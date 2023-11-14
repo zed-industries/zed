@@ -6609,6 +6609,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "project_panel2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "client2",
+ "collections",
+ "context_menu",
+ "db2",
+ "editor2",
+ "futures 0.3.28",
+ "gpui2",
+ "language2",
+ "menu2",
+ "postage",
+ "pretty_assertions",
+ "project2",
+ "schemars",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "settings2",
+ "smallvec",
+ "theme2",
+ "ui2",
+ "unicase",
+ "util",
+ "workspace2",
+]
+
+[[package]]
 name = "project_symbols"
 version = "0.1.0"
 dependencies = [
@@ -9256,9 +9286,9 @@ dependencies = [
 
 [[package]]
 name = "tiktoken-rs"
-version = "0.5.4"
+version = "0.5.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f9ae5a3c24361e5f038af22517ba7f8e3af4099e30e78a3d56f86b48238fce9d"
+checksum = "a4427b6b1c6b38215b92dd47a83a0ecc6735573d0a5a4c14acc0ac5b33b28adb"
 dependencies = [
  "anyhow",
  "base64 0.21.4",
@@ -11417,6 +11447,7 @@ dependencies = [
  "parking_lot 0.11.2",
  "postage",
  "project2",
+ "project_panel2",
  "rand 0.8.5",
  "regex",
  "rope2",

@@ -8,11 +8,11 @@ use file_associations::FileAssociations;
 
 use anyhow::{anyhow, Result};
 use gpui::{
-    actions, div, px, svg, uniform_list, Action, AppContext, AssetSource, AsyncAppContext,
-    AsyncWindowContext, ClipboardItem, Div, Element, Entity, EventEmitter, FocusEnabled,
-    FocusHandle, Model, ParentElement as _, Pixels, Point, PromptLevel, Render,
-    StatefulInteractive, StatefulInteractivity, Styled, Task, UniformListScrollHandle, View,
-    ViewContext, VisualContext as _, WeakView, WindowContext,
+    actions, div, px, rems, svg, uniform_list, Action, AppContext, AssetSource, AsyncWindowContext,
+    ClipboardItem, Component, Div, EventEmitter, FocusHandle, Focusable, InteractiveComponent,
+    Model, MouseButton, ParentComponent, Pixels, Point, PromptLevel, Render, Stateful,
+    StatefulInteractiveComponent, Styled, Task, UniformListScrollHandle, View, ViewContext,
+    VisualContext as _, WeakView, WindowContext,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
 use project::{
@@ -31,9 +31,9 @@ use std::{
     sync::Arc,
 };
 use theme::ActiveTheme as _;
-use ui::{h_stack, v_stack};
+use ui::{h_stack, v_stack, Label};
 use unicase::UniCase;
-use util::TryFutureExt;
+use util::{maybe, TryFutureExt};
 use workspace::{
     dock::{DockPosition, PanelEvent},
     Workspace,
@@ -54,8 +54,8 @@ pub struct ProjectPanel {
     edit_state: Option<EditState>,
     filename_editor: View<Editor>,
     clipboard_entry: Option<ClipboardEntry>,
-    dragged_entry_destination: Option<Arc<Path>>,
-    workspace: WeakView<Workspace>,
+    _dragged_entry_destination: Option<Arc<Path>>,
+    _workspace: WeakView<Workspace>,
     has_focus: bool,
     width: Option<f32>,
     pending_serialization: Task<Option<()>>,
@@ -131,31 +131,6 @@ pub fn init_settings(cx: &mut AppContext) {
 pub fn init(assets: impl AssetSource, cx: &mut AppContext) {
     init_settings(cx);
     file_associations::init(assets, cx);
-
-    // cx.add_action(ProjectPanel::expand_selected_entry);
-    // cx.add_action(ProjectPanel::collapse_selected_entry);
-    // cx.add_action(ProjectPanel::collapse_all_entries);
-    // cx.add_action(ProjectPanel::select_prev);
-    // cx.add_action(ProjectPanel::select_next);
-    // cx.add_action(ProjectPanel::new_file);
-    // cx.add_action(ProjectPanel::new_directory);
-    // cx.add_action(ProjectPanel::rename);
-    // cx.add_async_action(ProjectPanel::delete);
-    // cx.add_async_action(ProjectPanel::confirm);
-    // cx.add_async_action(ProjectPanel::open_file);
-    // cx.add_action(ProjectPanel::cancel);
-    // cx.add_action(ProjectPanel::cut);
-    // cx.add_action(ProjectPanel::copy);
-    // cx.add_action(ProjectPanel::copy_path);
-    // cx.add_action(ProjectPanel::copy_relative_path);
-    // cx.add_action(ProjectPanel::reveal_in_finder);
-    // cx.add_action(ProjectPanel::open_in_terminal);
-    // cx.add_action(ProjectPanel::new_search_in_directory);
-    // cx.add_action(
-    //     |this: &mut ProjectPanel, action: &Paste, cx: &mut ViewContext<ProjectPanel>| {
-    //         this.paste(action, cx);
-    //     },
-    // );
 }
 
 #[derive(Debug)]
@@ -244,7 +219,6 @@ impl ProjectPanel {
             // })
             // .detach();
 
-            let view_id = cx.view().entity_id();
             let mut this = Self {
                 project: project.clone(),
                 fs: workspace.app_state().fs.clone(),
@@ -258,8 +232,8 @@ impl ProjectPanel {
                 filename_editor,
                 clipboard_entry: None,
                 // context_menu: cx.add_view(|cx| ContextMenu::new(view_id, cx)),
-                dragged_entry_destination: None,
-                workspace: workspace.weak_handle(),
+                _dragged_entry_destination: None,
+                _workspace: workspace.weak_handle(),
                 has_focus: false,
                 width: None,
                 pending_serialization: Task::ready(None),
@@ -311,19 +285,19 @@ impl ProjectPanel {
                     }
                 }
                 &Event::SplitEntry { entry_id } => {
-                    // if let Some(worktree) = project.read(cx).worktree_for_entry(entry_id, cx) {
-                    //     if let Some(entry) = worktree.read(cx).entry_for_id(entry_id) {
-                    //         workspace
-                    //             .split_path(
-                    //                 ProjectPath {
-                    //                     worktree_id: worktree.read(cx).id(),
-                    //                     path: entry.path.clone(),
-                    //                 },
-                    //                 cx,
-                    //             )
-                    //             .detach_and_log_err(cx);
-                    //     }
-                    // }
+                    if let Some(worktree) = project.read(cx).worktree_for_entry(entry_id, cx) {
+                        if let Some(_entry) = worktree.read(cx).entry_for_id(entry_id) {
+                            // workspace
+                            //     .split_path(
+                            //         ProjectPath {
+                            //             worktree_id: worktree.read(cx).id(),
+                            //             path: entry.path.clone(),
+                            //         },
+                            //         cx,
+                            //     )
+                            //     .detach_and_log_err(cx);
+                        }
+                    }
                 }
                 _ => {}
             }
@@ -391,79 +365,80 @@ impl ProjectPanel {
 
     fn deploy_context_menu(
         &mut self,
-        position: Point<Pixels>,
-        entry_id: ProjectEntryId,
-        cx: &mut ViewContext<Self>,
+        _position: Point<Pixels>,
+        _entry_id: ProjectEntryId,
+        _cx: &mut ViewContext<Self>,
     ) {
-        // let project = self.project.read(cx);
+        todo!()
+        //     let project = self.project.read(cx);
 
-        // let worktree_id = if let Some(id) = project.worktree_id_for_entry(entry_id, cx) {
-        //     id
-        // } else {
-        //     return;
-        // };
+        //     let worktree_id = if let Some(id) = project.worktree_id_for_entry(entry_id, cx) {
+        //         id
+        //     } else {
+        //         return;
+        //     };
 
-        // self.selection = Some(Selection {
-        //     worktree_id,
-        //     entry_id,
-        // });
+        //     self.selection = Some(Selection {
+        //         worktree_id,
+        //         entry_id,
+        //     });
 
-        // let mut menu_entries = Vec::new();
-        // if let Some((worktree, entry)) = self.selected_entry(cx) {
-        //     let is_root = Some(entry) == worktree.root_entry();
-        //     if !project.is_remote() {
-        //         menu_entries.push(ContextMenuItem::action(
-        //             "Add Folder to Project",
-        //             workspace::AddFolderToProject,
-        //         ));
-        //         if is_root {
-        //             let project = self.project.clone();
-        //             menu_entries.push(ContextMenuItem::handler("Remove from Project", move |cx| {
-        //                 project.update(cx, |project, cx| project.remove_worktree(worktree_id, cx));
-        //             }));
+        //     let mut menu_entries = Vec::new();
+        //     if let Some((worktree, entry)) = self.selected_entry(cx) {
+        //         let is_root = Some(entry) == worktree.root_entry();
+        //         if !project.is_remote() {
+        //             menu_entries.push(ContextMenuItem::action(
+        //                 "Add Folder to Project",
+        //                 workspace::AddFolderToProject,
+        //             ));
+        //             if is_root {
+        //                 let project = self.project.clone();
+        //                 menu_entries.push(ContextMenuItem::handler("Remove from Project", move |cx| {
+        //                     project.update(cx, |project, cx| project.remove_worktree(worktree_id, cx));
+        //                 }));
+        //             }
         //         }
-        //     }
-        //     menu_entries.push(ContextMenuItem::action("New File", NewFile));
-        //     menu_entries.push(ContextMenuItem::action("New Folder", NewDirectory));
-        //     menu_entries.push(ContextMenuItem::Separator);
-        //     menu_entries.push(ContextMenuItem::action("Cut", Cut));
-        //     menu_entries.push(ContextMenuItem::action("Copy", Copy));
-        //     if let Some(clipboard_entry) = self.clipboard_entry {
-        //         if clipboard_entry.worktree_id() == worktree.id() {
-        //             menu_entries.push(ContextMenuItem::action("Paste", Paste));
-        //         }
-        //     }
-        //     menu_entries.push(ContextMenuItem::Separator);
-        //     menu_entries.push(ContextMenuItem::action("Copy Path", CopyPath));
-        //     menu_entries.push(ContextMenuItem::action(
-        //         "Copy Relative Path",
-        //         CopyRelativePath,
-        //     ));
-
-        //     if entry.is_dir() {
+        //         menu_entries.push(ContextMenuItem::action("New File", NewFile));
+        //         menu_entries.push(ContextMenuItem::action("New Folder", NewDirectory));
         //         menu_entries.push(ContextMenuItem::Separator);
-        //     }
-        //     menu_entries.push(ContextMenuItem::action("Reveal in Finder", RevealInFinder));
-        //     if entry.is_dir() {
-        //         menu_entries.push(ContextMenuItem::action("Open in Terminal", OpenInTerminal));
+        //         menu_entries.push(ContextMenuItem::action("Cut", Cut));
+        //         menu_entries.push(ContextMenuItem::action("Copy", Copy));
+        //         if let Some(clipboard_entry) = self.clipboard_entry {
+        //             if clipboard_entry.worktree_id() == worktree.id() {
+        //                 menu_entries.push(ContextMenuItem::action("Paste", Paste));
+        //             }
+        //         }
+        //         menu_entries.push(ContextMenuItem::Separator);
+        //         menu_entries.push(ContextMenuItem::action("Copy Path", CopyPath));
         //         menu_entries.push(ContextMenuItem::action(
-        //             "Search Inside",
-        //             NewSearchInDirectory,
+        //             "Copy Relative Path",
+        //             CopyRelativePath,
         //         ));
+
+        //         if entry.is_dir() {
+        //             menu_entries.push(ContextMenuItem::Separator);
+        //         }
+        //         menu_entries.push(ContextMenuItem::action("Reveal in Finder", RevealInFinder));
+        //         if entry.is_dir() {
+        //             menu_entries.push(ContextMenuItem::action("Open in Terminal", OpenInTerminal));
+        //             menu_entries.push(ContextMenuItem::action(
+        //                 "Search Inside",
+        //                 NewSearchInDirectory,
+        //             ));
+        //         }
+
+        //         menu_entries.push(ContextMenuItem::Separator);
+        //         menu_entries.push(ContextMenuItem::action("Rename", Rename));
+        //         if !is_root {
+        //             menu_entries.push(ContextMenuItem::action("Delete", Delete));
+        //         }
         //     }
 
-        //     menu_entries.push(ContextMenuItem::Separator);
-        //     menu_entries.push(ContextMenuItem::action("Rename", Rename));
-        //     if !is_root {
-        //         menu_entries.push(ContextMenuItem::action("Delete", Delete));
-        //     }
-        // }
+        //     // self.context_menu.update(cx, |menu, cx| {
+        //     //     menu.show(position, AnchorCorner::TopLeft, menu_entries, cx);
+        //     // });
 
-        // // self.context_menu.update(cx, |menu, cx| {
-        // //     menu.show(position, AnchorCorner::TopLeft, menu_entries, cx);
-        // // });
-
-        // cx.notify();
+        //     cx.notify();
     }
 
     fn expand_selected_entry(&mut self, _: &ExpandSelectedEntry, cx: &mut ViewContext<Self>) {
@@ -579,22 +554,18 @@ impl ProjectPanel {
         }
     }
 
-    fn confirm(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
+    fn confirm(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
         if let Some(task) = self.confirm_edit(cx) {
-            return Some(task);
+            task.detach_and_log_err(cx);
         }
-
-        None
     }
 
-    fn open_file(&mut self, _: &Open, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
+    fn open_file(&mut self, _: &Open, cx: &mut ViewContext<Self>) {
         if let Some((_, entry)) = self.selected_entry(cx) {
             if entry.is_file() {
                 self.open_entry(entry.id, true, cx);
             }
         }
-
-        None
     }
 
     fn confirm_edit(&mut self, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
@@ -800,27 +771,32 @@ impl ProjectPanel {
         }
     }
 
-    fn delete(&mut self, _: &Delete, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
-        let Selection { entry_id, .. } = self.selection?;
-        let path = self.project.read(cx).path_for_entry(entry_id, cx)?.path;
-        let file_name = path.file_name()?;
+    fn delete(&mut self, _: &Delete, cx: &mut ViewContext<Self>) {
+        maybe!({
+            let Selection { entry_id, .. } = self.selection?;
+            let path = self.project.read(cx).path_for_entry(entry_id, cx)?.path;
+            let file_name = path.file_name()?;
 
-        let mut answer = cx.prompt(
-            PromptLevel::Info,
-            &format!("Delete {file_name:?}?"),
-            &["Delete", "Cancel"],
-        );
-        Some(cx.spawn(|this, mut cx| async move {
-            if answer.await != Ok(0) {
-                return Ok(());
-            }
-            this.update(&mut cx, |this, cx| {
-                this.project
-                    .update(cx, |project, cx| project.delete_entry(entry_id, cx))
-                    .ok_or_else(|| anyhow!("no such entry"))
-            })??
-            .await
-        }))
+            let answer = cx.prompt(
+                PromptLevel::Info,
+                &format!("Delete {file_name:?}?"),
+                &["Delete", "Cancel"],
+            );
+
+            cx.spawn(|this, mut cx| async move {
+                if answer.await != Ok(0) {
+                    return Ok(());
+                }
+                this.update(&mut cx, |this, cx| {
+                    this.project
+                        .update(cx, |project, cx| project.delete_entry(entry_id, cx))
+                        .ok_or_else(|| anyhow!("no such entry"))
+                })??
+                .await
+            })
+            .detach_and_log_err(cx);
+            Some(())
+        });
     }
 
     fn select_next(&mut self, _: &SelectNext, cx: &mut ViewContext<Self>) {
@@ -897,8 +873,9 @@ impl ProjectPanel {
         }
     }
 
-    fn paste(&mut self, _: &Paste, cx: &mut ViewContext<Self>) -> Option<()> {
-        if let Some((worktree, entry)) = self.selected_entry(cx) {
+    fn paste(&mut self, _: &Paste, cx: &mut ViewContext<Self>) {
+        maybe!({
+            let (worktree, entry) = self.selected_entry(cx)?;
             let clipboard_entry = self.clipboard_entry?;
             if clipboard_entry.worktree_id() != worktree.id() {
                 return None;
@@ -942,15 +919,16 @@ impl ProjectPanel {
                 if let Some(task) = self.project.update(cx, |project, cx| {
                     project.rename_entry(clipboard_entry.entry_id(), new_path, cx)
                 }) {
-                    task.detach_and_log_err(cx)
+                    task.detach_and_log_err(cx);
                 }
             } else if let Some(task) = self.project.update(cx, |project, cx| {
                 project.copy_entry(clipboard_entry.entry_id(), new_path, cx)
             }) {
-                task.detach_and_log_err(cx)
+                task.detach_and_log_err(cx);
             }
-        }
-        None
+
+            Some(())
+        });
     }
 
     fn copy_path(&mut self, _: &CopyPath, cx: &mut ViewContext<Self>) {
@@ -977,7 +955,7 @@ impl ProjectPanel {
         }
     }
 
-    fn open_in_terminal(&mut self, _: &OpenInTerminal, cx: &mut ViewContext<Self>) {
+    fn open_in_terminal(&mut self, _: &OpenInTerminal, _cx: &mut ViewContext<Self>) {
         todo!()
         // if let Some((worktree, entry)) = self.selected_entry(cx) {
         //     let window = cx.window();
@@ -1012,36 +990,37 @@ impl ProjectPanel {
         }
     }
 
-    fn move_entry(
-        &mut self,
-        entry_to_move: ProjectEntryId,
-        destination: ProjectEntryId,
-        destination_is_file: bool,
-        cx: &mut ViewContext<Self>,
-    ) {
-        let destination_worktree = self.project.update(cx, |project, cx| {
-            let entry_path = project.path_for_entry(entry_to_move, cx)?;
-            let destination_entry_path = project.path_for_entry(destination, cx)?.path.clone();
+    // todo!()
+    // fn move_entry(
+    //     &mut self,
+    //     entry_to_move: ProjectEntryId,
+    //     destination: ProjectEntryId,
+    //     destination_is_file: bool,
+    //     cx: &mut ViewContext<Self>,
+    // ) {
+    //     let destination_worktree = self.project.update(cx, |project, cx| {
+    //         let entry_path = project.path_for_entry(entry_to_move, cx)?;
+    //         let destination_entry_path = project.path_for_entry(destination, cx)?.path.clone();
 
-            let mut destination_path = destination_entry_path.as_ref();
-            if destination_is_file {
-                destination_path = destination_path.parent()?;
-            }
+    //         let mut destination_path = destination_entry_path.as_ref();
+    //         if destination_is_file {
+    //             destination_path = destination_path.parent()?;
+    //         }
 
-            let mut new_path = destination_path.to_path_buf();
-            new_path.push(entry_path.path.file_name()?);
-            if new_path != entry_path.path.as_ref() {
-                let task = project.rename_entry(entry_to_move, new_path, cx)?;
-                cx.foreground_executor().spawn(task).detach_and_log_err(cx);
-            }
+    //         let mut new_path = destination_path.to_path_buf();
+    //         new_path.push(entry_path.path.file_name()?);
+    //         if new_path != entry_path.path.as_ref() {
+    //             let task = project.rename_entry(entry_to_move, new_path, cx)?;
+    //             cx.foreground_executor().spawn(task).detach_and_log_err(cx);
+    //         }
 
-            Some(project.worktree_id_for_entry(destination, cx)?)
-        });
+    //         Some(project.worktree_id_for_entry(destination, cx)?)
+    //     });
 
-        if let Some(destination_worktree) = destination_worktree {
-            self.expand_entry(destination_worktree, destination, cx);
-        }
-    }
+    //     if let Some(destination_worktree) = destination_worktree {
+    //         self.expand_entry(destination_worktree, destination, cx);
+    //     }
+    // }
 
     fn index_for_selection(&self, selection: Selection) -> Option<(usize, usize, usize)> {
         let mut entry_index = 0;
@@ -1366,23 +1345,32 @@ impl ProjectPanel {
             .git_status
             .as_ref()
             .map(|status| match status {
-                GitFileStatus::Added => theme.styles.status.created,
-                GitFileStatus::Modified => theme.styles.status.modified,
-                GitFileStatus::Conflict => theme.styles.status.conflict,
+                GitFileStatus::Added => theme.status().created,
+                GitFileStatus::Modified => theme.status().modified,
+                GitFileStatus::Conflict => theme.status().conflict,
             })
-            .unwrap_or(theme.styles.status.info);
+            .unwrap_or(theme.status().info);
 
         h_stack()
             .child(if let Some(icon) = &details.icon {
-                div().child(svg().path(icon.to_string()))
+                div().child(
+                    // todo!() Marshall: Can we use our `IconElement` component here?
+                    svg()
+                        .size(rems(0.9375))
+                        .flex_none()
+                        .path(icon.to_string())
+                        .text_color(cx.theme().colors().icon),
+                )
             } else {
                 div()
             })
             .child(
                 if let (Some(editor), true) = (editor, show_editor) {
-                    div().child(editor.clone())
+                    div().w_full().child(editor.clone())
                 } else {
-                    div().child(details.filename.clone())
+                    div()
+                        .text_color(filename_text_color)
+                        .child(Label::new(details.filename.clone()))
                 }
                 .ml_1(),
             )
@@ -1390,21 +1378,29 @@ impl ProjectPanel {
     }
 
     fn render_entry(
+        &self,
         entry_id: ProjectEntryId,
         details: EntryDetails,
-        editor: &View<Editor>,
         // dragged_entry_destination: &mut Option<Arc<Path>>,
-        // theme: &theme::ProjectPanel,
         cx: &mut ViewContext<Self>,
-    ) -> Div<Self, StatefulInteractivity<Self>> {
+    ) -> Stateful<Self, Div<Self>> {
         let kind = details.kind;
         let settings = ProjectPanelSettings::get_global(cx);
         const INDENT_SIZE: Pixels = px(16.0);
         let padding = INDENT_SIZE + details.depth as f32 * px(settings.indent_size);
         let show_editor = details.is_editing && !details.is_processing;
+        let is_selected = self
+            .selection
+            .map_or(false, |selection| selection.entry_id == entry_id);
 
-        Self::render_entry_visual_element(&details, Some(editor), padding, cx)
+        Self::render_entry_visual_element(&details, Some(&self.filename_editor), padding, cx)
             .id(entry_id.to_proto() as usize)
+            .w_full()
+            .cursor_pointer()
+            .when(is_selected, |this| {
+                this.bg(cx.theme().colors().element_selected)
+            })
+            .hover(|style| style.bg(cx.theme().colors().element_hover))
             .on_click(move |this, event, cx| {
                 if !show_editor {
                     if kind.is_dir() {
@@ -1418,38 +1414,51 @@ impl ProjectPanel {
                     }
                 }
             })
-        // .on_down(MouseButton::Right, move |event, this, cx| {
-        //     this.deploy_context_menu(event.position, entry_id, cx);
-        // })
-        // .on_up(MouseButton::Left, move |_, this, cx| {
-        // if let Some((_, dragged_entry)) = cx
-        //     .global::<DragAndDrop<Workspace>>()
-        //     .currently_dragged::<ProjectEntryId>(cx.window())
-        // {
+            .on_mouse_down(MouseButton::Right, move |this, event, cx| {
+                this.deploy_context_menu(event.position, entry_id, cx);
+            })
+        // .on_drop::<ProjectEntryId>(|this, event, cx| {
         //     this.move_entry(
         //         *dragged_entry,
         //         entry_id,
         //         matches!(details.kind, EntryKind::File(_)),
         //         cx,
         //     );
-        // }
         // })
     }
 }
 
 impl Render for ProjectPanel {
-    type Element = Div<Self, StatefulInteractivity<Self>, FocusEnabled<Self>>;
+    type Element = Focusable<Self, Stateful<Self, Div<Self>>>;
 
-    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> Self::Element {
-        enum ProjectPanel {}
-        let theme = cx.theme();
-        let last_worktree_root_id = self.last_worktree_root_id;
-
+    fn render(&mut self, _cx: &mut gpui::ViewContext<Self>) -> Self::Element {
         let has_worktree = self.visible_entries.len() != 0;
 
         if has_worktree {
             div()
                 .id("project-panel")
+                .size_full()
+                .key_context("ProjectPanel")
+                .on_action(Self::select_next)
+                .on_action(Self::select_prev)
+                .on_action(Self::expand_selected_entry)
+                .on_action(Self::collapse_selected_entry)
+                .on_action(Self::collapse_all_entries)
+                .on_action(Self::new_file)
+                .on_action(Self::new_directory)
+                .on_action(Self::rename)
+                .on_action(Self::delete)
+                .on_action(Self::confirm)
+                .on_action(Self::open_file)
+                .on_action(Self::cancel)
+                .on_action(Self::cut)
+                .on_action(Self::copy)
+                .on_action(Self::copy_path)
+                .on_action(Self::copy_relative_path)
+                .on_action(Self::paste)
+                .on_action(Self::reveal_in_finder)
+                .on_action(Self::open_in_terminal)
+                .on_action(Self::new_search_in_directory)
                 .track_focus(&self.focus_handle)
                 .child(
                     uniform_list(
@@ -1461,17 +1470,12 @@ impl Render for ProjectPanel {
                         |this: &mut Self, range, cx| {
                             let mut items = SmallVec::new();
                             this.for_each_visible_entry(range, cx, |id, details, cx| {
-                                items.push(Self::render_entry(
-                                    id,
-                                    details,
-                                    &this.filename_editor,
-                                    // &mut dragged_entry_destination,
-                                    cx,
-                                ));
+                                items.push(this.render_entry(id, details, cx));
                             });
                             items
                         },
                     )
+                    .size_full()
                     .track_scroll(self.list.clone()),
                 )
         } else {

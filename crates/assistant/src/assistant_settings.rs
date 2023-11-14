@@ -9,6 +9,8 @@ pub enum OpenAIModel {
     ThreePointFiveTurbo,
     #[serde(rename = "gpt-4-0613")]
     Four,
+    #[serde(rename = "gpt-4-1106-preview")]
+    FourTurbo,
 }
 
 impl OpenAIModel {
@@ -16,6 +18,7 @@ impl OpenAIModel {
         match self {
             OpenAIModel::ThreePointFiveTurbo => "gpt-3.5-turbo-0613",
             OpenAIModel::Four => "gpt-4-0613",
+            OpenAIModel::FourTurbo => "gpt-4-1106-preview",
         }
     }
 
@@ -23,13 +26,15 @@ impl OpenAIModel {
         match self {
             OpenAIModel::ThreePointFiveTurbo => "gpt-3.5-turbo",
             OpenAIModel::Four => "gpt-4",
+            OpenAIModel::FourTurbo => "gpt-4-turbo",
         }
     }
 
     pub fn cycle(&self) -> Self {
         match self {
             OpenAIModel::ThreePointFiveTurbo => OpenAIModel::Four,
-            OpenAIModel::Four => OpenAIModel::ThreePointFiveTurbo,
+            OpenAIModel::Four => OpenAIModel::FourTurbo,
+            OpenAIModel::FourTurbo => OpenAIModel::ThreePointFiveTurbo,
         }
     }
 }

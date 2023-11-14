@@ -1,6 +1,6 @@
 use crate::{h_stack, prelude::*};
-use crate::{ClickHandler, Icon, IconColor, IconElement};
-use gpui::{prelude::*, rems, MouseButton};
+use crate::{ClickHandler, Icon, IconColor, IconElement, TextTooltip};
+use gpui::{prelude::*, MouseButton, VisualContext};
 use std::sync::Arc;
 
 struct IconButtonHandlers<V: 'static> {
@@ -20,6 +20,7 @@ pub struct IconButton<V: 'static> {
     color: IconColor,
     variant: ButtonVariant,
     state: InteractionState,
+    tooltip: Option<SharedString>,
     handlers: IconButtonHandlers<V>,
 }
 
@@ -31,6 +32,7 @@ impl<V: 'static> IconButton<V> {
             color: IconColor::default(),
             variant: ButtonVariant::default(),
             state: InteractionState::default(),
+            tooltip: None,
             handlers: IconButtonHandlers::default(),
         }
     }
@@ -52,6 +54,11 @@ impl<V: 'static> IconButton<V> {
 
     pub fn state(mut self, state: InteractionState) -> Self {
         self.state = state;
+        self
+    }
+
+    pub fn tooltip(mut self, tooltip: impl Into<SharedString>) -> Self {
+        self.tooltip = Some(tooltip.into());
         self
     }
 
@@ -86,9 +93,7 @@ impl<V: 'static> IconButton<V> {
             .id(self.id.clone())
             .justify_center()
             .rounded_md()
-            // todo!("Where do these numbers come from?")
-            .py(rems(0.21875))
-            .px(rems(0.375))
+            .p_1()
             .bg(bg_color)
             .hover(|style| style.bg(bg_hover_color))
             .active(|style| style.bg(bg_active_color))
@@ -99,6 +104,11 @@ impl<V: 'static> IconButton<V> {
                 cx.stop_propagation();
                 click_handler(state, cx);
             });
+        }
+
+        if let Some(tooltip) = self.tooltip.clone() {
+            button =
+                button.tooltip(move |_, cx| cx.build_view(|cx| TextTooltip::new(tooltip.clone())));
         }
 
         button
