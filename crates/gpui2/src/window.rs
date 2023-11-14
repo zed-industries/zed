@@ -2138,7 +2138,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         &mut self,
         handler: impl Fn(&mut V, &Event, DispatchPhase, &mut ViewContext<V>) + 'static,
     ) {
-        let handle = self.view();
+        let handle = self.view().clone();
         self.window_cx.on_key_event(move |event, phase, cx| {
             handle.update(cx, |view, cx| {
                 handler(view, event, phase, cx);
@@ -2151,7 +2151,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         action_type: TypeId,
         handler: impl Fn(&mut V, &dyn Any, DispatchPhase, &mut ViewContext<V>) + 'static,
     ) {
-        let handle = self.view();
+        let handle = self.view().clone();
         self.window_cx
             .on_action(action_type, move |action, phase, cx| {
                 handle.update(cx, |view, cx| {

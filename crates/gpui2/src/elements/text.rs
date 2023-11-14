@@ -81,6 +81,7 @@ impl<V: 'static> Element<V> for Text<V> {
         let text = self.text.clone();
 
         let rem_size = cx.rem_size();
+
         let layout_id = cx.request_measured_layout(Default::default(), rem_size, {
             let element_state = element_state.clone();
             move |known_dimensions, _| {
@@ -93,6 +94,10 @@ impl<V: 'static> Element<V> for Text<V> {
                     )
                     .log_err()
                 else {
+                    element_state.lock().replace(TextElementState {
+                        lines: Default::default(),
+                        line_height,
+                    });
                     return Size::default();
                 };
 
@@ -131,7 +136,8 @@ impl<V: 'static> Element<V> for Text<V> {
         let element_state = element_state.lock();
         let element_state = element_state
             .as_ref()
-            .expect("measurement has not been performed");
+            .ok_or_else(|| anyhow::anyhow!("measurement has not been performed on {}", &self.text))
+            .unwrap();
 
         let line_height = element_state.line_height;
         let mut line_origin = bounds.origin;

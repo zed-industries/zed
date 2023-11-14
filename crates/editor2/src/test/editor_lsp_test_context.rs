@@ -59,6 +59,7 @@ impl<'a> EditorLspTestContext<'a> {
             .await;
 
         let project = Project::test(app_state.fs.clone(), [], cx).await;
+
         project.update(cx, |project, _| project.languages().add(Arc::new(language)));
 
         app_state
@@ -68,7 +69,9 @@ impl<'a> EditorLspTestContext<'a> {
             .await;
 
         let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+
         let workspace = window.root_view(cx).unwrap();
+
         let mut cx = VisualTestContext::from_window(*window.deref(), cx);
         project
             .update(&mut cx, |project, cx| {
@@ -78,7 +81,6 @@ impl<'a> EditorLspTestContext<'a> {
             .unwrap();
         cx.read(|cx| workspace.read(cx).worktree_scans_complete(cx))
             .await;
-
         let file = cx.read(|cx| workspace.file_project_paths(cx)[0].clone());
         let item = workspace
             .update(&mut cx, |workspace, cx| {
@@ -86,7 +88,6 @@ impl<'a> EditorLspTestContext<'a> {
             })
             .await
             .expect("Could not open test file");
-
         let editor = cx.update(|cx| {
             item.act_as::<Editor>(cx)
                 .expect("Opened test file wasn't an editor")
@@ -94,7 +95,6 @@ impl<'a> EditorLspTestContext<'a> {
         editor.update(&mut cx, |editor, cx| editor.focus(cx));
 
         let lsp = fake_servers.next().await.unwrap();
-
         Self {
             cx: EditorTestContext {
                 cx,
