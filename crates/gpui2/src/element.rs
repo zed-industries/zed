@@ -26,14 +26,6 @@ pub trait Element<V: 'static> {
         cx: &mut ViewContext<V>,
     ) -> LayoutId;
 
-    fn prepaint(
-        &mut self,
-        bounds: Bounds<Pixels>,
-        view_state: &mut V,
-        element_state: &mut Self::ElementState,
-        cx: &mut ViewContext<V>,
-    );
-
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
@@ -70,7 +62,6 @@ pub trait ParentElement<V: 'static> {
 trait ElementObject<V> {
     fn initialize(&mut self, view_state: &mut V, cx: &mut ViewContext<V>);
     fn layout(&mut self, view_state: &mut V, cx: &mut ViewContext<V>) -> LayoutId;
-    fn prepaint(&mut self, view_state: &mut V, cx: &mut ViewContext<V>);
     fn paint(&mut self, view_state: &mut V, cx: &mut ViewContext<V>);
     fn measure(
         &mut self,
@@ -208,36 +199,6 @@ where
         };
     }
 
-    fn prepaint(&mut self, view_state: &mut V, cx: &mut ViewContext<V>) {
-        self.phase = match mem::take(&mut self.phase) {
-            ElementRenderPhase::LayoutRequested {
-                layout_id,
-                mut frame_state,
-            }
-            | ElementRenderPhase::LayoutComputed {
-                layout_id,
-                mut frame_state,
-                ..
-            } => {
-                let bounds = cx.layout_bounds(layout_id);
-                if let Some(id) = self.element.id() {
-                    cx.with_element_state(id, |element_state, cx| {
-                        let mut element_state = element_state.unwrap();
-                        self.element
-                            .prepaint(bounds, view_state, &mut element_state, cx);
-                        ((), element_state)
-                    });
-                } else {
-                    self.element
-                        .prepaint(bounds, view_state, frame_state.as_mut().unwrap(), cx);
-                }
-                ElementRenderPhase::Painted
-            }
-
-            _ => panic!("must call layout before paint"),
-        };
-    }
-
     fn measure(
         &mut self,
         available_space: Size<AvailableSpace>,
@@ -320,10 +281,6 @@ impl<V> AnyElement<V> {
 
     pub fn paint(&mut self, view_state: &mut V, cx: &mut ViewContext<V>) {
         self.0.paint(view_state, cx)
-    }
-
-    pub fn prepaint(&mut self, view_state: &mut V, cx: &mut ViewContext<V>) {
-        self.0.prepaint(view_state, cx)
     }
 
     /// Initializes this element and performs layout within the given available space to determine its size.
@@ -417,16 +374,6 @@ where
         cx: &mut ViewContext<V>,
     ) -> LayoutId {
         rendered_element.layout(view_state, cx)
-    }
-
-    fn prepaint(
-        &mut self,
-        _bounds: Bounds<Pixels>,
-        view_state: &mut V,
-        rendered_element: &mut Self::ElementState,
-        cx: &mut ViewContext<V>,
-    ) {
-        rendered_element.prepaint(view_state, cx)
     }
 
     fn paint(

@@ -94,15 +94,6 @@ where
         self.base.layout(view_state, element_state, cx)
     }
 
-    fn prepaint(
-        &mut self,
-        bounds: Bounds<Pixels>,
-        view_state: &mut V,
-        element_state: &mut Self::ElementState,
-        cx: &mut ViewContext<V>,
-    ) {
-    }
-
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,

@@ -274,9 +274,7 @@ pub trait InteractiveComponent<V: 'static> {
     }
 }
 
-pub trait StatefulInteractiveComponent<V: 'static> {
-    fn interactivity(&mut self) -> &mut StatefulInteractivity<V>;
-
+pub trait StatefulInteractiveComponent<V: 'static>: InteractiveComponent<V> {
     fn active(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self
     where
         Self: Sized,
@@ -525,23 +523,14 @@ pub struct FocusEvent {
 }
 
 pub struct Node<V> {
-    style: StyleRefinement,
     key_context: KeyContext,
     interactivity: Interactivity<V>,
     children: Vec<AnyElement<V>>,
 }
 
-impl<V> Node<V> {
-    fn compute_style(&self) -> Style {
-        let mut style = Style::default();
-        style.refine(&self.style);
-        style
-    }
-}
-
 impl<V> Styled for Node<V> {
     fn style(&mut self) -> &mut StyleRefinement {
-        &mut self.style
+        &mut self.interactivity.base_style
     }
 }
 
@@ -582,7 +571,7 @@ impl<V: 'static> Element<V> for Node<V> {
         element_state: &mut Self::ElementState,
         cx: &mut ViewContext<V>,
     ) -> crate::LayoutId {
-        let style = self.compute_style();
+        let style = self.interactivity().compute_style(None, cx);
         style.with_text_style(cx, |cx| {
             element_state.child_layout_ids = self
                 .children
@@ -593,20 +582,6 @@ impl<V: 'static> Element<V> for Node<V> {
         })
     }
 
-    fn prepaint(
-        &mut self,
-        bounds: Bounds<Pixels>,
-        view_state: &mut V,
-        _: &mut Self::ElementState,
-        cx: &mut ViewContext<V>,
-    ) {
-        for child in &mut self.children {
-            child.prepaint(view_state, cx);
-        }
-        self.interactivity
-            .refine_style(&mut self.style, bounds, view_state, cx);
-    }
-
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
@@ -614,7 +589,7 @@ impl<V: 'static> Element<V> for Node<V> {
         element_state: &mut Self::ElementState,
         cx: &mut ViewContext<V>,
     ) {
-        let style = self.compute_style();
+        let style = self.interactivity.compute_style(Some(bounds), cx);
         if style.visibility == Visibility::Hidden {
             return;
         }
@@ -671,12 +646,37 @@ impl<V: 'static> Element<V> for Node<V> {
     }
 }
 
+pub struct ComputedStyle {
+    base: StyleRefinement,
+    focus: StyleRefinement,
+    hover: StyleRefinement,
+    active: StyleRefinement,
+}
+
+pub struct StyleCascade {
+    pub base: StyleRefinement,
+    pub focus: StyleRefinement,
+    pub hover: StyleRefinement,
+    pub dragged_over: StyleRefinement,
+    pub active: StyleRefinement,
+}
+
 pub struct Interactivity<V> {
+    pub active: bool,
+    pub group_active: bool,
+    pub hovered: bool,
+    pub group_hovered: bool,
+    pub focused: bool,
+    pub scroll_offset: Point<Pixels>,
+    pub base_style: StyleRefinement,
+    pub focus_style: StyleRefinement,
     pub hover_style: StyleRefinement,
     pub group_hover_style: Option<GroupStyle>,
+    pub active_style: StyleRefinement,
+    pub group_active_style: Option<GroupStyle>,
     pub drag_over_styles: SmallVec<[(TypeId, StyleRefinement); 2]>,
     pub group_drag_over_styles: SmallVec<[(TypeId, GroupStyle); 2]>,
-    group: Option<SharedString>,
+    pub group: Option<SharedString>,
     pub dispatch_context: KeyContext,
     pub mouse_down_listeners: SmallVec<[MouseDownListener<V>; 2]>,
     pub mouse_up_listeners: SmallVec<[MouseUpListener<V>; 2]>,
@@ -685,49 +685,68 @@ pub struct Interactivity<V> {
     pub key_down_listeners: SmallVec<[KeyDownListener<V>; 2]>,
     pub key_up_listeners: SmallVec<[KeyUpListener<V>; 2]>,
     pub action_listeners: SmallVec<[(TypeId, ActionListener<V>); 8]>,
-    drop_listeners: SmallVec<[(TypeId, Box<DropListener<V>>); 2]>,
-    scroll_offset: Point<Pixels>,
+    pub drop_listeners: SmallVec<[(TypeId, Box<DropListener<V>>); 2]>,
+    pub click_listeners: SmallVec<[ClickListener<V>; 2]>,
+    pub drag_listener: Option<DragListener<V>>,
+    pub hover_listener: Option<HoverListener<V>>,
+    pub tooltip_builder: Option<TooltipBuilder<V>>,
 }
 
 impl<V: 'static> Interactivity<V> {
-    fn refine_style(
-        &self,
-        style: &mut StyleRefinement,
-        bounds: Bounds<Pixels>,
-        cx: &mut ViewContext<V>,
-    ) {
-        let mouse_position = cx.mouse_position();
-        if let Some(group_hover) = self.group_hover_style.as_ref() {
-            if let Some(group_bounds) = GroupBounds::get(&group_hover.group, cx) {
-                if group_bounds.contains_point(&mouse_position) {
-                    style.refine(&group_hover.style);
-                }
-            }
-        }
-        if bounds.contains_point(&mouse_position) {
-            style.refine(&self.hover_style);
+    fn compute_style(&self, bounds: Option<Bounds<Pixels>>, cx: &mut ViewContext<V>) -> Style {
+        let mut style = Style::default();
+        style.refine(&self.base_style);
+        if self.focused {
+            style.refine(&self.focus_style);
         }
 
-        if let Some(drag) = cx.active_drag.take() {
-            for (state_type, group_drag_style) in &self.group_drag_over_styles {
-                if let Some(group_bounds) = GroupBounds::get(&group_drag_style.group, cx) {
-                    if *state_type == drag.view.entity_type()
-                        && group_bounds.contains_point(&mouse_position)
-                    {
-                        style.refine(&group_drag_style.style);
+        if let Some(bounds) = bounds {
+            let mouse_position = cx.mouse_position();
+            if let Some(group_hover) = self.group_hover_style.as_ref() {
+                if let Some(group_bounds) = GroupBounds::get(&group_hover.group, cx) {
+                    if group_bounds.contains_point(&mouse_position) {
+                        style.refine(&group_hover.style);
                     }
                 }
             }
-
-            for (state_type, drag_over_style) in &self.drag_over_styles {
-                if *state_type == drag.view.entity_type() && bounds.contains_point(&mouse_position)
-                {
-                    style.refine(drag_over_style);
-                }
+            if bounds.contains_point(&mouse_position) {
+                style.refine(&self.hover_style);
             }
 
-            cx.active_drag = Some(drag);
+            if let Some(drag) = cx.active_drag.take() {
+                for (state_type, group_drag_style) in &self.group_drag_over_styles {
+                    if let Some(group_bounds) = GroupBounds::get(&group_drag_style.group, cx) {
+                        if *state_type == drag.view.entity_type()
+                            && group_bounds.contains_point(&mouse_position)
+                        {
+                            style.refine(&group_drag_style.style);
+                        }
+                    }
+                }
+
+                for (state_type, drag_over_style) in &self.drag_over_styles {
+                    if *state_type == drag.view.entity_type()
+                        && bounds.contains_point(&mouse_position)
+                    {
+                        style.refine(drag_over_style);
+                    }
+                }
+
+                cx.active_drag = Some(drag);
+            }
         }
+
+        if self.group_active {
+            if let Some(group) = self.group_active_style.as_ref() {
+                style.refine(&group.style)
+            }
+        }
+
+        if self.active {
+            style.refine(&self.active_style)
+        }
+
+        style
     }
 
     fn paint(&mut self, bounds: Bounds<Pixels>, cx: &mut ViewContext<V>) {
@@ -863,32 +882,15 @@ impl<V: 'static, E: InteractiveComponent<V>> InteractiveComponent<V> for Focusab
 impl<V: 'static, E: StatefulInteractiveComponent<V>> StatefulInteractiveComponent<V>
     for Focusable<V, E>
 {
-    fn interactivity(&mut self) -> &mut StatefulInteractivity<V> {
-        self.element.interactivity()
-    }
 }
 
 pub struct Stateful<V, E> {
     id: SharedString,
-    interactivity: StatefulInteractivity<V>,
     view_type: PhantomData<V>,
     element: E,
 }
 
-pub struct StatefulInteractivity<V> {
-    click_listeners: SmallVec<[ClickListener<V>; 2]>,
-    active_style: StyleRefinement,
-    group_active_style: Option<GroupStyle>,
-    drag_listener: Option<DragListener<V>>,
-    hover_listener: Option<HoverListener<V>>,
-    tooltip_builder: Option<TooltipBuilder<V>>,
-}
-
-impl<V: 'static, E> StatefulInteractiveComponent<V> for Stateful<V, E> {
-    fn interactivity(&mut self) -> &mut StatefulInteractivity<V> {
-        &mut self.interactivity
-    }
-}
+impl<V: 'static, E: InteractiveComponent<V>> StatefulInteractiveComponent<V> for Stateful<V, E> {}
 
 impl<V: 'static, E: InteractiveComponent<V>> InteractiveComponent<V> for Stateful<V, E> {
     fn interactivity(&mut self) -> &mut Interactivity<V> {

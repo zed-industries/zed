@@ -121,15 +121,6 @@ impl<V: 'static> Element<V> for Text<V> {
         layout_id
     }
 
-    fn prepaint(
-        &mut self,
-        bounds: Bounds<Pixels>,
-        view_state: &mut V,
-        element_state: &mut Self::ElementState,
-        cx: &mut ViewContext<V>,
-    ) {
-    }
-
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,

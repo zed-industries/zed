@@ -2640,15 +2640,6 @@ impl Element<Editor> for EditorElement {
         cx.request_layout(&style, None)
     }
 
-    fn prepaint(
-        &mut self,
-        bounds: Bounds<Pixels>,
-        view_state: &mut Editor,
-        element_state: &mut Self::ElementState,
-        cx: &mut ViewContext<Editor>,
-    ) {
-    }
-
     fn paint(
         &mut self,
         bounds: Bounds<gpui::Pixels>,
