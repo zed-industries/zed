@@ -15,6 +15,7 @@ pub use only_instance::*;
 pub use open_listener::*;
 
 use anyhow::Result;
+use settings::Settings;
 use std::sync::Arc;
 use uuid::Uuid;
 use workspace::{AppState, Workspace};
@@ -45,6 +46,214 @@ pub fn build_window_options(
         is_movable: true,
         display_id: display.map(|display| display.id()),
     }
+}
+
+pub fn init_zed_actions(cx: &mut AppContext) {
+    cx.observe_new_views(|workspace: &mut Workspace, cx| {
+        workspace
+            // cx.add_action(about);
+            // cx.add_global_action(|_: &Hide, cx: &mut gpui::AppContext| {
+            //     cx.platform().hide();
+            // });
+            // cx.add_global_action(|_: &HideOthers, cx: &mut gpui::AppContext| {
+            //     cx.platform().hide_other_apps();
+            // });
+            // cx.add_global_action(|_: &ShowAll, cx: &mut gpui::AppContext| {
+            //     cx.platform().unhide_other_apps();
+            // });
+            // cx.add_action(
+            //     |_: &mut Workspace, _: &Minimize, cx: &mut ViewContext<Workspace>| {
+            //         cx.minimize_window();
+            //     },
+            // );
+            // cx.add_action(
+            //     |_: &mut Workspace, _: &Zoom, cx: &mut ViewContext<Workspace>| {
+            //         cx.zoom_window();
+            //     },
+            // );
+            // cx.add_action(
+            //     |_: &mut Workspace, _: &ToggleFullScreen, cx: &mut ViewContext<Workspace>| {
+            //         cx.toggle_full_screen();
+            //     },
+            // );
+            .register_action(|workspace, _: &zed_actions::Quit, cx| quit(cx));
+        // cx.add_global_action(move |action: &OpenZedURL, cx| {
+        //     cx.global::<Arc<OpenListener>>()
+        //         .open_urls(vec![action.url.clone()])
+        // });
+        // cx.add_global_action(move |action: &OpenBrowser, cx| cx.platform().open_url(&action.url));
+        // cx.add_global_action(move |_: &IncreaseBufferFontSize, cx| {
+        //     theme::adjust_font_size(cx, |size| *size += 1.0)
+        // });
+        // cx.add_global_action(move |_: &DecreaseBufferFontSize, cx| {
+        //     theme::adjust_font_size(cx, |size| *size -= 1.0)
+        // });
+        // cx.add_global_action(move |_: &ResetBufferFontSize, cx| theme::reset_font_size(cx));
+        // cx.add_global_action(move |_: &install_cli::Install, cx| {
+        //     cx.spawn(|cx| async move {
+        //         install_cli::install_cli(&cx)
+        //             .await
+        //             .context("error creating CLI symlink")
+        //     })
+        //     .detach_and_log_err(cx);
+        // });
+        // cx.add_action(
+        //     move |workspace: &mut Workspace, _: &OpenLog, cx: &mut ViewContext<Workspace>| {
+        //         open_log_file(workspace, cx);
+        //     },
+        // );
+        // cx.add_action(
+        //     move |workspace: &mut Workspace, _: &OpenLicenses, cx: &mut ViewContext<Workspace>| {
+        //         open_bundled_file(
+        //             workspace,
+        //             asset_str::<Assets>("licenses.md"),
+        //             "Open Source License Attribution",
+        //             "Markdown",
+        //             cx,
+        //         );
+        //     },
+        // );
+        // cx.add_action(
+        //     move |workspace: &mut Workspace, _: &OpenTelemetryLog, cx: &mut ViewContext<Workspace>| {
+        //         open_telemetry_log_file(workspace, cx);
+        //     },
+        // );
+        // cx.add_action(
+        //     move |_: &mut Workspace, _: &OpenKeymap, cx: &mut ViewContext<Workspace>| {
+        //         create_and_open_local_file(&paths::KEYMAP, cx, Default::default).detach_and_log_err(cx);
+        //     },
+        // );
+        // cx.add_action(
+        //     move |_: &mut Workspace, _: &OpenSettings, cx: &mut ViewContext<Workspace>| {
+        //         create_and_open_local_file(&paths::SETTINGS, cx, || {
+        //             settings::initial_user_settings_content().as_ref().into()
+        //         })
+        //         .detach_and_log_err(cx);
+        //     },
+        // );
+        // cx.add_action(open_local_settings_file);
+        // cx.add_action(
+        //     move |workspace: &mut Workspace, _: &OpenDefaultKeymap, cx: &mut ViewContext<Workspace>| {
+        //         open_bundled_file(
+        //             workspace,
+        //             settings::default_keymap(),
+        //             "Default Key Bindings",
+        //             "JSON",
+        //             cx,
+        //         );
+        //     },
+        // );
+        // cx.add_action(
+        //     move |workspace: &mut Workspace,
+        //           _: &OpenDefaultSettings,
+        //           cx: &mut ViewContext<Workspace>| {
+        //         open_bundled_file(
+        //             workspace,
+        //             settings::default_settings(),
+        //             "Default Settings",
+        //             "JSON",
+        //             cx,
+        //         );
+        //     },
+        // );
+        // cx.add_action({
+        //     move |workspace: &mut Workspace, _: &DebugElements, cx: &mut ViewContext<Workspace>| {
+        //         let app_state = workspace.app_state().clone();
+        //         let markdown = app_state.languages.language_for_name("JSON");
+        //         let window = cx.window();
+        //         cx.spawn(|workspace, mut cx| async move {
+        //             let markdown = markdown.await.log_err();
+        //             let content = to_string_pretty(&window.debug_elements(&cx).ok_or_else(|| {
+        //                 anyhow!("could not debug elements for window {}", window.id())
+        //             })?)
+        //             .unwrap();
+        //             workspace
+        //                 .update(&mut cx, |workspace, cx| {
+        //                     workspace.with_local_workspace(cx, move |workspace, cx| {
+        //                         let project = workspace.project().clone();
+
+        //                         let buffer = project
+        //                             .update(cx, |project, cx| {
+        //                                 project.create_buffer(&content, markdown, cx)
+        //                             })
+        //                             .expect("creating buffers on a local workspace always succeeds");
+        //                         let buffer = cx.add_model(|cx| {
+        //                             MultiBuffer::singleton(buffer, cx)
+        //                                 .with_title("Debug Elements".into())
+        //                         });
+        //                         workspace.add_item(
+        //                             Box::new(cx.add_view(|cx| {
+        //                                 Editor::for_multibuffer(buffer, Some(project.clone()), cx)
+        //                             })),
+        //                             cx,
+        //                         );
+        //                     })
+        //                 })?
+        //                 .await
+        //         })
+        //         .detach_and_log_err(cx);
+        //     }
+        // });
+        // cx.add_action(
+        //     |workspace: &mut Workspace,
+        //      _: &project_panel::ToggleFocus,
+        //      cx: &mut ViewContext<Workspace>| {
+        //         workspace.toggle_panel_focus::<ProjectPanel>(cx);
+        //     },
+        // );
+        // cx.add_action(
+        //     |workspace: &mut Workspace,
+        //      _: &collab_ui::collab_panel::ToggleFocus,
+        //      cx: &mut ViewContext<Workspace>| {
+        //         workspace.toggle_panel_focus::<collab_ui::collab_panel::CollabPanel>(cx);
+        //     },
+        // );
+        // cx.add_action(
+        //     |workspace: &mut Workspace,
+        //      _: &collab_ui::chat_panel::ToggleFocus,
+        //      cx: &mut ViewContext<Workspace>| {
+        //         workspace.toggle_panel_focus::<collab_ui::chat_panel::ChatPanel>(cx);
+        //     },
+        // );
+        // cx.add_action(
+        //     |workspace: &mut Workspace,
+        //      _: &collab_ui::notification_panel::ToggleFocus,
+        //      cx: &mut ViewContext<Workspace>| {
+        //         workspace.toggle_panel_focus::<collab_ui::notification_panel::NotificationPanel>(cx);
+        //     },
+        // );
+        // cx.add_action(
+        //     |workspace: &mut Workspace,
+        //      _: &terminal_panel::ToggleFocus,
+        //      cx: &mut ViewContext<Workspace>| {
+        //         workspace.toggle_panel_focus::<TerminalPanel>(cx);
+        //     },
+        // );
+        // cx.add_global_action({
+        //     let app_state = Arc::downgrade(&app_state);
+        //     move |_: &NewWindow, cx: &mut AppContext| {
+        //         if let Some(app_state) = app_state.upgrade() {
+        //             open_new(&app_state, cx, |workspace, cx| {
+        //                 Editor::new_file(workspace, &Default::default(), cx)
+        //             })
+        //             .detach();
+        //         }
+        //     }
+        // });
+        // cx.add_global_action({
+        //     let app_state = Arc::downgrade(&app_state);
+        //     move |_: &NewFile, cx: &mut AppContext| {
+        //         if let Some(app_state) = app_state.upgrade() {
+        //             open_new(&app_state, cx, |workspace, cx| {
+        //                 Editor::new_file(workspace, &Default::default(), cx)
+        //             })
+        //             .detach();
+        //         }
+        //     }
+        // });
+        // load_default_keymap(cx);
+    })
+    .detach();
 }
 
 pub fn initialize_workspace(
@@ -204,4 +413,52 @@ pub fn initialize_workspace(
         })?;
         Ok(())
     })
+}
+
+fn quit(cx: &mut gpui::AppContext) {
+    let should_confirm = workspace::WorkspaceSettings::get_global(cx).confirm_quit;
+    cx.spawn(|mut cx| async move {
+        // let mut workspace_windows = cx
+        //     .windows()
+        //     .into_iter()
+        //     .filter_map(|window| window.downcast::<Workspace>())
+        //     .collect::<Vec<_>>();
+
+        //     // If multiple windows have unsaved changes, and need a save prompt,
+        //     // prompt in the active window before switching to a different window.
+        //     workspace_windows.sort_by_key(|window| window.is_active(&cx) == Some(false));
+
+        //     if let (true, Some(window)) = (should_confirm, workspace_windows.first().copied()) {
+        //         let answer = window.prompt(
+        //             PromptLevel::Info,
+        //             "Are you sure you want to quit?",
+        //             &["Quit", "Cancel"],
+        //             &mut cx,
+        //         );
+
+        //         if let Some(mut answer) = answer {
+        //             let answer = answer.next().await;
+        //             if answer != Some(0) {
+        //                 return Ok(());
+        //             }
+        //         }
+        //     }
+
+        //     // If the user cancels any save prompt, then keep the app open.
+        //     for window in workspace_windows {
+        //         if let Some(should_close) = window.update_root(&mut cx, |workspace, cx| {
+        //             workspace.prepare_to_close(true, cx)
+        //         }) {
+        //             if !should_close.await? {
+        //                 return Ok(());
+        //             }
+        //         }
+        //     }
+        cx.update(|cx| {
+            cx.quit();
+        })?;
+
+        anyhow::Ok(())
+    })
+    .detach_and_log_err(cx);
 }

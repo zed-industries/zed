@@ -72,7 +72,7 @@ pub use toolbar::{ToolbarItemLocation, ToolbarItemView};
 use ui::{h_stack, Label};
 use util::ResultExt;
 use uuid::Uuid;
-use workspace_settings::{AutosaveSetting, WorkspaceSettings};
+pub use workspace_settings::{AutosaveSetting, WorkspaceSettings};
 
 lazy_static! {
     static ref ZED_WINDOW_SIZE: Option<Size<GlobalPixels>> = env::var("ZED_WINDOW_SIZE")
@@ -3506,13 +3506,14 @@ impl Workspace {
     pub fn register_action<A: Action>(
         &mut self,
         callback: impl Fn(&mut Self, &A, &mut ViewContext<Self>) + 'static,
-    ) {
+    ) -> &mut Self {
         let callback = Arc::new(callback);
 
         self.workspace_actions.push(Box::new(move |div| {
             let callback = callback.clone();
             div.on_action(move |workspace, event, cx| (callback.clone())(workspace, event, cx))
         }));
+        self
     }
 
     fn add_workspace_actions_listeners(
