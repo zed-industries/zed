@@ -8,7 +8,7 @@ use file_associations::FileAssociations;
 
 use anyhow::{anyhow, Result};
 use gpui::{
-    actions, div, px, rems, svg, uniform_list, Action, AppContext, AssetSource, AsyncWindowContext,
+    actions, div, px, uniform_list, Action, AppContext, AssetSource, AsyncWindowContext,
     ClipboardItem, Component, Div, EventEmitter, FocusHandle, FocusableKeyDispatch, Model,
     MouseButton, ParentElement as _, Pixels, Point, PromptLevel, Render, StatefulInteractive,
     StatefulInteractivity, StatelessInteractive, Styled, Task, UniformListScrollHandle, View,
@@ -31,7 +31,7 @@ use std::{
     sync::Arc,
 };
 use theme::ActiveTheme as _;
-use ui::{h_stack, v_stack, Label};
+use ui::{h_stack, v_stack, IconElement, Label};
 use unicase::UniCase;
 use util::{maybe, TryFutureExt};
 use workspace::{
@@ -1353,14 +1353,7 @@ impl ProjectPanel {
 
         h_stack()
             .child(if let Some(icon) = &details.icon {
-                div().child(
-                    // todo!() Marshall: Can we use our `IconElement` component here?
-                    svg()
-                        .size(rems(0.9375))
-                        .flex_none()
-                        .path(icon.to_string())
-                        .text_color(cx.theme().colors().icon),
-                )
+                div().child(IconElement::from_path(icon.to_string()))
             } else {
                 div()
             })
