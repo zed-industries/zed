@@ -1,9 +1,6 @@
+use crate::{h_stack, prelude::*, ClickHandler, Icon, IconColor, IconElement, TextTooltip};
+use gpui::{MouseButton, VisualContext};
 use std::sync::Arc;
-
-use gpui::{rems, MouseButton, VisualContext};
-
-use crate::{h_stack, prelude::*, TextTooltip};
-use crate::{ClickHandler, Icon, IconColor, IconElement};
 
 struct IconButtonHandlers<V: 'static> {
     click: Option<ClickHandler<V>>,
@@ -95,9 +92,7 @@ impl<V: 'static> IconButton<V> {
             .id(self.id.clone())
             .justify_center()
             .rounded_md()
-            // todo!("Where do these numbers come from?")
-            .py(rems(0.21875))
-            .px(rems(0.375))
+            .p_1()
             .bg(bg_color)
             .hover(|style| style.bg(bg_hover_color))
             .active(|style| style.bg(bg_active_color))
