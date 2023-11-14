@@ -21,7 +21,6 @@ use project::{
 };
 use project_panel_settings::{ProjectPanelDockPosition, ProjectPanelSettings};
 use serde::{Deserialize, Serialize};
-use smallvec::SmallVec;
 use std::{
     cmp::Ordering,
     collections::{hash_map, HashMap},
@@ -1468,7 +1467,7 @@ impl Render for ProjectPanel {
                             .map(|(_, worktree_entries)| worktree_entries.len())
                             .sum(),
                         |this: &mut Self, range, cx| {
-                            let mut items = SmallVec::new();
+                            let mut items = Vec::new();
                             this.for_each_visible_entry(range, cx, |id, details, cx| {
                                 items.push(this.render_entry(id, details, cx));
                             });

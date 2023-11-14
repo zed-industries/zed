@@ -38,10 +38,10 @@ use futures::{
 use gpui::{
     actions, div, point, rems, size, Action, AnyModel, AnyView, AnyWeakView, AppContext,
     AsyncAppContext, AsyncWindowContext, Bounds, Component, Div, Entity, EntityId, EventEmitter,
-    FocusHandle, FocusableKeyDispatch, GlobalPixels, KeyContext, Model, ModelContext,
-    ParentElement, Point, Render, Size, StatefulInteractive, StatefulInteractivity,
-    StatelessInteractive, StatelessInteractivity, Styled, Subscription, Task, View, ViewContext,
-    VisualContext, WeakView, WindowBounds, WindowContext, WindowHandle, WindowOptions,
+    FocusHandle, GlobalPixels, KeyContext, Model, ModelContext, ParentElement, Point, Render, Size,
+    StatefulInteractive, StatelessInteractive, StatelessInteractivity, Styled, Subscription, Task,
+    View, ViewContext, VisualContext, WeakView, WindowBounds, WindowContext, WindowHandle,
+    WindowOptions,
 };
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, ProjectItem};
 use itertools::Itertools;
@@ -3037,10 +3037,10 @@ impl Workspace {
 
     fn force_remove_pane(&mut self, pane: &View<Pane>, cx: &mut ViewContext<Workspace>) {
         self.panes.retain(|p| p != pane);
-        if true {
-            todo!()
-            // cx.focus(self.panes.last().unwrap());
-        }
+        self.panes
+            .last()
+            .unwrap()
+            .update(cx, |pane, cx| pane.focus(cx));
         if self.last_active_center_pane == Some(pane.downgrade()) {
             self.last_active_center_pane = None;
         }
@@ -3429,8 +3429,7 @@ impl Workspace {
             node_runtime: FakeNodeRuntime::new(),
         });
         let workspace = Self::new(0, project, app_state, cx);
-        dbg!(&workspace.focus_handle);
-        workspace.focus_handle.focus(cx);
+        workspace.active_pane.update(cx, |pane, cx| pane.focus(cx));
         workspace
     }
 
@@ -3709,7 +3708,7 @@ fn notify_if_database_failed(workspace: WindowHandle<Workspace>, cx: &mut AsyncA
 impl EventEmitter<Event> for Workspace {}
 
 impl Render for Workspace {
-    type Element = Div<Self, StatefulInteractivity<Self>, FocusableKeyDispatch<Self>>;
+    type Element = Div<Self>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         let mut context = KeyContext::default();
@@ -3717,7 +3716,6 @@ impl Render for Workspace {
         let ui_font = ThemeSettings::get_global(cx).ui_font.family.clone();
 
         self.add_workspace_actions_listeners(div())
-            .track_focus(&self.focus_handle)
             .context(context)
             .relative()
             .size_full()
