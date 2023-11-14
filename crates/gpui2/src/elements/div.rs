@@ -716,7 +716,6 @@ pub struct Interactivity<V> {
     pub focusable: bool,
     pub tracked_focus_handle: Option<FocusHandle>,
     pub focus_listeners: FocusListeners<V>,
-    // pub scroll_offset: Point<Pixels>,
     pub group: Option<SharedString>,
     pub base_style: StyleRefinement,
     pub focus_style: StyleRefinement,
