@@ -9413,14 +9413,17 @@ impl Render for Editor {
             EditorMode::Full => cx.theme().colors().editor_background,
         };
 
-        EditorElement::new(EditorStyle {
-            background,
-            local_player: cx.theme().players().local(),
-            text: text_style,
-            scrollbar_width: px(12.),
-            syntax: cx.theme().syntax().clone(),
-            diagnostic_style: cx.theme().diagnostic_style(),
-        })
+        EditorElement::new(
+            cx.view(),
+            EditorStyle {
+                background,
+                local_player: cx.theme().players().local(),
+                text: text_style,
+                scrollbar_width: px(12.),
+                syntax: cx.theme().syntax().clone(),
+                diagnostic_style: cx.theme().diagnostic_style(),
+            },
+        )
     }
 }
 
