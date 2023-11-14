@@ -4,7 +4,7 @@ use gpui::{
     Styled, Task, UniformListScrollHandle, View, ViewContext, VisualContext, WindowContext,
 };
 use std::{cmp, sync::Arc};
-use ui::{prelude::*, v_stack, Divider, Label, LabelColor};
+use ui::{prelude::*, v_stack, Divider, Label, TextColor};
 
 pub struct Picker<D: PickerDelegate> {
     pub delegate: D,
@@ -224,7 +224,7 @@ impl<D: PickerDelegate> Render for Picker<D> {
                     v_stack().p_1().grow().child(
                         div()
                             .px_1()
-                            .child(Label::new("No matches").color(LabelColor::Muted)),
+                            .child(Label::new("No matches").color(TextColor::Muted)),
                     ),
                 )
             })

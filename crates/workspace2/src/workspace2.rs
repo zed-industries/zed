@@ -69,7 +69,7 @@ use std::{
 };
 use theme2::ActiveTheme;
 pub use toolbar::{ToolbarItemLocation, ToolbarItemView};
-use ui::{h_stack, Button, ButtonVariant, KeyBinding, Label, LabelColor, TextTooltip};
+use ui::{h_stack, Button, ButtonVariant, KeyBinding, Label, TextColor, TextTooltip};
 use util::ResultExt;
 use uuid::Uuid;
 use workspace_settings::{AutosaveSetting, WorkspaceSettings};
@@ -2477,7 +2477,7 @@ impl Workspace {
                             .child(
                                 Button::new("player")
                                     .variant(ButtonVariant::Ghost)
-                                    .color(Some(LabelColor::Player(0))),
+                                    .color(Some(TextColor::Player(0))),
                             )
                             .tooltip(move |_, cx| {
                                 cx.build_view(|cx| TextTooltip::new("Toggle following"))
@@ -2499,7 +2499,7 @@ impl Workspace {
                             .child(
                                 Button::new("branch_name")
                                     .variant(ButtonVariant::Ghost)
-                                    .color(Some(LabelColor::Muted)),
+                                    .color(Some(TextColor::Muted)),
                             )
                             .tooltip(move |_, cx| {
                                 // todo!() Replace with real action.

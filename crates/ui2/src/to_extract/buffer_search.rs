@@ -1,7 +1,7 @@
 use gpui::{Div, Render, View, VisualContext};
 
 use crate::prelude::*;
-use crate::{h_stack, Icon, IconButton, IconColor, Input};
+use crate::{h_stack, Icon, IconButton, Input, TextColor};
 
 #[derive(Clone)]
 pub struct BufferSearch {
@@ -36,7 +36,7 @@ impl Render for BufferSearch {
             .child(
                 h_stack().child(Input::new("Search")).child(
                     IconButton::<Self>::new("replace", Icon::Replace)
-                        .when(self.is_replace_open, |this| this.color(IconColor::Accent))
+                        .when(self.is_replace_open, |this| this.color(TextColor::Accent))
                         .on_click(|buffer_search, cx| {
                             buffer_search.toggle_replace(cx);
                         }),

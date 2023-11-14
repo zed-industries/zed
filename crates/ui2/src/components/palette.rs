@@ -1,5 +1,5 @@
 use crate::prelude::*;
-use crate::{h_stack, v_stack, KeyBinding, Label, LabelColor};
+use crate::{h_stack, v_stack, KeyBinding, Label, TextColor};
 
 #[derive(Component)]
 pub struct Palette {
@@ -54,7 +54,7 @@ impl Palette {
                 v_stack()
                     .gap_px()
                     .child(v_stack().py_0p5().px_1().child(div().px_2().py_0p5().child(
-                        Label::new(self.input_placeholder.clone()).color(LabelColor::Placeholder),
+                        Label::new(self.input_placeholder.clone()).color(TextColor::Placeholder),
                     )))
                     .child(
                         div()
@@ -75,7 +75,7 @@ impl Palette {
                                     Some(
                                         h_stack().justify_between().px_2().py_1().child(
                                             Label::new(self.empty_string.clone())
-                                                .color(LabelColor::Muted),
+                                                .color(TextColor::Muted),
                                         ),
                                     )
                                 } else {

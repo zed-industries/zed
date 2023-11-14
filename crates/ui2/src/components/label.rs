@@ -11,7 +11,7 @@ pub enum LabelSize {
 }
 
 #[derive(Default, PartialEq, Copy, Clone)]
-pub enum LabelColor {
+pub enum TextColor {
     #[default]
     Default,
     Accent,
@@ -30,24 +30,24 @@ pub enum LabelColor {
     Warning,
 }
 
-impl LabelColor {
-    pub fn hsla(&self, cx: &WindowContext) -> Hsla {
+impl TextColor {
+    pub fn color(&self, cx: &WindowContext) -> Hsla {
         match self {
-            LabelColor::Default => cx.theme().colors().text,
-            LabelColor::Muted => cx.theme().colors().text_muted,
-            LabelColor::Created => cx.theme().status().created,
-            LabelColor::Modified => cx.theme().status().modified,
-            LabelColor::Deleted => cx.theme().status().deleted,
-            LabelColor::Disabled => cx.theme().colors().text_disabled,
-            LabelColor::Hidden => cx.theme().status().hidden,
-            LabelColor::Info => cx.theme().status().info,
-            LabelColor::Placeholder => cx.theme().colors().text_placeholder,
-            LabelColor::Accent => cx.theme().colors().text_accent,
-            LabelColor::Player(i) => cx.theme().styles.player.0[i.clone() as usize].cursor,
-            LabelColor::Error => cx.theme().status().error,
-            LabelColor::Selected => cx.theme().colors().text_accent,
-            LabelColor::Success => cx.theme().status().success,
-            LabelColor::Warning => cx.theme().status().warning,
+            TextColor::Default => cx.theme().colors().text,
+            TextColor::Muted => cx.theme().colors().text_muted,
+            TextColor::Created => cx.theme().status().created,
+            TextColor::Modified => cx.theme().status().modified,
+            TextColor::Deleted => cx.theme().status().deleted,
+            TextColor::Disabled => cx.theme().colors().text_disabled,
+            TextColor::Hidden => cx.theme().status().hidden,
+            TextColor::Info => cx.theme().status().info,
+            TextColor::Placeholder => cx.theme().colors().text_placeholder,
+            TextColor::Accent => cx.theme().colors().text_accent,
+            TextColor::Player(i) => cx.theme().styles.player.0[i.clone() as usize].cursor,
+            TextColor::Error => cx.theme().status().error,
+            TextColor::Selected => cx.theme().colors().text_accent,
+            TextColor::Success => cx.theme().status().success,
+            TextColor::Warning => cx.theme().status().warning,
         }
     }
 }
@@ -65,7 +65,7 @@ pub struct Label {
     label: SharedString,
     size: LabelSize,
     line_height_style: LineHeightStyle,
-    color: LabelColor,
+    color: TextColor,
     strikethrough: bool,
 }
 
@@ -75,7 +75,7 @@ impl Label {
             label: label.into(),
             size: LabelSize::Default,
             line_height_style: LineHeightStyle::default(),
-            color: LabelColor::Default,
+            color: TextColor::Default,
             strikethrough: false,
         }
     }
@@ -85,7 +85,7 @@ impl Label {
         self
     }
 
-    pub fn color(mut self, color: LabelColor) -> Self {
+    pub fn color(mut self, color: TextColor) -> Self {
         self.color = color;
         self
     }
@@ -109,7 +109,7 @@ impl Label {
                         .top_1_2()
                         .w_full()
                         .h_px()
-                        .bg(LabelColor::Hidden.hsla(cx)),
+                        .bg(TextColor::Hidden.color(cx)),
                 )
             })
             .map(|this| match self.size {
@@ -119,7 +119,7 @@ impl Label {
             .when(self.line_height_style == LineHeightStyle::UILabel, |this| {
                 this.line_height(relative(1.))
             })
-            .text_color(self.color.hsla(cx))
+            .text_color(self.color.color(cx))
             .child(self.label.clone())
     }
 }
@@ -128,7 +128,7 @@ impl Label {
 pub struct HighlightedLabel {
     label: SharedString,
     size: LabelSize,
-    color: LabelColor,
+    color: TextColor,
     highlight_indices: Vec<usize>,
     strikethrough: bool,
 }
@@ -140,7 +140,7 @@ impl HighlightedLabel {
         Self {
             label: label.into(),
             size: LabelSize::Default,
-            color: LabelColor::Default,
+            color: TextColor::Default,
             highlight_indices,
             strikethrough: false,
         }
@@ -151,7 +151,7 @@ impl HighlightedLabel {
         self
     }
 
-    pub fn color(mut self, color: LabelColor) -> Self {
+    pub fn color(mut self, color: TextColor) -> Self {
         self.color = color;
         self
     }
@@ -170,7 +170,7 @@ impl HighlightedLabel {
         let mut runs: Vec<TextRun> = Vec::new();
 
         for (char_ix, char) in self.label.char_indices() {
-            let mut color = self.color.hsla(cx);
+            let mut color = self.color.color(cx);
 
             if let Some(highlight_ix) = highlight_indices.peek() {
                 if char_ix == *highlight_ix {
@@ -207,7 +207,7 @@ impl HighlightedLabel {
                         .my_auto()
                         .w_full()
                         .h_px()
-                        .bg(LabelColor::Hidden.hsla(cx)),
+                        .bg(TextColor::Hidden.color(cx)),
                 )
             })
             .map(|this| match self.size {
