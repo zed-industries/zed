@@ -9257,7 +9257,7 @@ dependencies = [
 [[package]]
 name = "tiktoken-rs"
 version = "0.5.6"
-source = "git+https://github.com/JosephTLyons/tiktoken-rs/?rev=edb3ea9eda1b906205b346599c43c5c0e8da1392#edb3ea9eda1b906205b346599c43c5c0e8da1392"
+source = "git+https://github.com/zurawiki/tiktoken-rs?rev=6fd80d41d5c31e256cd760b52cd0257586033eb2#6fd80d41d5c31e256cd760b52cd0257586033eb2"
 dependencies = [
  "anyhow",
  "base64 0.21.4",
