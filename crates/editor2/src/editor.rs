@@ -9383,7 +9383,7 @@ impl Render for Editor {
                     color: cx.theme().colors().text,
                     font_family: "Zed Sans".into(), // todo!()
                     font_features: FontFeatures::default(),
-                    font_size: rems(1.0).into(),
+                    font_size: settings.ui_font_size.into(),
                     font_weight: FontWeight::NORMAL,
                     font_style: FontStyle::Normal,
                     line_height: relative(1.3).into(), // TODO relative(settings.buffer_line_height.value()),

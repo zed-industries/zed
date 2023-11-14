@@ -424,6 +424,7 @@ impl<'a> WindowContext<'a> {
                     .dispatch_tree
                     .focusable_node_id(focus_handle.id)
                 {
+                    cx.propagate_event = true;
                     cx.dispatch_action_on_node(node_id, action);
                 }
             })
