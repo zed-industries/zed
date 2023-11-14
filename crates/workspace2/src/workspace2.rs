@@ -69,7 +69,7 @@ use std::{
 };
 use theme2::ActiveTheme;
 pub use toolbar::{ToolbarItemLocation, ToolbarItemView};
-use ui::{h_stack, Button, ButtonVariant, Label, LabelColor, TextTooltip};
+use ui::{h_stack, Button, ButtonVariant, KeyBinding, Label, LabelColor, TextTooltip};
 use util::ResultExt;
 use uuid::Uuid;
 use workspace_settings::{AutosaveSetting, WorkspaceSettings};
@@ -2502,9 +2502,17 @@ impl Workspace {
                                     .color(Some(LabelColor::Muted)),
                             )
                             .tooltip(move |_, cx| {
+                                // todo!() Replace with real action.
+                                #[gpui::action]
+                                struct NoAction {}
+
                                 cx.build_view(|cx| {
                                     TextTooltip::new("Recent Branches")
-                                        .keybinding("⌘B")
+                                        .key_binding(KeyBinding::new(gpui::KeyBinding::new(
+                                            "cmd-b",
+                                            NoAction {},
+                                            None,
+                                        )))
                                         .meta("Only local branches shown")
                                 })
                             }),

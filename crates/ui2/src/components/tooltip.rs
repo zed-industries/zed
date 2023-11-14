@@ -1,15 +1,13 @@
-use gpui::{div, Component, Div, ParentElement, Render, SharedString, Styled, ViewContext};
+use gpui::{Div, Render};
 use theme2::ActiveTheme;
 
-use crate::{h_stack, v_stack, Label, LabelColor, StyledExt};
+use crate::prelude::*;
+use crate::{h_stack, v_stack, KeyBinding, Label, LabelColor, StyledExt};
 
-use super::keybinding;
-
-#[derive(Clone, Debug)]
 pub struct TextTooltip {
     title: SharedString,
     meta: Option<SharedString>,
-    keybinding: Option<SharedString>,
+    key_binding: Option<KeyBinding>,
 }
 
 impl TextTooltip {
@@ -17,7 +15,7 @@ impl TextTooltip {
         Self {
             title: title.into(),
             meta: None,
-            keybinding: None,
+            key_binding: None,
         }
     }
 
@@ -26,8 +24,8 @@ impl TextTooltip {
         self
     }
 
-    pub fn keybinding(mut self, keybinding: impl Into<SharedString>) -> Self {
-        self.keybinding = Some(keybinding.into());
+    pub fn key_binding(mut self, key_binding: impl Into<Option<KeyBinding>>) -> Self {
+        self.key_binding = key_binding.into();
         self
     }
 }
@@ -43,13 +41,13 @@ impl Render for TextTooltip {
             .text_color(cx.theme().colors().text)
             .py_1()
             .px_2()
-            .child(h_stack().child(self.title.clone()).when_some(
-                self.keybinding.clone(),
-                |this, keybinding| {
-                    this.justify_between()
-                        .child(Label::new(keybinding).color(LabelColor::Muted))
-                },
-            ))
+            .child(
+                h_stack()
+                    .child(self.title.clone())
+                    .when_some(self.key_binding.clone(), |this, key_binding| {
+                        this.justify_between().child(key_binding)
+                    }),
+            )
             .when_some(self.meta.clone(), |this, meta| {
                 this.child(Label::new(meta).color(LabelColor::Muted))
             })
