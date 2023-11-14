@@ -113,6 +113,8 @@ fn main() {
 
     app.run(move |cx| {
         cx.set_global(*RELEASE_CHANNEL);
+        cx.set_global(listener.clone());
+
         load_embedded_fonts(cx);
 
         let mut store = SettingsStore::default();
