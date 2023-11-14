@@ -1577,1296 +1577,1300 @@ impl ClipboardEntry {
     }
 }
 
-// todo!()
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     use gpui::{AnyWindowHandle, TestAppContext, View, WindowHandle};
-//     use pretty_assertions::assert_eq;
-//     use project::FakeFs;
-//     use serde_json::json;
-//     use settings::SettingsStore;
-//     use std::{
-//         collections::HashSet,
-//         path::{Path, PathBuf},
-//         sync::atomic::{self, AtomicUsize},
-//     };
-//     use workspace::{pane, AppState};
-
-//     #[gpui::test]
-//     async fn test_visible_list(cx: &mut gpui::TestAppContext) {
-//         init_test(cx);
-
-//         let fs = FakeFs::new(cx.executor().clone());
-//         fs.insert_tree(
-//             "/root1",
-//             json!({
-//                 ".dockerignore": "",
-//                 ".git": {
-//                     "HEAD": "",
-//                 },
-//                 "a": {
-//                     "0": { "q": "", "r": "", "s": "" },
-//                     "1": { "t": "", "u": "" },
-//                     "2": { "v": "", "w": "", "x": "", "y": "" },
-//                 },
-//                 "b": {
-//                     "3": { "Q": "" },
-//                     "4": { "R": "", "S": "", "T": "", "U": "" },
-//                 },
-//                 "C": {
-//                     "5": {},
-//                     "6": { "V": "", "W": "" },
-//                     "7": { "X": "" },
-//                     "8": { "Y": {}, "Z": "" }
-//                 }
-//             }),
-//         )
-//         .await;
-//         fs.insert_tree(
-//             "/root2",
-//             json!({
-//                 "d": {
-//                     "9": ""
-//                 },
-//                 "e": {}
-//             }),
-//         )
-//         .await;
-
-//         let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
-//         let workspace = cx
-//             .add_window(|cx| Workspace::test_new(project.clone(), cx))
-//             .root(cx);
-//         let panel = workspace.update(cx, |workspace, cx| ProjectPanel::new(workspace, cx));
-//         assert_eq!(
-//             visible_entries_as_strings(&panel, 0..50, cx),
-//             &[
-//                 "v root1",
-//                 "    > .git",
-//                 "    > a",
-//                 "    > b",
-//                 "    > C",
-//                 "      .dockerignore",
-//                 "v root2",
-//                 "    > d",
-//                 "    > e",
-//             ]
-//         );
-
-//         toggle_expand_dir(&panel, "root1/b", cx);
-//         assert_eq!(
-//             visible_entries_as_strings(&panel, 0..50, cx),
-//             &[
-//                 "v root1",
-//                 "    > .git",
-//                 "    > a",
-//                 "    v b  <== selected",
-//                 "        > 3",
-//                 "        > 4",
-//                 "    > C",
-//                 "      .dockerignore",
-//                 "v root2",
-//                 "    > d",
-//                 "    > e",
-//             ]
-//         );
-
-//         assert_eq!(
-//             visible_entries_as_strings(&panel, 6..9, cx),
-//             &[
-//                 //
-//                 "    > C",
-//                 "      .dockerignore",
-//                 "v root2",
-//             ]
-//         );
-//     }
-
-//     #[gpui::test(iterations = 30)]
-//     async fn test_editing_files(cx: &mut gpui::TestAppContext) {
-//         init_test(cx);
-
-//         let fs = FakeFs::new(cx.background());
-//         fs.insert_tree(
-//             "/root1",
-//             json!({
-//                 ".dockerignore": "",
-//                 ".git": {
-//                     "HEAD": "",
-//                 },
-//                 "a": {
-//                     "0": { "q": "", "r": "", "s": "" },
-//                     "1": { "t": "", "u": "" },
-//                     "2": { "v": "", "w": "", "x": "", "y": "" },
-//                 },
-//                 "b": {
-//                     "3": { "Q": "" },
-//                     "4": { "R": "", "S": "", "T": "", "U": "" },
-//                 },
-//                 "C": {
-//                     "5": {},
-//                     "6": { "V": "", "W": "" },
-//                     "7": { "X": "" },
-//                     "8": { "Y": {}, "Z": "" }
-//                 }
-//             }),
-//         )
-//         .await;
-//         fs.insert_tree(
-//             "/root2",
-//             json!({
-//                 "d": {
-//                     "9": ""
-//                 },
-//                 "e": {}
-//             }),
-//         )
-//         .await;
-
-//         let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
-//         let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
-//         let workspace = window.root(cx);
-//         let panel = workspace.update(cx, |workspace, cx| ProjectPanel::new(workspace, cx));
-
-//         select_path(&panel, "root1", cx);
-//         assert_eq!(
-//             visible_entries_as_strings(&panel, 0..10, cx),
-//             &[
-//                 "v root1  <== selected",
-//                 "    > .git",
-//                 "    > a",
-//                 "    > b",
-//                 "    > C",
-//                 "      .dockerignore",
-//                 "v root2",
-//                 "    > d",
-//                 "    > e",
-//             ]
-//         );
-
-//         // Add a file with the root folder selected. The filename editor is placed
-//         // before the first file in the root folder.
-//         panel.update(cx, |panel, cx| panel.new_file(&NewFile, cx));
-//         window.read_with(cx, |cx| {
-//             let panel = panel.read(cx);
-//             assert!(panel.filename_editor.is_focused(cx));
-//         });
-//         assert_eq!(
-//             visible_entries_as_strings(&panel, 0..10, cx),
-//             &[
-//                 "v root1",
-//                 "    > .git",
-//                 "    > a",
-//                 "    > b",
-//                 "    > C",
-//                 "      [EDITOR: '']  <== selected",
-//                 "      .dockerignore",
-//                 "v root2",
-//                 "    > d",
-//                 "    > e",
-//             ]
-//         );
-
-//         let confirm = panel.update(cx, |panel, cx| {
-//             panel
-//                 .filename_editor
-//                 .update(cx, |editor, cx| editor.set_text("the-new-filename", cx));
-//             panel.confirm(&Confirm, cx).unwrap()
-//         });
-//         assert_eq!(
-//             visible_entries_as_strings(&panel, 0..10, cx),
-//             &[
-//                 "v root1",
-//                 "    > .git",
-//                 "    > a",
-//                 "    > b",
-//                 "    > C",
-//                 "      [PROCESSING: 'the-new-filename']  <== selected",
-//                 "      .dockerignore",
-//                 "v root2",
-//                 "    > d",
-//                 "    > e",
-//             ]
-//         );
-
-//         confirm.await.unwrap();
-//         assert_eq!(
-//             visible_entries_as_strings(&panel, 0..10, cx),
-//             &[
-//                 "v root1",
-//                 "    > .git",
-//                 "    > a",
-//                 "    > b",
-//                 "    > C",
-//                 "      .dockerignore",
-//                 "      the-new-filename  <== selected",
-//                 "v root2",
-//                 "    > d",
-//                 "    > e",
-//             ]
-//         );
-
-//         select_path(&panel, "root1/b", cx);
-//         panel.update(cx, |panel, cx| panel.new_file(&NewFile, cx));
-//         assert_eq!(
-//             visible_entries_as_strings(&panel, 0..10, cx),
-//             &[
-//                 "v root1",
-//                 "    > .git",
-//                 "    > a",
-//                 "    v b",
-//                 "        > 3",
-//                 "        > 4",
-//                 "          [EDITOR: '']  <== selected",
-//                 "    > C",
-//                 "      .dockerignore",
-//                 "      the-new-filename",
-//             ]
-//         );
-
-//         panel
-//             .update(cx, |panel, cx| {
-//                 panel
-//                     .filename_editor
-//                     .update(cx, |editor, cx| editor.set_text("another-filename.txt", cx));
-//                 panel.confirm(&Confirm, cx).unwrap()
-//             })
-//             .await
-//             .unwrap();
-//         assert_eq!(
-//             visible_entries_as_strings(&panel, 0..10, cx),
-//             &[
-//                 "v root1",
-//                 "    > .git",
-//                 "    > a",
-//                 "    v b",
-//                 "        > 3",
-//                 "        > 4",
-//                 "          another-filename.txt  <== selected",
-//                 "    > C",
-//                 "      .dockerignore",
-//                 "      the-new-filename",
-//             ]
-//         );
-
-//         select_path(&panel, "root1/b/another-filename.txt", cx);
-//         panel.update(cx, |panel, cx| panel.rename(&Rename, cx));
-//         assert_eq!(
-//             visible_entries_as_strings(&panel, 0..10, cx),
-//             &[
-//                 "v root1",
-//                 "    > .git",
-//                 "    > a",
-//                 "    v b",
-//                 "        > 3",
-//                 "        > 4",
-//                 "          [EDITOR: 'another-filename.txt']  <== selected",
-//                 "    > C",
-//                 "      .dockerignore",
-//                 "      the-new-filename",
-//             ]
-//         );
-
-//         let confirm = panel.update(cx, |panel, cx| {
-//             panel.filename_editor.update(cx, |editor, cx| {
-//                 let file_name_selections = editor.selections.all::<usize>(cx);
-//                 assert_eq!(file_name_selections.len(), 1, "File editing should have a single selection, but got: {file_name_selections:?}");
-//                 let file_name_selection = &file_name_selections[0];
-//                 assert_eq!(file_name_selection.start, 0, "Should select the file name from the start");
-//                 assert_eq!(file_name_selection.end, "another-filename".len(), "Should not select file extension");
-
-//                 editor.set_text("a-different-filename.tar.gz", cx)
-//             });
-//             panel.confirm(&Confirm, cx).unwrap()
-//         });
-//         assert_eq!(
-//             visible_entries_as_strings(&panel, 0..10, cx),
-//             &[
-//                 "v root1",
-//                 "    > .git",
-//                 "    > a",
-//                 "    v b",
-//                 "        > 3",
-//                 "        > 4",
-//                 "          [PROCESSING: 'a-different-filename.tar.gz']  <== selected",
-//                 "    > C",
-//                 "      .dockerignore",
-//                 "      the-new-filename",
-//             ]
-//         );
-
-//         confirm.await.unwrap();
-//         assert_eq!(
-//             visible_entries_as_strings(&panel, 0..10, cx),
-//             &[
-//                 "v root1",
-//                 "    > .git",
-//                 "    > a",
-//                 "    v b",
-//                 "        > 3",
-//                 "        > 4",
-//                 "          a-different-filename.tar.gz  <== selected",
-//                 "    > C",
-//                 "      .dockerignore",
-//                 "      the-new-filename",
-//             ]
-//         );
-
-//         panel.update(cx, |panel, cx| panel.rename(&Rename, cx));
-//         assert_eq!(
-//             visible_entries_as_strings(&panel, 0..10, cx),
-//             &[
-//                 "v root1",
-//                 "    > .git",
-//                 "    > a",
-//                 "    v b",
-//                 "        > 3",
-//                 "        > 4",
-//                 "          [EDITOR: 'a-different-filename.tar.gz']  <== selected",
-//                 "    > C",
-//                 "      .dockerignore",
-//                 "      the-new-filename",
-//             ]
-//         );
-
-//         panel.update(cx, |panel, cx| {
-//             panel.filename_editor.update(cx, |editor, cx| {
-//                 let file_name_selections = editor.selections.all::<usize>(cx);
-//                 assert_eq!(file_name_selections.len(), 1, "File editing should have a single selection, but got: {file_name_selections:?}");
-//                 let file_name_selection = &file_name_selections[0];
-//                 assert_eq!(file_name_selection.start, 0, "Should select the file name from the start");
-//                 assert_eq!(file_name_selection.end, "a-different-filename.tar".len(), "Should not select file extension, but still may select anything up to the last dot");
-
-//             });
-//             panel.cancel(&Cancel, cx)
-//         });
-
-//         panel.update(cx, |panel, cx| panel.new_directory(&NewDirectory, cx));
-//         assert_eq!(
-//             visible_entries_as_strings(&panel, 0..10, cx),
-//             &[
-//                 "v root1",
-//                 "    > .git",
-//                 "    > a",
-//                 "    v b",
-//                 "        > [EDITOR: '']  <== selected",
-//                 "        > 3",
-//                 "        > 4",
-//                 "          a-different-filename.tar.gz",
-//                 "    > C",
-//                 "      .dockerignore",
-//             ]
-//         );
-
-//         let confirm = panel.update(cx, |panel, cx| {
-//             panel
-//                 .filename_editor
-//                 .update(cx, |editor, cx| editor.set_text("new-dir", cx));
-//             panel.confirm(&Confirm, cx).unwrap()
-//         });
-//         panel.update(cx, |panel, cx| panel.select_next(&Default::default(), cx));
-//         assert_eq!(
-//             visible_entries_as_strings(&panel, 0..10, cx),
-//             &[
-//                 "v root1",
-//                 "    > .git",
-//                 "    > a",
-//                 "    v b",
-//                 "        > [PROCESSING: 'new-dir']",
-//                 "        > 3  <== selected",
-//                 "        > 4",
-//                 "          a-different-filename.tar.gz",
-//                 "    > C",
-//                 "      .dockerignore",
-//             ]
-//         );
-
-//         confirm.await.unwrap();
-//         assert_eq!(
-//             visible_entries_as_strings(&panel, 0..10, cx),
-//             &[
-//                 "v root1",
-//                 "    > .git",
-//                 "    > a",
-//                 "    v b",
-//                 "        > 3  <== selected",
-//                 "        > 4",
-//                 "        > new-dir",
-//                 "          a-different-filename.tar.gz",
-//                 "    > C",
-//                 "      .dockerignore",
-//             ]
-//         );
-
-//         panel.update(cx, |panel, cx| panel.rename(&Default::default(), cx));
-//         assert_eq!(
-//             visible_entries_as_strings(&panel, 0..10, cx),
-//             &[
-//                 "v root1",
-//                 "    > .git",
-//                 "    > a",
-//                 "    v b",
-//                 "        > [EDITOR: '3']  <== selected",
-//                 "        > 4",
-//                 "        > new-dir",
-//                 "          a-different-filename.tar.gz",
-//                 "    > C",
-//                 "      .dockerignore",
-//             ]
-//         );
-
-//         // Dismiss the rename editor when it loses focus.
-//         workspace.update(cx, |_, cx| cx.focus_self());
-//         assert_eq!(
-//             visible_entries_as_strings(&panel, 0..10, cx),
-//             &[
-//                 "v root1",
-//                 "    > .git",
-//                 "    > a",
-//                 "    v b",
-//                 "        > 3  <== selected",
-//                 "        > 4",
-//                 "        > new-dir",
-//                 "          a-different-filename.tar.gz",
-//                 "    > C",
-//                 "      .dockerignore",
-//             ]
-//         );
-//     }
-
-//     #[gpui::test(iterations = 30)]
-//     async fn test_adding_directories_via_file(cx: &mut gpui::TestAppContext) {
-//         init_test(cx);
-
-//         let fs = FakeFs::new(cx.background());
-//         fs.insert_tree(
-//             "/root1",
-//             json!({
-//                 ".dockerignore": "",
-//                 ".git": {
-//                     "HEAD": "",
-//                 },
-//                 "a": {
-//                     "0": { "q": "", "r": "", "s": "" },
-//                     "1": { "t": "", "u": "" },
-//                     "2": { "v": "", "w": "", "x": "", "y": "" },
-//                 },
-//                 "b": {
-//                     "3": { "Q": "" },
-//                     "4": { "R": "", "S": "", "T": "", "U": "" },
-//                 },
-//                 "C": {
-//                     "5": {},
-//                     "6": { "V": "", "W": "" },
-//                     "7": { "X": "" },
-//                     "8": { "Y": {}, "Z": "" }
-//                 }
-//             }),
-//         )
-//         .await;
-//         fs.insert_tree(
-//             "/root2",
-//             json!({
-//                 "d": {
-//                     "9": ""
-//                 },
-//                 "e": {}
-//             }),
-//         )
-//         .await;
-
-//         let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
-//         let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
-//         let workspace = window.root(cx);
-//         let panel = workspace.update(cx, |workspace, cx| ProjectPanel::new(workspace, cx));
-
-//         select_path(&panel, "root1", cx);
-//         assert_eq!(
-//             visible_entries_as_strings(&panel, 0..10, cx),
-//             &[
-//                 "v root1  <== selected",
-//                 "    > .git",
-//                 "    > a",
-//                 "    > b",
-//                 "    > C",
-//                 "      .dockerignore",
-//                 "v root2",
-//                 "    > d",
-//                 "    > e",
-//             ]
-//         );
-
-//         // Add a file with the root folder selected. The filename editor is placed
-//         // before the first file in the root folder.
-//         panel.update(cx, |panel, cx| panel.new_file(&NewFile, cx));
-//         window.read_with(cx, |cx| {
-//             let panel = panel.read(cx);
-//             assert!(panel.filename_editor.is_focused(cx));
-//         });
-//         assert_eq!(
-//             visible_entries_as_strings(&panel, 0..10, cx),
-//             &[
-//                 "v root1",
-//                 "    > .git",
-//                 "    > a",
-//                 "    > b",
-//                 "    > C",
-//                 "      [EDITOR: '']  <== selected",
-//                 "      .dockerignore",
-//                 "v root2",
-//                 "    > d",
-//                 "    > e",
-//             ]
-//         );
-
-//         let confirm = panel.update(cx, |panel, cx| {
-//             panel.filename_editor.update(cx, |editor, cx| {
-//                 editor.set_text("/bdir1/dir2/the-new-filename", cx)
-//             });
-//             panel.confirm(&Confirm, cx).unwrap()
-//         });
-
-//         assert_eq!(
-//             visible_entries_as_strings(&panel, 0..10, cx),
-//             &[
-//                 "v root1",
-//                 "    > .git",
-//                 "    > a",
-//                 "    > b",
-//                 "    > C",
-//                 "      [PROCESSING: '/bdir1/dir2/the-new-filename']  <== selected",
-//                 "      .dockerignore",
-//                 "v root2",
-//                 "    > d",
-//                 "    > e",
-//             ]
-//         );
-
-//         confirm.await.unwrap();
-//         assert_eq!(
-//             visible_entries_as_strings(&panel, 0..13, cx),
-//             &[
-//                 "v root1",
-//                 "    > .git",
-//                 "    > a",
-//                 "    > b",
-//                 "    v bdir1",
-//                 "        v dir2",
-//                 "              the-new-filename  <== selected",
-//                 "    > C",
-//                 "      .dockerignore",
-//                 "v root2",
-//                 "    > d",
-//                 "    > e",
-//             ]
-//         );
-//     }
-
-//     #[gpui::test]
-//     async fn test_copy_paste(cx: &mut gpui::TestAppContext) {
-//         init_test(cx);
-
-//         let fs = FakeFs::new(cx.background());
-//         fs.insert_tree(
-//             "/root1",
-//             json!({
-//                 "one.two.txt": "",
-//                 "one.txt": ""
-//             }),
-//         )
-//         .await;
-
-//         let project = Project::test(fs.clone(), ["/root1".as_ref()], cx).await;
-//         let workspace = cx
-//             .add_window(|cx| Workspace::test_new(project.clone(), cx))
-//             .root(cx);
-//         let panel = workspace.update(cx, |workspace, cx| ProjectPanel::new(workspace, cx));
-
-//         panel.update(cx, |panel, cx| {
-//             panel.select_next(&Default::default(), cx);
-//             panel.select_next(&Default::default(), cx);
-//         });
-
-//         assert_eq!(
-//             visible_entries_as_strings(&panel, 0..50, cx),
-//             &[
-//                 //
-//                 "v root1",
-//                 "      one.two.txt  <== selected",
-//                 "      one.txt",
-//             ]
-//         );
-
-//         // Regression test - file name is created correctly when
-//         // the copied file's name contains multiple dots.
-//         panel.update(cx, |panel, cx| {
-//             panel.copy(&Default::default(), cx);
-//             panel.paste(&Default::default(), cx);
-//         });
-//         cx.foreground().run_until_parked();
-
-//         assert_eq!(
-//             visible_entries_as_strings(&panel, 0..50, cx),
-//             &[
-//                 //
-//                 "v root1",
-//                 "      one.two copy.txt",
-//                 "      one.two.txt  <== selected",
-//                 "      one.txt",
-//             ]
-//         );
-
-//         panel.update(cx, |panel, cx| {
-//             panel.paste(&Default::default(), cx);
-//         });
-//         cx.foreground().run_until_parked();
-
-//         assert_eq!(
-//             visible_entries_as_strings(&panel, 0..50, cx),
-//             &[
-//                 //
-//                 "v root1",
-//                 "      one.two copy 1.txt",
-//                 "      one.two copy.txt",
-//                 "      one.two.txt  <== selected",
-//                 "      one.txt",
-//             ]
-//         );
-//     }
-
-//     #[gpui::test]
-//     async fn test_remove_opened_file(cx: &mut gpui::TestAppContext) {
-//         init_test_with_editor(cx);
-
-//         let fs = FakeFs::new(cx.background());
-//         fs.insert_tree(
-//             "/src",
-//             json!({
-//                 "test": {
-//                     "first.rs": "// First Rust file",
-//                     "second.rs": "// Second Rust file",
-//                     "third.rs": "// Third Rust file",
-//                 }
-//             }),
-//         )
-//         .await;
-
-//         let project = Project::test(fs.clone(), ["/src".as_ref()], cx).await;
-//         let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
-//         let workspace = window.root(cx);
-//         let panel = workspace.update(cx, |workspace, cx| ProjectPanel::new(workspace, cx));
-
-//         toggle_expand_dir(&panel, "src/test", cx);
-//         select_path(&panel, "src/test/first.rs", cx);
-//         panel.update(cx, |panel, cx| panel.open_file(&Open, cx));
-//         cx.foreground().run_until_parked();
-//         assert_eq!(
-//             visible_entries_as_strings(&panel, 0..10, cx),
-//             &[
-//                 "v src",
-//                 "    v test",
-//                 "          first.rs  <== selected",
-//                 "          second.rs",
-//                 "          third.rs"
-//             ]
-//         );
-//         ensure_single_file_is_opened(window, "test/first.rs", cx);
-
-//         submit_deletion(window.into(), &panel, cx);
-//         assert_eq!(
-//             visible_entries_as_strings(&panel, 0..10, cx),
-//             &[
-//                 "v src",
-//                 "    v test",
-//                 "          second.rs",
-//                 "          third.rs"
-//             ],
-//             "Project panel should have no deleted file, no other file is selected in it"
-//         );
-//         ensure_no_open_items_and_panes(window.into(), &workspace, cx);
-
-//         select_path(&panel, "src/test/second.rs", cx);
-//         panel.update(cx, |panel, cx| panel.open_file(&Open, cx));
-//         cx.foreground().run_until_parked();
-//         assert_eq!(
-//             visible_entries_as_strings(&panel, 0..10, cx),
-//             &[
-//                 "v src",
-//                 "    v test",
-//                 "          second.rs  <== selected",
-//                 "          third.rs"
-//             ]
-//         );
-//         ensure_single_file_is_opened(window, "test/second.rs", cx);
-
-//         window.update(cx, |cx| {
-//             let active_items = workspace
-//                 .read(cx)
-//                 .panes()
-//                 .iter()
-//                 .filter_map(|pane| pane.read(cx).active_item())
-//                 .collect::<Vec<_>>();
-//             assert_eq!(active_items.len(), 1);
-//             let open_editor = active_items
-//                 .into_iter()
-//                 .next()
-//                 .unwrap()
-//                 .downcast::<Editor>()
-//                 .expect("Open item should be an editor");
-//             open_editor.update(cx, |editor, cx| editor.set_text("Another text!", cx));
-//         });
-//         submit_deletion(window.into(), &panel, cx);
-//         assert_eq!(
-//             visible_entries_as_strings(&panel, 0..10, cx),
-//             &["v src", "    v test", "          third.rs"],
-//             "Project panel should have no deleted file, with one last file remaining"
-//         );
-//         ensure_no_open_items_and_panes(window.into(), &workspace, cx);
-//     }
-
-//     #[gpui::test]
-//     async fn test_create_duplicate_items(cx: &mut gpui::TestAppContext) {
-//         init_test_with_editor(cx);
-
-//         let fs = FakeFs::new(cx.background());
-//         fs.insert_tree(
-//             "/src",
-//             json!({
-//                 "test": {
-//                     "first.rs": "// First Rust file",
-//                     "second.rs": "// Second Rust file",
-//                     "third.rs": "// Third Rust file",
-//                 }
-//             }),
-//         )
-//         .await;
-
-//         let project = Project::test(fs.clone(), ["/src".as_ref()], cx).await;
-//         let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
-//         let workspace = window.root(cx);
-//         let panel = workspace.update(cx, |workspace, cx| ProjectPanel::new(workspace, cx));
-
-//         select_path(&panel, "src/", cx);
-//         panel.update(cx, |panel, cx| panel.confirm(&Confirm, cx));
-//         cx.foreground().run_until_parked();
-//         assert_eq!(
-//             visible_entries_as_strings(&panel, 0..10, cx),
-//             &["v src  <== selected", "    > test"]
-//         );
-//         panel.update(cx, |panel, cx| panel.new_directory(&NewDirectory, cx));
-//         window.read_with(cx, |cx| {
-//             let panel = panel.read(cx);
-//             assert!(panel.filename_editor.is_focused(cx));
-//         });
-//         assert_eq!(
-//             visible_entries_as_strings(&panel, 0..10, cx),
-//             &["v src", "    > [EDITOR: '']  <== selected", "    > test"]
-//         );
-//         panel.update(cx, |panel, cx| {
-//             panel
-//                 .filename_editor
-//                 .update(cx, |editor, cx| editor.set_text("test", cx));
-//             assert!(
-//                 panel.confirm(&Confirm, cx).is_none(),
-//                 "Should not allow to confirm on conflicting new directory name"
-//             )
-//         });
-//         assert_eq!(
-//             visible_entries_as_strings(&panel, 0..10, cx),
-//             &["v src", "    > test"],
-//             "File list should be unchanged after failed folder create confirmation"
-//         );
-
-//         select_path(&panel, "src/test/", cx);
-//         panel.update(cx, |panel, cx| panel.confirm(&Confirm, cx));
-//         cx.foreground().run_until_parked();
-//         assert_eq!(
-//             visible_entries_as_strings(&panel, 0..10, cx),
-//             &["v src", "    > test  <== selected"]
-//         );
-//         panel.update(cx, |panel, cx| panel.new_file(&NewFile, cx));
-//         window.read_with(cx, |cx| {
-//             let panel = panel.read(cx);
-//             assert!(panel.filename_editor.is_focused(cx));
-//         });
-//         assert_eq!(
-//             visible_entries_as_strings(&panel, 0..10, cx),
-//             &[
-//                 "v src",
-//                 "    v test",
-//                 "          [EDITOR: '']  <== selected",
-//                 "          first.rs",
-//                 "          second.rs",
-//                 "          third.rs"
-//             ]
-//         );
-//         panel.update(cx, |panel, cx| {
-//             panel
-//                 .filename_editor
-//                 .update(cx, |editor, cx| editor.set_text("first.rs", cx));
-//             assert!(
-//                 panel.confirm(&Confirm, cx).is_none(),
-//                 "Should not allow to confirm on conflicting new file name"
-//             )
-//         });
-//         assert_eq!(
-//             visible_entries_as_strings(&panel, 0..10, cx),
-//             &[
-//                 "v src",
-//                 "    v test",
-//                 "          first.rs",
-//                 "          second.rs",
-//                 "          third.rs"
-//             ],
-//             "File list should be unchanged after failed file create confirmation"
-//         );
-
-//         select_path(&panel, "src/test/first.rs", cx);
-//         panel.update(cx, |panel, cx| panel.confirm(&Confirm, cx));
-//         cx.foreground().run_until_parked();
-//         assert_eq!(
-//             visible_entries_as_strings(&panel, 0..10, cx),
-//             &[
-//                 "v src",
-//                 "    v test",
-//                 "          first.rs  <== selected",
-//                 "          second.rs",
-//                 "          third.rs"
-//             ],
-//         );
-//         panel.update(cx, |panel, cx| panel.rename(&Rename, cx));
-//         window.read_with(cx, |cx| {
-//             let panel = panel.read(cx);
-//             assert!(panel.filename_editor.is_focused(cx));
-//         });
-//         assert_eq!(
-//             visible_entries_as_strings(&panel, 0..10, cx),
-//             &[
-//                 "v src",
-//                 "    v test",
-//                 "          [EDITOR: 'first.rs']  <== selected",
-//                 "          second.rs",
-//                 "          third.rs"
-//             ]
-//         );
-//         panel.update(cx, |panel, cx| {
-//             panel
-//                 .filename_editor
-//                 .update(cx, |editor, cx| editor.set_text("second.rs", cx));
-//             assert!(
-//                 panel.confirm(&Confirm, cx).is_none(),
-//                 "Should not allow to confirm on conflicting file rename"
-//             )
-//         });
-//         assert_eq!(
-//             visible_entries_as_strings(&panel, 0..10, cx),
-//             &[
-//                 "v src",
-//                 "    v test",
-//                 "          first.rs  <== selected",
-//                 "          second.rs",
-//                 "          third.rs"
-//             ],
-//             "File list should be unchanged after failed rename confirmation"
-//         );
-//     }
-
-//     #[gpui::test]
-//     async fn test_new_search_in_directory_trigger(cx: &mut gpui::TestAppContext) {
-//         init_test_with_editor(cx);
-
-//         let fs = FakeFs::new(cx.background());
-//         fs.insert_tree(
-//             "/src",
-//             json!({
-//                 "test": {
-//                     "first.rs": "// First Rust file",
-//                     "second.rs": "// Second Rust file",
-//                     "third.rs": "// Third Rust file",
-//                 }
-//             }),
-//         )
-//         .await;
-
-//         let project = Project::test(fs.clone(), ["/src".as_ref()], cx).await;
-//         let workspace = cx
-//             .add_window(|cx| Workspace::test_new(project.clone(), cx))
-//             .root(cx);
-//         let panel = workspace.update(cx, |workspace, cx| ProjectPanel::new(workspace, cx));
-
-//         let new_search_events_count = Arc::new(AtomicUsize::new(0));
-//         let _subscription = panel.update(cx, |_, cx| {
-//             let subcription_count = Arc::clone(&new_search_events_count);
-//             cx.subscribe(&cx.handle(), move |_, _, event, _| {
-//                 if matches!(event, Event::NewSearchInDirectory { .. }) {
-//                     subcription_count.fetch_add(1, atomic::Ordering::SeqCst);
-//                 }
-//             })
-//         });
-
-//         toggle_expand_dir(&panel, "src/test", cx);
-//         select_path(&panel, "src/test/first.rs", cx);
-//         panel.update(cx, |panel, cx| panel.confirm(&Confirm, cx));
-//         cx.foreground().run_until_parked();
-//         assert_eq!(
-//             visible_entries_as_strings(&panel, 0..10, cx),
-//             &[
-//                 "v src",
-//                 "    v test",
-//                 "          first.rs  <== selected",
-//                 "          second.rs",
-//                 "          third.rs"
-//             ]
-//         );
-//         panel.update(cx, |panel, cx| {
-//             panel.new_search_in_directory(&NewSearchInDirectory, cx)
-//         });
-//         assert_eq!(
-//             new_search_events_count.load(atomic::Ordering::SeqCst),
-//             0,
-//             "Should not trigger new search in directory when called on a file"
-//         );
-
-//         select_path(&panel, "src/test", cx);
-//         panel.update(cx, |panel, cx| panel.confirm(&Confirm, cx));
-//         cx.foreground().run_until_parked();
-//         assert_eq!(
-//             visible_entries_as_strings(&panel, 0..10, cx),
-//             &[
-//                 "v src",
-//                 "    v test  <== selected",
-//                 "          first.rs",
-//                 "          second.rs",
-//                 "          third.rs"
-//             ]
-//         );
-//         panel.update(cx, |panel, cx| {
-//             panel.new_search_in_directory(&NewSearchInDirectory, cx)
-//         });
-//         assert_eq!(
-//             new_search_events_count.load(atomic::Ordering::SeqCst),
-//             1,
-//             "Should trigger new search in directory when called on a directory"
-//         );
-//     }
-
-//     #[gpui::test]
-//     async fn test_collapse_all_entries(cx: &mut gpui::TestAppContext) {
-//         init_test_with_editor(cx);
-
-//         let fs = FakeFs::new(cx.background());
-//         fs.insert_tree(
-//             "/project_root",
-//             json!({
-//                 "dir_1": {
-//                     "nested_dir": {
-//                         "file_a.py": "# File contents",
-//                         "file_b.py": "# File contents",
-//                         "file_c.py": "# File contents",
-//                     },
-//                     "file_1.py": "# File contents",
-//                     "file_2.py": "# File contents",
-//                     "file_3.py": "# File contents",
-//                 },
-//                 "dir_2": {
-//                     "file_1.py": "# File contents",
-//                     "file_2.py": "# File contents",
-//                     "file_3.py": "# File contents",
-//                 }
-//             }),
-//         )
-//         .await;
-
-//         let project = Project::test(fs.clone(), ["/project_root".as_ref()], cx).await;
-//         let workspace = cx
-//             .add_window(|cx| Workspace::test_new(project.clone(), cx))
-//             .root(cx);
-//         let panel = workspace.update(cx, |workspace, cx| ProjectPanel::new(workspace, cx));
-
-//         panel.update(cx, |panel, cx| {
-//             panel.collapse_all_entries(&CollapseAllEntries, cx)
-//         });
-//         cx.foreground().run_until_parked();
-//         assert_eq!(
-//             visible_entries_as_strings(&panel, 0..10, cx),
-//             &["v project_root", "    > dir_1", "    > dir_2",]
-//         );
-
-//         // Open dir_1 and make sure nested_dir was collapsed when running collapse_all_entries
-//         toggle_expand_dir(&panel, "project_root/dir_1", cx);
-//         cx.foreground().run_until_parked();
-//         assert_eq!(
-//             visible_entries_as_strings(&panel, 0..10, cx),
-//             &[
-//                 "v project_root",
-//                 "    v dir_1  <== selected",
-//                 "        > nested_dir",
-//                 "          file_1.py",
-//                 "          file_2.py",
-//                 "          file_3.py",
-//                 "    > dir_2",
-//             ]
-//         );
-//     }
-
-//     #[gpui::test]
-//     async fn test_new_file_move(cx: &mut gpui::TestAppContext) {
-//         init_test(cx);
-
-//         let fs = FakeFs::new(cx.background());
-//         fs.as_fake().insert_tree("/root", json!({})).await;
-//         let project = Project::test(fs, ["/root".as_ref()], cx).await;
-//         let workspace = cx
-//             .add_window(|cx| Workspace::test_new(project.clone(), cx))
-//             .root(cx);
-//         let panel = workspace.update(cx, |workspace, cx| ProjectPanel::new(workspace, cx));
-
-//         // Make a new buffer with no backing file
-//         workspace.update(cx, |workspace, cx| {
-//             Editor::new_file(workspace, &Default::default(), cx)
-//         });
-
-//         // "Save as"" the buffer, creating a new backing file for it
-//         let task = workspace.update(cx, |workspace, cx| {
-//             workspace.save_active_item(workspace::SaveIntent::Save, cx)
-//         });
-
-//         cx.foreground().run_until_parked();
-//         cx.simulate_new_path_selection(|_| Some(PathBuf::from("/root/new")));
-//         task.await.unwrap();
-
-//         // Rename the file
-//         select_path(&panel, "root/new", cx);
-//         assert_eq!(
-//             visible_entries_as_strings(&panel, 0..10, cx),
-//             &["v root", "      new  <== selected"]
-//         );
-//         panel.update(cx, |panel, cx| panel.rename(&Rename, cx));
-//         panel.update(cx, |panel, cx| {
-//             panel
-//                 .filename_editor
-//                 .update(cx, |editor, cx| editor.set_text("newer", cx));
-//         });
-//         panel
-//             .update(cx, |panel, cx| panel.confirm(&Confirm, cx))
-//             .unwrap()
-//             .await
-//             .unwrap();
-
-//         cx.foreground().run_until_parked();
-//         assert_eq!(
-//             visible_entries_as_strings(&panel, 0..10, cx),
-//             &["v root", "      newer  <== selected"]
-//         );
-
-//         workspace
-//             .update(cx, |workspace, cx| {
-//                 workspace.save_active_item(workspace::SaveIntent::Save, cx)
-//             })
-//             .await
-//             .unwrap();
-
-//         cx.foreground().run_until_parked();
-//         // assert that saving the file doesn't restore "new"
-//         assert_eq!(
-//             visible_entries_as_strings(&panel, 0..10, cx),
-//             &["v root", "      newer  <== selected"]
-//         );
-//     }
-
-//     fn toggle_expand_dir(
-//         panel: &View<ProjectPanel>,
-//         path: impl AsRef<Path>,
-//         cx: &mut TestAppContext,
-//     ) {
-//         let path = path.as_ref();
-//         panel.update(cx, |panel, cx| {
-//             for worktree in panel.project.read(cx).worktrees().collect::<Vec<_>>() {
-//                 let worktree = worktree.read(cx);
-//                 if let Ok(relative_path) = path.strip_prefix(worktree.root_name()) {
-//                     let entry_id = worktree.entry_for_path(relative_path).unwrap().id;
-//                     panel.toggle_expanded(entry_id, cx);
-//                     return;
-//                 }
-//             }
-//             panic!("no worktree for path {:?}", path);
-//         });
-//     }
-
-//     fn select_path(panel: &View<ProjectPanel>, path: impl AsRef<Path>, cx: &mut TestAppContext) {
-//         let path = path.as_ref();
-//         panel.update(cx, |panel, cx| {
-//             for worktree in panel.project.read(cx).worktrees().collect::<Vec<_>>() {
-//                 let worktree = worktree.read(cx);
-//                 if let Ok(relative_path) = path.strip_prefix(worktree.root_name()) {
-//                     let entry_id = worktree.entry_for_path(relative_path).unwrap().id;
-//                     panel.selection = Some(Selection {
-//                         worktree_id: worktree.id(),
-//                         entry_id,
-//                     });
-//                     return;
-//                 }
-//             }
-//             panic!("no worktree for path {:?}", path);
-//         });
-//     }
-
-//     fn visible_entries_as_strings(
-//         panel: &View<ProjectPanel>,
-//         range: Range<usize>,
-//         cx: &mut TestAppContext,
-//     ) -> Vec<String> {
-//         let mut result = Vec::new();
-//         let mut project_entries = HashSet::new();
-//         let mut has_editor = false;
-
-//         panel.update(cx, |panel, cx| {
-//             panel.for_each_visible_entry(range, cx, |project_entry, details, _| {
-//                 if details.is_editing {
-//                     assert!(!has_editor, "duplicate editor entry");
-//                     has_editor = true;
-//                 } else {
-//                     assert!(
-//                         project_entries.insert(project_entry),
-//                         "duplicate project entry {:?} {:?}",
-//                         project_entry,
-//                         details
-//                     );
-//                 }
-
-//                 let indent = "    ".repeat(details.depth);
-//                 let icon = if details.kind.is_dir() {
-//                     if details.is_expanded {
-//                         "v "
-//                     } else {
-//                         "> "
-//                     }
-//                 } else {
-//                     "  "
-//                 };
-//                 let name = if details.is_editing {
-//                     format!("[EDITOR: '{}']", details.filename)
-//                 } else if details.is_processing {
-//                     format!("[PROCESSING: '{}']", details.filename)
-//                 } else {
-//                     details.filename.clone()
-//                 };
-//                 let selected = if details.is_selected {
-//                     "  <== selected"
-//                 } else {
-//                     ""
-//                 };
-//                 result.push(format!("{indent}{icon}{name}{selected}"));
-//             });
-//         });
-
-//         result
-//     }
-
-//     fn init_test(cx: &mut TestAppContext) {
-//         cx.foreground().forbid_parking();
-//         cx.update(|cx| {
-//             cx.set_global(SettingsStore::test(cx));
-//             init_settings(cx);
-//             theme::init(cx);
-//             language::init(cx);
-//             editor::init_settings(cx);
-//             crate::init((), cx);
-//             workspace::init_settings(cx);
-//             client::init_settings(cx);
-//             Project::init_settings(cx);
-//         });
-//     }
-
-//     fn init_test_with_editor(cx: &mut TestAppContext) {
-//         cx.foreground().forbid_parking();
-//         cx.update(|cx| {
-//             let app_state = AppState::test(cx);
-//             theme::init(cx);
-//             init_settings(cx);
-//             language::init(cx);
-//             editor::init(cx);
-//             pane::init(cx);
-//             crate::init((), cx);
-//             workspace::init(app_state.clone(), cx);
-//             Project::init_settings(cx);
-//         });
-//     }
-
-//     fn ensure_single_file_is_opened(
-//         window: WindowHandle<Workspace>,
-//         expected_path: &str,
-//         cx: &mut TestAppContext,
-//     ) {
-//         window.update_root(cx, |workspace, cx| {
-//             let worktrees = workspace.worktrees(cx).collect::<Vec<_>>();
-//             assert_eq!(worktrees.len(), 1);
-//             let worktree_id = WorktreeId::from_usize(worktrees[0].id());
-
-//             let open_project_paths = workspace
-//                 .panes()
-//                 .iter()
-//                 .filter_map(|pane| pane.read(cx).active_item()?.project_path(cx))
-//                 .collect::<Vec<_>>();
-//             assert_eq!(
-//                 open_project_paths,
-//                 vec![ProjectPath {
-//                     worktree_id,
-//                     path: Arc::from(Path::new(expected_path))
-//                 }],
-//                 "Should have opened file, selected in project panel"
-//             );
-//         });
-//     }
-
-//     fn submit_deletion(
-//         window: AnyWindowHandle,
-//         panel: &View<ProjectPanel>,
-//         cx: &mut TestAppContext,
-//     ) {
-//         assert!(
-//             !window.has_pending_prompt(cx),
-//             "Should have no prompts before the deletion"
-//         );
-//         panel.update(cx, |panel, cx| {
-//             panel
-//                 .delete(&Delete, cx)
-//                 .expect("Deletion start")
-//                 .detach_and_log_err(cx);
-//         });
-//         assert!(
-//             window.has_pending_prompt(cx),
-//             "Should have a prompt after the deletion"
-//         );
-//         window.simulate_prompt_answer(0, cx);
-//         assert!(
-//             !window.has_pending_prompt(cx),
-//             "Should have no prompts after prompt was replied to"
-//         );
-//         cx.foreground().run_until_parked();
-//     }
-
-//     fn ensure_no_open_items_and_panes(
-//         window: AnyWindowHandle,
-//         workspace: &View<Workspace>,
-//         cx: &mut TestAppContext,
-//     ) {
-//         assert!(
-//             !window.has_pending_prompt(cx),
-//             "Should have no prompts after deletion operation closes the file"
-//         );
-//         window.read_with(cx, |cx| {
-//             let open_project_paths = workspace
-//                 .read(cx)
-//                 .panes()
-//                 .iter()
-//                 .filter_map(|pane| pane.read(cx).active_item()?.project_path(cx))
-//                 .collect::<Vec<_>>();
-//             assert!(
-//                 open_project_paths.is_empty(),
-//                 "Deleted file's buffer should be closed, but got open files: {open_project_paths:?}"
-//             );
-//         });
-//     }
-// }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::{TestAppContext, View, VisualTestContext, WindowHandle};
+    use pretty_assertions::assert_eq;
+    use project::FakeFs;
+    use serde_json::json;
+    use settings::SettingsStore;
+    use std::{
+        collections::HashSet,
+        path::{Path, PathBuf},
+        sync::atomic::{self, AtomicUsize},
+    };
+    use workspace::{pane, AppState};
+
+    #[gpui::test]
+    async fn test_visible_list(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor().clone());
+        fs.insert_tree(
+            "/root1",
+            json!({
+                ".dockerignore": "",
+                ".git": {
+                    "HEAD": "",
+                },
+                "a": {
+                    "0": { "q": "", "r": "", "s": "" },
+                    "1": { "t": "", "u": "" },
+                    "2": { "v": "", "w": "", "x": "", "y": "" },
+                },
+                "b": {
+                    "3": { "Q": "" },
+                    "4": { "R": "", "S": "", "T": "", "U": "" },
+                },
+                "C": {
+                    "5": {},
+                    "6": { "V": "", "W": "" },
+                    "7": { "X": "" },
+                    "8": { "Y": {}, "Z": "" }
+                }
+            }),
+        )
+        .await;
+        fs.insert_tree(
+            "/root2",
+            json!({
+                "d": {
+                    "9": ""
+                },
+                "e": {}
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
+        let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let panel = workspace
+            .update(cx, |workspace, cx| ProjectPanel::new(workspace, cx))
+            .unwrap();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..50, cx),
+            &[
+                "v root1",
+                "    > .git",
+                "    > a",
+                "    > b",
+                "    > C",
+                "      .dockerignore",
+                "v root2",
+                "    > d",
+                "    > e",
+            ]
+        );
+
+        toggle_expand_dir(&panel, "root1/b", cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..50, cx),
+            &[
+                "v root1",
+                "    > .git",
+                "    > a",
+                "    v b  <== selected",
+                "        > 3",
+                "        > 4",
+                "    > C",
+                "      .dockerignore",
+                "v root2",
+                "    > d",
+                "    > e",
+            ]
+        );
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 6..9, cx),
+            &[
+                //
+                "    > C",
+                "      .dockerignore",
+                "v root2",
+            ]
+        );
+    }
+
+    #[gpui::test(iterations = 30)]
+    async fn test_editing_files(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor().clone());
+        fs.insert_tree(
+            "/root1",
+            json!({
+                ".dockerignore": "",
+                ".git": {
+                    "HEAD": "",
+                },
+                "a": {
+                    "0": { "q": "", "r": "", "s": "" },
+                    "1": { "t": "", "u": "" },
+                    "2": { "v": "", "w": "", "x": "", "y": "" },
+                },
+                "b": {
+                    "3": { "Q": "" },
+                    "4": { "R": "", "S": "", "T": "", "U": "" },
+                },
+                "C": {
+                    "5": {},
+                    "6": { "V": "", "W": "" },
+                    "7": { "X": "" },
+                    "8": { "Y": {}, "Z": "" }
+                }
+            }),
+        )
+        .await;
+        fs.insert_tree(
+            "/root2",
+            json!({
+                "d": {
+                    "9": ""
+                },
+                "e": {}
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
+        let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let panel = workspace
+            .update(cx, |workspace, cx| ProjectPanel::new(workspace, cx))
+            .unwrap();
+
+        select_path(&panel, "root1", cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v root1  <== selected",
+                "    > .git",
+                "    > a",
+                "    > b",
+                "    > C",
+                "      .dockerignore",
+                "v root2",
+                "    > d",
+                "    > e",
+            ]
+        );
+
+        // Add a file with the root folder selected. The filename editor is placed
+        // before the first file in the root folder.
+        panel.update(cx, |panel, cx| panel.new_file(&NewFile, cx));
+        panel.update(cx, |panel, cx| {
+            assert!(panel.filename_editor.read(cx).is_focused(cx));
+        });
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v root1",
+                "    > .git",
+                "    > a",
+                "    > b",
+                "    > C",
+                "      [EDITOR: '']  <== selected",
+                "      .dockerignore",
+                "v root2",
+                "    > d",
+                "    > e",
+            ]
+        );
+
+        let confirm = panel.update(cx, |panel, cx| {
+            panel
+                .filename_editor
+                .update(cx, |editor, cx| editor.set_text("the-new-filename", cx));
+            panel.confirm_edit(cx).unwrap()
+        });
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v root1",
+                "    > .git",
+                "    > a",
+                "    > b",
+                "    > C",
+                "      [PROCESSING: 'the-new-filename']  <== selected",
+                "      .dockerignore",
+                "v root2",
+                "    > d",
+                "    > e",
+            ]
+        );
+
+        confirm.await.unwrap();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v root1",
+                "    > .git",
+                "    > a",
+                "    > b",
+                "    > C",
+                "      .dockerignore",
+                "      the-new-filename  <== selected",
+                "v root2",
+                "    > d",
+                "    > e",
+            ]
+        );
+
+        select_path(&panel, "root1/b", cx);
+        panel.update(cx, |panel, cx| panel.new_file(&NewFile, cx));
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v root1",
+                "    > .git",
+                "    > a",
+                "    v b",
+                "        > 3",
+                "        > 4",
+                "          [EDITOR: '']  <== selected",
+                "    > C",
+                "      .dockerignore",
+                "      the-new-filename",
+            ]
+        );
+
+        panel
+            .update(cx, |panel, cx| {
+                panel
+                    .filename_editor
+                    .update(cx, |editor, cx| editor.set_text("another-filename.txt", cx));
+                panel.confirm_edit(cx).unwrap()
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v root1",
+                "    > .git",
+                "    > a",
+                "    v b",
+                "        > 3",
+                "        > 4",
+                "          another-filename.txt  <== selected",
+                "    > C",
+                "      .dockerignore",
+                "      the-new-filename",
+            ]
+        );
+
+        select_path(&panel, "root1/b/another-filename.txt", cx);
+        panel.update(cx, |panel, cx| panel.rename(&Rename, cx));
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v root1",
+                "    > .git",
+                "    > a",
+                "    v b",
+                "        > 3",
+                "        > 4",
+                "          [EDITOR: 'another-filename.txt']  <== selected",
+                "    > C",
+                "      .dockerignore",
+                "      the-new-filename",
+            ]
+        );
+
+        let confirm = panel.update(cx, |panel, cx| {
+            panel.filename_editor.update(cx, |editor, cx| {
+                let file_name_selections = editor.selections.all::<usize>(cx);
+                assert_eq!(file_name_selections.len(), 1, "File editing should have a single selection, but got: {file_name_selections:?}");
+                let file_name_selection = &file_name_selections[0];
+                assert_eq!(file_name_selection.start, 0, "Should select the file name from the start");
+                assert_eq!(file_name_selection.end, "another-filename".len(), "Should not select file extension");
+
+                editor.set_text("a-different-filename.tar.gz", cx)
+            });
+            panel.confirm_edit(cx).unwrap()
+        });
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v root1",
+                "    > .git",
+                "    > a",
+                "    v b",
+                "        > 3",
+                "        > 4",
+                "          [PROCESSING: 'a-different-filename.tar.gz']  <== selected",
+                "    > C",
+                "      .dockerignore",
+                "      the-new-filename",
+            ]
+        );
+
+        confirm.await.unwrap();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v root1",
+                "    > .git",
+                "    > a",
+                "    v b",
+                "        > 3",
+                "        > 4",
+                "          a-different-filename.tar.gz  <== selected",
+                "    > C",
+                "      .dockerignore",
+                "      the-new-filename",
+            ]
+        );
+
+        panel.update(cx, |panel, cx| panel.rename(&Rename, cx));
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v root1",
+                "    > .git",
+                "    > a",
+                "    v b",
+                "        > 3",
+                "        > 4",
+                "          [EDITOR: 'a-different-filename.tar.gz']  <== selected",
+                "    > C",
+                "      .dockerignore",
+                "      the-new-filename",
+            ]
+        );
+
+        panel.update(cx, |panel, cx| {
+            panel.filename_editor.update(cx, |editor, cx| {
+                let file_name_selections = editor.selections.all::<usize>(cx);
+                assert_eq!(file_name_selections.len(), 1, "File editing should have a single selection, but got: {file_name_selections:?}");
+                let file_name_selection = &file_name_selections[0];
+                assert_eq!(file_name_selection.start, 0, "Should select the file name from the start");
+                assert_eq!(file_name_selection.end, "a-different-filename.tar".len(), "Should not select file extension, but still may select anything up to the last dot..");
+
+            });
+            panel.cancel(&Cancel, cx)
+        });
+
+        panel.update(cx, |panel, cx| panel.new_directory(&NewDirectory, cx));
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v root1",
+                "    > .git",
+                "    > a",
+                "    v b",
+                "        > [EDITOR: '']  <== selected",
+                "        > 3",
+                "        > 4",
+                "          a-different-filename.tar.gz",
+                "    > C",
+                "      .dockerignore",
+            ]
+        );
+
+        let confirm = panel.update(cx, |panel, cx| {
+            panel
+                .filename_editor
+                .update(cx, |editor, cx| editor.set_text("new-dir", cx));
+            panel.confirm_edit(cx).unwrap()
+        });
+        panel.update(cx, |panel, cx| panel.select_next(&Default::default(), cx));
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v root1",
+                "    > .git",
+                "    > a",
+                "    v b",
+                "        > [PROCESSING: 'new-dir']",
+                "        > 3  <== selected",
+                "        > 4",
+                "          a-different-filename.tar.gz",
+                "    > C",
+                "      .dockerignore",
+            ]
+        );
+
+        confirm.await.unwrap();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v root1",
+                "    > .git",
+                "    > a",
+                "    v b",
+                "        > 3  <== selected",
+                "        > 4",
+                "        > new-dir",
+                "          a-different-filename.tar.gz",
+                "    > C",
+                "      .dockerignore",
+            ]
+        );
+
+        panel.update(cx, |panel, cx| panel.rename(&Default::default(), cx));
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v root1",
+                "    > .git",
+                "    > a",
+                "    v b",
+                "        > [EDITOR: '3']  <== selected",
+                "        > 4",
+                "        > new-dir",
+                "          a-different-filename.tar.gz",
+                "    > C",
+                "      .dockerignore",
+            ]
+        );
+
+        // Dismiss the rename editor when it loses focus.
+        workspace.update(cx, |_, cx| cx.blur()).unwrap();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v root1",
+                "    > .git",
+                "    > a",
+                "    v b",
+                "        > 3  <== selected",
+                "        > 4",
+                "        > new-dir",
+                "          a-different-filename.tar.gz",
+                "    > C",
+                "      .dockerignore",
+            ]
+        );
+    }
+
+    #[gpui::test(iterations = 30)]
+    async fn test_adding_directories_via_file(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor().clone());
+        fs.insert_tree(
+            "/root1",
+            json!({
+                ".dockerignore": "",
+                ".git": {
+                    "HEAD": "",
+                },
+                "a": {
+                    "0": { "q": "", "r": "", "s": "" },
+                    "1": { "t": "", "u": "" },
+                    "2": { "v": "", "w": "", "x": "", "y": "" },
+                },
+                "b": {
+                    "3": { "Q": "" },
+                    "4": { "R": "", "S": "", "T": "", "U": "" },
+                },
+                "C": {
+                    "5": {},
+                    "6": { "V": "", "W": "" },
+                    "7": { "X": "" },
+                    "8": { "Y": {}, "Z": "" }
+                }
+            }),
+        )
+        .await;
+        fs.insert_tree(
+            "/root2",
+            json!({
+                "d": {
+                    "9": ""
+                },
+                "e": {}
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
+        let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let panel = workspace
+            .update(cx, |workspace, cx| ProjectPanel::new(workspace, cx))
+            .unwrap();
+
+        select_path(&panel, "root1", cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v root1  <== selected",
+                "    > .git",
+                "    > a",
+                "    > b",
+                "    > C",
+                "      .dockerignore",
+                "v root2",
+                "    > d",
+                "    > e",
+            ]
+        );
+
+        // Add a file with the root folder selected. The filename editor is placed
+        // before the first file in the root folder.
+        panel.update(cx, |panel, cx| panel.new_file(&NewFile, cx));
+        panel.update(cx, |panel, cx| {
+            assert!(panel.filename_editor.read(cx).is_focused(cx));
+        });
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v root1",
+                "    > .git",
+                "    > a",
+                "    > b",
+                "    > C",
+                "      [EDITOR: '']  <== selected",
+                "      .dockerignore",
+                "v root2",
+                "    > d",
+                "    > e",
+            ]
+        );
+
+        let confirm = panel.update(cx, |panel, cx| {
+            panel.filename_editor.update(cx, |editor, cx| {
+                editor.set_text("/bdir1/dir2/the-new-filename", cx)
+            });
+            panel.confirm_edit(cx).unwrap()
+        });
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v root1",
+                "    > .git",
+                "    > a",
+                "    > b",
+                "    > C",
+                "      [PROCESSING: '/bdir1/dir2/the-new-filename']  <== selected",
+                "      .dockerignore",
+                "v root2",
+                "    > d",
+                "    > e",
+            ]
+        );
+
+        confirm.await.unwrap();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..13, cx),
+            &[
+                "v root1",
+                "    > .git",
+                "    > a",
+                "    > b",
+                "    v bdir1",
+                "        v dir2",
+                "              the-new-filename  <== selected",
+                "    > C",
+                "      .dockerignore",
+                "v root2",
+                "    > d",
+                "    > e",
+            ]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_copy_paste(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor().clone());
+        fs.insert_tree(
+            "/root1",
+            json!({
+                "one.two.txt": "",
+                "one.txt": ""
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/root1".as_ref()], cx).await;
+        let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let panel = workspace
+            .update(cx, |workspace, cx| ProjectPanel::new(workspace, cx))
+            .unwrap();
+
+        panel.update(cx, |panel, cx| {
+            panel.select_next(&Default::default(), cx);
+            panel.select_next(&Default::default(), cx);
+        });
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..50, cx),
+            &[
+                //
+                "v root1",
+                "      one.two.txt  <== selected",
+                "      one.txt",
+            ]
+        );
+
+        // Regression test - file name is created correctly when
+        // the copied file's name contains multiple dots.
+        panel.update(cx, |panel, cx| {
+            panel.copy(&Default::default(), cx);
+            panel.paste(&Default::default(), cx);
+        });
+        cx.executor().run_until_parked();
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..50, cx),
+            &[
+                //
+                "v root1",
+                "      one.two copy.txt",
+                "      one.two.txt  <== selected",
+                "      one.txt",
+            ]
+        );
+
+        panel.update(cx, |panel, cx| {
+            panel.paste(&Default::default(), cx);
+        });
+        cx.executor().run_until_parked();
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..50, cx),
+            &[
+                //
+                "v root1",
+                "      one.two copy 1.txt",
+                "      one.two copy.txt",
+                "      one.two.txt  <== selected",
+                "      one.txt",
+            ]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_remove_opened_file(cx: &mut gpui::TestAppContext) {
+        init_test_with_editor(cx);
+
+        let fs = FakeFs::new(cx.executor().clone());
+        fs.insert_tree(
+            "/src",
+            json!({
+                "test": {
+                    "first.rs": "// First Rust file",
+                    "second.rs": "// Second Rust file",
+                    "third.rs": "// Third Rust file",
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/src".as_ref()], cx).await;
+        let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let panel = workspace
+            .update(cx, |workspace, cx| ProjectPanel::new(workspace, cx))
+            .unwrap();
+
+        toggle_expand_dir(&panel, "src/test", cx);
+        select_path(&panel, "src/test/first.rs", cx);
+        panel.update(cx, |panel, cx| panel.open_file(&Open, cx));
+        cx.executor().run_until_parked();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v src",
+                "    v test",
+                "          first.rs  <== selected",
+                "          second.rs",
+                "          third.rs"
+            ]
+        );
+        ensure_single_file_is_opened(&workspace, "test/first.rs", cx);
+
+        submit_deletion(&panel, cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v src",
+                "    v test",
+                "          second.rs",
+                "          third.rs"
+            ],
+            "Project panel should have no deleted file, no other file is selected in it"
+        );
+        ensure_no_open_items_and_panes(&workspace, cx);
+
+        select_path(&panel, "src/test/second.rs", cx);
+        panel.update(cx, |panel, cx| panel.open_file(&Open, cx));
+        cx.executor().run_until_parked();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v src",
+                "    v test",
+                "          second.rs  <== selected",
+                "          third.rs"
+            ]
+        );
+        ensure_single_file_is_opened(&workspace, "test/second.rs", cx);
+
+        workspace
+            .update(cx, |workspace, cx| {
+                let active_items = workspace
+                    .panes()
+                    .iter()
+                    .filter_map(|pane| pane.read(cx).active_item())
+                    .collect::<Vec<_>>();
+                assert_eq!(active_items.len(), 1);
+                let open_editor = active_items
+                    .into_iter()
+                    .next()
+                    .unwrap()
+                    .downcast::<Editor>()
+                    .expect("Open item should be an editor");
+                open_editor.update(cx, |editor, cx| editor.set_text("Another text!", cx));
+            })
+            .unwrap();
+        submit_deletion(&panel, cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &["v src", "    v test", "          third.rs"],
+            "Project panel should have no deleted file, with one last file remaining"
+        );
+        ensure_no_open_items_and_panes(&workspace, cx);
+    }
+
+    #[gpui::test]
+    async fn test_create_duplicate_items(cx: &mut gpui::TestAppContext) {
+        init_test_with_editor(cx);
+
+        let fs = FakeFs::new(cx.executor().clone());
+        fs.insert_tree(
+            "/src",
+            json!({
+                "test": {
+                    "first.rs": "// First Rust file",
+                    "second.rs": "// Second Rust file",
+                    "third.rs": "// Third Rust file",
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/src".as_ref()], cx).await;
+        let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let panel = workspace
+            .update(cx, |workspace, cx| ProjectPanel::new(workspace, cx))
+            .unwrap();
+
+        select_path(&panel, "src/", cx);
+        panel.update(cx, |panel, cx| panel.confirm(&Confirm, cx));
+        cx.executor().run_until_parked();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &["v src  <== selected", "    > test"]
+        );
+        panel.update(cx, |panel, cx| panel.new_directory(&NewDirectory, cx));
+        panel.update(cx, |panel, cx| {
+            assert!(panel.filename_editor.read(cx).is_focused(cx));
+        });
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &["v src", "    > [EDITOR: '']  <== selected", "    > test"]
+        );
+        panel.update(cx, |panel, cx| {
+            panel
+                .filename_editor
+                .update(cx, |editor, cx| editor.set_text("test", cx));
+            assert!(
+                panel.confirm_edit(cx).is_none(),
+                "Should not allow to confirm on conflicting new directory name"
+            )
+        });
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &["v src", "    > test"],
+            "File list should be unchanged after failed folder create confirmation"
+        );
+
+        select_path(&panel, "src/test/", cx);
+        panel.update(cx, |panel, cx| panel.confirm(&Confirm, cx));
+        cx.executor().run_until_parked();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &["v src", "    > test  <== selected"]
+        );
+        panel.update(cx, |panel, cx| panel.new_file(&NewFile, cx));
+        panel.update(cx, |panel, cx| {
+            assert!(panel.filename_editor.read(cx).is_focused(cx));
+        });
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v src",
+                "    v test",
+                "          [EDITOR: '']  <== selected",
+                "          first.rs",
+                "          second.rs",
+                "          third.rs"
+            ]
+        );
+        panel.update(cx, |panel, cx| {
+            panel
+                .filename_editor
+                .update(cx, |editor, cx| editor.set_text("first.rs", cx));
+            assert!(
+                panel.confirm_edit(cx).is_none(),
+                "Should not allow to confirm on conflicting new file name"
+            )
+        });
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v src",
+                "    v test",
+                "          first.rs",
+                "          second.rs",
+                "          third.rs"
+            ],
+            "File list should be unchanged after failed file create confirmation"
+        );
+
+        select_path(&panel, "src/test/first.rs", cx);
+        panel.update(cx, |panel, cx| panel.confirm(&Confirm, cx));
+        cx.executor().run_until_parked();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v src",
+                "    v test",
+                "          first.rs  <== selected",
+                "          second.rs",
+                "          third.rs"
+            ],
+        );
+        panel.update(cx, |panel, cx| panel.rename(&Rename, cx));
+        panel.update(cx, |panel, cx| {
+            assert!(panel.filename_editor.read(cx).is_focused(cx));
+        });
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v src",
+                "    v test",
+                "          [EDITOR: 'first.rs']  <== selected",
+                "          second.rs",
+                "          third.rs"
+            ]
+        );
+        panel.update(cx, |panel, cx| {
+            panel
+                .filename_editor
+                .update(cx, |editor, cx| editor.set_text("second.rs", cx));
+            assert!(
+                panel.confirm_edit(cx).is_none(),
+                "Should not allow to confirm on conflicting file rename"
+            )
+        });
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v src",
+                "    v test",
+                "          first.rs  <== selected",
+                "          second.rs",
+                "          third.rs"
+            ],
+            "File list should be unchanged after failed rename confirmation"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_new_search_in_directory_trigger(cx: &mut gpui::TestAppContext) {
+        init_test_with_editor(cx);
+
+        let fs = FakeFs::new(cx.executor().clone());
+        fs.insert_tree(
+            "/src",
+            json!({
+                "test": {
+                    "first.rs": "// First Rust file",
+                    "second.rs": "// Second Rust file",
+                    "third.rs": "// Third Rust file",
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/src".as_ref()], cx).await;
+        let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let panel = workspace
+            .update(cx, |workspace, cx| ProjectPanel::new(workspace, cx))
+            .unwrap();
+
+        let new_search_events_count = Arc::new(AtomicUsize::new(0));
+        let _subscription = panel.update(cx, |_, cx| {
+            let subcription_count = Arc::clone(&new_search_events_count);
+            let view = cx.view().clone();
+            cx.subscribe(&view, move |_, _, event, _| {
+                if matches!(event, Event::NewSearchInDirectory { .. }) {
+                    subcription_count.fetch_add(1, atomic::Ordering::SeqCst);
+                }
+            })
+        });
+
+        toggle_expand_dir(&panel, "src/test", cx);
+        select_path(&panel, "src/test/first.rs", cx);
+        panel.update(cx, |panel, cx| panel.confirm(&Confirm, cx));
+        cx.executor().run_until_parked();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v src",
+                "    v test",
+                "          first.rs  <== selected",
+                "          second.rs",
+                "          third.rs"
+            ]
+        );
+        panel.update(cx, |panel, cx| {
+            panel.new_search_in_directory(&NewSearchInDirectory, cx)
+        });
+        assert_eq!(
+            new_search_events_count.load(atomic::Ordering::SeqCst),
+            0,
+            "Should not trigger new search in directory when called on a file"
+        );
+
+        select_path(&panel, "src/test", cx);
+        panel.update(cx, |panel, cx| panel.confirm(&Confirm, cx));
+        cx.executor().run_until_parked();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v src",
+                "    v test  <== selected",
+                "          first.rs",
+                "          second.rs",
+                "          third.rs"
+            ]
+        );
+        panel.update(cx, |panel, cx| {
+            panel.new_search_in_directory(&NewSearchInDirectory, cx)
+        });
+        assert_eq!(
+            new_search_events_count.load(atomic::Ordering::SeqCst),
+            1,
+            "Should trigger new search in directory when called on a directory"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_collapse_all_entries(cx: &mut gpui::TestAppContext) {
+        init_test_with_editor(cx);
+
+        let fs = FakeFs::new(cx.executor().clone());
+        fs.insert_tree(
+            "/project_root",
+            json!({
+                "dir_1": {
+                    "nested_dir": {
+                        "file_a.py": "# File contents",
+                        "file_b.py": "# File contents",
+                        "file_c.py": "# File contents",
+                    },
+                    "file_1.py": "# File contents",
+                    "file_2.py": "# File contents",
+                    "file_3.py": "# File contents",
+                },
+                "dir_2": {
+                    "file_1.py": "# File contents",
+                    "file_2.py": "# File contents",
+                    "file_3.py": "# File contents",
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/project_root".as_ref()], cx).await;
+        let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let panel = workspace
+            .update(cx, |workspace, cx| ProjectPanel::new(workspace, cx))
+            .unwrap();
+
+        panel.update(cx, |panel, cx| {
+            panel.collapse_all_entries(&CollapseAllEntries, cx)
+        });
+        cx.executor().run_until_parked();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &["v project_root", "    > dir_1", "    > dir_2",]
+        );
+
+        // Open dir_1 and make sure nested_dir was collapsed when running collapse_all_entries
+        toggle_expand_dir(&panel, "project_root/dir_1", cx);
+        cx.executor().run_until_parked();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v project_root",
+                "    v dir_1  <== selected",
+                "        > nested_dir",
+                "          file_1.py",
+                "          file_2.py",
+                "          file_3.py",
+                "    > dir_2",
+            ]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_new_file_move(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor().clone());
+        fs.as_fake().insert_tree("/root", json!({})).await;
+        let project = Project::test(fs, ["/root".as_ref()], cx).await;
+        let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let panel = workspace
+            .update(cx, |workspace, cx| ProjectPanel::new(workspace, cx))
+            .unwrap();
+
+        // Make a new buffer with no backing file
+        workspace
+            .update(cx, |workspace, cx| {
+                Editor::new_file(workspace, &Default::default(), cx)
+            })
+            .unwrap();
+
+        // "Save as"" the buffer, creating a new backing file for it
+        workspace
+            .update(cx, |workspace, cx| {
+                workspace.save_active_item(workspace::SaveIntent::Save, cx)
+            })
+            .unwrap()
+            .await
+            .unwrap();
+
+        cx.executor().run_until_parked();
+        cx.simulate_new_path_selection(|_| Some(PathBuf::from("/root/new")));
+        cx.executor().run_until_parked();
+
+        // Rename the file
+        select_path(&panel, "root/new", cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &["v root", "      new  <== selected"]
+        );
+        panel.update(cx, |panel, cx| panel.rename(&Rename, cx));
+        panel.update(cx, |panel, cx| {
+            panel
+                .filename_editor
+                .update(cx, |editor, cx| editor.set_text("newer", cx));
+        });
+        panel.update(cx, |panel, cx| panel.confirm(&Confirm, cx));
+
+        cx.executor().run_until_parked();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &["v root", "      newer  <== selected"]
+        );
+
+        workspace
+            .update(cx, |workspace, cx| {
+                workspace.save_active_item(workspace::SaveIntent::Save, cx)
+            })
+            .unwrap()
+            .await
+            .unwrap();
+
+        cx.executor().run_until_parked();
+        // assert that saving the file doesn't restore "new"
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &["v root", "      newer  <== selected"]
+        );
+    }
+
+    fn toggle_expand_dir(
+        panel: &View<ProjectPanel>,
+        path: impl AsRef<Path>,
+        cx: &mut VisualTestContext,
+    ) {
+        let path = path.as_ref();
+        panel.update(cx, |panel, cx| {
+            for worktree in panel.project.read(cx).worktrees().collect::<Vec<_>>() {
+                let worktree = worktree.read(cx);
+                if let Ok(relative_path) = path.strip_prefix(worktree.root_name()) {
+                    let entry_id = worktree.entry_for_path(relative_path).unwrap().id;
+                    panel.toggle_expanded(entry_id, cx);
+                    return;
+                }
+            }
+            panic!("no worktree for path {:?}", path);
+        });
+    }
+
+    fn select_path(panel: &View<ProjectPanel>, path: impl AsRef<Path>, cx: &mut VisualTestContext) {
+        let path = path.as_ref();
+        panel.update(cx, |panel, cx| {
+            for worktree in panel.project.read(cx).worktrees().collect::<Vec<_>>() {
+                let worktree = worktree.read(cx);
+                if let Ok(relative_path) = path.strip_prefix(worktree.root_name()) {
+                    let entry_id = worktree.entry_for_path(relative_path).unwrap().id;
+                    panel.selection = Some(Selection {
+                        worktree_id: worktree.id(),
+                        entry_id,
+                    });
+                    return;
+                }
+            }
+            panic!("no worktree for path {:?}", path);
+        });
+    }
+
+    fn visible_entries_as_strings(
+        panel: &View<ProjectPanel>,
+        range: Range<usize>,
+        cx: &mut VisualTestContext,
+    ) -> Vec<String> {
+        let mut result = Vec::new();
+        let mut project_entries = HashSet::new();
+        let mut has_editor = false;
+
+        panel.update(cx, |panel, cx| {
+            panel.for_each_visible_entry(range, cx, |project_entry, details, _| {
+                if details.is_editing {
+                    assert!(!has_editor, "duplicate editor entry");
+                    has_editor = true;
+                } else {
+                    assert!(
+                        project_entries.insert(project_entry),
+                        "duplicate project entry {:?} {:?}",
+                        project_entry,
+                        details
+                    );
+                }
+
+                let indent = "    ".repeat(details.depth);
+                let icon = if details.kind.is_dir() {
+                    if details.is_expanded {
+                        "v "
+                    } else {
+                        "> "
+                    }
+                } else {
+                    "  "
+                };
+                let name = if details.is_editing {
+                    format!("[EDITOR: '{}']", details.filename)
+                } else if details.is_processing {
+                    format!("[PROCESSING: '{}']", details.filename)
+                } else {
+                    details.filename.clone()
+                };
+                let selected = if details.is_selected {
+                    "  <== selected"
+                } else {
+                    ""
+                };
+                result.push(format!("{indent}{icon}{name}{selected}"));
+            });
+        });
+
+        result
+    }
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            init_settings(cx);
+            theme::init(cx);
+            language::init(cx);
+            editor::init_settings(cx);
+            crate::init((), cx);
+            workspace::init_settings(cx);
+            client::init_settings(cx);
+            Project::init_settings(cx);
+        });
+    }
+
+    fn init_test_with_editor(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let app_state = AppState::test(cx);
+            theme::init(cx);
+            init_settings(cx);
+            language::init(cx);
+            editor::init(cx);
+            pane::init(cx);
+            crate::init((), cx);
+            workspace::init(app_state.clone(), cx);
+            Project::init_settings(cx);
+        });
+    }
+
+    fn ensure_single_file_is_opened(
+        window: &WindowHandle<Workspace>,
+        expected_path: &str,
+        cx: &mut TestAppContext,
+    ) {
+        window
+            .update(cx, |workspace, cx| {
+                let worktrees = workspace.worktrees(cx).collect::<Vec<_>>();
+                assert_eq!(worktrees.len(), 1);
+                let worktree_id = worktrees[0].read(cx).id();
+
+                let open_project_paths = workspace
+                    .panes()
+                    .iter()
+                    .filter_map(|pane| pane.read(cx).active_item()?.project_path(cx))
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    open_project_paths,
+                    vec![ProjectPath {
+                        worktree_id,
+                        path: Arc::from(Path::new(expected_path))
+                    }],
+                    "Should have opened file, selected in project panel"
+                );
+            })
+            .unwrap();
+    }
+
+    fn submit_deletion(panel: &View<ProjectPanel>, cx: &mut VisualTestContext) {
+        assert!(
+            !cx.has_pending_prompt(),
+            "Should have no prompts before the deletion"
+        );
+        panel.update(cx, |panel, cx| panel.delete(&Delete, cx));
+        assert!(
+            cx.has_pending_prompt(),
+            "Should have a prompt after the deletion"
+        );
+        cx.simulate_prompt_answer(0);
+        assert!(
+            !cx.has_pending_prompt(),
+            "Should have no prompts after prompt was replied to"
+        );
+        cx.executor().run_until_parked();
+    }
+
+    fn ensure_no_open_items_and_panes(
+        workspace: &WindowHandle<Workspace>,
+        cx: &mut VisualTestContext,
+    ) {
+        assert!(
+            !cx.has_pending_prompt(),
+            "Should have no prompts after deletion operation closes the file"
+        );
+        workspace
+            .read_with(cx, |workspace, cx| {
+                let open_project_paths = workspace
+                    .panes()
+                    .iter()
+                    .filter_map(|pane| pane.read(cx).active_item()?.project_path(cx))
+                    .collect::<Vec<_>>();
+                assert!(
+                    open_project_paths.is_empty(),
+                    "Deleted file's buffer should be closed, but got open files: {open_project_paths:?}"
+                );
+            })
+            .unwrap();
+    }
+}

@@ -152,6 +152,21 @@ impl TestAppContext {
         (view, VisualTestContext::from_window(*window.deref(), self))
     }
 
+    pub fn simulate_new_path_selection(
+        &self,
+        _select_path: impl FnOnce(&std::path::Path) -> Option<std::path::PathBuf>,
+    ) {
+        //
+    }
+
+    pub fn simulate_prompt_answer(&self, _button_ix: usize) {
+        //
+    }
+
+    pub fn has_pending_prompt(&self) -> bool {
+        false
+    }
+
     pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncAppContext) -> Fut) -> Task<R>
     where
         Fut: Future<Output = R> + 'static,

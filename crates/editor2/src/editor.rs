@@ -9168,6 +9168,10 @@ impl Editor {
         cx.focus(&self.focus_handle)
     }
 
+    pub fn is_focused(&self, cx: &WindowContext) -> bool {
+        self.focus_handle.is_focused(cx)
+    }
+
     fn handle_focus_in(&mut self, cx: &mut ViewContext<Self>) {
         if self.focus_handle.is_focused(cx) {
             // todo!()
