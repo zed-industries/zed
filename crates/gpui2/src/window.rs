@@ -1365,6 +1365,14 @@ impl<'a> WindowContext<'a> {
         self.window.platform_window.activate();
     }
 
+    pub fn minimize_window(&self) {
+        self.window.platform_window.minimize();
+    }
+
+    pub fn toggle_full_screen(&self) {
+        self.window.platform_window.toggle_full_screen();
+    }
+
     pub fn prompt(
         &self,
         level: PromptLevel,
@@ -2359,6 +2367,12 @@ impl<V: 'static + Render> WindowHandle<V> {
         C: Context,
     {
         cx.read_window(self, |root_view, _cx| root_view.clone())
+    }
+
+    pub fn is_active(&self, cx: &WindowContext) -> Option<bool> {
+        cx.windows
+            .get(self.id)
+            .and_then(|window| window.as_ref().map(|window| window.active))
     }
 }
 

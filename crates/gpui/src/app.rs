@@ -2112,6 +2112,10 @@ impl AppContext {
         AsyncAppContext(self.weak_self.as_ref().unwrap().upgrade().unwrap())
     }
 
+    pub fn open_url(&self, url: &str) {
+        self.platform.open_url(url)
+    }
+
     pub fn write_to_clipboard(&self, item: ClipboardItem) {
         self.platform.write_to_clipboard(item);
     }

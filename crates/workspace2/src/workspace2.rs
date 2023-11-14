@@ -45,7 +45,7 @@ use gpui::{
 };
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, ProjectItem};
 use itertools::Itertools;
-use language2::LanguageRegistry;
+use language2::{LanguageRegistry, Rope};
 use lazy_static::lazy_static;
 pub use modal_layer::*;
 use node_runtime::NodeRuntime;
@@ -72,7 +72,7 @@ pub use toolbar::{ToolbarItemLocation, ToolbarItemView};
 use ui::{h_stack, Button, ButtonVariant, Label, LabelColor};
 use util::ResultExt;
 use uuid::Uuid;
-use workspace_settings::{AutosaveSetting, WorkspaceSettings};
+pub use workspace_settings::{AutosaveSetting, WorkspaceSettings};
 
 lazy_static! {
     static ref ZED_WINDOW_SIZE: Option<Size<GlobalPixels>> = env::var("ZED_WINDOW_SIZE")
@@ -1052,29 +1052,29 @@ impl Workspace {
     //     self.titlebar_item.clone()
     // }
 
-    //     /// Call the given callback with a workspace whose project is local.
-    //     ///
-    //     /// If the given workspace has a local project, then it will be passed
-    //     /// to the callback. Otherwise, a new empty window will be created.
-    //     pub fn with_local_workspace<T, F>(
-    //         &mut self,
-    //         cx: &mut ViewContext<Self>,
-    //         callback: F,
-    //     ) -> Task<Result<T>>
-    //     where
-    //         T: 'static,
-    //         F: 'static + FnOnce(&mut Workspace, &mut ViewContext<Workspace>) -> T,
-    //     {
-    //         if self.project.read(cx).is_local() {
-    //             Task::Ready(Some(Ok(callback(self, cx))))
-    //         } else {
-    //             let task = Self::new_local(Vec::new(), self.app_state.clone(), None, cx);
-    //             cx.spawn(|_vh, mut cx| async move {
-    //                 let (workspace, _) = task.await;
-    //                 workspace.update(&mut cx, callback)
-    //             })
-    //         }
-    //     }
+    /// Call the given callback with a workspace whose project is local.
+    ///
+    /// If the given workspace has a local project, then it will be passed
+    /// to the callback. Otherwise, a new empty window will be created.
+    pub fn with_local_workspace<T, F>(
+        &mut self,
+        cx: &mut ViewContext<Self>,
+        callback: F,
+    ) -> Task<Result<T>>
+    where
+        T: 'static,
+        F: 'static + FnOnce(&mut Workspace, &mut ViewContext<Workspace>) -> T,
+    {
+        if self.project.read(cx).is_local() {
+            Task::Ready(Some(Ok(callback(self, cx))))
+        } else {
+            let task = Self::new_local(Vec::new(), self.app_state.clone(), None, cx);
+            cx.spawn(|_vh, mut cx| async move {
+                let (workspace, _) = task.await?;
+                workspace.update(&mut cx, callback)
+            })
+        }
+    }
 
     pub fn worktrees<'a>(&self, cx: &'a AppContext) -> impl 'a + Iterator<Item = Model<Worktree>> {
         self.project.read(cx).worktrees()
@@ -3435,13 +3435,14 @@ impl Workspace {
     pub fn register_action<A: Action>(
         &mut self,
         callback: impl Fn(&mut Self, &A, &mut ViewContext<Self>) + 'static,
-    ) {
+    ) -> &mut Self {
         let callback = Arc::new(callback);
 
         self.workspace_actions.push(Box::new(move |div| {
             let callback = callback.clone();
             div.on_action(move |workspace, event, cx| (callback.clone())(workspace, event, cx))
         }));
+        self
     }
 
     fn add_workspace_actions_listeners(
@@ -4383,32 +4384,32 @@ pub fn open_new(
     })
 }
 
-// pub fn create_and_open_local_file(
-//     path: &'static Path,
-//     cx: &mut ViewContext<Workspace>,
-//     default_content: impl 'static + Send + FnOnce() -> Rope,
-// ) -> Task<Result<Box<dyn ItemHandle>>> {
-//     cx.spawn(|workspace, mut cx| async move {
-//         let fs = workspace.read_with(&cx, |workspace, _| workspace.app_state().fs.clone())?;
-//         if !fs.is_file(path).await {
-//             fs.create_file(path, Default::default()).await?;
-//             fs.save(path, &default_content(), Default::default())
-//                 .await?;
-//         }
+pub fn create_and_open_local_file(
+    path: &'static Path,
+    cx: &mut ViewContext<Workspace>,
+    default_content: impl 'static + Send + FnOnce() -> Rope,
+) -> Task<Result<Box<dyn ItemHandle>>> {
+    cx.spawn(|workspace, mut cx| async move {
+        let fs = workspace.update(&mut cx, |workspace, _| workspace.app_state().fs.clone())?;
+        if !fs.is_file(path).await {
+            fs.create_file(path, Default::default()).await?;
+            fs.save(path, &default_content(), Default::default())
+                .await?;
+        }
 
-//         let mut items = workspace
-//             .update(&mut cx, |workspace, cx| {
-//                 workspace.with_local_workspace(cx, |workspace, cx| {
-//                     workspace.open_paths(vec![path.to_path_buf()], false, cx)
-//                 })
-//             })?
-//             .await?
-//             .await;
+        let mut items = workspace
+            .update(&mut cx, |workspace, cx| {
+                workspace.with_local_workspace(cx, |workspace, cx| {
+                    workspace.open_paths(vec![path.to_path_buf()], false, cx)
+                })
+            })?
+            .await?
+            .await;
 
-//         let item = items.pop().flatten();
-//         item.ok_or_else(|| anyhow!("path {path:?} is not a file"))?
-//     })
-// }
+        let item = items.pop().flatten();
+        item.ok_or_else(|| anyhow!("path {path:?} is not a file"))?
+    })
+}
 
 // pub fn join_remote_project(
 //     project_id: u64,
