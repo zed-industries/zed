@@ -1448,6 +1448,7 @@ impl EditorElement {
 
         let snapshot = editor.snapshot(cx);
         let style = self.style.clone();
+
         dbg!(&style.text.font());
         let font_id = cx.text_system().font_id(&style.text.font()).unwrap();
         let font_size = style.text.font_size.to_pixels(cx.rem_size());

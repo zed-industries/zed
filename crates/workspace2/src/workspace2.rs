@@ -67,7 +67,7 @@ use std::{
     sync::{atomic::AtomicUsize, Arc},
     time::Duration,
 };
-use theme2::ActiveTheme;
+use theme2::{ActiveTheme, ThemeSettings};
 pub use toolbar::{ToolbarItemLocation, ToolbarItemView};
 use ui::{h_stack, Button, ButtonVariant, KeyBinding, Label, TextColor, TextTooltip};
 use util::ResultExt;
@@ -3714,6 +3714,7 @@ impl Render for Workspace {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         let mut context = KeyContext::default();
         context.add("Workspace");
+        let ui_font = ThemeSettings::get_global(cx).ui_font.family.clone();
 
         self.add_workspace_actions_listeners(div())
             .track_focus(&self.focus_handle)
@@ -3722,7 +3723,7 @@ impl Render for Workspace {
             .size_full()
             .flex()
             .flex_col()
-            .font("Zed Sans")
+            .font(ui_font)
             .gap_0()
             .justify_start()
             .items_start()

@@ -1,8 +1,8 @@
 use crate::{
     div, Action, AnyView, AnyWindowHandle, AppCell, AppContext, AsyncAppContext,
     BackgroundExecutor, Context, Div, EventEmitter, ForegroundExecutor, InputEvent, KeyDownEvent,
-    Keystroke, Model, ModelContext, Render, Result, Task, TestDispatcher, TestPlatform, TextStyle,
-    View, ViewContext, VisualContext, WindowContext, WindowHandle, WindowOptions,
+    Keystroke, Model, ModelContext, Render, Result, Task, TestDispatcher, TestPlatform, View,
+    ViewContext, VisualContext, WindowContext, WindowHandle, WindowOptions,
 };
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt};
@@ -83,16 +83,9 @@ impl TestAppContext {
         ));
         let asset_source = Arc::new(());
         let http_client = util::http::FakeHttpClient::with_404_response();
-        let cx = AppContext::new(platform, asset_source, http_client);
-        let lock = cx.borrow_mut();
-        lock.push_text_style(crate::TextStyleRefinement {
-            font_family: "Helvetica".into(),
-            ..Default::default()
-        });
-        drop(lock);
 
         Self {
-            app: cx,
+            app: AppContext::new(platform, asset_source, http_client),
             background_executor,
             foreground_executor,
             dispatcher: dispatcher.clone(),
