@@ -189,7 +189,7 @@ fn main() {
         // file_finder::init(cx);
         // outline::init(cx);
         // project_symbols::init(cx);
-        // project_panel::init(Assets, cx);
+        project_panel::init(Assets, cx);
         // channel::init(&client, user_store.clone(), cx);
         // diagnostics::init(cx);
         // search::init(cx);

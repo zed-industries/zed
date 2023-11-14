@@ -293,7 +293,16 @@ pub fn blue() -> Hsla {
 
 pub fn green() -> Hsla {
     Hsla {
-        h: 0.3,
+        h: 0.33,
+        s: 1.,
+        l: 0.5,
+        a: 1.,
+    }
+}
+
+pub fn yellow() -> Hsla {
+    Hsla {
+        h: 0.16,
         s: 1.,
         l: 0.5,
         a: 1.,
