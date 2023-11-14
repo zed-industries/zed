@@ -9176,6 +9176,39 @@ dependencies = [
 ]
 
 [[package]]
+name = "terminal_view2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "client2",
+ "db2",
+ "dirs 4.0.0",
+ "editor2",
+ "futures 0.3.28",
+ "gpui2",
+ "itertools 0.10.5",
+ "language2",
+ "lazy_static",
+ "libc",
+ "mio-extras",
+ "ordered-float 2.10.0",
+ "procinfo",
+ "project2",
+ "rand 0.8.5",
+ "serde",
+ "serde_derive",
+ "settings2",
+ "shellexpand",
+ "smallvec",
+ "smol",
+ "terminal2",
+ "theme2",
+ "thiserror",
+ "util",
+ "workspace2",
+]
+
+[[package]]
 name = "text"
 version = "0.1.0"
 dependencies = [
