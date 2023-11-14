@@ -1875,7 +1875,6 @@ impl View for ProjectSearchBar {
                                 .with_child(filter_button)
                                 .with_children(case_sensitive)
                                 .with_children(whole_word)
-                                .with_children(include_ignored)
                                 .flex(1., false)
                                 .constrained()
                                 .contained(),
@@ -1892,7 +1891,15 @@ impl View for ProjectSearchBar {
                 .with_children(search.filters_enabled.then(|| {
                     Flex::row()
                         .with_child(
-                            ChildView::new(&search.included_files_editor, cx)
+                            Flex::row()
+                                .with_child(
+                                    ChildView::new(&search.included_files_editor, cx)
+                                        .contained()
+                                        .constrained()
+                                        .with_height(theme.search.search_bar_row_height)
+                                        .flex(1., true),
+                                )
+                                .with_children(include_ignored)
                                 .contained()
                                 .with_style(include_container_style)
                                 .constrained()
