@@ -69,7 +69,7 @@ use std::{
 };
 use theme2::ActiveTheme;
 pub use toolbar::{ToolbarItemLocation, ToolbarItemView};
-use ui::{h_stack, Button, ButtonVariant, Label, LabelColor};
+use ui::{h_stack, Button, ButtonVariant, KeyBinding, Label, TextColor, TextTooltip};
 use util::ResultExt;
 use uuid::Uuid;
 pub use workspace_settings::{AutosaveSetting, WorkspaceSettings};
@@ -2472,17 +2472,50 @@ impl Workspace {
                 h_stack()
                     // TODO - Add player menu
                     .child(
-                        Button::new("player")
-                            .variant(ButtonVariant::Ghost)
-                            .color(Some(LabelColor::Player(0))),
+                        div()
+                            .id("project_owner_indicator")
+                            .child(
+                                Button::new("player")
+                                    .variant(ButtonVariant::Ghost)
+                                    .color(Some(TextColor::Player(0))),
+                            )
+                            .tooltip(move |_, cx| {
+                                cx.build_view(|cx| TextTooltip::new("Toggle following"))
+                            }),
                     )
                     // TODO - Add project menu
-                    .child(Button::new("project_name").variant(ButtonVariant::Ghost))
+                    .child(
+                        div()
+                            .id("titlebar_project_menu_button")
+                            .child(Button::new("project_name").variant(ButtonVariant::Ghost))
+                            .tooltip(move |_, cx| {
+                                cx.build_view(|cx| TextTooltip::new("Recent Projects"))
+                            }),
+                    )
                     // TODO - Add git menu
                     .child(
-                        Button::new("branch_name")
-                            .variant(ButtonVariant::Ghost)
-                            .color(Some(LabelColor::Muted)),
+                        div()
+                            .id("titlebar_git_menu_button")
+                            .child(
+                                Button::new("branch_name")
+                                    .variant(ButtonVariant::Ghost)
+                                    .color(Some(TextColor::Muted)),
+                            )
+                            .tooltip(move |_, cx| {
+                                // todo!() Replace with real action.
+                                #[gpui::action]
+                                struct NoAction {}
+
+                                cx.build_view(|cx| {
+                                    TextTooltip::new("Recent Branches")
+                                        .key_binding(KeyBinding::new(gpui::KeyBinding::new(
+                                            "cmd-b",
+                                            NoAction {},
+                                            None,
+                                        )))
+                                        .meta("Only local branches shown")
+                                })
+                            }),
                     ),
             ) // self.titlebar_item
             .child(h_stack().child(Label::new("Right side titlebar item")))

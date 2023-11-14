@@ -1,4 +1,4 @@
-use crate::{h_stack, prelude::*, ClickHandler, Icon, IconColor, IconElement, TextTooltip};
+use crate::{h_stack, prelude::*, ClickHandler, Icon, IconElement, TextColor, TextTooltip};
 use gpui::{MouseButton, VisualContext};
 use std::sync::Arc;
 
@@ -16,7 +16,7 @@ impl<V: 'static> Default for IconButtonHandlers<V> {
 pub struct IconButton<V: 'static> {
     id: ElementId,
     icon: Icon,
-    color: IconColor,
+    color: TextColor,
     variant: ButtonVariant,
     state: InteractionState,
     tooltip: Option<SharedString>,
@@ -28,7 +28,7 @@ impl<V: 'static> IconButton<V> {
         Self {
             id: id.into(),
             icon,
-            color: IconColor::default(),
+            color: TextColor::default(),
             variant: ButtonVariant::default(),
             state: InteractionState::default(),
             tooltip: None,
@@ -41,7 +41,7 @@ impl<V: 'static> IconButton<V> {
         self
     }
 
-    pub fn color(mut self, color: IconColor) -> Self {
+    pub fn color(mut self, color: TextColor) -> Self {
         self.color = color;
         self
     }
@@ -71,7 +71,7 @@ impl<V: 'static> IconButton<V> {
 
     fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         let icon_color = match (self.state, self.color) {
-            (InteractionState::Disabled, _) => IconColor::Disabled,
+            (InteractionState::Disabled, _) => TextColor::Disabled,
             _ => self.color,
         };
 

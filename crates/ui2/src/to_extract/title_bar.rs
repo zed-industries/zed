@@ -6,8 +6,8 @@ use gpui::{Div, Render, View, VisualContext};
 use crate::prelude::*;
 use crate::settings::user_settings;
 use crate::{
-    Avatar, Button, Icon, IconButton, IconColor, MicStatus, PlayerStack, PlayerWithCallStatus,
-    ScreenShareStatus, ToolDivider, TrafficLights,
+    Avatar, Button, Icon, IconButton, MicStatus, PlayerStack, PlayerWithCallStatus,
+    ScreenShareStatus, TextColor, ToolDivider, TrafficLights,
 };
 
 #[derive(Clone)]
@@ -152,19 +152,19 @@ impl Render for TitleBar {
                             .gap_1()
                             .child(
                                 IconButton::<TitleBar>::new("toggle_mic_status", Icon::Mic)
-                                    .when(self.is_mic_muted(), |this| this.color(IconColor::Error))
+                                    .when(self.is_mic_muted(), |this| this.color(TextColor::Error))
                                     .on_click(|title_bar, cx| title_bar.toggle_mic_status(cx)),
                             )
                             .child(
                                 IconButton::<TitleBar>::new("toggle_deafened", Icon::AudioOn)
-                                    .when(self.is_deafened, |this| this.color(IconColor::Error))
+                                    .when(self.is_deafened, |this| this.color(TextColor::Error))
                                     .on_click(|title_bar, cx| title_bar.toggle_deafened(cx)),
                             )
                             .child(
                                 IconButton::<TitleBar>::new("toggle_screen_share", Icon::Screen)
                                     .when(
                                         self.screen_share_status == ScreenShareStatus::Shared,
-                                        |this| this.color(IconColor::Accent),
+                                        |this| this.color(TextColor::Accent),
                                     )
                                     .on_click(|title_bar, cx| {
                                         title_bar.toggle_screen_share_status(cx)

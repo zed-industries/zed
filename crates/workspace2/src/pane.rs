@@ -27,7 +27,7 @@ use std::{
     },
 };
 use ui::v_stack;
-use ui::{prelude::*, Icon, IconButton, IconColor, IconElement, TextTooltip};
+use ui::{prelude::*, Icon, IconButton, IconElement, TextColor, TextTooltip};
 use util::truncate_and_remove_front;
 
 #[derive(PartialEq, Clone, Copy, Deserialize, Debug)]
@@ -1432,13 +1432,13 @@ impl Pane {
                         Some(
                             IconElement::new(Icon::ExclamationTriangle)
                                 .size(ui::IconSize::Small)
-                                .color(IconColor::Warning),
+                                .color(TextColor::Warning),
                         )
                     } else if item.is_dirty(cx) {
                         Some(
                             IconElement::new(Icon::ExclamationTriangle)
                                 .size(ui::IconSize::Small)
-                                .color(IconColor::Info),
+                                .color(TextColor::Info),
                         )
                     } else {
                         None

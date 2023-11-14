@@ -1,11 +1,11 @@
 use gpui::div;
 
+use crate::prelude::*;
 use crate::settings::user_settings;
 use crate::{
-    disclosure_control, h_stack, v_stack, Avatar, Icon, IconColor, IconElement, IconSize, Label,
-    LabelColor, Toggle,
+    disclosure_control, h_stack, v_stack, Avatar, GraphicSlot, Icon, IconElement, IconSize, Label,
+    TextColor, Toggle,
 };
-use crate::{prelude::*, GraphicSlot};
 
 #[derive(Clone, Copy, Default, Debug, PartialEq)]
 pub enum ListItemVariant {
@@ -68,7 +68,7 @@ impl ListHeader {
                     .items_center()
                     .children(icons.into_iter().map(|i| {
                         IconElement::new(i)
-                            .color(IconColor::Muted)
+                            .color(TextColor::Muted)
                             .size(IconSize::Small)
                     })),
             ),
@@ -106,10 +106,10 @@ impl ListHeader {
                                     .items_center()
                                     .children(self.left_icon.map(|i| {
                                         IconElement::new(i)
-                                            .color(IconColor::Muted)
+                                            .color(TextColor::Muted)
                                             .size(IconSize::Small)
                                     }))
-                                    .child(Label::new(self.label.clone()).color(LabelColor::Muted)),
+                                    .child(Label::new(self.label.clone()).color(TextColor::Muted)),
                             )
                             .child(disclosure_control),
                     )
@@ -157,10 +157,10 @@ impl ListSubHeader {
                         .items_center()
                         .children(self.left_icon.map(|i| {
                             IconElement::new(i)
-                                .color(IconColor::Muted)
+                                .color(TextColor::Muted)
                                 .size(IconSize::Small)
                         }))
-                        .child(Label::new(self.label.clone()).color(LabelColor::Muted)),
+                        .child(Label::new(self.label.clone()).color(TextColor::Muted)),
                 ),
         )
     }
@@ -291,7 +291,7 @@ impl ListEntry {
                 h_stack().child(
                     IconElement::new(i)
                         .size(IconSize::Small)
-                        .color(IconColor::Muted),
+                        .color(TextColor::Muted),
                 ),
             ),
             Some(GraphicSlot::Avatar(src)) => Some(h_stack().child(Avatar::new(src))),
@@ -394,7 +394,7 @@ impl List {
             (false, _) => div().children(self.items),
             (true, Toggle::Toggled(false)) => div(),
             (true, _) => {
-                div().child(Label::new(self.empty_message.clone()).color(LabelColor::Muted))
+                div().child(Label::new(self.empty_message.clone()).color(TextColor::Muted))
             }
         };
 

@@ -1,5 +1,5 @@
 use crate::prelude::*;
-use crate::{Icon, IconColor, IconElement, Label, LabelColor};
+use crate::{Icon, IconElement, Label, TextColor};
 use gpui::{red, Div, ElementId, Render, View, VisualContext};
 
 #[derive(Component, Clone)]
@@ -92,20 +92,18 @@ impl Tab {
 
         let label = match (self.git_status, is_deleted) {
             (_, true) | (GitStatus::Deleted, false) => Label::new(self.title.clone())
-                .color(LabelColor::Hidden)
+                .color(TextColor::Hidden)
                 .set_strikethrough(true),
             (GitStatus::None, false) => Label::new(self.title.clone()),
-            (GitStatus::Created, false) => {
-                Label::new(self.title.clone()).color(LabelColor::Created)
-            }
+            (GitStatus::Created, false) => Label::new(self.title.clone()).color(TextColor::Created),
             (GitStatus::Modified, false) => {
-                Label::new(self.title.clone()).color(LabelColor::Modified)
+                Label::new(self.title.clone()).color(TextColor::Modified)
             }
-            (GitStatus::Renamed, false) => Label::new(self.title.clone()).color(LabelColor::Accent),
+            (GitStatus::Renamed, false) => Label::new(self.title.clone()).color(TextColor::Accent),
             (GitStatus::Conflict, false) => Label::new(self.title.clone()),
         };
 
-        let close_icon = || IconElement::new(Icon::Close).color(IconColor::Muted);
+        let close_icon = || IconElement::new(Icon::Close).color(TextColor::Muted);
 
         let (tab_bg, tab_hover_bg, tab_active_bg) = match self.current {
             false => (
@@ -148,7 +146,7 @@ impl Tab {
                     .children(has_fs_conflict.then(|| {
                         IconElement::new(Icon::ExclamationTriangle)
                             .size(crate::IconSize::Small)
-                            .color(IconColor::Warning)
+                            .color(TextColor::Warning)
                     }))
                     .children(self.icon.map(IconElement::new))
                     .children(if self.close_side == IconSide::Left {
