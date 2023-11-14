@@ -46,9 +46,7 @@ impl Platform for TestPlatform {
         unimplemented!()
     }
 
-    fn quit(&self) {
-        unimplemented!()
-    }
+    fn quit(&self) {}
 
     fn restart(&self) {
         unimplemented!()
@@ -141,9 +139,7 @@ impl Platform for TestPlatform {
         unimplemented!()
     }
 
-    fn on_quit(&self, _callback: Box<dyn FnMut()>) {
-        unimplemented!()
-    }
+    fn on_quit(&self, _callback: Box<dyn FnMut()>) {}
 
     fn on_reopen(&self, _callback: Box<dyn FnMut()>) {
         unimplemented!()

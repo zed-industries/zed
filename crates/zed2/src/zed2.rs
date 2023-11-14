@@ -502,7 +502,6 @@ fn quit(_: &mut Workspace, _: &Quit, cx: &mut gpui::ViewContext<Workspace>) {
         cx.update(|_, cx| {
             cx.quit();
         })?;
-
         anyhow::Ok(())
     })
     .detach_and_log_err(cx);
