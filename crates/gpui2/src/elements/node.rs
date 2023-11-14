@@ -746,13 +746,11 @@ where
         f: impl FnOnce(Style, &mut ViewContext<V>) -> LayoutId,
     ) -> LayoutId {
         let style = self.compute_style(None, element_state, cx);
-        cx.with_element_id(self.element_id.clone(), |cx| {
-            cx.with_key_dispatch(
-                self.key_context.clone(),
-                self.tracked_focus_handle.clone(),
-                |_, cx| f(style, cx),
-            )
-        })
+        cx.with_key_dispatch(
+            self.key_context.clone(),
+            self.tracked_focus_handle.clone(),
+            |_, cx| f(style, cx),
+        )
     }
 
     pub fn paint(
@@ -1037,40 +1035,38 @@ where
             .as_ref()
             .map(|scroll_offset| *scroll_offset.lock());
 
-        cx.with_element_id(self.element_id.clone(), |cx| {
-            cx.with_key_dispatch(
-                self.key_context.clone(),
-                element_state.focus_handle.clone(),
-                |_, cx| {
-                    for listener in self.key_down_listeners.drain(..) {
-                        cx.on_key_event(move |state, event: &KeyDownEvent, phase, cx| {
-                            listener(state, event, phase, cx);
-                        })
-                    }
+        cx.with_key_dispatch(
+            self.key_context.clone(),
+            element_state.focus_handle.clone(),
+            |_, cx| {
+                for listener in self.key_down_listeners.drain(..) {
+                    cx.on_key_event(move |state, event: &KeyDownEvent, phase, cx| {
+                        listener(state, event, phase, cx);
+                    })
+                }
 
-                    for listener in self.key_up_listeners.drain(..) {
-                        cx.on_key_event(move |state, event: &KeyUpEvent, phase, cx| {
-                            listener(state, event, phase, cx);
-                        })
-                    }
+                for listener in self.key_up_listeners.drain(..) {
+                    cx.on_key_event(move |state, event: &KeyUpEvent, phase, cx| {
+                        listener(state, event, phase, cx);
+                    })
+                }
 
-                    for (action_type, listener) in self.action_listeners.drain(..) {
-                        cx.on_action(action_type, listener)
-                    }
+                for (action_type, listener) in self.action_listeners.drain(..) {
+                    cx.on_action(action_type, listener)
+                }
 
-                    if let Some(focus_handle) = element_state.focus_handle.as_ref() {
-                        for listener in self.focus_listeners.drain(..) {
-                            let focus_handle = focus_handle.clone();
-                            cx.on_focus_changed(move |view, event, cx| {
-                                listener(view, &focus_handle, event, cx)
-                            });
-                        }
+                if let Some(focus_handle) = element_state.focus_handle.as_ref() {
+                    for listener in self.focus_listeners.drain(..) {
+                        let focus_handle = focus_handle.clone();
+                        cx.on_focus_changed(move |view, event, cx| {
+                            listener(view, &focus_handle, event, cx)
+                        });
                     }
+                }
 
-                    f(style, scroll_offset.unwrap_or_default(), cx)
-                },
-            );
-        });
+                f(style, scroll_offset.unwrap_or_default(), cx)
+            },
+        );
 
         if let Some(group) = self.group.as_ref() {
             GroupBounds::pop(group, cx);
