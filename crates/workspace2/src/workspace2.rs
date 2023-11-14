@@ -69,7 +69,8 @@ use std::{
 };
 use theme2::ActiveTheme;
 pub use toolbar::{ToolbarItemLocation, ToolbarItemView};
-use ui::{h_stack, Button, ButtonVariant, KeyBinding, Label, TextColor, TextTooltip};
+use ui::TextColor;
+use ui::{h_stack, Button, ButtonVariant, KeyBinding, Label, TextTooltip};
 use util::ResultExt;
 use uuid::Uuid;
 pub use workspace_settings::{AutosaveSetting, WorkspaceSettings};
@@ -3744,7 +3745,15 @@ impl Render for Workspace {
                             .flex_row()
                             .flex_1()
                             .h_full()
-                            .child(div().flex().flex_1().child(self.left_dock.clone()))
+                            // Left Dock
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_none()
+                                    .overflow_hidden()
+                                    .child(self.left_dock.clone()),
+                            )
+                            // Panes
                             .child(
                                 div()
                                     .flex()
@@ -3761,7 +3770,14 @@ impl Render for Workspace {
                                     ))
                                     .child(div().flex().flex_1().child(self.bottom_dock.clone())),
                             )
-                            .child(div().flex().flex_1().child(self.right_dock.clone())),
+                            // Right Dock
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_none()
+                                    .overflow_hidden()
+                                    .child(self.right_dock.clone()),
+                            ),
                     ),
             )
             .child(self.status_bar.clone())
