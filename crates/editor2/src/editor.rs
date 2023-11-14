@@ -9168,6 +9168,10 @@ impl Editor {
         cx.focus(&self.focus_handle)
     }
 
+    pub fn is_focused(&self, cx: &WindowContext) -> bool {
+        self.focus_handle.is_focused(cx)
+    }
+
     fn handle_focus_in(&mut self, cx: &mut ViewContext<Self>) {
         if self.focus_handle.is_focused(cx) {
             // todo!()
@@ -9379,8 +9383,8 @@ impl Render for Editor {
             EditorMode::SingleLine => {
                 TextStyle {
                     color: cx.theme().colors().text,
-                    font_family: "Zed Sans".into(), // todo!()
-                    font_features: FontFeatures::default(),
+                    font_family: settings.ui_font.family.clone(), // todo!()
+                    font_features: settings.ui_font.features,
                     font_size: rems(0.875).into(),
                     font_weight: FontWeight::NORMAL,
                     font_style: FontStyle::Normal,

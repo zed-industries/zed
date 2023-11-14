@@ -26,7 +26,7 @@ impl EntityId {
 
 impl Display for EntityId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self)
+        write!(f, "{}", self.as_u64())
     }
 }
 

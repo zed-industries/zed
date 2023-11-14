@@ -234,10 +234,10 @@ impl AppContext {
             app_version: platform.app_version().ok(),
         };
 
-        Rc::new_cyclic(|this| AppCell {
+        let app = Rc::new_cyclic(|this| AppCell {
             app: RefCell::new(AppContext {
                 this: this.clone(),
-                platform,
+                platform: platform.clone(),
                 app_metadata,
                 text_system,
                 flushing_effects: false,
@@ -269,12 +269,21 @@ impl AppContext {
                 layout_id_buffer: Default::default(),
                 propagate_event: true,
             }),
-        })
+        });
+
+        platform.on_quit(Box::new({
+            let cx = app.clone();
+            move || {
+                cx.borrow_mut().shutdown();
+            }
+        }));
+
+        app
     }
 
     /// Quit the application gracefully. Handlers registered with `ModelContext::on_app_quit`
     /// will be given 100ms to complete before exiting.
-    pub fn quit(&mut self) {
+    pub fn shutdown(&mut self) {
         let mut futures = Vec::new();
 
         for observer in self.quit_observers.remove(&()) {
@@ -292,8 +301,10 @@ impl AppContext {
         {
             log::error!("timed out waiting on app_will_quit");
         }
+    }
 
-        self.globals_by_type.clear();
+    pub fn quit(&mut self) {
+        self.platform.quit();
     }
 
     pub fn app_metadata(&self) -> AppMetadata {

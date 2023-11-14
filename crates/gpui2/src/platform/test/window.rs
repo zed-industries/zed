@@ -1,15 +1,13 @@
-use std::{
-    rc::Rc,
-    sync::{self, Arc},
-};
-
-use collections::HashMap;
-use parking_lot::Mutex;
-
 use crate::{
     px, AtlasKey, AtlasTextureId, AtlasTile, Pixels, PlatformAtlas, PlatformDisplay,
-    PlatformInputHandler, PlatformWindow, Point, Scene, Size, TileId, WindowAppearance,
-    WindowBounds, WindowOptions,
+    PlatformInputHandler, PlatformWindow, Point, Scene, Size, TestPlatform, TileId,
+    WindowAppearance, WindowBounds, WindowOptions,
+};
+use collections::HashMap;
+use parking_lot::Mutex;
+use std::{
+    rc::{Rc, Weak},
+    sync::{self, Arc},
 };
 
 #[derive(Default)]
@@ -25,16 +23,22 @@ pub struct TestWindow {
     current_scene: Mutex<Option<Scene>>,
     display: Rc<dyn PlatformDisplay>,
     input_handler: Option<Box<dyn PlatformInputHandler>>,
-
     handlers: Mutex<Handlers>,
+    platform: Weak<TestPlatform>,
     sprite_atlas: Arc<dyn PlatformAtlas>,
 }
+
 impl TestWindow {
-    pub fn new(options: WindowOptions, display: Rc<dyn PlatformDisplay>) -> Self {
+    pub fn new(
+        options: WindowOptions,
+        platform: Weak<TestPlatform>,
+        display: Rc<dyn PlatformDisplay>,
+    ) -> Self {
         Self {
             bounds: options.bounds,
             current_scene: Default::default(),
             display,
+            platform,
             input_handler: None,
             sprite_atlas: Arc::new(TestAtlas::new()),
             handlers: Default::default(),
@@ -89,7 +93,7 @@ impl PlatformWindow for TestWindow {
         _msg: &str,
         _answers: &[&str],
     ) -> futures::channel::oneshot::Receiver<usize> {
-        todo!()
+        self.platform.upgrade().expect("platform dropped").prompt()
     }
 
     fn activate(&self) {

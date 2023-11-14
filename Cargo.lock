@@ -3062,6 +3062,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "file_finder2"
+version = "0.1.0"
+dependencies = [
+ "collections",
+ "ctor",
+ "editor2",
+ "env_logger 0.9.3",
+ "fuzzy2",
+ "gpui2",
+ "language2",
+ "menu2",
+ "picker2",
+ "postage",
+ "project2",
+ "serde",
+ "serde_json",
+ "settings2",
+ "text2",
+ "theme2",
+ "ui2",
+ "util",
+ "workspace2",
+]
+
+[[package]]
 name = "filetime"
 version = "0.2.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11424,6 +11449,7 @@ dependencies = [
  "editor2",
  "env_logger 0.9.3",
  "feature_flags2",
+ "file_finder2",
  "fs2",
  "fsevent",
  "futures 0.3.28",

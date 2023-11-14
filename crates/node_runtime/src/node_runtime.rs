@@ -2,7 +2,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use serde::Deserialize;
-use smol::{fs, io::BufReader, process::Command};
+use smol::{fs, io::BufReader, lock::Mutex, process::Command};
 use std::process::{Output, Stdio};
 use std::{
     env::consts,
@@ -45,14 +45,19 @@ pub trait NodeRuntime: Send + Sync {
 
 pub struct RealNodeRuntime {
     http: Arc<dyn HttpClient>,
+    installation_lock: Mutex<()>,
 }
 
 impl RealNodeRuntime {
     pub fn new(http: Arc<dyn HttpClient>) -> Arc<dyn NodeRuntime> {
-        Arc::new(RealNodeRuntime { http })
+        Arc::new(RealNodeRuntime {
+            http,
+            installation_lock: Mutex::new(()),
+        })
     }
 
     async fn install_if_needed(&self) -> Result<PathBuf> {
+        let _lock = self.installation_lock.lock().await;
         log::info!("Node runtime install_if_needed");
 
         let arch = match consts::ARCH {
@@ -73,6 +78,9 @@ impl RealNodeRuntime {
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
+            .args(["--cache".into(), node_dir.join("cache")])
+            .args(["--userconfig".into(), node_dir.join("blank_user_npmrc")])
+            .args(["--globalconfig".into(), node_dir.join("blank_global_npmrc")])
             .status()
             .await;
         let valid = matches!(result, Ok(status) if status.success());
@@ -95,6 +103,11 @@ impl RealNodeRuntime {
             let archive = Archive::new(decompressed_bytes);
             archive.unpack(&node_containing_dir).await?;
         }
+
+        // Note: Not in the `if !valid {}` so we can populate these for existing installations
+        _ = fs::create_dir(node_dir.join("cache")).await;
+        _ = fs::write(node_dir.join("blank_user_npmrc"), []).await;
+        _ = fs::write(node_dir.join("blank_global_npmrc"), []).await;
 
         anyhow::Ok(node_dir)
     }
@@ -137,7 +150,17 @@ impl NodeRuntime for RealNodeRuntime {
 
             let mut command = Command::new(node_binary);
             command.env("PATH", env_path);
-            command.arg(npm_file).arg(subcommand).args(args);
+            command.arg(npm_file).arg(subcommand);
+            command.args(["--cache".into(), installation_path.join("cache")]);
+            command.args([
+                "--userconfig".into(),
+                installation_path.join("blank_user_npmrc"),
+            ]);
+            command.args([
+                "--globalconfig".into(),
+                installation_path.join("blank_global_npmrc"),
+            ]);
+            command.args(args);
 
             if let Some(directory) = directory {
                 command.current_dir(directory);

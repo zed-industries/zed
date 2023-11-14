@@ -1,5 +1,6 @@
-use gpui::{Div, ParentComponent, Render, SharedString, Styled, ViewContext};
-use theme2::ActiveTheme;
+use gpui::{Div, Render};
+use settings2::Settings;
+use theme2::{ActiveTheme, ThemeSettings};
 
 use crate::prelude::*;
 use crate::{h_stack, v_stack, KeyBinding, Label, LabelSize, StyledExt, TextColor};
@@ -34,9 +35,10 @@ impl Render for TextTooltip {
     type Element = Div<Self>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+        let ui_font = ThemeSettings::get_global(cx).ui_font.family.clone();
         v_stack()
             .elevation_2(cx)
-            .font("Zed Sans")
+            .font(ui_font)
             .text_ui_sm()
             .text_color(cx.theme().colors().text)
             .py_1()

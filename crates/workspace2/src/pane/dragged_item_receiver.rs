@@ -2,7 +2,7 @@ use super::DraggedItem;
 use crate::{Pane, SplitDirection, Workspace};
 use gpui::{
     color::Color,
-    elements::{Canvas, MouseEventHandler, ParentElement, Stack},
+    elements::{Canvas, MouseEventHandler, ParentComponent, Stack},
     geometry::{rect::RectF, vector::Vector2F},
     platform::MouseButton,
     scene::MouseUp,

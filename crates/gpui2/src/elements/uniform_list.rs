@@ -14,7 +14,7 @@ use taffy::style::Overflow;
 pub fn uniform_list<I, V, C>(
     id: I,
     item_count: usize,
-    f: impl 'static + Fn(&mut V, Range<usize>, &mut ViewContext<V>) -> SmallVec<[C; 64]>,
+    f: impl 'static + Fn(&mut V, Range<usize>, &mut ViewContext<V>) -> Vec<C>,
 ) -> UniformList<V>
 where
     I: Into<ElementId>,

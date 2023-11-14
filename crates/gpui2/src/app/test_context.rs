@@ -1,8 +1,8 @@
 use crate::{
-    div, AnyView, AnyWindowHandle, AppCell, AppContext, AsyncAppContext, BackgroundExecutor,
-    Context, Div, EventEmitter, ForegroundExecutor, InputEvent, KeyDownEvent, Keystroke, Model,
-    ModelContext, Render, Result, Task, TestDispatcher, TestPlatform, View, ViewContext,
-    VisualContext, WindowContext, WindowHandle, WindowOptions,
+    div, Action, AnyView, AnyWindowHandle, AppCell, AppContext, AsyncAppContext,
+    BackgroundExecutor, Context, Div, EventEmitter, ForegroundExecutor, InputEvent, KeyDownEvent,
+    Keystroke, Model, ModelContext, Render, Result, Task, TestDispatcher, TestPlatform, View,
+    ViewContext, VisualContext, WindowContext, WindowHandle, WindowOptions,
 };
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt};
@@ -14,6 +14,7 @@ pub struct TestAppContext {
     pub background_executor: BackgroundExecutor,
     pub foreground_executor: ForegroundExecutor,
     pub dispatcher: TestDispatcher,
+    pub test_platform: Rc<TestPlatform>,
 }
 
 impl Context for TestAppContext {
@@ -77,17 +78,16 @@ impl TestAppContext {
         let arc_dispatcher = Arc::new(dispatcher.clone());
         let background_executor = BackgroundExecutor::new(arc_dispatcher.clone());
         let foreground_executor = ForegroundExecutor::new(arc_dispatcher);
-        let platform = Rc::new(TestPlatform::new(
-            background_executor.clone(),
-            foreground_executor.clone(),
-        ));
+        let platform = TestPlatform::new(background_executor.clone(), foreground_executor.clone());
         let asset_source = Arc::new(());
         let http_client = util::http::FakeHttpClient::with_404_response();
+
         Self {
-            app: AppContext::new(platform, asset_source, http_client),
+            app: AppContext::new(platform.clone(), asset_source, http_client),
             background_executor,
             foreground_executor,
             dispatcher: dispatcher.clone(),
+            test_platform: platform,
         }
     }
 
@@ -96,7 +96,7 @@ impl TestAppContext {
     }
 
     pub fn quit(&self) {
-        self.app.borrow_mut().quit();
+        self.app.borrow_mut().shutdown();
     }
 
     pub fn refresh(&mut self) -> Result<()> {
@@ -152,6 +152,21 @@ impl TestAppContext {
         (view, VisualTestContext::from_window(*window.deref(), self))
     }
 
+    pub fn simulate_new_path_selection(
+        &self,
+        select_path: impl FnOnce(&std::path::Path) -> Option<std::path::PathBuf>,
+    ) {
+        self.test_platform.simulate_new_path_selection(select_path);
+    }
+
+    pub fn simulate_prompt_answer(&self, button_ix: usize) {
+        self.test_platform.simulate_prompt_answer(button_ix);
+    }
+
+    pub fn has_pending_prompt(&self) -> bool {
+        self.test_platform.has_pending_prompt()
+    }
+
     pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncAppContext) -> Fut) -> Task<R>
     where
         Fut: Future<Output = R> + 'static,
@@ -197,6 +212,15 @@ impl TestAppContext {
             background_executor: self.background_executor.clone(),
             foreground_executor: self.foreground_executor.clone(),
         }
+    }
+
+    pub fn dispatch_action<A>(&mut self, window: AnyWindowHandle, action: A)
+    where
+        A: Action,
+    {
+        window
+            .update(self, |_, cx| cx.dispatch_action(action.boxed_clone()))
+            .unwrap()
     }
 
     pub fn dispatch_keystroke(
@@ -375,6 +399,13 @@ pub struct VisualTestContext<'a> {
 impl<'a> VisualTestContext<'a> {
     pub fn from_window(window: AnyWindowHandle, cx: &'a mut TestAppContext) -> Self {
         Self { cx, window }
+    }
+
+    pub fn dispatch_action<A>(&mut self, action: A)
+    where
+        A: Action,
+    {
+        self.cx.dispatch_action(self.window, action)
     }
 }
 

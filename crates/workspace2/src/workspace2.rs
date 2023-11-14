@@ -66,9 +66,10 @@ use std::{
     sync::{atomic::AtomicUsize, Arc},
     time::Duration,
 };
-use theme2::ActiveTheme;
+use theme2::{ActiveTheme, ThemeSettings};
 pub use toolbar::{ToolbarItemLocation, ToolbarItemView};
-use ui::{h_stack, Button, ButtonVariant, KeyBinding, Label, TextColor, TextTooltip};
+use ui::TextColor;
+use ui::{h_stack, Button, ButtonVariant, KeyBinding, Label, TextTooltip};
 use util::ResultExt;
 use uuid::Uuid;
 pub use workspace_settings::{AutosaveSetting, WorkspaceSettings};
@@ -1765,50 +1766,50 @@ impl Workspace {
         })
     }
 
-    //     pub fn open_abs_path(
-    //         &mut self,
-    //         abs_path: PathBuf,
-    //         visible: bool,
-    //         cx: &mut ViewContext<Self>,
-    //     ) -> Task<anyhow::Result<Box<dyn ItemHandle>>> {
-    //         cx.spawn(|workspace, mut cx| async move {
-    //             let open_paths_task_result = workspace
-    //                 .update(&mut cx, |workspace, cx| {
-    //                     workspace.open_paths(vec![abs_path.clone()], visible, cx)
-    //                 })
-    //                 .with_context(|| format!("open abs path {abs_path:?} task spawn"))?
-    //                 .await;
-    //             anyhow::ensure!(
-    //                 open_paths_task_result.len() == 1,
-    //                 "open abs path {abs_path:?} task returned incorrect number of results"
-    //             );
-    //             match open_paths_task_result
-    //                 .into_iter()
-    //                 .next()
-    //                 .expect("ensured single task result")
-    //             {
-    //                 Some(open_result) => {
-    //                     open_result.with_context(|| format!("open abs path {abs_path:?} task join"))
-    //                 }
-    //                 None => anyhow::bail!("open abs path {abs_path:?} task returned None"),
-    //             }
-    //         })
-    //     }
+    pub fn open_abs_path(
+        &mut self,
+        abs_path: PathBuf,
+        visible: bool,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<anyhow::Result<Box<dyn ItemHandle>>> {
+        cx.spawn(|workspace, mut cx| async move {
+            let open_paths_task_result = workspace
+                .update(&mut cx, |workspace, cx| {
+                    workspace.open_paths(vec![abs_path.clone()], visible, cx)
+                })
+                .with_context(|| format!("open abs path {abs_path:?} task spawn"))?
+                .await;
+            anyhow::ensure!(
+                open_paths_task_result.len() == 1,
+                "open abs path {abs_path:?} task returned incorrect number of results"
+            );
+            match open_paths_task_result
+                .into_iter()
+                .next()
+                .expect("ensured single task result")
+            {
+                Some(open_result) => {
+                    open_result.with_context(|| format!("open abs path {abs_path:?} task join"))
+                }
+                None => anyhow::bail!("open abs path {abs_path:?} task returned None"),
+            }
+        })
+    }
 
-    //     pub fn split_abs_path(
-    //         &mut self,
-    //         abs_path: PathBuf,
-    //         visible: bool,
-    //         cx: &mut ViewContext<Self>,
-    //     ) -> Task<anyhow::Result<Box<dyn ItemHandle>>> {
-    //         let project_path_task =
-    //             Workspace::project_path_for_path(self.project.clone(), &abs_path, visible, cx);
-    //         cx.spawn(|this, mut cx| async move {
-    //             let (_, path) = project_path_task.await?;
-    //             this.update(&mut cx, |this, cx| this.split_path(path, cx))?
-    //                 .await
-    //         })
-    //     }
+    pub fn split_abs_path(
+        &mut self,
+        abs_path: PathBuf,
+        visible: bool,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<anyhow::Result<Box<dyn ItemHandle>>> {
+        let project_path_task =
+            Workspace::project_path_for_path(self.project.clone(), &abs_path, visible, cx);
+        cx.spawn(|this, mut cx| async move {
+            let (_, path) = project_path_task.await?;
+            this.update(&mut cx, |this, cx| this.split_path(path, cx))?
+                .await
+        })
+    }
 
     pub fn open_path(
         &mut self,
@@ -1835,37 +1836,37 @@ impl Workspace {
         })
     }
 
-    //     pub fn split_path(
-    //         &mut self,
-    //         path: impl Into<ProjectPath>,
-    //         cx: &mut ViewContext<Self>,
-    //     ) -> Task<Result<Box<dyn ItemHandle>, anyhow::Error>> {
-    //         let pane = self.last_active_center_pane.clone().unwrap_or_else(|| {
-    //             self.panes
-    //                 .first()
-    //                 .expect("There must be an active pane")
-    //                 .downgrade()
-    //         });
+    pub fn split_path(
+        &mut self,
+        path: impl Into<ProjectPath>,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<Box<dyn ItemHandle>, anyhow::Error>> {
+        let pane = self.last_active_center_pane.clone().unwrap_or_else(|| {
+            self.panes
+                .first()
+                .expect("There must be an active pane")
+                .downgrade()
+        });
 
-    //         if let Member::Pane(center_pane) = &self.center.root {
-    //             if center_pane.read(cx).items_len() == 0 {
-    //                 return self.open_path(path, Some(pane), true, cx);
-    //             }
-    //         }
+        if let Member::Pane(center_pane) = &self.center.root {
+            if center_pane.read(cx).items_len() == 0 {
+                return self.open_path(path, Some(pane), true, cx);
+            }
+        }
 
-    //         let task = self.load_path(path.into(), cx);
-    //         cx.spawn(|this, mut cx| async move {
-    //             let (project_entry_id, build_item) = task.await?;
-    //             this.update(&mut cx, move |this, cx| -> Option<_> {
-    //                 let pane = pane.upgrade(cx)?;
-    //                 let new_pane = this.split_pane(pane, SplitDirection::Right, cx);
-    //                 new_pane.update(cx, |new_pane, cx| {
-    //                     Some(new_pane.open_item(project_entry_id, true, cx, build_item))
-    //                 })
-    //             })
-    //             .map(|option| option.ok_or_else(|| anyhow!("pane was dropped")))?
-    //         })
-    //     }
+        let task = self.load_path(path.into(), cx);
+        cx.spawn(|this, mut cx| async move {
+            let (project_entry_id, build_item) = task.await?;
+            this.update(&mut cx, move |this, cx| -> Option<_> {
+                let pane = pane.upgrade()?;
+                let new_pane = this.split_pane(pane, SplitDirection::Right, cx);
+                new_pane.update(cx, |new_pane, cx| {
+                    Some(new_pane.open_item(project_entry_id, true, cx, build_item))
+                })
+            })
+            .map(|option| option.ok_or_else(|| anyhow!("pane was dropped")))?
+        })
+    }
 
     pub(crate) fn load_path(
         &mut self,
@@ -3029,10 +3030,10 @@ impl Workspace {
 
     fn force_remove_pane(&mut self, pane: &View<Pane>, cx: &mut ViewContext<Workspace>) {
         self.panes.retain(|p| p != pane);
-        if true {
-            todo!()
-            // cx.focus(self.panes.last().unwrap());
-        }
+        self.panes
+            .last()
+            .unwrap()
+            .update(cx, |pane, cx| pane.focus(cx));
         if self.last_active_center_pane == Some(pane.downgrade()) {
             self.last_active_center_pane = None;
         }
@@ -3401,10 +3402,6 @@ impl Workspace {
         //     });
     }
 
-    // todo!()
-    //     #[cfg(any(test, feature = "test-support"))]
-    //     pub fn test_new(project: ModelHandle<Project>, cx: &mut ViewContext<Self>) -> Self {
-    //         use node_runtime::FakeNodeRuntime;
     #[cfg(any(test, feature = "test-support"))]
     pub fn test_new(project: Model<Project>, cx: &mut ViewContext<Self>) -> Self {
         use node_runtime::FakeNodeRuntime;
@@ -3423,7 +3420,9 @@ impl Workspace {
             initialize_workspace: |_, _, _, _| Task::ready(Ok(())),
             node_runtime: FakeNodeRuntime::new(),
         });
-        Self::new(0, project, app_state, cx)
+        let workspace = Self::new(0, project, app_state, cx);
+        workspace.active_pane.update(cx, |pane, cx| pane.focus(cx));
+        workspace
     }
 
     //     fn render_dock(&self, position: DockPosition, cx: &WindowContext) -> Option<AnyElement<Self>> {
@@ -3474,6 +3473,10 @@ impl Workspace {
             div = (action)(div)
         }
         div
+    }
+
+    pub fn current_modal<V: Modal + 'static>(&mut self, cx: &ViewContext<Self>) -> Option<View<V>> {
+        self.modal_layer.read(cx).current_modal()
     }
 
     pub fn toggle_modal<V: Modal, B>(&mut self, cx: &mut ViewContext<Self>, build: B)
@@ -3699,6 +3702,7 @@ impl Render for Workspace {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         let mut context = KeyContext::default();
         context.add("Workspace");
+        let ui_font = ThemeSettings::get_global(cx).ui_font.family.clone();
 
         self.add_workspace_actions_listeners(div())
             .key_context(context)
@@ -3706,7 +3710,7 @@ impl Render for Workspace {
             .size_full()
             .flex()
             .flex_col()
-            .font("Zed Sans")
+            .font(ui_font)
             .gap_0()
             .justify_start()
             .items_start()
@@ -3732,7 +3736,15 @@ impl Render for Workspace {
                             .flex_row()
                             .flex_1()
                             .h_full()
-                            .child(div().flex().flex_1().child(self.left_dock.clone()))
+                            // Left Dock
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_none()
+                                    .overflow_hidden()
+                                    .child(self.left_dock.clone()),
+                            )
+                            // Panes
                             .child(
                                 div()
                                     .flex()
@@ -3749,7 +3761,14 @@ impl Render for Workspace {
                                     ))
                                     .child(div().flex().flex_1().child(self.bottom_dock.clone())),
                             )
-                            .child(div().flex().flex_1().child(self.right_dock.clone())),
+                            // Right Dock
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_none()
+                                    .overflow_hidden()
+                                    .child(self.right_dock.clone()),
+                            ),
                     ),
             )
             .child(self.status_bar.clone())
