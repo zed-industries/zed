@@ -1,17 +1,7 @@
 use editor::{Cursor, HighlightedRange, HighlightedRangeLine};
 use gpui::{
-    color::Color,
-    elements::{Empty, Overlay},
-    fonts::{HighlightStyle, Properties, Style::Italic, TextStyle, Underline, Weight},
-    geometry::{
-        rect::RectF,
-        vector::{vec2f, Vector2F},
-    },
-    platform::{CursorStyle, MouseButton},
-    serde_json::json,
-    text_layout::{Line, RunStyle},
-    AnyElement, Element, EventContext, FontCache, ModelContext, MouseRegion, Quad, SizeConstraint,
-    TextLayoutCache, ViewContext, WeakModelHandle, WindowContext,
+    serde_json::json, AnyElement, Bounds, HighlightStyle, Hsla, Line, ModelContext, MouseButton,
+    Pixels, Point, TextStyle, ViewContext, WeakModel, WindowContext,
 };
 use itertools::Itertools;
 use language::CursorShape;
@@ -20,14 +10,17 @@ use terminal::{
     alacritty_terminal::{
         ansi::{Color as AnsiColor, Color::Named, CursorShape as AlacCursorShape, NamedColor},
         grid::Dimensions,
-        index::Point,
+        index::Point as AlacPoint,
         term::{cell::Flags, TermMode},
     },
-    mappings::colors::convert_color,
+    // mappings::colors::convert_color,
     terminal_settings::TerminalSettings,
-    IndexedCell, Terminal, TerminalContent, TerminalSize,
+    IndexedCell,
+    Terminal,
+    TerminalContent,
+    TerminalSize,
 };
-use theme::{TerminalStyle, ThemeSettings};
+use theme::ThemeSettings;
 use util::ResultExt;
 
 use std::{fmt::Debug, ops::RangeInclusive};
@@ -39,9 +32,9 @@ use crate::TerminalView;
 pub struct LayoutState {
     cells: Vec<LayoutCell>,
     rects: Vec<LayoutRect>,
-    relative_highlighted_ranges: Vec<(RangeInclusive<Point>, Color)>,
+    relative_highlighted_ranges: Vec<(RangeInclusive<AlacPoint>, Hsla)>,
     cursor: Option<Cursor>,
-    background_color: Color,
+    background_color: Hsla,
     size: TerminalSize,
     mode: TermMode,
     display_offset: usize,
@@ -56,7 +49,7 @@ struct DisplayCursor {
 }
 
 impl DisplayCursor {
-    fn from(cursor_point: Point, display_offset: usize) -> Self {
+    fn from(cursor_point: AlacPoint, display_offset: usize) -> Self {
         Self {
             line: cursor_point.line.0 + display_offset as i32,
             col: cursor_point.column.0,
@@ -74,45 +67,45 @@ impl DisplayCursor {
 
 #[derive(Clone, Debug, Default)]
 struct LayoutCell {
-    point: Point<i32, i32>,
+    point: AlacPoint<i32, i32>,
     text: Line,
 }
 
 impl LayoutCell {
-    fn new(point: Point<i32, i32>, text: Line) -> LayoutCell {
+    fn new(point: AlacPoint<i32, i32>, text: Line) -> LayoutCell {
         LayoutCell { point, text }
     }
 
     fn paint(
         &self,
-        origin: Vector2F,
+        origin: Point<Pixels>,
         layout: &LayoutState,
-        visible_bounds: RectF,
+        _visible_bounds: Bounds<Pixels>,
         _view: &mut TerminalView,
         cx: &mut WindowContext,
     ) {
         let pos = {
             let point = self.point;
-            vec2f(
-                (origin.x() + point.column as f32 * layout.size.cell_width).floor(),
-                origin.y() + point.line as f32 * layout.size.line_height,
+
+            Point::new(
+                (origin.x + point.column as f32 * layout.size.cell_width).floor(),
+                origin.y + point.line as f32 * layout.size.line_height,
             )
         };
 
-        self.text
-            .paint(pos, visible_bounds, layout.size.line_height, cx);
+        self.text.paint(pos, layout.size.line_height, cx);
     }
 }
 
 #[derive(Clone, Debug, Default)]
 struct LayoutRect {
-    point: Point<i32, i32>,
+    point: AlacPoint<i32, i32>,
     num_of_cells: usize,
-    color: Color,
+    color: Hsla,
 }
 
 impl LayoutRect {
-    fn new(point: Point<i32, i32>, num_of_cells: usize, color: Color) -> LayoutRect {
+    fn new(point: AlacPoint<i32, i32>, num_of_cells: usize, color: Hsla) -> LayoutRect {
         LayoutRect {
             point,
             num_of_cells,
@@ -130,7 +123,7 @@ impl LayoutRect {
 
     fn paint(
         &self,
-        origin: Vector2F,
+        origin: Point<Pixels>,
         layout: &LayoutState,
         _view: &mut TerminalView,
         cx: &mut ViewContext<TerminalView>,
@@ -147,19 +140,20 @@ impl LayoutRect {
             layout.size.line_height,
         );
 
-        cx.scene().push_quad(Quad {
-            bounds: RectF::new(position, size),
-            background: Some(self.color),
-            border: Default::default(),
-            corner_radii: Default::default(),
-        })
+        cx.paint_quad(
+            Bounds::new(position, size),
+            Default::default(),
+            Some(self.color),
+            Default::default(),
+            Default::default(),
+        );
     }
 }
 
 ///The GPUI element that paints the terminal.
 ///We need to keep a reference to the view for mouse events, do we need it for any other terminal stuff, or can we move that to connection?
 pub struct TerminalElement {
-    terminal: WeakModelHandle<Terminal>,
+    terminal: WeakModel<Terminal>,
     focused: bool,
     cursor_visible: bool,
     can_navigate_to_selected_word: bool,
@@ -167,7 +161,7 @@ pub struct TerminalElement {
 
 impl TerminalElement {
     pub fn new(
-        terminal: WeakModelHandle<Terminal>,
+        terminal: WeakModel<Terminal>,
         focused: bool,
         cursor_visible: bool,
         can_navigate_to_selected_word: bool,
@@ -180,7 +174,7 @@ impl TerminalElement {
         }
     }
 
-    //Vec<Range<Point>> -> Clip out the parts of the ranges
+    //Vec<Range<AlacPoint>> -> Clip out the parts of the ranges
 
     fn layout_grid(
         grid: &Vec<IndexedCell>,
@@ -188,7 +182,7 @@ impl TerminalElement {
         terminal_theme: &TerminalStyle,
         text_layout_cache: &TextLayoutCache,
         font_cache: &FontCache,
-        hyperlink: Option<(HighlightStyle, &RangeInclusive<Point>)>,
+        hyperlink: Option<(HighlightStyle, &RangeInclusive<AlacPoint>)>,
     ) -> (Vec<LayoutCell>, Vec<LayoutRect>) {
         let mut cells = vec![];
         let mut rects = vec![];
@@ -225,7 +219,10 @@ impl TerminalElement {
                                         rects.push(cur_rect.take().unwrap());
                                     }
                                     cur_rect = Some(LayoutRect::new(
-                                        Point::new(line_index as i32, cell.point.column.0 as i32),
+                                        AlacPoint::new(
+                                            line_index as i32,
+                                            cell.point.column.0 as i32,
+                                        ),
                                         1,
                                         convert_color(&bg, &terminal_theme),
                                     ));
@@ -234,7 +231,7 @@ impl TerminalElement {
                             None => {
                                 cur_alac_color = Some(bg);
                                 cur_rect = Some(LayoutRect::new(
-                                    Point::new(line_index as i32, cell.point.column.0 as i32),
+                                    AlacPoint::new(line_index as i32, cell.point.column.0 as i32),
                                     1,
                                     convert_color(&bg, &terminal_theme),
                                 ));
@@ -263,7 +260,7 @@ impl TerminalElement {
                         );
 
                         cells.push(LayoutCell::new(
-                            Point::new(line_index as i32, cell.point.column.0 as i32),
+                            AlacPoint::new(line_index as i32, cell.point.column.0 as i32),
                             layout_cell,
                         ))
                     };
@@ -312,7 +309,7 @@ impl TerminalElement {
         style: &TerminalStyle,
         text_style: &TextStyle,
         font_cache: &FontCache,
-        hyperlink: Option<(HighlightStyle, &RangeInclusive<Point>)>,
+        hyperlink: Option<(HighlightStyle, &RangeInclusive<AlacPoint>)>,
     ) -> RunStyle {
         let flags = indexed.cell.flags;
         let fg = convert_color(&fg, &style);
@@ -366,8 +363,8 @@ impl TerminalElement {
     }
 
     fn generic_button_handler<E>(
-        connection: WeakModelHandle<Terminal>,
-        origin: Vector2F,
+        connection: WeakModel<Terminal>,
+        origin: Point<Pixels>,
         f: impl Fn(&mut Terminal, Vector2F, E, &mut ModelContext<Terminal>),
     ) -> impl Fn(E, &mut TerminalView, &mut EventContext<TerminalView>) {
         move |event, _: &mut TerminalView, cx| {
@@ -384,8 +381,8 @@ impl TerminalElement {
 
     fn attach_mouse_handlers(
         &self,
-        origin: Vector2F,
-        visible_bounds: RectF,
+        origin: Point<Pixels>,
+        visible_bounds: Bounds,
         mode: TermMode,
         cx: &mut ViewContext<TerminalView>,
     ) {
@@ -729,8 +726,8 @@ impl Element<TerminalView> for TerminalElement {
 
     fn paint(
         &mut self,
-        bounds: RectF,
-        visible_bounds: RectF,
+        bounds: Bounds,
+        visible_bounds: Bounds,
         layout: &mut Self::LayoutState,
         view: &mut TerminalView,
         cx: &mut ViewContext<TerminalView>,
@@ -749,7 +746,7 @@ impl Element<TerminalView> for TerminalElement {
             cx.scene().push_cursor_region(gpui::CursorRegion {
                 bounds,
                 style: if layout.hyperlink_tooltip.is_some() {
-                    CursorStyle::PointingHand
+                    CursorStyle::AlacPointingHand
                 } else {
                     CursorStyle::IBeam
                 },
@@ -817,7 +814,7 @@ impl Element<TerminalView> for TerminalElement {
 
     fn debug(
         &self,
-        _: RectF,
+        _: Bounds,
         _: &Self::LayoutState,
         _: &Self::PaintState,
         _: &TerminalView,
@@ -831,8 +828,8 @@ impl Element<TerminalView> for TerminalElement {
     fn rect_for_text_range(
         &self,
         _: Range<usize>,
-        bounds: RectF,
-        _: RectF,
+        bounds: Bounds,
+        _: Bounds,
         layout: &Self::LayoutState,
         _: &Self::PaintState,
         _: &TerminalView,
@@ -875,9 +872,9 @@ fn is_blank(cell: &IndexedCell) -> bool {
 }
 
 fn to_highlighted_range_lines(
-    range: &RangeInclusive<Point>,
+    range: &RangeInclusive<AlacPoint>,
     layout: &LayoutState,
-    origin: Vector2F,
+    origin: Point<Pixels>,
 ) -> Option<(f32, Vec<HighlightedRangeLine>)> {
     // Step 1. Normalize the points to be viewport relative.
     // When display_offset = 1, here's how the grid is arranged:
@@ -897,11 +894,12 @@ fn to_highlighted_range_lines(
     // of the grid data we should be looking at. But for the rendering step, we don't
     // want negatives. We want things relative to the 'viewport' (the area of the grid
     // which is currently shown according to the display offset)
-    let unclamped_start = Point::new(
+    let unclamped_start = AlacPoint::new(
         range.start().line + layout.display_offset,
         range.start().column,
     );
-    let unclamped_end = Point::new(range.end().line + layout.display_offset, range.end().column);
+    let unclamped_end =
+        AlacPoint::new(range.end().line + layout.display_offset, range.end().column);
 
     // Step 2. Clamp range to viewport, and return None if it doesn't overlap
     if unclamped_end.line.0 < 0 || unclamped_start.line.0 > layout.size.num_lines() as i32 {
@@ -911,7 +909,7 @@ fn to_highlighted_range_lines(
     let clamped_start_line = unclamped_start.line.0.max(0) as usize;
     let clamped_end_line = unclamped_end.line.0.min(layout.size.num_lines() as i32) as usize;
     //Convert the start of the range to pixels
-    let start_y = origin.y() + clamped_start_line as f32 * layout.size.line_height;
+    let start_y = origin.y + clamped_start_line as f32 * layout.size.line_height;
 
     // Step 3. Expand ranges that cross lines into a collection of single-line ranges.
     //  (also convert to pixels)
