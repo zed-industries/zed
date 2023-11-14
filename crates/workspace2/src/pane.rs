@@ -733,21 +733,21 @@ impl Pane {
     //         self.activate_item(index, activate_pane, activate_pane, cx);
     //     }
 
-    //     pub fn close_active_item(
-    //         &mut self,
-    //         action: &CloseActiveItem,
-    //         cx: &mut ViewContext<Self>,
-    //     ) -> Option<Task<Result<()>>> {
-    //         if self.items.is_empty() {
-    //             return None;
-    //         }
-    //         let active_item_id = self.items[self.active_item_index].id();
-    //         Some(self.close_item_by_id(
-    //             active_item_id,
-    //             action.save_intent.unwrap_or(SaveIntent::Close),
-    //             cx,
-    //         ))
-    //     }
+    pub fn close_active_item(
+        &mut self,
+        action: &CloseActiveItem,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<Task<Result<()>>> {
+        if self.items.is_empty() {
+            return None;
+        }
+        let active_item_id = self.items[self.active_item_index].id();
+        Some(self.close_item_by_id(
+            active_item_id,
+            action.save_intent.unwrap_or(SaveIntent::Close),
+            cx,
+        ))
+    }
 
     pub fn close_item_by_id(
         &mut self,
@@ -1919,7 +1919,12 @@ impl Render for Pane {
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         v_stack()
+            .context("Pane")
             .size_full()
+            .on_action(|pane: &mut Self, action, cx| {
+                pane.close_active_item(action, cx)
+                    .map(|task| task.detach_and_log_err(cx));
+            })
             .child(self.render_tab_bar(cx))
             .child(div() /* todo!(toolbar) */)
             .child(if let Some(item) = self.active_item() {

@@ -1,9 +1,6 @@
+use crate::{h_stack, prelude::*, ClickHandler, Icon, IconColor, IconElement, TextTooltip};
+use gpui::{MouseButton, VisualContext};
 use std::sync::Arc;
-
-use gpui::MouseButton;
-
-use crate::{h_stack, prelude::*};
-use crate::{ClickHandler, Icon, IconColor, IconElement};
 
 struct IconButtonHandlers<V: 'static> {
     click: Option<ClickHandler<V>>,
@@ -22,6 +19,7 @@ pub struct IconButton<V: 'static> {
     color: IconColor,
     variant: ButtonVariant,
     state: InteractionState,
+    tooltip: Option<SharedString>,
     handlers: IconButtonHandlers<V>,
 }
 
@@ -33,6 +31,7 @@ impl<V: 'static> IconButton<V> {
             color: IconColor::default(),
             variant: ButtonVariant::default(),
             state: InteractionState::default(),
+            tooltip: None,
             handlers: IconButtonHandlers::default(),
         }
     }
@@ -54,6 +53,11 @@ impl<V: 'static> IconButton<V> {
 
     pub fn state(mut self, state: InteractionState) -> Self {
         self.state = state;
+        self
+    }
+
+    pub fn tooltip(mut self, tooltip: impl Into<SharedString>) -> Self {
+        self.tooltip = Some(tooltip.into());
         self
     }
 
@@ -99,6 +103,11 @@ impl<V: 'static> IconButton<V> {
                 cx.stop_propagation();
                 click_handler(state, cx);
             });
+        }
+
+        if let Some(tooltip) = self.tooltip.clone() {
+            button =
+                button.tooltip(move |_, cx| cx.build_view(|cx| TextTooltip::new(tooltip.clone())));
         }
 
         button

@@ -9,8 +9,10 @@ pub struct TextTooltip {
 }
 
 impl TextTooltip {
-    pub fn new(str: SharedString) -> Self {
-        Self { title: str }
+    pub fn new(title: impl Into<SharedString>) -> Self {
+        Self {
+            title: title.into(),
+        }
     }
 }
 
