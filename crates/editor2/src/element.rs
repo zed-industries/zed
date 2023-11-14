@@ -19,9 +19,10 @@ use anyhow::Result;
 use collections::{BTreeMap, HashMap};
 use gpui::{
     point, px, relative, size, transparent_black, Action, AnyElement, AvailableSpace, BorrowWindow,
-    Bounds, ContentMask, Corners, DispatchPhase, Edges, Element, ElementId, ElementInputHandler,
-    Entity, Hsla, Line, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement,
-    Pixels, ScrollWheelEvent, Size, Style, TextRun, TextStyle, ViewContext, WindowContext,
+    Bounds, Component, ContentMask, Corners, DispatchPhase, Edges, Element, ElementId,
+    ElementInputHandler, Entity, Hsla, Line, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, ParentElement, Pixels, ScrollWheelEvent, Size, Style, TextRun, TextStyle,
+    ViewContext, WindowContext,
 };
 use itertools::Itertools;
 use language::language_settings::ShowWhitespaceSetting;
@@ -1176,30 +1177,31 @@ impl EditorElement {
         }
     }
 
-    // fn paint_blocks(
-    //     &mut self,
-    //     bounds: Bounds<Pixels>,
-    //     visible_bounds: Bounds<Pixels>,
-    //     layout: &mut LayoutState,
-    //     editor: &mut Editor,
-    //     cx: &mut ViewContext<Editor>,
-    // ) {
-    //     let scroll_position = layout.position_map.snapshot.scroll_position();
-    //     let scroll_left = scroll_position.x * layout.position_map.em_width;
-    //     let scroll_top = scroll_position.y * layout.position_map.line_height;
+    fn paint_blocks(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        layout: &mut LayoutState,
+        editor: &mut Editor,
+        cx: &mut ViewContext<Editor>,
+    ) {
+        let scroll_position = layout.position_map.snapshot.scroll_position();
+        let scroll_left = scroll_position.x * layout.position_map.em_width;
+        let scroll_top = scroll_position.y * layout.position_map.line_height;
 
-    //     for block in &mut layout.blocks {
-    //         let mut origin = bounds.origin
-    //             + point(
-    //                 0.,
-    //                 block.row as f32 * layout.position_map.line_height - scroll_top,
-    //             );
-    //         if !matches!(block.style, BlockStyle::Sticky) {
-    //             origin += point(-scroll_left, 0.);
-    //         }
-    //         block.element.paint(origin, visible_bounds, editor, cx);
-    //     }
-    // }
+        for block in &mut layout.blocks {
+            let mut origin = bounds.origin
+                + point(
+                    Pixels::ZERO,
+                    block.row as f32 * layout.position_map.line_height - scroll_top,
+                );
+            if !matches!(block.style, BlockStyle::Sticky) {
+                origin += point(-scroll_left, Pixels::ZERO);
+            }
+            block
+                .element
+                .draw(origin, block.available_space, editor, cx);
+        }
+    }
 
     fn column_pixels(&self, column: usize, cx: &ViewContext<Editor>) -> Pixels {
         let style = &self.style;
@@ -1942,7 +1944,7 @@ impl EditorElement {
             fold_ranges,
             line_number_layouts,
             display_hunks,
-            // blocks,
+            blocks,
             selections,
             context_menu,
             code_actions_indicator,
@@ -1978,7 +1980,11 @@ impl EditorElement {
                 TransformBlock::ExcerptHeader { .. } => false,
                 TransformBlock::Custom(block) => block.style() == BlockStyle::Fixed,
             });
-        let mut render_block = |block: &TransformBlock, width: Pixels, block_id: usize| {
+        let mut render_block = |block: &TransformBlock,
+                                available_space: Size<AvailableSpace>,
+                                block_id: usize,
+                                editor: &mut Editor,
+                                cx: &mut ViewContext<Editor>| {
             let mut element = match block {
                 TransformBlock::Custom(block) => {
                     let align_to = block
@@ -2031,28 +2037,15 @@ impl EditorElement {
                         let jump_position = language::ToPoint::to_point(&jump_anchor, buffer);
 
                         // todo!("avoid ElementId collision risk here")
-                        IconButton::new(usize::from(*id), ui::Icon::ArrowUpRight)
-                            .on_click(move |editor, cx| {
-                                if let Some(workspace) = editor
-                                    .workspace
-                                    .as_ref()
-                                    .and_then(|(workspace, _)| workspace.upgrade(cx))
-                                {
-                                    workspace.update(cx, |workspace, cx| {
-                                        Editor::jump(
-                                            workspace,
-                                            jump_path.clone(),
-                                            jump_position,
-                                            jump_anchor,
-                                            cx,
-                                        );
-                                    });
-                                }
+                        let icon_button_id: usize = id.clone().into();
+                        IconButton::new(icon_button_id, ui::Icon::ArrowUpRight)
+                            .on_click(move |editor: &mut Editor, cx| {
+                                editor.jump(jump_path.clone(), jump_position, jump_anchor, cx);
                             })
                             .tooltip("Jump to Buffer") // todo!(pass an action as well to show key binding)
                     });
 
-                    if *starts_new_buffer {
+                    let element = if *starts_new_buffer {
                         let path = buffer.resolve_file_path(cx, include_root);
                         let mut filename = None;
                         let mut parent_path = None;
@@ -2066,40 +2059,34 @@ impl EditorElement {
                         h_stack()
                             .child(filename.unwrap_or_else(|| "untitled".to_string()))
                             .children(parent_path)
-                            .children(jump_icon)
-                            .p_x(gutter_padding)
+                            .children(jump_icon) // .p_x(gutter_padding)
                     } else {
                         let text_style = style.text.clone();
-                        h_stack()
-                            .child("⋯")
-                            .children(jump_icon)
-                            .p_x(gutter_padding)
-                            .expanded()
-                            .into_any_named("collapsed context")
-                    }
+                        h_stack().child("⋯").children(jump_icon) // .p_x(gutter_padding)
+                    };
+                    element.render()
                 }
             };
 
-            // element.layout(
-            //     SizeConstraint {
-            //         min: gpui::Point::<Pixels>::zero(),
-            //         max: point(width, block.height() as f32 * line_height),
-            //     },
-            //     editor,
-            //     cx,
-            // );
-            element
+            let size = element.measure(available_space, editor, cx);
+            (element, size)
         };
 
         let mut fixed_block_max_width = Pixels::ZERO;
         let mut blocks = Vec::new();
         for (row, block) in fixed_blocks {
-            let element = render_block(block, f32::INFINITY, block_id);
+            let available_space = size(
+                AvailableSpace::MinContent,
+                AvailableSpace::Definite(block.height() as f32 * line_height),
+            );
+            let (element, element_size) =
+                render_block(block, available_space, block_id, editor, cx);
             block_id += 1;
-            fixed_block_max_width = fixed_block_max_width.max(element.size().x + em_width);
+            fixed_block_max_width = fixed_block_max_width.max(element_size.width + em_width);
             blocks.push(BlockLayout {
                 row,
                 element,
+                available_space,
                 style: BlockStyle::Fixed,
             });
         }
@@ -2115,11 +2102,16 @@ impl EditorElement {
                     .max(gutter_width + scroll_width),
                 BlockStyle::Fixed => unreachable!(),
             };
-            let element = render_block(block, width, block_id);
+            let available_space = size(
+                AvailableSpace::Definite(width),
+                AvailableSpace::Definite(block.height() as f32 * line_height),
+            );
+            let (element, _) = render_block(block, available_space, block_id, editor, cx);
             block_id += 1;
             blocks.push(BlockLayout {
                 row,
                 element,
+                available_space,
                 style,
             });
         }
@@ -2630,11 +2622,18 @@ impl Element<Editor> for EditorElement {
                     &layout.position_map,
                     cx,
                 );
+
                 self.paint_background(gutter_bounds, text_bounds, &layout, cx);
                 if layout.gutter_size.width > Pixels::ZERO {
                     self.paint_gutter(gutter_bounds, &mut layout, editor, cx);
                 }
+
                 self.paint_text(text_bounds, &mut layout, editor, cx);
+
+                if !layout.blocks.is_empty() {
+                    self.paint_blocks(bounds, &mut layout, editor, cx);
+                }
+
                 let input_handler = ElementInputHandler::new(bounds, cx);
                 cx.handle_input(&editor.focus_handle, input_handler);
             });
@@ -3255,7 +3254,7 @@ pub struct LayoutState {
     highlighted_rows: Option<Range<u32>>,
     line_number_layouts: Vec<Option<gpui::Line>>,
     display_hunks: Vec<DisplayDiffHunk>,
-    // blocks: Vec<BlockLayout>,
+    blocks: Vec<BlockLayout>,
     highlighted_ranges: Vec<(Range<DisplayPoint>, Hsla)>,
     fold_ranges: Vec<(BufferRow, Range<DisplayPoint>, Hsla)>,
     selections: Vec<(PlayerColor, Vec<SelectionLayout>)>,
@@ -3358,6 +3357,7 @@ impl PositionMap {
 struct BlockLayout {
     row: u32,
     element: AnyElement<Editor>,
+    available_space: Size<AvailableSpace>,
     style: BlockStyle,
 }
 
