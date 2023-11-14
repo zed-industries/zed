@@ -9,7 +9,7 @@ use schemars::{
 };
 use serde::Deserialize;
 use serde_json::Value;
-use util::{asset_str, ResultExt};
+use util::asset_str;
 
 #[derive(Debug, Deserialize, Default, Clone, JsonSchema)]
 #[serde(transparent)]
@@ -86,7 +86,9 @@ impl KeymapFile {
                             "invalid binding value for keystroke {keystroke}, context {context:?}"
                         )
                     })
-                    .log_err()
+                    // todo!()
+                    .ok()
+                    // .log_err()
                     .map(|action| KeyBinding::load(&keystroke, action, context.as_deref()))
                 })
                 .collect::<Result<Vec<_>>>()?;

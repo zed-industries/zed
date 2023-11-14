@@ -68,8 +68,12 @@ where
     A: for<'a> Deserialize<'a> + PartialEq + Clone + Default + std::fmt::Debug + 'static,
 {
     fn qualified_name() -> SharedString {
+        let name = type_name::<A>();
+        let mut separator_matches = name.rmatch_indices("::");
+        separator_matches.next().unwrap();
+        let name_start_ix = separator_matches.next().map_or(0, |(ix, _)| ix + 2);
         // todo!() remove the 2 replacement when migration is done
-        type_name::<A>().replace("2::", "::").into()
+        name[name_start_ix..].replace("2::", "::").into()
     }
 
     fn build(params: Option<serde_json::Value>) -> Result<Box<dyn Action>>

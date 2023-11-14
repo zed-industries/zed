@@ -7,28 +7,40 @@ use crate::styled_ext::StyledExt;
 pub enum LabelColor {
     #[default]
     Default,
-    Muted,
+    Accent,
     Created,
-    Modified,
     Deleted,
     Disabled,
+    Error,
     Hidden,
+    Info,
+    Modified,
+    Muted,
     Placeholder,
-    Accent,
+    Player(u32),
+    Selected,
+    Success,
+    Warning,
 }
 
 impl LabelColor {
     pub fn hsla(&self, cx: &WindowContext) -> Hsla {
         match self {
-            Self::Default => cx.theme().colors().text,
-            Self::Muted => cx.theme().colors().text_muted,
-            Self::Created => cx.theme().status().created,
-            Self::Modified => cx.theme().status().modified,
-            Self::Deleted => cx.theme().status().deleted,
-            Self::Disabled => cx.theme().colors().text_disabled,
-            Self::Hidden => cx.theme().status().hidden,
-            Self::Placeholder => cx.theme().colors().text_placeholder,
-            Self::Accent => cx.theme().colors().text_accent,
+            LabelColor::Default => cx.theme().colors().text,
+            LabelColor::Muted => cx.theme().colors().text_muted,
+            LabelColor::Created => cx.theme().status().created,
+            LabelColor::Modified => cx.theme().status().modified,
+            LabelColor::Deleted => cx.theme().status().deleted,
+            LabelColor::Disabled => cx.theme().colors().text_disabled,
+            LabelColor::Hidden => cx.theme().status().hidden,
+            LabelColor::Info => cx.theme().status().info,
+            LabelColor::Placeholder => cx.theme().colors().text_placeholder,
+            LabelColor::Accent => cx.theme().colors().text_accent,
+            LabelColor::Player(i) => cx.theme().styles.player.0[i.clone() as usize].cursor,
+            LabelColor::Error => cx.theme().status().error,
+            LabelColor::Selected => cx.theme().colors().text_accent,
+            LabelColor::Success => cx.theme().status().success,
+            LabelColor::Warning => cx.theme().status().warning,
         }
     }
 }

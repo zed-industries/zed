@@ -29,7 +29,7 @@ use client2::{
     Client, TypedEnvelope, UserStore,
 };
 use collections::{hash_map, HashMap, HashSet};
-use dock::{Dock, DockPosition, PanelButtons};
+use dock::{Dock, DockPosition, Panel, PanelButtons, PanelHandle as _};
 use futures::{
     channel::{mpsc, oneshot},
     future::try_join_all,
@@ -69,7 +69,7 @@ use std::{
 };
 use theme2::ActiveTheme;
 pub use toolbar::{ToolbarItemLocation, ToolbarItemView};
-use ui::{h_stack, Label};
+use ui::{h_stack, Button, ButtonVariant, Label, LabelColor};
 use util::ResultExt;
 use uuid::Uuid;
 pub use workspace_settings::{AutosaveSetting, WorkspaceSettings};
@@ -247,102 +247,6 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
     //                 .detach();
     //             }
     //         }
-    //     });
-    //     cx.add_async_action(Workspace::open);
-
-    //     cx.add_async_action(Workspace::follow_next_collaborator);
-    //     cx.add_async_action(Workspace::close);
-    //     cx.add_async_action(Workspace::close_inactive_items_and_panes);
-    //     cx.add_async_action(Workspace::close_all_items_and_panes);
-    //     cx.add_global_action(Workspace::close_global);
-    //     cx.add_global_action(restart);
-    //     cx.add_async_action(Workspace::save_all);
-    //     cx.add_action(Workspace::add_folder_to_project);
-    //     cx.add_action(
-    //         |workspace: &mut Workspace, _: &Unfollow, cx: &mut ViewContext<Workspace>| {
-    //             let pane = workspace.active_pane().clone();
-    //             workspace.unfollow(&pane, cx);
-    //         },
-    //     );
-    //     cx.add_action(
-    //         |workspace: &mut Workspace, action: &Save, cx: &mut ViewContext<Workspace>| {
-    //             workspace
-    //                 .save_active_item(action.save_intent.unwrap_or(SaveIntent::Save), cx)
-    //                 .detach_and_log_err(cx);
-    //         },
-    //     );
-    //     cx.add_action(
-    //         |workspace: &mut Workspace, _: &SaveAs, cx: &mut ViewContext<Workspace>| {
-    //             workspace
-    //                 .save_active_item(SaveIntent::SaveAs, cx)
-    //                 .detach_and_log_err(cx);
-    //         },
-    //     );
-    //     cx.add_action(|workspace: &mut Workspace, _: &ActivatePreviousPane, cx| {
-    //         workspace.activate_previous_pane(cx)
-    //     });
-    //     cx.add_action(|workspace: &mut Workspace, _: &ActivateNextPane, cx| {
-    //         workspace.activate_next_pane(cx)
-    //     });
-
-    //     cx.add_action(
-    //         |workspace: &mut Workspace, action: &ActivatePaneInDirection, cx| {
-    //             workspace.activate_pane_in_direction(action.0, cx)
-    //         },
-    //     );
-
-    //     cx.add_action(
-    //         |workspace: &mut Workspace, action: &SwapPaneInDirection, cx| {
-    //             workspace.swap_pane_in_direction(action.0, cx)
-    //         },
-    //     );
-
-    //     cx.add_action(|workspace: &mut Workspace, _: &ToggleLeftDock, cx| {
-    //         workspace.toggle_dock(DockPosition::Left, cx);
-    //     });
-    //     cx.add_action(|workspace: &mut Workspace, _: &ToggleRightDock, cx| {
-    //         workspace.toggle_dock(DockPosition::Right, cx);
-    //     });
-    //     cx.add_action(|workspace: &mut Workspace, _: &ToggleBottomDock, cx| {
-    //         workspace.toggle_dock(DockPosition::Bottom, cx);
-    //     });
-    //     cx.add_action(|workspace: &mut Workspace, _: &CloseAllDocks, cx| {
-    //         workspace.close_all_docks(cx);
-    //     });
-    //     cx.add_action(Workspace::activate_pane_at_index);
-    //     cx.add_action(|workspace: &mut Workspace, _: &ReopenClosedItem, cx| {
-    //         workspace.reopen_closed_item(cx).detach();
-    //     });
-    //     cx.add_action(|workspace: &mut Workspace, _: &GoBack, cx| {
-    //         workspace
-    //             .go_back(workspace.active_pane().downgrade(), cx)
-    //             .detach();
-    //     });
-    //     cx.add_action(|workspace: &mut Workspace, _: &GoForward, cx| {
-    //         workspace
-    //             .go_forward(workspace.active_pane().downgrade(), cx)
-    //             .detach();
-    //     });
-
-    //     cx.add_action(|_: &mut Workspace, _: &install_cli::Install, cx| {
-    //         cx.spawn(|workspace, mut cx| async move {
-    //             let err = install_cli::install_cli(&cx)
-    //                 .await
-    //                 .context("Failed to create CLI symlink");
-
-    //             workspace.update(&mut cx, |workspace, cx| {
-    //                 if matches!(err, Err(_)) {
-    //                     err.notify_err(workspace, cx);
-    //                 } else {
-    //                     workspace.show_notification(1, cx, |cx| {
-    //                         cx.build_view(|_| {
-    //                             MessageNotification::new("Successfully installed the `zed` binary")
-    //                         })
-    //                     });
-    //                 }
-    //             })
-    //         })
-    //         .detach();
     //     });
 }
 
@@ -942,108 +846,15 @@ impl Workspace {
         &self.right_dock
     }
 
-    //     pub fn add_panel<T: Panel>(&mut self, panel: View<T>, cx: &mut ViewContext<Self>)
-    //     where
-    //         T::Event: std::fmt::Debug,
-    //     {
-    //         self.add_panel_with_extra_event_handler(panel, cx, |_, _, _, _| {})
-    //     }
+    pub fn add_panel<T: Panel>(&mut self, panel: View<T>, cx: &mut ViewContext<Self>) {
+        let dock = match panel.position(cx) {
+            DockPosition::Left => &self.left_dock,
+            DockPosition::Bottom => &self.bottom_dock,
+            DockPosition::Right => &self.right_dock,
+        };
 
-    //     pub fn add_panel_with_extra_event_handler<T: Panel, F>(
-    //         &mut self,
-    //         panel: View<T>,
-    //         cx: &mut ViewContext<Self>,
-    //         handler: F,
-    //     ) where
-    //         T::Event: std::fmt::Debug,
-    //         F: Fn(&mut Self, &View<T>, &T::Event, &mut ViewContext<Self>) + 'static,
-    //     {
-    //         let dock = match panel.position(cx) {
-    //             DockPosition::Left => &self.left_dock,
-    //             DockPosition::Bottom => &self.bottom_dock,
-    //             DockPosition::Right => &self.right_dock,
-    //         };
-
-    //         self.subscriptions.push(cx.subscribe(&panel, {
-    //             let mut dock = dock.clone();
-    //             let mut prev_position = panel.position(cx);
-    //             move |this, panel, event, cx| {
-    //                 if T::should_change_position_on_event(event) {
-    //                     THIS HAS BEEN MOVED TO NORMAL EVENT EMISSION
-    //                     See: Dock::add_panel
-    //
-    //                     let new_position = panel.read(cx).position(cx);
-    //                     let mut was_visible = false;
-    //                     dock.update(cx, |dock, cx| {
-    //                         prev_position = new_position;
-
-    //                         was_visible = dock.is_open()
-    //                             && dock
-    //                                 .visible_panel()
-    //                                 .map_or(false, |active_panel| active_panel.id() == panel.id());
-    //                         dock.remove_panel(&panel, cx);
-    //                     });
-
-    //                     if panel.is_zoomed(cx) {
-    //                         this.zoomed_position = Some(new_position);
-    //                     }
-
-    //                     dock = match panel.read(cx).position(cx) {
-    //                         DockPosition::Left => &this.left_dock,
-    //                         DockPosition::Bottom => &this.bottom_dock,
-    //                         DockPosition::Right => &this.right_dock,
-    //                     }
-    //                     .clone();
-    //                     dock.update(cx, |dock, cx| {
-    //                         dock.add_panel(panel.clone(), cx);
-    //                         if was_visible {
-    //                             dock.set_open(true, cx);
-    //                             dock.activate_panel(dock.panels_len() - 1, cx);
-    //                         }
-    //                     });
-    //                 } else if T::should_zoom_in_on_event(event) {
-    //                     THIS HAS BEEN MOVED TO NORMAL EVENT EMISSION
-    //                     See: Dock::add_panel
-    //
-    //                     dock.update(cx, |dock, cx| dock.set_panel_zoomed(&panel, true, cx));
-    //                     if !panel.has_focus(cx) {
-    //                         cx.focus(&panel);
-    //                     }
-    //                     this.zoomed = Some(panel.downgrade().into_any());
-    //                     this.zoomed_position = Some(panel.read(cx).position(cx));
-    //                 } else if T::should_zoom_out_on_event(event) {
-    //                     THIS HAS BEEN MOVED TO NORMAL EVENT EMISSION
-    //                     See: Dock::add_panel
-    //
-    //                     dock.update(cx, |dock, cx| dock.set_panel_zoomed(&panel, false, cx));
-    //                     if this.zoomed_position == Some(prev_position) {
-    //                         this.zoomed = None;
-    //                         this.zoomed_position = None;
-    //                     }
-    //                     cx.notify();
-    //                 } else if T::is_focus_event(event) {
-    //                     THIS HAS BEEN MOVED TO NORMAL EVENT EMISSION
-    //                     See: Dock::add_panel
-    //
-    //                     let position = panel.read(cx).position(cx);
-    //                     this.dismiss_zoomed_items_to_reveal(Some(position), cx);
-    //                     if panel.is_zoomed(cx) {
-    //                         this.zoomed = Some(panel.downgrade().into_any());
-    //                         this.zoomed_position = Some(position);
-    //                     } else {
-    //                         this.zoomed = None;
-    //                         this.zoomed_position = None;
-    //                     }
-    //                     this.update_active_view_for_followers(cx);
-    //                     cx.notify();
-    //                 } else {
-    //                     handler(this, &panel, event, cx)
-    //                 }
-    //             }
-    //         }));
-
-    //         dock.update(cx, |dock, cx| dock.add_panel(panel, cx));
-    //     }
+        dock.update(cx, |dock, cx| dock.add_panel(panel, cx));
+    }
 
     pub fn status_bar(&self) -> &View<StatusBar> {
         &self.status_bar
@@ -1735,42 +1546,43 @@ impl Workspace {
     //         }
     //     }
 
-    //     pub fn toggle_dock(&mut self, dock_side: DockPosition, cx: &mut ViewContext<Self>) {
-    //         let dock = match dock_side {
-    //             DockPosition::Left => &self.left_dock,
-    //             DockPosition::Bottom => &self.bottom_dock,
-    //             DockPosition::Right => &self.right_dock,
-    //         };
-    //         let mut focus_center = false;
-    //         let mut reveal_dock = false;
-    //         dock.update(cx, |dock, cx| {
-    //             let other_is_zoomed = self.zoomed.is_some() && self.zoomed_position != Some(dock_side);
-    //             let was_visible = dock.is_open() && !other_is_zoomed;
-    //             dock.set_open(!was_visible, cx);
+    pub fn toggle_dock(&mut self, dock_side: DockPosition, cx: &mut ViewContext<Self>) {
+        let dock = match dock_side {
+            DockPosition::Left => &self.left_dock,
+            DockPosition::Bottom => &self.bottom_dock,
+            DockPosition::Right => &self.right_dock,
+        };
+        let mut focus_center = false;
+        let mut reveal_dock = false;
+        dock.update(cx, |dock, cx| {
+            let other_is_zoomed = self.zoomed.is_some() && self.zoomed_position != Some(dock_side);
+            let was_visible = dock.is_open() && !other_is_zoomed;
+            dock.set_open(!was_visible, cx);
 
-    //             if let Some(active_panel) = dock.active_panel() {
-    //                 if was_visible {
-    //                     if active_panel.has_focus(cx) {
-    //                         focus_center = true;
-    //                     }
-    //                 } else {
-    //                     cx.focus(active_panel.as_any());
-    //                     reveal_dock = true;
-    //                 }
-    //             }
-    //         });
+            if let Some(active_panel) = dock.active_panel() {
+                if was_visible {
+                    if active_panel.has_focus(cx) {
+                        focus_center = true;
+                    }
+                } else {
+                    let focus_handle = &active_panel.focus_handle(cx);
+                    cx.focus(focus_handle);
+                    reveal_dock = true;
+                }
+            }
+        });
 
-    //         if reveal_dock {
-    //             self.dismiss_zoomed_items_to_reveal(Some(dock_side), cx);
-    //         }
+        if reveal_dock {
+            self.dismiss_zoomed_items_to_reveal(Some(dock_side), cx);
+        }
 
-    //         if focus_center {
-    //             cx.focus_self();
-    //         }
+        if focus_center {
+            cx.focus(&self.focus_handle);
+        }
 
-    //         cx.notify();
-    //         self.serialize_workspace(cx);
-    //     }
+        cx.notify();
+        self.serialize_workspace(cx);
+    }
 
     pub fn close_all_docks(&mut self, cx: &mut ViewContext<Self>) {
         let docks = [&self.left_dock, &self.bottom_dock, &self.right_dock];
@@ -2644,19 +2456,35 @@ impl Workspace {
         h_stack()
             .id("titlebar")
             .justify_between()
-            .w_full()
-            .h(rems(1.75))
-            .bg(cx.theme().colors().title_bar_background)
             .when(
                 !matches!(cx.window_bounds(), WindowBounds::Fullscreen),
                 |s| s.pl_20(),
             )
+            .w_full()
+            .h(rems(1.75))
+            .bg(cx.theme().colors().title_bar_background)
             .on_click(|_, event, cx| {
                 if event.up.click_count == 2 {
                     cx.zoom_window();
                 }
             })
-            .child(h_stack().child(Label::new("Left side titlebar item"))) // self.titlebar_item
+            .child(
+                h_stack()
+                    // TODO - Add player menu
+                    .child(
+                        Button::new("player")
+                            .variant(ButtonVariant::Ghost)
+                            .color(Some(LabelColor::Player(0))),
+                    )
+                    // TODO - Add project menu
+                    .child(Button::new("project_name").variant(ButtonVariant::Ghost))
+                    // TODO - Add git menu
+                    .child(
+                        Button::new("branch_name")
+                            .variant(ButtonVariant::Ghost)
+                            .color(Some(LabelColor::Muted)),
+                    ),
+            ) // self.titlebar_item
             .child(h_stack().child(Label::new("Right side titlebar item")))
     }
 
@@ -3451,6 +3279,107 @@ impl Workspace {
         })
     }
 
+    fn actions(div: Div<Self>) -> Div<Self> {
+        div
+            //     cx.add_async_action(Workspace::open);
+            //     cx.add_async_action(Workspace::follow_next_collaborator);
+            //     cx.add_async_action(Workspace::close);
+            //     cx.add_async_action(Workspace::close_inactive_items_and_panes);
+            //     cx.add_async_action(Workspace::close_all_items_and_panes);
+            //     cx.add_global_action(Workspace::close_global);
+            //     cx.add_global_action(restart);
+            //     cx.add_async_action(Workspace::save_all);
+            //     cx.add_action(Workspace::add_folder_to_project);
+            //     cx.add_action(
+            //         |workspace: &mut Workspace, _: &Unfollow, cx: &mut ViewContext<Workspace>| {
+            //             let pane = workspace.active_pane().clone();
+            //             workspace.unfollow(&pane, cx);
+            //         },
+            //     );
+            //     cx.add_action(
+            //         |workspace: &mut Workspace, action: &Save, cx: &mut ViewContext<Workspace>| {
+            //             workspace
+            //                 .save_active_item(action.save_intent.unwrap_or(SaveIntent::Save), cx)
+            //                 .detach_and_log_err(cx);
+            //         },
+            //     );
+            //     cx.add_action(
+            //         |workspace: &mut Workspace, _: &SaveAs, cx: &mut ViewContext<Workspace>| {
+            //             workspace
+            //                 .save_active_item(SaveIntent::SaveAs, cx)
+            //                 .detach_and_log_err(cx);
+            //         },
+            //     );
+            //     cx.add_action(|workspace: &mut Workspace, _: &ActivatePreviousPane, cx| {
+            //         workspace.activate_previous_pane(cx)
+            //     });
+            //     cx.add_action(|workspace: &mut Workspace, _: &ActivateNextPane, cx| {
+            //         workspace.activate_next_pane(cx)
+            //     });
+            //     cx.add_action(
+            //         |workspace: &mut Workspace, action: &ActivatePaneInDirection, cx| {
+            //             workspace.activate_pane_in_direction(action.0, cx)
+            //         },
+            //     );
+            //     cx.add_action(
+            //         |workspace: &mut Workspace, action: &SwapPaneInDirection, cx| {
+            //             workspace.swap_pane_in_direction(action.0, cx)
+            //         },
+            //     );
+            .on_action(|this, e: &ToggleLeftDock, cx| {
+                println!("TOGGLING DOCK");
+                this.toggle_dock(DockPosition::Left, cx);
+            })
+        //     cx.add_action(|workspace: &mut Workspace, _: &ToggleRightDock, cx| {
+        //         workspace.toggle_dock(DockPosition::Right, cx);
+        //     });
+        //     cx.add_action(|workspace: &mut Workspace, _: &ToggleBottomDock, cx| {
+        //         workspace.toggle_dock(DockPosition::Bottom, cx);
+        //     });
+        //     cx.add_action(|workspace: &mut Workspace, _: &CloseAllDocks, cx| {
+        //         workspace.close_all_docks(cx);
+        //     });
+        //     cx.add_action(Workspace::activate_pane_at_index);
+        //     cx.add_action(|workspace: &mut Workspace, _: &ReopenClosedItem, cx| {
+        //         workspace.reopen_closed_item(cx).detach();
+        //     });
+        //     cx.add_action(|workspace: &mut Workspace, _: &GoBack, cx| {
+        //         workspace
+        //             .go_back(workspace.active_pane().downgrade(), cx)
+        //             .detach();
+        //     });
+        //     cx.add_action(|workspace: &mut Workspace, _: &GoForward, cx| {
+        //         workspace
+        //             .go_forward(workspace.active_pane().downgrade(), cx)
+        //             .detach();
+        //     });
+
+        //     cx.add_action(|_: &mut Workspace, _: &install_cli::Install, cx| {
+        //         cx.spawn(|workspace, mut cx| async move {
+        //             let err = install_cli::install_cli(&cx)
+        //                 .await
+        //                 .context("Failed to create CLI symlink");
+
+        //             workspace.update(&mut cx, |workspace, cx| {
+        //                 if matches!(err, Err(_)) {
+        //                     err.notify_err(workspace, cx);
+        //                 } else {
+        //                     workspace.show_notification(1, cx, |cx| {
+        //                         cx.build_view(|_| {
+        //                             MessageNotification::new("Successfully installed the `zed` binary")
+        //                         })
+        //                     });
+        //                 }
+        //             })
+        //         })
+        //         .detach();
+        //     });
+    }
+
+    // todo!()
+    //     #[cfg(any(test, feature = "test-support"))]
+    //     pub fn test_new(project: ModelHandle<Project>, cx: &mut ViewContext<Self>) -> Self {
+    //         use node_runtime::FakeNodeRuntime;
     #[cfg(any(test, feature = "test-support"))]
     pub fn test_new(project: Model<Project>, cx: &mut ViewContext<Self>) -> Self {
         use gpui::Context;
@@ -3776,83 +3705,31 @@ impl Render for Workspace {
                     .border_b()
                     .border_color(cx.theme().colors().border)
                     .child(self.modal_layer.clone())
-                    // .children(
-                    //     Some(
-                    //         Panel::new("project-panel-outer", cx)
-                    //             .side(PanelSide::Left)
-                    //             .child(ProjectPanel::new("project-panel-inner")),
-                    //     )
-                    //     .filter(|_| self.is_project_panel_open()),
-                    // )
-                    // .children(
-                    //     Some(
-                    //         Panel::new("collab-panel-outer", cx)
-                    //             .child(CollabPanel::new("collab-panel-inner"))
-                    //             .side(PanelSide::Left),
-                    //     )
-                    //     .filter(|_| self.is_collab_panel_open()),
-                    // )
-                    // .child(NotificationToast::new(
-                    //     "maxbrunsfeld has requested to add you as a contact.".into(),
-                    // ))
                     .child(
-                        div().flex().flex_col().flex_1().h_full().child(
-                            div().flex().flex_1().child(self.center.render(
-                                &self.project,
-                                &self.follower_states,
-                                self.active_call(),
-                                &self.active_pane,
-                                self.zoomed.as_ref(),
-                                &self.app_state,
-                                cx,
-                            )),
-                        ), // .children(
-                           //     Some(
-                           //         Panel::new("terminal-panel", cx)
-                           //             .child(Terminal::new())
-                           //             .allowed_sides(PanelAllowedSides::BottomOnly)
-                           //             .side(PanelSide::Bottom),
-                           //     )
-                           //     .filter(|_| self.is_terminal_open()),
-                           // ),
-                    ), // .children(
-                       //     Some(
-                       //         Panel::new("chat-panel-outer", cx)
-                       //             .side(PanelSide::Right)
-                       //             .child(ChatPanel::new("chat-panel-inner").messages(vec![
-                       //                 ChatMessage::new(
-                       //                     "osiewicz".to_string(),
-                       //                     "is this thing on?".to_string(),
-                       //                     DateTime::parse_from_rfc3339("2023-09-27T15:40:52.707Z")
-                       //                         .unwrap()
-                       //                         .naive_local(),
-                       //                 ),
-                       //                 ChatMessage::new(
-                       //                     "maxdeviant".to_string(),
-                       //                     "Reading you loud and clear!".to_string(),
-                       //                     DateTime::parse_from_rfc3339("2023-09-28T15:40:52.707Z")
-                       //                         .unwrap()
-                       //                         .naive_local(),
-                       //                 ),
-                       //             ])),
-                       //     )
-                       //     .filter(|_| self.is_chat_panel_open()),
-                       // )
-                       // .children(
-                       //     Some(
-                       //         Panel::new("notifications-panel-outer", cx)
-                       //             .side(PanelSide::Right)
-                       //             .child(NotificationsPanel::new("notifications-panel-inner")),
-                       //     )
-                       //     .filter(|_| self.is_notifications_panel_open()),
-                       // )
-                       // .children(
-                       //     Some(
-                       //         Panel::new("assistant-panel-outer", cx)
-                       //             .child(AssistantPanel::new("assistant-panel-inner")),
-                       //     )
-                       //     .filter(|_| self.is_assistant_panel_open()),
-                       // ),
+                        div()
+                            .flex()
+                            .flex_row()
+                            .flex_1()
+                            .h_full()
+                            .child(div().flex().flex_1().child(self.left_dock.clone()))
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .flex_1()
+                                    .child(self.center.render(
+                                        &self.project,
+                                        &self.follower_states,
+                                        self.active_call(),
+                                        &self.active_pane,
+                                        self.zoomed.as_ref(),
+                                        &self.app_state,
+                                        cx,
+                                    ))
+                                    .child(div().flex().flex_1().child(self.bottom_dock.clone())),
+                            )
+                            .child(div().flex().flex_1().child(self.right_dock.clone())),
+                    ),
             )
             .child(self.status_bar.clone())
             // .when(self.debug.show_toast, |this| {

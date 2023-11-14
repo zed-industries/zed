@@ -87,6 +87,7 @@ pub struct Button<V: 'static> {
     label: SharedString,
     variant: ButtonVariant,
     width: Option<DefiniteLength>,
+    color: Option<LabelColor>,
 }
 
 impl<V: 'static> Button<V> {
@@ -99,6 +100,7 @@ impl<V: 'static> Button<V> {
             label: label.into(),
             variant: Default::default(),
             width: Default::default(),
+            color: None,
         }
     }
 
@@ -139,25 +141,24 @@ impl<V: 'static> Button<V> {
         self
     }
 
-    fn label_color(&self) -> LabelColor {
+    pub fn color(mut self, color: Option<LabelColor>) -> Self {
+        self.color = color;
+        self
+    }
+
+    pub fn label_color(&self, color: Option<LabelColor>) -> LabelColor {
         if self.disabled {
             LabelColor::Disabled
+        } else if let Some(color) = color {
+            color
         } else {
             Default::default()
         }
     }
 
-    fn icon_color(&self) -> IconColor {
-        if self.disabled {
-            IconColor::Disabled
-        } else {
-            Default::default()
-        }
-    }
-
-    fn render_label(&self) -> Label {
+    fn render_label(&self, color: LabelColor) -> Label {
         Label::new(self.label.clone())
-            .color(self.label_color())
+            .color(color)
             .line_height_style(LineHeightStyle::UILabel)
     }
 
@@ -166,7 +167,11 @@ impl<V: 'static> Button<V> {
     }
 
     pub fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
-        let icon_color = self.icon_color();
+        let (icon_color, label_color) = match (self.disabled, self.color) {
+            (true, _) => (IconColor::Disabled, LabelColor::Disabled),
+            (_, None) => (IconColor::Default, LabelColor::Default),
+            (_, Some(color)) => (IconColor::from(color), color),
+        };
 
         let mut button = h_stack()
             .id(SharedString::from(format!("{}", self.label)))
@@ -182,16 +187,16 @@ impl<V: 'static> Button<V> {
             (Some(_), Some(IconPosition::Left)) => {
                 button = button
                     .gap_1()
-                    .child(self.render_label())
+                    .child(self.render_label(label_color))
                     .children(self.render_icon(icon_color))
             }
             (Some(_), Some(IconPosition::Right)) => {
                 button = button
                     .gap_1()
                     .children(self.render_icon(icon_color))
-                    .child(self.render_label())
+                    .child(self.render_label(label_color))
             }
-            (_, _) => button = button.child(self.render_label()),
+            (_, _) => button = button.child(self.render_label(label_color)),
         }
 
         if let Some(width) = self.width {
