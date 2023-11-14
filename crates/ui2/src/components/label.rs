@@ -1,5 +1,4 @@
-use gpui::{relative, Hsla, WindowContext};
-use smallvec::SmallVec;
+use gpui::{relative, Hsla, Text, TextRun, WindowContext};
 
 use crate::prelude::*;
 use crate::styled_ext::StyledExt;
@@ -105,6 +104,8 @@ pub struct HighlightedLabel {
 }
 
 impl HighlightedLabel {
+    /// shows a label with the given characters highlighted.
+    /// characters are identified by utf8 byte position.
     pub fn new(label: impl Into<SharedString>, highlight_indices: Vec<usize>) -> Self {
         Self {
             label: label.into(),
@@ -126,10 +127,11 @@ impl HighlightedLabel {
 
     fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         let highlight_color = cx.theme().colors().text_accent;
+        let mut text_style = cx.text_style().clone();
 
         let mut highlight_indices = self.highlight_indices.iter().copied().peekable();
 
-        let mut runs: SmallVec<[Run; 8]> = SmallVec::new();
+        let mut runs: Vec<TextRun> = Vec::new();
 
         for (char_ix, char) in self.label.char_indices() {
             let mut color = self.color.hsla(cx);
@@ -137,16 +139,14 @@ impl HighlightedLabel {
             if let Some(highlight_ix) = highlight_indices.peek() {
                 if char_ix == *highlight_ix {
                     color = highlight_color;
-
                     highlight_indices.next();
                 }
             }
 
             let last_run = runs.last_mut();
-
             let start_new_run = if let Some(last_run) = last_run {
                 if color == last_run.color {
-                    last_run.text.push(char);
+                    last_run.len += char.len_utf8();
                     false
                 } else {
                     true
@@ -156,10 +156,8 @@ impl HighlightedLabel {
             };
 
             if start_new_run {
-                runs.push(Run {
-                    text: char.to_string(),
-                    color,
-                });
+                text_style.color = color;
+                runs.push(text_style.to_run(char.len_utf8()))
             }
         }
 
@@ -176,10 +174,7 @@ impl HighlightedLabel {
                         .bg(LabelColor::Hidden.hsla(cx)),
                 )
             })
-            .children(
-                runs.into_iter()
-                    .map(|run| div().text_color(run.color).child(run.text)),
-            )
+            .child(Text::styled(self.label, runs))
     }
 }
 
@@ -212,6 +207,10 @@ mod stories {
                 .child(HighlightedLabel::new(
                     "Hello, world!",
                     vec![0, 1, 2, 7, 8, 12],
+                ))
+                .child(HighlightedLabel::new(
+                    "Héllo, world!",
+                    vec![0, 1, 3, 8, 9, 13],
                 ))
         }
     }

@@ -1,6 +1,6 @@
 use crate::{
     AnyElement, BorrowWindow, Bounds, Component, Element, LayoutId, Line, Pixels, SharedString,
-    Size, ViewContext,
+    Size, TextRun, ViewContext,
 };
 use parking_lot::Mutex;
 use smallvec::SmallVec;
@@ -11,6 +11,7 @@ impl<V: 'static> Component<V> for SharedString {
     fn render(self) -> AnyElement<V> {
         Text {
             text: self,
+            runs: None,
             state_type: PhantomData,
         }
         .render()
@@ -21,6 +22,7 @@ impl<V: 'static> Component<V> for &'static str {
     fn render(self) -> AnyElement<V> {
         Text {
             text: self.into(),
+            runs: None,
             state_type: PhantomData,
         }
         .render()
@@ -33,6 +35,7 @@ impl<V: 'static> Component<V> for String {
     fn render(self) -> AnyElement<V> {
         Text {
             text: self.into(),
+            runs: None,
             state_type: PhantomData,
         }
         .render()
@@ -41,7 +44,23 @@ impl<V: 'static> Component<V> for String {
 
 pub struct Text<V> {
     text: SharedString,
+    runs: Option<Vec<TextRun>>,
     state_type: PhantomData<V>,
+}
+
+impl<V: 'static> Text<V> {
+    /// styled renders text that has different runs of different styles.
+    /// callers are responsible for setting the correct style for each run.
+    ////
+    /// For uniform text you can usually just pass a string as a child, and
+    /// cx.text_style() will be used automatically.
+    pub fn styled(text: SharedString, runs: Vec<TextRun>) -> Self {
+        Text {
+            text,
+            runs: Some(runs),
+            state_type: Default::default(),
+        }
+    }
 }
 
 impl<V: 'static> Component<V> for Text<V> {
@@ -82,6 +101,12 @@ impl<V: 'static> Element<V> for Text<V> {
 
         let rem_size = cx.rem_size();
 
+        let runs = if let Some(runs) = self.runs.take() {
+            runs
+        } else {
+            vec![text_style.to_run(text.len())]
+        };
+
         let layout_id = cx.request_measured_layout(Default::default(), rem_size, {
             let element_state = element_state.clone();
             move |known_dimensions, _| {
@@ -89,7 +114,7 @@ impl<V: 'static> Element<V> for Text<V> {
                     .layout_text(
                         &text,
                         font_size,
-                        &[text_style.to_run(text.len())],
+                        &runs[..],
                         known_dimensions.width, // Wrap if we know the width.
                     )
                     .log_err()

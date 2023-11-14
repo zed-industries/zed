@@ -32,6 +32,7 @@ impl KeyBinding {
                 div()
                     .flex()
                     .gap_1()
+                    .when(keystroke.modifiers.function, |el| el.child(Key::new("fn")))
                     .when(keystroke.modifiers.control, |el| el.child(Key::new("^")))
                     .when(keystroke.modifiers.alt, |el| el.child(Key::new("⌥")))
                     .when(keystroke.modifiers.command, |el| el.child(Key::new("⌘")))
@@ -136,6 +137,7 @@ mod stories {
                 .child(KeyBinding::new(binding("a z")))
                 .child(Story::label(cx, "Chord with Modifier"))
                 .child(KeyBinding::new(binding("ctrl-a shift-z")))
+                .child(KeyBinding::new(binding("fn-s")))
         }
     }
 }

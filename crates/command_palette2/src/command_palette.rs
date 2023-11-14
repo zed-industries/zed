@@ -130,16 +130,7 @@ impl CommandPaletteDelegate {
     ) -> Self {
         Self {
             command_palette,
-            matches: commands
-                .iter()
-                .enumerate()
-                .map(|(i, command)| StringMatch {
-                    candidate_id: i,
-                    string: command.name.clone(),
-                    positions: Vec::new(),
-                    score: 0.0,
-                })
-                .collect(),
+            matches: vec![],
             commands,
             selected_ix: 0,
             previous_focus_handle,

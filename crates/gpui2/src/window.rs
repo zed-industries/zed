@@ -101,6 +101,12 @@ pub struct FocusHandle {
     handles: Arc<RwLock<SlotMap<FocusId, AtomicUsize>>>,
 }
 
+impl std::fmt::Debug for FocusHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!("FocusHandle({:?})", self.id))
+    }
+}
+
 impl FocusHandle {
     pub(crate) fn new(handles: &Arc<RwLock<SlotMap<FocusId, AtomicUsize>>>) -> Self {
         let id = handles.write().insert(AtomicUsize::new(1));
@@ -424,6 +430,7 @@ impl<'a> WindowContext<'a> {
                     .dispatch_tree
                     .focusable_node_id(focus_handle.id)
                 {
+                    cx.propagate_event = true;
                     cx.dispatch_action_on_node(node_id, action);
                 }
             })
