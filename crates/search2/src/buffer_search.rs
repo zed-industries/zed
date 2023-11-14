@@ -10,16 +10,16 @@ use collections::HashMap;
 use editor::Editor;
 use futures::channel::oneshot;
 use gpui::{
-    action, actions, blue, div, red, white, Action, AnyElement, AnyView, AppContext, Component,
-    Div, Entity, EventEmitter, Hsla, ParentElement as _, Render, Styled, Subscription, Svg, Task,
-    View, ViewContext, VisualContext as _, WindowContext,
+    action, actions, blue, div, red, rems, white, Action, AnyElement, AnyView, AppContext,
+    Component, Div, Entity, EventEmitter, Hsla, ParentElement as _, Render, Styled, Subscription,
+    Svg, Task, View, ViewContext, VisualContext as _, WindowContext,
 };
 use project::search::SearchQuery;
 use serde::Deserialize;
 use std::{any::Any, sync::Arc};
 use theme::ActiveTheme;
 
-use ui::{h_stack, Icon, IconButton, IconElement, Label, StyledExt};
+use ui::{h_stack, Button, ButtonGroup, Icon, IconButton, IconElement, Label, StyledExt};
 use util::ResultExt;
 use workspace::{
     item::ItemHandle,
@@ -173,10 +173,9 @@ impl Render for BufferSearchBar {
             )
         };
         div()
-            .w_full()
             .border()
             .border_color(blue())
-            .flex() // Make this div a flex container
+            .flex()
             .justify_between()
             .child(
                 div()
@@ -199,17 +198,10 @@ impl Render for BufferSearchBar {
                             .then(|| search_option_button(SearchOptions::WHOLE_WORD)),
                     ),
             )
-            .child(div().w_auto().flex_row())
-            .child(search_button_for_mode(
-                SearchMode::Text,
-                Some(Side::Left),
-                cx,
-            ))
-            .child(search_button_for_mode(
-                SearchMode::Regex,
-                Some(Side::Right),
-                cx,
-            ))
+            .child(ButtonGroup::new(vec![
+                search_button_for_mode(SearchMode::Text, Some(Side::Left), cx),
+                search_button_for_mode(SearchMode::Regex, Some(Side::Right), cx),
+            ]))
             .when(supported_options.replacement, |this| {
                 this.child(super::toggle_replace_button(self.replace_enabled))
             })
@@ -373,6 +365,9 @@ impl BufferSearchBar {
         workspace.register_action(|workspace, a: &Deploy, cx| {
             workspace.active_pane().update(cx, |this, cx| {
                 this.toolbar().update(cx, |this, cx| {
+                    if this.item_of_type::<BufferSearchBar>().is_some() {
+                        return;
+                    }
                     let view = cx.build_view(|cx| BufferSearchBar::new(cx));
                     this.add_item(view.clone(), cx);
                     view.update(cx, |this, cx| this.deploy(a, cx));

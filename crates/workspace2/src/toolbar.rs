@@ -1,8 +1,9 @@
 use crate::ItemHandle;
 use gpui::{
-    div, AnyView, Div, Entity, EntityId, EventEmitter, ParentElement, Render, Styled, View,
-    ViewContext, WindowContext,
+    div, AnyView, Component, Div, Entity, EntityId, EventEmitter, ParentElement, Render, Styled,
+    View, ViewContext, WindowContext,
 };
+use ui::{h_stack, v_stack, Button, Icon, IconButton, Label, LabelColor, StyledExt};
 
 pub enum ToolbarItemEvent {
     ChangeLocation(ToolbarItemLocation),
@@ -40,8 +41,8 @@ trait ToolbarItemViewHandle: Send {
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum ToolbarItemLocation {
     Hidden,
-    PrimaryLeft { flex: Option<(f32, bool)> },
-    PrimaryRight { flex: Option<(f32, bool)> },
+    PrimaryLeft,
+    PrimaryRight,
     Secondary,
 }
 
@@ -52,12 +53,54 @@ pub struct Toolbar {
     items: Vec<(Box<dyn ToolbarItemViewHandle>, ToolbarItemLocation)>,
 }
 
+impl Toolbar {
+    fn left_items(&self) -> impl Iterator<Item = &dyn ToolbarItemViewHandle> {
+        self.items.iter().filter_map(|(item, location)| {
+            if *location == ToolbarItemLocation::PrimaryLeft {
+                Some(item.as_ref())
+            } else {
+                None
+            }
+        })
+    }
+
+    fn right_items(&self) -> impl Iterator<Item = &dyn ToolbarItemViewHandle> {
+        self.items.iter().filter_map(|(item, location)| {
+            if *location == ToolbarItemLocation::PrimaryRight {
+                Some(item.as_ref())
+            } else {
+                None
+            }
+        })
+    }
+}
+
 impl Render for Toolbar {
     type Element = Div<Self>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         //dbg!(&self.items.len());
-        div().children(self.items.iter().map(|(child, _)| child.to_any()))
+        v_stack()
+            .child(
+                h_stack()
+                    .justify_between()
+                    .child(
+                        // Toolbar left side
+                        h_stack()
+                            .p_1()
+                            .child(Button::new("crates"))
+                            .child(Label::new("/").color(LabelColor::Muted))
+                            .child(Button::new("workspace2")),
+                    )
+                    // Toolbar right side
+                    .child(
+                        h_stack()
+                            .p_1()
+                            .child(IconButton::new("buffer-search", Icon::MagnifyingGlass))
+                            .child(IconButton::new("inline-assist", Icon::MagicWand)),
+                    ),
+            )
+            .children(self.items.iter().map(|(child, _)| child.to_any()))
     }
 }
 

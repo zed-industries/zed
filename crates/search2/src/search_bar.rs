@@ -5,7 +5,7 @@ use gpui::{
     ParentElement as _, StatelessInteractive, Styled, Svg, View, ViewContext,
 };
 use theme::ActiveTheme;
-use ui::{Button, Label};
+use ui::{v_stack, Button, ButtonVariant, Label};
 use workspace::searchable::Direction;
 
 use crate::{
@@ -83,23 +83,33 @@ pub(crate) fn render_search_mode_button<V: 'static>(
     mode: SearchMode,
     side: Option<Side>,
     is_active: bool,
-    on_click: impl Fn(&mut V, &mut ViewContext<V>) + 'static,
+    on_click: impl Fn(&mut V, &mut ViewContext<V>) + 'static + Send + Sync,
     cx: &mut ViewContext<V>,
-) -> impl Component<V> {
+) -> Button<V> {
     //let tooltip_style = cx.theme().tooltip.clone();
     enum SearchModeButton {}
 
-    div()
-        .border_2()
-        .rounded_md()
-        .when(side == Some(Side::Left), |this| {
-            this.border_r_0().rounded_tr_none().rounded_br_none()
-        })
-        .when(side == Some(Side::Right), |this| {
-            this.border_l_0().rounded_bl_none().rounded_tl_none()
-        })
-        .on_key_down(move |v, _, _, cx| on_click(v, cx))
-        .child(Label::new(mode.label()))
+    let button_variant = if is_active {
+        ButtonVariant::Filled
+    } else {
+        ButtonVariant::Ghost
+    };
+
+    Button::new(mode.label())
+        .on_click(Arc::new(on_click))
+        .variant(button_variant)
+
+    // v_stack()
+    //     .border_2()
+    //     .rounded_md()
+    //     .when(side == Some(Side::Left), |this| {
+    //         this.border_r_0().rounded_tr_none().rounded_br_none()
+    //     })
+    //     .when(side == Some(Side::Right), |this| {
+    //         this.border_l_0().rounded_bl_none().rounded_tl_none()
+    //     })
+    //     .on_key_down(move |v, _, _, cx| on_click(v, cx))
+    //     .child(Label::new(mode.label()))
     // MouseEventHandler::new::<SearchModeButton, _>(mode.region_id(), cx, |state, cx| {
     //     let theme = cx.theme();
     //     let style = theme
