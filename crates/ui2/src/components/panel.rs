@@ -126,7 +126,7 @@ pub use stories::*;
 mod stories {
     use super::*;
     use crate::{Label, Story};
-    use gpui::{InteractiveComponent, Div, Render};
+    use gpui::{Div, InteractiveComponent, Render};
 
     pub struct PanelStory;
 

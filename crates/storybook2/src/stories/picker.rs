@@ -1,5 +1,5 @@
 use fuzzy::StringMatchCandidate;
-use gpui::{div, prelude::*, KeyBinding, Div, Render, Styled, Task, View, WindowContext};
+use gpui::{div, prelude::*, Div, KeyBinding, Render, Styled, Task, View, WindowContext};
 use picker::{Picker, PickerDelegate};
 use std::sync::Arc;
 use theme2::ActiveTheme;

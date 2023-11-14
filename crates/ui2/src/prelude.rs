@@ -1,8 +1,8 @@
 use gpui::rems;
 use gpui::Rems;
 pub use gpui::{
-    div, Component, Element, ElementId, InteractiveComponent, ParentComponent, SharedString, Styled,
-    ViewContext, WindowContext,
+    div, Component, Element, ElementId, InteractiveComponent, ParentComponent, SharedString,
+    Styled, ViewContext, WindowContext,
 };
 
 pub use crate::elevation::*;

@@ -7,9 +7,9 @@ use crate::{
 use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
 use gpui::{
-    actions, prelude::*, register_action, AppContext, AsyncWindowContext, Component, EntityId,
-    EventEmitter, FocusHandle, Model, Div, PromptLevel, Render, Task, View, ViewContext,
-    VisualContext, WeakView, WindowContext,
+    actions, prelude::*, register_action, AppContext, AsyncWindowContext, Component, Div, EntityId,
+    EventEmitter, FocusHandle, Model, PromptLevel, Render, Task, View, ViewContext, VisualContext,
+    WeakView, WindowContext,
 };
 use parking_lot::Mutex;
 use project2::{Project, ProjectEntryId, ProjectPath};

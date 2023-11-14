@@ -1,5 +1,5 @@
 use gpui::{
-    div, prelude::*, px, AnyView, EventEmitter, FocusHandle, Div, Render, Subscription, View,
+    div, prelude::*, px, AnyView, Div, EventEmitter, FocusHandle, Render, Subscription, View,
     ViewContext, WindowContext,
 };
 use ui::{h_stack, v_stack};

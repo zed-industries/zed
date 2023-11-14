@@ -1,6 +1,4 @@
-use gpui::{
-    div, prelude::*, px, Div, Render, SharedString, Stateful, Styled, View, WindowContext,
-};
+use gpui::{div, prelude::*, px, Div, Render, SharedString, Stateful, Styled, View, WindowContext};
 use theme2::ActiveTheme;
 
 pub struct ScrollStory;

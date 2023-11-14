@@ -1,5 +1,5 @@
 use gpui::{
-    actions, div, prelude::*, FocusHandle, Focusable, KeyBinding, Div, Render, Stateful, View,
+    actions, div, prelude::*, Div, FocusHandle, Focusable, KeyBinding, Render, Stateful, View,
     WindowContext,
 };
 use theme2::ActiveTheme;

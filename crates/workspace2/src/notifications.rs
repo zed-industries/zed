@@ -165,7 +165,7 @@ impl Workspace {
 
 pub mod simple_message_notification {
     use super::{Notification, NotificationEvent};
-    use gpui::{AnyElement, AppContext, EventEmitter, Div, Render, TextStyle, ViewContext};
+    use gpui::{AnyElement, AppContext, Div, EventEmitter, Render, TextStyle, ViewContext};
     use serde::Deserialize;
     use std::{borrow::Cow, sync::Arc};
 
