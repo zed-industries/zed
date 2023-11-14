@@ -2368,6 +2368,12 @@ impl<V: 'static + Render> WindowHandle<V> {
     {
         cx.read_window(self, |root_view, _cx| root_view.clone())
     }
+
+    pub fn is_active(&self, cx: &WindowContext) -> Option<bool> {
+        cx.windows
+            .get(self.id)
+            .and_then(|window| window.as_ref().map(|window| window.active))
+    }
 }
 
 impl<V> Copy for WindowHandle<V> {}

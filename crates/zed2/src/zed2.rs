@@ -460,36 +460,45 @@ fn quit(_: &mut Workspace, _: &Quit, cx: &mut gpui::ViewContext<Workspace>) {
                 .collect::<Vec<_>>()
         })?;
 
-        // // If multiple windows have unsaved changes, and need a save prompt,
-        // // prompt in the active window before switching to a different window.
-        // workspace_windows.sort_by_key(|window| window.is_active(&cx) == Some(false));
+        // If multiple windows have unsaved changes, and need a save prompt,
+        // prompt in the active window before switching to a different window.
+        cx.update(|_, cx| {
+            workspace_windows.sort_by_key(|window| window.is_active(&cx) == Some(false));
+        })
+        .log_err();
 
-        // if let (true, Some(window)) = (should_confirm, workspace_windows.first().copied()) {
-        //     let answer = window.prompt(
-        //         PromptLevel::Info,
-        //         "Are you sure you want to quit?",
-        //         &["Quit", "Cancel"],
-        //         &mut cx,
-        //     );
+        if let (true, Some(window)) = (should_confirm, workspace_windows.first().copied()) {
+            let answer = cx
+                .update(|_, cx| {
+                    cx.prompt(
+                        PromptLevel::Info,
+                        "Are you sure you want to quit?",
+                        &["Quit", "Cancel"],
+                    )
+                })
+                .log_err();
 
-        //     if let Some(mut answer) = answer {
-        //         let answer = answer.next().await;
-        //         if answer != Some(0) {
-        //             return Ok(());
-        //         }
-        //     }
-        // }
+            if let Some(mut answer) = answer {
+                let answer = answer.await.ok();
+                if answer != Some(0) {
+                    return Ok(());
+                }
+            }
+        }
 
-        // // If the user cancels any save prompt, then keep the app open.
-        // for window in workspace_windows {
-        //     if let Some(should_close) = window.update_root(&mut cx, |workspace, cx| {
-        //         workspace.prepare_to_close(true, cx)
-        //     }) {
-        //         if !should_close.await? {
-        //             return Ok(());
-        //         }
-        //     }
-        // }
+        // If the user cancels any save prompt, then keep the app open.
+        for window in workspace_windows {
+            if let Some(should_close) = window
+                .update(&mut cx, |workspace, cx| {
+                    workspace.prepare_to_close(true, cx)
+                })
+                .log_err()
+            {
+                if !should_close.await? {
+                    return Ok(());
+                }
+            }
+        }
         cx.update(|_, cx| {
             cx.quit();
         })?;
