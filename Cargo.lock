@@ -3081,6 +3081,7 @@ dependencies = [
  "settings2",
  "text2",
  "theme2",
+ "ui2",
  "util",
  "workspace2",
 ]

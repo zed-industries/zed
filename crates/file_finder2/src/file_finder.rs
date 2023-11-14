@@ -1,7 +1,9 @@
 use collections::HashMap;
 use editor::{scroll::autoscroll::Autoscroll, Bias, Editor};
 use fuzzy::{CharBag, PathMatch, PathMatchCandidate};
-use gpui::{actions, AppContext, Task, ViewContext, View, EventEmitter, WindowContext};
+use gpui::{
+    actions, AppContext, Div, EventEmitter, Render, Task, View, ViewContext, WindowContext,
+};
 use picker::{Picker, PickerDelegate};
 use project::{PathMatchCandidateSet, Project, ProjectPath, WorktreeId};
 use std::{
@@ -12,13 +14,13 @@ use std::{
     },
 };
 use text::Point;
-use util::{paths::PathLikeWithPosition, post_inc, ResultExt};
-use workspace::{Workspace, Modal, ModalEvent};
+use util::{paths::PathLikeWithPosition, post_inc};
+use workspace::{Modal, ModalEvent, Workspace};
 
 actions!(Toggle);
 
 pub struct FileFinder {
-    picker: View<Picker<FileFinderDelegate>>
+    picker: View<Picker<FileFinderDelegate>>,
 }
 
 pub fn init(cx: &mut AppContext) {
@@ -28,21 +30,88 @@ pub fn init(cx: &mut AppContext) {
 impl FileFinder {
     fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
         workspace.register_action(|workspace, _: &Toggle, cx| {
-            workspace.toggle_modal(cx, |cx| FileFinder::new(cx));
+            let Some(file_finder) = workspace.current_modal::<Self>(cx) else {
+                workspace.toggle_modal(cx, |cx| FileFinder::new(workspace, cx));
+                return;
+            };
+            file_finder.update(cx, |file_finder, cx| {
+                file_finder
+                    .picker
+                    .update(cx, |picker, cx| picker.cycle_selection(cx))
+            })
         });
     }
 
-    fn new(cx: &mut ViewContext<Self>) -> Self {
-        FileFinder{
+    fn new(workspace: &mut Workspace, cx: &mut ViewContext<Self>) -> Self {
+        let project = workspace.project().read(cx);
 
-        }
+        let currently_opened_path = workspace
+            .active_item(cx)
+            .and_then(|item| item.project_path(cx))
+            .map(|project_path| {
+                let abs_path = project
+                    .worktree_for_id(project_path.worktree_id, cx)
+                    .map(|worktree| worktree.read(cx).abs_path().join(&project_path.path));
+                FoundPath::new(project_path, abs_path)
+            });
+
+        // if exists, bubble the currently opened path to the top
+        let history_items = currently_opened_path
+            .clone()
+            .into_iter()
+            .chain(
+                workspace
+                    .recent_navigation_history(Some(MAX_RECENT_SELECTIONS), cx)
+                    .into_iter()
+                    .filter(|(history_path, _)| {
+                        Some(history_path)
+                            != currently_opened_path
+                                .as_ref()
+                                .map(|found_path| &found_path.project)
+                    })
+                    .filter(|(_, history_abs_path)| {
+                        history_abs_path.as_ref()
+                            != currently_opened_path
+                                .as_ref()
+                                .and_then(|found_path| found_path.absolute.as_ref())
+                    })
+                    .filter(|(_, history_abs_path)| match history_abs_path {
+                        Some(abs_path) => history_file_exists(abs_path),
+                        None => true,
+                    })
+                    .map(|(history_path, abs_path)| FoundPath::new(history_path, abs_path)),
+            )
+            .collect();
+
+        let project = workspace.project().clone();
+        let workspace = cx.handle().downgrade();
+        let finder = cx.add_view(|cx| {
+            Picker::new(
+                FileFinderDelegate::new(
+                    workspace,
+                    project,
+                    currently_opened_path,
+                    history_items,
+                    cx,
+                ),
+                cx,
+            )
+        });
+        finder
     }
 }
 
-impl EventEmitter<ModalEvent> for FileFinder;
-impl Modal for FileFinder{
+impl EventEmitter<ModalEvent> for FileFinder {}
+impl Modal for FileFinder {
     fn focus(&self, cx: &mut WindowContext) {
-        self.picker.update(cx, |picker, cx| { picker.focus(cx) })
+        self.picker.update(cx, |picker, cx| picker.focus(cx))
+    }
+}
+impl Render for FileFinder {
+    type Element = Div<Self>;
+
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
+        v_stack().w_96().child(self.picker.clone())
     }
 }
 

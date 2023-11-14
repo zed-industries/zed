@@ -58,7 +58,7 @@ impl<D: PickerDelegate> Picker<D> {
         self.editor.update(cx, |editor, cx| editor.focus(cx));
     }
 
-    fn select_next(&mut self, _: &menu::SelectNext, cx: &mut ViewContext<Self>) {
+    pub fn select_next(&mut self, _: &menu::SelectNext, cx: &mut ViewContext<Self>) {
         let count = self.delegate.match_count();
         if count > 0 {
             let index = self.delegate.selected_index();
@@ -96,6 +96,15 @@ impl<D: PickerDelegate> Picker<D> {
             self.scroll_handle.scroll_to_item(count - 1);
             cx.notify();
         }
+    }
+
+    pub fn cycle_selection(&mut self, cx: &mut ViewContext<Self>) {
+        let count = self.delegate.match_count();
+        let index = self.delegate.selected_index();
+        let new_index = if index + 1 == count { 0 } else { index + 1 };
+        self.delegate.set_selected_index(new_index, cx);
+        self.scroll_handle.scroll_to_item(new_index);
+        cx.notify();
     }
 
     fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
