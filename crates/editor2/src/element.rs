@@ -2565,7 +2565,11 @@ impl Element<Editor> for EditorElement {
                     });
                     // on_action(cx, Editor::rename); todo!()
                     // on_action(cx, Editor::confirm_rename); todo!()
-                    // on_action(cx, Editor::find_all_references); todo!()
+                    register_action(cx, |editor, action, cx| {
+                        editor
+                            .find_all_references(action, cx)
+                            .map(|task| task.detach_and_log_err(cx));
+                    });
                     register_action(cx, Editor::next_copilot_suggestion);
                     register_action(cx, Editor::previous_copilot_suggestion);
                     register_action(cx, Editor::copilot_suggest);

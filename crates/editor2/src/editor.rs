@@ -7588,53 +7588,47 @@ impl Editor {
         })
     }
 
-    //     pub fn find_all_references(
-    //         workspace: &mut Workspace,
-    //         _: &FindAllReferences,
-    //         cx: &mut ViewContext<Workspace>,
-    //     ) -> Option<Task<Result<()>>> {
-    //         let active_item = workspace.active_item(cx)?;
-    //         let editor_handle = active_item.act_as::<Self>(cx)?;
+    pub fn find_all_references(
+        &mut self,
+        _: &FindAllReferences,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<Task<Result<()>>> {
+        let buffer = self.buffer.read(cx);
+        let head = self.selections.newest::<usize>(cx).head();
+        let (buffer, head) = buffer.text_anchor_for_position(head, cx)?;
+        let replica_id = self.replica_id(cx);
 
-    //         let editor = editor_handle.read(cx);
-    //         let buffer = editor.buffer.read(cx);
-    //         let head = editor.selections.newest::<usize>(cx).head();
-    //         let (buffer, head) = buffer.text_anchor_for_position(head, cx)?;
-    //         let replica_id = editor.replica_id(cx);
+        let workspace = self.workspace()?;
+        let project = workspace.read(cx).project().clone();
+        let references = project.update(cx, |project, cx| project.references(&buffer, head, cx));
+        Some(cx.spawn(|_, mut cx| async move {
+            let locations = references.await?;
+            if locations.is_empty() {
+                return Ok(());
+            }
 
-    //         let project = workspace.project().clone();
-    //         let references = project.update(cx, |project, cx| project.references(&buffer, head, cx));
-    //         Some(cx.spawn_labeled(
-    //             "Finding All References...",
-    //             |workspace, mut cx| async move {
-    //                 let locations = references.await?;
-    //                 if locations.is_empty() {
-    //                     return Ok(());
-    //                 }
+            workspace.update(&mut cx, |workspace, cx| {
+                let title = locations
+                    .first()
+                    .as_ref()
+                    .map(|location| {
+                        let buffer = location.buffer.read(cx);
+                        format!(
+                            "References to `{}`",
+                            buffer
+                                .text_for_range(location.range.clone())
+                                .collect::<String>()
+                        )
+                    })
+                    .unwrap();
+                Self::open_locations_in_multibuffer(
+                    workspace, locations, replica_id, title, false, cx,
+                );
+            })?;
 
-    //                 workspace.update(&mut cx, |workspace, cx| {
-    //                     let title = locations
-    //                         .first()
-    //                         .as_ref()
-    //                         .map(|location| {
-    //                             let buffer = location.buffer.read(cx);
-    //                             format!(
-    //                                 "References to `{}`",
-    //                                 buffer
-    //                                     .text_for_range(location.range.clone())
-    //                                     .collect::<String>()
-    //                             )
-    //                         })
-    //                         .unwrap();
-    //                     Self::open_locations_in_multibuffer(
-    //                         workspace, locations, replica_id, title, false, cx,
-    //                     );
-    //                 })?;
-
-    //                 Ok(())
-    //             },
-    //         ))
-    //     }
+            Ok(())
+        }))
+    }
 
     /// Opens a multibuffer with the given project locations in it
     pub fn open_locations_in_multibuffer(
@@ -7685,7 +7679,7 @@ impl Editor {
         editor.update(cx, |editor, cx| {
             editor.highlight_background::<Self>(
                 ranges_to_highlight,
-                |theme| todo!("theme.editor.highlighted_line_background"),
+                |theme| theme.editor_highlighted_line_background,
                 cx,
             );
         });
