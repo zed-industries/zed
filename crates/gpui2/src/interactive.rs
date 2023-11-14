@@ -286,8 +286,8 @@ pub struct FocusEvent {
 #[cfg(test)]
 mod test {
     use crate::{
-        self as gpui, div, Div, FocusHandle, InteractiveComponent, KeyBinding, Keystroke,
-        ParentComponent, Render, Stateful, TestAppContext, VisualContext,
+        self as gpui, div, Component, Div, FocusHandle, InteractiveComponent, KeyBinding,
+        Keystroke, ParentComponent, Render, Stateful, TestAppContext, ViewContext, VisualContext,
     };
 
     struct TestView {
@@ -304,10 +304,15 @@ mod test {
         fn render(&mut self, _: &mut gpui::ViewContext<Self>) -> Self::Element {
             div().id("testview").child(
                 div()
-                    .key_context("test")
-                    .track_focus(&self.focus_handle)
+                    .key_context("parent")
                     .on_key_down(|this: &mut TestView, _, _, _| this.saw_key_down = true)
-                    .on_action(|this: &mut TestView, _: &TestAction, _| this.saw_action = true),
+                    .on_action(|this: &mut TestView, _: &TestAction, _| this.saw_action = true)
+                    .child(|this: &mut Self, _cx: &mut ViewContext<Self>| {
+                        div()
+                            .key_context("nested")
+                            .track_focus(&this.focus_handle)
+                            .render()
+                    }),
             )
         }
     }
@@ -325,7 +330,7 @@ mod test {
         });
 
         cx.update(|cx| {
-            cx.bind_keys(vec![KeyBinding::new("ctrl-g", TestAction, None)]);
+            cx.bind_keys(vec![KeyBinding::new("ctrl-g", TestAction, Some("parent"))]);
         });
 
         window

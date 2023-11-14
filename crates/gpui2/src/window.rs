@@ -1309,6 +1309,7 @@ impl<'a> WindowContext<'a> {
             .current_frame
             .dispatch_tree
             .dispatch_path(node_id);
+        dbg!(node_id, &dispatch_path, self.propagate_event);
 
         // Capture phase
         for node_id in &dispatch_path {
@@ -1328,6 +1329,8 @@ impl<'a> WindowContext<'a> {
             }
         }
 
+        dbg!(node_id, &dispatch_path, self.propagate_event);
+
         // Bubble phase
         for node_id in dispatch_path.iter().rev() {
             let node = self.window.current_frame.dispatch_tree.node(*node_id);
@@ -1337,6 +1340,7 @@ impl<'a> WindowContext<'a> {
             } in node.action_listeners.clone()
             {
                 let any_action = action.as_any();
+                dbg!(action_type, any_action.type_id());
                 if action_type == any_action.type_id() {
                     self.propagate_event = false; // Actions stop propagation by default during the bubble phase
                     listener(any_action, DispatchPhase::Bubble, self);
@@ -2082,11 +2086,10 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         f: impl FnOnce(Option<FocusHandle>, &mut Self) -> R,
     ) -> R {
         let window = &mut self.window;
-
         window
             .current_frame
             .dispatch_tree
-            .push_node(context, &mut window.previous_frame.dispatch_tree);
+            .push_node(context.clone(), &mut window.previous_frame.dispatch_tree);
         if let Some(focus_handle) = focus_handle.as_ref() {
             window
                 .current_frame

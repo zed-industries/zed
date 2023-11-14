@@ -612,6 +612,7 @@ impl<V: 'static> Element<V> for Div<V> {
         let interactive_state = self
             .interactivity
             .initialize(element_state.map(|s| s.interactive_state), cx);
+
         for child in &mut self.children {
             child.initialize(view_state, cx);
         }
@@ -763,6 +764,7 @@ where
                     .unwrap_or_else(|| cx.focus_handle())
             });
         }
+
         element_state
     }
 
@@ -773,11 +775,7 @@ where
         f: impl FnOnce(Style, &mut ViewContext<V>) -> LayoutId,
     ) -> LayoutId {
         let style = self.compute_style(None, element_state, cx);
-        cx.with_key_dispatch(
-            self.key_context.clone(),
-            self.tracked_focus_handle.clone(),
-            |_, cx| f(style, cx),
-        )
+        f(style, cx)
     }
 
     pub fn paint(
@@ -1078,6 +1076,9 @@ where
                     })
                 }
 
+                if !self.key_context.is_empty() {
+                    dbg!(&self.key_context, self.action_listeners.len());
+                }
                 for (action_type, listener) in self.action_listeners.drain(..) {
                     cx.on_action(action_type, listener)
                 }

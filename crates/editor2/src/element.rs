@@ -2446,7 +2446,7 @@ impl Element<Editor> for EditorElement {
     type ElementState = ();
 
     fn element_id(&self) -> Option<gpui::ElementId> {
-        None
+        None // todo! can we change the element trait to return an id here from the view context?
     }
 
     fn initialize(
@@ -2456,6 +2456,41 @@ impl Element<Editor> for EditorElement {
         cx: &mut gpui::ViewContext<Editor>,
     ) -> Self::ElementState {
         editor.style = Some(self.style.clone()); // Long-term, we'd like to eliminate this.
+    }
+
+    fn layout(
+        &mut self,
+        editor: &mut Editor,
+        element_state: &mut Self::ElementState,
+        cx: &mut gpui::ViewContext<Editor>,
+    ) -> gpui::LayoutId {
+        let rem_size = cx.rem_size();
+        let mut style = Style::default();
+        style.size.width = relative(1.).into();
+        style.size.height = match editor.mode {
+            EditorMode::SingleLine => self.style.text.line_height_in_pixels(cx.rem_size()).into(),
+            EditorMode::AutoHeight { .. } => todo!(),
+            EditorMode::Full => relative(1.).into(),
+        };
+        cx.request_layout(&style, None)
+    }
+
+    fn paint(
+        &mut self,
+        bounds: Bounds<gpui::Pixels>,
+        editor: &mut Editor,
+        element_state: &mut Self::ElementState,
+        cx: &mut gpui::ViewContext<Editor>,
+    ) {
+        let mut layout = self.compute_layout(editor, cx, bounds);
+        let gutter_bounds = Bounds {
+            origin: bounds.origin,
+            size: layout.gutter_size,
+        };
+        let text_bounds = Bounds {
+            origin: gutter_bounds.upper_right(),
+            size: layout.text_size,
+        };
 
         let dispatch_context = editor.dispatch_context(cx);
         cx.with_element_id(Some(cx.view().entity_id()), |cx| {
@@ -2621,63 +2656,28 @@ impl Element<Editor> for EditorElement {
                     register_action(cx, Editor::context_menu_prev);
                     register_action(cx, Editor::context_menu_next);
                     register_action(cx, Editor::context_menu_last);
+
+                    // We call with_z_index to establish a new stacking context.
+                    cx.with_z_index(0, |cx| {
+                        cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
+                            self.paint_mouse_listeners(
+                                bounds,
+                                gutter_bounds,
+                                text_bounds,
+                                &layout.position_map,
+                                cx,
+                            );
+                            self.paint_background(gutter_bounds, text_bounds, &layout, cx);
+                            if layout.gutter_size.width > Pixels::ZERO {
+                                self.paint_gutter(gutter_bounds, &mut layout, editor, cx);
+                            }
+                            self.paint_text(text_bounds, &mut layout, editor, cx);
+                            let input_handler = ElementInputHandler::new(bounds, cx);
+                            cx.handle_input(&editor.focus_handle, input_handler);
+                        });
+                    });
                 },
-            )
-        });
-    }
-
-    fn layout(
-        &mut self,
-        editor: &mut Editor,
-        element_state: &mut Self::ElementState,
-        cx: &mut gpui::ViewContext<Editor>,
-    ) -> gpui::LayoutId {
-        let rem_size = cx.rem_size();
-        let mut style = Style::default();
-        style.size.width = relative(1.).into();
-        style.size.height = match editor.mode {
-            EditorMode::SingleLine => self.style.text.line_height_in_pixels(cx.rem_size()).into(),
-            EditorMode::AutoHeight { .. } => todo!(),
-            EditorMode::Full => relative(1.).into(),
-        };
-        cx.request_layout(&style, None)
-    }
-
-    fn paint(
-        &mut self,
-        bounds: Bounds<gpui::Pixels>,
-        editor: &mut Editor,
-        element_state: &mut Self::ElementState,
-        cx: &mut gpui::ViewContext<Editor>,
-    ) {
-        let mut layout = self.compute_layout(editor, cx, bounds);
-        let gutter_bounds = Bounds {
-            origin: bounds.origin,
-            size: layout.gutter_size,
-        };
-        let text_bounds = Bounds {
-            origin: gutter_bounds.upper_right(),
-            size: layout.text_size,
-        };
-
-        // We call with_z_index to establish a new stacking context.
-        cx.with_z_index(0, |cx| {
-            cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
-                self.paint_mouse_listeners(
-                    bounds,
-                    gutter_bounds,
-                    text_bounds,
-                    &layout.position_map,
-                    cx,
-                );
-                self.paint_background(gutter_bounds, text_bounds, &layout, cx);
-                if layout.gutter_size.width > Pixels::ZERO {
-                    self.paint_gutter(gutter_bounds, &mut layout, editor, cx);
-                }
-                self.paint_text(text_bounds, &mut layout, editor, cx);
-                let input_handler = ElementInputHandler::new(bounds, cx);
-                cx.handle_input(&editor.focus_handle, input_handler);
-            });
+            );
         });
     }
 }
