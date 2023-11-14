@@ -547,17 +547,6 @@ impl<V: 'static> InteractiveComponent<V> for Node<V> {
     }
 }
 
-pub struct NodeState {
-    child_layout_ids: SmallVec<[LayoutId; 4]>,
-    interactive_state: InteractiveElementState,
-}
-
-impl AsMut<InteractiveElementState> for InteractiveElementState {
-    fn as_mut(&mut self) -> &mut InteractiveElementState {
-        self
-    }
-}
-
 impl<V: 'static> Element<V> for Node<V> {
     type ElementState = NodeState;
 
@@ -660,26 +649,25 @@ impl<V: 'static> Element<V> for Node<V> {
     }
 }
 
-pub enum FocusStatus {
-    /// The current element is not focused, and does not contain or descend from the focused element.
-    None,
-    /// The current element is focused.
-    Focus,
-    /// The current element contains the focused element
-    FocusIn,
-    /// The current element descends from the focused element
-    InFocus,
+pub struct NodeState {
+    child_layout_ids: SmallVec<[LayoutId; 4]>,
+    interactive_state: InteractiveElementState,
+}
+
+impl AsMut<InteractiveElementState> for InteractiveElementState {
+    fn as_mut(&mut self) -> &mut InteractiveElementState {
+        self
+    }
 }
 
 pub struct Interactivity<V> {
-    active: Option<MouseDownEvent>,
-    group_active: bool,
     hovered: bool,
     group_hovered: bool,
-    focus_status: FocusStatus,
     key_context: KeyContext,
     focus_handle: Option<FocusHandle>,
+    focusable: bool,
     scroll_offset: Point<Pixels>,
+    group: Option<SharedString>,
     base_style: StyleRefinement,
     focus_style: StyleRefinement,
     focus_in_style: StyleRefinement,
@@ -690,8 +678,6 @@ pub struct Interactivity<V> {
     group_active_style: Option<GroupStyle>,
     drag_over_styles: SmallVec<[(TypeId, StyleRefinement); 2]>,
     group_drag_over_styles: SmallVec<[(TypeId, GroupStyle); 2]>,
-    group: Option<SharedString>,
-    dispatch_context: KeyContext,
     mouse_down_listeners: SmallVec<[MouseDownListener<V>; 2]>,
     mouse_up_listeners: SmallVec<[MouseUpListener<V>; 2]>,
     mouse_move_listeners: SmallVec<[MouseMoveListener<V>; 2]>,
@@ -708,6 +694,7 @@ pub struct Interactivity<V> {
 
 #[derive(Default)]
 pub struct InteractiveElementState {
+    focus_handle: Option<FocusHandle>,
     clicked_state: Arc<Mutex<ElementClickedState>>,
     hover_state: Arc<Mutex<bool>>,
     pending_mouse_down: Arc<Mutex<Option<MouseDownEvent>>>,
@@ -738,22 +725,26 @@ impl<V> Interactivity<V>
 where
     V: 'static,
 {
-    fn compute_style(&self, bounds: Option<Bounds<Pixels>>, cx: &mut ViewContext<V>) -> Style {
+    fn compute_style(
+        &self,
+        bounds: Option<Bounds<Pixels>>,
+        element_state: &mut InteractiveElementState,
+        cx: &mut ViewContext<V>,
+    ) -> Style {
         let mut style = Style::default();
         style.refine(&self.base_style);
 
-        match self.focus_status {
-            FocusStatus::None => {}
-            FocusStatus::Focus => {
+        if let Some(focus_handle) = self.focus_handle.as_ref() {
+            if focus_handle.contains_focused(cx) {
+                style.refine(&self.focus_in_style);
+            }
+
+            if focus_handle.within_focused(cx) {
+                style.refine(&self.in_focus_style);
+            }
+
+            if focus_handle.is_focused(cx) {
                 style.refine(&self.focus_style);
-                style.refine(&self.focus_in_style);
-                style.refine(&self.in_focus_style);
-            }
-            FocusStatus::FocusIn => {
-                style.refine(&self.focus_in_style);
-            }
-            FocusStatus::InFocus => {
-                style.refine(&self.in_focus_style);
             }
         }
 
@@ -793,13 +784,14 @@ where
             }
         }
 
-        if self.group_active {
+        let clicked_state = element_state.clicked_state.lock();
+        if clicked_state.group {
             if let Some(group) = self.group_active_style.as_ref() {
                 style.refine(&group.style)
             }
         }
 
-        if self.active.is_some() {
+        if clicked_state.element {
             style.refine(&self.active_style)
         }
 
@@ -812,34 +804,12 @@ where
         cx: &mut ViewContext<V>,
         f: impl FnOnce(Style, &mut ViewContext<V>) -> LayoutId,
     ) -> LayoutId {
-        let mut style = Style::default();
-        style.refine(&self.base_style);
-
-        if let Some(focus_handle) = self.focus_handle.as_ref() {
-            if focus_handle.contains_focused(cx) {
-                style.refine(&self.focus_in_style);
-            }
-
-            if focus_handle.within_focused(cx) {
-                style.refine(&self.in_focus_style);
-            }
-
-            if focus_handle.is_focused(cx) {
-                style.refine(&self.focus_style);
-            }
-        }
-
-        let clicked_state = element_state.clicked_state.lock();
-        if clicked_state.group {
-            if let Some(group_style) = self.group_active_style.as_ref() {
-                style.refine(&group_style.style);
-            }
-        }
-        if clicked_state.element {
-            style.refine(&self.active_style);
-        }
-
-        f(style, cx)
+        let style = self.compute_style(None, element_state, cx);
+        cx.with_key_dispatch(
+            self.key_context.clone(),
+            self.focus_handle.clone(),
+            |_, cx| f(style, cx),
+        )
     }
 
     fn paint(
@@ -850,7 +820,7 @@ where
         cx: &mut ViewContext<V>,
         f: impl FnOnce(Style, Point<Pixels>, &mut ViewContext<V>),
     ) {
-        let style = self.compute_style(Some(bounds), cx);
+        let style = self.compute_style(Some(bounds), element_state, cx);
 
         if let Some(mouse_cursor) = style.mouse_cursor {
             let hovered = bounds.contains_point(&cx.mouse_position());
@@ -934,8 +904,6 @@ where
                 }
             });
         }
-
-        let mut element_state: &mut InteractiveElementState = element_state.as_mut();
 
         let click_listeners = mem::take(&mut self.click_listeners);
         let drag_listener = mem::take(&mut self.drag_listener);
@@ -1136,14 +1104,12 @@ where
 impl<V: 'static> Default for Interactivity<V> {
     fn default() -> Self {
         Self {
-            active: None,
-            group_active: false,
             hovered: false,
             group_hovered: false,
-            focus_status: FocusStatus::None,
             key_context: KeyContext::default(),
             focus_handle: None,
             scroll_offset: Point::default(),
+            group: None,
             base_style: StyleRefinement::default(),
             focus_style: StyleRefinement::default(),
             focus_in_style: StyleRefinement::default(),
@@ -1154,8 +1120,6 @@ impl<V: 'static> Default for Interactivity<V> {
             group_active_style: None,
             drag_over_styles: SmallVec::new(),
             group_drag_over_styles: SmallVec::new(),
-            group: None,
-            dispatch_context: KeyContext::default(),
             mouse_down_listeners: SmallVec::new(),
             mouse_up_listeners: SmallVec::new(),
             mouse_move_listeners: SmallVec::new(),
@@ -1168,6 +1132,7 @@ impl<V: 'static> Default for Interactivity<V> {
             drag_listener: None,
             hover_listener: None,
             tooltip_builder: None,
+            focusable: todo!(),
         }
     }
 }
@@ -1240,7 +1205,7 @@ where
     type ElementState = E::ElementState;
 
     fn id(&self) -> Option<crate::ElementId> {
-        todo!()
+        self.element.id()
     }
 
     fn initialize(
