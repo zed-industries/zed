@@ -1,7 +1,8 @@
 use crate::{status_bar::StatusItemView, Axis, Workspace};
 use gpui::{
-    div, Action, AnyView, AppContext, Div, Entity, EntityId, EventEmitter, FocusHandle,
-    ParentElement, Render, Styled, Subscription, View, ViewContext, WeakView, WindowContext,
+    div, px, Action, AnyView, AppContext, Component, Div, Entity, EntityId, EventEmitter,
+    FocusHandle, ParentElement, Render, Styled, Subscription, View, ViewContext, WeakView,
+    WindowContext,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -429,7 +430,14 @@ impl Render for Dock {
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         if let Some(entry) = self.visible_entry() {
-            div().size_full().child(entry.panel.to_any())
+            let size = entry.panel.size(cx);
+
+            div()
+                .map(|this| match self.position().axis() {
+                    Axis::Horizontal => this.w(px(size)).h_full(),
+                    Axis::Vertical => this.h(px(size)).w_full(),
+                })
+                .child(entry.panel.to_any())
         } else {
             div()
         }
