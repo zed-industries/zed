@@ -38,10 +38,10 @@ use futures::{
 use gpui::{
     actions, div, point, rems, size, Action, AnyModel, AnyView, AnyWeakView, AppContext,
     AsyncAppContext, AsyncWindowContext, Bounds, Component, Div, Entity, EntityId, EventEmitter,
-    FocusHandle, GlobalPixels, KeyContext, Model, ModelContext, ParentElement, Point, Render, Size,
-    StatefulInteractive, StatelessInteractive, StatelessInteractivity, Styled, Subscription, Task,
-    View, ViewContext, VisualContext, WeakView, WindowBounds, WindowContext, WindowHandle,
-    WindowOptions,
+    FocusHandle, FocusableKeyDispatch, GlobalPixels, KeyContext, Model, ModelContext,
+    ParentElement, Point, Render, Size, StatefulInteractive, StatefulInteractivity,
+    StatelessInteractive, StatelessInteractivity, Styled, Subscription, Task, View, ViewContext,
+    VisualContext, WeakView, WindowBounds, WindowContext, WindowHandle, WindowOptions,
 };
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, ProjectItem};
 use itertools::Itertools;
@@ -3409,10 +3409,6 @@ impl Workspace {
         //     });
     }
 
-    // todo!()
-    //     #[cfg(any(test, feature = "test-support"))]
-    //     pub fn test_new(project: ModelHandle<Project>, cx: &mut ViewContext<Self>) -> Self {
-    //         use node_runtime::FakeNodeRuntime;
     #[cfg(any(test, feature = "test-support"))]
     pub fn test_new(project: Model<Project>, cx: &mut ViewContext<Self>) -> Self {
         use gpui::Context;
@@ -3432,7 +3428,10 @@ impl Workspace {
             initialize_workspace: |_, _, _, _| Task::ready(Ok(())),
             node_runtime: FakeNodeRuntime::new(),
         });
-        Self::new(0, project, app_state, cx)
+        let workspace = Self::new(0, project, app_state, cx);
+        dbg!(&workspace.focus_handle);
+        workspace.focus_handle.focus(cx);
+        workspace
     }
 
     //     fn render_dock(&self, position: DockPosition, cx: &WindowContext) -> Option<AnyElement<Self>> {
@@ -3710,13 +3709,14 @@ fn notify_if_database_failed(workspace: WindowHandle<Workspace>, cx: &mut AsyncA
 impl EventEmitter<Event> for Workspace {}
 
 impl Render for Workspace {
-    type Element = Div<Self>;
+    type Element = Div<Self, StatefulInteractivity<Self>, FocusableKeyDispatch<Self>>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         let mut context = KeyContext::default();
         context.add("Workspace");
 
         self.add_workspace_actions_listeners(div())
+            .track_focus(&self.focus_handle)
             .context(context)
             .relative()
             .size_full()
