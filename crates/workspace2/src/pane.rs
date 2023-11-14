@@ -179,7 +179,7 @@ pub struct Pane {
     workspace: WeakView<Workspace>,
     project: Model<Project>,
     //     can_drop: Rc<dyn Fn(&DragAndDrop<Workspace>, &WindowContext) -> bool>,
-    //     can_split: bool,
+    can_split: bool,
     //     render_tab_bar_buttons: Rc<dyn Fn(&mut Pane, &mut ViewContext<Pane>) -> AnyElement<Pane>>,
 }
 
@@ -347,7 +347,7 @@ impl Pane {
             workspace,
             project,
             // can_drop: Rc::new(|_, _| true),
-            // can_split: true,
+            can_split: true,
             // render_tab_bar_buttons: Rc::new(move |pane, cx| {
             //     Flex::row()
             //         // New menu
@@ -427,17 +427,17 @@ impl Pane {
     //         self.can_drop = Rc::new(can_drop);
     //     }
 
-    //     pub fn set_can_split(&mut self, can_split: bool, cx: &mut ViewContext<Self>) {
-    //         self.can_split = can_split;
-    //         cx.notify();
-    //     }
+    pub fn set_can_split(&mut self, can_split: bool, cx: &mut ViewContext<Self>) {
+        self.can_split = can_split;
+        cx.notify();
+    }
 
-    //     pub fn set_can_navigate(&mut self, can_navigate: bool, cx: &mut ViewContext<Self>) {
-    //         self.toolbar.update(cx, |toolbar, cx| {
-    //             toolbar.set_can_navigate(can_navigate, cx);
-    //         });
-    //         cx.notify();
-    //     }
+    pub fn set_can_navigate(&mut self, can_navigate: bool, cx: &mut ViewContext<Self>) {
+        self.toolbar.update(cx, |toolbar, cx| {
+            toolbar.set_can_navigate(can_navigate, cx);
+        });
+        cx.notify();
+    }
 
     //     pub fn set_render_tab_bar_buttons<F>(&mut self, cx: &mut ViewContext<Self>, render: F)
     //     where

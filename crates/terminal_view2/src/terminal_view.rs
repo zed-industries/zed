@@ -10,10 +10,11 @@ use anyhow::Context;
 use dirs::home_dir;
 use editor::{scroll::autoscroll::Autoscroll, Editor};
 use gpui::{
-    actions, div, img, red, register_action, AnyElement, AppContext, Component, Div, EventEmitter,
-    FocusEvent, FocusHandle, Focusable, FocusableKeyDispatch, InputHandler, KeyDownEvent,
-    Keystroke, Model, ParentElement, Pixels, Render, StatefulInteractivity, StatelessInteractive,
-    Styled, Task, View, ViewContext, VisualContext, WeakView,
+    actions, div, img, red, register_action, AnyElement, AppContext, Component, DispatchPhase, Div,
+    EventEmitter, FocusEvent, FocusHandle, Focusable, FocusableKeyDispatch, InputHandler,
+    KeyDownEvent, Keystroke, Model, ParentElement, Pixels, Render, SharedString,
+    StatefulInteractivity, StatelessInteractive, Styled, Task, View, ViewContext, VisualContext,
+    WeakView,
 };
 use language::Bias;
 use project::{search::SearchQuery, LocalWorktree, Project};
@@ -21,7 +22,6 @@ use serde::Deserialize;
 use settings::Settings;
 use smol::Timer;
 use std::{
-    borrow::Cow,
     ops::RangeInclusive,
     path::{Path, PathBuf},
     sync::Arc,
@@ -40,7 +40,7 @@ use workspace::{
     item::{BreadcrumbText, Item, ItemEvent},
     notifications::NotifyResultExt,
     register_deserializable_item,
-    searchable::{SearchEvent, SearchOptions, SearchableItem, SearchableItemHandle},
+    searchable::{SearchEvent, SearchOptions, SearchableItem},
     NewCenterTerminal, Pane, ToolbarItemLocation, Workspace, WorkspaceId,
 };
 
@@ -51,11 +51,11 @@ const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 pub struct ScrollTerminal(pub i32);
 
 #[register_action]
-#[derive(Clone, Default, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 pub struct SendText(String);
 
 #[register_action]
-#[derive(Clone, Default, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 pub struct SendKeystroke(String);
 
 actions!(Clear, Copy, Paste, ShowCharacterPalette, SearchTest);
@@ -260,7 +260,7 @@ impl TerminalView {
             has_bell: false,
             focus_handle: cx.focus_handle(),
             // todo!()
-            // context_menu: cx.add_view(|cx| ContextMenu::new(view_id, cx)),
+            // context_menu: cx.build_view(|cx| ContextMenu::new(view_id, cx)),
             blink_state: true,
             blinking_on: false,
             blinking_paused: false,
@@ -493,7 +493,12 @@ pub fn regex_search_for_query(query: &project::search::SearchQuery) -> Option<Re
 }
 
 impl TerminalView {
-    fn key_down(&mut self, event: &KeyDownEvent, cx: &mut ViewContext<Self>) -> bool {
+    fn key_down(
+        &mut self,
+        event: &KeyDownEvent,
+        _dispatch_phase: DispatchPhase,
+        cx: &mut ViewContext<Self>,
+    ) {
         self.clear_bel(cx);
         self.pause_cursor_blinking(cx);
 
@@ -502,7 +507,7 @@ impl TerminalView {
                 &event.keystroke,
                 TerminalSettings::get_global(cx).option_as_meta,
             )
-        })
+        });
     }
 
     fn focus_in(&mut self, event: &FocusEvent, cx: &mut ViewContext<Self>) {
@@ -652,7 +657,10 @@ impl InputHandler for TerminalView {
         todo!()
     }
 
-    fn selected_text_range(&self, cx: &AppContext) -> Option<std::ops::Range<usize>> {
+    fn selected_text_range(
+        &mut self,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<std::ops::Range<usize>> {
         if self
             .terminal
             .read(cx)
@@ -706,7 +714,7 @@ impl InputHandler for TerminalView {
 }
 
 impl Item for TerminalView {
-    fn tab_tooltip_text(&self, cx: &AppContext) -> Option<Cow<str>> {
+    fn tab_tooltip_text(&self, cx: &AppContext) -> Option<SharedString> {
         Some(self.terminal().read(cx).title().into())
     }
 
@@ -727,7 +735,7 @@ impl Item for TerminalView {
         &self,
         _workspace_id: WorkspaceId,
         _cx: &mut ViewContext<Self>,
-    ) -> Option<Self> {
+    ) -> Option<View<Self>> {
         //From what I can tell, there's no  way to tell the current working
         //Directory of the terminal from outside the shell. There might be
         //solutions to this, but they are non-trivial and require more IPC
@@ -789,7 +797,7 @@ impl Item for TerminalView {
             //     cx.read(|cx| {
             //         let strategy = TerminalSettings::get_global(cx).working_directory.clone();
             //         workspace
-            //             .upgrade(cx)
+            //             .upgrade()
             //             .map(|workspace| {
             //                 get_working_directory(workspace.read(cx), cx, strategy)
             //             })
@@ -816,6 +824,10 @@ impl Item for TerminalView {
         //     ))
         //     .detach();
         self.workspace_id = workspace.database_id();
+    }
+
+    fn focus_handle(&self) -> FocusHandle {
+        self.focus_handle.clone()
     }
 }
 
@@ -1098,7 +1110,8 @@ mod tests {
         let project = Project::test(params.fs.clone(), [], cx).await;
         let workspace = cx
             .add_window(|cx| Workspace::test_new(project.clone(), cx))
-            .root_view(cx);
+            .root_view(cx)
+            .unwrap();
 
         (project, workspace)
     }

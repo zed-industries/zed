@@ -36,11 +36,12 @@ use futures::{
     Future, FutureExt, StreamExt,
 };
 use gpui::{
-    actions, div, point, prelude::*, size, Action, AnyModel, AnyView, AnyWeakView, AppContext,
+    actions, div, point, register_action, size, Action, AnyModel, AnyView, AnyWeakView, AppContext,
     AsyncAppContext, AsyncWindowContext, Bounds, Div, Entity, EntityId, EventEmitter, FocusHandle,
-    FocusableView, GlobalPixels, KeyContext, Model, ModelContext, ParentComponent, Point, Render,
-    Size, Styled, Subscription, Task, View, ViewContext, WeakView, WindowBounds, WindowContext,
-    WindowHandle, WindowOptions,
+    FocusableView, GlobalPixels, KeyContext, Model, ModelContext, ParentElement, Point, Render,
+    Size, StatefulInteractive, StatelessInteractive, StatelessInteractivity, Styled, Subscription,
+    Task, View, ViewContext, VisualContext, WeakView, WindowBounds, WindowContext, WindowHandle,
+    WindowOptions,
 };
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, ProjectItem};
 use itertools::Itertools;
@@ -193,10 +194,11 @@ impl Clone for Toast {
     }
 }
 
-// #[derive(Clone, Deserialize, PartialEq)]
-// pub struct OpenTerminal {
-//     pub working_directory: PathBuf,
-// }
+#[register_action]
+#[derive(Debug, Default, Clone, Deserialize, PartialEq)]
+pub struct OpenTerminal {
+    pub working_directory: PathBuf,
+}
 
 // impl_actions!(
 //     workspace,
@@ -206,7 +208,6 @@ impl Clone for Toast {
 //         SwapPaneInDirection,
 //         NewFileInDirection,
 //         Toast,
-//         OpenTerminal,
 //         SaveAll,
 //         Save,
 //         CloseAllItemsAndPanes,

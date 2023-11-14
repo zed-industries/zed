@@ -3,27 +3,34 @@ use std::{path::PathBuf, sync::Arc};
 use crate::TerminalView;
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
-    actions, anyhow::Result, elements::*, serde_json, Action, AppContext, AsyncAppContext, Entity,
-    Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle, WindowContext,
+    actions, serde_json, Action, AppContext, AsyncAppContext, Entity, EventEmitter, Render,
+    Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use project::Fs;
 use serde::{Deserialize, Serialize};
-use settings::SettingsStore;
+use settings::{Settings, SettingsStore};
 use terminal::terminal_settings::{TerminalDockPosition, TerminalSettings};
 use util::{ResultExt, TryFutureExt};
 use workspace::{
-    dock::{DockPosition, Panel},
+    dock::{DockPosition, Panel, PanelEvent},
     item::Item,
-    pane, DraggedItem, Pane, Workspace,
+    pane, Pane, Workspace,
 };
+
+use anyhow::Result;
 
 const TERMINAL_PANEL_KEY: &'static str = "TerminalPanel";
 
-actions!(terminal_panel, [ToggleFocus]);
+actions!(ToggleFocus);
 
 pub fn init(cx: &mut AppContext) {
-    cx.add_action(TerminalPanel::new_terminal);
-    cx.add_action(TerminalPanel::open_terminal);
+    cx.observe_new_views(
+        |workspace: &mut Workspace, _: &mut ViewContext<Workspace>| {
+            workspace.register_action(TerminalPanel::new_terminal);
+            workspace.register_action(TerminalPanel::open_terminal);
+        },
+    )
+    .detach();
 }
 
 #[derive(Debug)]
@@ -36,9 +43,9 @@ pub enum Event {
 }
 
 pub struct TerminalPanel {
-    pane: ViewHandle<Pane>,
+    pane: View<Pane>,
     fs: Arc<dyn Fs>,
-    workspace: WeakViewHandle<Workspace>,
+    workspace: WeakView<Workspace>,
     width: Option<f32>,
     height: Option<f32>,
     pending_serialization: Task<Option<()>>,
@@ -48,12 +55,11 @@ pub struct TerminalPanel {
 impl TerminalPanel {
     fn new(workspace: &Workspace, cx: &mut ViewContext<Self>) -> Self {
         let weak_self = cx.weak_handle();
-        let pane = cx.add_view(|cx| {
-            let window = cx.window();
+        let pane = cx.build_view(|cx| {
+            let window = cx.window_handle();
             let mut pane = Pane::new(
                 workspace.weak_handle(),
                 workspace.project().clone(),
-                workspace.app_state().background_actions,
                 Default::default(),
                 cx,
             );
@@ -78,7 +84,7 @@ impl TerminalPanel {
                         move |_, cx| {
                             let this = this.clone();
                             cx.window_context().defer(move |cx| {
-                                if let Some(this) = this.upgrade(cx) {
+                                if let Some(this) = this.upgrade() {
                                     this.update(cx, |this, cx| {
                                         this.add_terminal(None, cx);
                                     });
@@ -104,7 +110,7 @@ impl TerminalPanel {
                     ))
                     .into_any()
             });
-            let buffer_search_bar = cx.add_view(search::BufferSearchBar::new);
+            let buffer_search_bar = cx.build_view(search::BufferSearchBar::new);
             pane.toolbar()
                 .update(cx, |toolbar, cx| toolbar.add_item(buffer_search_bar, cx));
             pane
@@ -123,7 +129,7 @@ impl TerminalPanel {
             _subscriptions: subscriptions,
         };
         let mut old_dock_position = this.position(cx);
-        cx.observe_global::<SettingsStore, _>(move |this, cx| {
+        cx.observe_global::<SettingsStore>(move |this, cx| {
             let new_dock_position = this.position(cx);
             if new_dock_position != old_dock_position {
                 old_dock_position = new_dock_position;
@@ -134,13 +140,10 @@ impl TerminalPanel {
         this
     }
 
-    pub fn load(
-        workspace: WeakViewHandle<Workspace>,
-        cx: AsyncAppContext,
-    ) -> Task<Result<ViewHandle<Self>>> {
+    pub fn load(workspace: WeakView<Workspace>, cx: AsyncAppContext) -> Task<Result<View<Self>>> {
         cx.spawn(|mut cx| async move {
             let serialized_panel = if let Some(panel) = cx
-                .background()
+                .background_executor()
                 .spawn(async move { KEY_VALUE_STORE.read_kvp(TERMINAL_PANEL_KEY) })
                 .await
                 .log_err()
@@ -151,7 +154,7 @@ impl TerminalPanel {
                 None
             };
             let (panel, pane, items) = workspace.update(&mut cx, |workspace, cx| {
-                let panel = cx.add_view(|cx| TerminalPanel::new(workspace, cx));
+                let panel = cx.build_view(|cx| TerminalPanel::new(workspace, cx));
                 let items = if let Some(serialized_panel) = serialized_panel.as_ref() {
                     panel.update(cx, |panel, cx| {
                         cx.notify();
@@ -189,7 +192,7 @@ impl TerminalPanel {
                 let mut active_ix = None;
                 for item in items {
                     if let Some(item) = item.log_err() {
-                        let item_id = item.id();
+                        let item_id = item.entity_id().as_u64();
                         pane.add_item(Box::new(item), false, false, None, cx);
                         if Some(item_id) == active_item_id {
                             active_ix = Some(pane.items_len() - 1);
@@ -208,7 +211,7 @@ impl TerminalPanel {
 
     fn handle_pane_event(
         &mut self,
-        _pane: ViewHandle<Pane>,
+        _pane: View<Pane>,
         event: &pane::Event,
         cx: &mut ViewContext<Self>,
     ) {
@@ -221,7 +224,7 @@ impl TerminalPanel {
             pane::Event::Focus => cx.emit(Event::Focus),
 
             pane::Event::AddItem { item } => {
-                if let Some(workspace) = self.workspace.upgrade(cx) {
+                if let Some(workspace) = self.workspace.upgrade() {
                     let pane = self.pane.clone();
                     workspace.update(cx, |workspace, cx| item.added_to_pane(workspace, pane, cx))
                 }
@@ -261,24 +264,23 @@ impl TerminalPanel {
     fn add_terminal(&mut self, working_directory: Option<PathBuf>, cx: &mut ViewContext<Self>) {
         let workspace = self.workspace.clone();
         cx.spawn(|this, mut cx| async move {
-            let pane = this.read_with(&cx, |this, _| this.pane.clone())?;
+            let pane = this.update(&mut cx, |this, _| this.pane.clone())?;
             workspace.update(&mut cx, |workspace, cx| {
                 let working_directory = if let Some(working_directory) = working_directory {
                     Some(working_directory)
                 } else {
-                    let working_directory_strategy = settings::get::<TerminalSettings>(cx)
-                        .working_directory
-                        .clone();
+                    let working_directory_strategy =
+                        TerminalSettings::get_global(cx).working_directory.clone();
                     crate::get_working_directory(workspace, cx, working_directory_strategy)
                 };
 
-                let window = cx.window();
+                let window = cx.window_handle();
                 if let Some(terminal) = workspace.project().update(cx, |project, cx| {
                     project
                         .create_terminal(working_directory, window, cx)
                         .log_err()
                 }) {
-                    let terminal = Box::new(cx.add_view(|cx| {
+                    let terminal = Box::new(cx.build_view(|cx| {
                         TerminalView::new(
                             terminal,
                             workspace.weak_handle(),
@@ -287,7 +289,7 @@ impl TerminalPanel {
                         )
                     }));
                     pane.update(cx, |pane, cx| {
-                        let focus = pane.has_focus();
+                        let focus = pane.has_focus(cx);
                         pane.add_item(terminal, true, focus, None, cx);
                     });
                 }
@@ -303,12 +305,16 @@ impl TerminalPanel {
             .pane
             .read(cx)
             .items()
-            .map(|item| item.id())
+            .map(|item| item.id().as_u64())
             .collect::<Vec<_>>();
-        let active_item_id = self.pane.read(cx).active_item().map(|item| item.id());
+        let active_item_id = self
+            .pane
+            .read(cx)
+            .active_item()
+            .map(|item| item.id().as_u64());
         let height = self.height;
         let width = self.width;
-        self.pending_serialization = cx.background().spawn(
+        self.pending_serialization = cx.background_executor().spawn(
             async move {
                 KEY_VALUE_STORE
                     .write_kvp(
@@ -328,29 +334,25 @@ impl TerminalPanel {
     }
 }
 
-impl Entity for TerminalPanel {
-    type Event = Event;
-}
+impl EventEmitter<Event> for TerminalPanel {}
+impl EventEmitter<PanelEvent> for TerminalPanel {}
 
-impl View for TerminalPanel {
-    fn ui_name() -> &'static str {
-        "TerminalPanel"
-    }
-
+impl Render for TerminalPanel {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> gpui::AnyElement<Self> {
         ChildView::new(&self.pane, cx).into_any()
     }
 
-    fn focus_in(&mut self, _: gpui::AnyViewHandle, cx: &mut ViewContext<Self>) {
-        if cx.is_self_focused() {
-            cx.focus(&self.pane);
-        }
-    }
+    // todo!()
+    // fn focus_in(&mut self, _: gpui::AnyView, cx: &mut ViewContext<Self>) {
+    //     if cx.is_self_focused() {
+    //         cx.focus(&self.pane);
+    //     }
+    // }
 }
 
 impl Panel for TerminalPanel {
     fn position(&self, cx: &WindowContext) -> DockPosition {
-        match settings::get::<TerminalSettings>(cx).dock {
+        match TerminalSettings::get_global(cx).dock {
             TerminalDockPosition::Left => DockPosition::Left,
             TerminalDockPosition::Bottom => DockPosition::Bottom,
             TerminalDockPosition::Right => DockPosition::Right,
@@ -373,7 +375,7 @@ impl Panel for TerminalPanel {
     }
 
     fn size(&self, cx: &WindowContext) -> f32 {
-        let settings = settings::get::<TerminalSettings>(cx);
+        let settings = TerminalSettings::get_global(cx);
         match self.position(cx) {
             DockPosition::Left | DockPosition::Right => {
                 self.width.unwrap_or_else(|| settings.default_width)
@@ -389,14 +391,6 @@ impl Panel for TerminalPanel {
         }
         self.serialize(cx);
         cx.notify();
-    }
-
-    fn should_zoom_in_on_event(event: &Event) -> bool {
-        matches!(event, Event::ZoomIn)
-    }
-
-    fn should_zoom_out_on_event(event: &Event) -> bool {
-        matches!(event, Event::ZoomOut)
     }
 
     fn is_zoomed(&self, cx: &WindowContext) -> bool {
@@ -430,31 +424,44 @@ impl Panel for TerminalPanel {
         }
     }
 
-    fn should_change_position_on_event(event: &Self::Event) -> bool {
-        matches!(event, Event::DockPositionChanged)
-    }
-
-    fn should_activate_on_event(_: &Self::Event) -> bool {
-        false
-    }
-
-    fn should_close_on_event(event: &Event) -> bool {
-        matches!(event, Event::Close)
-    }
-
     fn has_focus(&self, cx: &WindowContext) -> bool {
-        self.pane.read(cx).has_focus()
+        self.pane.read(cx).has_focus(cx)
     }
 
-    fn is_focus_event(event: &Self::Event) -> bool {
-        matches!(event, Event::Focus)
+    fn persistent_name(&self) -> &'static str {
+        todo!()
     }
+
+    // todo!() is it needed?
+    // fn should_change_position_on_event(event: &Self::Event) -> bool {
+    //     matches!(event, Event::DockPositionChanged)
+    // }
+
+    // fn should_activate_on_event(_: &Self::Event) -> bool {
+    //     false
+    // }
+
+    // fn should_close_on_event(event: &Event) -> bool {
+    //     matches!(event, Event::Close)
+    // }
+
+    // fn is_focus_event(event: &Self::Event) -> bool {
+    //     matches!(event, Event::Focus)
+    // }
+
+    // fn should_zoom_in_on_event(event: &Event) -> bool {
+    //     matches!(event, Event::ZoomIn)
+    // }
+
+    // fn should_zoom_out_on_event(event: &Event) -> bool {
+    //     matches!(event, Event::ZoomOut)
+    // }
 }
 
 #[derive(Serialize, Deserialize)]
 struct SerializedTerminalPanel {
-    items: Vec<usize>,
-    active_item_id: Option<usize>,
+    items: Vec<u64>,
+    active_item_id: Option<u64>,
     width: Option<f32>,
     height: Option<f32>,
 }
