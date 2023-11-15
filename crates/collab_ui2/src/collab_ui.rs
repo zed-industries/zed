@@ -9,6 +9,7 @@ mod panel_settings;
 
 use std::sync::Arc;
 
+pub use collab_panel::CollabPanel;
 pub use collab_titlebar_item::CollabTitlebarItem;
 use gpui::AppContext;
 pub use panel_settings::{
@@ -29,7 +30,7 @@ pub fn init(_app_state: &Arc<AppState>, cx: &mut AppContext) {
 
     // vcs_menu::init(cx);
     collab_titlebar_item::init(cx);
-    // collab_panel::init(cx);
+    collab_panel::init(cx);
     // chat_panel::init(cx);
     // notifications::init(&app_state, cx);
 
