@@ -1633,8 +1633,8 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
         }
     }
 
-    /// Update the global element offset based on the given offset. This is used to implement
-    /// scrolling and position drag handles.
+    /// Update the global element offset relative to the current offset. This is used to implement
+    /// scrolling.
     fn with_element_offset<R>(
         &mut self,
         offset: Point<Pixels>,
@@ -1644,7 +1644,17 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
             return f(self);
         };
 
-        let offset = self.element_offset() + offset;
+        let abs_offset = self.element_offset() + offset;
+        self.with_absolute_element_offset(abs_offset, f)
+    }
+
+    /// Update the global element offset based on the given offset. This is used to implement
+    /// drag handles and other manual painting of elements.
+    fn with_absolute_element_offset<R>(
+        &mut self,
+        offset: Point<Pixels>,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
         self.window_mut()
             .current_frame
             .element_offset_stack

@@ -131,9 +131,9 @@ impl<V: 'static> Element<V> for UniformList<V> {
     fn layout(
         &mut self,
         _view_state: &mut V,
-        element_state: &mut Self::ElementState,
+        element_state: Option<Self::ElementState>,
         cx: &mut ViewContext<V>,
-    ) -> LayoutId {
+    ) -> (LayoutId, Self::ElementState) {
         let max_items = self.item_count;
         let item_size = element_state.item_size;
         let rem_size = cx.rem_size();
