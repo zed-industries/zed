@@ -125,10 +125,6 @@ pub fn init(cx: &mut AppContext) {
     //     cx.add_async_action(Pane::close_items_to_the_left);
     //     cx.add_async_action(Pane::close_items_to_the_right);
     //     cx.add_async_action(Pane::close_all_items);
-    //     cx.add_action(|pane: &mut Pane, _: &SplitLeft, cx| pane.split(SplitDirection::Left, cx));
-    //     cx.add_action(|pane: &mut Pane, _: &SplitUp, cx| pane.split(SplitDirection::Up, cx));
-    //     cx.add_action(|pane: &mut Pane, _: &SplitRight, cx| pane.split(SplitDirection::Right, cx));
-    //     cx.add_action(|pane: &mut Pane, _: &SplitDown, cx| pane.split(SplitDirection::Down, cx));
 }
 
 pub enum Event {
@@ -1195,9 +1191,9 @@ impl Pane {
         }
     }
 
-    //     pub fn split(&mut self, direction: SplitDirection, cx: &mut ViewContext<Self>) {
-    //         cx.emit(Event::Split(direction));
-    //     }
+    pub fn split(&mut self, direction: SplitDirection, cx: &mut ViewContext<Self>) {
+        cx.emit(Event::Split(direction));
+    }
 
     //     fn deploy_split_menu(&mut self, cx: &mut ViewContext<Self>) {
     //         self.tab_bar_context_menu.handle.update(cx, |menu, cx| {
@@ -1903,10 +1899,6 @@ impl Pane {
     }
 }
 
-// impl Entity for Pane {
-//     type Event = Event;
-// }
-
 impl Render for Pane {
     type Element = Focusable<Self, Div<Self>>;
 
@@ -1914,6 +1906,10 @@ impl Render for Pane {
         v_stack()
             .key_context("Pane")
             .track_focus(&self.focus_handle)
+            .on_action(|pane: &mut Pane, _: &SplitLeft, cx| pane.split(SplitDirection::Left, cx))
+            .on_action(|pane: &mut Pane, _: &SplitUp, cx| pane.split(SplitDirection::Up, cx))
+            .on_action(|pane: &mut Pane, _: &SplitRight, cx| pane.split(SplitDirection::Right, cx))
+            .on_action(|pane: &mut Pane, _: &SplitDown, cx| pane.split(SplitDirection::Down, cx))
             .size_full()
             .on_action(|pane: &mut Self, action, cx| {
                 pane.close_active_item(action, cx)

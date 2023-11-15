@@ -551,7 +551,32 @@ impl PaneAxis {
     ) -> AnyElement<Workspace> {
         debug_assert!(self.members.len() == self.flexes.lock().len());
 
-        todo!()
+        div()
+            .flex()
+            .flex_auto()
+            .map(|s| match self.axis {
+                Axis::Vertical => s.flex_col(),
+                Axis::Horizontal => s.flex_row(),
+            })
+            .children(self.members.iter().enumerate().map(|(ix, member)| {
+                match member {
+                    Member::Axis(axis) => axis
+                        .render(
+                            project,
+                            basis,
+                            follower_states,
+                            active_call,
+                            active_pane,
+                            zoomed,
+                            app_state,
+                            cx,
+                        )
+                        .render(),
+                    Member::Pane(pane) => pane.clone().render(),
+                }
+            }))
+            .render()
+
         // let mut pane_axis = PaneAxisElement::new(
         //     self.axis,
         //     basis,
