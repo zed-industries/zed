@@ -1880,10 +1880,8 @@ impl Editor {
         );
 
         let focus_handle = cx.focus_handle();
-        cx.on_focus_in(&focus_handle, Self::handle_focus_in)
-            .detach();
-        cx.on_focus_out(&focus_handle, Self::handle_focus_out)
-            .detach();
+        cx.on_focus(&focus_handle, Self::handle_focus).detach();
+        cx.on_blur(&focus_handle, Self::handle_blur).detach();
 
         let mut this = Self {
             handle: cx.view().downgrade(),
@@ -7903,6 +7901,10 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) -> Option<RenameState> {
         let rename = self.pending_rename.take()?;
+        if rename.editor.focus_handle(cx).is_focused(cx) {
+            cx.focus(&self.focus_handle);
+        }
+
         self.remove_blocks(
             [rename.block_id].into_iter().collect(),
             Some(Autoscroll::fit()),
@@ -9201,17 +9203,13 @@ impl Editor {
         self.focus_handle.is_focused(cx)
     }
 
-    fn handle_focus_in(&mut self, cx: &mut ViewContext<Self>) {
-        if self.focus_handle.is_focused(cx) {
-            // todo!()
-            // let focused_event = EditorFocused(cx.handle());
-            // cx.emit_global(focused_event);
-            cx.emit(Event::Focused);
-        }
+    fn handle_focus(&mut self, cx: &mut ViewContext<Self>) {
+        cx.emit(Event::Focused);
+
         if let Some(rename) = self.pending_rename.as_ref() {
             let rename_editor_focus_handle = rename.editor.read(cx).focus_handle.clone();
             cx.focus(&rename_editor_focus_handle);
-        } else if self.focus_handle.is_focused(cx) {
+        } else {
             self.blink_manager.update(cx, BlinkManager::enable);
             self.buffer.update(cx, |buffer, cx| {
                 buffer.finalize_last_transaction(cx);
@@ -9227,7 +9225,7 @@ impl Editor {
         }
     }
 
-    fn handle_focus_out(&mut self, cx: &mut ViewContext<Self>) {
+    fn handle_blur(&mut self, cx: &mut ViewContext<Self>) {
         // todo!()
         // let blurred_event = EditorBlurred(cx.handle());
         // cx.emit_global(blurred_event);
