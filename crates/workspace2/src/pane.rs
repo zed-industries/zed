@@ -8,8 +8,8 @@ use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
 use gpui::{
     actions, prelude::*, register_action, AppContext, AsyncWindowContext, Component, Div, EntityId,
-    EventEmitter, FocusHandle, Model, PromptLevel, Render, Task, View, ViewContext, VisualContext,
-    WeakView, WindowContext,
+    EventEmitter, FocusHandle, Focusable, Model, PromptLevel, Render, Task, View, ViewContext,
+    VisualContext, WeakView, WindowContext,
 };
 use parking_lot::Mutex;
 use project2::{Project, ProjectEntryId, ProjectPath};
@@ -1017,7 +1017,11 @@ impl Pane {
                 .unwrap_or_else(|| item_index.min(self.items.len()).saturating_sub(1));
 
             let should_activate = activate_pane || self.has_focus(cx);
-            self.activate_item(index_to_activate, should_activate, should_activate, cx);
+            if self.items.len() == 1 && should_activate {
+                self.focus_handle.focus(cx);
+            } else {
+                self.activate_item(index_to_activate, should_activate, should_activate, cx);
+            }
         }
 
         let item = self.items.remove(item_index);
@@ -1913,11 +1917,12 @@ impl Pane {
 // }
 
 impl Render for Pane {
-    type Element = Div<Self>;
+    type Element = Focusable<Self, Div<Self>>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         v_stack()
             .key_context("Pane")
+            .track_focus(&self.focus_handle)
             .size_full()
             .on_action(|pane: &mut Self, action, cx| {
                 pane.close_active_item(action, cx)
