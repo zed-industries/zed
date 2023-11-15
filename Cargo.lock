@@ -1864,6 +1864,7 @@ dependencies = [
  "theme2",
  "time",
  "tree-sitter-markdown",
+ "ui2",
  "util",
  "workspace2",
  "zed_actions2",
