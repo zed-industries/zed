@@ -1581,11 +1581,11 @@ impl EditorElement {
             snapshot
                 .folds_in_range(start_anchor..end_anchor)
                 .map(|anchor| {
-                    let start = anchor.start.to_point(&snapshot.buffer_snapshot);
+                    let start = anchor.range.start.to_point(&snapshot.buffer_snapshot);
                     (
                         start.row,
                         start.to_display_point(&snapshot.display_snapshot)
-                            ..anchor.end.to_display_point(&snapshot),
+                            ..anchor.range.end.to_display_point(&snapshot),
                     )
                 }),
         );

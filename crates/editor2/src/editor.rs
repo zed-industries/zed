@@ -5303,8 +5303,8 @@ impl Editor {
                         buffer.anchor_before(range_to_move.start)
                             ..buffer.anchor_after(range_to_move.end),
                     ) {
-                        let mut start = fold.start.to_point(&buffer);
-                        let mut end = fold.end.to_point(&buffer);
+                        let mut start = fold.range.start.to_point(&buffer);
+                        let mut end = fold.range.end.to_point(&buffer);
                         start.row -= row_delta;
                         end.row -= row_delta;
                         refold_ranges.push(start..end);
@@ -5394,8 +5394,8 @@ impl Editor {
                         buffer.anchor_before(range_to_move.start)
                             ..buffer.anchor_after(range_to_move.end),
                     ) {
-                        let mut start = fold.start.to_point(&buffer);
-                        let mut end = fold.end.to_point(&buffer);
+                        let mut start = fold.range.start.to_point(&buffer);
+                        let mut end = fold.range.end.to_point(&buffer);
                         start.row += row_delta;
                         end.row += row_delta;
                         refold_ranges.push(start..end);

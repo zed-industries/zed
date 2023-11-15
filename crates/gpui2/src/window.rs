@@ -2471,7 +2471,7 @@ impl From<SmallVec<[u32; 16]>> for StackingOrder {
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub enum ElementId {
     View(EntityId),
-    Number(usize),
+    Integer(usize),
     Name(SharedString),
     FocusHandle(FocusId),
 }
@@ -2484,13 +2484,13 @@ impl From<EntityId> for ElementId {
 
 impl From<usize> for ElementId {
     fn from(id: usize) -> Self {
-        ElementId::Number(id)
+        ElementId::Integer(id)
     }
 }
 
 impl From<i32> for ElementId {
     fn from(id: i32) -> Self {
-        Self::Number(id as usize)
+        Self::Integer(id as usize)
     }
 }
 
