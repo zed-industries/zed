@@ -39,6 +39,7 @@ pub struct TextSystem {
     platform_text_system: Arc<dyn PlatformTextSystem>,
     font_ids_by_font: RwLock<HashMap<Font, FontId>>,
     font_metrics: RwLock<HashMap<FontId, FontMetrics>>,
+    raster_bounds: RwLock<HashMap<RenderGlyphParams, Bounds<DevicePixels>>>,
     wrapper_pool: Mutex<HashMap<FontIdWithSize, Vec<LineWrapper>>>,
     font_runs_pool: Mutex<Vec<Vec<FontRun>>>,
 }
@@ -48,10 +49,11 @@ impl TextSystem {
         TextSystem {
             line_layout_cache: Arc::new(LineLayoutCache::new(platform_text_system.clone())),
             platform_text_system,
-            font_metrics: RwLock::new(HashMap::default()),
-            font_ids_by_font: RwLock::new(HashMap::default()),
-            wrapper_pool: Mutex::new(HashMap::default()),
-            font_runs_pool: Default::default(),
+            font_metrics: RwLock::default(),
+            raster_bounds: RwLock::default(),
+            font_ids_by_font: RwLock::default(),
+            wrapper_pool: Mutex::default(),
+            font_runs_pool: Mutex::default(),
         }
     }
 
@@ -252,14 +254,24 @@ impl TextSystem {
     }
 
     pub fn raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
-        self.platform_text_system.glyph_raster_bounds(params)
+        let raster_bounds = self.raster_bounds.upgradable_read();
+        if let Some(bounds) = raster_bounds.get(params) {
+            Ok(bounds.clone())
+        } else {
+            let mut raster_bounds = RwLockUpgradableReadGuard::upgrade(raster_bounds);
+            let bounds = self.platform_text_system.glyph_raster_bounds(params)?;
+            raster_bounds.insert(params.clone(), bounds);
+            Ok(bounds)
+        }
     }
 
     pub fn rasterize_glyph(
         &self,
-        glyph_id: &RenderGlyphParams,
+        params: &RenderGlyphParams,
     ) -> Result<(Size<DevicePixels>, Vec<u8>)> {
-        self.platform_text_system.rasterize_glyph(glyph_id)
+        let raster_bounds = self.raster_bounds(params)?;
+        self.platform_text_system
+            .rasterize_glyph(params, raster_bounds)
     }
 }
 

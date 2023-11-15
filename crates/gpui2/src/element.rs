@@ -3,7 +3,7 @@ use crate::{
 };
 use derive_more::{Deref, DerefMut};
 pub(crate) use smallvec::SmallVec;
-use std::{any::Any, mem};
+use std::{any::Any, fmt::Debug, mem};
 
 pub trait Element<V: 'static> {
     type ElementState: 'static;
@@ -33,6 +33,42 @@ pub trait Element<V: 'static> {
         element_state: &mut Self::ElementState,
         cx: &mut ViewContext<V>,
     );
+
+    fn draw<T, R>(
+        self,
+        origin: Point<Pixels>,
+        available_space: Size<T>,
+        view_state: &mut V,
+        cx: &mut ViewContext<V>,
+        f: impl FnOnce(&Self::ElementState, &mut ViewContext<V>) -> R,
+    ) -> R
+    where
+        Self: Sized,
+        T: Clone + Default + Debug + Into<AvailableSpace>,
+    {
+        let mut element = RenderedElement {
+            element: self,
+            phase: ElementRenderPhase::Start,
+        };
+        element.draw(origin, available_space.map(Into::into), view_state, cx);
+        if let ElementRenderPhase::Painted { frame_state } = &element.phase {
+            if let Some(frame_state) = frame_state.as_ref() {
+                f(&frame_state, cx)
+            } else {
+                let element_id = element
+                    .element
+                    .element_id()
+                    .expect("we either have some frame_state or some element_id");
+                cx.with_element_state(element_id, |element_state, cx| {
+                    let element_state = element_state.unwrap();
+                    let result = f(&element_state, cx);
+                    (result, element_state)
+                })
+            }
+        } else {
+            unreachable!()
+        }
+    }
 }
 
 #[derive(Deref, DerefMut, Default, Clone, Debug, Eq, PartialEq, Hash)]
@@ -100,7 +136,9 @@ enum ElementRenderPhase<V> {
         available_space: Size<AvailableSpace>,
         frame_state: Option<V>,
     },
-    Painted,
+    Painted {
+        frame_state: Option<V>,
+    },
 }
 
 /// Internal struct that wraps an element to store Layout and ElementState after the element is rendered.
@@ -162,7 +200,7 @@ where
             ElementRenderPhase::Start => panic!("must call initialize before layout"),
             ElementRenderPhase::LayoutRequested { .. }
             | ElementRenderPhase::LayoutComputed { .. }
-            | ElementRenderPhase::Painted => {
+            | ElementRenderPhase::Painted { .. } => {
                 panic!("element rendered twice")
             }
         };
@@ -197,7 +235,7 @@ where
                     self.element
                         .paint(bounds, view_state, frame_state.as_mut().unwrap(), cx);
                 }
-                ElementRenderPhase::Painted
+                ElementRenderPhase::Painted { frame_state }
             }
 
             _ => panic!("must call layout before paint"),

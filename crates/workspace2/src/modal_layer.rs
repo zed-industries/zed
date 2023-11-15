@@ -72,7 +72,7 @@ impl ModalLayer {
         cx.notify();
     }
 
-    pub fn current_modal<V>(&self) -> Option<View<V>>
+    pub fn active_modal<V>(&self) -> Option<View<V>>
     where
         V: 'static,
     {

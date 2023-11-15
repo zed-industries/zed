@@ -63,6 +63,16 @@ impl<V: 'static> View<V> {
     pub fn read<'a>(&self, cx: &'a AppContext) -> &'a V {
         self.model.read(cx)
     }
+
+    pub fn render_with<C>(&self, component: C) -> RenderViewWith<C, V>
+    where
+        C: 'static + Component<V>,
+    {
+        RenderViewWith {
+            view: self.clone(),
+            component: Some(component),
+        }
+    }
 }
 
 impl<V> Clone for View<V> {
@@ -280,6 +290,67 @@ impl<V: Render> From<WeakView<V>> for AnyWeakView {
 //         (self)(cx)
 //     }
 // }
+
+pub struct RenderViewWith<C, V> {
+    view: View<V>,
+    component: Option<C>,
+}
+
+impl<C, ParentViewState, ViewState> Component<ParentViewState> for RenderViewWith<C, ViewState>
+where
+    C: 'static + Component<ViewState>,
+    ParentViewState: 'static,
+    ViewState: 'static,
+{
+    fn render(self) -> AnyElement<ParentViewState> {
+        AnyElement::new(self)
+    }
+}
+
+impl<C, ParentViewState, ViewState> Element<ParentViewState> for RenderViewWith<C, ViewState>
+where
+    C: 'static + Component<ViewState>,
+    ParentViewState: 'static,
+    ViewState: 'static,
+{
+    type ElementState = AnyElement<ViewState>;
+
+    fn element_id(&self) -> Option<ElementId> {
+        Some(self.view.entity_id().into())
+    }
+
+    fn initialize(
+        &mut self,
+        _: &mut ParentViewState,
+        _: Option<Self::ElementState>,
+        cx: &mut ViewContext<ParentViewState>,
+    ) -> Self::ElementState {
+        self.view.update(cx, |view, cx| {
+            let mut element = self.component.take().unwrap().render();
+            element.initialize(view, cx);
+            element
+        })
+    }
+
+    fn layout(
+        &mut self,
+        _: &mut ParentViewState,
+        element: &mut Self::ElementState,
+        cx: &mut ViewContext<ParentViewState>,
+    ) -> LayoutId {
+        self.view.update(cx, |view, cx| element.layout(view, cx))
+    }
+
+    fn paint(
+        &mut self,
+        _: Bounds<Pixels>,
+        _: &mut ParentViewState,
+        element: &mut Self::ElementState,
+        cx: &mut ViewContext<ParentViewState>,
+    ) {
+        self.view.update(cx, |view, cx| element.paint(view, cx))
+    }
+}
 
 mod any_view {
     use crate::{AnyElement, AnyView, BorrowWindow, LayoutId, Render, WindowContext};

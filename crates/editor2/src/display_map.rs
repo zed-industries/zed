@@ -31,7 +31,7 @@ pub use block_map::{
     BlockDisposition, BlockId, BlockProperties, BlockStyle, RenderBlock, TransformBlock,
 };
 
-pub use self::fold_map::FoldPoint;
+pub use self::fold_map::{Fold, FoldPoint};
 pub use self::inlay_map::{Inlay, InlayOffset, InlayPoint};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -124,7 +124,7 @@ impl DisplayMap {
         self.fold(
             other
                 .folds_in_range(0..other.buffer_snapshot.len())
-                .map(|fold| fold.to_offset(&other.buffer_snapshot)),
+                .map(|fold| fold.range.to_offset(&other.buffer_snapshot)),
             cx,
         );
     }
@@ -578,12 +578,7 @@ impl DisplaySnapshot {
             line.push_str(chunk.chunk);
 
             let text_style = if let Some(style) = chunk.style {
-                editor_style
-                    .text
-                    .clone()
-                    .highlight(style)
-                    .map(Cow::Owned)
-                    .unwrap_or_else(|_| Cow::Borrowed(&editor_style.text))
+                Cow::Owned(editor_style.text.clone().highlight(style))
             } else {
                 Cow::Borrowed(&editor_style.text)
             };
@@ -728,7 +723,7 @@ impl DisplaySnapshot {
         DisplayPoint(point)
     }
 
-    pub fn folds_in_range<T>(&self, range: Range<T>) -> impl Iterator<Item = &Range<Anchor>>
+    pub fn folds_in_range<T>(&self, range: Range<T>) -> impl Iterator<Item = &Fold>
     where
         T: ToOffset,
     {

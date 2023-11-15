@@ -22,7 +22,7 @@ pub struct TestWindow {
     bounds: WindowBounds,
     current_scene: Mutex<Option<Scene>>,
     display: Rc<dyn PlatformDisplay>,
-    input_handler: Option<Box<dyn PlatformInputHandler>>,
+    pub(crate) input_handler: Option<Arc<Mutex<Box<dyn PlatformInputHandler>>>>,
     handlers: Mutex<Handlers>,
     platform: Weak<TestPlatform>,
     sprite_atlas: Arc<dyn PlatformAtlas>,
@@ -80,11 +80,11 @@ impl PlatformWindow for TestWindow {
     }
 
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-        todo!()
+        self
     }
 
     fn set_input_handler(&mut self, input_handler: Box<dyn crate::PlatformInputHandler>) {
-        self.input_handler = Some(input_handler);
+        self.input_handler = Some(Arc::new(Mutex::new(input_handler)));
     }
 
     fn prompt(

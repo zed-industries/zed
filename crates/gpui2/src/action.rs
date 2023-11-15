@@ -56,6 +56,9 @@ pub trait Action: std::fmt::Debug + 'static {
     fn build(value: Option<serde_json::Value>) -> Result<Box<dyn Action>>
     where
         Self: Sized;
+    fn is_registered() -> bool
+    where
+        Self: Sized;
 
     fn partial_eq(&self, action: &dyn Action) -> bool;
     fn boxed_clone(&self) -> Box<dyn Action>;
@@ -86,6 +89,14 @@ where
             Self::default()
         };
         Ok(Box::new(action))
+    }
+
+    fn is_registered() -> bool {
+        ACTION_REGISTRY
+            .read()
+            .names_by_type_id
+            .get(&TypeId::of::<A>())
+            .is_some()
     }
 
     fn partial_eq(&self, action: &dyn Action) -> bool {

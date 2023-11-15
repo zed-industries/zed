@@ -6,15 +6,15 @@ use crate::{
     SharedString, Size, Style, StyleRefinement, Styled, Task, View, ViewContext, Visibility,
 };
 use collections::HashMap;
-use parking_lot::Mutex;
 use refineable::Refineable;
 use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
+    cell::RefCell,
     fmt::Debug,
     marker::PhantomData,
     mem,
-    sync::Arc,
+    rc::Rc,
     time::Duration,
 };
 use taffy::style::Overflow;
@@ -229,6 +229,20 @@ pub trait InteractiveComponent<V: 'static>: Sized + Element<V> {
         mut self,
         listener: impl Fn(&mut V, &A, &mut ViewContext<V>) + 'static,
     ) -> Self {
+        // NOTE: this debug assert has the side-effect of working around
+        // a bug where a crate consisting only of action definitions does
+        // not register the actions in debug builds:
+        //
+        // https://github.com/rust-lang/rust/issues/47384
+        // https://github.com/mmastrac/rust-ctor/issues/280
+        //
+        // if we are relying on this side-effect still, removing the debug_assert!
+        // likely breaks the command_palette tests.
+        debug_assert!(
+            A::is_registered(),
+            "{:?} is not registered as an action",
+            A::qualified_name()
+        );
         self.interactivity().action_listeners.push((
             TypeId::of::<A>(),
             Box::new(move |view, action, phase, cx| {
@@ -406,7 +420,7 @@ pub trait StatefulInteractiveComponent<V: 'static, E: Element<V>>: InteractiveCo
             self.interactivity().tooltip_builder.is_none(),
             "calling tooltip more than once on the same element is not supported"
         );
-        self.interactivity().tooltip_builder = Some(Arc::new(move |view_state, cx| {
+        self.interactivity().tooltip_builder = Some(Rc::new(move |view_state, cx| {
             build_tooltip(view_state, cx).into()
         }));
 
@@ -555,7 +569,7 @@ type DropListener<V> = dyn Fn(&mut V, AnyView, &mut ViewContext<V>) + 'static;
 
 pub type HoverListener<V> = Box<dyn Fn(&mut V, bool, &mut ViewContext<V>) + 'static>;
 
-pub type TooltipBuilder<V> = Arc<dyn Fn(&mut V, &mut ViewContext<V>) -> AnyView + 'static>;
+pub type TooltipBuilder<V> = Rc<dyn Fn(&mut V, &mut ViewContext<V>) -> AnyView + 'static>;
 
 pub type KeyDownListener<V> =
     Box<dyn Fn(&mut V, &KeyDownEvent, DispatchPhase, &mut ViewContext<V>) + 'static>;
@@ -597,7 +611,7 @@ impl<V: 'static> ParentComponent<V> for Div<V> {
 }
 
 impl<V: 'static> Element<V> for Div<V> {
-    type ElementState = NodeState;
+    type ElementState = DivState;
 
     fn element_id(&self) -> Option<ElementId> {
         self.interactivity.element_id.clone()
@@ -617,7 +631,7 @@ impl<V: 'static> Element<V> for Div<V> {
             child.initialize(view_state, cx);
         }
 
-        NodeState {
+        DivState {
             interactive_state,
             child_layout_ids: SmallVec::new(),
         }
@@ -706,9 +720,15 @@ impl<V: 'static> Component<V> for Div<V> {
     }
 }
 
-pub struct NodeState {
+pub struct DivState {
     child_layout_ids: SmallVec<[LayoutId; 4]>,
     interactive_state: InteractiveElementState,
+}
+
+impl DivState {
+    pub fn is_active(&self) -> bool {
+        self.interactive_state.pending_mouse_down.borrow().is_some()
+    }
 }
 
 pub struct Interactivity<V> {
@@ -876,7 +896,7 @@ where
 
         if !click_listeners.is_empty() || drag_listener.is_some() {
             let pending_mouse_down = element_state.pending_mouse_down.clone();
-            let mouse_down = pending_mouse_down.lock().clone();
+            let mouse_down = pending_mouse_down.borrow().clone();
             if let Some(mouse_down) = mouse_down {
                 if let Some(drag_listener) = drag_listener {
                     let active_state = element_state.clicked_state.clone();
@@ -890,7 +910,7 @@ where
                             && bounds.contains_point(&event.position)
                             && (event.position - mouse_down.position).magnitude() > DRAG_THRESHOLD
                         {
-                            *active_state.lock() = ElementClickedState::default();
+                            *active_state.borrow_mut() = ElementClickedState::default();
                             let cursor_offset = event.position - bounds.origin;
                             let drag = drag_listener(view_state, cursor_offset, cx);
                             cx.active_drag = Some(drag);
@@ -910,12 +930,14 @@ where
                             listener(view_state, &mouse_click, cx);
                         }
                     }
-                    *pending_mouse_down.lock() = None;
+                    *pending_mouse_down.borrow_mut() = None;
+                    cx.notify();
                 });
             } else {
-                cx.on_mouse_event(move |_state, event: &MouseDownEvent, phase, _cx| {
+                cx.on_mouse_event(move |_view_state, event: &MouseDownEvent, phase, cx| {
                     if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position) {
-                        *pending_mouse_down.lock() = Some(event.clone());
+                        *pending_mouse_down.borrow_mut() = Some(event.clone());
+                        cx.notify();
                     }
                 });
             }
@@ -930,8 +952,8 @@ where
                     return;
                 }
                 let is_hovered =
-                    bounds.contains_point(&event.position) && has_mouse_down.lock().is_none();
-                let mut was_hovered = was_hovered.lock();
+                    bounds.contains_point(&event.position) && has_mouse_down.borrow().is_none();
+                let mut was_hovered = was_hovered.borrow_mut();
 
                 if is_hovered != was_hovered.clone() {
                     *was_hovered = is_hovered;
@@ -952,13 +974,13 @@ where
                 }
 
                 let is_hovered =
-                    bounds.contains_point(&event.position) && pending_mouse_down.lock().is_none();
+                    bounds.contains_point(&event.position) && pending_mouse_down.borrow().is_none();
                 if !is_hovered {
-                    active_tooltip.lock().take();
+                    active_tooltip.borrow_mut().take();
                     return;
                 }
 
-                if active_tooltip.lock().is_none() {
+                if active_tooltip.borrow().is_none() {
                     let task = cx.spawn({
                         let active_tooltip = active_tooltip.clone();
                         let tooltip_builder = tooltip_builder.clone();
@@ -966,7 +988,7 @@ where
                         move |view, mut cx| async move {
                             cx.background_executor().timer(TOOLTIP_DELAY).await;
                             view.update(&mut cx, move |view_state, cx| {
-                                active_tooltip.lock().replace(ActiveTooltip {
+                                active_tooltip.borrow_mut().replace(ActiveTooltip {
                                     waiting: None,
                                     tooltip: Some(AnyTooltip {
                                         view: tooltip_builder(view_state, cx),
@@ -978,14 +1000,14 @@ where
                             .ok();
                         }
                     });
-                    active_tooltip.lock().replace(ActiveTooltip {
+                    active_tooltip.borrow_mut().replace(ActiveTooltip {
                         waiting: Some(task),
                         tooltip: None,
                     });
                 }
             });
 
-            if let Some(active_tooltip) = element_state.active_tooltip.lock().as_ref() {
+            if let Some(active_tooltip) = element_state.active_tooltip.borrow().as_ref() {
                 if active_tooltip.tooltip.is_some() {
                     cx.active_tooltip = active_tooltip.tooltip.clone()
                 }
@@ -993,10 +1015,10 @@ where
         }
 
         let active_state = element_state.clicked_state.clone();
-        if !active_state.lock().is_clicked() {
+        if !active_state.borrow().is_clicked() {
             cx.on_mouse_event(move |_, _: &MouseUpEvent, phase, cx| {
                 if phase == DispatchPhase::Capture {
-                    *active_state.lock() = ElementClickedState::default();
+                    *active_state.borrow_mut() = ElementClickedState::default();
                     cx.notify();
                 }
             });
@@ -1011,7 +1033,7 @@ where
                         .map_or(false, |bounds| bounds.contains_point(&down.position));
                     let element = bounds.contains_point(&down.position);
                     if group || element {
-                        *active_state.lock() = ElementClickedState { group, element };
+                        *active_state.borrow_mut() = ElementClickedState { group, element };
                         cx.notify();
                     }
                 }
@@ -1022,14 +1044,14 @@ where
         if overflow.x == Overflow::Scroll || overflow.y == Overflow::Scroll {
             let scroll_offset = element_state
                 .scroll_offset
-                .get_or_insert_with(Arc::default)
+                .get_or_insert_with(Rc::default)
                 .clone();
             let line_height = cx.line_height();
             let scroll_max = (content_size - bounds.size).max(&Size::default());
 
             cx.on_mouse_event(move |_, event: &ScrollWheelEvent, phase, cx| {
                 if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position) {
-                    let mut scroll_offset = scroll_offset.lock();
+                    let mut scroll_offset = scroll_offset.borrow_mut();
                     let old_scroll_offset = *scroll_offset;
                     let delta = event.delta.pixel_delta(line_height);
 
@@ -1058,7 +1080,7 @@ where
         let scroll_offset = element_state
             .scroll_offset
             .as_ref()
-            .map(|scroll_offset| *scroll_offset.lock());
+            .map(|scroll_offset| *scroll_offset.borrow());
 
         cx.with_key_dispatch(
             self.key_context.clone(),
@@ -1157,7 +1179,7 @@ where
             }
         }
 
-        let clicked_state = element_state.clicked_state.lock();
+        let clicked_state = element_state.clicked_state.borrow();
         if clicked_state.group {
             if let Some(group) = self.group_active_style.as_ref() {
                 style.refine(&group.style)
@@ -1211,11 +1233,11 @@ impl<V: 'static> Default for Interactivity<V> {
 #[derive(Default)]
 pub struct InteractiveElementState {
     pub focus_handle: Option<FocusHandle>,
-    pub clicked_state: Arc<Mutex<ElementClickedState>>,
-    pub hover_state: Arc<Mutex<bool>>,
-    pub pending_mouse_down: Arc<Mutex<Option<MouseDownEvent>>>,
-    pub scroll_offset: Option<Arc<Mutex<Point<Pixels>>>>,
-    pub active_tooltip: Arc<Mutex<Option<ActiveTooltip>>>,
+    pub clicked_state: Rc<RefCell<ElementClickedState>>,
+    pub hover_state: Rc<RefCell<bool>>,
+    pub pending_mouse_down: Rc<RefCell<Option<MouseDownEvent>>>,
+    pub scroll_offset: Option<Rc<RefCell<Point<Pixels>>>>,
+    pub active_tooltip: Rc<RefCell<Option<ActiveTooltip>>>,
 }
 
 pub struct ActiveTooltip {

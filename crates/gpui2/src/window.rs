@@ -189,7 +189,7 @@ impl Drop for FocusHandle {
 pub struct Window {
     pub(crate) handle: AnyWindowHandle,
     pub(crate) removed: bool,
-    platform_window: Box<dyn PlatformWindow>,
+    pub(crate) platform_window: Box<dyn PlatformWindow>,
     display_id: DisplayId,
     sprite_atlas: Arc<dyn PlatformAtlas>,
     rem_size: Pixels,
@@ -216,7 +216,7 @@ pub struct Window {
 
 // #[derive(Default)]
 pub(crate) struct Frame {
-    element_states: HashMap<GlobalElementId, AnyBox>,
+    pub(crate) element_states: HashMap<GlobalElementId, AnyBox>,
     mouse_listeners: HashMap<TypeId, Vec<(StackingOrder, AnyMouseListener)>>,
     pub(crate) dispatch_tree: DispatchTree,
     pub(crate) focus_listeners: Vec<AnyFocusListener>,
@@ -393,6 +393,10 @@ impl<'a> WindowContext<'a> {
 
     /// Move focus to the element associated with the given `FocusHandle`.
     pub fn focus(&mut self, handle: &FocusHandle) {
+        if self.window.focus == Some(handle.id) {
+            return;
+        }
+
         let focus_id = handle.id;
 
         if self.window.last_blur.is_none() {
@@ -400,6 +404,10 @@ impl<'a> WindowContext<'a> {
         }
 
         self.window.focus = Some(focus_id);
+        self.window
+            .current_frame
+            .dispatch_tree
+            .clear_keystroke_matchers();
         self.app.push_effect(Effect::FocusChanged {
             window_handle: self.window.handle,
             focused: Some(focus_id),
@@ -1090,6 +1098,14 @@ impl<'a> WindowContext<'a> {
                 });
             });
         }
+
+        self.window
+            .current_frame
+            .dispatch_tree
+            .preserve_keystroke_matchers(
+                &mut self.window.previous_frame.dispatch_tree,
+                self.window.focus,
+            );
 
         self.window.root_view = Some(root_view);
         let scene = self.window.current_frame.scene_builder.build();
@@ -2093,7 +2109,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         window
             .current_frame
             .dispatch_tree
-            .push_node(context.clone(), &mut window.previous_frame.dispatch_tree);
+            .push_node(context.clone());
         if let Some(focus_handle) = focus_handle.as_ref() {
             window
                 .current_frame
@@ -2471,7 +2487,7 @@ impl From<SmallVec<[u32; 16]>> for StackingOrder {
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub enum ElementId {
     View(EntityId),
-    Number(usize),
+    Integer(usize),
     Name(SharedString),
     FocusHandle(FocusId),
 }
@@ -2496,13 +2512,13 @@ impl From<EntityId> for ElementId {
 
 impl From<usize> for ElementId {
     fn from(id: usize) -> Self {
-        ElementId::Number(id)
+        ElementId::Integer(id)
     }
 }
 
 impl From<i32> for ElementId {
     fn from(id: i32) -> Self {
-        Self::Number(id as usize)
+        Self::Integer(id as usize)
     }
 }
 
