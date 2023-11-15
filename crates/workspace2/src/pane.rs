@@ -1,5 +1,3 @@
-// mod dragged_item_receiver;
-
 use crate::{
     item::{Item, ItemHandle, ItemSettings, WeakItemHandle},
     toolbar::Toolbar,
@@ -9,7 +7,7 @@ use crate::{
 use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
 use gpui::{
-    actions, register_action, AppContext, AsyncWindowContext, Component, Div, EntityId,
+    actions, prelude::*, register_action, AppContext, AsyncWindowContext, Component, Div, EntityId,
     EventEmitter, FocusHandle, Model, PromptLevel, Render, Task, View, ViewContext, VisualContext,
     WeakView, WindowContext,
 };
@@ -27,7 +25,7 @@ use std::{
     },
 };
 use ui::v_stack;
-use ui::{prelude::*, Icon, IconButton, IconColor, IconElement, TextTooltip};
+use ui::{prelude::*, Icon, IconButton, IconElement, TextColor, TextTooltip};
 use util::truncate_and_remove_front;
 
 #[derive(PartialEq, Clone, Copy, Deserialize, Debug)]
@@ -1432,13 +1430,13 @@ impl Pane {
                         Some(
                             IconElement::new(Icon::ExclamationTriangle)
                                 .size(ui::IconSize::Small)
-                                .color(IconColor::Warning),
+                                .color(TextColor::Warning),
                         )
                     } else if item.is_dirty(cx) {
                         Some(
                             IconElement::new(Icon::ExclamationTriangle)
                                 .size(ui::IconSize::Small)
-                                .color(IconColor::Info),
+                                .color(TextColor::Info),
                         )
                     } else {
                         None
@@ -1919,7 +1917,7 @@ impl Render for Pane {
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         v_stack()
-            .context("Pane")
+            .key_context("Pane")
             .size_full()
             .on_action(|pane: &mut Self, action, cx| {
                 pane.close_active_item(action, cx)

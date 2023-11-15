@@ -19,6 +19,7 @@ const MIN_LINE_HEIGHT: f32 = 1.0;
 #[derive(Clone)]
 pub struct ThemeSettings {
     pub ui_font_size: Pixels,
+    pub ui_font: Font,
     pub buffer_font: Font,
     pub buffer_font_size: Pixels,
     pub buffer_line_height: BufferLineHeight,
@@ -120,6 +121,12 @@ impl settings::Settings for ThemeSettings {
 
         let mut this = Self {
             ui_font_size: defaults.ui_font_size.unwrap_or(16.).into(),
+            ui_font: Font {
+                family: "Helvetica".into(),
+                features: Default::default(),
+                weight: Default::default(),
+                style: Default::default(),
+            },
             buffer_font: Font {
                 family: defaults.buffer_font_family.clone().unwrap().into(),
                 features: defaults.buffer_font_features.clone().unwrap(),

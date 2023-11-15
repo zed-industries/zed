@@ -206,13 +206,14 @@ impl Render for Workspace {
             .child(self.editor_1.clone())],
             SplitDirection::Horizontal,
         );
+        let ui_font = ThemeSettings::get_global(cx).ui_font.family.clone();
 
         div()
             .relative()
             .size_full()
             .flex()
             .flex_col()
-            .font("Zed Sans")
+            .font(ui_font)
             .gap_0()
             .justify_start()
             .items_start()

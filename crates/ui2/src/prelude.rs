@@ -1,13 +1,13 @@
 use gpui::rems;
 use gpui::Rems;
 pub use gpui::{
-    div, Component, Element, ElementId, ParentElement, SharedString, StatefulInteractive,
-    StatelessInteractive, Styled, ViewContext, WindowContext,
+    div, Component, Element, ElementId, InteractiveComponent, ParentComponent, SharedString,
+    Styled, ViewContext, WindowContext,
 };
 
 pub use crate::elevation::*;
-pub use crate::ButtonVariant;
 pub use crate::StyledExt;
+pub use crate::{ButtonVariant, TextColor};
 pub use theme2::ActiveTheme;
 
 use gpui::Hsla;

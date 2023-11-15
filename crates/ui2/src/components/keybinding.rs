@@ -3,7 +3,7 @@ use strum::EnumIter;
 
 use crate::prelude::*;
 
-#[derive(Component)]
+#[derive(Component, Clone)]
 pub struct KeyBinding {
     /// A keybinding consists of a key and a set of modifier keys.
     /// More then one keybinding produces a chord.

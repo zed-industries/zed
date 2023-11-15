@@ -1,8 +1,8 @@
 use crate::{
     black, phi, point, rems, AbsoluteLength, BorrowAppContext, BorrowWindow, Bounds, ContentMask,
     Corners, CornersRefinement, CursorStyle, DefiniteLength, Edges, EdgesRefinement, Font,
-    FontFeatures, FontStyle, FontWeight, Hsla, Length, Pixels, Point, PointRefinement, Rgba,
-    SharedString, Size, SizeRefinement, Styled, TextRun, ViewContext, WindowContext,
+    FontFeatures, FontStyle, FontWeight, Hsla, Length, Pixels, Point, PointRefinement,
+    Rgba, SharedString, Size, SizeRefinement, Styled, TextRun, ViewContext,
 };
 use refineable::{Cascade, Refineable};
 use smallvec::SmallVec;
@@ -220,11 +220,45 @@ pub struct HighlightStyle {
 impl Eq for HighlightStyle {}
 
 impl Style {
-    pub fn text_style(&self, _cx: &WindowContext) -> Option<&TextStyleRefinement> {
+    pub fn text_style(&self) -> Option<&TextStyleRefinement> {
         if self.text.is_some() {
             Some(&self.text)
         } else {
             None
+        }
+    }
+
+    pub fn overflow_mask(&self, bounds: Bounds<Pixels>) -> Option<ContentMask<Pixels>> {
+        match self.overflow {
+            Point {
+                x: Overflow::Visible,
+                y: Overflow::Visible,
+            } => None,
+            _ => {
+                let current_mask = bounds;
+                let min = current_mask.origin;
+                let max = current_mask.lower_right();
+                let bounds = match (
+                    self.overflow.x == Overflow::Visible,
+                    self.overflow.y == Overflow::Visible,
+                ) {
+                    // x and y both visible
+                    (true, true) => return None,
+                    // x visible, y hidden
+                    (true, false) => Bounds::from_corners(
+                        point(min.x, bounds.origin.y),
+                        point(max.x, bounds.lower_right().y),
+                    ),
+                    // x hidden, y visible
+                    (false, true) => Bounds::from_corners(
+                        point(bounds.origin.x, min.y),
+                        point(bounds.lower_right().x, max.y),
+                    ),
+                    // both hidden
+                    (false, false) => bounds,
+                };
+                Some(ContentMask { bounds })
+            }
         }
     }
 
@@ -234,7 +268,7 @@ impl Style {
         F: FnOnce(&mut C) -> R,
     {
         if self.text.is_some() {
-            cx.with_text_style(self.text.clone(), f)
+            cx.with_text_style(Some(self.text.clone()), f)
         } else {
             f(cx)
         }
@@ -274,7 +308,7 @@ impl Style {
             bounds: mask_bounds,
         };
 
-        cx.with_content_mask(mask, f)
+        cx.with_content_mask(Some(mask), f)
     }
 
     /// Paints the background of an element styled with this style.

@@ -1,6 +1,5 @@
-use crate::prelude::*;
-use crate::Label;
-use crate::LabelColor;
+use crate::{prelude::*, Label};
+use gpui::prelude::*;
 
 #[derive(Default, PartialEq)]
 pub enum InputVariant {
@@ -71,15 +70,15 @@ impl Input {
         };
 
         let placeholder_label = Label::new(self.placeholder.clone()).color(if self.disabled {
-            LabelColor::Disabled
+            TextColor::Disabled
         } else {
-            LabelColor::Placeholder
+            TextColor::Placeholder
         });
 
         let label = Label::new(self.value.clone()).color(if self.disabled {
-            LabelColor::Disabled
+            TextColor::Disabled
         } else {
-            LabelColor::Default
+            TextColor::Default
         });
 
         div()

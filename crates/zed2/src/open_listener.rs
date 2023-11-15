@@ -54,7 +54,7 @@ impl OpenListener {
         )
     }
 
-    pub fn open_urls(&self, urls: Vec<String>) {
+    pub fn open_urls(&self, urls: &[String]) {
         self.triggered.store(true, Ordering::Release);
         let request = if let Some(server_name) =
             urls.first().and_then(|url| url.strip_prefix("zed-cli://"))
@@ -101,7 +101,7 @@ impl OpenListener {
         None
     }
 
-    fn handle_file_urls(&self, urls: Vec<String>) -> Option<OpenRequest> {
+    fn handle_file_urls(&self, urls: &[String]) -> Option<OpenRequest> {
         let paths: Vec<_> = urls
             .iter()
             .flat_map(|url| url.strip_prefix("file://"))

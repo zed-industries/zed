@@ -59,7 +59,7 @@ impl<V: 'static> Pane<V> {
     }
 }
 
-impl<V: 'static> ParentElement<V> for Pane<V> {
+impl<V: 'static> ParentComponent<V> for Pane<V> {
     fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<V>; 2]> {
         &mut self.children
     }

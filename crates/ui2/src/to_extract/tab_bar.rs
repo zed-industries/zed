@@ -1,5 +1,5 @@
-use crate::prelude::*;
-use crate::{Icon, IconButton, Tab};
+use crate::{prelude::*, Icon, IconButton, Tab};
+use gpui::prelude::*;
 
 #[derive(Component)]
 pub struct TabBar {

@@ -72,7 +72,7 @@ impl<V: 'static> Component<V> for Text<V> {
 impl<V: 'static> Element<V> for Text<V> {
     type ElementState = Arc<Mutex<Option<TextElementState>>>;
 
-    fn id(&self) -> Option<crate::ElementId> {
+    fn element_id(&self) -> Option<crate::ElementId> {
         None
     }
 

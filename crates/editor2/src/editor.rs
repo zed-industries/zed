@@ -39,12 +39,12 @@ use futures::FutureExt;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use git::diff_hunk_to_display;
 use gpui::{
-    action, actions, div, point, px, relative, rems, render_view, size, uniform_list, AnyElement,
-    AppContext, AsyncWindowContext, BackgroundExecutor, Bounds, ClipboardItem, Component, Context,
-    Entity, EventEmitter, FocusHandle, FontFeatures, FontStyle, FontWeight, HighlightStyle, Hsla,
-    InputHandler, KeyContext, Model, MouseButton, ParentElement, Pixels, Render,
-    StatefulInteractive, StatelessInteractive, Styled, Subscription, Task, TextStyle,
-    UniformListScrollHandle, View, ViewContext, VisualContext, WeakView, WindowContext,
+    action, actions, div, point, prelude::*, px, relative, rems, render_view, size, uniform_list,
+    AnyElement, AppContext, AsyncWindowContext, BackgroundExecutor, Bounds, ClipboardItem,
+    Component, Context, EventEmitter, FocusHandle, FontFeatures, FontStyle, FontWeight,
+    HighlightStyle, Hsla, InputHandler, KeyContext, Model, MouseButton, ParentComponent, Pixels,
+    Render, Styled, Subscription, Task, TextStyle, UniformListScrollHandle, View, ViewContext,
+    VisualContext, WeakView, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -7808,17 +7808,22 @@ impl Editor {
                                         .pl(cx.anchor_x)
                                         .child(render_view(
                                             &rename_editor,
-                                            EditorElement::new(EditorStyle {
-                                                background: cx.theme().system().transparent,
-                                                local_player: cx.editor_style.local_player,
-                                                text: text_style,
-                                                scrollbar_width: cx.editor_style.scrollbar_width,
-                                                syntax: cx.editor_style.syntax.clone(),
-                                                diagnostic_style: cx
-                                                    .editor_style
-                                                    .diagnostic_style
-                                                    .clone(),
-                                            }),
+                                            EditorElement::new(
+                                                &rename_editor,
+                                                EditorStyle {
+                                                    background: cx.theme().system().transparent,
+                                                    local_player: cx.editor_style.local_player,
+                                                    text: text_style,
+                                                    scrollbar_width: cx
+                                                        .editor_style
+                                                        .scrollbar_width,
+                                                    syntax: cx.editor_style.syntax.clone(),
+                                                    diagnostic_style: cx
+                                                        .editor_style
+                                                        .diagnostic_style
+                                                        .clone(),
+                                                },
+                                            ),
                                         ))
                                         .render()
                                 }
@@ -9192,6 +9197,10 @@ impl Editor {
         cx.focus(&self.focus_handle)
     }
 
+    pub fn is_focused(&self, cx: &WindowContext) -> bool {
+        self.focus_handle.is_focused(cx)
+    }
+
     fn handle_focus_in(&mut self, cx: &mut ViewContext<Self>) {
         if self.focus_handle.is_focused(cx) {
             // todo!()
@@ -9403,8 +9412,8 @@ impl Render for Editor {
             EditorMode::SingleLine => {
                 TextStyle {
                     color: cx.theme().colors().text,
-                    font_family: "Zed Sans".into(), // todo!()
-                    font_features: FontFeatures::default(),
+                    font_family: settings.ui_font.family.clone(), // todo!()
+                    font_features: settings.ui_font.features,
                     font_size: rems(0.875).into(),
                     font_weight: FontWeight::NORMAL,
                     font_style: FontStyle::Normal,
@@ -9433,14 +9442,17 @@ impl Render for Editor {
             EditorMode::Full => cx.theme().colors().editor_background,
         };
 
-        EditorElement::new(EditorStyle {
-            background,
-            local_player: cx.theme().players().local(),
-            text: text_style,
-            scrollbar_width: px(12.),
-            syntax: cx.theme().syntax().clone(),
-            diagnostic_style: cx.theme().diagnostic_style(),
-        })
+        EditorElement::new(
+            cx.view(),
+            EditorStyle {
+                background,
+                local_player: cx.theme().players().local(),
+                text: text_style,
+                scrollbar_width: px(12.),
+                syntax: cx.theme().syntax().clone(),
+                diagnostic_style: cx.theme().diagnostic_style(),
+            },
+        )
     }
 }
 

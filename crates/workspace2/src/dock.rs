@@ -1,7 +1,8 @@
 use crate::{status_bar::StatusItemView, Axis, Workspace};
 use gpui::{
-    div, Action, AnyView, AppContext, Div, Entity, EntityId, EventEmitter, ParentElement, Render,
-    Subscription, View, ViewContext, WeakView, WindowContext,
+    div, px, Action, AnyView, AppContext, Component, Div, Entity, EntityId, EventEmitter,
+    FocusHandle, ParentComponent, Render, Styled, Subscription, View, ViewContext, WeakView,
+    WindowContext,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -34,6 +35,7 @@ pub trait Panel: Render + EventEmitter<PanelEvent> {
     fn set_zoomed(&mut self, _zoomed: bool, _cx: &mut ViewContext<Self>) {}
     fn set_active(&mut self, _active: bool, _cx: &mut ViewContext<Self>) {}
     fn has_focus(&self, cx: &WindowContext) -> bool;
+    fn focus_handle(&self, cx: &WindowContext) -> FocusHandle;
 }
 
 pub trait PanelHandle: Send + Sync {
@@ -51,6 +53,7 @@ pub trait PanelHandle: Send + Sync {
     fn icon_tooltip(&self, cx: &WindowContext) -> (String, Option<Box<dyn Action>>);
     fn icon_label(&self, cx: &WindowContext) -> Option<String>;
     fn has_focus(&self, cx: &WindowContext) -> bool;
+    fn focus_handle(&self, cx: &WindowContext) -> FocusHandle;
     fn to_any(&self) -> AnyView;
 }
 
@@ -116,6 +119,10 @@ where
 
     fn to_any(&self) -> AnyView {
         self.clone().into()
+    }
+
+    fn focus_handle(&self, cx: &WindowContext) -> FocusHandle {
+        self.read(cx).focus_handle(cx).clone()
     }
 }
 
@@ -422,7 +429,18 @@ impl Render for Dock {
     type Element = Div<Self>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-        todo!()
+        if let Some(entry) = self.visible_entry() {
+            let size = entry.panel.size(cx);
+
+            div()
+                .map(|this| match self.position().axis() {
+                    Axis::Horizontal => this.w(px(size)).h_full(),
+                    Axis::Vertical => this.h(px(size)).w_full(),
+                })
+                .child(entry.panel.to_any())
+        } else {
+            div()
+        }
     }
 }
 
@@ -727,6 +745,10 @@ pub mod test {
 
         fn has_focus(&self, _cx: &WindowContext) -> bool {
             self.has_focus
+        }
+
+        fn focus_handle(&self, cx: &WindowContext) -> FocusHandle {
+            unimplemented!()
         }
     }
 }

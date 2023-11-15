@@ -1,10 +1,10 @@
 use editor::Editor;
 use gpui::{
-    div, uniform_list, Component, Div, MouseButton, ParentElement, Render, StatelessInteractive,
-    Styled, Task, UniformListScrollHandle, View, ViewContext, VisualContext, WindowContext,
+    div, prelude::*, uniform_list, Component, Div, MouseButton, Render, Task,
+    UniformListScrollHandle, View, ViewContext, WindowContext,
 };
 use std::{cmp, sync::Arc};
-use ui::{prelude::*, v_stack, Divider, Label, LabelColor};
+use ui::{prelude::*, v_stack, Divider, Label, TextColor};
 
 pub struct Picker<D: PickerDelegate> {
     pub delegate: D,
@@ -58,7 +58,7 @@ impl<D: PickerDelegate> Picker<D> {
         self.editor.update(cx, |editor, cx| editor.focus(cx));
     }
 
-    fn select_next(&mut self, _: &menu::SelectNext, cx: &mut ViewContext<Self>) {
+    pub fn select_next(&mut self, _: &menu::SelectNext, cx: &mut ViewContext<Self>) {
         let count = self.delegate.match_count();
         if count > 0 {
             let index = self.delegate.selected_index();
@@ -96,6 +96,15 @@ impl<D: PickerDelegate> Picker<D> {
             self.scroll_handle.scroll_to_item(count - 1);
             cx.notify();
         }
+    }
+
+    pub fn cycle_selection(&mut self, cx: &mut ViewContext<Self>) {
+        let count = self.delegate.match_count();
+        let index = self.delegate.selected_index();
+        let new_index = if index + 1 == count { 0 } else { index + 1 };
+        self.delegate.set_selected_index(new_index, cx);
+        self.scroll_handle.scroll_to_item(new_index);
+        cx.notify();
     }
 
     fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
@@ -137,6 +146,11 @@ impl<D: PickerDelegate> Picker<D> {
         }
     }
 
+    pub fn refresh(&mut self, cx: &mut ViewContext<Self>) {
+        let query = self.editor.read(cx).text(cx);
+        self.update_matches(query, cx);
+    }
+
     pub fn update_matches(&mut self, query: String, cx: &mut ViewContext<Self>) {
         let update = self.delegate.update_matches(query, cx);
         self.matches_updated(cx);
@@ -165,7 +179,7 @@ impl<D: PickerDelegate> Render for Picker<D> {
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         div()
-            .context("picker")
+            .key_context("picker")
             .size_full()
             .elevation_2(cx)
             .on_action(Self::select_next)
@@ -224,7 +238,7 @@ impl<D: PickerDelegate> Render for Picker<D> {
                     v_stack().p_1().grow().child(
                         div()
                             .px_1()
-                            .child(Label::new("No matches").color(LabelColor::Muted)),
+                            .child(Label::new("No matches").color(TextColor::Muted)),
                     ),
                 )
             })

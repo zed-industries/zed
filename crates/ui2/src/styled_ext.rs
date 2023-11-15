@@ -1,4 +1,4 @@
-use gpui::{Div, ElementInteractivity, KeyDispatch, Styled, UniformList, ViewContext};
+use gpui::{Styled, ViewContext};
 use theme2::ActiveTheme;
 
 use crate::{ElevationIndex, UITextSize};
@@ -93,11 +93,4 @@ pub trait StyledExt: Styled + Sized {
     }
 }
 
-impl<V, I, F> StyledExt for Div<V, I, F>
-where
-    I: ElementInteractivity<V>,
-    F: KeyDispatch<V>,
-{
-}
-
-impl<V> StyledExt for UniformList<V> {}
+impl<E: Styled> StyledExt for E {}

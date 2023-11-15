@@ -1,7 +1,6 @@
+use crate::{prelude::*, Icon, IconButton, Input, Label};
 use chrono::NaiveDateTime;
-
-use crate::prelude::*;
-use crate::{Icon, IconButton, Input, Label, LabelColor};
+use gpui::prelude::*;
 
 #[derive(Component)]
 pub struct ChatPanel {
@@ -95,7 +94,7 @@ impl ChatMessage {
                     .child(Label::new(self.author.clone()))
                     .child(
                         Label::new(self.sent_at.format("%m/%d/%Y").to_string())
-                            .color(LabelColor::Muted),
+                            .color(TextColor::Muted),
                     ),
             )
             .child(div().child(Label::new(self.text.clone())))

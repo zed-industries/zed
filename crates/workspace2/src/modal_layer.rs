@@ -1,6 +1,6 @@
 use gpui::{
-    div, px, AnyView, Div, EventEmitter, FocusHandle, ParentElement, Render, StatelessInteractive,
-    Styled, Subscription, View, ViewContext, VisualContext, WindowContext,
+    div, prelude::*, px, AnyView, Div, EventEmitter, FocusHandle, Render, Subscription, View,
+    ViewContext, WindowContext,
 };
 use ui::{h_stack, v_stack};
 
@@ -70,6 +70,14 @@ impl ModalLayer {
         }
 
         cx.notify();
+    }
+
+    pub fn current_modal<V>(&self) -> Option<View<V>>
+    where
+        V: 'static,
+    {
+        let active_modal = self.active_modal.as_ref()?;
+        active_modal.modal.clone().downcast::<V>().ok()
     }
 }
 

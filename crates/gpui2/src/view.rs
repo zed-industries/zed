@@ -206,7 +206,7 @@ impl<V: Render> From<View<V>> for AnyView {
 impl<ParentViewState: 'static> Element<ParentViewState> for AnyView {
     type ElementState = Box<dyn Any>;
 
-    fn id(&self) -> Option<ElementId> {
+    fn element_id(&self) -> Option<ElementId> {
         Some(self.model.entity_id.into())
     }
 
@@ -305,7 +305,7 @@ where
 {
     type ElementState = AnyElement<ViewState>;
 
-    fn id(&self) -> Option<ElementId> {
+    fn element_id(&self) -> Option<ElementId> {
         Some(self.view.entity_id().into())
     }
 
@@ -315,7 +315,7 @@ where
         _: Option<Self::ElementState>,
         cx: &mut ViewContext<ParentViewState>,
     ) -> Self::ElementState {
-        cx.with_element_id(self.view.entity_id(), |_, cx| {
+        cx.with_element_id(Some(self.view.entity_id()), |cx| {
             self.view.update(cx, |view, cx| {
                 let mut element = self.component.take().unwrap().render();
                 element.initialize(view, cx);
@@ -330,7 +330,7 @@ where
         element: &mut Self::ElementState,
         cx: &mut ViewContext<ParentViewState>,
     ) -> LayoutId {
-        cx.with_element_id(self.view.entity_id(), |_, cx| {
+        cx.with_element_id(Some(self.view.entity_id()), |cx| {
             self.view.update(cx, |view, cx| element.layout(view, cx))
         })
     }
@@ -342,7 +342,7 @@ where
         element: &mut Self::ElementState,
         cx: &mut ViewContext<ParentViewState>,
     ) {
-        cx.with_element_id(self.view.entity_id(), |_, cx| {
+        cx.with_element_id(Some(self.view.entity_id()), |cx| {
             self.view.update(cx, |view, cx| element.paint(view, cx))
         })
     }
@@ -364,7 +364,7 @@ mod any_view {
     use std::any::Any;
 
     pub(crate) fn initialize<V: Render>(view: &AnyView, cx: &mut WindowContext) -> Box<dyn Any> {
-        cx.with_element_id(view.model.entity_id, |_, cx| {
+        cx.with_element_id(Some(view.model.entity_id), |cx| {
             let view = view.clone().downcast::<V>().unwrap();
             let element = view.update(cx, |view, cx| {
                 let mut element = AnyElement::new(view.render(cx));
@@ -380,7 +380,7 @@ mod any_view {
         element: &mut Box<dyn Any>,
         cx: &mut WindowContext,
     ) -> LayoutId {
-        cx.with_element_id(view.model.entity_id, |_, cx| {
+        cx.with_element_id(Some(view.model.entity_id), |cx| {
             let view = view.clone().downcast::<V>().unwrap();
             let element = element.downcast_mut::<AnyElement<V>>().unwrap();
             view.update(cx, |view, cx| element.layout(view, cx))
@@ -392,7 +392,7 @@ mod any_view {
         element: &mut Box<dyn Any>,
         cx: &mut WindowContext,
     ) {
-        cx.with_element_id(view.model.entity_id, |_, cx| {
+        cx.with_element_id(Some(view.model.entity_id), |cx| {
             let view = view.clone().downcast::<V>().unwrap();
             let element = element.downcast_mut::<AnyElement<V>>().unwrap();
             view.update(cx, |view, cx| element.paint(view, cx))

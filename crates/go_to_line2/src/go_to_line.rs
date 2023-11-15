@@ -1,11 +1,11 @@
 use editor::{display_map::ToDisplayPoint, scroll::autoscroll::Autoscroll, Editor};
 use gpui::{
-    actions, div, AppContext, Div, EventEmitter, ParentElement, Render, SharedString,
-    StatelessInteractive, Styled, Subscription, View, ViewContext, VisualContext, WindowContext,
+    actions, div, prelude::*, AppContext, Div, EventEmitter, ParentComponent, Render, SharedString,
+    Styled, Subscription, View, ViewContext, VisualContext, WindowContext,
 };
 use text::{Bias, Point};
 use theme::ActiveTheme;
-use ui::{h_stack, v_stack, Label, LabelColor, StyledExt};
+use ui::{h_stack, v_stack, Label, StyledExt, TextColor};
 use util::paths::FILE_ROW_COLUMN_DELIMITER;
 use workspace::{Modal, ModalEvent, Workspace};
 
@@ -150,7 +150,7 @@ impl Render for GoToLine {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         div()
             .elevation_2(cx)
-            .context("GoToLine")
+            .key_context("GoToLine")
             .on_action(Self::cancel)
             .on_action(Self::confirm)
             .w_96()
@@ -176,7 +176,7 @@ impl Render for GoToLine {
                             .justify_between()
                             .px_2()
                             .py_1()
-                            .child(Label::new(self.current_text.clone()).color(LabelColor::Muted)),
+                            .child(Label::new(self.current_text.clone()).color(TextColor::Muted)),
                     ),
             )
     }
