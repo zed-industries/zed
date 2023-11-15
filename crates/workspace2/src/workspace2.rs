@@ -36,11 +36,11 @@ use futures::{
     Future, FutureExt, StreamExt,
 };
 use gpui::{
-    actions, div, point, prelude::*, rems, size, Action, AnyModel, AnyView, AnyWeakView,
-    AppContext, AsyncAppContext, AsyncWindowContext, Bounds, Component, Div, Entity, EntityId,
-    EventEmitter, GlobalPixels, KeyContext, Model, ModelContext, ParentComponent, Point, Render,
-    Size, Styled, Subscription, Task, View, ViewContext, WeakView, WindowBounds, WindowContext,
-    WindowHandle, WindowOptions,
+    actions, div, point, prelude::*, register_action, rems, size, Action, AnyModel, AnyView,
+    AnyWeakView, AppContext, AsyncAppContext, AsyncWindowContext, Bounds, Component, Div, Entity,
+    EntityId, EventEmitter, GlobalPixels, KeyContext, Model, ModelContext, ParentComponent, Point,
+    Render, Size, Styled, Subscription, Task, View, ViewContext, WeakView, WindowBounds,
+    WindowContext, WindowHandle, WindowOptions,
 };
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, ProjectItem};
 use itertools::Itertools;

@@ -1398,6 +1398,7 @@ impl Pane {
             .when_some(item.tab_tooltip_text(cx), |div, text| {
                 div.tooltip(move |_, cx| cx.build_view(|cx| TextTooltip::new(text.clone())))
             })
+            .on_click(move |v: &mut Self, e, cx| v.activate_item(ix, true, true, cx))
             // .on_drag(move |pane, cx| pane.render_tab(ix, item.boxed_clone(), detail, cx))
             // .drag_over::<DraggedTab>(|d| d.bg(cx.theme().colors().element_drop_target))
             // .on_drop(|_view, state: View<DraggedTab>, cx| {
@@ -1430,32 +1431,22 @@ impl Pane {
                     .items_center()
                     .gap_1()
                     .text_color(text_color)
-                    .children(if item.has_conflict(cx) {
-                        Some(
-                            IconElement::new(Icon::ExclamationTriangle)
-                                .size(ui::IconSize::Small)
-                                .color(TextColor::Warning),
-                        )
-                    } else if item.is_dirty(cx) {
-                        Some(
-                            IconElement::new(Icon::ExclamationTriangle)
-                                .size(ui::IconSize::Small)
-                                .color(TextColor::Info),
-                        )
-                    } else {
-                        None
-                    })
-                    .children(if !close_right {
-                        Some(close_icon())
-                    } else {
-                        None
-                    })
+                    .children(
+                        item.has_conflict(cx)
+                            .then(|| {
+                                IconElement::new(Icon::ExclamationTriangle)
+                                    .size(ui::IconSize::Small)
+                                    .color(TextColor::Warning)
+                            })
+                            .or(item.is_dirty(cx).then(|| {
+                                IconElement::new(Icon::ExclamationTriangle)
+                                    .size(ui::IconSize::Small)
+                                    .color(TextColor::Info)
+                            })),
+                    )
+                    .children((!close_right).then(|| close_icon()))
                     .child(label)
-                    .children(if close_right {
-                        Some(close_icon())
-                    } else {
-                        None
-                    }),
+                    .children(close_right.then(|| close_icon())),
             )
     }
 
