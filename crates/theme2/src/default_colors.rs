@@ -1,261 +1,15 @@
-use gpui::{hsla, Hsla, Rgba};
+use gpui::{Hsla, Rgba};
 
-use crate::colors::{StatusColors, SystemColors, ThemeColors};
 use crate::scale::{ColorScaleSet, ColorScales};
-use crate::syntax::SyntaxTheme;
-use crate::{ColorScale, PlayerColor, PlayerColors};
+use crate::ColorScale;
+use crate::{SystemColors, ThemeColors};
 
-impl Default for PlayerColors {
-    fn default() -> Self {
-        Self(vec![
-            PlayerColor {
-                cursor: blue().dark().step_9(),
-                background: blue().dark().step_5(),
-                selection: blue().dark().step_3(),
-            },
-            PlayerColor {
-                cursor: orange().dark().step_9(),
-                background: orange().dark().step_5(),
-                selection: orange().dark().step_3(),
-            },
-            PlayerColor {
-                cursor: pink().dark().step_9(),
-                background: pink().dark().step_5(),
-                selection: pink().dark().step_3(),
-            },
-            PlayerColor {
-                cursor: lime().dark().step_9(),
-                background: lime().dark().step_5(),
-                selection: lime().dark().step_3(),
-            },
-            PlayerColor {
-                cursor: purple().dark().step_9(),
-                background: purple().dark().step_5(),
-                selection: purple().dark().step_3(),
-            },
-            PlayerColor {
-                cursor: amber().dark().step_9(),
-                background: amber().dark().step_5(),
-                selection: amber().dark().step_3(),
-            },
-            PlayerColor {
-                cursor: jade().dark().step_9(),
-                background: jade().dark().step_5(),
-                selection: jade().dark().step_3(),
-            },
-            PlayerColor {
-                cursor: red().dark().step_9(),
-                background: red().dark().step_5(),
-                selection: red().dark().step_3(),
-            },
-        ])
-    }
-}
-
-impl PlayerColors {
-    pub fn default_light() -> Self {
-        Self(vec![
-            PlayerColor {
-                cursor: blue().light().step_9(),
-                background: blue().light().step_4(),
-                selection: blue().light().step_3(),
-            },
-            PlayerColor {
-                cursor: orange().light().step_9(),
-                background: orange().light().step_4(),
-                selection: orange().light().step_3(),
-            },
-            PlayerColor {
-                cursor: pink().light().step_9(),
-                background: pink().light().step_4(),
-                selection: pink().light().step_3(),
-            },
-            PlayerColor {
-                cursor: lime().light().step_9(),
-                background: lime().light().step_4(),
-                selection: lime().light().step_3(),
-            },
-            PlayerColor {
-                cursor: purple().light().step_9(),
-                background: purple().light().step_4(),
-                selection: purple().light().step_3(),
-            },
-            PlayerColor {
-                cursor: amber().light().step_9(),
-                background: amber().light().step_4(),
-                selection: amber().light().step_3(),
-            },
-            PlayerColor {
-                cursor: jade().light().step_9(),
-                background: jade().light().step_4(),
-                selection: jade().light().step_3(),
-            },
-            PlayerColor {
-                cursor: red().light().step_9(),
-                background: red().light().step_4(),
-                selection: red().light().step_3(),
-            },
-        ])
-    }
-}
-
-fn neutral() -> ColorScaleSet {
+pub(crate) fn neutral() -> ColorScaleSet {
     slate()
 }
 
-impl Default for SystemColors {
-    fn default() -> Self {
-        Self {
-            transparent: hsla(0.0, 0.0, 0.0, 0.0),
-            mac_os_traffic_light_red: hsla(0.0139, 0.79, 0.65, 1.0),
-            mac_os_traffic_light_yellow: hsla(0.114, 0.88, 0.63, 1.0),
-            mac_os_traffic_light_green: hsla(0.313, 0.49, 0.55, 1.0),
-        }
-    }
-}
-
-impl Default for StatusColors {
-    fn default() -> Self {
-        Self {
-            conflict: red().dark().step_9(),
-            created: grass().dark().step_9(),
-            deleted: red().dark().step_9(),
-            error: red().dark().step_9(),
-            hidden: neutral().dark().step_9(),
-            ignored: neutral().dark().step_9(),
-            info: blue().dark().step_9(),
-            modified: yellow().dark().step_9(),
-            renamed: blue().dark().step_9(),
-            success: grass().dark().step_9(),
-            warning: yellow().dark().step_9(),
-        }
-    }
-}
-
-impl SyntaxTheme {
-    pub fn default_light() -> Self {
-        Self {
-            highlights: vec![
-                ("attribute".into(), cyan().light().step_11().into()),
-                ("boolean".into(), tomato().light().step_11().into()),
-                ("comment".into(), neutral().light().step_11().into()),
-                ("comment.doc".into(), iris().light().step_12().into()),
-                ("constant".into(), red().light().step_9().into()),
-                ("constructor".into(), red().light().step_9().into()),
-                ("embedded".into(), red().light().step_9().into()),
-                ("emphasis".into(), red().light().step_9().into()),
-                ("emphasis.strong".into(), red().light().step_9().into()),
-                ("enum".into(), red().light().step_9().into()),
-                ("function".into(), red().light().step_9().into()),
-                ("hint".into(), red().light().step_9().into()),
-                ("keyword".into(), orange().light().step_11().into()),
-                ("label".into(), red().light().step_9().into()),
-                ("link_text".into(), red().light().step_9().into()),
-                ("link_uri".into(), red().light().step_9().into()),
-                ("number".into(), red().light().step_9().into()),
-                ("operator".into(), red().light().step_9().into()),
-                ("predictive".into(), red().light().step_9().into()),
-                ("preproc".into(), red().light().step_9().into()),
-                ("primary".into(), red().light().step_9().into()),
-                ("property".into(), red().light().step_9().into()),
-                ("punctuation".into(), neutral().light().step_11().into()),
-                (
-                    "punctuation.bracket".into(),
-                    neutral().light().step_11().into(),
-                ),
-                (
-                    "punctuation.delimiter".into(),
-                    neutral().light().step_11().into(),
-                ),
-                (
-                    "punctuation.list_marker".into(),
-                    blue().light().step_11().into(),
-                ),
-                ("punctuation.special".into(), red().light().step_9().into()),
-                ("string".into(), jade().light().step_11().into()),
-                ("string.escape".into(), red().light().step_9().into()),
-                ("string.regex".into(), tomato().light().step_11().into()),
-                ("string.special".into(), red().light().step_9().into()),
-                (
-                    "string.special.symbol".into(),
-                    red().light().step_9().into(),
-                ),
-                ("tag".into(), red().light().step_9().into()),
-                ("text.literal".into(), red().light().step_9().into()),
-                ("title".into(), red().light().step_9().into()),
-                ("type".into(), red().light().step_9().into()),
-                ("variable".into(), red().light().step_9().into()),
-                ("variable.special".into(), red().light().step_9().into()),
-                ("variant".into(), red().light().step_9().into()),
-            ],
-            inlay_style: tomato().light().step_1().into(), // todo!("nate: use a proper style")
-            suggestion_style: orange().light().step_1().into(), // todo!("nate: use proper style")
-        }
-    }
-
-    pub fn default_dark() -> Self {
-        Self {
-            highlights: vec![
-                ("attribute".into(), tomato().dark().step_11().into()),
-                ("boolean".into(), tomato().dark().step_11().into()),
-                ("comment".into(), neutral().dark().step_11().into()),
-                ("comment.doc".into(), iris().dark().step_12().into()),
-                ("constant".into(), orange().dark().step_11().into()),
-                ("constructor".into(), gold().dark().step_11().into()),
-                ("embedded".into(), red().dark().step_11().into()),
-                ("emphasis".into(), red().dark().step_11().into()),
-                ("emphasis.strong".into(), red().dark().step_11().into()),
-                ("enum".into(), yellow().dark().step_11().into()),
-                ("function".into(), blue().dark().step_11().into()),
-                ("hint".into(), indigo().dark().step_11().into()),
-                ("keyword".into(), plum().dark().step_11().into()),
-                ("label".into(), red().dark().step_11().into()),
-                ("link_text".into(), red().dark().step_11().into()),
-                ("link_uri".into(), red().dark().step_11().into()),
-                ("number".into(), red().dark().step_11().into()),
-                ("operator".into(), red().dark().step_11().into()),
-                ("predictive".into(), red().dark().step_11().into()),
-                ("preproc".into(), red().dark().step_11().into()),
-                ("primary".into(), red().dark().step_11().into()),
-                ("property".into(), red().dark().step_11().into()),
-                ("punctuation".into(), neutral().dark().step_11().into()),
-                (
-                    "punctuation.bracket".into(),
-                    neutral().dark().step_11().into(),
-                ),
-                (
-                    "punctuation.delimiter".into(),
-                    neutral().dark().step_11().into(),
-                ),
-                (
-                    "punctuation.list_marker".into(),
-                    blue().dark().step_11().into(),
-                ),
-                ("punctuation.special".into(), red().dark().step_11().into()),
-                ("string".into(), lime().dark().step_11().into()),
-                ("string.escape".into(), orange().dark().step_11().into()),
-                ("string.regex".into(), tomato().dark().step_11().into()),
-                ("string.special".into(), red().dark().step_11().into()),
-                (
-                    "string.special.symbol".into(),
-                    red().dark().step_11().into(),
-                ),
-                ("tag".into(), red().dark().step_11().into()),
-                ("text.literal".into(), purple().dark().step_11().into()),
-                ("title".into(), sky().dark().step_11().into()),
-                ("type".into(), mint().dark().step_11().into()),
-                ("variable".into(), red().dark().step_11().into()),
-                ("variable.special".into(), red().dark().step_11().into()),
-                ("variant".into(), red().dark().step_11().into()),
-            ],
-            inlay_style: neutral().dark().step_11().into(), // todo!("nate: use a proper style")
-            suggestion_style: orange().dark().step_11().into(), // todo!("nate: use a proper style")
-        }
-    }
-}
-
 impl ThemeColors {
-    pub fn default_light() -> Self {
+    pub fn light() -> Self {
         let system = SystemColors::default();
 
         Self {
@@ -327,7 +81,7 @@ impl ThemeColors {
         }
     }
 
-    pub fn default_dark() -> Self {
+    pub fn dark() -> Self {
         let system = SystemColors::default();
 
         Self {
@@ -470,7 +224,7 @@ pub fn default_color_scales() -> ColorScales {
     }
 }
 
-fn gray() -> ColorScaleSet {
+pub(crate) fn gray() -> ColorScaleSet {
     StaticColorScaleSet {
         scale: "Gray",
         light: [
@@ -534,7 +288,7 @@ fn gray() -> ColorScaleSet {
     .unwrap()
 }
 
-fn mauve() -> ColorScaleSet {
+pub(crate) fn mauve() -> ColorScaleSet {
     StaticColorScaleSet {
         scale: "Mauve",
         light: [
@@ -598,7 +352,7 @@ fn mauve() -> ColorScaleSet {
     .unwrap()
 }
 
-fn slate() -> ColorScaleSet {
+pub(crate) fn slate() -> ColorScaleSet {
     StaticColorScaleSet {
         scale: "Slate",
         light: [
@@ -662,7 +416,7 @@ fn slate() -> ColorScaleSet {
     .unwrap()
 }
 
-fn sage() -> ColorScaleSet {
+pub(crate) fn sage() -> ColorScaleSet {
     StaticColorScaleSet {
         scale: "Sage",
         light: [
@@ -726,7 +480,7 @@ fn sage() -> ColorScaleSet {
     .unwrap()
 }
 
-fn olive() -> ColorScaleSet {
+pub(crate) fn olive() -> ColorScaleSet {
     StaticColorScaleSet {
         scale: "Olive",
         light: [
@@ -790,7 +544,7 @@ fn olive() -> ColorScaleSet {
     .unwrap()
 }
 
-fn sand() -> ColorScaleSet {
+pub(crate) fn sand() -> ColorScaleSet {
     StaticColorScaleSet {
         scale: "Sand",
         light: [
@@ -854,7 +608,7 @@ fn sand() -> ColorScaleSet {
     .unwrap()
 }
 
-fn gold() -> ColorScaleSet {
+pub(crate) fn gold() -> ColorScaleSet {
     StaticColorScaleSet {
         scale: "Gold",
         light: [
@@ -918,7 +672,7 @@ fn gold() -> ColorScaleSet {
     .unwrap()
 }
 
-fn bronze() -> ColorScaleSet {
+pub(crate) fn bronze() -> ColorScaleSet {
     StaticColorScaleSet {
         scale: "Bronze",
         light: [
@@ -982,7 +736,7 @@ fn bronze() -> ColorScaleSet {
     .unwrap()
 }
 
-fn brown() -> ColorScaleSet {
+pub(crate) fn brown() -> ColorScaleSet {
     StaticColorScaleSet {
         scale: "Brown",
         light: [
@@ -1046,7 +800,7 @@ fn brown() -> ColorScaleSet {
     .unwrap()
 }
 
-fn yellow() -> ColorScaleSet {
+pub(crate) fn yellow() -> ColorScaleSet {
     StaticColorScaleSet {
         scale: "Yellow",
         light: [
@@ -1110,7 +864,7 @@ fn yellow() -> ColorScaleSet {
     .unwrap()
 }
 
-fn amber() -> ColorScaleSet {
+pub(crate) fn amber() -> ColorScaleSet {
     StaticColorScaleSet {
         scale: "Amber",
         light: [
@@ -1174,7 +928,7 @@ fn amber() -> ColorScaleSet {
     .unwrap()
 }
 
-fn orange() -> ColorScaleSet {
+pub(crate) fn orange() -> ColorScaleSet {
     StaticColorScaleSet {
         scale: "Orange",
         light: [
@@ -1238,7 +992,7 @@ fn orange() -> ColorScaleSet {
     .unwrap()
 }
 
-fn tomato() -> ColorScaleSet {
+pub(crate) fn tomato() -> ColorScaleSet {
     StaticColorScaleSet {
         scale: "Tomato",
         light: [
@@ -1302,7 +1056,7 @@ fn tomato() -> ColorScaleSet {
     .unwrap()
 }
 
-fn red() -> ColorScaleSet {
+pub(crate) fn red() -> ColorScaleSet {
     StaticColorScaleSet {
         scale: "Red",
         light: [
@@ -1366,7 +1120,7 @@ fn red() -> ColorScaleSet {
     .unwrap()
 }
 
-fn ruby() -> ColorScaleSet {
+pub(crate) fn ruby() -> ColorScaleSet {
     StaticColorScaleSet {
         scale: "Ruby",
         light: [
@@ -1430,7 +1184,7 @@ fn ruby() -> ColorScaleSet {
     .unwrap()
 }
 
-fn crimson() -> ColorScaleSet {
+pub(crate) fn crimson() -> ColorScaleSet {
     StaticColorScaleSet {
         scale: "Crimson",
         light: [
@@ -1494,7 +1248,7 @@ fn crimson() -> ColorScaleSet {
     .unwrap()
 }
 
-fn pink() -> ColorScaleSet {
+pub(crate) fn pink() -> ColorScaleSet {
     StaticColorScaleSet {
         scale: "Pink",
         light: [
@@ -1558,7 +1312,7 @@ fn pink() -> ColorScaleSet {
     .unwrap()
 }
 
-fn plum() -> ColorScaleSet {
+pub(crate) fn plum() -> ColorScaleSet {
     StaticColorScaleSet {
         scale: "Plum",
         light: [
@@ -1622,7 +1376,7 @@ fn plum() -> ColorScaleSet {
     .unwrap()
 }
 
-fn purple() -> ColorScaleSet {
+pub(crate) fn purple() -> ColorScaleSet {
     StaticColorScaleSet {
         scale: "Purple",
         light: [
@@ -1686,7 +1440,7 @@ fn purple() -> ColorScaleSet {
     .unwrap()
 }
 
-fn violet() -> ColorScaleSet {
+pub(crate) fn violet() -> ColorScaleSet {
     StaticColorScaleSet {
         scale: "Violet",
         light: [
@@ -1750,7 +1504,7 @@ fn violet() -> ColorScaleSet {
     .unwrap()
 }
 
-fn iris() -> ColorScaleSet {
+pub(crate) fn iris() -> ColorScaleSet {
     StaticColorScaleSet {
         scale: "Iris",
         light: [
@@ -1814,7 +1568,7 @@ fn iris() -> ColorScaleSet {
     .unwrap()
 }
 
-fn indigo() -> ColorScaleSet {
+pub(crate) fn indigo() -> ColorScaleSet {
     StaticColorScaleSet {
         scale: "Indigo",
         light: [
@@ -1878,7 +1632,7 @@ fn indigo() -> ColorScaleSet {
     .unwrap()
 }
 
-fn blue() -> ColorScaleSet {
+pub(crate) fn blue() -> ColorScaleSet {
     StaticColorScaleSet {
         scale: "Blue",
         light: [
@@ -1942,7 +1696,7 @@ fn blue() -> ColorScaleSet {
     .unwrap()
 }
 
-fn cyan() -> ColorScaleSet {
+pub(crate) fn cyan() -> ColorScaleSet {
     StaticColorScaleSet {
         scale: "Cyan",
         light: [
@@ -2006,7 +1760,7 @@ fn cyan() -> ColorScaleSet {
     .unwrap()
 }
 
-fn teal() -> ColorScaleSet {
+pub(crate) fn teal() -> ColorScaleSet {
     StaticColorScaleSet {
         scale: "Teal",
         light: [
@@ -2070,7 +1824,7 @@ fn teal() -> ColorScaleSet {
     .unwrap()
 }
 
-fn jade() -> ColorScaleSet {
+pub(crate) fn jade() -> ColorScaleSet {
     StaticColorScaleSet {
         scale: "Jade",
         light: [
@@ -2134,7 +1888,7 @@ fn jade() -> ColorScaleSet {
     .unwrap()
 }
 
-fn green() -> ColorScaleSet {
+pub(crate) fn green() -> ColorScaleSet {
     StaticColorScaleSet {
         scale: "Green",
         light: [
@@ -2198,7 +1952,7 @@ fn green() -> ColorScaleSet {
     .unwrap()
 }
 
-fn grass() -> ColorScaleSet {
+pub(crate) fn grass() -> ColorScaleSet {
     StaticColorScaleSet {
         scale: "Grass",
         light: [
@@ -2262,7 +2016,7 @@ fn grass() -> ColorScaleSet {
     .unwrap()
 }
 
-fn lime() -> ColorScaleSet {
+pub(crate) fn lime() -> ColorScaleSet {
     StaticColorScaleSet {
         scale: "Lime",
         light: [
@@ -2326,7 +2080,7 @@ fn lime() -> ColorScaleSet {
     .unwrap()
 }
 
-fn mint() -> ColorScaleSet {
+pub(crate) fn mint() -> ColorScaleSet {
     StaticColorScaleSet {
         scale: "Mint",
         light: [
@@ -2390,7 +2144,7 @@ fn mint() -> ColorScaleSet {
     .unwrap()
 }
 
-fn sky() -> ColorScaleSet {
+pub(crate) fn sky() -> ColorScaleSet {
     StaticColorScaleSet {
         scale: "Sky",
         light: [
@@ -2454,7 +2208,7 @@ fn sky() -> ColorScaleSet {
     .unwrap()
 }
 
-fn black() -> ColorScaleSet {
+pub(crate) fn black() -> ColorScaleSet {
     StaticColorScaleSet {
         scale: "Black",
         light: [
@@ -2518,7 +2272,7 @@ fn black() -> ColorScaleSet {
     .unwrap()
 }
 
-fn white() -> ColorScaleSet {
+pub(crate) fn white() -> ColorScaleSet {
     StaticColorScaleSet {
         scale: "White",
         light: [

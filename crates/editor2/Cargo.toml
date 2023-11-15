@@ -27,7 +27,6 @@ client = { package = "client2", path = "../client2" }
 clock = { path = "../clock" }
 copilot = { package="copilot2", path = "../copilot2" }
 db = { package="db2", path = "../db2" }
-drag_and_drop = { path = "../drag_and_drop" }
 collections = { path = "../collections" }
 # context_menu = { path = "../context_menu" }
 fuzzy = { package = "fuzzy2", path = "../fuzzy2" }

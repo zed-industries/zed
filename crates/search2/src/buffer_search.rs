@@ -10,16 +10,15 @@ use collections::HashMap;
 use editor::Editor;
 use futures::channel::oneshot;
 use gpui::{
-    action, actions, blue, div, red, rems, white, Action, AnyElement, AnyView, AppContext,
-    Component, Div, Entity, EventEmitter, Hsla, ParentElement as _, Render, Styled, Subscription,
-    Svg, Task, View, ViewContext, VisualContext as _, WindowContext,
+    action, actions, div, red, Action, AppContext, Component, Div, EventEmitter,
+    ParentComponent as _, Render, Styled, Subscription, Task, View, ViewContext,
+    VisualContext as _, WindowContext,
 };
 use project::search::SearchQuery;
-use serde::Deserialize;
 use std::{any::Any, sync::Arc};
 use theme::ActiveTheme;
 
-use ui::{h_stack, Button, ButtonGroup, Icon, IconButton, IconElement, Label, StyledExt};
+use ui::{h_stack, ButtonGroup, Icon, IconButton, IconElement};
 use util::ResultExt;
 use workspace::{
     item::ItemHandle,

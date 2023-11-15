@@ -1,5 +1,5 @@
 use crate::{story::Story, story_selector::ComponentStory};
-use gpui::{Div, Render, StatefulInteractivity, View, VisualContext};
+use gpui::{prelude::*, Div, Render, Stateful, View};
 use strum::IntoEnumIterator;
 use ui::prelude::*;
 
@@ -12,7 +12,7 @@ impl KitchenSinkStory {
 }
 
 impl Render for KitchenSinkStory {
-    type Element = Div<Self, StatefulInteractivity<Self>>;
+    type Element = Stateful<Self, Div<Self>>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         let component_stories = ComponentStory::iter()

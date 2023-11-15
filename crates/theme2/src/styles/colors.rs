@@ -1,31 +1,8 @@
-use crate::{PlayerColors, SyntaxTheme};
 use gpui::Hsla;
 use refineable::Refineable;
 use std::sync::Arc;
 
-#[derive(Clone)]
-pub struct SystemColors {
-    pub transparent: Hsla,
-    pub mac_os_traffic_light_red: Hsla,
-    pub mac_os_traffic_light_yellow: Hsla,
-    pub mac_os_traffic_light_green: Hsla,
-}
-
-#[derive(Refineable, Clone, Debug)]
-#[refineable(Debug, serde::Deserialize)]
-pub struct StatusColors {
-    pub conflict: Hsla,
-    pub created: Hsla,
-    pub deleted: Hsla,
-    pub error: Hsla,
-    pub hidden: Hsla,
-    pub ignored: Hsla,
-    pub info: Hsla,
-    pub modified: Hsla,
-    pub renamed: Hsla,
-    pub success: Hsla,
-    pub warning: Hsla,
-}
+use crate::{PlayerColors, StatusColors, SyntaxTheme, SystemColors};
 
 #[derive(Refineable, Clone, Debug)]
 #[refineable(Debug, serde::Deserialize)]
@@ -259,7 +236,7 @@ mod tests {
 
     #[test]
     fn override_a_single_theme_color() {
-        let mut colors = ThemeColors::default_light();
+        let mut colors = ThemeColors::light();
 
         let magenta: Hsla = gpui::rgb(0xff00ff);
 
@@ -277,7 +254,7 @@ mod tests {
 
     #[test]
     fn override_multiple_theme_colors() {
-        let mut colors = ThemeColors::default_light();
+        let mut colors = ThemeColors::light();
 
         let magenta: Hsla = gpui::rgb(0xff00ff);
         let green: Hsla = gpui::rgb(0x00ff00);

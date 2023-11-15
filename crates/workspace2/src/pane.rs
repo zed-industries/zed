@@ -1,5 +1,3 @@
-// mod dragged_item_receiver;
-
 use crate::{
     item::{Item, ItemHandle, ItemSettings, WeakItemHandle},
     toolbar::Toolbar,
@@ -9,7 +7,7 @@ use crate::{
 use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
 use gpui::{
-    actions, register_action, AppContext, AsyncWindowContext, Component, Div, EntityId,
+    actions, prelude::*, register_action, AppContext, AsyncWindowContext, Component, Div, EntityId,
     EventEmitter, FocusHandle, Model, PromptLevel, Render, Task, View, ViewContext, VisualContext,
     WeakView, WindowContext,
 };
@@ -27,7 +25,7 @@ use std::{
     },
 };
 use ui::v_stack;
-use ui::{prelude::*, Icon, IconButton, IconColor, IconElement, TextTooltip};
+use ui::{prelude::*, Icon, IconButton, IconElement, TextColor, TextTooltip};
 use util::truncate_and_remove_front;
 
 #[derive(PartialEq, Clone, Copy, Deserialize, Debug)]
@@ -733,21 +731,21 @@ impl Pane {
     //         self.activate_item(index, activate_pane, activate_pane, cx);
     //     }
 
-    //     pub fn close_active_item(
-    //         &mut self,
-    //         action: &CloseActiveItem,
-    //         cx: &mut ViewContext<Self>,
-    //     ) -> Option<Task<Result<()>>> {
-    //         if self.items.is_empty() {
-    //             return None;
-    //         }
-    //         let active_item_id = self.items[self.active_item_index].id();
-    //         Some(self.close_item_by_id(
-    //             active_item_id,
-    //             action.save_intent.unwrap_or(SaveIntent::Close),
-    //             cx,
-    //         ))
-    //     }
+    pub fn close_active_item(
+        &mut self,
+        action: &CloseActiveItem,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<Task<Result<()>>> {
+        if self.items.is_empty() {
+            return None;
+        }
+        let active_item_id = self.items[self.active_item_index].id();
+        Some(self.close_item_by_id(
+            active_item_id,
+            action.save_intent.unwrap_or(SaveIntent::Close),
+            cx,
+        ))
+    }
 
     pub fn close_item_by_id(
         &mut self,
@@ -1401,32 +1399,44 @@ impl Pane {
             // .on_drop(|_view, state: View<DraggedTab>, cx| {
             //     eprintln!("{:?}", state.read(cx));
             // })
-            .px_2()
-            .py_0p5()
             .flex()
             .items_center()
             .justify_center()
+            // todo!("Nate - I need to do some work to balance all the items in the tab once things stablize")
+            .map(|this| {
+                if close_right {
+                    this.pl_3().pr_1()
+                } else {
+                    this.pr_1().pr_3()
+                }
+            })
+            .py_1()
             .bg(tab_bg)
-            .hover(|h| h.bg(tab_hover_bg))
-            .active(|a| a.bg(tab_active_bg))
+            .border_color(cx.theme().colors().border)
+            .map(|this| match ix.cmp(&self.active_item_index) {
+                cmp::Ordering::Less => this.border_l(),
+                cmp::Ordering::Equal => this.border_r(),
+                cmp::Ordering::Greater => this.border_l().border_r(),
+            })
+            // .hover(|h| h.bg(tab_hover_bg))
+            // .active(|a| a.bg(tab_active_bg))
             .child(
                 div()
-                    .px_1()
                     .flex()
                     .items_center()
-                    .gap_1p5()
+                    .gap_1()
                     .text_color(text_color)
                     .children(if item.has_conflict(cx) {
                         Some(
                             IconElement::new(Icon::ExclamationTriangle)
                                 .size(ui::IconSize::Small)
-                                .color(IconColor::Warning),
+                                .color(TextColor::Warning),
                         )
                     } else if item.is_dirty(cx) {
                         Some(
                             IconElement::new(Icon::ExclamationTriangle)
                                 .size(ui::IconSize::Small)
-                                .color(IconColor::Info),
+                                .color(TextColor::Info),
                         )
                     } else {
                         None
@@ -1907,7 +1917,12 @@ impl Render for Pane {
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         v_stack()
+            .key_context("Pane")
             .size_full()
+            .on_action(|pane: &mut Self, action, cx| {
+                pane.close_active_item(action, cx)
+                    .map(|task| task.detach_and_log_err(cx));
+            })
             .child(self.render_tab_bar(cx))
             .child(self.toolbar.clone())
             .child(if let Some(item) = self.active_item() {

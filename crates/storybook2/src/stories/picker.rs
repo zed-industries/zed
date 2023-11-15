@@ -1,11 +1,7 @@
-use std::sync::Arc;
-
 use fuzzy::StringMatchCandidate;
-use gpui::{
-    div, Component, Div, KeyBinding, ParentElement, Render, StatelessInteractive, Styled, Task,
-    View, VisualContext, WindowContext,
-};
+use gpui::{div, prelude::*, Div, KeyBinding, Render, Styled, Task, View, WindowContext};
 use picker::{Picker, PickerDelegate};
+use std::sync::Arc;
 use theme2::ActiveTheme;
 
 pub struct PickerStory {
@@ -42,6 +38,10 @@ impl PickerDelegate for Delegate {
 
     fn match_count(&self) -> usize {
         self.candidates.len()
+    }
+
+    fn placeholder_text(&self) -> Arc<str> {
+        "Test".into()
     }
 
     fn render_match(

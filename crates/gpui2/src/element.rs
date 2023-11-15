@@ -8,7 +8,7 @@ use std::{any::Any, mem};
 pub trait Element<V: 'static> {
     type ElementState: 'static;
 
-    fn id(&self) -> Option<ElementId>;
+    fn element_id(&self) -> Option<ElementId>;
 
     /// Called to initialize this element for the current frame. If this
     /// element had state in a previous frame, it will be passed in for the 3rd argument.
@@ -38,7 +38,7 @@ pub trait Element<V: 'static> {
 #[derive(Deref, DerefMut, Default, Clone, Debug, Eq, PartialEq, Hash)]
 pub struct GlobalElementId(SmallVec<[ElementId; 32]>);
 
-pub trait ParentElement<V: 'static> {
+pub trait ParentComponent<V: 'static> {
     fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<V>; 2]>;
 
     fn child(mut self, child: impl Component<V>) -> Self
@@ -120,7 +120,7 @@ where
     E::ElementState: 'static,
 {
     fn initialize(&mut self, view_state: &mut V, cx: &mut ViewContext<V>) {
-        let frame_state = if let Some(id) = self.element.id() {
+        let frame_state = if let Some(id) = self.element.element_id() {
             cx.with_element_state(id, |element_state, cx| {
                 let element_state = self.element.initialize(view_state, element_state, cx);
                 ((), element_state)
@@ -142,7 +142,7 @@ where
                 frame_state: initial_frame_state,
             } => {
                 frame_state = initial_frame_state;
-                if let Some(id) = self.element.id() {
+                if let Some(id) = self.element.element_id() {
                     layout_id = cx.with_element_state(id, |element_state, cx| {
                         let mut element_state = element_state.unwrap();
                         let layout_id = self.element.layout(state, &mut element_state, cx);
@@ -181,7 +181,7 @@ where
                 ..
             } => {
                 let bounds = cx.layout_bounds(layout_id);
-                if let Some(id) = self.element.id() {
+                if let Some(id) = self.element.element_id() {
                     cx.with_element_state(id, |element_state, cx| {
                         let mut element_state = element_state.unwrap();
                         self.element
@@ -255,7 +255,7 @@ where
         // Ignore the element offset when drawing this element, as the origin is already specified
         // in absolute terms.
         origin -= cx.element_offset();
-        cx.with_element_offset(Some(origin), |cx| self.paint(view_state, cx))
+        cx.with_element_offset(origin, |cx| self.paint(view_state, cx))
     }
 }
 
@@ -351,7 +351,7 @@ where
 {
     type ElementState = AnyElement<V>;
 
-    fn id(&self) -> Option<ElementId> {
+    fn element_id(&self) -> Option<ElementId> {
         None
     }
 

@@ -1,7 +1,7 @@
 use crate::{
     private::Sealed, AnyBox, AnyElement, AnyModel, AnyWeakModel, AppContext, AvailableSpace,
-    Bounds, Component, Element, ElementId, Entity, EntityId, Flatten, LayoutId, Model, Pixels,
-    Size, ViewContext, VisualContext, WeakModel, WindowContext,
+    BorrowWindow, Bounds, Component, Element, ElementId, Entity, EntityId, Flatten, LayoutId,
+    Model, Pixels, Size, ViewContext, VisualContext, WeakModel, WindowContext,
 };
 use anyhow::{Context, Result};
 use std::{
@@ -184,10 +184,6 @@ impl AnyView {
             .compute_layout(layout_id, available_space);
         (self.paint)(self, &mut rendered_element, cx);
     }
-
-    pub(crate) fn draw_dispatch_stack(&self, cx: &mut WindowContext) {
-        (self.initialize)(self, cx);
-    }
 }
 
 impl<V: 'static> Component<V> for AnyView {
@@ -210,7 +206,7 @@ impl<V: Render> From<View<V>> for AnyView {
 impl<ParentViewState: 'static> Element<ParentViewState> for AnyView {
     type ElementState = Box<dyn Any>;
 
-    fn id(&self) -> Option<ElementId> {
+    fn element_id(&self) -> Option<ElementId> {
         Some(self.model.entity_id.into())
     }
 
@@ -285,12 +281,90 @@ where
     }
 }
 
+pub struct RenderView<C, V> {
+    view: View<V>,
+    component: Option<C>,
+}
+
+impl<C, ParentViewState, ViewState> Component<ParentViewState> for RenderView<C, ViewState>
+where
+    C: 'static + Component<ViewState>,
+    ParentViewState: 'static,
+    ViewState: 'static,
+{
+    fn render(self) -> AnyElement<ParentViewState> {
+        AnyElement::new(self)
+    }
+}
+
+impl<C, ParentViewState, ViewState> Element<ParentViewState> for RenderView<C, ViewState>
+where
+    C: 'static + Component<ViewState>,
+    ParentViewState: 'static,
+    ViewState: 'static,
+{
+    type ElementState = AnyElement<ViewState>;
+
+    fn element_id(&self) -> Option<ElementId> {
+        Some(self.view.entity_id().into())
+    }
+
+    fn initialize(
+        &mut self,
+        _: &mut ParentViewState,
+        _: Option<Self::ElementState>,
+        cx: &mut ViewContext<ParentViewState>,
+    ) -> Self::ElementState {
+        cx.with_element_id(Some(self.view.entity_id()), |cx| {
+            self.view.update(cx, |view, cx| {
+                let mut element = self.component.take().unwrap().render();
+                element.initialize(view, cx);
+                element
+            })
+        })
+    }
+
+    fn layout(
+        &mut self,
+        _: &mut ParentViewState,
+        element: &mut Self::ElementState,
+        cx: &mut ViewContext<ParentViewState>,
+    ) -> LayoutId {
+        cx.with_element_id(Some(self.view.entity_id()), |cx| {
+            self.view.update(cx, |view, cx| element.layout(view, cx))
+        })
+    }
+
+    fn paint(
+        &mut self,
+        _: Bounds<Pixels>,
+        _: &mut ParentViewState,
+        element: &mut Self::ElementState,
+        cx: &mut ViewContext<ParentViewState>,
+    ) {
+        cx.with_element_id(Some(self.view.entity_id()), |cx| {
+            self.view.update(cx, |view, cx| element.paint(view, cx))
+        })
+    }
+}
+
+pub fn render_view<C, V>(view: &View<V>, component: C) -> RenderView<C, V>
+where
+    C: 'static + Component<V>,
+    V: 'static,
+{
+    RenderView {
+        view: view.clone(),
+        component: Some(component),
+    }
+}
+
 mod any_view {
     use crate::{AnyElement, AnyView, BorrowWindow, LayoutId, Render, WindowContext};
     use std::any::Any;
 
     pub(crate) fn initialize<V: Render>(view: &AnyView, cx: &mut WindowContext) -> Box<dyn Any> {
-        cx.with_element_id(view.model.entity_id, |_, cx| {
+        cx.with_element_id(Some(view.model.entity_id), |cx| {
             let view = view.clone().downcast::<V>().unwrap();
             let element = view.update(cx, |view, cx| {
                 let mut element = AnyElement::new(view.render(cx));
@@ -306,7 +380,7 @@ mod any_view {
         element: &mut Box<dyn Any>,
         cx: &mut WindowContext,
     ) -> LayoutId {
-        cx.with_element_id(view.model.entity_id, |_, cx| {
+        cx.with_element_id(Some(view.model.entity_id), |cx| {
             let view = view.clone().downcast::<V>().unwrap();
             let element = element.downcast_mut::<AnyElement<V>>().unwrap();
             view.update(cx, |view, cx| element.layout(view, cx))
@@ -318,7 +392,7 @@ mod any_view {
         element: &mut Box<dyn Any>,
         cx: &mut WindowContext,
     ) {
-        cx.with_element_id(view.model.entity_id, |_, cx| {
+        cx.with_element_id(Some(view.model.entity_id), |cx| {
             let view = view.clone().downcast::<V>().unwrap();
             let element = element.downcast_mut::<AnyElement<V>>().unwrap();
             view.update(cx, |view, cx| element.paint(view, cx))

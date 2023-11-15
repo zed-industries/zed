@@ -1,6 +1,6 @@
 use crate::prelude::*;
 use crate::{Icon, IconButton, Label, Panel, PanelSide};
-use gpui::{rems, AbsoluteLength};
+use gpui::{prelude::*, rems, AbsoluteLength};
 
 #[derive(Component)]
 pub struct AssistantPanel {

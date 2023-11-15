@@ -9,6 +9,7 @@ use backtrace::Backtrace;
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
 use client::UserStore;
 use db::kvp::KEY_VALUE_STORE;
+use editor::Editor;
 use fs::RealFs;
 use futures::StreamExt;
 use gpui::{Action, App, AppContext, AsyncAppContext, Context, SemanticVersion, Task};
@@ -49,17 +50,16 @@ use util::{
 use uuid::Uuid;
 use workspace::{AppState, WorkspaceStore};
 use zed2::{
-    build_window_options, ensure_only_instance, handle_cli_connection, initialize_workspace,
-    languages, Assets, IsOnlyInstance, OpenListener, OpenRequest,
+    build_window_options, ensure_only_instance, handle_cli_connection, init_zed_actions,
+    initialize_workspace, languages, Assets, IsOnlyInstance, OpenListener, OpenRequest,
 };
 
 mod open_listener;
 
 fn main() {
-    //TODO!(figure out what the linker issues are here)
-    // https://github.com/rust-lang/rust/issues/47384
-    // https://github.com/mmastrac/rust-ctor/issues/280
-    menu::unused();
+    menu::init();
+    zed_actions::init();
+
     let http = http::client();
     init_paths();
     init_logger();
@@ -98,7 +98,7 @@ fn main() {
     let (listener, mut open_rx) = OpenListener::new();
     let listener = Arc::new(listener);
     let open_listener = listener.clone();
-    app.on_open_urls(move |urls, _| open_listener.open_urls(urls));
+    app.on_open_urls(move |urls, _| open_listener.open_urls(&urls));
     app.on_reopen(move |_cx| {
         // todo!("workspace")
         // if cx.has_global::<Weak<AppState>>() {
@@ -113,6 +113,8 @@ fn main() {
 
     app.run(move |cx| {
         cx.set_global(*RELEASE_CHANNEL);
+        cx.set_global(listener.clone());
+
         load_embedded_fonts(cx);
 
         let mut store = SettingsStore::default();
@@ -188,10 +190,10 @@ fn main() {
         // recent_projects::init(cx);
 
         go_to_line::init(cx);
-        // file_finder::init(cx);
+        file_finder::init(cx);
         // outline::init(cx);
         // project_symbols::init(cx);
-        // project_panel::init(Assets, cx);
+        project_panel::init(Assets, cx);
         // channel::init(&client, user_store.clone(), cx);
         // diagnostics::init(cx);
         search::init(cx);
@@ -211,12 +213,13 @@ fn main() {
         // zed::init(&app_state, cx);
 
         // cx.set_menus(menus::menus());
+        init_zed_actions(app_state.clone(), cx);
 
         if stdout_is_a_pty() {
             cx.activate(true);
             let urls = collect_url_args();
             if !urls.is_empty() {
-                listener.open_urls(urls)
+                listener.open_urls(&urls)
             }
         } else {
             upload_previous_panics(http.clone(), cx);
@@ -226,7 +229,7 @@ fn main() {
             if std::env::var(FORCE_CLI_MODE_ENV_VAR_NAME).ok().is_some()
                 && !listener.triggered.load(Ordering::Acquire)
             {
-                listener.open_urls(collect_url_args())
+                listener.open_urls(&collect_url_args())
             }
         }
 
@@ -357,8 +360,7 @@ async fn restore_or_create_workspace(app_state: &Arc<AppState>, mut cx: AsyncApp
         } else {
             cx.update(|cx| {
                 workspace::open_new(app_state, cx, |workspace, cx| {
-                    // todo!(editor)
-                    // Editor::new_file(workspace, &Default::default(), cx)
+                    Editor::new_file(workspace, &Default::default(), cx)
                 })
                 .detach();
             })?;

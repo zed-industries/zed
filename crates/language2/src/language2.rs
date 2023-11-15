@@ -1858,7 +1858,7 @@ mod tests {
     async fn test_first_line_pattern(cx: &mut TestAppContext) {
         let mut languages = LanguageRegistry::test();
 
-        languages.set_executor(cx.executor().clone());
+        languages.set_executor(cx.executor());
         let languages = Arc::new(languages);
         languages.register(
             "/javascript",
@@ -1895,7 +1895,7 @@ mod tests {
     #[gpui::test(iterations = 10)]
     async fn test_language_loading(cx: &mut TestAppContext) {
         let mut languages = LanguageRegistry::test();
-        languages.set_executor(cx.executor().clone());
+        languages.set_executor(cx.executor());
         let languages = Arc::new(languages);
         languages.register(
             "/JSON",

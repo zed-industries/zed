@@ -497,7 +497,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_prettier_lookup_finds_nothing(cx: &mut gpui::TestAppContext) {
-        let fs = FakeFs::new(cx.executor().clone());
+        let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
             "/root",
             json!({
@@ -573,7 +573,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_prettier_lookup_in_simple_npm_projects(cx: &mut gpui::TestAppContext) {
-        let fs = FakeFs::new(cx.executor().clone());
+        let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
             "/root",
             json!({
@@ -638,7 +638,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_prettier_lookup_for_not_installed(cx: &mut gpui::TestAppContext) {
-        let fs = FakeFs::new(cx.executor().clone());
+        let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
             "/root",
             json!({
@@ -731,7 +731,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_prettier_lookup_in_npm_workspaces(cx: &mut gpui::TestAppContext) {
-        let fs = FakeFs::new(cx.executor().clone());
+        let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
             "/root",
             json!({
@@ -812,7 +812,7 @@ mod tests {
     async fn test_prettier_lookup_in_npm_workspaces_for_not_installed(
         cx: &mut gpui::TestAppContext,
     ) {
-        let fs = FakeFs::new(cx.executor().clone());
+        let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
             "/root",
             json!({

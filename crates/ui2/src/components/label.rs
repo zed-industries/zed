@@ -1,35 +1,53 @@
-use gpui::{relative, Hsla, WindowContext};
-use smallvec::SmallVec;
+use gpui::{relative, Hsla, Text, TextRun, WindowContext};
 
 use crate::prelude::*;
 use crate::styled_ext::StyledExt;
 
-#[derive(Default, PartialEq, Copy, Clone)]
-pub enum LabelColor {
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Default)]
+pub enum LabelSize {
     #[default]
     Default,
-    Muted,
-    Created,
-    Modified,
-    Deleted,
-    Disabled,
-    Hidden,
-    Placeholder,
-    Accent,
+    Small,
 }
 
-impl LabelColor {
-    pub fn hsla(&self, cx: &WindowContext) -> Hsla {
+#[derive(Default, PartialEq, Copy, Clone)]
+pub enum TextColor {
+    #[default]
+    Default,
+    Accent,
+    Created,
+    Deleted,
+    Disabled,
+    Error,
+    Hidden,
+    Info,
+    Modified,
+    Muted,
+    Placeholder,
+    Player(u32),
+    Selected,
+    Success,
+    Warning,
+}
+
+impl TextColor {
+    pub fn color(&self, cx: &WindowContext) -> Hsla {
         match self {
-            Self::Default => cx.theme().colors().text,
-            Self::Muted => cx.theme().colors().text_muted,
-            Self::Created => cx.theme().status().created,
-            Self::Modified => cx.theme().status().modified,
-            Self::Deleted => cx.theme().status().deleted,
-            Self::Disabled => cx.theme().colors().text_disabled,
-            Self::Hidden => cx.theme().status().hidden,
-            Self::Placeholder => cx.theme().colors().text_placeholder,
-            Self::Accent => cx.theme().colors().text_accent,
+            TextColor::Default => cx.theme().colors().text,
+            TextColor::Muted => cx.theme().colors().text_muted,
+            TextColor::Created => cx.theme().status().created,
+            TextColor::Modified => cx.theme().status().modified,
+            TextColor::Deleted => cx.theme().status().deleted,
+            TextColor::Disabled => cx.theme().colors().text_disabled,
+            TextColor::Hidden => cx.theme().status().hidden,
+            TextColor::Info => cx.theme().status().info,
+            TextColor::Placeholder => cx.theme().colors().text_placeholder,
+            TextColor::Accent => cx.theme().colors().text_accent,
+            TextColor::Player(i) => cx.theme().styles.player.0[i.clone() as usize].cursor,
+            TextColor::Error => cx.theme().status().error,
+            TextColor::Selected => cx.theme().colors().text_accent,
+            TextColor::Success => cx.theme().status().success,
+            TextColor::Warning => cx.theme().status().warning,
         }
     }
 }
@@ -45,8 +63,9 @@ pub enum LineHeightStyle {
 #[derive(Component)]
 pub struct Label {
     label: SharedString,
+    size: LabelSize,
     line_height_style: LineHeightStyle,
-    color: LabelColor,
+    color: TextColor,
     strikethrough: bool,
 }
 
@@ -54,13 +73,19 @@ impl Label {
     pub fn new(label: impl Into<SharedString>) -> Self {
         Self {
             label: label.into(),
+            size: LabelSize::Default,
             line_height_style: LineHeightStyle::default(),
-            color: LabelColor::Default,
+            color: TextColor::Default,
             strikethrough: false,
         }
     }
 
-    pub fn color(mut self, color: LabelColor) -> Self {
+    pub fn size(mut self, size: LabelSize) -> Self {
+        self.size = size;
+        self
+    }
+
+    pub fn color(mut self, color: TextColor) -> Self {
         self.color = color;
         self
     }
@@ -84,14 +109,17 @@ impl Label {
                         .top_1_2()
                         .w_full()
                         .h_px()
-                        .bg(LabelColor::Hidden.hsla(cx)),
+                        .bg(TextColor::Hidden.color(cx)),
                 )
             })
-            .text_ui()
+            .map(|this| match self.size {
+                LabelSize::Default => this.text_ui(),
+                LabelSize::Small => this.text_ui_sm(),
+            })
             .when(self.line_height_style == LineHeightStyle::UILabel, |this| {
                 this.line_height(relative(1.))
             })
-            .text_color(self.color.hsla(cx))
+            .text_color(self.color.color(cx))
             .child(self.label.clone())
     }
 }
@@ -99,22 +127,31 @@ impl Label {
 #[derive(Component)]
 pub struct HighlightedLabel {
     label: SharedString,
-    color: LabelColor,
+    size: LabelSize,
+    color: TextColor,
     highlight_indices: Vec<usize>,
     strikethrough: bool,
 }
 
 impl HighlightedLabel {
+    /// shows a label with the given characters highlighted.
+    /// characters are identified by utf8 byte position.
     pub fn new(label: impl Into<SharedString>, highlight_indices: Vec<usize>) -> Self {
         Self {
             label: label.into(),
-            color: LabelColor::Default,
+            size: LabelSize::Default,
+            color: TextColor::Default,
             highlight_indices,
             strikethrough: false,
         }
     }
 
-    pub fn color(mut self, color: LabelColor) -> Self {
+    pub fn size(mut self, size: LabelSize) -> Self {
+        self.size = size;
+        self
+    }
+
+    pub fn color(mut self, color: TextColor) -> Self {
         self.color = color;
         self
     }
@@ -126,27 +163,26 @@ impl HighlightedLabel {
 
     fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         let highlight_color = cx.theme().colors().text_accent;
+        let mut text_style = cx.text_style().clone();
 
         let mut highlight_indices = self.highlight_indices.iter().copied().peekable();
 
-        let mut runs: SmallVec<[Run; 8]> = SmallVec::new();
+        let mut runs: Vec<TextRun> = Vec::new();
 
         for (char_ix, char) in self.label.char_indices() {
-            let mut color = self.color.hsla(cx);
+            let mut color = self.color.color(cx);
 
             if let Some(highlight_ix) = highlight_indices.peek() {
                 if char_ix == *highlight_ix {
                     color = highlight_color;
-
                     highlight_indices.next();
                 }
             }
 
             let last_run = runs.last_mut();
-
             let start_new_run = if let Some(last_run) = last_run {
                 if color == last_run.color {
-                    last_run.text.push(char);
+                    last_run.len += char.len_utf8();
                     false
                 } else {
                     true
@@ -156,10 +192,8 @@ impl HighlightedLabel {
             };
 
             if start_new_run {
-                runs.push(Run {
-                    text: char.to_string(),
-                    color,
-                });
+                text_style.color = color;
+                runs.push(text_style.to_run(char.len_utf8()))
             }
         }
 
@@ -173,13 +207,14 @@ impl HighlightedLabel {
                         .my_auto()
                         .w_full()
                         .h_px()
-                        .bg(LabelColor::Hidden.hsla(cx)),
+                        .bg(TextColor::Hidden.color(cx)),
                 )
             })
-            .children(
-                runs.into_iter()
-                    .map(|run| div().text_color(run.color).child(run.text)),
-            )
+            .map(|this| match self.size {
+                LabelSize::Default => this.text_ui(),
+                LabelSize::Small => this.text_ui_sm(),
+            })
+            .child(Text::styled(self.label, runs))
     }
 }
 
@@ -212,6 +247,10 @@ mod stories {
                 .child(HighlightedLabel::new(
                     "Hello, world!",
                     vec![0, 1, 2, 7, 8, 12],
+                ))
+                .child(HighlightedLabel::new(
+                    "Héllo, world!",
+                    vec![0, 1, 3, 8, 9, 13],
                 ))
         }
     }

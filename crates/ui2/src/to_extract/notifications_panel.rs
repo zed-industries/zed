@@ -1,10 +1,9 @@
-use crate::utils::naive_format_distance_from_now;
 use crate::{
-    h_stack, prelude::*, static_new_notification_items_2, v_stack, Avatar, ButtonOrIconButton,
-    Icon, IconElement, Label, LabelColor, LineHeightStyle, ListHeaderMeta, ListSeparator,
-    PublicPlayer, UnreadIndicator,
+    h_stack, prelude::*, static_new_notification_items_2, utils::naive_format_distance_from_now,
+    v_stack, Avatar, ButtonOrIconButton, ClickHandler, Icon, IconElement, Label, LineHeightStyle,
+    ListHeader, ListHeaderMeta, ListSeparator, PublicPlayer, TextColor, UnreadIndicator,
 };
-use crate::{ClickHandler, ListHeader};
+use gpui::prelude::*;
 
 #[derive(Component)]
 pub struct NotificationsPanel {
@@ -48,7 +47,7 @@ impl NotificationsPanel {
                             .border_color(cx.theme().colors().border_variant)
                             .child(
                                 Label::new("Search...")
-                                    .color(LabelColor::Placeholder)
+                                    .color(TextColor::Placeholder)
                                     .line_height_style(LineHeightStyle::UILabel),
                             ),
                     )
@@ -252,7 +251,7 @@ impl<V> Notification<V> {
                         if let Some(icon) = icon {
                             meta_el = meta_el.child(IconElement::new(icon.clone()));
                         }
-                        meta_el.child(Label::new(text.clone()).color(LabelColor::Muted))
+                        meta_el.child(Label::new(text.clone()).color(TextColor::Muted))
                     })
                     .collect::<Vec<_>>(),
             )
@@ -311,7 +310,7 @@ impl<V> Notification<V> {
                                             true,
                                             true,
                                         ))
-                                        .color(LabelColor::Muted),
+                                        .color(TextColor::Muted),
                                     )
                                     .child(self.render_meta_items(cx)),
                             )
@@ -321,11 +320,11 @@ impl<V> Notification<V> {
                                 // Show the taken_message
                                 (Some(_), Some(action_taken)) => h_stack()
                                     .children(action_taken.taken_message.0.map(|icon| {
-                                        IconElement::new(icon).color(crate::IconColor::Muted)
+                                        IconElement::new(icon).color(crate::TextColor::Muted)
                                     }))
                                     .child(
                                         Label::new(action_taken.taken_message.1.clone())
-                                            .color(LabelColor::Muted),
+                                            .color(TextColor::Muted),
                                     ),
                                 // Show the actions
                                 (Some(actions), None) => {

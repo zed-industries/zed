@@ -1,9 +1,32 @@
-// use editor::{
-//     test::editor_test_context::EditorTestContext, ConfirmCodeAction, ConfirmCompletion,
-//     ConfirmRename, Editor, Redo, Rename, ToggleCodeActions, Undo,
+//todo(partially ported)
+// use std::{
+//     path::Path,
+//     sync::{
+//         atomic::{self, AtomicBool, AtomicUsize},
+//         Arc,
+//     },
 // };
 
-//todo!(editor)
+// use call::ActiveCall;
+// use editor::{
+//     test::editor_test_context::{AssertionContextManager, EditorTestContext},
+//     Anchor, ConfirmCodeAction, ConfirmCompletion, ConfirmRename, Editor, Redo, Rename,
+//     ToggleCodeActions, Undo,
+// };
+// use gpui::{BackgroundExecutor, TestAppContext, VisualContext, VisualTestContext};
+// use indoc::indoc;
+// use language::{
+//     language_settings::{AllLanguageSettings, InlayHintSettings},
+//     tree_sitter_rust, FakeLspAdapter, Language, LanguageConfig,
+// };
+// use rpc::RECEIVE_TIMEOUT;
+// use serde_json::json;
+// use settings::SettingsStore;
+// use text::Point;
+// use workspace::Workspace;
+
+// use crate::{rpc::RECONNECT_TIMEOUT, tests::TestServer};
+
 // #[gpui::test(iterations = 10)]
 // async fn test_host_disconnect(
 //     executor: BackgroundExecutor,
@@ -11,7 +34,7 @@
 //     cx_b: &mut TestAppContext,
 //     cx_c: &mut TestAppContext,
 // ) {
-//     let mut server = TestServer::start(&executor).await;
+//     let mut server = TestServer::start(executor).await;
 //     let client_a = server.create_client(cx_a, "user_a").await;
 //     let client_b = server.create_client(cx_b, "user_b").await;
 //     let client_c = server.create_client(cx_c, "user_c").await;
@@ -25,7 +48,7 @@
 //         .fs()
 //         .insert_tree(
 //             "/a",
-//             json!({
+//             serde_json::json!({
 //                 "a.txt": "a-contents",
 //                 "b.txt": "b-contents",
 //             }),
@@ -35,7 +58,7 @@
 //     let active_call_a = cx_a.read(ActiveCall::global);
 //     let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
 
-//     let worktree_a = project_a.read_with(cx_a, |project, cx| project.worktrees(cx).next().unwrap());
+//     let worktree_a = project_a.read_with(cx_a, |project, cx| project.worktrees().next().unwrap());
 //     let project_id = active_call_a
 //         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
 //         .await
@@ -46,21 +69,25 @@
 
 //     assert!(worktree_a.read_with(cx_a, |tree, _| tree.as_local().unwrap().is_shared()));
 
-//     let window_b =
+//     let workspace_b =
 //         cx_b.add_window(|cx| Workspace::new(0, project_b.clone(), client_b.app_state.clone(), cx));
-//     let workspace_b = window_b.root(cx_b);
+//     let cx_b = &mut VisualTestContext::from_window(*workspace_b, cx_b);
+
 //     let editor_b = workspace_b
 //         .update(cx_b, |workspace, cx| {
 //             workspace.open_path((worktree_id, "b.txt"), None, true, cx)
 //         })
+//         .unwrap()
 //         .await
 //         .unwrap()
 //         .downcast::<Editor>()
 //         .unwrap();
 
-//     assert!(window_b.read_with(cx_b, |cx| editor_b.is_focused(cx)));
+//     //TODO: focus
+//     assert!(cx_b.update_view(&editor_b, |editor, cx| editor.is_focused(cx)));
 //     editor_b.update(cx_b, |editor, cx| editor.insert("X", cx));
-//     assert!(window_b.is_edited(cx_b));
+//     //todo(is_edited)
+//     // assert!(workspace_b.is_edited(cx_b));
 
 //     // Drop client A's connection. Collaborators should disappear and the project should not be shown as shared.
 //     server.forbid_connections();
@@ -77,10 +104,10 @@
 
 //     // Ensure client B's edited state is reset and that the whole window is blurred.
 
-//     window_b.read_with(cx_b, |cx| {
+//     workspace_b.update(cx_b, |_, cx| {
 //         assert_eq!(cx.focused_view_id(), None);
 //     });
-//     assert!(!window_b.is_edited(cx_b));
+//     // assert!(!workspace_b.is_edited(cx_b));
 
 //     // Ensure client B is not prompted to save edits when closing window after disconnecting.
 //     let can_close = workspace_b
@@ -120,7 +147,6 @@
 //     project_a.read_with(cx_a, |project, _| assert!(!project.is_shared()));
 // }
 
-//todo!(editor)
 // #[gpui::test]
 // async fn test_newline_above_or_below_does_not_move_guest_cursor(
 //     executor: BackgroundExecutor,
@@ -152,12 +178,14 @@
 //         .update(cx_a, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
 //         .await
 //         .unwrap();
-//     let window_a = cx_a.add_window(|_| EmptyView);
-//     let editor_a = window_a.add_view(cx_a, |cx| Editor::for_buffer(buffer_a, Some(project_a), cx));
+//     let window_a = cx_a.add_empty_window();
+//     let editor_a =
+//         window_a.build_view(cx_a, |cx| Editor::for_buffer(buffer_a, Some(project_a), cx));
 //     let mut editor_cx_a = EditorTestContext {
 //         cx: cx_a,
 //         window: window_a.into(),
 //         editor: editor_a,
+//         assertion_cx: AssertionContextManager::new(),
 //     };
 
 //     // Open a buffer as client B
@@ -165,12 +193,14 @@
 //         .update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
 //         .await
 //         .unwrap();
-//     let window_b = cx_b.add_window(|_| EmptyView);
-//     let editor_b = window_b.add_view(cx_b, |cx| Editor::for_buffer(buffer_b, Some(project_b), cx));
+//     let window_b = cx_b.add_empty_window();
+//     let editor_b =
+//         window_b.build_view(cx_b, |cx| Editor::for_buffer(buffer_b, Some(project_b), cx));
 //     let mut editor_cx_b = EditorTestContext {
 //         cx: cx_b,
 //         window: window_b.into(),
 //         editor: editor_b,
+//         assertion_cx: AssertionContextManager::new(),
 //     };
 
 //     // Test newline above
@@ -214,7 +244,6 @@
 //     "});
 // }
 
-//todo!(editor)
 // #[gpui::test(iterations = 10)]
 // async fn test_collaborating_with_completion(
 //     executor: BackgroundExecutor,
@@ -275,8 +304,8 @@
 //         .update(cx_b, |p, cx| p.open_buffer((worktree_id, "main.rs"), cx))
 //         .await
 //         .unwrap();
-//     let window_b = cx_b.add_window(|_| EmptyView);
-//     let editor_b = window_b.add_view(cx_b, |cx| {
+//     let window_b = cx_b.add_empty_window();
+//     let editor_b = window_b.build_view(cx_b, |cx| {
 //         Editor::for_buffer(buffer_b.clone(), Some(project_b.clone()), cx)
 //     });
 
@@ -384,7 +413,7 @@
 //     );
 
 //     // The additional edit is applied.
-//     cx_a.foreground().run_until_parked();
+//     cx_a.executor().run_until_parked();
 
 //     buffer_a.read_with(cx_a, |buffer, _| {
 //         assert_eq!(
@@ -400,7 +429,7 @@
 //         );
 //     });
 // }
-//todo!(editor)
+
 // #[gpui::test(iterations = 10)]
 // async fn test_collaborating_with_code_actions(
 //     executor: BackgroundExecutor,
@@ -619,7 +648,6 @@
 //     });
 // }
 
-//todo!(editor)
 // #[gpui::test(iterations = 10)]
 // async fn test_collaborating_with_renames(
 //     executor: BackgroundExecutor,
@@ -813,7 +841,6 @@
 //     })
 // }
 
-//todo!(editor)
 // #[gpui::test(iterations = 10)]
 // async fn test_language_server_statuses(
 //     executor: BackgroundExecutor,
@@ -937,8 +964,8 @@
 //     cx_b: &mut TestAppContext,
 //     cx_c: &mut TestAppContext,
 // ) {
-//     let window_b = cx_b.add_window(|_| EmptyView);
-//     let mut server = TestServer::start(&executor).await;
+//     let window_b = cx_b.add_empty_window();
+//     let mut server = TestServer::start(executor).await;
 //     let client_a = server.create_client(cx_a, "user_a").await;
 //     let client_b = server.create_client(cx_b, "user_b").await;
 //     let client_c = server.create_client(cx_c, "user_c").await;
@@ -1052,7 +1079,7 @@
 //         .await
 //         .unwrap();
 
-//     let editor_b = window_b.add_view(cx_b, |cx| Editor::for_buffer(buffer_b, None, cx));
+//     let editor_b = window_b.build_view(cx_b, |cx| Editor::for_buffer(buffer_b, None, cx));
 
 //     // Client A sees client B's selection
 //     executor.run_until_parked();
@@ -1105,4 +1132,758 @@
 //             .count()
 //             == 0
 //     });
+// }
+
+// #[gpui::test(iterations = 10)]
+// async fn test_on_input_format_from_host_to_guest(
+//     executor: BackgroundExecutor,
+//     cx_a: &mut TestAppContext,
+//     cx_b: &mut TestAppContext,
+// ) {
+//     let mut server = TestServer::start(&executor).await;
+//     let client_a = server.create_client(cx_a, "user_a").await;
+//     let client_b = server.create_client(cx_b, "user_b").await;
+//     server
+//         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+//         .await;
+//     let active_call_a = cx_a.read(ActiveCall::global);
+
+//     // Set up a fake language server.
+//     let mut language = Language::new(
+//         LanguageConfig {
+//             name: "Rust".into(),
+//             path_suffixes: vec!["rs".to_string()],
+//             ..Default::default()
+//         },
+//         Some(tree_sitter_rust::language()),
+//     );
+//     let mut fake_language_servers = language
+//         .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+//             capabilities: lsp::ServerCapabilities {
+//                 document_on_type_formatting_provider: Some(lsp::DocumentOnTypeFormattingOptions {
+//                     first_trigger_character: ":".to_string(),
+//                     more_trigger_character: Some(vec![">".to_string()]),
+//                 }),
+//                 ..Default::default()
+//             },
+//             ..Default::default()
+//         }))
+//         .await;
+//     client_a.language_registry().add(Arc::new(language));
+
+//     client_a
+//         .fs()
+//         .insert_tree(
+//             "/a",
+//             json!({
+//                 "main.rs": "fn main() { a }",
+//                 "other.rs": "// Test file",
+//             }),
+//         )
+//         .await;
+//     let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
+//     let project_id = active_call_a
+//         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+//         .await
+//         .unwrap();
+//     let project_b = client_b.build_remote_project(project_id, cx_b).await;
+
+//     // Open a file in an editor as the host.
+//     let buffer_a = project_a
+//         .update(cx_a, |p, cx| p.open_buffer((worktree_id, "main.rs"), cx))
+//         .await
+//         .unwrap();
+//     let window_a = cx_a.add_empty_window();
+//     let editor_a = window_a
+//         .update(cx_a, |_, cx| {
+//             cx.build_view(|cx| Editor::for_buffer(buffer_a, Some(project_a.clone()), cx))
+//         })
+//         .unwrap();
+
+//     let fake_language_server = fake_language_servers.next().await.unwrap();
+//     executor.run_until_parked();
+
+//     // Receive an OnTypeFormatting request as the host's language server.
+//     // Return some formattings from the host's language server.
+//     fake_language_server.handle_request::<lsp::request::OnTypeFormatting, _, _>(
+//         |params, _| async move {
+//             assert_eq!(
+//                 params.text_document_position.text_document.uri,
+//                 lsp::Url::from_file_path("/a/main.rs").unwrap(),
+//             );
+//             assert_eq!(
+//                 params.text_document_position.position,
+//                 lsp::Position::new(0, 14),
+//             );
+
+//             Ok(Some(vec![lsp::TextEdit {
+//                 new_text: "~<".to_string(),
+//                 range: lsp::Range::new(lsp::Position::new(0, 14), lsp::Position::new(0, 14)),
+//             }]))
+//         },
+//     );
+
+//     // Open the buffer on the guest and see that the formattings worked
+//     let buffer_b = project_b
+//         .update(cx_b, |p, cx| p.open_buffer((worktree_id, "main.rs"), cx))
+//         .await
+//         .unwrap();
+
+//     // Type a on type formatting trigger character as the guest.
+//     editor_a.update(cx_a, |editor, cx| {
+//         cx.focus(&editor_a);
+//         editor.change_selections(None, cx, |s| s.select_ranges([13..13]));
+//         editor.handle_input(">", cx);
+//     });
+
+//     executor.run_until_parked();
+
+//     buffer_b.read_with(cx_b, |buffer, _| {
+//         assert_eq!(buffer.text(), "fn main() { a>~< }")
+//     });
+
+//     // Undo should remove LSP edits first
+//     editor_a.update(cx_a, |editor, cx| {
+//         assert_eq!(editor.text(cx), "fn main() { a>~< }");
+//         editor.undo(&Undo, cx);
+//         assert_eq!(editor.text(cx), "fn main() { a> }");
+//     });
+//     executor.run_until_parked();
+
+//     buffer_b.read_with(cx_b, |buffer, _| {
+//         assert_eq!(buffer.text(), "fn main() { a> }")
+//     });
+
+//     editor_a.update(cx_a, |editor, cx| {
+//         assert_eq!(editor.text(cx), "fn main() { a> }");
+//         editor.undo(&Undo, cx);
+//         assert_eq!(editor.text(cx), "fn main() { a }");
+//     });
+//     executor.run_until_parked();
+
+//     buffer_b.read_with(cx_b, |buffer, _| {
+//         assert_eq!(buffer.text(), "fn main() { a }")
+//     });
+// }
+
+// #[gpui::test(iterations = 10)]
+// async fn test_on_input_format_from_guest_to_host(
+//     executor: BackgroundExecutor,
+//     cx_a: &mut TestAppContext,
+//     cx_b: &mut TestAppContext,
+// ) {
+//     let mut server = TestServer::start(&executor).await;
+//     let client_a = server.create_client(cx_a, "user_a").await;
+//     let client_b = server.create_client(cx_b, "user_b").await;
+//     server
+//         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+//         .await;
+//     let active_call_a = cx_a.read(ActiveCall::global);
+
+//     // Set up a fake language server.
+//     let mut language = Language::new(
+//         LanguageConfig {
+//             name: "Rust".into(),
+//             path_suffixes: vec!["rs".to_string()],
+//             ..Default::default()
+//         },
+//         Some(tree_sitter_rust::language()),
+//     );
+//     let mut fake_language_servers = language
+//         .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+//             capabilities: lsp::ServerCapabilities {
+//                 document_on_type_formatting_provider: Some(lsp::DocumentOnTypeFormattingOptions {
+//                     first_trigger_character: ":".to_string(),
+//                     more_trigger_character: Some(vec![">".to_string()]),
+//                 }),
+//                 ..Default::default()
+//             },
+//             ..Default::default()
+//         }))
+//         .await;
+//     client_a.language_registry().add(Arc::new(language));
+
+//     client_a
+//         .fs()
+//         .insert_tree(
+//             "/a",
+//             json!({
+//                 "main.rs": "fn main() { a }",
+//                 "other.rs": "// Test file",
+//             }),
+//         )
+//         .await;
+//     let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
+//     let project_id = active_call_a
+//         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+//         .await
+//         .unwrap();
+//     let project_b = client_b.build_remote_project(project_id, cx_b).await;
+
+//     // Open a file in an editor as the guest.
+//     let buffer_b = project_b
+//         .update(cx_b, |p, cx| p.open_buffer((worktree_id, "main.rs"), cx))
+//         .await
+//         .unwrap();
+//     let window_b = cx_b.add_empty_window();
+//     let editor_b = window_b.build_view(cx_b, |cx| {
+//         Editor::for_buffer(buffer_b, Some(project_b.clone()), cx)
+//     });
+
+//     let fake_language_server = fake_language_servers.next().await.unwrap();
+//     executor.run_until_parked();
+//     // Type a on type formatting trigger character as the guest.
+//     editor_b.update(cx_b, |editor, cx| {
+//         editor.change_selections(None, cx, |s| s.select_ranges([13..13]));
+//         editor.handle_input(":", cx);
+//         cx.focus(&editor_b);
+//     });
+
+//     // Receive an OnTypeFormatting request as the host's language server.
+//     // Return some formattings from the host's language server.
+//     cx_a.foreground().start_waiting();
+//     fake_language_server
+//         .handle_request::<lsp::request::OnTypeFormatting, _, _>(|params, _| async move {
+//             assert_eq!(
+//                 params.text_document_position.text_document.uri,
+//                 lsp::Url::from_file_path("/a/main.rs").unwrap(),
+//             );
+//             assert_eq!(
+//                 params.text_document_position.position,
+//                 lsp::Position::new(0, 14),
+//             );
+
+//             Ok(Some(vec![lsp::TextEdit {
+//                 new_text: "~:".to_string(),
+//                 range: lsp::Range::new(lsp::Position::new(0, 14), lsp::Position::new(0, 14)),
+//             }]))
+//         })
+//         .next()
+//         .await
+//         .unwrap();
+//     cx_a.foreground().finish_waiting();
+
+//     // Open the buffer on the host and see that the formattings worked
+//     let buffer_a = project_a
+//         .update(cx_a, |p, cx| p.open_buffer((worktree_id, "main.rs"), cx))
+//         .await
+//         .unwrap();
+//     executor.run_until_parked();
+
+//     buffer_a.read_with(cx_a, |buffer, _| {
+//         assert_eq!(buffer.text(), "fn main() { a:~: }")
+//     });
+
+//     // Undo should remove LSP edits first
+//     editor_b.update(cx_b, |editor, cx| {
+//         assert_eq!(editor.text(cx), "fn main() { a:~: }");
+//         editor.undo(&Undo, cx);
+//         assert_eq!(editor.text(cx), "fn main() { a: }");
+//     });
+//     executor.run_until_parked();
+
+//     buffer_a.read_with(cx_a, |buffer, _| {
+//         assert_eq!(buffer.text(), "fn main() { a: }")
+//     });
+
+//     editor_b.update(cx_b, |editor, cx| {
+//         assert_eq!(editor.text(cx), "fn main() { a: }");
+//         editor.undo(&Undo, cx);
+//         assert_eq!(editor.text(cx), "fn main() { a }");
+//     });
+//     executor.run_until_parked();
+
+//     buffer_a.read_with(cx_a, |buffer, _| {
+//         assert_eq!(buffer.text(), "fn main() { a }")
+//     });
+// }
+
+// #[gpui::test(iterations = 10)]
+// async fn test_mutual_editor_inlay_hint_cache_update(
+//     executor: BackgroundExecutor,
+//     cx_a: &mut TestAppContext,
+//     cx_b: &mut TestAppContext,
+// ) {
+//     let mut server = TestServer::start(&executor).await;
+//     let client_a = server.create_client(cx_a, "user_a").await;
+//     let client_b = server.create_client(cx_b, "user_b").await;
+//     server
+//         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+//         .await;
+//     let active_call_a = cx_a.read(ActiveCall::global);
+//     let active_call_b = cx_b.read(ActiveCall::global);
+
+//     cx_a.update(editor::init);
+//     cx_b.update(editor::init);
+
+//     cx_a.update(|cx| {
+//         cx.update_global(|store: &mut SettingsStore, cx| {
+//             store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
+//                 settings.defaults.inlay_hints = Some(InlayHintSettings {
+//                     enabled: true,
+//                     show_type_hints: true,
+//                     show_parameter_hints: false,
+//                     show_other_hints: true,
+//                 })
+//             });
+//         });
+//     });
+//     cx_b.update(|cx| {
+//         cx.update_global(|store: &mut SettingsStore, cx| {
+//             store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
+//                 settings.defaults.inlay_hints = Some(InlayHintSettings {
+//                     enabled: true,
+//                     show_type_hints: true,
+//                     show_parameter_hints: false,
+//                     show_other_hints: true,
+//                 })
+//             });
+//         });
+//     });
+
+//     let mut language = Language::new(
+//         LanguageConfig {
+//             name: "Rust".into(),
+//             path_suffixes: vec!["rs".to_string()],
+//             ..Default::default()
+//         },
+//         Some(tree_sitter_rust::language()),
+//     );
+//     let mut fake_language_servers = language
+//         .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+//             capabilities: lsp::ServerCapabilities {
+//                 inlay_hint_provider: Some(lsp::OneOf::Left(true)),
+//                 ..Default::default()
+//             },
+//             ..Default::default()
+//         }))
+//         .await;
+//     let language = Arc::new(language);
+//     client_a.language_registry().add(Arc::clone(&language));
+//     client_b.language_registry().add(language);
+
+//     // Client A opens a project.
+//     client_a
+//         .fs()
+//         .insert_tree(
+//             "/a",
+//             json!({
+//                 "main.rs": "fn main() { a } // and some long comment to ensure inlay hints are not trimmed out",
+//                 "other.rs": "// Test file",
+//             }),
+//         )
+//         .await;
+//     let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
+//     active_call_a
+//         .update(cx_a, |call, cx| call.set_location(Some(&project_a), cx))
+//         .await
+//         .unwrap();
+//     let project_id = active_call_a
+//         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+//         .await
+//         .unwrap();
+
+//     // Client B joins the project
+//     let project_b = client_b.build_remote_project(project_id, cx_b).await;
+//     active_call_b
+//         .update(cx_b, |call, cx| call.set_location(Some(&project_b), cx))
+//         .await
+//         .unwrap();
+
+//     let workspace_a = client_a.build_workspace(&project_a, cx_a).root_view(cx_a);
+//     cx_a.foreground().start_waiting();
+
+//     // The host opens a rust file.
+//     let _buffer_a = project_a
+//         .update(cx_a, |project, cx| {
+//             project.open_local_buffer("/a/main.rs", cx)
+//         })
+//         .await
+//         .unwrap();
+//     let fake_language_server = fake_language_servers.next().await.unwrap();
+//     let editor_a = workspace_a
+//         .update(cx_a, |workspace, cx| {
+//             workspace.open_path((worktree_id, "main.rs"), None, true, cx)
+//         })
+//         .await
+//         .unwrap()
+//         .downcast::<Editor>()
+//         .unwrap();
+
+//     // Set up the language server to return an additional inlay hint on each request.
+//     let edits_made = Arc::new(AtomicUsize::new(0));
+//     let closure_edits_made = Arc::clone(&edits_made);
+//     fake_language_server
+//         .handle_request::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
+//             let task_edits_made = Arc::clone(&closure_edits_made);
+//             async move {
+//                 assert_eq!(
+//                     params.text_document.uri,
+//                     lsp::Url::from_file_path("/a/main.rs").unwrap(),
+//                 );
+//                 let edits_made = task_edits_made.load(atomic::Ordering::Acquire);
+//                 Ok(Some(vec![lsp::InlayHint {
+//                     position: lsp::Position::new(0, edits_made as u32),
+//                     label: lsp::InlayHintLabel::String(edits_made.to_string()),
+//                     kind: None,
+//                     text_edits: None,
+//                     tooltip: None,
+//                     padding_left: None,
+//                     padding_right: None,
+//                     data: None,
+//                 }]))
+//             }
+//         })
+//         .next()
+//         .await
+//         .unwrap();
+
+//     executor.run_until_parked();
+
+//     let initial_edit = edits_made.load(atomic::Ordering::Acquire);
+//     editor_a.update(cx_a, |editor, _| {
+//         assert_eq!(
+//             vec![initial_edit.to_string()],
+//             extract_hint_labels(editor),
+//             "Host should get its first hints when opens an editor"
+//         );
+//         let inlay_cache = editor.inlay_hint_cache();
+//         assert_eq!(
+//             inlay_cache.version(),
+//             1,
+//             "Host editor update the cache version after every cache/view change",
+//         );
+//     });
+//     let workspace_b = client_b.build_workspace(&project_b, cx_b).root(cx_b);
+//     let editor_b = workspace_b
+//         .update(cx_b, |workspace, cx| {
+//             workspace.open_path((worktree_id, "main.rs"), None, true, cx)
+//         })
+//         .await
+//         .unwrap()
+//         .downcast::<Editor>()
+//         .unwrap();
+
+//     executor.run_until_parked();
+//     editor_b.update(cx_b, |editor, _| {
+//         assert_eq!(
+//             vec![initial_edit.to_string()],
+//             extract_hint_labels(editor),
+//             "Client should get its first hints when opens an editor"
+//         );
+//         let inlay_cache = editor.inlay_hint_cache();
+//         assert_eq!(
+//             inlay_cache.version(),
+//             1,
+//             "Guest editor update the cache version after every cache/view change"
+//         );
+//     });
+
+//     let after_client_edit = edits_made.fetch_add(1, atomic::Ordering::Release) + 1;
+//     editor_b.update(cx_b, |editor, cx| {
+//         editor.change_selections(None, cx, |s| s.select_ranges([13..13].clone()));
+//         editor.handle_input(":", cx);
+//         cx.focus(&editor_b);
+//     });
+
+//     executor.run_until_parked();
+//     editor_a.update(cx_a, |editor, _| {
+//         assert_eq!(
+//             vec![after_client_edit.to_string()],
+//             extract_hint_labels(editor),
+//         );
+//         let inlay_cache = editor.inlay_hint_cache();
+//         assert_eq!(inlay_cache.version(), 2);
+//     });
+//     editor_b.update(cx_b, |editor, _| {
+//         assert_eq!(
+//             vec![after_client_edit.to_string()],
+//             extract_hint_labels(editor),
+//         );
+//         let inlay_cache = editor.inlay_hint_cache();
+//         assert_eq!(inlay_cache.version(), 2);
+//     });
+
+//     let after_host_edit = edits_made.fetch_add(1, atomic::Ordering::Release) + 1;
+//     editor_a.update(cx_a, |editor, cx| {
+//         editor.change_selections(None, cx, |s| s.select_ranges([13..13]));
+//         editor.handle_input("a change to increment both buffers' versions", cx);
+//         cx.focus(&editor_a);
+//     });
+
+//     executor.run_until_parked();
+//     editor_a.update(cx_a, |editor, _| {
+//         assert_eq!(
+//             vec![after_host_edit.to_string()],
+//             extract_hint_labels(editor),
+//         );
+//         let inlay_cache = editor.inlay_hint_cache();
+//         assert_eq!(inlay_cache.version(), 3);
+//     });
+//     editor_b.update(cx_b, |editor, _| {
+//         assert_eq!(
+//             vec![after_host_edit.to_string()],
+//             extract_hint_labels(editor),
+//         );
+//         let inlay_cache = editor.inlay_hint_cache();
+//         assert_eq!(inlay_cache.version(), 3);
+//     });
+
+//     let after_special_edit_for_refresh = edits_made.fetch_add(1, atomic::Ordering::Release) + 1;
+//     fake_language_server
+//         .request::<lsp::request::InlayHintRefreshRequest>(())
+//         .await
+//         .expect("inlay refresh request failed");
+
+//     executor.run_until_parked();
+//     editor_a.update(cx_a, |editor, _| {
+//         assert_eq!(
+//             vec![after_special_edit_for_refresh.to_string()],
+//             extract_hint_labels(editor),
+//             "Host should react to /refresh LSP request"
+//         );
+//         let inlay_cache = editor.inlay_hint_cache();
+//         assert_eq!(
+//             inlay_cache.version(),
+//             4,
+//             "Host should accepted all edits and bump its cache version every time"
+//         );
+//     });
+//     editor_b.update(cx_b, |editor, _| {
+//         assert_eq!(
+//             vec![after_special_edit_for_refresh.to_string()],
+//             extract_hint_labels(editor),
+//             "Guest should get a /refresh LSP request propagated by host"
+//         );
+//         let inlay_cache = editor.inlay_hint_cache();
+//         assert_eq!(
+//             inlay_cache.version(),
+//             4,
+//             "Guest should accepted all edits and bump its cache version every time"
+//         );
+//     });
+// }
+
+// #[gpui::test(iterations = 10)]
+// async fn test_inlay_hint_refresh_is_forwarded(
+//     executor: BackgroundExecutor,
+//     cx_a: &mut TestAppContext,
+//     cx_b: &mut TestAppContext,
+// ) {
+//     let mut server = TestServer::start(&executor).await;
+//     let client_a = server.create_client(cx_a, "user_a").await;
+//     let client_b = server.create_client(cx_b, "user_b").await;
+//     server
+//         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+//         .await;
+//     let active_call_a = cx_a.read(ActiveCall::global);
+//     let active_call_b = cx_b.read(ActiveCall::global);
+
+//     cx_a.update(editor::init);
+//     cx_b.update(editor::init);
+
+//     cx_a.update(|cx| {
+//         cx.update_global(|store: &mut SettingsStore, cx| {
+//             store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
+//                 settings.defaults.inlay_hints = Some(InlayHintSettings {
+//                     enabled: false,
+//                     show_type_hints: false,
+//                     show_parameter_hints: false,
+//                     show_other_hints: false,
+//                 })
+//             });
+//         });
+//     });
+//     cx_b.update(|cx| {
+//         cx.update_global(|store: &mut SettingsStore, cx| {
+//             store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
+//                 settings.defaults.inlay_hints = Some(InlayHintSettings {
+//                     enabled: true,
+//                     show_type_hints: true,
+//                     show_parameter_hints: true,
+//                     show_other_hints: true,
+//                 })
+//             });
+//         });
+//     });
+
+//     let mut language = Language::new(
+//         LanguageConfig {
+//             name: "Rust".into(),
+//             path_suffixes: vec!["rs".to_string()],
+//             ..Default::default()
+//         },
+//         Some(tree_sitter_rust::language()),
+//     );
+//     let mut fake_language_servers = language
+//         .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+//             capabilities: lsp::ServerCapabilities {
+//                 inlay_hint_provider: Some(lsp::OneOf::Left(true)),
+//                 ..Default::default()
+//             },
+//             ..Default::default()
+//         }))
+//         .await;
+//     let language = Arc::new(language);
+//     client_a.language_registry().add(Arc::clone(&language));
+//     client_b.language_registry().add(language);
+
+//     client_a
+//         .fs()
+//         .insert_tree(
+//             "/a",
+//             json!({
+//                 "main.rs": "fn main() { a } // and some long comment to ensure inlay hints are not trimmed out",
+//                 "other.rs": "// Test file",
+//             }),
+//         )
+//         .await;
+//     let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
+//     active_call_a
+//         .update(cx_a, |call, cx| call.set_location(Some(&project_a), cx))
+//         .await
+//         .unwrap();
+//     let project_id = active_call_a
+//         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+//         .await
+//         .unwrap();
+
+//     let project_b = client_b.build_remote_project(project_id, cx_b).await;
+//     active_call_b
+//         .update(cx_b, |call, cx| call.set_location(Some(&project_b), cx))
+//         .await
+//         .unwrap();
+
+//     let workspace_a = client_a.build_workspace(&project_a, cx_a).root(cx_a);
+//     let workspace_b = client_b.build_workspace(&project_b, cx_b).root(cx_b);
+//     cx_a.foreground().start_waiting();
+//     cx_b.foreground().start_waiting();
+
+//     let editor_a = workspace_a
+//         .update(cx_a, |workspace, cx| {
+//             workspace.open_path((worktree_id, "main.rs"), None, true, cx)
+//         })
+//         .await
+//         .unwrap()
+//         .downcast::<Editor>()
+//         .unwrap();
+
+//     let editor_b = workspace_b
+//         .update(cx_b, |workspace, cx| {
+//             workspace.open_path((worktree_id, "main.rs"), None, true, cx)
+//         })
+//         .await
+//         .unwrap()
+//         .downcast::<Editor>()
+//         .unwrap();
+
+//     let other_hints = Arc::new(AtomicBool::new(false));
+//     let fake_language_server = fake_language_servers.next().await.unwrap();
+//     let closure_other_hints = Arc::clone(&other_hints);
+//     fake_language_server
+//         .handle_request::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
+//             let task_other_hints = Arc::clone(&closure_other_hints);
+//             async move {
+//                 assert_eq!(
+//                     params.text_document.uri,
+//                     lsp::Url::from_file_path("/a/main.rs").unwrap(),
+//                 );
+//                 let other_hints = task_other_hints.load(atomic::Ordering::Acquire);
+//                 let character = if other_hints { 0 } else { 2 };
+//                 let label = if other_hints {
+//                     "other hint"
+//                 } else {
+//                     "initial hint"
+//                 };
+//                 Ok(Some(vec![lsp::InlayHint {
+//                     position: lsp::Position::new(0, character),
+//                     label: lsp::InlayHintLabel::String(label.to_string()),
+//                     kind: None,
+//                     text_edits: None,
+//                     tooltip: None,
+//                     padding_left: None,
+//                     padding_right: None,
+//                     data: None,
+//                 }]))
+//             }
+//         })
+//         .next()
+//         .await
+//         .unwrap();
+//     cx_a.foreground().finish_waiting();
+//     cx_b.foreground().finish_waiting();
+
+//     executor.run_until_parked();
+//     editor_a.update(cx_a, |editor, _| {
+//         assert!(
+//             extract_hint_labels(editor).is_empty(),
+//             "Host should get no hints due to them turned off"
+//         );
+//         let inlay_cache = editor.inlay_hint_cache();
+//         assert_eq!(
+//             inlay_cache.version(),
+//             0,
+//             "Turned off hints should not generate version updates"
+//         );
+//     });
+
+//     executor.run_until_parked();
+//     editor_b.update(cx_b, |editor, _| {
+//         assert_eq!(
+//             vec!["initial hint".to_string()],
+//             extract_hint_labels(editor),
+//             "Client should get its first hints when opens an editor"
+//         );
+//         let inlay_cache = editor.inlay_hint_cache();
+//         assert_eq!(
+//             inlay_cache.version(),
+//             1,
+//             "Should update cache verison after first hints"
+//         );
+//     });
+
+//     other_hints.fetch_or(true, atomic::Ordering::Release);
+//     fake_language_server
+//         .request::<lsp::request::InlayHintRefreshRequest>(())
+//         .await
+//         .expect("inlay refresh request failed");
+//     executor.run_until_parked();
+//     editor_a.update(cx_a, |editor, _| {
+//         assert!(
+//             extract_hint_labels(editor).is_empty(),
+//             "Host should get nop hints due to them turned off, even after the /refresh"
+//         );
+//         let inlay_cache = editor.inlay_hint_cache();
+//         assert_eq!(
+//             inlay_cache.version(),
+//             0,
+//             "Turned off hints should not generate version updates, again"
+//         );
+//     });
+
+//     executor.run_until_parked();
+//     editor_b.update(cx_b, |editor, _| {
+//         assert_eq!(
+//             vec!["other hint".to_string()],
+//             extract_hint_labels(editor),
+//             "Guest should get a /refresh LSP request propagated by host despite host hints are off"
+//         );
+//         let inlay_cache = editor.inlay_hint_cache();
+//         assert_eq!(
+//             inlay_cache.version(),
+//             2,
+//             "Guest should accepted all edits and bump its cache version every time"
+//         );
+//     });
+// }
+
+// fn extract_hint_labels(editor: &Editor) -> Vec<String> {
+//     let mut labels = Vec::new();
+//     for hint in editor.inlay_hint_cache().hints() {
+//         match hint.label {
+//             project::InlayHintLabel::String(s) => labels.push(s),
+//             _ => unreachable!(),
+//         }
+//     }
+//     labels
 // }

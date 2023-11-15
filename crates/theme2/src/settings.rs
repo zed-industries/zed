@@ -1,3 +1,4 @@
+use crate::one_themes::one_dark;
 use crate::{Theme, ThemeRegistry};
 use anyhow::Result;
 use gpui::{px, AppContext, Font, FontFeatures, FontStyle, FontWeight, Pixels};
@@ -18,6 +19,7 @@ const MIN_LINE_HEIGHT: f32 = 1.0;
 #[derive(Clone)]
 pub struct ThemeSettings {
     pub ui_font_size: Pixels,
+    pub ui_font: Font,
     pub buffer_font: Font,
     pub buffer_font_size: Pixels,
     pub buffer_line_height: BufferLineHeight,
@@ -119,6 +121,12 @@ impl settings::Settings for ThemeSettings {
 
         let mut this = Self {
             ui_font_size: defaults.ui_font_size.unwrap_or(16.).into(),
+            ui_font: Font {
+                family: "Helvetica".into(),
+                features: Default::default(),
+                weight: Default::default(),
+                style: Default::default(),
+            },
             buffer_font: Font {
                 family: defaults.buffer_font_family.clone().unwrap().into(),
                 features: defaults.buffer_font_features.clone().unwrap(),
@@ -129,7 +137,7 @@ impl settings::Settings for ThemeSettings {
             buffer_line_height: defaults.buffer_line_height.unwrap(),
             active_theme: themes
                 .get(defaults.theme.as_ref().unwrap())
-                .or(themes.get("Zed Pro Moonlight"))
+                .or(themes.get(&one_dark().name))
                 .unwrap(),
         };
 

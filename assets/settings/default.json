@@ -174,7 +174,8 @@
     //
     // 1. "gpt-3.5-turbo-0613""
     // 2. "gpt-4-0613""
-    "default_open_ai_model": "gpt-4-0613"
+    // 3. "gpt-4-1106-preview"
+    "default_open_ai_model": "gpt-4-1106-preview"
   },
   // Whether the screen sharing icon is shown in the os status bar.
   "show_call_status_icon": true,
@@ -270,9 +271,7 @@
   "copilot": {
     // The set of glob patterns for which copilot should be disabled
     // in any matching file.
-    "disabled_globs": [
-      ".env"
-    ]
+    "disabled_globs": [".env"]
   },
   // Settings specific to journaling
   "journal": {
@@ -381,12 +380,7 @@
         // Default directories to search for virtual environments, relative
         // to the current working directory. We recommend overriding this
         // in your project's settings, rather than globally.
-        "directories": [
-          ".env",
-          "env",
-          ".venv",
-          "venv"
-        ],
+        "directories": [".env", "env", ".venv", "venv"],
         // Can also be 'csh', 'fish', and `nushell`
         "activate_script": "default"
       }

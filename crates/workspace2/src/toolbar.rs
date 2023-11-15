@@ -1,10 +1,10 @@
 use crate::ItemHandle;
 use gpui::{
-    div, AnyView, Component, Div, Entity, EntityId, EventEmitter, ParentElement, Render, Styled,
-    View, ViewContext, WindowContext,
+    AnyView, Div, Entity, EntityId, EventEmitter, ParentComponent, Render, Styled, View,
+    ViewContext, WindowContext,
 };
 use theme2::ActiveTheme;
-use ui::{h_stack, v_stack, Button, Icon, IconButton, Label, LabelColor, StyledExt};
+use ui::{h_stack, v_stack, Button, Icon, IconButton, Label, TextColor};
 
 pub enum ToolbarItemEvent {
     ChangeLocation(ToolbarItemLocation),
@@ -92,7 +92,7 @@ impl Render for Toolbar {
                         h_stack()
                             .p_1()
                             .child(Button::new("crates"))
-                            .child(Label::new("/").color(LabelColor::Muted))
+                            .child(Label::new("/").color(TextColor::Muted))
                             .child(Button::new("workspace2")),
                     )
                     // Toolbar right side

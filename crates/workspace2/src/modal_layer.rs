@@ -1,8 +1,8 @@
 use gpui::{
-    div, px, AnyView, Div, EventEmitter, FocusHandle, ParentElement, Render, StatelessInteractive,
-    Styled, Subscription, View, ViewContext, VisualContext, WindowContext,
+    div, prelude::*, px, AnyView, Div, EventEmitter, FocusHandle, Render, Subscription, View,
+    ViewContext, WindowContext,
 };
-use ui::v_stack;
+use ui::{h_stack, v_stack};
 
 pub struct ActiveModal {
     modal: AnyView,
@@ -33,8 +33,6 @@ impl ModalLayer {
         V: Modal,
         B: FnOnce(&mut ViewContext<V>) -> V,
     {
-        let previous_focus = cx.focused();
-
         if let Some(active_modal) = &self.active_modal {
             let is_close = active_modal.modal.clone().downcast::<V>().is_ok();
             self.hide_modal(cx);
@@ -73,6 +71,14 @@ impl ModalLayer {
 
         cx.notify();
     }
+
+    pub fn current_modal<V>(&self) -> Option<View<V>>
+    where
+        V: 'static,
+    {
+        let active_modal = self.active_modal.as_ref()?;
+        active_modal.modal.clone().downcast::<V>().ok()
+    }
 }
 
 impl Render for ModalLayer {
@@ -85,9 +91,6 @@ impl Render for ModalLayer {
 
         div()
             .absolute()
-            .flex()
-            .flex_col()
-            .items_center()
             .size_full()
             .top_0()
             .left_0()
@@ -96,11 +99,21 @@ impl Render for ModalLayer {
                 v_stack()
                     .h(px(0.0))
                     .top_20()
+                    .flex()
+                    .flex_col()
+                    .items_center()
                     .track_focus(&active_modal.focus_handle)
-                    .on_mouse_down_out(|this: &mut Self, event, cx| {
-                        this.hide_modal(cx);
-                    })
-                    .child(active_modal.modal.clone()),
+                    .child(
+                        h_stack()
+                            // needed to prevent mouse events leaking to the
+                            // UI below. // todo! for gpui3.
+                            .on_any_mouse_down(|_, _, cx| cx.stop_propagation())
+                            .on_any_mouse_up(|_, _, cx| cx.stop_propagation())
+                            .on_mouse_down_out(|this: &mut Self, event, cx| {
+                                this.hide_modal(cx);
+                            })
+                            .child(active_modal.modal.clone()),
+                    ),
             )
     }
 }

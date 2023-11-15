@@ -68,7 +68,8 @@ impl LineLayout {
                 prev_x = glyph.position.x;
             }
         }
-        prev_index
+
+        self.len
     }
 
     pub fn x_for_index(&self, index: usize) -> Pixels {

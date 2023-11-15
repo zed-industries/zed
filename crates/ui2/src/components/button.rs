@@ -1,11 +1,9 @@
 use std::sync::Arc;
 
-use gpui::{div, DefiniteLength, Hsla, MouseButton, WindowContext};
+use gpui::{div, DefiniteLength, Hsla, MouseButton, StatefulInteractiveComponent, WindowContext};
 
-use crate::{
-    h_stack, prelude::*, Icon, IconButton, IconColor, IconElement, Label, LabelColor,
-    LineHeightStyle,
-};
+use crate::prelude::*;
+use crate::{h_stack, Icon, IconButton, IconElement, Label, LineHeightStyle, TextColor};
 
 /// Provides the flexibility to use either a standard
 /// button or an icon button in a given context.
@@ -87,6 +85,7 @@ pub struct Button<V: 'static> {
     label: SharedString,
     variant: ButtonVariant,
     width: Option<DefiniteLength>,
+    color: Option<TextColor>,
 }
 
 impl<V: 'static> Button<V> {
@@ -99,6 +98,7 @@ impl<V: 'static> Button<V> {
             label: label.into(),
             variant: Default::default(),
             width: Default::default(),
+            color: None,
         }
     }
 
@@ -139,34 +139,37 @@ impl<V: 'static> Button<V> {
         self
     }
 
-    fn label_color(&self) -> LabelColor {
+    pub fn color(mut self, color: Option<TextColor>) -> Self {
+        self.color = color;
+        self
+    }
+
+    pub fn label_color(&self, color: Option<TextColor>) -> TextColor {
         if self.disabled {
-            LabelColor::Disabled
+            TextColor::Disabled
+        } else if let Some(color) = color {
+            color
         } else {
             Default::default()
         }
     }
 
-    fn icon_color(&self) -> IconColor {
-        if self.disabled {
-            IconColor::Disabled
-        } else {
-            Default::default()
-        }
-    }
-
-    fn render_label(&self) -> Label {
+    fn render_label(&self, color: TextColor) -> Label {
         Label::new(self.label.clone())
-            .color(self.label_color())
+            .color(color)
             .line_height_style(LineHeightStyle::UILabel)
     }
 
-    fn render_icon(&self, icon_color: IconColor) -> Option<IconElement> {
+    fn render_icon(&self, icon_color: TextColor) -> Option<IconElement> {
         self.icon.map(|i| IconElement::new(i).color(icon_color))
     }
 
     pub fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
-        let icon_color = self.icon_color();
+        let (icon_color, label_color) = match (self.disabled, self.color) {
+            (true, _) => (TextColor::Disabled, TextColor::Disabled),
+            (_, None) => (TextColor::Default, TextColor::Default),
+            (_, Some(color)) => (TextColor::from(color), color),
+        };
 
         let mut button = h_stack()
             .id(SharedString::from(format!("{}", self.label)))
@@ -182,16 +185,16 @@ impl<V: 'static> Button<V> {
             (Some(_), Some(IconPosition::Left)) => {
                 button = button
                     .gap_1()
-                    .child(self.render_label())
+                    .child(self.render_label(label_color))
                     .children(self.render_icon(icon_color))
             }
             (Some(_), Some(IconPosition::Right)) => {
                 button = button
                     .gap_1()
                     .children(self.render_icon(icon_color))
-                    .child(self.render_label())
+                    .child(self.render_label(label_color))
             }
-            (_, _) => button = button.child(self.render_label()),
+            (_, _) => button = button.child(self.render_label(label_color)),
         }
 
         if let Some(width) = self.width {
@@ -235,7 +238,7 @@ pub use stories::*;
 #[cfg(feature = "stories")]
 mod stories {
     use super::*;
-    use crate::{h_stack, v_stack, LabelColor, Story};
+    use crate::{h_stack, v_stack, Story, TextColor};
     use gpui::{rems, Div, Render};
     use strum::IntoEnumIterator;
 
@@ -260,7 +263,7 @@ mod stories {
                                     v_stack()
                                         .gap_1()
                                         .child(
-                                            Label::new(state.to_string()).color(LabelColor::Muted),
+                                            Label::new(state.to_string()).color(TextColor::Muted),
                                         )
                                         .child(
                                             Button::new("Label").variant(ButtonVariant::Ghost), // .state(state),
@@ -271,7 +274,7 @@ mod stories {
                                     v_stack()
                                         .gap_1()
                                         .child(
-                                            Label::new(state.to_string()).color(LabelColor::Muted),
+                                            Label::new(state.to_string()).color(TextColor::Muted),
                                         )
                                         .child(
                                             Button::new("Label")
@@ -285,7 +288,7 @@ mod stories {
                                     v_stack()
                                         .gap_1()
                                         .child(
-                                            Label::new(state.to_string()).color(LabelColor::Muted),
+                                            Label::new(state.to_string()).color(TextColor::Muted),
                                         )
                                         .child(
                                             Button::new("Label")
@@ -302,7 +305,7 @@ mod stories {
                                     v_stack()
                                         .gap_1()
                                         .child(
-                                            Label::new(state.to_string()).color(LabelColor::Muted),
+                                            Label::new(state.to_string()).color(TextColor::Muted),
                                         )
                                         .child(
                                             Button::new("Label").variant(ButtonVariant::Filled), // .state(state),
@@ -313,7 +316,7 @@ mod stories {
                                     v_stack()
                                         .gap_1()
                                         .child(
-                                            Label::new(state.to_string()).color(LabelColor::Muted),
+                                            Label::new(state.to_string()).color(TextColor::Muted),
                                         )
                                         .child(
                                             Button::new("Label")
@@ -327,7 +330,7 @@ mod stories {
                                     v_stack()
                                         .gap_1()
                                         .child(
-                                            Label::new(state.to_string()).color(LabelColor::Muted),
+                                            Label::new(state.to_string()).color(TextColor::Muted),
                                         )
                                         .child(
                                             Button::new("Label")
@@ -344,7 +347,7 @@ mod stories {
                                     v_stack()
                                         .gap_1()
                                         .child(
-                                            Label::new(state.to_string()).color(LabelColor::Muted),
+                                            Label::new(state.to_string()).color(TextColor::Muted),
                                         )
                                         .child(
                                             Button::new("Label")
@@ -358,7 +361,7 @@ mod stories {
                                     v_stack()
                                         .gap_1()
                                         .child(
-                                            Label::new(state.to_string()).color(LabelColor::Muted),
+                                            Label::new(state.to_string()).color(TextColor::Muted),
                                         )
                                         .child(
                                             Button::new("Label")
@@ -374,7 +377,7 @@ mod stories {
                                     v_stack()
                                         .gap_1()
                                         .child(
-                                            Label::new(state.to_string()).color(LabelColor::Muted),
+                                            Label::new(state.to_string()).color(TextColor::Muted),
                                         )
                                         .child(
                                             Button::new("Label")

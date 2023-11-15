@@ -7,12 +7,12 @@ use gpui::{AppContext, ViewContext};
 use rand::Rng;
 use theme2::ActiveTheme;
 
-use crate::HighlightedText;
+use crate::{binding, HighlightedText};
 use crate::{
     Buffer, BufferRow, BufferRows, Button, EditorPane, FileSystemStatus, GitStatus,
-    HighlightedLine, Icon, Keybinding, Label, LabelColor, ListEntry, ListEntrySize, Livestream,
-    MicStatus, ModifierKeys, Notification, PaletteItem, Player, PlayerCallStatus,
-    PlayerWithCallStatus, PublicPlayer, ScreenShareStatus, Symbol, Tab, Toggle, VideoStatus,
+    HighlightedLine, Icon, KeyBinding, Label, ListEntry, ListEntrySize, Livestream, MicStatus,
+    Notification, PaletteItem, Player, PlayerCallStatus, PlayerWithCallStatus, PublicPlayer,
+    ScreenShareStatus, Symbol, Tab, TextColor, Toggle, VideoStatus,
 };
 use crate::{ListItem, NotificationAction};
 
@@ -490,20 +490,20 @@ pub fn static_project_panel_project_items() -> Vec<ListItem> {
         ListEntry::new(Label::new(".config"))
             .left_icon(Icon::Folder.into())
             .indent_level(1),
-        ListEntry::new(Label::new(".git").color(LabelColor::Hidden))
+        ListEntry::new(Label::new(".git").color(TextColor::Hidden))
             .left_icon(Icon::Folder.into())
             .indent_level(1),
         ListEntry::new(Label::new(".cargo"))
             .left_icon(Icon::Folder.into())
             .indent_level(1),
-        ListEntry::new(Label::new(".idea").color(LabelColor::Hidden))
+        ListEntry::new(Label::new(".idea").color(TextColor::Hidden))
             .left_icon(Icon::Folder.into())
             .indent_level(1),
         ListEntry::new(Label::new("assets"))
             .left_icon(Icon::Folder.into())
             .indent_level(1)
             .toggle(Toggle::Toggled(true)),
-        ListEntry::new(Label::new("cargo-target").color(LabelColor::Hidden))
+        ListEntry::new(Label::new("cargo-target").color(TextColor::Hidden))
             .left_icon(Icon::Folder.into())
             .indent_level(1),
         ListEntry::new(Label::new("crates"))
@@ -528,7 +528,7 @@ pub fn static_project_panel_project_items() -> Vec<ListItem> {
         ListEntry::new(Label::new("call"))
             .left_icon(Icon::Folder.into())
             .indent_level(2),
-        ListEntry::new(Label::new("sqlez").color(LabelColor::Modified))
+        ListEntry::new(Label::new("sqlez").color(TextColor::Modified))
             .left_icon(Icon::Folder.into())
             .indent_level(2)
             .toggle(Toggle::Toggled(false)),
@@ -543,45 +543,45 @@ pub fn static_project_panel_project_items() -> Vec<ListItem> {
         ListEntry::new(Label::new("derive_element.rs"))
             .left_icon(Icon::FileRust.into())
             .indent_level(4),
-        ListEntry::new(Label::new("storybook").color(LabelColor::Modified))
+        ListEntry::new(Label::new("storybook").color(TextColor::Modified))
             .left_icon(Icon::FolderOpen.into())
             .indent_level(1)
             .toggle(Toggle::Toggled(true)),
-        ListEntry::new(Label::new("docs").color(LabelColor::Default))
+        ListEntry::new(Label::new("docs").color(TextColor::Default))
             .left_icon(Icon::Folder.into())
             .indent_level(2)
             .toggle(Toggle::Toggled(true)),
-        ListEntry::new(Label::new("src").color(LabelColor::Modified))
+        ListEntry::new(Label::new("src").color(TextColor::Modified))
             .left_icon(Icon::FolderOpen.into())
             .indent_level(3)
             .toggle(Toggle::Toggled(true)),
-        ListEntry::new(Label::new("ui").color(LabelColor::Modified))
+        ListEntry::new(Label::new("ui").color(TextColor::Modified))
             .left_icon(Icon::FolderOpen.into())
             .indent_level(4)
             .toggle(Toggle::Toggled(true)),
-        ListEntry::new(Label::new("component").color(LabelColor::Created))
+        ListEntry::new(Label::new("component").color(TextColor::Created))
             .left_icon(Icon::FolderOpen.into())
             .indent_level(5)
             .toggle(Toggle::Toggled(true)),
-        ListEntry::new(Label::new("facepile.rs").color(LabelColor::Default))
+        ListEntry::new(Label::new("facepile.rs").color(TextColor::Default))
             .left_icon(Icon::FileRust.into())
             .indent_level(6),
-        ListEntry::new(Label::new("follow_group.rs").color(LabelColor::Default))
+        ListEntry::new(Label::new("follow_group.rs").color(TextColor::Default))
             .left_icon(Icon::FileRust.into())
             .indent_level(6),
-        ListEntry::new(Label::new("list_item.rs").color(LabelColor::Created))
+        ListEntry::new(Label::new("list_item.rs").color(TextColor::Created))
             .left_icon(Icon::FileRust.into())
             .indent_level(6),
-        ListEntry::new(Label::new("tab.rs").color(LabelColor::Default))
+        ListEntry::new(Label::new("tab.rs").color(TextColor::Default))
             .left_icon(Icon::FileRust.into())
             .indent_level(6),
-        ListEntry::new(Label::new("target").color(LabelColor::Hidden))
+        ListEntry::new(Label::new("target").color(TextColor::Hidden))
             .left_icon(Icon::Folder.into())
             .indent_level(1),
         ListEntry::new(Label::new(".dockerignore"))
             .left_icon(Icon::FileGeneric.into())
             .indent_level(1),
-        ListEntry::new(Label::new(".DS_Store").color(LabelColor::Hidden))
+        ListEntry::new(Label::new(".DS_Store").color(TextColor::Hidden))
             .left_icon(Icon::FileGeneric.into())
             .indent_level(1),
         ListEntry::new(Label::new("Cargo.lock"))
@@ -701,46 +701,16 @@ pub fn static_collab_panel_channels() -> Vec<ListItem> {
 
 pub fn example_editor_actions() -> Vec<PaletteItem> {
     vec![
-        PaletteItem::new("New File").keybinding(Keybinding::new(
-            "N".to_string(),
-            ModifierKeys::new().command(true),
-        )),
-        PaletteItem::new("Open File").keybinding(Keybinding::new(
-            "O".to_string(),
-            ModifierKeys::new().command(true),
-        )),
-        PaletteItem::new("Save File").keybinding(Keybinding::new(
-            "S".to_string(),
-            ModifierKeys::new().command(true),
-        )),
-        PaletteItem::new("Cut").keybinding(Keybinding::new(
-            "X".to_string(),
-            ModifierKeys::new().command(true),
-        )),
-        PaletteItem::new("Copy").keybinding(Keybinding::new(
-            "C".to_string(),
-            ModifierKeys::new().command(true),
-        )),
-        PaletteItem::new("Paste").keybinding(Keybinding::new(
-            "V".to_string(),
-            ModifierKeys::new().command(true),
-        )),
-        PaletteItem::new("Undo").keybinding(Keybinding::new(
-            "Z".to_string(),
-            ModifierKeys::new().command(true),
-        )),
-        PaletteItem::new("Redo").keybinding(Keybinding::new(
-            "Z".to_string(),
-            ModifierKeys::new().command(true).shift(true),
-        )),
-        PaletteItem::new("Find").keybinding(Keybinding::new(
-            "F".to_string(),
-            ModifierKeys::new().command(true),
-        )),
-        PaletteItem::new("Replace").keybinding(Keybinding::new(
-            "R".to_string(),
-            ModifierKeys::new().command(true),
-        )),
+        PaletteItem::new("New File").key_binding(KeyBinding::new(binding("cmd-n"))),
+        PaletteItem::new("Open File").key_binding(KeyBinding::new(binding("cmd-o"))),
+        PaletteItem::new("Save File").key_binding(KeyBinding::new(binding("cmd-s"))),
+        PaletteItem::new("Cut").key_binding(KeyBinding::new(binding("cmd-x"))),
+        PaletteItem::new("Copy").key_binding(KeyBinding::new(binding("cmd-c"))),
+        PaletteItem::new("Paste").key_binding(KeyBinding::new(binding("cmd-v"))),
+        PaletteItem::new("Undo").key_binding(KeyBinding::new(binding("cmd-z"))),
+        PaletteItem::new("Redo").key_binding(KeyBinding::new(binding("cmd-shift-z"))),
+        PaletteItem::new("Find").key_binding(KeyBinding::new(binding("cmd-f"))),
+        PaletteItem::new("Replace").key_binding(KeyBinding::new(binding("cmd-r"))),
         PaletteItem::new("Jump to Line"),
         PaletteItem::new("Select All"),
         PaletteItem::new("Deselect All"),

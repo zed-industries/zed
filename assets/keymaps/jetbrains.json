@@ -10,6 +10,7 @@
     "bindings": {
       "ctrl->": "zed::IncreaseBufferFontSize",
       "ctrl-<": "zed::DecreaseBufferFontSize",
+      "ctrl-shift-j": "editor::JoinLines",
       "cmd-d": "editor::DuplicateLine",
       "cmd-backspace": "editor::DeleteLine",
       "cmd-pagedown": "editor::MovePageDown",
@@ -18,7 +19,7 @@
       "cmd-alt-enter": "editor::NewlineAbove",
       "shift-enter": "editor::NewlineBelow",
       "cmd--": "editor::Fold",
-      "cmd-=": "editor::UnfoldLines",
+      "cmd-+": "editor::UnfoldLines",
       "alt-shift-g": "editor::SplitSelectionIntoLines",
       "ctrl-g": [
         "editor::SelectNext",

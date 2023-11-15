@@ -1,14 +1,17 @@
 use collections::{CommandPaletteFilter, HashMap};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, div, Action, AppContext, Component, Div, EventEmitter, FocusHandle, Keystroke,
-    ParentElement, Render, StatelessInteractive, Styled, View, ViewContext, VisualContext,
-    WeakView, WindowContext,
+    actions, div, prelude::*, Action, AppContext, Component, Div, EventEmitter, FocusHandle,
+    Keystroke, ParentComponent, Render, Styled, View, ViewContext, VisualContext, WeakView,
+    WindowContext,
 };
 use picker::{Picker, PickerDelegate};
-use std::cmp::{self, Reverse};
+use std::{
+    cmp::{self, Reverse},
+    sync::Arc,
+};
 use theme::ActiveTheme;
-use ui::{v_stack, Label, StyledExt};
+use ui::{h_stack, v_stack, HighlightedLabel, KeyBinding, StyledExt};
 use util::{
     channel::{parse_zed_link, ReleaseChannel, RELEASE_CHANNEL},
     ResultExt,
@@ -127,16 +130,7 @@ impl CommandPaletteDelegate {
     ) -> Self {
         Self {
             command_palette,
-            matches: commands
-                .iter()
-                .enumerate()
-                .map(|(i, command)| StringMatch {
-                    candidate_id: i,
-                    string: command.name.clone(),
-                    positions: Vec::new(),
-                    score: 0.0,
-                })
-                .collect(),
+            matches: vec![],
             commands,
             selected_ix: 0,
             previous_focus_handle,
@@ -146,6 +140,10 @@ impl CommandPaletteDelegate {
 
 impl PickerDelegate for CommandPaletteDelegate {
     type ListItem = Div<Picker<Self>>;
+
+    fn placeholder_text(&self) -> Arc<str> {
+        "Execute a command...".into()
+    }
 
     fn match_count(&self) -> usize {
         self.matches.len()
@@ -296,11 +294,10 @@ impl PickerDelegate for CommandPaletteDelegate {
         cx: &mut ViewContext<Picker<Self>>,
     ) -> Self::ListItem {
         let colors = cx.theme().colors();
-        let Some(command) = self
-            .matches
-            .get(ix)
-            .and_then(|m| self.commands.get(m.candidate_id))
-        else {
+        let Some(r#match) = self.matches.get(ix) else {
+            return div();
+        };
+        let Some(command) = self.commands.get(r#match.candidate_id) else {
             return div();
         };
 
@@ -312,63 +309,16 @@ impl PickerDelegate for CommandPaletteDelegate {
             .rounded_md()
             .when(selected, |this| this.bg(colors.ghost_element_selected))
             .hover(|this| this.bg(colors.ghost_element_hover))
-            .child(Label::new(command.name.clone()))
+            .child(
+                h_stack()
+                    .justify_between()
+                    .child(HighlightedLabel::new(
+                        command.name.clone(),
+                        r#match.positions.clone(),
+                    ))
+                    .children(KeyBinding::for_action(&*command.action, cx)),
+            )
     }
-
-    // fn render_match(
-    //     &self,
-    //     ix: usize,
-    //     mouse_state: &mut MouseState,
-    //     selected: bool,
-    //     cx: &gpui::AppContext,
-    // ) -> AnyElement<Picker<Self>> {
-    //     let mat = &self.matches[ix];
-    //     let command = &self.actions[mat.candidate_id];
-    //     let theme = theme::current(cx);
-    //     let style = theme.picker.item.in_state(selected).style_for(mouse_state);
-    //     let key_style = &theme.command_palette.key.in_state(selected);
-    //     let keystroke_spacing = theme.command_palette.keystroke_spacing;
-
-    //     Flex::row()
-    //         .with_child(
-    //             Label::new(mat.string.clone(), style.label.clone())
-    //                 .with_highlights(mat.positions.clone()),
-    //         )
-    //         .with_children(command.keystrokes.iter().map(|keystroke| {
-    //             Flex::row()
-    //                 .with_children(
-    //                     [
-    //                         (keystroke.ctrl, "^"),
-    //                         (keystroke.alt, "⌥"),
-    //                         (keystroke.cmd, "⌘"),
-    //                         (keystroke.shift, "⇧"),
-    //                     ]
-    //                     .into_iter()
-    //                     .filter_map(|(modifier, label)| {
-    //                         if modifier {
-    //                             Some(
-    //                                 Label::new(label, key_style.label.clone())
-    //                                     .contained()
-    //                                     .with_style(key_style.container),
-    //                             )
-    //                         } else {
-    //                             None
-    //                         }
-    //                     }),
-    //                 )
-    //                 .with_child(
-    //                     Label::new(keystroke.key.clone(), key_style.label.clone())
-    //                         .contained()
-    //                         .with_style(key_style.container),
-    //                 )
-    //                 .contained()
-    //                 .with_margin_left(keystroke_spacing)
-    //                 .flex_float()
-    //         }))
-    //         .contained()
-    //         .with_style(style.container)
-    //         .into_any()
-    // }
 }
 
 fn humanize_action_name(name: &str) -> String {

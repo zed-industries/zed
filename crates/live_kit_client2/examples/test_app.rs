@@ -167,7 +167,7 @@ fn main() {
                 panic!("unexpected message");
             }
 
-            cx.update(|cx| cx.quit()).ok();
+            cx.update(|cx| cx.shutdown()).ok();
         })
         .detach();
     });

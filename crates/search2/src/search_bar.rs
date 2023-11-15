@@ -1,17 +1,10 @@
 use std::{borrow::Cow, sync::Arc};
 
-use gpui::{
-    div, Action, AnyElement, Component, CursorStyle, Element, MouseButton, MouseDownEvent,
-    ParentElement as _, StatelessInteractive, Styled, Svg, View, ViewContext,
-};
-use theme::ActiveTheme;
-use ui::{v_stack, Button, ButtonVariant, Label};
+use gpui::{div, Action, Component, ViewContext};
+use ui::{Button, ButtonVariant};
 use workspace::searchable::Direction;
 
-use crate::{
-    mode::{SearchMode, Side},
-    SelectNextMatch, SelectPrevMatch,
-};
+use crate::mode::{SearchMode, Side};
 
 pub(super) fn render_nav_button<V: 'static>(
     icon: &'static str,

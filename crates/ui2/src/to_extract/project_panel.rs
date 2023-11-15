@@ -1,7 +1,8 @@
-use crate::prelude::*;
 use crate::{
-    static_project_panel_project_items, static_project_panel_single_items, Input, List, ListHeader,
+    prelude::*, static_project_panel_project_items, static_project_panel_single_items, Input, List,
+    ListHeader,
 };
+use gpui::prelude::*;
 
 #[derive(Component)]
 pub struct ProjectPanel {

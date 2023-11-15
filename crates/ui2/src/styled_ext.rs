@@ -1,4 +1,4 @@
-use gpui::{Div, ElementFocus, ElementInteractivity, Styled, UniformList, ViewContext};
+use gpui::{Styled, ViewContext};
 use theme2::ActiveTheme;
 
 use crate::{ElevationIndex, UITextSize};
@@ -12,31 +12,22 @@ fn elevated<E: Styled, V: 'static>(this: E, cx: &mut ViewContext<V>, index: Elev
 }
 
 /// Extends [`Styled`](gpui::Styled) with Zed specific styling methods.
-pub trait StyledExt: Styled {
+pub trait StyledExt: Styled + Sized {
     /// Horizontally stacks elements.
     ///
     /// Sets `flex()`, `flex_row()`, `items_center()`
-    fn h_flex(self) -> Self
-    where
-        Self: Sized,
-    {
+    fn h_flex(self) -> Self {
         self.flex().flex_row().items_center()
     }
 
     /// Vertically stacks elements.
     ///
     /// Sets `flex()`, `flex_col()`
-    fn v_flex(self) -> Self
-    where
-        Self: Sized,
-    {
+    fn v_flex(self) -> Self {
         self.flex().flex_col()
     }
 
-    fn text_ui_size(self, size: UITextSize) -> Self
-    where
-        Self: Sized,
-    {
+    fn text_ui_size(self, size: UITextSize) -> Self {
         let size = size.rems();
 
         self.text_size(size)
@@ -49,10 +40,7 @@ pub trait StyledExt: Styled {
     /// Note: The absolute size of this text will change based on a user's `ui_scale` setting.
     ///
     /// Use [`text_ui_sm`] for regular-sized text.
-    fn text_ui(self) -> Self
-    where
-        Self: Sized,
-    {
+    fn text_ui(self) -> Self {
         let size = UITextSize::default().rems();
 
         self.text_size(size)
@@ -65,10 +53,7 @@ pub trait StyledExt: Styled {
     /// Note: The absolute size of this text will change based on a user's `ui_scale` setting.
     ///
     /// Use [`text_ui`] for regular-sized text.
-    fn text_ui_sm(self) -> Self
-    where
-        Self: Sized,
-    {
+    fn text_ui_sm(self) -> Self {
         let size = UITextSize::Small.rems();
 
         self.text_size(size)
@@ -79,10 +64,7 @@ pub trait StyledExt: Styled {
     /// Sets `bg()`, `rounded_lg()`, `border()`, `border_color()`, `shadow()`
     ///
     /// Example Elements: Title Bar, Panel, Tab Bar, Editor
-    fn elevation_1<V: 'static>(self, cx: &mut ViewContext<V>) -> Self
-    where
-        Self: Styled + Sized,
-    {
+    fn elevation_1<V: 'static>(self, cx: &mut ViewContext<V>) -> Self {
         elevated(self, cx, ElevationIndex::Surface)
     }
 
@@ -91,10 +73,7 @@ pub trait StyledExt: Styled {
     /// Sets `bg()`, `rounded_lg()`, `border()`, `border_color()`, `shadow()`
     ///
     /// Examples: Notifications, Palettes, Detached/Floating Windows, Detached/Floating Panels
-    fn elevation_2<V: 'static>(self, cx: &mut ViewContext<V>) -> Self
-    where
-        Self: Styled + Sized,
-    {
+    fn elevation_2<V: 'static>(self, cx: &mut ViewContext<V>) -> Self {
         elevated(self, cx, ElevationIndex::ElevatedSurface)
     }
 
@@ -109,19 +88,9 @@ pub trait StyledExt: Styled {
     /// Sets `bg()`, `rounded_lg()`, `border()`, `border_color()`, `shadow()`
     ///
     /// Examples: Settings Modal, Channel Management, Wizards/Setup UI, Dialogs
-    fn elevation_4<V: 'static>(self, cx: &mut ViewContext<V>) -> Self
-    where
-        Self: Styled + Sized,
-    {
+    fn elevation_4<V: 'static>(self, cx: &mut ViewContext<V>) -> Self {
         elevated(self, cx, ElevationIndex::ModalSurface)
     }
 }
 
-impl<V, I, F> StyledExt for Div<V, I, F>
-where
-    I: ElementInteractivity<V>,
-    F: ElementFocus<V>,
-{
-}
-
-impl<V> StyledExt for UniformList<V> {}
+impl<E: Styled> StyledExt for E {}

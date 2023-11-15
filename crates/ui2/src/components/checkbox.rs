@@ -1,12 +1,8 @@
+use gpui::{div, prelude::*, Component, ElementId, Styled, ViewContext};
 use std::sync::Arc;
-
-use gpui::{
-    div, Component, ElementId, ParentElement, StatefulInteractive, StatelessInteractive, Styled,
-    ViewContext,
-};
 use theme2::ActiveTheme;
 
-use crate::{Icon, IconColor, IconElement, Selection};
+use crate::{Icon, IconElement, Selection, TextColor};
 
 pub type CheckHandler<V> = Arc<dyn Fn(Selection, &mut V, &mut ViewContext<V>) + Send + Sync>;
 
@@ -58,9 +54,9 @@ impl<V: 'static> Checkbox<V> {
                         .color(
                             // If the checkbox is disabled we change the color of the icon.
                             if self.disabled {
-                                IconColor::Disabled
+                                TextColor::Disabled
                             } else {
-                                IconColor::Selected
+                                TextColor::Selected
                             },
                         ),
                 )
@@ -73,9 +69,9 @@ impl<V: 'static> Checkbox<V> {
                         .color(
                             // If the checkbox is disabled we change the color of the icon.
                             if self.disabled {
-                                IconColor::Disabled
+                                TextColor::Disabled
                             } else {
-                                IconColor::Selected
+                                TextColor::Selected
                             },
                         ),
                 )

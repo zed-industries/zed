@@ -234,10 +234,10 @@ impl AppContext {
             app_version: platform.app_version().ok(),
         };
 
-        Rc::new_cyclic(|this| AppCell {
+        let app = Rc::new_cyclic(|this| AppCell {
             app: RefCell::new(AppContext {
                 this: this.clone(),
-                platform,
+                platform: platform.clone(),
                 app_metadata,
                 text_system,
                 flushing_effects: false,
@@ -269,12 +269,21 @@ impl AppContext {
                 layout_id_buffer: Default::default(),
                 propagate_event: true,
             }),
-        })
+        });
+
+        platform.on_quit(Box::new({
+            let cx = app.clone();
+            move || {
+                cx.borrow_mut().shutdown();
+            }
+        }));
+
+        app
     }
 
     /// Quit the application gracefully. Handlers registered with `ModelContext::on_app_quit`
     /// will be given 100ms to complete before exiting.
-    pub fn quit(&mut self) {
+    pub fn shutdown(&mut self) {
         let mut futures = Vec::new();
 
         for observer in self.quit_observers.remove(&()) {
@@ -292,8 +301,10 @@ impl AppContext {
         {
             log::error!("timed out waiting on app_will_quit");
         }
+    }
 
-        self.globals_by_type.clear();
+    pub fn quit(&mut self) {
+        self.platform.quit();
     }
 
     pub fn app_metadata(&self) -> AppMetadata {
@@ -429,6 +440,18 @@ impl AppContext {
     /// Instructs the platform to activate the application by bringing it to the foreground.
     pub fn activate(&self, ignoring_other_apps: bool) {
         self.platform.activate(ignoring_other_apps);
+    }
+
+    pub fn hide(&self) {
+        self.platform.hide();
+    }
+
+    pub fn hide_other_apps(&self) {
+        self.platform.hide_other_apps();
+    }
+
+    pub fn unhide_other_apps(&self) {
+        self.platform.unhide_other_apps();
     }
 
     /// Returns the list of currently active displays.
@@ -641,14 +664,19 @@ impl AppContext {
                 // The window might change focus multiple times in an effect cycle.
                 // We only honor effects for the most recently focused handle.
                 if cx.window.focus == focused {
+                    // if someone calls focus multiple times in one frame with the same handle
+                    // the first apply_focus_changed_effect will have taken the last blur already
+                    // and run the rest of this, so we can return.
+                    let Some(last_blur) = cx.window.last_blur.take() else {
+                        return;
+                    };
+
                     let focused = focused
                         .map(|id| FocusHandle::for_id(id, &cx.window.focus_handles).unwrap());
-                    let blurred = cx
-                        .window
-                        .last_blur
-                        .take()
-                        .unwrap()
-                        .and_then(|id| FocusHandle::for_id(id, &cx.window.focus_handles));
+
+                    let blurred =
+                        last_blur.and_then(|id| FocusHandle::for_id(id, &cx.window.focus_handles));
+
                     let focus_changed = focused.is_some() || blurred.is_some();
                     let event = FocusEvent { focused, blurred };
 
@@ -1007,6 +1035,29 @@ impl Context for AppContext {
         let entity = self.entities.read(handle);
         read(entity, self)
     }
+
+    fn read_window<T, R>(
+        &self,
+        window: &WindowHandle<T>,
+        read: impl FnOnce(View<T>, &AppContext) -> R,
+    ) -> Result<R>
+    where
+        T: 'static,
+    {
+        let window = self
+            .windows
+            .get(window.id)
+            .ok_or_else(|| anyhow!("window not found"))?
+            .as_ref()
+            .unwrap();
+
+        let root_view = window.root_view.clone().unwrap();
+        let view = root_view
+            .downcast::<T>()
+            .map_err(|_| anyhow!("root view's type has changed"))?;
+
+        Ok(read(view, self))
+    }
 }
 
 /// These effects are processed at the end of each application update cycle.
@@ -1063,7 +1114,7 @@ impl<G: 'static> DerefMut for GlobalLease<G> {
 
 /// Contains state associated with an active drag operation, started by dragging an element
 /// within the window or by dragging into the app from the underlying platform.
-pub(crate) struct AnyDrag {
+pub struct AnyDrag {
     pub view: AnyView,
     pub cursor_offset: Point<Pixels>,
 }

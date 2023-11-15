@@ -74,7 +74,7 @@ impl<V: 'static> Modal<V> {
     }
 }
 
-impl<V: 'static> ParentElement<V> for Modal<V> {
+impl<V: 'static> ParentComponent<V> for Modal<V> {
     fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<V>; 2]> {
         &mut self.children
     }

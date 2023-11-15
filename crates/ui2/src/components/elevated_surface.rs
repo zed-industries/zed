@@ -23,6 +23,6 @@ pub fn elevated_surface<V: 'static>(level: ElevationIndex, cx: &mut ViewContext<
         .shadow(level.shadow())
 }
 
-pub fn modal<V>(cx: &mut ViewContext<V>) -> Div<V> {
+pub fn modal<V: 'static>(cx: &mut ViewContext<V>) -> Div<V> {
     elevated_surface(ElevationIndex::ModalSurface, cx)
 }

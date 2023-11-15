@@ -1,17 +1,17 @@
 use crate::{
-    build_action_from_type, px, size, Action, AnyBox, AnyDrag, AnyView, AppContext,
+    key_dispatch::DispatchActionListener, px, size, Action, AnyBox, AnyDrag, AnyView, AppContext,
     AsyncWindowContext, AvailableSpace, Bounds, BoxShadow, Context, Corners, CursorStyle,
-    DevicePixels, DispatchContext, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter,
-    FileDropEvent, FocusEvent, FontId, GlobalElementId, GlyphId, Hsla, ImageData, InputEvent,
-    IsZero, KeyListener, KeyMatch, KeyMatcher, Keystroke, LayoutId, Model, ModelContext, Modifiers,
-    MonochromeSprite, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels,
-    PlatformAtlas, PlatformDisplay, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite,
-    PromptLevel, Quad, Render, RenderGlyphParams, RenderImageParams, RenderSvgParams, ScaledPixels,
-    SceneBuilder, Shadow, SharedString, Size, Style, SubscriberSet, Subscription,
-    TaffyLayoutEngine, Task, Underline, UnderlineStyle, View, VisualContext, WeakView,
-    WindowBounds, WindowOptions, SUBPIXEL_VARIANTS,
+    DevicePixels, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity, EntityId,
+    EventEmitter, FileDropEvent, FocusEvent, FontId, GlobalElementId, GlyphId, Hsla, ImageData,
+    InputEvent, IsZero, KeyBinding, KeyContext, KeyDownEvent, LayoutId, Model, ModelContext,
+    Modifiers, MonochromeSprite, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Path,
+    Pixels, PlatformAtlas, PlatformDisplay, PlatformInputHandler, PlatformWindow, Point,
+    PolychromeSprite, PromptLevel, Quad, Render, RenderGlyphParams, RenderImageParams,
+    RenderSvgParams, ScaledPixels, SceneBuilder, Shadow, SharedString, Size, Style, SubscriberSet,
+    Subscription, TaffyLayoutEngine, Task, Underline, UnderlineStyle, View, VisualContext,
+    WeakView, WindowBounds, WindowOptions, SUBPIXEL_VARIANTS,
 };
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context as _, Result};
 use collections::HashMap;
 use derive_more::{Deref, DerefMut};
 use futures::{
@@ -60,16 +60,7 @@ pub enum DispatchPhase {
 }
 
 type AnyObserver = Box<dyn FnMut(&mut WindowContext) -> bool + 'static>;
-type AnyListener = Box<dyn FnMut(&dyn Any, DispatchPhase, &mut WindowContext) + 'static>;
-type AnyKeyListener = Box<
-    dyn Fn(
-            &dyn Any,
-            &[&DispatchContext],
-            DispatchPhase,
-            &mut WindowContext,
-        ) -> Option<Box<dyn Action>>
-        + 'static,
->;
+type AnyMouseListener = Box<dyn FnMut(&dyn Any, DispatchPhase, &mut WindowContext) + 'static>;
 type AnyFocusListener = Box<dyn Fn(&FocusEvent, &mut WindowContext) + 'static>;
 type AnyWindowFocusListener = Box<dyn FnMut(&FocusEvent, &mut WindowContext) -> bool + 'static>;
 
@@ -97,20 +88,10 @@ impl FocusId {
 
     /// Obtains whether this handle contains the given handle in the most recently rendered frame.
     pub(crate) fn contains(&self, other: Self, cx: &WindowContext) -> bool {
-        let mut ancestor = Some(other);
-        while let Some(ancestor_id) = ancestor {
-            if *self == ancestor_id {
-                return true;
-            } else {
-                ancestor = cx
-                    .window
-                    .current_frame
-                    .focus_parents_by_child
-                    .get(&ancestor_id)
-                    .copied();
-            }
-        }
-        false
+        cx.window
+            .current_frame
+            .dispatch_tree
+            .focus_contains(*self, other)
     }
 }
 
@@ -118,6 +99,12 @@ impl FocusId {
 pub struct FocusHandle {
     pub(crate) id: FocusId,
     handles: Arc<RwLock<SlotMap<FocusId, AtomicUsize>>>,
+}
+
+impl std::fmt::Debug for FocusHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!("FocusHandle({:?})", self.id))
+    }
 }
 
 impl FocusHandle {
@@ -227,20 +214,31 @@ pub struct Window {
     pub(crate) focus: Option<FocusId>,
 }
 
-#[derive(Default)]
+// #[derive(Default)]
 pub(crate) struct Frame {
     element_states: HashMap<GlobalElementId, AnyBox>,
-    key_matchers: HashMap<GlobalElementId, KeyMatcher>,
-    mouse_listeners: HashMap<TypeId, Vec<(StackingOrder, AnyListener)>>,
+    mouse_listeners: HashMap<TypeId, Vec<(StackingOrder, AnyMouseListener)>>,
+    pub(crate) dispatch_tree: DispatchTree,
     pub(crate) focus_listeners: Vec<AnyFocusListener>,
-    pub(crate) key_dispatch_stack: Vec<KeyDispatchStackFrame>,
-    freeze_key_dispatch_stack: bool,
-    focus_parents_by_child: HashMap<FocusId, FocusId>,
     pub(crate) scene_builder: SceneBuilder,
     z_index_stack: StackingOrder,
     content_mask_stack: Vec<ContentMask<Pixels>>,
     element_offset_stack: Vec<Point<Pixels>>,
-    focus_stack: Vec<FocusId>,
+}
+
+impl Frame {
+    pub fn new(dispatch_tree: DispatchTree) -> Self {
+        Frame {
+            element_states: HashMap::default(),
+            mouse_listeners: HashMap::default(),
+            dispatch_tree,
+            focus_listeners: Vec::new(),
+            scene_builder: SceneBuilder::default(),
+            z_index_stack: StackingOrder::default(),
+            content_mask_stack: Vec::new(),
+            element_offset_stack: Vec::new(),
+        }
+    }
 }
 
 impl Window {
@@ -309,8 +307,8 @@ impl Window {
             layout_engine: TaffyLayoutEngine::new(),
             root_view: None,
             element_id_stack: GlobalElementId::default(),
-            previous_frame: Frame::default(),
-            current_frame: Frame::default(),
+            previous_frame: Frame::new(DispatchTree::new(cx.keymap.clone())),
+            current_frame: Frame::new(DispatchTree::new(cx.keymap.clone())),
             focus_handles: Arc::new(RwLock::new(SlotMap::with_key())),
             focus_listeners: SubscriberSet::new(),
             default_prevented: true,
@@ -326,18 +324,6 @@ impl Window {
             focus: None,
         }
     }
-}
-
-/// When constructing the element tree, we maintain a stack of key dispatch frames until we
-/// find the focused element. We interleave key listeners with dispatch contexts so we can use the
-/// contexts when matching key events against the keymap. A key listener can be either an action
-/// handler or a [KeyDown] / [KeyUp] event listener.
-pub(crate) enum KeyDispatchStackFrame {
-    Listener {
-        event_type: TypeId,
-        listener: AnyKeyListener,
-    },
-    Context(DispatchContext),
 }
 
 /// Indicates which region of the window is visible. Content falling outside of this mask will not be
@@ -407,21 +393,16 @@ impl<'a> WindowContext<'a> {
 
     /// Move focus to the element associated with the given `FocusHandle`.
     pub fn focus(&mut self, handle: &FocusHandle) {
-        if self.window.focus == Some(handle.id) {
-            return;
-        }
+        let focus_id = handle.id;
 
         if self.window.last_blur.is_none() {
             self.window.last_blur = Some(self.window.focus);
         }
 
-        self.window.focus = Some(handle.id);
-
-        // self.window.current_frame.key_dispatch_stack.clear()
-        // self.window.root_view.initialize()
+        self.window.focus = Some(focus_id);
         self.app.push_effect(Effect::FocusChanged {
             window_handle: self.window.handle,
-            focused: Some(handle.id),
+            focused: Some(focus_id),
         });
         self.notify();
     }
@@ -441,11 +422,19 @@ impl<'a> WindowContext<'a> {
     }
 
     pub fn dispatch_action(&mut self, action: Box<dyn Action>) {
-        self.defer(|cx| {
-            cx.app.propagate_event = true;
-            let stack = cx.dispatch_stack();
-            cx.dispatch_action_internal(action, &stack[..])
-        })
+        if let Some(focus_handle) = self.focused() {
+            self.defer(move |cx| {
+                if let Some(node_id) = cx
+                    .window
+                    .current_frame
+                    .dispatch_tree
+                    .focusable_node_id(focus_handle.id)
+                {
+                    cx.propagate_event = true;
+                    cx.dispatch_action_on_node(node_id, action);
+                }
+            })
+        }
     }
 
     /// Schedules the given function to be run at the end of the current effect cycle, allowing entities
@@ -729,6 +718,43 @@ impl<'a> WindowContext<'a> {
                     handler(event.downcast_ref().unwrap(), phase, cx)
                 }),
             ))
+    }
+
+    /// Register a key event listener on the window for the current frame. The type of event
+    /// is determined by the first parameter of the given listener. When the next frame is rendered
+    /// the listener will be cleared.
+    ///
+    /// This is a fairly low-level method, so prefer using event handlers on elements unless you have
+    /// a specific need to register a global listener.
+    pub fn on_key_event<Event: 'static>(
+        &mut self,
+        handler: impl Fn(&Event, DispatchPhase, &mut WindowContext) + 'static,
+    ) {
+        self.window
+            .current_frame
+            .dispatch_tree
+            .on_key_event(Rc::new(move |event, phase, cx| {
+                if let Some(event) = event.downcast_ref::<Event>() {
+                    handler(event, phase, cx)
+                }
+            }));
+    }
+
+    /// Register an action listener on the window for the current frame. The type of action
+    /// is determined by the first parameter of the given listener. When the next frame is rendered
+    /// the listener will be cleared.
+    ///
+    /// This is a fairly low-level method, so prefer using action handlers on elements unless you have
+    /// a specific need to register a global listener.
+    pub fn on_action(
+        &mut self,
+        action_type: TypeId,
+        handler: impl Fn(&dyn Any, DispatchPhase, &mut WindowContext) + 'static,
+    ) {
+        self.window.current_frame.dispatch_tree.on_action(
+            action_type,
+            Rc::new(move |action, phase, cx| handler(action, phase, cx)),
+        );
     }
 
     /// The position of the mouse relative to the window.
@@ -1048,7 +1074,7 @@ impl<'a> WindowContext<'a> {
         if let Some(active_drag) = self.app.active_drag.take() {
             self.with_z_index(1, |cx| {
                 let offset = cx.mouse_position() - active_drag.cursor_offset;
-                cx.with_element_offset(Some(offset), |cx| {
+                cx.with_element_offset(offset, |cx| {
                     let available_space =
                         size(AvailableSpace::MinContent, AvailableSpace::MinContent);
                     active_drag.view.draw(available_space, cx);
@@ -1057,7 +1083,7 @@ impl<'a> WindowContext<'a> {
             });
         } else if let Some(active_tooltip) = self.app.active_tooltip.take() {
             self.with_z_index(1, |cx| {
-                cx.with_element_offset(Some(active_tooltip.cursor_offset), |cx| {
+                cx.with_element_offset(active_tooltip.cursor_offset, |cx| {
                     let available_space =
                         size(AvailableSpace::MinContent, AvailableSpace::MinContent);
                     active_tooltip.view.draw(available_space, cx);
@@ -1079,26 +1105,6 @@ impl<'a> WindowContext<'a> {
         self.window.dirty = false;
     }
 
-    pub(crate) fn dispatch_stack(&mut self) -> Vec<KeyDispatchStackFrame> {
-        let root_view = self.window.root_view.take().unwrap();
-        let window = &mut *self.window;
-        let mut spare_frame = Frame::default();
-        mem::swap(&mut spare_frame, &mut window.previous_frame);
-
-        self.start_frame();
-
-        root_view.draw_dispatch_stack(self);
-
-        let window = &mut *self.window;
-        // restore the old values of current and previous frame,
-        // putting the new frame into spare_frame.
-        mem::swap(&mut window.current_frame, &mut window.previous_frame);
-        mem::swap(&mut spare_frame, &mut window.previous_frame);
-        self.window.root_view = Some(root_view);
-
-        spare_frame.key_dispatch_stack
-    }
-
     /// Rotate the current frame and the previous frame, then clear the current frame.
     /// We repopulate all state in the current frame during each paint.
     fn start_frame(&mut self) {
@@ -1110,12 +1116,9 @@ impl<'a> WindowContext<'a> {
         mem::swap(&mut window.previous_frame, &mut window.current_frame);
         let frame = &mut window.current_frame;
         frame.element_states.clear();
-        frame.key_matchers.clear();
         frame.mouse_listeners.values_mut().for_each(Vec::clear);
         frame.focus_listeners.clear();
-        frame.key_dispatch_stack.clear();
-        frame.focus_parents_by_child.clear();
-        frame.freeze_key_dispatch_stack = false;
+        frame.dispatch_tree.clear();
     }
 
     /// Dispatch a mouse or keyboard event on the window.
@@ -1177,146 +1180,172 @@ impl<'a> WindowContext<'a> {
         };
 
         if let Some(any_mouse_event) = event.mouse_event() {
-            if let Some(mut handlers) = self
-                .window
-                .current_frame
-                .mouse_listeners
-                .remove(&any_mouse_event.type_id())
-            {
-                // Because handlers may add other handlers, we sort every time.
-                handlers.sort_by(|(a, _), (b, _)| a.cmp(b));
-
-                // Capture phase, events bubble from back to front. Handlers for this phase are used for
-                // special purposes, such as detecting events outside of a given Bounds.
-                for (_, handler) in &mut handlers {
-                    handler(any_mouse_event, DispatchPhase::Capture, self);
-                    if !self.app.propagate_event {
-                        break;
-                    }
-                }
-
-                // Bubble phase, where most normal handlers do their work.
-                if self.app.propagate_event {
-                    for (_, handler) in handlers.iter_mut().rev() {
-                        handler(any_mouse_event, DispatchPhase::Bubble, self);
-                        if !self.app.propagate_event {
-                            break;
-                        }
-                    }
-                }
-
-                if self.app.propagate_event
-                    && any_mouse_event.downcast_ref::<MouseUpEvent>().is_some()
-                {
-                    self.active_drag = None;
-                }
-
-                // Just in case any handlers added new handlers, which is weird, but possible.
-                handlers.extend(
-                    self.window
-                        .current_frame
-                        .mouse_listeners
-                        .get_mut(&any_mouse_event.type_id())
-                        .into_iter()
-                        .flat_map(|handlers| handlers.drain(..)),
-                );
-                self.window
-                    .current_frame
-                    .mouse_listeners
-                    .insert(any_mouse_event.type_id(), handlers);
-            }
+            self.dispatch_mouse_event(any_mouse_event);
         } else if let Some(any_key_event) = event.keyboard_event() {
-            let key_dispatch_stack = mem::take(&mut self.window.current_frame.key_dispatch_stack);
-            let key_event_type = any_key_event.type_id();
-            let mut context_stack = SmallVec::<[&DispatchContext; 16]>::new();
-
-            for (ix, frame) in key_dispatch_stack.iter().enumerate() {
-                match frame {
-                    KeyDispatchStackFrame::Listener {
-                        event_type,
-                        listener,
-                    } => {
-                        if key_event_type == *event_type {
-                            if let Some(action) = listener(
-                                any_key_event,
-                                &context_stack,
-                                DispatchPhase::Capture,
-                                self,
-                            ) {
-                                self.dispatch_action_internal(action, &key_dispatch_stack[..ix]);
-                            }
-                            if !self.app.propagate_event {
-                                break;
-                            }
-                        }
-                    }
-                    KeyDispatchStackFrame::Context(context) => {
-                        context_stack.push(&context);
-                    }
-                }
-            }
-
-            if self.app.propagate_event {
-                for (ix, frame) in key_dispatch_stack.iter().enumerate().rev() {
-                    match frame {
-                        KeyDispatchStackFrame::Listener {
-                            event_type,
-                            listener,
-                        } => {
-                            if key_event_type == *event_type {
-                                if let Some(action) = listener(
-                                    any_key_event,
-                                    &context_stack,
-                                    DispatchPhase::Bubble,
-                                    self,
-                                ) {
-                                    self.dispatch_action_internal(
-                                        action,
-                                        &key_dispatch_stack[..ix],
-                                    );
-                                }
-
-                                if !self.app.propagate_event {
-                                    break;
-                                }
-                            }
-                        }
-                        KeyDispatchStackFrame::Context(_) => {
-                            context_stack.pop();
-                        }
-                    }
-                }
-            }
-
-            drop(context_stack);
-            self.window.current_frame.key_dispatch_stack = key_dispatch_stack;
+            self.dispatch_key_event(any_key_event);
         }
 
         !self.app.propagate_event
     }
 
-    /// Attempt to map a keystroke to an action based on the keymap.
-    pub fn match_keystroke(
-        &mut self,
-        element_id: &GlobalElementId,
-        keystroke: &Keystroke,
-        context_stack: &[&DispatchContext],
-    ) -> KeyMatch {
-        let key_match = self
+    fn dispatch_mouse_event(&mut self, event: &dyn Any) {
+        if let Some(mut handlers) = self
             .window
             .current_frame
-            .key_matchers
-            .get_mut(element_id)
-            .unwrap()
-            .match_keystroke(keystroke, context_stack);
+            .mouse_listeners
+            .remove(&event.type_id())
+        {
+            // Because handlers may add other handlers, we sort every time.
+            handlers.sort_by(|(a, _), (b, _)| a.cmp(b));
 
-        if key_match.is_some() {
-            for matcher in self.window.current_frame.key_matchers.values_mut() {
-                matcher.clear_pending();
+            // Capture phase, events bubble from back to front. Handlers for this phase are used for
+            // special purposes, such as detecting events outside of a given Bounds.
+            for (_, handler) in &mut handlers {
+                handler(event, DispatchPhase::Capture, self);
+                if !self.app.propagate_event {
+                    break;
+                }
+            }
+
+            // Bubble phase, where most normal handlers do their work.
+            if self.app.propagate_event {
+                for (_, handler) in handlers.iter_mut().rev() {
+                    handler(event, DispatchPhase::Bubble, self);
+                    if !self.app.propagate_event {
+                        break;
+                    }
+                }
+            }
+
+            if self.app.propagate_event && event.downcast_ref::<MouseUpEvent>().is_some() {
+                self.active_drag = None;
+            }
+
+            // Just in case any handlers added new handlers, which is weird, but possible.
+            handlers.extend(
+                self.window
+                    .current_frame
+                    .mouse_listeners
+                    .get_mut(&event.type_id())
+                    .into_iter()
+                    .flat_map(|handlers| handlers.drain(..)),
+            );
+            self.window
+                .current_frame
+                .mouse_listeners
+                .insert(event.type_id(), handlers);
+        }
+    }
+
+    fn dispatch_key_event(&mut self, event: &dyn Any) {
+        if let Some(node_id) = self.window.focus.and_then(|focus_id| {
+            self.window
+                .current_frame
+                .dispatch_tree
+                .focusable_node_id(focus_id)
+        }) {
+            let dispatch_path = self
+                .window
+                .current_frame
+                .dispatch_tree
+                .dispatch_path(node_id);
+
+            // Capture phase
+            let mut context_stack: SmallVec<[KeyContext; 16]> = SmallVec::new();
+            self.propagate_event = true;
+
+            for node_id in &dispatch_path {
+                let node = self.window.current_frame.dispatch_tree.node(*node_id);
+
+                if !node.context.is_empty() {
+                    context_stack.push(node.context.clone());
+                }
+
+                for key_listener in node.key_listeners.clone() {
+                    key_listener(event, DispatchPhase::Capture, self);
+                    if !self.propagate_event {
+                        return;
+                    }
+                }
+            }
+
+            // Bubble phase
+            for node_id in dispatch_path.iter().rev() {
+                // Handle low level key events
+                let node = self.window.current_frame.dispatch_tree.node(*node_id);
+                for key_listener in node.key_listeners.clone() {
+                    key_listener(event, DispatchPhase::Bubble, self);
+                    if !self.propagate_event {
+                        return;
+                    }
+                }
+
+                // Match keystrokes
+                let node = self.window.current_frame.dispatch_tree.node(*node_id);
+                if !node.context.is_empty() {
+                    if let Some(key_down_event) = event.downcast_ref::<KeyDownEvent>() {
+                        if let Some(action) = self
+                            .window
+                            .current_frame
+                            .dispatch_tree
+                            .dispatch_key(&key_down_event.keystroke, &context_stack)
+                        {
+                            self.dispatch_action_on_node(*node_id, action);
+                            if !self.propagate_event {
+                                return;
+                            }
+                        }
+                    }
+
+                    context_stack.pop();
+                }
+            }
+        }
+    }
+
+    fn dispatch_action_on_node(&mut self, node_id: DispatchNodeId, action: Box<dyn Action>) {
+        let dispatch_path = self
+            .window
+            .current_frame
+            .dispatch_tree
+            .dispatch_path(node_id);
+
+        // Capture phase
+        for node_id in &dispatch_path {
+            let node = self.window.current_frame.dispatch_tree.node(*node_id);
+            for DispatchActionListener {
+                action_type,
+                listener,
+            } in node.action_listeners.clone()
+            {
+                let any_action = action.as_any();
+                if action_type == any_action.type_id() {
+                    listener(any_action, DispatchPhase::Capture, self);
+                    if !self.propagate_event {
+                        return;
+                    }
+                }
             }
         }
 
-        key_match
+        // Bubble phase
+        for node_id in dispatch_path.iter().rev() {
+            let node = self.window.current_frame.dispatch_tree.node(*node_id);
+            for DispatchActionListener {
+                action_type,
+                listener,
+            } in node.action_listeners.clone()
+            {
+                let any_action = action.as_any();
+                if action_type == any_action.type_id() {
+                    self.propagate_event = false; // Actions stop propagation by default during the bubble phase
+                    listener(any_action, DispatchPhase::Bubble, self);
+                    if !self.propagate_event {
+                        return;
+                    }
+                }
+            }
+        }
     }
 
     /// Register the given handler to be invoked whenever the global of the given type
@@ -1336,6 +1365,14 @@ impl<'a> WindowContext<'a> {
         self.window.platform_window.activate();
     }
 
+    pub fn minimize_window(&self) {
+        self.window.platform_window.minimize();
+    }
+
+    pub fn toggle_full_screen(&self) {
+        self.window.platform_window.toggle_full_screen();
+    }
+
     pub fn prompt(
         &self,
         level: PromptLevel,
@@ -1345,106 +1382,22 @@ impl<'a> WindowContext<'a> {
         self.window.platform_window.prompt(level, msg, answers)
     }
 
-    pub fn available_actions(&self) -> impl Iterator<Item = Box<dyn Action>> + '_ {
-        let key_dispatch_stack = &self.window.previous_frame.key_dispatch_stack;
-        key_dispatch_stack.iter().filter_map(|frame| {
-            match frame {
-                // todo!factor out a KeyDispatchStackFrame::Action
-                KeyDispatchStackFrame::Listener {
-                    event_type,
-                    listener: _,
-                } => {
-                    match build_action_from_type(event_type) {
-                        Ok(action) => Some(action),
-                        Err(err) => {
-                            dbg!(err);
-                            None
-                        } // we'll hit his if TypeId == KeyDown
-                    }
-                }
-                KeyDispatchStackFrame::Context(_) => None,
-            }
-        })
+    pub fn available_actions(&self) -> Vec<Box<dyn Action>> {
+        if let Some(focus_id) = self.window.focus {
+            self.window
+                .current_frame
+                .dispatch_tree
+                .available_actions(focus_id)
+        } else {
+            Vec::new()
+        }
     }
 
-    pub(crate) fn dispatch_action_internal(
-        &mut self,
-        action: Box<dyn Action>,
-        dispatch_stack: &[KeyDispatchStackFrame],
-    ) {
-        let action_type = action.as_any().type_id();
-
-        if let Some(mut global_listeners) = self.app.global_action_listeners.remove(&action_type) {
-            for listener in &global_listeners {
-                listener(action.as_ref(), DispatchPhase::Capture, self);
-                if !self.app.propagate_event {
-                    break;
-                }
-            }
-            global_listeners.extend(
-                self.global_action_listeners
-                    .remove(&action_type)
-                    .unwrap_or_default(),
-            );
-            self.global_action_listeners
-                .insert(action_type, global_listeners);
-        }
-
-        if self.app.propagate_event {
-            for stack_frame in dispatch_stack {
-                if let KeyDispatchStackFrame::Listener {
-                    event_type,
-                    listener,
-                } = stack_frame
-                {
-                    if action_type == *event_type {
-                        listener(action.as_any(), &[], DispatchPhase::Capture, self);
-                        if !self.app.propagate_event {
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-
-        if self.app.propagate_event {
-            for stack_frame in dispatch_stack.iter().rev() {
-                if let KeyDispatchStackFrame::Listener {
-                    event_type,
-                    listener,
-                } = stack_frame
-                {
-                    if action_type == *event_type {
-                        self.app.propagate_event = false;
-                        listener(action.as_any(), &[], DispatchPhase::Bubble, self);
-                        if !self.app.propagate_event {
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-
-        if self.app.propagate_event {
-            if let Some(mut global_listeners) =
-                self.app.global_action_listeners.remove(&action_type)
-            {
-                for listener in global_listeners.iter().rev() {
-                    self.app.propagate_event = false;
-                    listener(action.as_ref(), DispatchPhase::Bubble, self);
-                    if !self.app.propagate_event {
-                        break;
-                    }
-                }
-                global_listeners.extend(
-                    self.global_action_listeners
-                        .remove(&action_type)
-                        .unwrap_or_default(),
-                );
-                self.global_action_listeners
-                    .insert(action_type, global_listeners);
-            }
-        }
+    pub fn bindings_for_action(&self, action: &dyn Action) -> Vec<KeyBinding> {
+        self.window
+            .current_frame
+            .dispatch_tree
+            .bindings_for_action(action)
     }
 }
 
@@ -1499,6 +1452,28 @@ impl Context for WindowContext<'_> {
     {
         let entity = self.entities.read(handle);
         read(&*entity, &*self.app)
+    }
+
+    fn read_window<T, R>(
+        &self,
+        window: &WindowHandle<T>,
+        read: impl FnOnce(View<T>, &AppContext) -> R,
+    ) -> Result<R>
+    where
+        T: 'static,
+    {
+        if window.any_handle == self.window.handle {
+            let root_view = self
+                .window
+                .root_view
+                .clone()
+                .unwrap()
+                .downcast::<T>()
+                .map_err(|_| anyhow!("the type of the window's root view has changed"))?;
+            Ok(read(root_view, self))
+        } else {
+            self.app.read_window(window, read)
+        }
     }
 }
 
@@ -1606,56 +1581,50 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
     /// used to associate state with identified elements across separate frames.
     fn with_element_id<R>(
         &mut self,
-        id: impl Into<ElementId>,
-        f: impl FnOnce(GlobalElementId, &mut Self) -> R,
+        id: Option<impl Into<ElementId>>,
+        f: impl FnOnce(&mut Self) -> R,
     ) -> R {
-        let keymap = self.app_mut().keymap.clone();
-        let window = self.window_mut();
-        window.element_id_stack.push(id.into());
-        let global_id = window.element_id_stack.clone();
-
-        if window.current_frame.key_matchers.get(&global_id).is_none() {
-            window.current_frame.key_matchers.insert(
-                global_id.clone(),
-                window
-                    .previous_frame
-                    .key_matchers
-                    .remove(&global_id)
-                    .unwrap_or_else(|| KeyMatcher::new(keymap)),
-            );
+        if let Some(id) = id.map(Into::into) {
+            let window = self.window_mut();
+            window.element_id_stack.push(id.into());
+            let result = f(self);
+            let window: &mut Window = self.borrow_mut();
+            window.element_id_stack.pop();
+            result
+        } else {
+            f(self)
         }
-
-        let result = f(global_id, self);
-        let window: &mut Window = self.borrow_mut();
-        window.element_id_stack.pop();
-        result
     }
 
     /// Invoke the given function with the given content mask after intersecting it
     /// with the current mask.
     fn with_content_mask<R>(
         &mut self,
-        mask: ContentMask<Pixels>,
+        mask: Option<ContentMask<Pixels>>,
         f: impl FnOnce(&mut Self) -> R,
     ) -> R {
-        let mask = mask.intersect(&self.content_mask());
-        self.window_mut()
-            .current_frame
-            .content_mask_stack
-            .push(mask);
-        let result = f(self);
-        self.window_mut().current_frame.content_mask_stack.pop();
-        result
+        if let Some(mask) = mask {
+            let mask = mask.intersect(&self.content_mask());
+            self.window_mut()
+                .current_frame
+                .content_mask_stack
+                .push(mask);
+            let result = f(self);
+            self.window_mut().current_frame.content_mask_stack.pop();
+            result
+        } else {
+            f(self)
+        }
     }
 
     /// Update the global element offset based on the given offset. This is used to implement
     /// scrolling and position drag handles.
     fn with_element_offset<R>(
         &mut self,
-        offset: Option<Point<Pixels>>,
+        offset: Point<Pixels>,
         f: impl FnOnce(&mut Self) -> R,
     ) -> R {
-        let Some(offset) = offset else {
+        if offset.is_zero() {
             return f(self);
         };
 
@@ -1691,7 +1660,9 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
     where
         S: 'static,
     {
-        self.with_element_id(id, |global_id, cx| {
+        self.with_element_id(Some(id), |cx| {
+            let global_id = cx.window().element_id_stack.clone();
+
             if let Some(any) = cx
                 .window_mut()
                 .current_frame
@@ -1819,9 +1790,12 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         }
     }
 
-    // todo!("change this to return a reference");
-    pub fn view(&self) -> View<V> {
-        self.view.clone()
+    pub fn entity_id(&self) -> EntityId {
+        self.view.entity_id()
+    }
+
+    pub fn view(&self) -> &View<V> {
+        self.view
     }
 
     pub fn model(&self) -> Model<V> {
@@ -1844,7 +1818,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     where
         V: 'static,
     {
-        let view = self.view();
+        let view = self.view().clone();
         self.window_cx.on_next_frame(move |cx| view.update(cx, f));
     }
 
@@ -2109,94 +2083,27 @@ impl<'a, V: 'static> ViewContext<'a, V> {
             }));
     }
 
-    pub fn with_key_listeners<R>(
+    pub fn with_key_dispatch<R>(
         &mut self,
-        key_listeners: impl IntoIterator<Item = (TypeId, KeyListener<V>)>,
-        f: impl FnOnce(&mut Self) -> R,
+        context: KeyContext,
+        focus_handle: Option<FocusHandle>,
+        f: impl FnOnce(Option<FocusHandle>, &mut Self) -> R,
     ) -> R {
-        let old_stack_len = self.window.current_frame.key_dispatch_stack.len();
-        if !self.window.current_frame.freeze_key_dispatch_stack {
-            for (event_type, listener) in key_listeners {
-                let handle = self.view().downgrade();
-                let listener = Box::new(
-                    move |event: &dyn Any,
-                          context_stack: &[&DispatchContext],
-                          phase: DispatchPhase,
-                          cx: &mut WindowContext<'_>| {
-                        handle
-                            .update(cx, |view, cx| {
-                                listener(view, event, context_stack, phase, cx)
-                            })
-                            .log_err()
-                            .flatten()
-                    },
-                );
-                self.window.current_frame.key_dispatch_stack.push(
-                    KeyDispatchStackFrame::Listener {
-                        event_type,
-                        listener,
-                    },
-                );
-            }
-        }
-
-        let result = f(self);
-
-        if !self.window.current_frame.freeze_key_dispatch_stack {
-            self.window
+        let window = &mut self.window;
+        window
+            .current_frame
+            .dispatch_tree
+            .push_node(context.clone(), &mut window.previous_frame.dispatch_tree);
+        if let Some(focus_handle) = focus_handle.as_ref() {
+            window
                 .current_frame
-                .key_dispatch_stack
-                .truncate(old_stack_len);
+                .dispatch_tree
+                .make_focusable(focus_handle.id);
         }
+        let result = f(focus_handle, self);
 
-        result
-    }
+        self.window.current_frame.dispatch_tree.pop_node();
 
-    pub fn with_key_dispatch_context<R>(
-        &mut self,
-        context: DispatchContext,
-        f: impl FnOnce(&mut Self) -> R,
-    ) -> R {
-        if context.is_empty() {
-            return f(self);
-        }
-
-        if !self.window.current_frame.freeze_key_dispatch_stack {
-            self.window
-                .current_frame
-                .key_dispatch_stack
-                .push(KeyDispatchStackFrame::Context(context));
-        }
-
-        let result = f(self);
-
-        if !self.window.previous_frame.freeze_key_dispatch_stack {
-            self.window.previous_frame.key_dispatch_stack.pop();
-        }
-
-        result
-    }
-
-    pub fn with_focus<R>(
-        &mut self,
-        focus_handle: FocusHandle,
-        f: impl FnOnce(&mut Self) -> R,
-    ) -> R {
-        if let Some(parent_focus_id) = self.window.current_frame.focus_stack.last().copied() {
-            self.window
-                .current_frame
-                .focus_parents_by_child
-                .insert(focus_handle.id, parent_focus_id);
-        }
-        self.window.current_frame.focus_stack.push(focus_handle.id);
-
-        if Some(focus_handle.id) == self.window.focus {
-            self.window.current_frame.freeze_key_dispatch_stack = true;
-        }
-
-        let result = f(self);
-
-        self.window.current_frame.focus_stack.pop();
         result
     }
 
@@ -2242,12 +2149,38 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         &mut self,
         handler: impl Fn(&mut V, &Event, DispatchPhase, &mut ViewContext<V>) + 'static,
     ) {
-        let handle = self.view();
+        let handle = self.view().clone();
         self.window_cx.on_mouse_event(move |event, phase, cx| {
             handle.update(cx, |view, cx| {
                 handler(view, event, phase, cx);
             })
         });
+    }
+
+    pub fn on_key_event<Event: 'static>(
+        &mut self,
+        handler: impl Fn(&mut V, &Event, DispatchPhase, &mut ViewContext<V>) + 'static,
+    ) {
+        let handle = self.view().clone();
+        self.window_cx.on_key_event(move |event, phase, cx| {
+            handle.update(cx, |view, cx| {
+                handler(view, event, phase, cx);
+            })
+        });
+    }
+
+    pub fn on_action(
+        &mut self,
+        action_type: TypeId,
+        handler: impl Fn(&mut V, &dyn Any, DispatchPhase, &mut ViewContext<V>) + 'static,
+    ) {
+        let handle = self.view().clone();
+        self.window_cx
+            .on_action(action_type, move |action, phase, cx| {
+                handle.update(cx, |view, cx| {
+                    handler(view, action, phase, cx);
+                })
+            });
     }
 
     /// Set an input handler, such as [ElementInputHandler], which interfaces with the
@@ -2315,6 +2248,17 @@ impl<V> Context for ViewContext<'_, V> {
         T: 'static,
     {
         self.window_cx.read_model(handle, read)
+    }
+
+    fn read_window<T, R>(
+        &self,
+        window: &WindowHandle<T>,
+        read: impl FnOnce(View<T>, &AppContext) -> R,
+    ) -> Result<R>
+    where
+        T: 'static,
+    {
+        self.window_cx.read_window(window, read)
     }
 }
 
@@ -2388,7 +2332,7 @@ impl<V: 'static + Render> WindowHandle<V> {
     }
 
     pub fn update<C, R>(
-        self,
+        &self,
         cx: &mut C,
         update: impl FnOnce(&mut V, &mut ViewContext<'_, V>) -> R,
     ) -> Result<R>
@@ -2401,6 +2345,42 @@ impl<V: 'static + Render> WindowHandle<V> {
                 .map_err(|_| anyhow!("the type of the window's root view has changed"))?;
             Ok(cx.update_view(&view, update))
         })?
+    }
+
+    pub fn read<'a>(&self, cx: &'a AppContext) -> Result<&'a V> {
+        let x = cx
+            .windows
+            .get(self.id)
+            .and_then(|window| {
+                window
+                    .as_ref()
+                    .and_then(|window| window.root_view.clone())
+                    .map(|root_view| root_view.downcast::<V>())
+            })
+            .ok_or_else(|| anyhow!("window not found"))?
+            .map_err(|_| anyhow!("the type of the window's root view has changed"))?;
+
+        Ok(x.read(cx))
+    }
+
+    pub fn read_with<C, R>(&self, cx: &C, read_with: impl FnOnce(&V, &AppContext) -> R) -> Result<R>
+    where
+        C: Context,
+    {
+        cx.read_window(self, |root_view, cx| read_with(root_view.read(cx), cx))
+    }
+
+    pub fn root_view<C>(&self, cx: &C) -> Result<View<V>>
+    where
+        C: Context,
+    {
+        cx.read_window(self, |root_view, _cx| root_view.clone())
+    }
+
+    pub fn is_active(&self, cx: &WindowContext) -> Option<bool> {
+        cx.windows
+            .get(self.id)
+            .and_then(|window| window.as_ref().map(|window| window.active))
     }
 }
 
@@ -2466,6 +2446,18 @@ impl AnyWindowHandle {
         C: Context,
     {
         cx.update_window(self, update)
+    }
+
+    pub fn read<T, C, R>(self, cx: &C, read: impl FnOnce(View<T>, &AppContext) -> R) -> Result<R>
+    where
+        C: Context,
+        T: 'static,
+    {
+        let view = self
+            .downcast::<T>()
+            .context("the type of the window's root view has changed")?;
+
+        cx.read_window(&view, read)
     }
 }
 

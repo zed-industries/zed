@@ -1,4 +1,4 @@
-use gpui::{rems, svg, Hsla};
+use gpui::{rems, svg};
 use strum::EnumIter;
 
 use crate::prelude::*;
@@ -8,38 +8,6 @@ pub enum IconSize {
     Small,
     #[default]
     Medium,
-}
-
-#[derive(Default, PartialEq, Copy, Clone)]
-pub enum IconColor {
-    #[default]
-    Default,
-    Muted,
-    Disabled,
-    Placeholder,
-    Accent,
-    Error,
-    Warning,
-    Success,
-    Info,
-    Selected,
-}
-
-impl IconColor {
-    pub fn color(self, cx: &WindowContext) -> Hsla {
-        match self {
-            IconColor::Default => cx.theme().colors().icon,
-            IconColor::Muted => cx.theme().colors().icon_muted,
-            IconColor::Disabled => cx.theme().colors().icon_disabled,
-            IconColor::Placeholder => cx.theme().colors().icon_placeholder,
-            IconColor::Accent => cx.theme().colors().icon_accent,
-            IconColor::Error => cx.theme().status().error,
-            IconColor::Warning => cx.theme().status().warning,
-            IconColor::Success => cx.theme().status().success,
-            IconColor::Info => cx.theme().status().info,
-            IconColor::Selected => cx.theme().colors().icon_accent,
-        }
-    }
 }
 
 #[derive(Debug, PartialEq, Copy, Clone, EnumIter)]
@@ -165,21 +133,29 @@ impl Icon {
 
 #[derive(Component)]
 pub struct IconElement {
-    icon: Icon,
-    color: IconColor,
+    path: SharedString,
+    color: TextColor,
     size: IconSize,
 }
 
 impl IconElement {
     pub fn new(icon: Icon) -> Self {
         Self {
-            icon,
-            color: IconColor::default(),
+            path: icon.path().into(),
+            color: TextColor::default(),
             size: IconSize::default(),
         }
     }
 
-    pub fn color(mut self, color: IconColor) -> Self {
+    pub fn from_path(path: impl Into<SharedString>) -> Self {
+        Self {
+            path: path.into(),
+            color: TextColor::default(),
+            size: IconSize::default(),
+        }
+    }
+
+    pub fn color(mut self, color: TextColor) -> Self {
         self.color = color;
         self
     }
@@ -198,7 +174,7 @@ impl IconElement {
         svg()
             .size(svg_size)
             .flex_none()
-            .path(self.icon.path())
+            .path(self.path)
             .text_color(self.color.color(cx))
     }
 }

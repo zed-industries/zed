@@ -6,13 +6,14 @@ mod color;
 mod element;
 mod elements;
 mod executor;
-mod focusable;
 mod geometry;
 mod image_cache;
 mod input;
 mod interactive;
+mod key_dispatch;
 mod keymap;
 mod platform;
+pub mod prelude;
 mod scene;
 mod style;
 mod styled;
@@ -41,12 +42,12 @@ pub use ctor::ctor;
 pub use element::*;
 pub use elements::*;
 pub use executor::*;
-pub use focusable::*;
 pub use geometry::*;
 pub use gpui2_macros::*;
 pub use image_cache::*;
 pub use input::*;
 pub use interactive::*;
+pub use key_dispatch::*;
 pub use keymap::*;
 pub use platform::*;
 use private::Sealed;
@@ -104,6 +105,14 @@ pub trait Context {
     fn update_window<T, F>(&mut self, window: AnyWindowHandle, f: F) -> Result<T>
     where
         F: FnOnce(AnyView, &mut WindowContext<'_>) -> T;
+
+    fn read_window<T, R>(
+        &self,
+        window: &WindowHandle<T>,
+        read: impl FnOnce(View<T>, &AppContext) -> R,
+    ) -> Result<R>
+    where
+        T: 'static;
 }
 
 pub trait VisualContext: Context {
@@ -147,7 +156,7 @@ pub enum GlobalKey {
 }
 
 pub trait BorrowAppContext {
-    fn with_text_style<F, R>(&mut self, style: TextStyleRefinement, f: F) -> R
+    fn with_text_style<F, R>(&mut self, style: Option<TextStyleRefinement>, f: F) -> R
     where
         F: FnOnce(&mut Self) -> R;
 
@@ -158,14 +167,18 @@ impl<C> BorrowAppContext for C
 where
     C: BorrowMut<AppContext>,
 {
-    fn with_text_style<F, R>(&mut self, style: TextStyleRefinement, f: F) -> R
+    fn with_text_style<F, R>(&mut self, style: Option<TextStyleRefinement>, f: F) -> R
     where
         F: FnOnce(&mut Self) -> R,
     {
-        self.borrow_mut().push_text_style(style);
-        let result = f(self);
-        self.borrow_mut().pop_text_style();
-        result
+        if let Some(style) = style {
+            self.borrow_mut().push_text_style(style);
+            let result = f(self);
+            self.borrow_mut().pop_text_style();
+            result
+        } else {
+            f(self)
+        }
     }
 
     fn set_global<G: 'static>(&mut self, global: G) {
