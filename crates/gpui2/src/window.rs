@@ -216,7 +216,7 @@ pub struct Window {
 
 // #[derive(Default)]
 pub(crate) struct Frame {
-    element_states: HashMap<GlobalElementId, AnyBox>,
+    pub(crate) element_states: HashMap<GlobalElementId, AnyBox>,
     mouse_listeners: HashMap<TypeId, Vec<(StackingOrder, AnyMouseListener)>>,
     pub(crate) dispatch_tree: DispatchTree,
     pub(crate) focus_listeners: Vec<AnyFocusListener>,

@@ -711,6 +711,12 @@ pub struct DivState {
     interactive_state: InteractiveElementState,
 }
 
+impl DivState {
+    pub fn is_active(&self) -> bool {
+        self.interactive_state.pending_mouse_down.lock().is_some()
+    }
+}
+
 pub struct Interactivity<V> {
     pub element_id: Option<ElementId>,
     pub key_context: KeyContext,
