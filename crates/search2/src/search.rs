@@ -1,6 +1,6 @@
 use bitflags::bitflags;
 pub use buffer_search::BufferSearchBar;
-use gpui::{actions, Action, AnyElement, AppContext, Component, Element, Svg, View};
+use gpui::{actions, Action, AppContext, Component};
 pub use mode::SearchMode;
 use project::search::SearchQuery;
 use ui::ButtonVariant;
@@ -106,9 +106,8 @@ fn toggle_replace_button<V: 'static>(active: bool) -> impl Component<V> {
         .when(active, |button| button.variant(ButtonVariant::Filled))
 }
 
-fn replace_action<V: 'static>(
+fn render_replace_button<V: 'static>(
     action: impl Action + 'static + Send + Sync,
-    name: &'static str,
     icon: ui::Icon,
 ) -> impl Component<V> {
     // todo: add tooltip

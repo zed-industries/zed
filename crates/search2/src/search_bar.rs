@@ -1,28 +1,19 @@
 use std::{borrow::Cow, sync::Arc};
 
 use gpui::{div, Action, Component, ViewContext};
-use ui::{Button, ButtonVariant};
+use ui::{Button, ButtonVariant, IconButton};
 use workspace::searchable::Direction;
 
 use crate::mode::{SearchMode, Side};
 
 pub(super) fn render_nav_button<V: 'static>(
-    icon: &'static str,
+    icon: ui::Icon,
     direction: Direction,
+
     active: bool,
     on_click: impl Fn(&mut V, &mut ViewContext<V>) + 'static + Send + Sync,
     cx: &mut ViewContext<V>,
 ) -> impl Component<V> {
-    let tooltip;
-
-    match direction {
-        Direction::Prev => {
-            tooltip = "Select Previous Match";
-        }
-        Direction::Next => {
-            tooltip = "Select Next Match";
-        }
-    };
     // let tooltip_style = cx.theme().tooltip.clone();
     // let cursor_style = if active {
     //     CursorStyle::PointingHand
@@ -30,7 +21,7 @@ pub(super) fn render_nav_button<V: 'static>(
     //     CursorStyle::default()
     // };
     // enum NavButton {}
-    Button::new(icon).on_click(Arc::new(on_click))
+    IconButton::new("search-nav-button", icon).on_click(on_click)
     // MouseEventHandler::new::<NavButton, _>(direction as usize, cx, |state, cx| {
     //     let theme = cx.theme();
     //     let style = theme

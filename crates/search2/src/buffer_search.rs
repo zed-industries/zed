@@ -11,8 +11,8 @@ use editor::Editor;
 use futures::channel::oneshot;
 use gpui::{
     action, actions, div, red, Action, AppContext, Component, Div, EventEmitter,
-    ParentComponent as _, Render, Styled, Subscription, Task, View, ViewContext,
-    VisualContext as _, WindowContext,
+    InteractiveComponent, ParentComponent as _, Render, Styled, Subscription, Task, View,
+    ViewContext, VisualContext as _, WindowContext,
 };
 use project::search::SearchQuery;
 use std::{any::Any, sync::Arc};
@@ -38,7 +38,6 @@ pub enum Event {
 }
 
 pub fn init(cx: &mut AppContext) {
-    dbg!("Registered");
     cx.observe_new_views(|workspace: &mut Workspace, _| BufferSearchBar::register(workspace))
         .detach();
 }
@@ -78,45 +77,51 @@ impl Render for BufferSearchBar {
             .map(|active_searchable_item| active_searchable_item.supported_options())
             .unwrap_or_default();
 
-        // let previous_query_keystrokes =
-        //     cx.binding_for_action(&PreviousHistoryQuery {})
-        //         .map(|binding| {
-        //             binding
-        //                 .keystrokes()
-        //                 .iter()
-        //                 .map(|k| k.to_string())
-        //                 .collect::<Vec<_>>()
-        //         });
-        // let next_query_keystrokes = cx.binding_for_action(&NextHistoryQuery {}).map(|binding| {
-        //     binding
-        //         .keystrokes()
-        //         .iter()
-        //         .map(|k| k.to_string())
-        //         .collect::<Vec<_>>()
-        // });
-        // let new_placeholder_text = match (previous_query_keystrokes, next_query_keystrokes) {
-        //     (Some(previous_query_keystrokes), Some(next_query_keystrokes)) => {
-        //         format!(
-        //             "Search ({}/{} for previous/next query)",
-        //             previous_query_keystrokes.join(" "),
-        //             next_query_keystrokes.join(" ")
-        //         )
-        //     }
-        //     (None, Some(next_query_keystrokes)) => {
-        //         format!(
-        //             "Search ({} for next query)",
-        //             next_query_keystrokes.join(" ")
-        //         )
-        //     }
-        //     (Some(previous_query_keystrokes), None) => {
-        //         format!(
-        //             "Search ({} for previous query)",
-        //             previous_query_keystrokes.join(" ")
-        //         )
-        //     }
-        //     (None, None) => String::new(),
-        // };
-        let new_placeholder_text = Arc::from("Search for..");
+        let previous_query_keystrokes = cx
+            .bindings_for_action(&PreviousHistoryQuery {})
+            .into_iter()
+            .next()
+            .map(|binding| {
+                binding
+                    .keystrokes()
+                    .iter()
+                    .map(|k| k.to_string())
+                    .collect::<Vec<_>>()
+            });
+        let next_query_keystrokes = cx
+            .bindings_for_action(&NextHistoryQuery {})
+            .into_iter()
+            .next()
+            .map(|binding| {
+                binding
+                    .keystrokes()
+                    .iter()
+                    .map(|k| k.to_string())
+                    .collect::<Vec<_>>()
+            });
+        let new_placeholder_text = match (previous_query_keystrokes, next_query_keystrokes) {
+            (Some(previous_query_keystrokes), Some(next_query_keystrokes)) => {
+                format!(
+                    "Search ({}/{} for previous/next query)",
+                    previous_query_keystrokes.join(" "),
+                    next_query_keystrokes.join(" ")
+                )
+            }
+            (None, Some(next_query_keystrokes)) => {
+                format!(
+                    "Search ({} for next query)",
+                    next_query_keystrokes.join(" ")
+                )
+            }
+            (Some(previous_query_keystrokes), None) => {
+                format!(
+                    "Search ({} for previous query)",
+                    previous_query_keystrokes.join(" ")
+                )
+            }
+            (None, None) => String::new(),
+        };
+        let new_placeholder_text = Arc::from(new_placeholder_text);
         self.query_editor.update(cx, |editor, cx| {
             editor.set_placeholder_text(new_placeholder_text, cx);
         });
@@ -159,9 +164,9 @@ impl Render for BufferSearchBar {
 
                 Some(ui::Label::new(message))
             });
-        let nav_button_for_direction = |label, direction, cx: &mut ViewContext<Self>| {
+        let nav_button_for_direction = |icon, direction, cx: &mut ViewContext<Self>| {
             render_nav_button(
-                label,
+                icon,
                 direction,
                 self.active_match_index.is_some(),
                 move |this, cx| match direction {
@@ -172,12 +177,32 @@ impl Render for BufferSearchBar {
             )
         };
         let should_show_replace_input = self.replace_enabled && supported_options.replacement;
-        let replace_all = should_show_replace_input.then(|| {
-            super::replace_action::<Self>(ReplaceAll, "Replace all", ui::Icon::ReplaceAll)
-        });
+        let replace_all = should_show_replace_input
+            .then(|| super::render_replace_button::<Self>(ReplaceAll, ui::Icon::ReplaceAll));
         let replace_next = should_show_replace_input
-            .then(|| super::replace_action::<Self>(ReplaceNext, "Replace next", ui::Icon::Replace));
+            .then(|| super::render_replace_button::<Self>(ReplaceNext, ui::Icon::Replace));
+        let in_replace = self.replacement_editor.focus_handle(cx).is_focused(cx);
+
         h_stack()
+            .key_context("BufferSearchBar")
+            .when(in_replace, |this| {
+                this.key_context("in_replace")
+                    .on_action(Self::replace_next)
+                    .on_action(Self::replace_all)
+            })
+            .on_action(Self::previous_history_query)
+            .on_action(Self::next_history_query)
+            .when(supported_options.case, |this| {
+                this.on_action(Self::toggle_case_sensitive)
+            })
+            .when(supported_options.word, |this| {
+                this.on_action(Self::toggle_whole_word)
+            })
+            .when(supported_options.replacement, |this| {
+                this.on_action(Self::toggle_replace)
+            })
+            .on_action(Self::select_next_match)
+            .on_action(Self::select_prev_match)
             .w_full()
             .p_1()
             .child(
@@ -226,9 +251,18 @@ impl Render for BufferSearchBar {
                 h_stack()
                     .gap_0p5()
                     .flex_none()
+                    .child(self.render_action_button(cx))
                     .children(match_count)
-                    .child(nav_button_for_direction("<", Direction::Prev, cx))
-                    .child(nav_button_for_direction(">", Direction::Next, cx)),
+                    .child(nav_button_for_direction(
+                        ui::Icon::ChevronLeft,
+                        Direction::Prev,
+                        cx,
+                    ))
+                    .child(nav_button_for_direction(
+                        ui::Icon::ChevronRight,
+                        Direction::Next,
+                        cx,
+                    )),
             )
 
         // let query_column = Flex::row()
@@ -343,7 +377,7 @@ impl ToolbarItemView for BufferSearchBar {
         cx.notify();
         self.active_searchable_item_subscription.take();
         self.active_searchable_item.take();
-        dbg!("Take?");
+
         self.pending_search.take();
 
         if let Some(searchable_item_handle) =
@@ -382,7 +416,8 @@ impl BufferSearchBar {
         workspace.register_action(|workspace, a: &Deploy, cx| {
             workspace.active_pane().update(cx, |this, cx| {
                 this.toolbar().update(cx, |this, cx| {
-                    if this.item_of_type::<BufferSearchBar>().is_some() {
+                    if let Some(search_bar) = this.item_of_type::<BufferSearchBar>() {
+                        search_bar.update(cx, |this, cx| this.dismiss(&Dismiss, cx));
                         return;
                     }
                     let view = cx.build_view(|cx| BufferSearchBar::new(cx));
@@ -392,46 +427,8 @@ impl BufferSearchBar {
                 })
             });
         });
-        fn register_action<A: Action>(
-            workspace: &mut Workspace,
-            update: fn(&mut BufferSearchBar, &mut ViewContext<'_, BufferSearchBar>),
-        ) {
-            workspace.register_action(move |workspace, _: &A, cx| {
-                workspace.active_pane().update(cx, move |this, cx| {
-                    this.toolbar().update(cx, move |toolbar, cx| {
-                        let Some(search_bar) = toolbar.item_of_type::<BufferSearchBar>() else {
-                            return;
-                        };
-                        search_bar.update(cx, |this, cx| update(this, cx))
-                    })
-                });
-            });
-        }
-        register_action::<ToggleCaseSensitive>(workspace, |this, cx| {
-            this.toggle_search_option(SearchOptions::CASE_SENSITIVE, cx)
-        });
-        register_action::<ToggleWholeWord>(workspace, |this: &mut BufferSearchBar, cx| {
-            this.toggle_search_option(SearchOptions::WHOLE_WORD, cx)
-        });
-        register_action::<ToggleReplace>(workspace, |this: &mut BufferSearchBar, cx| {
-            dbg!("Toggling");
-            this.toggle_replace(&ToggleReplace, cx)
-        });
-        // workspace.register_action(|workspace, _: &ToggleCaseSensitive, cx| {
-        //     workspace.active_pane().update(cx, |this, cx| {
-        //         this.toolbar().update(cx, |toolbar, cx| {
-        //             let Some(search_bar) = toolbar.item_of_type::<BufferSearchBar>() else {
-        //                 return;
-        //             };
-        //             search_bar.update(cx, |this, cx| {
-        //                 this.toggle_search_option(SearchOptions::CASE_SENSITIVE, cx);
-        //             })
-        //         })
-        //     });
-        // });
     }
     pub fn new(cx: &mut ViewContext<Self>) -> Self {
-        dbg!("New");
         let query_editor = cx.build_view(|cx| Editor::single_line(cx));
         cx.subscribe(&query_editor, Self::on_query_editor_event)
             .detach();
@@ -463,7 +460,7 @@ impl BufferSearchBar {
 
     pub fn dismiss(&mut self, _: &Dismiss, cx: &mut ViewContext<Self>) {
         self.dismissed = true;
-        dbg!("Dismissed :(");
+
         for searchable_item in self.searchable_items_with_matches.keys() {
             if let Some(searchable_item) =
                 WeakSearchableItemHandle::upgrade(searchable_item.as_ref(), cx)
@@ -495,10 +492,9 @@ impl BufferSearchBar {
 
     pub fn show(&mut self, cx: &mut ViewContext<Self>) -> bool {
         if self.active_searchable_item.is_none() {
-            dbg!("Hey");
             return false;
         }
-        dbg!("not dismissed");
+
         self.dismissed = false;
         cx.notify();
         cx.emit(Event::UpdateLocation);
@@ -590,13 +586,7 @@ impl BufferSearchBar {
         self.update_matches(cx)
     }
 
-    fn render_action_button(
-        &self,
-        icon: &'static str,
-        cx: &mut ViewContext<Self>,
-    ) -> impl Component<Self> {
-        let tooltip = "Select All Matches";
-        let theme = cx.theme();
+    fn render_action_button(&self, cx: &mut ViewContext<Self>) -> impl Component<Self> {
         // let tooltip_style = theme.tooltip.clone();
 
         // let style = theme.search.action_button.clone();
@@ -695,8 +685,13 @@ impl BufferSearchBar {
                     .searchable_items_with_matches
                     .get(&searchable_item.downgrade())
                 {
-                    let new_match_index = searchable_item
-                        .match_index_for_direction(matches, index, direction, count, cx);
+                    let new_match_index = searchable_item.match_index_for_direction(
+                        matches,
+                        index,
+                        direction,
+                        dbg!(count),
+                        cx,
+                    );
                     searchable_item.update_matches(matches, cx);
                     searchable_item.activate_match(new_match_index, matches, cx);
                 }
@@ -769,6 +764,7 @@ impl BufferSearchBar {
     }
 
     fn on_active_searchable_item_event(&mut self, event: &SearchEvent, cx: &mut ViewContext<Self>) {
+        dbg!(&event);
         match event {
             SearchEvent::MatchesInvalidated => {
                 let _ = self.update_matches(cx);
@@ -777,6 +773,12 @@ impl BufferSearchBar {
         }
     }
 
+    fn toggle_case_sensitive(&mut self, _: &ToggleCaseSensitive, cx: &mut ViewContext<Self>) {
+        self.toggle_search_option(SearchOptions::CASE_SENSITIVE, cx)
+    }
+    fn toggle_whole_word(&mut self, _: &ToggleWholeWord, cx: &mut ViewContext<Self>) {
+        self.toggle_search_option(SearchOptions::WHOLE_WORD, cx)
+    }
     fn clear_matches(&mut self, cx: &mut ViewContext<Self>) {
         let mut active_item_matches = None;
         for (searchable_item, matches) in self.searchable_items_with_matches.drain() {
@@ -799,7 +801,7 @@ impl BufferSearchBar {
         let (done_tx, done_rx) = oneshot::channel();
         let query = self.query(cx);
         self.pending_search.take();
-        dbg!("update_matches");
+
         if let Some(active_searchable_item) = self.active_searchable_item.as_ref() {
             if query.is_empty() {
                 self.active_match_index.take();
@@ -841,26 +843,23 @@ impl BufferSearchBar {
                 .into();
                 self.active_search = Some(query.clone());
                 let query_text = query.as_str().to_string();
-                dbg!(&query_text);
+
                 let matches = active_searchable_item.find_matches(query, cx);
 
                 let active_searchable_item = active_searchable_item.downgrade();
                 self.pending_search = Some(cx.spawn(|this, mut cx| async move {
                     let matches = matches.await;
-                    //dbg!(&matches);
+
                     this.update(&mut cx, |this, cx| {
-                        dbg!("Updating!!");
                         if let Some(active_searchable_item) =
                             WeakSearchableItemHandle::upgrade(active_searchable_item.as_ref(), cx)
                         {
-                            dbg!("in if!!");
                             this.searchable_items_with_matches
                                 .insert(active_searchable_item.downgrade(), matches);
 
                             this.update_match_index(cx);
                             this.search_history.add(query_text);
                             if !this.dismissed {
-                                dbg!("Not dismissed");
                                 let matches = this
                                     .searchable_items_with_matches
                                     .get(&active_searchable_item.downgrade())
