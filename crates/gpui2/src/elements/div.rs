@@ -437,14 +437,6 @@ pub trait FocusableComponent<V: 'static>: InteractiveComponent<V> {
         self
     }
 
-    fn focus_in(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self
-    where
-        Self: Sized,
-    {
-        self.interactivity().focus_in_style = f(StyleRefinement::default());
-        self
-    }
-
     fn in_focus(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self
     where
         Self: Sized,
@@ -730,7 +722,6 @@ pub struct Interactivity<V> {
     pub group: Option<SharedString>,
     pub base_style: StyleRefinement,
     pub focus_style: StyleRefinement,
-    pub focus_in_style: StyleRefinement,
     pub in_focus_style: StyleRefinement,
     pub hover_style: StyleRefinement,
     pub group_hover_style: Option<GroupStyle>,
@@ -1113,10 +1104,6 @@ where
         style.refine(&self.base_style);
 
         if let Some(focus_handle) = self.tracked_focus_handle.as_ref() {
-            if focus_handle.contains_focused(cx) {
-                style.refine(&self.focus_in_style);
-            }
-
             if focus_handle.within_focused(cx) {
                 style.refine(&self.in_focus_style);
             }
@@ -1189,7 +1176,6 @@ impl<V: 'static> Default for Interactivity<V> {
             group: None,
             base_style: StyleRefinement::default(),
             focus_style: StyleRefinement::default(),
-            focus_in_style: StyleRefinement::default(),
             in_focus_style: StyleRefinement::default(),
             hover_style: StyleRefinement::default(),
             group_hover_style: None,
