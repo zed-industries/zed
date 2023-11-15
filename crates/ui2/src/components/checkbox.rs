@@ -1,9 +1,5 @@
+use gpui::{div, prelude::*, Component, ElementId, Styled, ViewContext};
 use std::sync::Arc;
-
-use gpui::{
-    div, Component, ElementId, ParentElement, StatefulInteractive, StatelessInteractive, Styled,
-    ViewContext,
-};
 use theme2::ActiveTheme;
 
 use crate::{Icon, IconElement, Selection, TextColor};

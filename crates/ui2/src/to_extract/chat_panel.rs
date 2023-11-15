@@ -1,7 +1,6 @@
+use crate::{prelude::*, Icon, IconButton, Input, Label};
 use chrono::NaiveDateTime;
-
-use crate::prelude::*;
-use crate::{Icon, IconButton, Input, Label, TextColor};
+use gpui::prelude::*;
 
 #[derive(Component)]
 pub struct ChatPanel {

@@ -36,12 +36,11 @@ use futures::{
     Future, FutureExt, StreamExt,
 };
 use gpui::{
-    actions, div, point, rems, size, Action, AnyModel, AnyView, AnyWeakView, AppContext,
-    AsyncAppContext, AsyncWindowContext, Bounds, Component, Div, Entity, EntityId, EventEmitter,
-    FocusHandle, GlobalPixels, KeyContext, Model, ModelContext, ParentElement, Point, Render, Size,
-    StatefulInteractive, StatelessInteractive, StatelessInteractivity, Styled, Subscription, Task,
-    View, ViewContext, VisualContext, WeakView, WindowBounds, WindowContext, WindowHandle,
-    WindowOptions,
+    actions, div, point, prelude::*, rems, size, Action, AnyModel, AnyView, AnyWeakView,
+    AppContext, AsyncAppContext, AsyncWindowContext, Bounds, Component, Div, Entity, EntityId,
+    EventEmitter, FocusHandle, GlobalPixels, KeyContext, Model, ModelContext, ParentComponent,
+    Point, Render, Size, Styled, Subscription, Task, View, ViewContext, WeakView, WindowBounds,
+    WindowContext, WindowHandle, WindowOptions,
 };
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, ProjectItem};
 use itertools::Itertools;
@@ -348,7 +347,6 @@ struct Follower {
 impl AppState {
     #[cfg(any(test, feature = "test-support"))]
     pub fn test(cx: &mut AppContext) -> Arc<Self> {
-        use gpui::Context;
         use node_runtime::FakeNodeRuntime;
         use settings2::SettingsStore;
 
@@ -436,13 +434,7 @@ pub enum Event {
 pub struct Workspace {
     weak_self: WeakView<Self>,
     focus_handle: FocusHandle,
-    workspace_actions: Vec<
-        Box<
-            dyn Fn(
-                Div<Workspace, StatelessInteractivity<Workspace>>,
-            ) -> Div<Workspace, StatelessInteractivity<Workspace>>,
-        >,
-    >,
+    workspace_actions: Vec<Box<dyn Fn(Div<Workspace>) -> Div<Workspace>>>,
     zoomed: Option<AnyWeakView>,
     zoomed_position: Option<DockPosition>,
     center: PaneGroup,
@@ -3412,7 +3404,6 @@ impl Workspace {
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn test_new(project: Model<Project>, cx: &mut ViewContext<Self>) -> Self {
-        use gpui::Context;
         use node_runtime::FakeNodeRuntime;
 
         let client = project.read(cx).client();
@@ -3477,10 +3468,7 @@ impl Workspace {
         self
     }
 
-    fn add_workspace_actions_listeners(
-        &self,
-        mut div: Div<Workspace, StatelessInteractivity<Workspace>>,
-    ) -> Div<Workspace, StatelessInteractivity<Workspace>> {
+    fn add_workspace_actions_listeners(&self, mut div: Div<Workspace>) -> Div<Workspace> {
         for action in self.workspace_actions.iter() {
             div = (action)(div)
         }
@@ -3717,7 +3705,7 @@ impl Render for Workspace {
         let ui_font = ThemeSettings::get_global(cx).ui_font.family.clone();
 
         self.add_workspace_actions_listeners(div())
-            .context(context)
+            .key_context(context)
             .relative()
             .size_full()
             .flex()

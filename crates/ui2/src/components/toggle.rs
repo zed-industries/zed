@@ -1,4 +1,4 @@
-use gpui::{div, Component, ParentElement};
+use gpui::{div, Component, ParentComponent};
 
 use crate::{Icon, IconElement, IconSize, TextColor};
 

@@ -2,8 +2,9 @@ use collections::HashMap;
 use editor::{scroll::autoscroll::Autoscroll, Bias, Editor};
 use fuzzy::{CharBag, PathMatch, PathMatchCandidate};
 use gpui::{
-    actions, div, AppContext, Component, Div, EventEmitter, Model, ParentElement, Render,
-    StatelessInteractive, Styled, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
+    actions, div, AppContext, Component, Div, EventEmitter, InteractiveComponent, Model,
+    ParentComponent, Render, Styled, Task, View, ViewContext, VisualContext, WeakView,
+    WindowContext,
 };
 use picker::{Picker, PickerDelegate};
 use project::{PathMatchCandidateSet, Project, ProjectPath, WorktreeId};
@@ -32,9 +33,7 @@ pub fn init(cx: &mut AppContext) {
 
 impl FileFinder {
     fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
-        dbg!("REGISTERING");
         workspace.register_action(|workspace, _: &Toggle, cx| {
-            dbg!("CALLING ACTION");
             let Some(file_finder) = workspace.current_modal::<Self>(cx) else {
                 Self::open(workspace, cx);
                 return;
@@ -593,7 +592,6 @@ impl PickerDelegate for FileFinderDelegate {
     }
 
     fn confirm(&mut self, secondary: bool, cx: &mut ViewContext<Picker<FileFinderDelegate>>) {
-        dbg!("CONFIRMING???");
         if let Some(m) = self.matches.get(self.selected_index()) {
             if let Some(workspace) = self.workspace.upgrade() {
                 let open_task = workspace.update(cx, move |workspace, cx| {
@@ -691,7 +689,6 @@ impl PickerDelegate for FileFinderDelegate {
                                 .log_err();
                         }
                     }
-                    dbg!("DISMISSING");
                     finder
                         .update(&mut cx, |_, cx| cx.emit(ModalEvent::Dismissed))
                         .ok()?;

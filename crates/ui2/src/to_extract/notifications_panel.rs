@@ -1,10 +1,9 @@
-use crate::utils::naive_format_distance_from_now;
 use crate::{
-    h_stack, prelude::*, static_new_notification_items_2, v_stack, Avatar, ButtonOrIconButton,
-    Icon, IconElement, Label, LineHeightStyle, ListHeaderMeta, ListSeparator, PublicPlayer,
-    TextColor, UnreadIndicator,
+    h_stack, prelude::*, static_new_notification_items_2, utils::naive_format_distance_from_now,
+    v_stack, Avatar, ButtonOrIconButton, ClickHandler, Icon, IconElement, Label, LineHeightStyle,
+    ListHeader, ListHeaderMeta, ListSeparator, PublicPlayer, TextColor, UnreadIndicator,
 };
-use crate::{ClickHandler, ListHeader};
+use gpui::prelude::*;
 
 #[derive(Component)]
 pub struct NotificationsPanel {

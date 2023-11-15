@@ -1,6 +1,6 @@
 use gpui::{
-    div, px, AnyView, Div, EventEmitter, FocusHandle, ParentElement, Render, StatelessInteractive,
-    Styled, Subscription, View, ViewContext, VisualContext, WindowContext,
+    div, prelude::*, px, AnyView, Div, EventEmitter, FocusHandle, Render, Subscription, View,
+    ViewContext, WindowContext,
 };
 use ui::{h_stack, v_stack};
 

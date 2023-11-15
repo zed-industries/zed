@@ -1,35 +1,28 @@
 use crate::{
-    div, AnyElement, BorrowWindow, Bounds, Component, Div, DivState, Element, ElementId,
-    ElementInteractivity, FocusListeners, Focusable, FocusableKeyDispatch, KeyDispatch, LayoutId,
-    NonFocusableKeyDispatch, Pixels, SharedString, StatefulInteractive, StatefulInteractivity,
-    StatelessInteractive, StatelessInteractivity, StyleRefinement, Styled, ViewContext,
+    AnyElement, BorrowWindow, Bounds, Component, Element, InteractiveComponent,
+    InteractiveElementState, Interactivity, LayoutId, Pixels, SharedString, StyleRefinement,
+    Styled, ViewContext,
 };
 use futures::FutureExt;
 use util::ResultExt;
 
-pub struct Img<
-    V: 'static,
-    I: ElementInteractivity<V> = StatelessInteractivity<V>,
-    F: KeyDispatch<V> = NonFocusableKeyDispatch,
-> {
-    base: Div<V, I, F>,
+pub struct Img<V: 'static> {
+    interactivity: Interactivity<V>,
     uri: Option<SharedString>,
     grayscale: bool,
 }
 
-pub fn img<V: 'static>() -> Img<V, StatelessInteractivity<V>, NonFocusableKeyDispatch> {
+pub fn img<V: 'static>() -> Img<V> {
     Img {
-        base: div(),
+        interactivity: Interactivity::default(),
         uri: None,
         grayscale: false,
     }
 }
 
-impl<V, I, F> Img<V, I, F>
+impl<V> Img<V>
 where
     V: 'static,
-    I: ElementInteractivity<V>,
-    F: KeyDispatch<V>,
 {
     pub fn uri(mut self, uri: impl Into<SharedString>) -> Self {
         self.uri = Some(uri.into());
@@ -42,145 +35,90 @@ where
     }
 }
 
-impl<V, F> Img<V, StatelessInteractivity<V>, F>
-where
-    F: KeyDispatch<V>,
-{
-    pub fn id(self, id: impl Into<ElementId>) -> Img<V, StatefulInteractivity<V>, F> {
-        Img {
-            base: self.base.id(id),
-            uri: self.uri,
-            grayscale: self.grayscale,
-        }
-    }
-}
-
-impl<V, I, F> Component<V> for Img<V, I, F>
-where
-    I: ElementInteractivity<V>,
-    F: KeyDispatch<V>,
-{
+impl<V> Component<V> for Img<V> {
     fn render(self) -> AnyElement<V> {
         AnyElement::new(self)
     }
 }
 
-impl<V, I, F> Element<V> for Img<V, I, F>
-where
-    I: ElementInteractivity<V>,
-    F: KeyDispatch<V>,
-{
-    type ElementState = DivState;
+impl<V> Element<V> for Img<V> {
+    type ElementState = InteractiveElementState;
 
-    fn id(&self) -> Option<crate::ElementId> {
-        self.base.id()
+    fn element_id(&self) -> Option<crate::ElementId> {
+        self.interactivity.element_id.clone()
     }
 
     fn initialize(
         &mut self,
-        view_state: &mut V,
+        _view_state: &mut V,
         element_state: Option<Self::ElementState>,
         cx: &mut ViewContext<V>,
     ) -> Self::ElementState {
-        self.base.initialize(view_state, element_state, cx)
+        self.interactivity.initialize(element_state, cx)
     }
 
     fn layout(
         &mut self,
-        view_state: &mut V,
+        _view_state: &mut V,
         element_state: &mut Self::ElementState,
         cx: &mut ViewContext<V>,
     ) -> LayoutId {
-        self.base.layout(view_state, element_state, cx)
+        self.interactivity.layout(element_state, cx, |style, cx| {
+            cx.request_layout(&style, None)
+        })
     }
 
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
-        view: &mut V,
+        _view_state: &mut V,
         element_state: &mut Self::ElementState,
         cx: &mut ViewContext<V>,
     ) {
-        cx.with_z_index(0, |cx| {
-            self.base.paint(bounds, view, element_state, cx);
-        });
+        self.interactivity.paint(
+            bounds,
+            bounds.size,
+            element_state,
+            cx,
+            |style, _scroll_offset, cx| {
+                let corner_radii = style.corner_radii;
 
-        let style = self.base.compute_style(bounds, element_state, cx);
-        let corner_radii = style.corner_radii;
-
-        if let Some(uri) = self.uri.clone() {
-            // eprintln!(">>> image_cache.get({uri}");
-            let image_future = cx.image_cache.get(uri.clone());
-            // eprintln!("<<< image_cache.get({uri}");
-            if let Some(data) = image_future
-                .clone()
-                .now_or_never()
-                .and_then(ResultExt::log_err)
-            {
-                let corner_radii = corner_radii.to_pixels(bounds.size, cx.rem_size());
-                cx.with_z_index(1, |cx| {
-                    cx.paint_image(bounds, corner_radii, data, self.grayscale)
-                        .log_err()
-                });
-            } else {
-                cx.spawn(|_, mut cx| async move {
-                    if image_future.await.log_err().is_some() {
-                        cx.on_next_frame(|cx| cx.notify());
+                if let Some(uri) = self.uri.clone() {
+                    // eprintln!(">>> image_cache.get({uri}");
+                    let image_future = cx.image_cache.get(uri.clone());
+                    // eprintln!("<<< image_cache.get({uri}");
+                    if let Some(data) = image_future
+                        .clone()
+                        .now_or_never()
+                        .and_then(ResultExt::log_err)
+                    {
+                        let corner_radii = corner_radii.to_pixels(bounds.size, cx.rem_size());
+                        cx.with_z_index(1, |cx| {
+                            cx.paint_image(bounds, corner_radii, data, self.grayscale)
+                                .log_err()
+                        });
+                    } else {
+                        cx.spawn(|_, mut cx| async move {
+                            if image_future.await.log_err().is_some() {
+                                cx.on_next_frame(|cx| cx.notify());
+                            }
+                        })
+                        .detach()
                     }
-                })
-                .detach()
-            }
-        }
+                }
+            },
+        )
     }
 }
 
-impl<V, I, F> Styled for Img<V, I, F>
-where
-    I: ElementInteractivity<V>,
-    F: KeyDispatch<V>,
-{
+impl<V> Styled for Img<V> {
     fn style(&mut self) -> &mut StyleRefinement {
-        self.base.style()
+        &mut self.interactivity.base_style
     }
 }
 
-impl<V, I, F> StatelessInteractive<V> for Img<V, I, F>
-where
-    I: ElementInteractivity<V>,
-    F: KeyDispatch<V>,
-{
-    fn stateless_interactivity(&mut self) -> &mut StatelessInteractivity<V> {
-        self.base.stateless_interactivity()
-    }
-}
-
-impl<V, F> StatefulInteractive<V> for Img<V, StatefulInteractivity<V>, F>
-where
-    F: KeyDispatch<V>,
-{
-    fn stateful_interactivity(&mut self) -> &mut StatefulInteractivity<V> {
-        self.base.stateful_interactivity()
-    }
-}
-
-impl<V, I> Focusable<V> for Img<V, I, FocusableKeyDispatch<V>>
-where
-    V: 'static,
-    I: ElementInteractivity<V>,
-{
-    fn focus_listeners(&mut self) -> &mut FocusListeners<V> {
-        self.base.focus_listeners()
-    }
-
-    fn set_focus_style(&mut self, style: StyleRefinement) {
-        self.base.set_focus_style(style)
-    }
-
-    fn set_focus_in_style(&mut self, style: StyleRefinement) {
-        self.base.set_focus_in_style(style)
-    }
-
-    fn set_in_focus_style(&mut self, style: StyleRefinement) {
-        self.base.set_in_focus_style(style)
+impl<V> InteractiveComponent<V> for Img<V> {
+    fn interactivity(&mut self) -> &mut Interactivity<V> {
+        &mut self.interactivity
     }
 }

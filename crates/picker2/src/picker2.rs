@@ -1,7 +1,7 @@
 use editor::Editor;
 use gpui::{
-    div, uniform_list, Component, Div, MouseButton, ParentElement, Render, StatelessInteractive,
-    Styled, Task, UniformListScrollHandle, View, ViewContext, VisualContext, WindowContext,
+    div, prelude::*, uniform_list, Component, Div, MouseButton, Render, Task,
+    UniformListScrollHandle, View, ViewContext, WindowContext,
 };
 use std::{cmp, sync::Arc};
 use ui::{prelude::*, v_stack, Divider, Label, TextColor};
@@ -179,7 +179,7 @@ impl<D: PickerDelegate> Render for Picker<D> {
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         div()
-            .context("picker")
+            .key_context("picker")
             .size_full()
             .elevation_2(cx)
             .on_action(Self::select_next)

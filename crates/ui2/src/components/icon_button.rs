@@ -1,5 +1,5 @@
-use crate::{h_stack, prelude::*, ClickHandler, Icon, IconElement, TextColor, TextTooltip};
-use gpui::{MouseButton, VisualContext};
+use crate::{h_stack, prelude::*, ClickHandler, Icon, IconElement, TextTooltip};
+use gpui::{prelude::*, MouseButton, VisualContext};
 use std::sync::Arc;
 
 struct IconButtonHandlers<V: 'static> {

@@ -1,4 +1,4 @@
-use gpui::{div, white, Div, ParentElement, Render, Styled, View, VisualContext, WindowContext};
+use gpui::{div, white, Div, ParentComponent, Render, Styled, View, VisualContext, WindowContext};
 
 pub struct TextStory;
 

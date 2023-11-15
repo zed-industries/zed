@@ -1,7 +1,8 @@
-use crate::{prelude::*, Toggle};
 use crate::{
-    static_collab_panel_channels, static_collab_panel_current_call, v_stack, Icon, List, ListHeader,
+    prelude::*, static_collab_panel_channels, static_collab_panel_current_call, v_stack, Icon,
+    List, ListHeader, Toggle,
 };
+use gpui::prelude::*;
 
 #[derive(Component)]
 pub struct CollabPanel {

@@ -1,7 +1,7 @@
 use crate::{status_bar::StatusItemView, Axis, Workspace};
 use gpui::{
     div, px, Action, AnyView, AppContext, Component, Div, Entity, EntityId, EventEmitter,
-    FocusHandle, ParentElement, Render, Styled, Subscription, View, ViewContext, WeakView,
+    FocusHandle, ParentComponent, Render, Styled, Subscription, View, ViewContext, WeakView,
     WindowContext,
 };
 use schemars::JsonSchema;

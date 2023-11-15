@@ -9,10 +9,10 @@ use file_associations::FileAssociations;
 use anyhow::{anyhow, Result};
 use gpui::{
     actions, div, px, uniform_list, Action, AppContext, AssetSource, AsyncWindowContext,
-    ClipboardItem, Component, Div, EventEmitter, FocusHandle, FocusableKeyDispatch, Model,
-    MouseButton, ParentElement as _, Pixels, Point, PromptLevel, Render, StatefulInteractive,
-    StatefulInteractivity, StatelessInteractive, Styled, Task, UniformListScrollHandle, View,
-    ViewContext, VisualContext as _, WeakView, WindowContext,
+    ClipboardItem, Component, Div, EventEmitter, FocusHandle, Focusable, InteractiveComponent,
+    Model, MouseButton, ParentComponent, Pixels, Point, PromptLevel, Render, Stateful,
+    StatefulInteractiveComponent, Styled, Task, UniformListScrollHandle, View, ViewContext,
+    VisualContext as _, WeakView, WindowContext,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
 use project::{
@@ -1372,7 +1372,7 @@ impl ProjectPanel {
         details: EntryDetails,
         // dragged_entry_destination: &mut Option<Arc<Path>>,
         cx: &mut ViewContext<Self>,
-    ) -> Div<Self, StatefulInteractivity<Self>> {
+    ) -> Stateful<Self, Div<Self>> {
         let kind = details.kind;
         let settings = ProjectPanelSettings::get_global(cx);
         const INDENT_SIZE: Pixels = px(16.0);
@@ -1418,7 +1418,7 @@ impl ProjectPanel {
 }
 
 impl Render for ProjectPanel {
-    type Element = Div<Self, StatefulInteractivity<Self>, FocusableKeyDispatch<Self>>;
+    type Element = Focusable<Self, Stateful<Self, Div<Self>>>;
 
     fn render(&mut self, _cx: &mut gpui::ViewContext<Self>) -> Self::Element {
         let has_worktree = self.visible_entries.len() != 0;
@@ -1427,7 +1427,7 @@ impl Render for ProjectPanel {
             div()
                 .id("project-panel")
                 .size_full()
-                .context("ProjectPanel")
+                .key_context("ProjectPanel")
                 .on_action(Self::select_next)
                 .on_action(Self::select_prev)
                 .on_action(Self::expand_selected_entry)

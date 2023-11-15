@@ -97,6 +97,7 @@ impl KeystrokeMatcher {
     }
 }
 
+#[derive(Debug)]
 pub enum KeyMatch {
     None,
     Pending,

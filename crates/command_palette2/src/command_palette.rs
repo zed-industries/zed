@@ -1,9 +1,9 @@
 use collections::{CommandPaletteFilter, HashMap};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, div, Action, AppContext, Component, Div, EventEmitter, FocusHandle, Keystroke,
-    ParentElement, Render, StatelessInteractive, Styled, View, ViewContext, VisualContext,
-    WeakView, WindowContext,
+    actions, div, prelude::*, Action, AppContext, Component, Div, EventEmitter, FocusHandle,
+    Keystroke, ParentComponent, Render, Styled, View, ViewContext, VisualContext, WeakView,
+    WindowContext,
 };
 use picker::{Picker, PickerDelegate};
 use std::{

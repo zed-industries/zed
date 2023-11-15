@@ -153,12 +153,16 @@ impl Render for TitleBar {
                             .child(
                                 IconButton::<TitleBar>::new("toggle_mic_status", Icon::Mic)
                                     .when(self.is_mic_muted(), |this| this.color(TextColor::Error))
-                                    .on_click(|title_bar, cx| title_bar.toggle_mic_status(cx)),
+                                    .on_click(|title_bar: &mut TitleBar, cx| {
+                                        title_bar.toggle_mic_status(cx)
+                                    }),
                             )
                             .child(
                                 IconButton::<TitleBar>::new("toggle_deafened", Icon::AudioOn)
                                     .when(self.is_deafened, |this| this.color(TextColor::Error))
-                                    .on_click(|title_bar, cx| title_bar.toggle_deafened(cx)),
+                                    .on_click(|title_bar: &mut TitleBar, cx| {
+                                        title_bar.toggle_deafened(cx)
+                                    }),
                             )
                             .child(
                                 IconButton::<TitleBar>::new("toggle_screen_share", Icon::Screen)
@@ -166,7 +170,7 @@ impl Render for TitleBar {
                                         self.screen_share_status == ScreenShareStatus::Shared,
                                         |this| this.color(TextColor::Accent),
                                     )
-                                    .on_click(|title_bar, cx| {
+                                    .on_click(|title_bar: &mut TitleBar, cx| {
                                         title_bar.toggle_screen_share_status(cx)
                                     }),
                             ),

@@ -1,5 +1,5 @@
 use crate::story::Story;
-use gpui::{px, Div, Render};
+use gpui::{prelude::*, px, Div, Render};
 use theme2::{default_color_scales, ColorScaleStep};
 use ui::prelude::*;
 

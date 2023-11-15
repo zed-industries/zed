@@ -1,5 +1,5 @@
-use crate::prelude::*;
-use crate::{h_stack, v_stack, KeyBinding, Label, TextColor};
+use crate::{h_stack, prelude::*, v_stack, KeyBinding, Label};
+use gpui::prelude::*;
 
 #[derive(Component)]
 pub struct Palette {

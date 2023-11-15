@@ -1,8 +1,6 @@
+use crate::{h_stack, prelude::*, HighlightedText};
+use gpui::{prelude::*, Div};
 use std::path::PathBuf;
-
-use crate::prelude::*;
-use crate::{h_stack, HighlightedText};
-use gpui::Div;
 
 #[derive(Clone)]
 pub struct Symbol(pub Vec<HighlightedText>);

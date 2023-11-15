@@ -112,7 +112,7 @@ impl StatusBar {
                     .when(workspace.is_project_panel_open(), |this| {
                         this.color(TextColor::Accent)
                     })
-                    .on_click(|workspace, cx| {
+                    .on_click(|workspace: &mut Workspace, cx| {
                         workspace.toggle_project_panel(cx);
                     }),
             )
@@ -121,7 +121,7 @@ impl StatusBar {
                     .when(workspace.is_collab_panel_open(), |this| {
                         this.color(TextColor::Accent)
                     })
-                    .on_click(|workspace, cx| {
+                    .on_click(|workspace: &mut Workspace, cx| {
                         workspace.toggle_collab_panel();
                     }),
             )
@@ -176,7 +176,7 @@ impl StatusBar {
                             .when(workspace.is_terminal_open(), |this| {
                                 this.color(TextColor::Accent)
                             })
-                            .on_click(|workspace, cx| {
+                            .on_click(|workspace: &mut Workspace, cx| {
                                 workspace.toggle_terminal(cx);
                             }),
                     )
@@ -185,7 +185,7 @@ impl StatusBar {
                             .when(workspace.is_chat_panel_open(), |this| {
                                 this.color(TextColor::Accent)
                             })
-                            .on_click(|workspace, cx| {
+                            .on_click(|workspace: &mut Workspace, cx| {
                                 workspace.toggle_chat_panel(cx);
                             }),
                     )
@@ -194,7 +194,7 @@ impl StatusBar {
                             .when(workspace.is_assistant_panel_open(), |this| {
                                 this.color(TextColor::Accent)
                             })
-                            .on_click(|workspace, cx| {
+                            .on_click(|workspace: &mut Workspace, cx| {
                                 workspace.toggle_assistant_panel(cx);
                             }),
                     ),

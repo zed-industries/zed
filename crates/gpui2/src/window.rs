@@ -422,11 +422,8 @@ impl<'a> WindowContext<'a> {
     }
 
     pub fn dispatch_action(&mut self, action: Box<dyn Action>) {
-        dbg!("BEFORE FOCUS");
         if let Some(focus_handle) = self.focused() {
-            dbg!("BEFORE DEFER", focus_handle.id);
             self.defer(move |cx| {
-                dbg!("AFTER DEFER");
                 if let Some(node_id) = cx
                     .window
                     .current_frame
@@ -1077,7 +1074,7 @@ impl<'a> WindowContext<'a> {
         if let Some(active_drag) = self.app.active_drag.take() {
             self.with_z_index(1, |cx| {
                 let offset = cx.mouse_position() - active_drag.cursor_offset;
-                cx.with_element_offset(Some(offset), |cx| {
+                cx.with_element_offset(offset, |cx| {
                     let available_space =
                         size(AvailableSpace::MinContent, AvailableSpace::MinContent);
                     active_drag.view.draw(available_space, cx);
@@ -1086,7 +1083,7 @@ impl<'a> WindowContext<'a> {
             });
         } else if let Some(active_tooltip) = self.app.active_tooltip.take() {
             self.with_z_index(1, |cx| {
-                cx.with_element_offset(Some(active_tooltip.cursor_offset), |cx| {
+                cx.with_element_offset(active_tooltip.cursor_offset, |cx| {
                     let available_space =
                         size(AvailableSpace::MinContent, AvailableSpace::MinContent);
                     active_tooltip.view.draw(available_space, cx);
@@ -1584,43 +1581,50 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
     /// used to associate state with identified elements across separate frames.
     fn with_element_id<R>(
         &mut self,
-        id: impl Into<ElementId>,
-        f: impl FnOnce(GlobalElementId, &mut Self) -> R,
+        id: Option<impl Into<ElementId>>,
+        f: impl FnOnce(&mut Self) -> R,
     ) -> R {
-        let window = self.window_mut();
-        window.element_id_stack.push(id.into());
-        let global_id = window.element_id_stack.clone();
-        let result = f(global_id, self);
-        let window: &mut Window = self.borrow_mut();
-        window.element_id_stack.pop();
-        result
+        if let Some(id) = id.map(Into::into) {
+            let window = self.window_mut();
+            window.element_id_stack.push(id.into());
+            let result = f(self);
+            let window: &mut Window = self.borrow_mut();
+            window.element_id_stack.pop();
+            result
+        } else {
+            f(self)
+        }
     }
 
     /// Invoke the given function with the given content mask after intersecting it
     /// with the current mask.
     fn with_content_mask<R>(
         &mut self,
-        mask: ContentMask<Pixels>,
+        mask: Option<ContentMask<Pixels>>,
         f: impl FnOnce(&mut Self) -> R,
     ) -> R {
-        let mask = mask.intersect(&self.content_mask());
-        self.window_mut()
-            .current_frame
-            .content_mask_stack
-            .push(mask);
-        let result = f(self);
-        self.window_mut().current_frame.content_mask_stack.pop();
-        result
+        if let Some(mask) = mask {
+            let mask = mask.intersect(&self.content_mask());
+            self.window_mut()
+                .current_frame
+                .content_mask_stack
+                .push(mask);
+            let result = f(self);
+            self.window_mut().current_frame.content_mask_stack.pop();
+            result
+        } else {
+            f(self)
+        }
     }
 
     /// Update the global element offset based on the given offset. This is used to implement
     /// scrolling and position drag handles.
     fn with_element_offset<R>(
         &mut self,
-        offset: Option<Point<Pixels>>,
+        offset: Point<Pixels>,
         f: impl FnOnce(&mut Self) -> R,
     ) -> R {
-        let Some(offset) = offset else {
+        if offset.is_zero() {
             return f(self);
         };
 
@@ -1656,7 +1660,9 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
     where
         S: 'static,
     {
-        self.with_element_id(id, |global_id, cx| {
+        self.with_element_id(Some(id), |cx| {
+            let global_id = cx.window().element_id_stack.clone();
+
             if let Some(any) = cx
                 .window_mut()
                 .current_frame
@@ -2084,11 +2090,10 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         f: impl FnOnce(Option<FocusHandle>, &mut Self) -> R,
     ) -> R {
         let window = &mut self.window;
-
         window
             .current_frame
             .dispatch_tree
-            .push_node(context, &mut window.previous_frame.dispatch_tree);
+            .push_node(context.clone(), &mut window.previous_frame.dispatch_tree);
         if let Some(focus_handle) = focus_handle.as_ref() {
             window
                 .current_frame

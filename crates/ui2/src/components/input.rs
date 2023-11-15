@@ -1,6 +1,5 @@
-use crate::prelude::*;
-use crate::Label;
-use crate::TextColor;
+use crate::{prelude::*, Label};
+use gpui::prelude::*;
 
 #[derive(Default, PartialEq)]
 pub enum InputVariant {
