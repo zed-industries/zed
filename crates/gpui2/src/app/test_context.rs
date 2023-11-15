@@ -140,7 +140,7 @@ impl TestAppContext {
         .any_handle
     }
 
-    pub fn add_window_view<F, V>(&mut self, build_window: F) -> (View<V>, VisualTestContext)
+    pub fn add_window_view<F, V>(&mut self, build_window: F) -> (View<V>, &mut VisualTestContext)
     where
         F: FnOnce(&mut ViewContext<V>) -> V,
         V: Render,
@@ -149,7 +149,9 @@ impl TestAppContext {
         let window = cx.open_window(WindowOptions::default(), |cx| cx.build_view(build_window));
         drop(cx);
         let view = window.root_view(self).unwrap();
-        (view, VisualTestContext::from_window(*window.deref(), self))
+        let cx = Box::new(VisualTestContext::from_window(*window.deref(), self));
+        // it might be nice to try and cleanup these at the end of each test.
+        (view, Box::leak(cx))
     }
 
     pub fn simulate_new_path_selection(

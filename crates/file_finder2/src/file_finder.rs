@@ -775,8 +775,7 @@ mod tests {
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
 
-        let (picker, workspace, mut cx) = build_find_picker(project, cx);
-        let cx = &mut cx;
+        let (picker, workspace, cx) = build_find_picker(project, cx);
 
         cx.simulate_input("bna");
 
@@ -815,8 +814,7 @@ mod tests {
 
         let project = Project::test(app_state.fs.clone(), ["/src".as_ref()], cx).await;
 
-        let (picker, workspace, mut cx) = build_find_picker(project, cx);
-        let cx = &mut cx;
+        let (picker, workspace, cx) = build_find_picker(project, cx);
 
         let file_query = &first_file_name[..3];
         let file_row = 1;
@@ -891,8 +889,7 @@ mod tests {
 
         let project = Project::test(app_state.fs.clone(), ["/src".as_ref()], cx).await;
 
-        let (picker, workspace, mut cx) = build_find_picker(project, cx);
-        let cx = &mut cx;
+        let (picker, workspace, cx) = build_find_picker(project, cx);
 
         let file_query = &first_file_name[..3];
         let file_row = 200;
@@ -967,8 +964,7 @@ mod tests {
 
         let project = Project::test(app_state.fs.clone(), ["/dir".as_ref()], cx).await;
 
-        let (picker, _, mut cx) = build_find_picker(project, cx);
-        let cx = &mut cx;
+        let (picker, _, cx) = build_find_picker(project, cx);
 
         let query = test_path_like("hi");
         picker
@@ -1055,8 +1051,7 @@ mod tests {
         )
         .await;
 
-        let (picker, _, mut cx) = build_find_picker(project, cx);
-        let cx = &mut cx;
+        let (picker, _, cx) = build_find_picker(project, cx);
 
         picker
             .update(cx, |picker, cx| {
@@ -1082,8 +1077,7 @@ mod tests {
         )
         .await;
 
-        let (picker, _, mut cx) = build_find_picker(project, cx);
-        let cx = &mut cx;
+        let (picker, _, cx) = build_find_picker(project, cx);
 
         // Even though there is only one worktree, that worktree's filename
         // is included in the matching, because the worktree is a single file.
@@ -1139,8 +1133,7 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
-        let (workspace, mut cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
-        let cx = &mut cx;
+        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
 
         let worktree_id = cx.read(|cx| {
             let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
@@ -1198,8 +1191,8 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
-        let (picker, _workspace, mut cx) = build_find_picker(project, cx);
-        let cx = &mut cx;
+        let (picker, _workspace, cx) = build_find_picker(project, cx);
+
         picker
             .update(cx, |f, cx| {
                 f.delegate.spawn_search(test_path_like("dir"), cx)
@@ -1231,8 +1224,7 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/src".as_ref()], cx).await;
-        let (workspace, mut cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
-        let cx = &mut cx;
+        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
         let worktree_id = cx.read(|cx| {
             let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
             assert_eq!(worktrees.len(), 1);
@@ -1395,8 +1387,7 @@ mod tests {
         .detach();
         cx.background_executor.run_until_parked();
 
-        let (workspace, mut cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
-        let cx = &mut cx;
+        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
         let worktree_id = cx.read(|cx| {
             let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
             assert_eq!(worktrees.len(), 1,);
@@ -1488,8 +1479,7 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/src".as_ref()], cx).await;
-        let (workspace, mut cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
-        let cx = &mut cx;
+        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
 
         // generate some history to select from
         open_close_queried_buffer("fir", 1, "first.rs", &workspace, cx).await;
@@ -1547,8 +1537,7 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/src".as_ref()], cx).await;
-        let (workspace, mut cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
-        let cx = &mut cx;
+        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
         let worktree_id = cx.read(|cx| {
             let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
             assert_eq!(worktrees.len(), 1,);
@@ -1652,8 +1641,7 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/src".as_ref()], cx).await;
-        let (workspace, mut cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
-        let cx = &mut cx;
+        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
         // generate some history to select from
         open_close_queried_buffer("fir", 1, "first.rs", &workspace, cx).await;
         open_close_queried_buffer("sec", 1, "second.rs", &workspace, cx).await;
@@ -1709,9 +1697,7 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/src".as_ref()], cx).await;
-        let (workspace, mut cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
-        let cx = &mut cx;
-        // generate some history to select from
+        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx)); // generate some history to select from
         open_close_queried_buffer("fir", 1, "first.rs", &workspace, cx).await;
         open_close_queried_buffer("non", 1, "nonexistent.rs", &workspace, cx).await;
         open_close_queried_buffer("thi", 1, "third.rs", &workspace, cx).await;
@@ -1807,10 +1793,10 @@ mod tests {
     ) -> (
         View<Picker<FileFinderDelegate>>,
         View<Workspace>,
-        VisualTestContext,
+        &mut VisualTestContext,
     ) {
-        let (workspace, mut cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
-        let picker = open_file_picker(&workspace, &mut cx);
+        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
+        let picker = open_file_picker(&workspace, cx);
         (picker, workspace, cx)
     }
 
