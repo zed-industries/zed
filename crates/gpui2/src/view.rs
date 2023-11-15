@@ -63,6 +63,16 @@ impl<V: 'static> View<V> {
     pub fn read<'a>(&self, cx: &'a AppContext) -> &'a V {
         self.model.read(cx)
     }
+
+    pub fn render_with<C>(&self, component: C) -> RenderViewWith<C, V>
+    where
+        C: 'static + Component<V>,
+    {
+        RenderViewWith {
+            view: self.clone(),
+            component: Some(component),
+        }
+    }
 }
 
 impl<V> Clone for View<V> {
@@ -281,12 +291,12 @@ where
     }
 }
 
-pub struct RenderView<C, V> {
+pub struct RenderViewWith<C, V> {
     view: View<V>,
     component: Option<C>,
 }
 
-impl<C, ParentViewState, ViewState> Component<ParentViewState> for RenderView<C, ViewState>
+impl<C, ParentViewState, ViewState> Component<ParentViewState> for RenderViewWith<C, ViewState>
 where
     C: 'static + Component<ViewState>,
     ParentViewState: 'static,
@@ -297,7 +307,7 @@ where
     }
 }
 
-impl<C, ParentViewState, ViewState> Element<ParentViewState> for RenderView<C, ViewState>
+impl<C, ParentViewState, ViewState> Element<ParentViewState> for RenderViewWith<C, ViewState>
 where
     C: 'static + Component<ViewState>,
     ParentViewState: 'static,
@@ -345,17 +355,6 @@ where
         cx.with_element_id(Some(self.view.entity_id()), |cx| {
             self.view.update(cx, |view, cx| element.paint(view, cx))
         })
-    }
-}
-
-pub fn render_view<C, V>(view: &View<V>, component: C) -> RenderView<C, V>
-where
-    C: 'static + Component<V>,
-    V: 'static,
-{
-    RenderView {
-        view: view.clone(),
-        component: Some(component),
     }
 }
 

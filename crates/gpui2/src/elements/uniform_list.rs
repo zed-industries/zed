@@ -3,9 +3,8 @@ use crate::{
     ElementId, InteractiveComponent, InteractiveElementState, Interactivity, LayoutId, Pixels,
     Point, Size, StyleRefinement, Styled, ViewContext,
 };
-use parking_lot::Mutex;
 use smallvec::SmallVec;
-use std::{cmp, mem, ops::Range, sync::Arc};
+use std::{cell::RefCell, cmp, mem, ops::Range, rc::Rc};
 use taffy::style::Overflow;
 
 /// uniform_list provides lazy rendering for a set of items that are of uniform height.
@@ -61,23 +60,23 @@ pub struct UniformList<V: 'static> {
 }
 
 #[derive(Clone, Default)]
-pub struct UniformListScrollHandle(Arc<Mutex<Option<ScrollHandleState>>>);
+pub struct UniformListScrollHandle(Rc<RefCell<Option<ScrollHandleState>>>);
 
 #[derive(Clone, Debug)]
 struct ScrollHandleState {
     item_height: Pixels,
     list_height: Pixels,
-    scroll_offset: Arc<Mutex<Point<Pixels>>>,
+    scroll_offset: Rc<RefCell<Point<Pixels>>>,
 }
 
 impl UniformListScrollHandle {
     pub fn new() -> Self {
-        Self(Arc::new(Mutex::new(None)))
+        Self(Rc::new(RefCell::new(None)))
     }
 
     pub fn scroll_to_item(&self, ix: usize) {
-        if let Some(state) = &*self.0.lock() {
-            let mut scroll_offset = state.scroll_offset.lock();
+        if let Some(state) = &*self.0.borrow() {
+            let mut scroll_offset = state.scroll_offset.borrow_mut();
             let item_top = state.item_height * ix;
             let item_bottom = item_top + state.item_height;
             let scroll_top = -scroll_offset.y;
@@ -196,7 +195,7 @@ impl<V: 'static> Element<V> for UniformList<V> {
         let shared_scroll_offset = element_state
             .interactive
             .scroll_offset
-            .get_or_insert_with(Arc::default)
+            .get_or_insert_with(Rc::default)
             .clone();
 
         interactivity.paint(
@@ -222,7 +221,7 @@ impl<V: 'static> Element<V> for UniformList<V> {
                             .measure_item(view_state, Some(padded_bounds.size.width), cx)
                             .height;
                         if let Some(scroll_handle) = self.scroll_handle.clone() {
-                            scroll_handle.0.lock().replace(ScrollHandleState {
+                            scroll_handle.0.borrow_mut().replace(ScrollHandleState {
                                 item_height,
                                 list_height: padded_bounds.size.height,
                                 scroll_offset: shared_scroll_offset,
