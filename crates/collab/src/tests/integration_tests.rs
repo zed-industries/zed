@@ -1381,6 +1381,8 @@ async fn test_share_project(
                 Path::new("a.txt"),
                 Path::new("b.txt"),
                 Path::new("ignored-dir"),
+                Path::new("ignored-dir/c.txt"),
+                Path::new("ignored-dir/d.txt"),
             ]
         );
     });
