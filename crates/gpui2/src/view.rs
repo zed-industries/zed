@@ -269,17 +269,17 @@ impl<V: Render> From<WeakView<V>> for AnyWeakView {
     }
 }
 
-impl<T, E> Render for T
-where
-    T: 'static + FnMut(&mut WindowContext) -> E,
-    E: 'static + Send + Element<T>,
-{
-    type Element = E;
+// impl<T, E> Render for T
+// where
+//     T: 'static + FnMut(&mut WindowContext) -> E,
+//     E: 'static + Send + Element<T>,
+// {
+//     type Element = E;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-        (self)(cx)
-    }
-}
+//     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+//         (self)(cx)
+//     }
+// }
 
 mod any_view {
     use crate::{AnyElement, AnyView, BorrowWindow, LayoutId, Render, WindowContext};

@@ -2318,7 +2318,7 @@ impl Editor {
         }
 
         self.blink_manager.update(cx, BlinkManager::pause_blinking);
-        cx.emit(Event::SelectionsChanged { local });
+        cx.emit(EditorEvent::SelectionsChanged { local });
 
         if self.selections.disjoint_anchors().len() == 1 {
             cx.emit(SearchEvent::ActiveMatchChanged)
@@ -4242,7 +4242,7 @@ impl Editor {
 
                 self.report_copilot_event(Some(completion.uuid.clone()), true, cx)
             }
-            cx.emit(Event::InputHandled {
+            cx.emit(EditorEvent::InputHandled {
                 utf16_range_to_replace: None,
                 text: suggestion.text.to_string().into(),
             });
@@ -5664,7 +5664,7 @@ impl Editor {
             self.request_autoscroll(Autoscroll::fit(), cx);
             self.unmark_text(cx);
             self.refresh_copilot_suggestions(true, cx);
-            cx.emit(Event::Edited);
+            cx.emit(EditorEvent::Edited);
         }
     }
 
@@ -5679,7 +5679,7 @@ impl Editor {
             self.request_autoscroll(Autoscroll::fit(), cx);
             self.unmark_text(cx);
             self.refresh_copilot_suggestions(true, cx);
-            cx.emit(Event::Edited);
+            cx.emit(EditorEvent::Edited);
         }
     }
 
@@ -8123,7 +8123,7 @@ impl Editor {
                 log::error!("unexpectedly ended a transaction that wasn't started by this editor");
             }
 
-            cx.emit(Event::Edited);
+            cx.emit(EditorEvent::Edited);
             Some(tx_id)
         } else {
             None
@@ -8711,7 +8711,7 @@ impl Editor {
                 if self.has_active_copilot_suggestion(cx) {
                     self.update_visible_copilot_suggestion(cx);
                 }
-                cx.emit(Event::BufferEdited);
+                cx.emit(EditorEvent::BufferEdited);
                 cx.emit(ItemEvent::Edit);
                 cx.emit(ItemEvent::UpdateBreadcrumbs);
                 cx.emit(SearchEvent::MatchesInvalidated);
@@ -8750,7 +8750,7 @@ impl Editor {
                 predecessor,
                 excerpts,
             } => {
-                cx.emit(Event::ExcerptsAdded {
+                cx.emit(EditorEvent::ExcerptsAdded {
                     buffer: buffer.clone(),
                     predecessor: *predecessor,
                     excerpts: excerpts.clone(),
@@ -8759,7 +8759,7 @@ impl Editor {
             }
             multi_buffer::Event::ExcerptsRemoved { ids } => {
                 self.refresh_inlay_hints(InlayHintRefreshReason::ExcerptsRemoved(ids.clone()), cx);
-                cx.emit(Event::ExcerptsRemoved { ids: ids.clone() })
+                cx.emit(EditorEvent::ExcerptsRemoved { ids: ids.clone() })
             }
             multi_buffer::Event::Reparsed => {
                 cx.emit(ItemEvent::UpdateBreadcrumbs);
@@ -8773,7 +8773,7 @@ impl Editor {
                 cx.emit(ItemEvent::UpdateTab);
                 cx.emit(ItemEvent::UpdateBreadcrumbs);
             }
-            multi_buffer::Event::DiffBaseChanged => cx.emit(Event::DiffBaseChanged),
+            multi_buffer::Event::DiffBaseChanged => cx.emit(EditorEvent::DiffBaseChanged),
             multi_buffer::Event::Closed => cx.emit(ItemEvent::CloseItem),
             multi_buffer::Event::DiagnosticsUpdated => {
                 self.refresh_active_diagnostics(cx);
@@ -9113,7 +9113,7 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         if !self.input_enabled {
-            cx.emit(Event::InputIgnored { text: text.into() });
+            cx.emit(EditorEvent::InputIgnored { text: text.into() });
             return;
         }
         if let Some(relative_utf16_range) = relative_utf16_range {
@@ -9177,7 +9177,7 @@ impl Editor {
             // todo!()
             // let focused_event = EditorFocused(cx.handle());
             // cx.emit_global(focused_event);
-            cx.emit(Event::Focused);
+            cx.emit(EditorEvent::Focused);
         }
         if let Some(rename) = self.pending_rename.as_ref() {
             let rename_editor_focus_handle = rename.editor.read(cx).focus_handle.clone();
@@ -9207,7 +9207,7 @@ impl Editor {
             .update(cx, |buffer, cx| buffer.remove_active_selections(cx));
         self.hide_context_menu(cx);
         hide_hover(self, cx);
-        cx.emit(Event::Blurred);
+        cx.emit(EditorEvent::Blurred);
         cx.notify();
     }
 }
@@ -9330,7 +9330,7 @@ impl Deref for EditorSnapshot {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Event {
+pub enum EditorEvent {
     InputIgnored {
         text: Arc<str>,
     },
@@ -9348,8 +9348,12 @@ pub enum Event {
     },
     BufferEdited,
     Edited,
+    Reparsed,
     Focused,
     Blurred,
+    DirtyChanged,
+    Saved,
+    TitleChanged,
     DiffBaseChanged,
     SelectionsChanged {
         local: bool,
@@ -9358,6 +9362,7 @@ pub enum Event {
         local: bool,
         autoscroll: bool,
     },
+    Closed,
 }
 
 pub struct EditorFocused(pub View<Editor>);
@@ -9372,7 +9377,7 @@ pub struct EditorReleased(pub WeakView<Editor>);
 //     }
 // }
 //
-impl EventEmitter<Event> for Editor {}
+impl EventEmitter<EditorEvent> for Editor {}
 
 impl Render for Editor {
     type Element = EditorElement;
@@ -9571,7 +9576,7 @@ impl InputHandler for Editor {
         cx: &mut ViewContext<Self>,
     ) {
         if !self.input_enabled {
-            cx.emit(Event::InputIgnored { text: text.into() });
+            cx.emit(EditorEvent::InputIgnored { text: text.into() });
             return;
         }
 
@@ -9601,7 +9606,7 @@ impl InputHandler for Editor {
                     })
             });
 
-            cx.emit(Event::InputHandled {
+            cx.emit(EditorEvent::InputHandled {
                 utf16_range_to_replace: range_to_replace,
                 text: text.into(),
             });
@@ -9632,7 +9637,7 @@ impl InputHandler for Editor {
         cx: &mut ViewContext<Self>,
     ) {
         if !self.input_enabled {
-            cx.emit(Event::InputIgnored { text: text.into() });
+            cx.emit(EditorEvent::InputIgnored { text: text.into() });
             return;
         }
 
@@ -9675,7 +9680,7 @@ impl InputHandler for Editor {
                     })
             });
 
-            cx.emit(Event::InputHandled {
+            cx.emit(EditorEvent::InputHandled {
                 utf16_range_to_replace: range_to_replace,
                 text: text.into(),
             });

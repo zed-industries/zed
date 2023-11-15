@@ -60,6 +60,7 @@ pub trait ParentComponent<V: 'static> {
 }
 
 trait ElementObject<V> {
+    fn element_id(&self) -> Option<ElementId>;
     fn initialize(&mut self, view_state: &mut V, cx: &mut ViewContext<V>);
     fn layout(&mut self, view_state: &mut V, cx: &mut ViewContext<V>) -> LayoutId;
     fn paint(&mut self, view_state: &mut V, cx: &mut ViewContext<V>);
@@ -119,6 +120,10 @@ where
     E: Element<V>,
     E::ElementState: 'static,
 {
+    fn element_id(&self) -> Option<ElementId> {
+        self.element.element_id()
+    }
+
     fn initialize(&mut self, view_state: &mut V, cx: &mut ViewContext<V>) {
         let frame_state = if let Some(id) = self.element.element_id() {
             cx.with_element_state(id, |element_state, cx| {
@@ -269,6 +274,10 @@ impl<V> AnyElement<V> {
         E::ElementState: Any,
     {
         AnyElement(Box::new(RenderedElement::new(element)))
+    }
+
+    pub fn element_id(&self) -> Option<ElementId> {
+        self.0.element_id()
     }
 
     pub fn initialize(&mut self, view_state: &mut V, cx: &mut ViewContext<V>) {

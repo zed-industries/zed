@@ -20,9 +20,9 @@ use collections::{BTreeMap, HashMap};
 use gpui::{
     point, px, relative, size, transparent_black, Action, AnyElement, AvailableSpace, BorrowWindow,
     Bounds, Component, ContentMask, Corners, DispatchPhase, Edges, Element, ElementId,
-    ElementInputHandler, Entity, EntityId, Hsla, Line, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, ParentComponent, Pixels, ScrollWheelEvent, Size, Style, Styled, TextRun,
-    TextStyle, View, ViewContext, WindowContext,
+    ElementInputHandler, Entity, EntityId, Hsla, InteractiveComponent, Line, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentComponent, Pixels, ScrollWheelEvent, Size,
+    Style, Styled, TextRun, TextStyle, View, ViewContext, WindowContext,
 };
 use itertools::Itertools;
 use language::language_settings::ShowWhitespaceSetting;
@@ -2062,6 +2062,7 @@ impl EditorElement {
                         }
 
                         h_stack()
+                            .id("path header block")
                             .size_full()
                             .bg(gpui::red())
                             .child(filename.unwrap_or_else(|| "untitled".to_string()))
@@ -2070,6 +2071,7 @@ impl EditorElement {
                     } else {
                         let text_style = style.text.clone();
                         h_stack()
+                            .id("collapsed context")
                             .size_full()
                             .bg(gpui::red())
                             .child("⋯")

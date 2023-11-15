@@ -193,10 +193,11 @@ impl ProjectPanel {
             let filename_editor = cx.build_view(|cx| Editor::single_line(cx));
 
             cx.subscribe(&filename_editor, |this, _, event, cx| match event {
-                editor::Event::BufferEdited | editor::Event::SelectionsChanged { .. } => {
+                editor::EditorEvent::BufferEdited
+                | editor::EditorEvent::SelectionsChanged { .. } => {
                     this.autoscroll(cx);
                 }
-                editor::Event::Blurred => {
+                editor::EditorEvent::Blurred => {
                     if this
                         .edit_state
                         .as_ref()

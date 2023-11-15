@@ -2476,6 +2476,18 @@ pub enum ElementId {
     FocusHandle(FocusId),
 }
 
+impl TryInto<SharedString> for ElementId {
+    type Error = anyhow::Error;
+
+    fn try_into(self) -> anyhow::Result<SharedString> {
+        if let ElementId::Name(name) = self {
+            Ok(name)
+        } else {
+            Err(anyhow!("element id is not string"))
+        }
+    }
+}
+
 impl From<EntityId> for ElementId {
     fn from(id: EntityId) -> Self {
         ElementId::View(id)

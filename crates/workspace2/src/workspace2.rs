@@ -67,7 +67,7 @@ use std::{
     time::Duration,
 };
 use theme2::{ActiveTheme, ThemeSettings};
-pub use toolbar::{ToolbarItemLocation, ToolbarItemView};
+pub use toolbar::{ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 use ui::TextColor;
 use ui::{h_stack, Button, ButtonVariant, KeyBinding, Label, TextTooltip};
 use util::ResultExt;
@@ -1433,18 +1433,18 @@ impl Workspace {
         self.panes.iter().flat_map(|pane| pane.read(cx).items())
     }
 
-    //     pub fn item_of_type<T: Item>(&self, cx: &AppContext) -> Option<View<T>> {
-    //         self.items_of_type(cx).max_by_key(|item| item.id())
-    //     }
+    pub fn item_of_type<T: Item>(&self, cx: &AppContext) -> Option<View<T>> {
+        self.items_of_type(cx).max_by_key(|item| item.entity_id())
+    }
 
-    //     pub fn items_of_type<'a, T: Item>(
-    //         &'a self,
-    //         cx: &'a AppContext,
-    //     ) -> impl 'a + Iterator<Item = View<T>> {
-    //         self.panes
-    //             .iter()
-    //             .flat_map(|pane| pane.read(cx).items_of_type())
-    //     }
+    pub fn items_of_type<'a, T: Item>(
+        &'a self,
+        cx: &'a AppContext,
+    ) -> impl 'a + Iterator<Item = View<T>> {
+        self.panes
+            .iter()
+            .flat_map(|pane| pane.read(cx).items_of_type())
+    }
 
     pub fn active_item(&self, cx: &AppContext) -> Option<Box<dyn ItemHandle>> {
         self.active_pane().read(cx).active_item()

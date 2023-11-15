@@ -2574,6 +2574,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "diagnostics2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "client2",
+ "collections",
+ "editor2",
+ "futures 0.3.28",
+ "gpui2",
+ "language2",
+ "log",
+ "lsp2",
+ "postage",
+ "project2",
+ "schemars",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "settings2",
+ "smallvec",
+ "theme2",
+ "ui2",
+ "unindent",
+ "util",
+ "workspace2",
+]
+
+[[package]]
 name = "diff"
 version = "0.1.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"

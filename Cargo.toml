@@ -31,6 +31,7 @@ members = [
     "crates/refineable",
     "crates/refineable/derive_refineable",
     "crates/diagnostics",
+    "crates/diagnostics2",
     "crates/drag_and_drop",
     "crates/editor",
     "crates/feature_flags",

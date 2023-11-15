@@ -619,11 +619,11 @@ impl Pane {
         self.items.iter()
     }
 
-    //     pub fn items_of_type<T: View>(&self) -> impl '_ + Iterator<Item = ViewHandle<T>> {
-    //         self.items
-    //             .iter()
-    //             .filter_map(|item| item.as_any().clone().downcast())
-    //     }
+    pub fn items_of_type<T: 'static>(&self) -> impl '_ + Iterator<Item = View<T>> {
+        self.items
+            .iter()
+            .filter_map(|item| item.to_any().clone().downcast().ok())
+    }
 
     pub fn active_item(&self) -> Option<Box<dyn ItemHandle>> {
         self.items.get(self.active_item_index).cloned()

@@ -137,10 +137,10 @@ impl<D: PickerDelegate> Picker<D> {
     fn on_input_editor_event(
         &mut self,
         _: View<Editor>,
-        event: &editor::Event,
+        event: &editor::EditorEvent,
         cx: &mut ViewContext<Self>,
     ) {
-        if let editor::Event::BufferEdited = event {
+        if let editor::EditorEvent::BufferEdited = event {
             let query = self.editor.read(cx).text(cx);
             self.update_matches(query, cx);
         }

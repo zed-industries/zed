@@ -1,7 +1,7 @@
 use crate::{
     editor_settings::SeedQuerySetting, link_go_to_definition::hide_link_definition,
     movement::surrounding_word, persistence::DB, scroll::ScrollAnchor, Anchor, Autoscroll, Editor,
-    EditorSettings, Event, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot,
+    EditorEvent, EditorSettings, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot,
     NavigationData, ToPoint as _,
 };
 use anyhow::{anyhow, Context, Result};
@@ -41,11 +41,12 @@ use workspace::{
 
 pub const MAX_TAB_TITLE_LEN: usize = 24;
 
-impl FollowableEvents for Event {
+impl FollowableEvents for EditorEvent {
     fn to_follow_event(&self) -> Option<workspace::item::FollowEvent> {
         match self {
-            Event::Edited => Some(FollowEvent::Unfollow),
-            Event::SelectionsChanged { local } | Event::ScrollPositionChanged { local, .. } => {
+            EditorEvent::Edited => Some(FollowEvent::Unfollow),
+            EditorEvent::SelectionsChanged { local }
+            | EditorEvent::ScrollPositionChanged { local, .. } => {
                 if *local {
                     Some(FollowEvent::Unfollow)
                 } else {
@@ -60,7 +61,7 @@ impl FollowableEvents for Event {
 impl EventEmitter<ItemEvent> for Editor {}
 
 impl FollowableItem for Editor {
-    type FollowableEvent = Event;
+    type FollowableEvent = EditorEvent;
     fn remote_id(&self) -> Option<ViewId> {
         self.remote_id
     }
@@ -248,7 +249,7 @@ impl FollowableItem for Editor {
 
         match update {
             proto::update_view::Variant::Editor(update) => match event {
-                Event::ExcerptsAdded {
+                EditorEvent::ExcerptsAdded {
                     buffer,
                     predecessor,
                     excerpts,
@@ -269,20 +270,20 @@ impl FollowableItem for Editor {
                     }
                     true
                 }
-                Event::ExcerptsRemoved { ids } => {
+                EditorEvent::ExcerptsRemoved { ids } => {
                     update
                         .deleted_excerpts
                         .extend(ids.iter().map(ExcerptId::to_proto));
                     true
                 }
-                Event::ScrollPositionChanged { .. } => {
+                EditorEvent::ScrollPositionChanged { .. } => {
                     let scroll_anchor = self.scroll_manager.anchor();
                     update.scroll_top_anchor = Some(serialize_anchor(&scroll_anchor.anchor));
                     update.scroll_x = scroll_anchor.offset.x;
                     update.scroll_y = scroll_anchor.offset.y;
                     true
                 }
-                Event::SelectionsChanged { .. } => {
+                EditorEvent::SelectionsChanged { .. } => {
                     update.selections = self
                         .selections
                         .disjoint_anchors()
