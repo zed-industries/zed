@@ -1741,6 +1741,7 @@ impl Project {
                     self.open_remote_buffer_internal(&project_path.path, &worktree, cx)
                 };
 
+                let project_path = project_path.clone();
                 cx.spawn(move |this, mut cx| async move {
                     let load_result = load_buffer.await;
                     *tx.borrow_mut() = Some(this.update(&mut cx, |this, _| {
@@ -1759,7 +1760,7 @@ impl Project {
         cx.background_executor().spawn(async move {
             wait_for_loading_buffer(loading_watch)
                 .await
-                .map_err(|error| anyhow!("{}", error))
+                .map_err(|error| anyhow!("{project_path:?} opening failure: {error:#}"))
         })
     }
 
