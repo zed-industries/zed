@@ -1830,6 +1830,47 @@ dependencies = [
 ]
 
 [[package]]
+name = "collab_ui2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "call2",
+ "channel2",
+ "client2",
+ "clock",
+ "collections",
+ "db2",
+ "editor2",
+ "feature_flags2",
+ "futures 0.3.28",
+ "fuzzy",
+ "gpui2",
+ "language2",
+ "lazy_static",
+ "log",
+ "menu2",
+ "notifications2",
+ "picker2",
+ "postage",
+ "pretty_assertions",
+ "project2",
+ "rich_text2",
+ "rpc2",
+ "schemars",
+ "serde",
+ "serde_derive",
+ "settings2",
+ "smallvec",
+ "theme2",
+ "time",
+ "tree-sitter-markdown",
+ "ui2",
+ "util",
+ "workspace2",
+ "zed_actions2",
+]
+
+[[package]]
 name = "collections"
 version = "0.1.0"
 dependencies = [
@@ -11441,6 +11482,7 @@ dependencies = [
  "chrono",
  "cli",
  "client2",
+ "collab_ui2",
  "collections",
  "command_palette2",
  "copilot2",

@@ -18,6 +18,7 @@ members = [
     "crates/collab",
     "crates/collab2",
     "crates/collab_ui",
+    "crates/collab_ui2",
     "crates/collections",
     "crates/command_palette",
     "crates/command_palette2",

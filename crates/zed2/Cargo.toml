@@ -23,7 +23,7 @@ ai = { package = "ai2", path = "../ai2"}
 call = { package = "call2", path = "../call2" }
 # channel = { path = "../channel" }
 cli = { path = "../cli" }
-# collab_ui = { path = "../collab_ui" }
+collab_ui = { package = "collab_ui2", path = "../collab_ui2" }
 collections = { path = "../collections" }
 command_palette = { package="command_palette2", path = "../command_palette2" }
 # component_test = { path = "../component_test" }

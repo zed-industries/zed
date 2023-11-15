@@ -36,11 +36,10 @@ use futures::{
     Future, FutureExt, StreamExt,
 };
 use gpui::{
-    actions, div, point, prelude::*, rems, size, Action, AnyModel, AnyView, AnyWeakView,
-    AppContext, AsyncAppContext, AsyncWindowContext, Bounds, Component, Div, Entity, EntityId,
-    EventEmitter, GlobalPixels, KeyContext, Model, ModelContext, ParentComponent, Point, Render,
-    Size, Styled, Subscription, Task, View, ViewContext, WeakView, WindowBounds, WindowContext,
-    WindowHandle, WindowOptions,
+    actions, div, point, prelude::*, size, Action, AnyModel, AnyView, AnyWeakView, AppContext,
+    AsyncAppContext, AsyncWindowContext, Bounds, Div, Entity, EntityId, EventEmitter, GlobalPixels,
+    KeyContext, Model, ModelContext, ParentComponent, Point, Render, Size, Styled, Subscription,
+    Task, View, ViewContext, WeakView, WindowBounds, WindowContext, WindowHandle, WindowOptions,
 };
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, ProjectItem};
 use itertools::Itertools;
@@ -68,8 +67,6 @@ use std::{
 };
 use theme2::{ActiveTheme, ThemeSettings};
 pub use toolbar::{ToolbarItemLocation, ToolbarItemView};
-use ui::TextColor;
-use ui::{h_stack, Button, ButtonVariant, KeyBinding, Label, TextTooltip};
 use util::ResultExt;
 use uuid::Uuid;
 pub use workspace_settings::{AutosaveSetting, WorkspaceSettings};
@@ -447,7 +444,7 @@ pub struct Workspace {
     last_active_view_id: Option<proto::ViewId>,
     status_bar: View<StatusBar>,
     modal_layer: View<ModalLayer>,
-    //     titlebar_item: Option<AnyViewHandle>,
+    titlebar_item: Option<AnyView>,
     notifications: Vec<(TypeId, usize, Box<dyn NotificationHandle>)>,
     project: Model<Project>,
     follower_states: HashMap<View<Pane>, FollowerState>,
@@ -660,7 +657,7 @@ impl Workspace {
             last_active_view_id: None,
             status_bar,
             modal_layer,
-            // titlebar_item: None,
+            titlebar_item: None,
             notifications: Default::default(),
             left_dock,
             bottom_dock,
@@ -1033,15 +1030,14 @@ impl Workspace {
         &self.app_state.client
     }
 
-    // todo!()
-    // pub fn set_titlebar_item(&mut self, item: AnyViewHandle, cx: &mut ViewContext<Self>) {
-    //     self.titlebar_item = Some(item);
-    //     cx.notify();
-    // }
+    pub fn set_titlebar_item(&mut self, item: AnyView, cx: &mut ViewContext<Self>) {
+        self.titlebar_item = Some(item);
+        cx.notify();
+    }
 
-    // pub fn titlebar_item(&self) -> Option<AnyViewHandle> {
-    //     self.titlebar_item.clone()
-    // }
+    pub fn titlebar_item(&self) -> Option<AnyView> {
+        self.titlebar_item.clone()
+    }
 
     /// Call the given callback with a workspace whose project is local.
     ///
@@ -2448,75 +2444,6 @@ impl Workspace {
     //             .any(|state| state.leader_id == peer_id)
     //     }
 
-    fn render_titlebar(&self, cx: &mut ViewContext<Self>) -> impl Component<Self> {
-        h_stack()
-            .id("titlebar")
-            .justify_between()
-            .when(
-                !matches!(cx.window_bounds(), WindowBounds::Fullscreen),
-                |s| s.pl_20(),
-            )
-            .w_full()
-            .h(rems(1.75))
-            .bg(cx.theme().colors().title_bar_background)
-            .on_click(|_, event, cx| {
-                if event.up.click_count == 2 {
-                    cx.zoom_window();
-                }
-            })
-            .child(
-                h_stack()
-                    // TODO - Add player menu
-                    .child(
-                        div()
-                            .id("project_owner_indicator")
-                            .child(
-                                Button::new("player")
-                                    .variant(ButtonVariant::Ghost)
-                                    .color(Some(TextColor::Player(0))),
-                            )
-                            .tooltip(move |_, cx| {
-                                cx.build_view(|cx| TextTooltip::new("Toggle following"))
-                            }),
-                    )
-                    // TODO - Add project menu
-                    .child(
-                        div()
-                            .id("titlebar_project_menu_button")
-                            .child(Button::new("project_name").variant(ButtonVariant::Ghost))
-                            .tooltip(move |_, cx| {
-                                cx.build_view(|cx| TextTooltip::new("Recent Projects"))
-                            }),
-                    )
-                    // TODO - Add git menu
-                    .child(
-                        div()
-                            .id("titlebar_git_menu_button")
-                            .child(
-                                Button::new("branch_name")
-                                    .variant(ButtonVariant::Ghost)
-                                    .color(Some(TextColor::Muted)),
-                            )
-                            .tooltip(move |_, cx| {
-                                // todo!() Replace with real action.
-                                #[gpui::action]
-                                struct NoAction {}
-
-                                cx.build_view(|cx| {
-                                    TextTooltip::new("Recent Branches")
-                                        .key_binding(KeyBinding::new(gpui::KeyBinding::new(
-                                            "cmd-b",
-                                            NoAction {},
-                                            None,
-                                        )))
-                                        .meta("Only local branches shown")
-                                })
-                            }),
-                    ),
-            ) // self.titlebar_item
-            .child(h_stack().child(Label::new("Right side titlebar item")))
-    }
-
     fn active_item_path_changed(&mut self, cx: &mut ViewContext<Self>) {
         let active_entry = self.active_project_path(cx);
         self.project
@@ -3719,7 +3646,7 @@ impl Render for Workspace {
             .items_start()
             .text_color(cx.theme().colors().text)
             .bg(cx.theme().colors().background)
-            .child(self.render_titlebar(cx))
+            .children(self.titlebar_item.clone())
             .child(
                 // todo! should this be a component a view?
                 div()

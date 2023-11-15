@@ -341,10 +341,6 @@ pub fn initialize_workspace(
             //         workspace.active_pane().clone(),
             //     ));
 
-            //     let collab_titlebar_item =
-            //         cx.add_view(|cx| CollabTitlebarItem::new(workspace, &workspace_handle, cx));
-            //     workspace.set_titlebar_item(collab_titlebar_item.into_any(), cx);
-
             //     let copilot =
             //         cx.add_view(|cx| copilot_button::CopilotButton::new(app_state.fs.clone(), cx));
             //     let diagnostic_summary =
