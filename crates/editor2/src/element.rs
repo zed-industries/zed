@@ -2451,6 +2451,12 @@ impl Element<Editor> for EditorElement {
                 // We call with_z_index to establish a new stacking context.
                 cx.with_z_index(0, |cx| {
                     cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
+                        // Paint mouse listeners first, so any elements we paint on top of the editor
+                        // take precedence.
+                        self.paint_mouse_listeners(bounds, gutter_bounds, text_bounds, &layout, cx);
+                        let input_handler = ElementInputHandler::new(bounds, cx);
+                        cx.handle_input(&editor.focus_handle, input_handler);
+
                         self.paint_background(gutter_bounds, text_bounds, &layout, cx);
                         if layout.gutter_size.width > Pixels::ZERO {
                             self.paint_gutter(gutter_bounds, &mut layout, editor, cx);
@@ -2460,11 +2466,6 @@ impl Element<Editor> for EditorElement {
                         if !layout.blocks.is_empty() {
                             self.paint_blocks(bounds, &mut layout, editor, cx);
                         }
-
-                        self.paint_mouse_listeners(bounds, gutter_bounds, text_bounds, &layout, cx);
-
-                        let input_handler = ElementInputHandler::new(bounds, cx);
-                        cx.handle_input(&editor.focus_handle, input_handler);
                     });
                 });
             },
