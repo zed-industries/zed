@@ -244,7 +244,7 @@ where
 
     fn draw(
         &mut self,
-        mut origin: Point<Pixels>,
+        origin: Point<Pixels>,
         available_space: Size<AvailableSpace>,
         view_state: &mut V,
         cx: &mut ViewContext<V>,

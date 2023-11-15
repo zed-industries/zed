@@ -1076,26 +1076,22 @@ impl<'a> WindowContext<'a> {
 
         self.with_z_index(0, |cx| {
             let available_space = cx.window.viewport_size.map(Into::into);
-            root_view.draw(available_space, cx);
+            root_view.draw(Point::zero(), available_space, cx);
         });
 
         if let Some(active_drag) = self.app.active_drag.take() {
             self.with_z_index(1, |cx| {
                 let offset = cx.mouse_position() - active_drag.cursor_offset;
-                cx.with_element_offset(offset, |cx| {
-                    let available_space =
-                        size(AvailableSpace::MinContent, AvailableSpace::MinContent);
-                    active_drag.view.draw(available_space, cx);
-                    cx.active_drag = Some(active_drag);
-                });
+                let available_space = size(AvailableSpace::MinContent, AvailableSpace::MinContent);
+                active_drag.view.draw(offset, available_space, cx);
+                cx.active_drag = Some(active_drag);
             });
         } else if let Some(active_tooltip) = self.app.active_tooltip.take() {
             self.with_z_index(1, |cx| {
-                cx.with_element_offset(active_tooltip.cursor_offset, |cx| {
-                    let available_space =
-                        size(AvailableSpace::MinContent, AvailableSpace::MinContent);
-                    active_tooltip.view.draw(available_space, cx);
-                });
+                let available_space = size(AvailableSpace::MinContent, AvailableSpace::MinContent);
+                active_tooltip
+                    .view
+                    .draw(active_tooltip.cursor_offset, available_space, cx);
             });
         }
 

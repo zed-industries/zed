@@ -225,10 +225,10 @@ impl<ParentViewState: 'static> Element<ParentViewState> for AnyView {
     fn layout(
         &mut self,
         _view_state: &mut ParentViewState,
-        rendered_element: Option<Self::ElementState>,
+        _element_state: Option<Self::ElementState>,
         cx: &mut ViewContext<ParentViewState>,
     ) -> (LayoutId, Self::ElementState) {
-        (self.layout)(self, rendered_element, cx)
+        (self.layout)(self, cx)
     }
 
     fn paint(
