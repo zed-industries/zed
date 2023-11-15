@@ -39,9 +39,9 @@ use futures::FutureExt;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use git::diff_hunk_to_display;
 use gpui::{
-    action, actions, div, point, px, relative, rems, size, uniform_list, AnyElement, AppContext,
-    AsyncWindowContext, BackgroundExecutor, Bounds, ClipboardItem, Component, Context, Entity,
-    EventEmitter, FocusHandle, FontFeatures, FontStyle, FontWeight, HighlightStyle, Hsla,
+    action, actions, div, point, px, relative, rems, render_view, size, uniform_list, AnyElement,
+    AppContext, AsyncWindowContext, BackgroundExecutor, Bounds, ClipboardItem, Component, Context,
+    Entity, EventEmitter, FocusHandle, FontFeatures, FontStyle, FontWeight, HighlightStyle, Hsla,
     InputHandler, KeyContext, Model, MouseButton, ParentElement, Pixels, Render,
     StatefulInteractive, StatelessInteractive, Styled, Subscription, Task, TextStyle,
     UniformListScrollHandle, View, ViewContext, VisualContext, WeakView, WindowContext,
@@ -7806,7 +7806,8 @@ impl Editor {
                                     }
                                     div()
                                         .pl(cx.anchor_x)
-                                        .child(with_view(&rename_editor, |_, _| {
+                                        .child(render_view(
+                                            &rename_editor,
                                             EditorElement::new(EditorStyle {
                                                 background: cx.theme().system().transparent,
                                                 local_player: cx.editor_style.local_player,
@@ -7817,8 +7818,8 @@ impl Editor {
                                                     .editor_style
                                                     .diagnostic_style
                                                     .clone(),
-                                            })
-                                        }))
+                                            }),
+                                        ))
                                         .render()
                                 }
                             }),
