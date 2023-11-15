@@ -225,7 +225,7 @@ pub struct LocalSnapshot {
     /// All of the git repositories in the worktree, indexed by the project entry
     /// id of their parent directory.
     git_repositories: TreeMap<ProjectEntryId, LocalRepositoryEntry>,
-    scan_exclude_files: Vec<PathMatcher>,
+    file_scan_exclusions: Vec<PathMatcher>,
 }
 
 struct BackgroundScannerState {
@@ -315,14 +315,14 @@ impl Worktree {
         Ok(cx.add_model(move |cx: &mut ModelContext<Worktree>| {
             let settings_subscription = cx.observe_global::<SettingsStore, _>(move |this, cx| {
                 if let Self::Local(this) = this {
-                    let new_scan_exclude_files =
-                        scan_exclude_files(settings::get::<ProjectSettings>(cx));
-                    if new_scan_exclude_files != this.snapshot.scan_exclude_files {
-                        this.snapshot.scan_exclude_files = new_scan_exclude_files;
+                    let new_file_scan_exclusions =
+                        file_scan_exclusions(settings::get::<ProjectSettings>(cx));
+                    if new_file_scan_exclusions != this.snapshot.file_scan_exclusions {
+                        this.snapshot.file_scan_exclusions = new_file_scan_exclusions;
                         log::info!(
                             "Re-scanning directories, new scan exclude files: {:?}",
                             this.snapshot
-                                .scan_exclude_files
+                                .file_scan_exclusions
                                 .iter()
                                 .map(ToString::to_string)
                                 .collect::<Vec<_>>()
@@ -351,7 +351,7 @@ impl Worktree {
                 .file_name()
                 .map_or(String::new(), |f| f.to_string_lossy().to_string());
             let mut snapshot = LocalSnapshot {
-                scan_exclude_files: scan_exclude_files(settings::get::<ProjectSettings>(cx)),
+                file_scan_exclusions: file_scan_exclusions(settings::get::<ProjectSettings>(cx)),
                 ignores_by_parent_abs_path: Default::default(),
                 git_repositories: Default::default(),
                 snapshot: Snapshot {
@@ -648,15 +648,15 @@ fn start_background_scan_tasks(
     vec![background_scanner, scan_state_updater]
 }
 
-fn scan_exclude_files(project_settings: &ProjectSettings) -> Vec<PathMatcher> {
-    project_settings.scan_exclude_files.as_deref().unwrap_or(&[]).iter()
+fn file_scan_exclusions(project_settings: &ProjectSettings) -> Vec<PathMatcher> {
+    project_settings.file_scan_exclusions.as_deref().unwrap_or(&[]).iter()
     .sorted()
     .filter_map(|pattern| {
         PathMatcher::new(pattern)
             .map(Some)
             .unwrap_or_else(|e| {
                 log::error!(
-                    "Skipping pattern {pattern} in `scan_exclude_files` project settings due to parsing error: {e:#}"
+                    "Skipping pattern {pattern} in `file_scan_exclusions` project settings due to parsing error: {e:#}"
                 );
                 None
             })
@@ -2227,7 +2227,7 @@ impl LocalSnapshot {
     }
 
     fn is_abs_path_excluded(&self, abs_path: &Path) -> bool {
-        self.scan_exclude_files
+        self.file_scan_exclusions
             .iter()
             .any(|exclude_matcher| exclude_matcher.is_match(abs_path))
     }

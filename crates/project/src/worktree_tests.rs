@@ -888,7 +888,7 @@ async fn test_write_file(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_ignore_exclusions(cx: &mut TestAppContext) {
+async fn test_file_scan_exclusions(cx: &mut TestAppContext) {
     init_test(cx);
     let dir = temp_tree(json!({
         ".gitignore": "**/target\n/node_modules\n",
@@ -917,7 +917,7 @@ async fn test_ignore_exclusions(cx: &mut TestAppContext) {
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _, _>(|store, cx| {
             store.update_user_settings::<ProjectSettings>(cx, |project_settings| {
-                project_settings.scan_exclude_files =
+                project_settings.file_scan_exclusions =
                     Some(vec!["**/foo/**".to_string(), "**/.DS_Store".to_string()]);
             });
         });
@@ -954,7 +954,8 @@ async fn test_ignore_exclusions(cx: &mut TestAppContext) {
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _, _>(|store, cx| {
             store.update_user_settings::<ProjectSettings>(cx, |project_settings| {
-                project_settings.scan_exclude_files = Some(vec!["**/node_modules/**".to_string()]);
+                project_settings.file_scan_exclusions =
+                    Some(vec!["**/node_modules/**".to_string()]);
             });
         });
     });

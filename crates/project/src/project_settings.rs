@@ -10,9 +10,9 @@ pub struct ProjectSettings {
     pub lsp: HashMap<Arc<str>, LspSettings>,
     #[serde(default)]
     pub git: GitSettings,
-    // TODO kb better names and docs and tests
+    // TODO kb docs and project_search test
     #[serde(default)]
-    pub scan_exclude_files: Option<Vec<String>>,
+    pub file_scan_exclusions: Option<Vec<String>>,
 }
 
 #[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]

@@ -269,7 +269,7 @@
     "include_warnings": true
   },
   // TODO kb docs
-  "scan_exclude_files": [
+  "file_scan_exclusions": [
     "**/.git",
     "**/.svn",
     "**/.hg",
@@ -277,8 +277,7 @@
     "**/.DS_Store",
     "**/Thumbs.db",
     "**/.classpath",
-    "**/.settings",
-    "**/target"
+    "**/.settings"
   ],
   // Git gutter behavior configuration.
   "git": {
