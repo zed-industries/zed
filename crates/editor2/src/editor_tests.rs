@@ -3851,12 +3851,12 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut gpui::TestAppContext) {
         Buffer::new(0, cx.entity_id().as_u64(), text).with_language(language, cx)
     });
     let buffer = cx.build_model(|cx| MultiBuffer::singleton(buffer, cx));
-    let (view, mut cx) = cx.add_window_view(|cx| build_editor(buffer, cx));
+    let (view, cx) = cx.add_window_view(|cx| build_editor(buffer, cx));
 
     view.condition::<crate::Event>(&cx, |view, cx| !view.buffer.read(cx).is_parsing(cx))
         .await;
 
-    view.update(&mut cx, |view, cx| {
+    view.update(cx, |view, cx| {
         view.change_selections(None, cx, |s| {
             s.select_display_ranges([
                 DisplayPoint::new(0, 25)..DisplayPoint::new(0, 25),
@@ -3867,7 +3867,7 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut gpui::TestAppContext) {
         view.select_larger_syntax_node(&SelectLargerSyntaxNode, cx);
     });
     assert_eq!(
-        view.update(&mut cx, |view, cx| { view.selections.display_ranges(cx) }),
+        view.update(cx, |view, cx| { view.selections.display_ranges(cx) }),
         &[
             DisplayPoint::new(0, 23)..DisplayPoint::new(0, 27),
             DisplayPoint::new(2, 35)..DisplayPoint::new(2, 7),
@@ -3875,50 +3875,50 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut gpui::TestAppContext) {
         ]
     );
 
-    view.update(&mut cx, |view, cx| {
+    view.update(cx, |view, cx| {
         view.select_larger_syntax_node(&SelectLargerSyntaxNode, cx);
     });
     assert_eq!(
-        view.update(&mut cx, |view, cx| view.selections.display_ranges(cx)),
+        view.update(cx, |view, cx| view.selections.display_ranges(cx)),
         &[
             DisplayPoint::new(0, 16)..DisplayPoint::new(0, 28),
             DisplayPoint::new(4, 1)..DisplayPoint::new(2, 0),
         ]
     );
 
-    view.update(&mut cx, |view, cx| {
+    view.update(cx, |view, cx| {
         view.select_larger_syntax_node(&SelectLargerSyntaxNode, cx);
     });
     assert_eq!(
-        view.update(&mut cx, |view, cx| view.selections.display_ranges(cx)),
+        view.update(cx, |view, cx| view.selections.display_ranges(cx)),
         &[DisplayPoint::new(5, 0)..DisplayPoint::new(0, 0)]
     );
 
     // Trying to expand the selected syntax node one more time has no effect.
-    view.update(&mut cx, |view, cx| {
+    view.update(cx, |view, cx| {
         view.select_larger_syntax_node(&SelectLargerSyntaxNode, cx);
     });
     assert_eq!(
-        view.update(&mut cx, |view, cx| view.selections.display_ranges(cx)),
+        view.update(cx, |view, cx| view.selections.display_ranges(cx)),
         &[DisplayPoint::new(5, 0)..DisplayPoint::new(0, 0)]
     );
 
-    view.update(&mut cx, |view, cx| {
+    view.update(cx, |view, cx| {
         view.select_smaller_syntax_node(&SelectSmallerSyntaxNode, cx);
     });
     assert_eq!(
-        view.update(&mut cx, |view, cx| view.selections.display_ranges(cx)),
+        view.update(cx, |view, cx| view.selections.display_ranges(cx)),
         &[
             DisplayPoint::new(0, 16)..DisplayPoint::new(0, 28),
             DisplayPoint::new(4, 1)..DisplayPoint::new(2, 0),
         ]
     );
 
-    view.update(&mut cx, |view, cx| {
+    view.update(cx, |view, cx| {
         view.select_smaller_syntax_node(&SelectSmallerSyntaxNode, cx);
     });
     assert_eq!(
-        view.update(&mut cx, |view, cx| view.selections.display_ranges(cx)),
+        view.update(cx, |view, cx| view.selections.display_ranges(cx)),
         &[
             DisplayPoint::new(0, 23)..DisplayPoint::new(0, 27),
             DisplayPoint::new(2, 35)..DisplayPoint::new(2, 7),
@@ -3926,11 +3926,11 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut gpui::TestAppContext) {
         ]
     );
 
-    view.update(&mut cx, |view, cx| {
+    view.update(cx, |view, cx| {
         view.select_smaller_syntax_node(&SelectSmallerSyntaxNode, cx);
     });
     assert_eq!(
-        view.update(&mut cx, |view, cx| view.selections.display_ranges(cx)),
+        view.update(cx, |view, cx| view.selections.display_ranges(cx)),
         &[
             DisplayPoint::new(0, 25)..DisplayPoint::new(0, 25),
             DisplayPoint::new(2, 24)..DisplayPoint::new(2, 12),
@@ -3939,11 +3939,11 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut gpui::TestAppContext) {
     );
 
     // Trying to shrink the selected syntax node one more time has no effect.
-    view.update(&mut cx, |view, cx| {
+    view.update(cx, |view, cx| {
         view.select_smaller_syntax_node(&SelectSmallerSyntaxNode, cx);
     });
     assert_eq!(
-        view.update(&mut cx, |view, cx| view.selections.display_ranges(cx)),
+        view.update(cx, |view, cx| view.selections.display_ranges(cx)),
         &[
             DisplayPoint::new(0, 25)..DisplayPoint::new(0, 25),
             DisplayPoint::new(2, 24)..DisplayPoint::new(2, 12),
@@ -3953,7 +3953,7 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut gpui::TestAppContext) {
 
     // Ensure that we keep expanding the selection if the larger selection starts or ends within
     // a fold.
-    view.update(&mut cx, |view, cx| {
+    view.update(cx, |view, cx| {
         view.fold_ranges(
             vec![
                 Point::new(0, 21)..Point::new(0, 24),
@@ -3965,7 +3965,7 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut gpui::TestAppContext) {
         view.select_larger_syntax_node(&SelectLargerSyntaxNode, cx);
     });
     assert_eq!(
-        view.update(&mut cx, |view, cx| view.selections.display_ranges(cx)),
+        view.update(cx, |view, cx| view.selections.display_ranges(cx)),
         &[
             DisplayPoint::new(0, 16)..DisplayPoint::new(0, 28),
             DisplayPoint::new(2, 35)..DisplayPoint::new(2, 7),
@@ -4017,8 +4017,7 @@ async fn test_autoindent_selections(cx: &mut gpui::TestAppContext) {
         Buffer::new(0, cx.entity_id().as_u64(), text).with_language(language, cx)
     });
     let buffer = cx.build_model(|cx| MultiBuffer::singleton(buffer, cx));
-    let (editor, mut cx) = cx.add_window_view(|cx| build_editor(buffer, cx));
-    let cx = &mut cx;
+    let (editor, cx) = cx.add_window_view(|cx| build_editor(buffer, cx));
     editor
         .condition::<crate::Event>(cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
         .await;
@@ -4583,8 +4582,7 @@ async fn test_surround_with_pair(cx: &mut gpui::TestAppContext) {
         Buffer::new(0, cx.entity_id().as_u64(), text).with_language(language, cx)
     });
     let buffer = cx.build_model(|cx| MultiBuffer::singleton(buffer, cx));
-    let (view, mut cx) = cx.add_window_view(|cx| build_editor(buffer, cx));
-    let cx = &mut cx;
+    let (view, cx) = cx.add_window_view(|cx| build_editor(buffer, cx));
     view.condition::<crate::Event>(cx, |view, cx| !view.buffer.read(cx).is_parsing(cx))
         .await;
 
@@ -4734,8 +4732,7 @@ async fn test_delete_autoclose_pair(cx: &mut gpui::TestAppContext) {
         Buffer::new(0, cx.entity_id().as_u64(), text).with_language(language, cx)
     });
     let buffer = cx.build_model(|cx| MultiBuffer::singleton(buffer, cx));
-    let (editor, mut cx) = cx.add_window_view(|cx| build_editor(buffer, cx));
-    let cx = &mut cx;
+    let (editor, cx) = cx.add_window_view(|cx| build_editor(buffer, cx));
     editor
         .condition::<crate::Event>(cx, |view, cx| !view.buffer.read(cx).is_parsing(cx))
         .await;
@@ -4957,8 +4954,7 @@ async fn test_document_format_during_save(cx: &mut gpui::TestAppContext) {
     let fake_server = fake_servers.next().await.unwrap();
 
     let buffer = cx.build_model(|cx| MultiBuffer::singleton(buffer, cx));
-    let (editor, mut cx) = cx.add_window_view(|cx| build_editor(buffer, cx));
-    let cx = &mut cx;
+    let (editor, cx) = cx.add_window_view(|cx| build_editor(buffer, cx));
     editor.update(cx, |editor, cx| editor.set_text("one\ntwo\nthree\n", cx));
     assert!(cx.read(|cx| editor.is_dirty(cx)));
 
@@ -5077,8 +5073,7 @@ async fn test_range_format_during_save(cx: &mut gpui::TestAppContext) {
     let fake_server = fake_servers.next().await.unwrap();
 
     let buffer = cx.build_model(|cx| MultiBuffer::singleton(buffer, cx));
-    let (editor, mut cx) = cx.add_window_view(|cx| build_editor(buffer, cx));
-    let cx = &mut cx;
+    let (editor, cx) = cx.add_window_view(|cx| build_editor(buffer, cx));
     editor.update(cx, |editor, cx| editor.set_text("one\ntwo\nthree\n", cx));
     assert!(cx.read(|cx| editor.is_dirty(cx)));
 
@@ -5205,8 +5200,7 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
     let fake_server = fake_servers.next().await.unwrap();
 
     let buffer = cx.build_model(|cx| MultiBuffer::singleton(buffer, cx));
-    let (editor, mut cx) = cx.add_window_view(|cx| build_editor(buffer, cx));
-    let cx = &mut cx;
+    let (editor, cx) = cx.add_window_view(|cx| build_editor(buffer, cx));
     editor.update(cx, |editor, cx| editor.set_text("one\ntwo\nthree\n", cx));
 
     let format = editor
@@ -5993,8 +5987,7 @@ fn test_editing_disjoint_excerpts(cx: &mut TestAppContext) {
         multibuffer
     });
 
-    let (view, mut cx) = cx.add_window_view(|cx| build_editor(multibuffer, cx));
-    let cx = &mut cx;
+    let (view, cx) = cx.add_window_view(|cx| build_editor(multibuffer, cx));
     view.update(cx, |view, cx| {
         assert_eq!(view.text(cx), "aaaa\nbbbb");
         view.change_selections(None, cx, |s| {
@@ -6064,8 +6057,7 @@ fn test_editing_overlapping_excerpts(cx: &mut TestAppContext) {
         multibuffer
     });
 
-    let (view, mut cx) = cx.add_window_view(|cx| build_editor(multibuffer, cx));
-    let cx = &mut cx;
+    let (view, cx) = cx.add_window_view(|cx| build_editor(multibuffer, cx));
     view.update(cx, |view, cx| {
         let (expected_text, selection_ranges) = marked_text_ranges(
             indoc! {"
@@ -6302,8 +6294,7 @@ async fn test_extra_newline_insertion(cx: &mut gpui::TestAppContext) {
         Buffer::new(0, cx.entity_id().as_u64(), text).with_language(language, cx)
     });
     let buffer = cx.build_model(|cx| MultiBuffer::singleton(buffer, cx));
-    let (view, mut cx) = cx.add_window_view(|cx| build_editor(buffer, cx));
-    let cx = &mut cx;
+    let (view, cx) = cx.add_window_view(|cx| build_editor(buffer, cx));
     view.condition::<crate::Event>(cx, |view, cx| !view.buffer.read(cx).is_parsing(cx))
         .await;
 
@@ -8112,8 +8103,7 @@ async fn test_document_format_with_prettier(cx: &mut gpui::TestAppContext) {
 
     let buffer_text = "one\ntwo\nthree\n";
     let buffer = cx.build_model(|cx| MultiBuffer::singleton(buffer, cx));
-    let (editor, mut cx) = cx.add_window_view(|cx| build_editor(buffer, cx));
-    let cx = &mut cx;
+    let (editor, cx) = cx.add_window_view(|cx| build_editor(buffer, cx));
     editor.update(cx, |editor, cx| editor.set_text(buffer_text, cx));
 
     editor

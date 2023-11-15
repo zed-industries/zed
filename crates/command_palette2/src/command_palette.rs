@@ -385,8 +385,7 @@ mod tests {
         let app_state = init_test(cx);
 
         let project = Project::test(app_state.fs.clone(), [], cx).await;
-        let (workspace, mut cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
-        let cx = &mut cx;
+        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
 
         let editor = cx.build_view(|cx| {
             let mut editor = Editor::single_line(cx);
@@ -417,7 +416,7 @@ mod tests {
             assert!(is_sorted(&palette.delegate.commands));
         });
 
-        cx.simulate_keystrokes("b c k s p");
+        cx.simulate_input("bcksp");
 
         palette.update(cx, |palette, _| {
             assert_eq!(palette.delegate.matches[0].string, "editor: backspace");
@@ -439,7 +438,7 @@ mod tests {
         });
 
         cx.simulate_keystrokes("cmd-shift-p");
-        cx.simulate_keystrokes("b c k s p");
+        cx.simulate_input("bcksp");
 
         let palette = workspace.update(cx, |workspace, cx| {
             workspace
