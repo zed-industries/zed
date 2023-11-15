@@ -487,23 +487,26 @@ impl EditorElement {
             }
         }
 
-        // todo!("fold indicators")
-        // for (ix, fold_indicator) in layout.fold_indicators.iter_mut().enumerate() {
-        //     if let Some(indicator) = fold_indicator.as_mut() {
-        //         let position = point(
-        //             bounds.width() - layout.gutter_padding,
-        //             ix as f32 * line_height - (scroll_top % line_height),
-        //         );
-        //         let centering_offset = point(
-        //             (layout.gutter_padding + layout.gutter_margin - indicator.size().x) / 2.,
-        //             (line_height - indicator.size().y) / 2.,
-        //         );
+        for (ix, fold_indicator) in layout.fold_indicators.iter_mut().enumerate() {
+            if let Some(fold_indicator) = fold_indicator.as_mut() {
+                let available_space = size(
+                    AvailableSpace::MinContent,
+                    AvailableSpace::Definite(line_height * 0.55),
+                );
+                let fold_indicator_size = fold_indicator.measure(available_space, editor, cx);
 
-        //         let indicator_origin = bounds.origin + position + centering_offset;
-
-        //         indicator.paint(indicator_origin, visible_bounds, editor, cx);
-        //     }
-        // }
+                let position = point(
+                    bounds.size.width - layout.gutter_padding,
+                    ix as f32 * line_height - (scroll_top % line_height),
+                );
+                let centering_offset = point(
+                    (layout.gutter_padding + layout.gutter_margin - fold_indicator_size.width) / 2.,
+                    (line_height - fold_indicator_size.height) / 2.,
+                );
+                let origin = bounds.origin + position + centering_offset;
+                fold_indicator.draw(origin, available_space, editor, cx);
+            }
+        }
 
         if let Some(indicator) = layout.code_actions_indicator.as_mut() {
             let available_space = size(
@@ -1684,35 +1687,25 @@ impl EditorElement {
             ShowScrollbar::Auto => {
                 // Git
                 (is_singleton && scrollbar_settings.git_diff && snapshot.buffer_snapshot.has_git_diffs())
-                        ||
-                        // Selections
-                        (is_singleton && scrollbar_settings.selections && !highlighted_ranges.is_empty())
-                        // Scrollmanager
-                        || editor.scroll_manager.scrollbars_visible()
+                ||
+                // Selections
+                (is_singleton && scrollbar_settings.selections && !highlighted_ranges.is_empty())
+                // Scrollmanager
+                || editor.scroll_manager.scrollbars_visible()
             }
             ShowScrollbar::System => editor.scroll_manager.scrollbars_visible(),
             ShowScrollbar::Always => true,
             ShowScrollbar::Never => false,
         };
 
-        let fold_ranges: Vec<(BufferRow, Range<DisplayPoint>, Hsla)> = Vec::new();
-        // todo!()
-
-        // fold_ranges
-        // .into_iter()
-        // .map(|(id, fold)| {
-        //     // todo!("folds!")
-        //     // let color = self
-        //     //     .style
-        //     //     .folds
-        //     //     .ellipses
-        //     //     .background
-        //     //     .style_for(&mut cx.mouse_state::<FoldMarkers>(id as usize))
-        //     //     .color;
-
-        //     // (id, fold, color)
-        // })
-        // .collect();
+        let fold_ranges: Vec<(BufferRow, Range<DisplayPoint>, Hsla)> = fold_ranges
+            .into_iter()
+            .map(|(id, fold)| {
+                // todo!("change color based on mouse state")
+                let color = gpui::red();
+                (id, fold, color)
+            })
+            .collect();
 
         let head_for_relative = newest_selection_head.unwrap_or_else(|| {
             let newest = editor.selections.newest::<Point>(cx);
@@ -1754,21 +1747,23 @@ impl EditorElement {
             .width;
         let scroll_width = longest_line_width.max(max_visible_line_width) + overscroll.width;
 
-        let (scroll_width, blocks) = self.layout_blocks(
-            start_row..end_row,
-            &snapshot,
-            bounds.size.width,
-            scroll_width,
-            gutter_padding,
-            gutter_width,
-            em_width,
-            gutter_width + gutter_margin,
-            line_height,
-            &style,
-            &line_layouts,
-            editor,
-            cx,
-        );
+        let (scroll_width, blocks) = cx.with_element_id(Some("editor_blocks"), |cx| {
+            self.layout_blocks(
+                start_row..end_row,
+                &snapshot,
+                bounds.size.width,
+                scroll_width,
+                gutter_padding,
+                gutter_width,
+                em_width,
+                gutter_width + gutter_margin,
+                line_height,
+                &style,
+                &line_layouts,
+                editor,
+                cx,
+            )
+        });
 
         let scroll_max = point(
             f32::from((scroll_width - text_size.width) / em_width).max(0.0),
@@ -1828,15 +1823,16 @@ impl EditorElement {
         // );
         // let mode = editor.mode;
 
-        // todo!("fold_indicators")
-        // let mut fold_indicators = editor.render_fold_indicators(
-        //     fold_statuses,
-        //     &style,
-        //     editor.gutter_hovered,
-        //     line_height,
-        //     gutter_margin,
-        //     cx,
-        // );
+        let mut fold_indicators = cx.with_element_id(Some("gutter_fold_indicators"), |cx| {
+            editor.render_fold_indicators(
+                fold_statuses,
+                &style,
+                editor.gutter_hovered,
+                line_height,
+                gutter_margin,
+                cx,
+            )
+        });
 
         // todo!("context_menu")
         // if let Some((_, context_menu)) = context_menu.as_mut() {
@@ -1851,20 +1847,6 @@ impl EditorElement {
         //         editor,
         //         cx,
         //     );
-        // }
-
-        // todo!("fold indicators")
-        // for fold_indicator in fold_indicators.iter_mut() {
-        //     if let Some(indicator) = fold_indicator.as_mut() {
-        //         indicator.layout(
-        //             SizeConstraint::strict_along(
-        //                 Axis::Vertical,
-        //                 line_height * style.code_actions.vertical_scale,
-        //             ),
-        //             editor,
-        //             cx,
-        //         );
-        //     }
         // }
 
         // todo!("hover popovers")
@@ -1953,7 +1935,7 @@ impl EditorElement {
             selections,
             context_menu,
             code_actions_indicator,
-            // fold_indicators,
+            fold_indicators,
             tab_invisible,
             space_invisible,
             // hover_popovers: hover,
@@ -2019,7 +2001,6 @@ impl EditorElement {
                     })
                 }
                 TransformBlock::ExcerptHeader {
-                    id,
                     buffer,
                     range,
                     starts_new_buffer,
@@ -2041,9 +2022,7 @@ impl EditorElement {
                             .map_or(range.context.start, |primary| primary.start);
                         let jump_position = language::ToPoint::to_point(&jump_anchor, buffer);
 
-                        // todo!("avoid ElementId collision risk here")
-                        let icon_button_id: usize = id.clone().into();
-                        IconButton::new(icon_button_id, ui::Icon::ArrowUpRight)
+                        IconButton::new(block_id, ui::Icon::ArrowUpRight)
                             .on_click(move |editor: &mut Editor, cx| {
                                 editor.jump(jump_path.clone(), jump_position, jump_anchor, cx);
                             })
@@ -3117,7 +3096,7 @@ pub struct LayoutState {
     context_menu: Option<(DisplayPoint, AnyElement<Editor>)>,
     code_actions_indicator: Option<CodeActionsIndicator>,
     // hover_popovers: Option<(DisplayPoint, Vec<AnyElement<Editor>>)>,
-    // fold_indicators: Vec<Option<AnyElement<Editor>>>,
+    fold_indicators: Vec<Option<AnyElement<Editor>>>,
     tab_invisible: Line,
     space_invisible: Line,
 }

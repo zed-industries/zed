@@ -4372,69 +4372,42 @@ impl Editor {
         }
     }
 
-    //     pub fn render_fold_indicators(
-    //         &self,
-    //         fold_data: Vec<Option<(FoldStatus, u32, bool)>>,
-    //         style: &EditorStyle,
-    //         gutter_hovered: bool,
-    //         line_height: f32,
-    //         gutter_margin: f32,
-    //         cx: &mut ViewContext<Self>,
-    //     ) -> Vec<Option<AnyElement<Self>>> {
-    //         enum FoldIndicators {}
-
-    //         let style = style.folds.clone();
-
-    //         fold_data
-    //             .iter()
-    //             .enumerate()
-    //             .map(|(ix, fold_data)| {
-    //                 fold_data
-    //                     .map(|(fold_status, buffer_row, active)| {
-    //                         (active || gutter_hovered || fold_status == FoldStatus::Folded).then(|| {
-    //                             MouseEventHandler::new::<FoldIndicators, _>(
-    //                                 ix as usize,
-    //                                 cx,
-    //                                 |mouse_state, _| {
-    //                                     Svg::new(match fold_status {
-    //                                         FoldStatus::Folded => style.folded_icon.clone(),
-    //                                         FoldStatus::Foldable => style.foldable_icon.clone(),
-    //                                     })
-    //                                     .with_color(
-    //                                         style
-    //                                             .indicator
-    //                                             .in_state(fold_status == FoldStatus::Folded)
-    //                                             .style_for(mouse_state)
-    //                                             .color,
-    //                                     )
-    //                                     .constrained()
-    //                                     .with_width(gutter_margin * style.icon_margin_scale)
-    //                                     .aligned()
-    //                                     .constrained()
-    //                                     .with_height(line_height)
-    //                                     .with_width(gutter_margin)
-    //                                     .aligned()
-    //                                 },
-    //                             )
-    //                             .with_cursor_style(CursorStyle::PointingHand)
-    //                             .with_padding(Padding::uniform(3.))
-    //                             .on_click(MouseButton::Left, {
-    //                                 move |_, editor, cx| match fold_status {
-    //                                     FoldStatus::Folded => {
-    //                                         editor.unfold_at(&UnfoldAt { buffer_row }, cx);
-    //                                     }
-    //                                     FoldStatus::Foldable => {
-    //                                         editor.fold_at(&FoldAt { buffer_row }, cx);
-    //                                     }
-    //                                 }
-    //                             })
-    //                             .into_any()
-    //                         })
-    //                     })
-    //                     .flatten()
-    //             })
-    //             .collect()
-    //     }
+    pub fn render_fold_indicators(
+        &self,
+        fold_data: Vec<Option<(FoldStatus, u32, bool)>>,
+        style: &EditorStyle,
+        gutter_hovered: bool,
+        line_height: Pixels,
+        gutter_margin: Pixels,
+        cx: &mut ViewContext<Self>,
+    ) -> Vec<Option<AnyElement<Self>>> {
+        fold_data
+            .iter()
+            .enumerate()
+            .map(|(ix, fold_data)| {
+                fold_data
+                    .map(|(fold_status, buffer_row, active)| {
+                        (active || gutter_hovered || fold_status == FoldStatus::Folded).then(|| {
+                            let icon = match fold_status {
+                                FoldStatus::Folded => ui::Icon::ChevronRight,
+                                FoldStatus::Foldable => ui::Icon::ChevronDown,
+                            };
+                            IconButton::new(ix as usize, icon)
+                                .on_click(move |editor: &mut Editor, cx| match fold_status {
+                                    FoldStatus::Folded => {
+                                        editor.unfold_at(&UnfoldAt { buffer_row }, cx);
+                                    }
+                                    FoldStatus::Foldable => {
+                                        editor.fold_at(&FoldAt { buffer_row }, cx);
+                                    }
+                                })
+                                .render()
+                        })
+                    })
+                    .flatten()
+            })
+            .collect()
+    }
 
     pub fn context_menu_visible(&self) -> bool {
         self.context_menu
