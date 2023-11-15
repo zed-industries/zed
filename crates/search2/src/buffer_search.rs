@@ -203,6 +203,7 @@ impl Render for BufferSearchBar {
             })
             .on_action(Self::select_next_match)
             .on_action(Self::select_prev_match)
+            .on_action(Self::cycle_mode)
             .w_full()
             .p_1()
             .child(
