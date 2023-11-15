@@ -1,7 +1,7 @@
 use crate::{
     private::Sealed, AnyBox, AnyElement, AnyModel, AnyWeakModel, AppContext, AvailableSpace,
-    BorrowWindow, Bounds, Component, Element, ElementId, Entity, EntityId, Flatten, LayoutId,
-    Model, Pixels, Size, ViewContext, VisualContext, WeakModel, WindowContext,
+    Bounds, Component, Element, ElementId, Entity, EntityId, Flatten, LayoutId, Model, Pixels,
+    Size, ViewContext, VisualContext, WeakModel, WindowContext,
 };
 use anyhow::{Context, Result};
 use std::{
@@ -325,12 +325,10 @@ where
         _: Option<Self::ElementState>,
         cx: &mut ViewContext<ParentViewState>,
     ) -> Self::ElementState {
-        cx.with_element_id(Some(self.view.entity_id()), |cx| {
-            self.view.update(cx, |view, cx| {
-                let mut element = self.component.take().unwrap().render();
-                element.initialize(view, cx);
-                element
-            })
+        self.view.update(cx, |view, cx| {
+            let mut element = self.component.take().unwrap().render();
+            element.initialize(view, cx);
+            element
         })
     }
 
@@ -340,9 +338,7 @@ where
         element: &mut Self::ElementState,
         cx: &mut ViewContext<ParentViewState>,
     ) -> LayoutId {
-        cx.with_element_id(Some(self.view.entity_id()), |cx| {
-            self.view.update(cx, |view, cx| element.layout(view, cx))
-        })
+        self.view.update(cx, |view, cx| element.layout(view, cx))
     }
 
     fn paint(
@@ -352,9 +348,7 @@ where
         element: &mut Self::ElementState,
         cx: &mut ViewContext<ParentViewState>,
     ) {
-        cx.with_element_id(Some(self.view.entity_id()), |cx| {
-            self.view.update(cx, |view, cx| element.paint(view, cx))
-        })
+        self.view.update(cx, |view, cx| element.paint(view, cx))
     }
 }
 
