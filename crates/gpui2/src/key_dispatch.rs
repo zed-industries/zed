@@ -60,7 +60,7 @@ impl DispatchTree {
         self.keystroke_matchers.clear();
     }
 
-    pub fn push_node(&mut self, context: KeyContext, old_dispatcher: &mut Self) {
+    pub fn push_node(&mut self, context: KeyContext) {
         let parent = self.node_stack.last().copied();
         let node_id = DispatchNodeId(self.nodes.len());
         self.nodes.push(DispatchNode {
@@ -71,12 +71,6 @@ impl DispatchTree {
         if !context.is_empty() {
             self.active_node().context = context.clone();
             self.context_stack.push(context);
-            if let Some((context_stack, matcher)) = old_dispatcher
-                .keystroke_matchers
-                .remove_entry(self.context_stack.as_slice())
-            {
-                self.keystroke_matchers.insert(context_stack, matcher);
-            }
         }
     }
 
@@ -84,6 +78,33 @@ impl DispatchTree {
         let node_id = self.node_stack.pop().unwrap();
         if !self.nodes[node_id.0].context.is_empty() {
             self.context_stack.pop();
+        }
+    }
+
+    pub fn clear_keystroke_matchers(&mut self) {
+        self.keystroke_matchers.clear();
+    }
+
+    /// Preserve keystroke matchers from previous frames to support multi-stroke
+    /// bindings across multiple frames.
+    pub fn preserve_keystroke_matchers(&mut self, old_tree: &mut Self, focus_id: Option<FocusId>) {
+        if let Some(node_id) = focus_id.and_then(|focus_id| self.focusable_node_id(focus_id)) {
+            let dispatch_path = self.dispatch_path(node_id);
+
+            self.context_stack.clear();
+            for node_id in dispatch_path {
+                let node = self.node(node_id);
+                if !node.context.is_empty() {
+                    self.context_stack.push(node.context.clone());
+                }
+
+                if let Some((context_stack, matcher)) = old_tree
+                    .keystroke_matchers
+                    .remove_entry(self.context_stack.as_slice())
+                {
+                    self.keystroke_matchers.insert(context_stack, matcher);
+                }
+            }
         }
     }
 
