@@ -116,7 +116,9 @@ impl PlatformTextSystem for MacTextSystem {
                 },
             )?;
 
-            Ok(candidates[ix])
+            let font_id = candidates[ix];
+            lock.font_selections.insert(font.clone(), font_id);
+            Ok(font_id)
         }
     }
 
@@ -145,8 +147,9 @@ impl PlatformTextSystem for MacTextSystem {
     fn rasterize_glyph(
         &self,
         glyph_id: &RenderGlyphParams,
+        raster_bounds: Bounds<DevicePixels>,
     ) -> Result<(Size<DevicePixels>, Vec<u8>)> {
-        self.0.read().rasterize_glyph(glyph_id)
+        self.0.read().rasterize_glyph(glyph_id, raster_bounds)
     }
 
     fn layout_line(&self, text: &str, font_size: Pixels, font_runs: &[FontRun]) -> LineLayout {
@@ -247,8 +250,11 @@ impl MacTextSystemState {
             .into())
     }
 
-    fn rasterize_glyph(&self, params: &RenderGlyphParams) -> Result<(Size<DevicePixels>, Vec<u8>)> {
-        let glyph_bounds = self.raster_bounds(params)?;
+    fn rasterize_glyph(
+        &self,
+        params: &RenderGlyphParams,
+        glyph_bounds: Bounds<DevicePixels>,
+    ) -> Result<(Size<DevicePixels>, Vec<u8>)> {
         if glyph_bounds.size.width.0 == 0 || glyph_bounds.size.height.0 == 0 {
             Err(anyhow!("glyph bounds are empty"))
         } else {
@@ -260,6 +266,7 @@ impl MacTextSystemState {
             if params.subpixel_variant.y > 0 {
                 bitmap_size.height += DevicePixels(1);
             }
+            let bitmap_size = bitmap_size;
 
             let mut bytes;
             let cx;
