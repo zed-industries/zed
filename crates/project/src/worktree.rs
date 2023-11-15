@@ -320,7 +320,7 @@ impl Worktree {
                     if new_scan_exclude_files != this.snapshot.scan_exclude_files {
                         this.snapshot.scan_exclude_files = new_scan_exclude_files;
                         log::info!(
-                            "Re-scanning due to new scan exclude files: {:?}",
+                            "Re-scanning directories, new scan exclude files: {:?}",
                             this.snapshot
                                 .scan_exclude_files
                                 .iter()
@@ -343,7 +343,6 @@ impl Worktree {
                             cx,
                         );
                         this.is_scanning = watch::channel_with(true);
-                        // TODO kb change more state? will this even work now?
                     }
                 }
             });
@@ -3489,18 +3488,26 @@ impl BackgroundScanner {
     }
 
     async fn scan_dir(&self, job: &ScanJob) -> Result<()> {
-        log::debug!("scan directory {:?}", job.path);
-
-        let mut ignore_stack = job.ignore_stack.clone();
-        let mut new_ignore = None;
-        let (root_abs_path, root_char_bag, next_entry_id) = {
-            let snapshot = &self.state.lock().snapshot;
-            (
-                snapshot.abs_path().clone(),
-                snapshot.root_char_bag,
-                self.next_entry_id.clone(),
-            )
-        };
+        let root_abs_path;
+        let mut ignore_stack;
+        let mut new_ignore;
+        let root_char_bag;
+        let next_entry_id;
+        {
+            let state = self.state.lock();
+            let snapshot = &state.snapshot;
+            root_abs_path = snapshot.abs_path().clone();
+            if snapshot.is_abs_path_excluded(&job.abs_path) {
+                log::error!("skipping excluded directory {:?}", job.path);
+                return Ok(());
+            }
+            log::debug!("scanning directory {:?}", job.path);
+            ignore_stack = job.ignore_stack.clone();
+            new_ignore = None;
+            root_char_bag = snapshot.root_char_bag;
+            next_entry_id = self.next_entry_id.clone();
+            drop(state);
+        }
 
         let mut dotgit_path = None;
         let mut root_canonical_path = None;
@@ -3515,8 +3522,18 @@ impl BackgroundScanner {
                     continue;
                 }
             };
-
             let child_name = child_abs_path.file_name().unwrap();
+            {
+                let mut state = self.state.lock();
+                if state.snapshot.is_abs_path_excluded(&child_abs_path) {
+                    let relative_path = job.path.join(child_name);
+                    log::debug!("skipping excluded child entry {relative_path:?}");
+                    state.remove_path(&relative_path);
+                    continue;
+                }
+                drop(state);
+            }
+
             let child_path: Arc<Path> = job.path.join(child_name).into();
             let child_metadata = match self.fs.metadata(&child_abs_path).await {
                 Ok(Some(metadata)) => metadata,

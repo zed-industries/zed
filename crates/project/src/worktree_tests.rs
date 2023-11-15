@@ -935,10 +935,9 @@ async fn test_ignore_exclusions(cx: &mut TestAppContext) {
             &[
                 "src/foo/foo.rs",
                 "src/foo/another.rs",
-                // TODO kb
-                // "node_modules/.DS_Store",
-                // "src/.DS_Store",
-                // ".DS_Store",
+                "node_modules/.DS_Store",
+                "src/.DS_Store",
+                ".DS_Store",
             ],
             &["target/index", "node_modules/prettier/package.json"],
             &["src/lib.rs", "src/bar/bar.rs", ".gitignore"],
