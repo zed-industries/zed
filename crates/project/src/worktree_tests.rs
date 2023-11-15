@@ -7,7 +7,7 @@ use anyhow::Result;
 use client::Client;
 use fs::{repository::GitFileStatus, FakeFs, Fs, RealFs, RemoveOptions};
 use git::GITIGNORE;
-use gpui::{executor::Deterministic, ModelContext, ModelHandle, Task, TestAppContext};
+use gpui::{executor::Deterministic, ModelContext, Task, TestAppContext};
 use parking_lot::Mutex;
 use postage::stream::Stream;
 use pretty_assertions::assert_eq;
@@ -880,14 +880,11 @@ async fn test_write_file(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_ignore_inclusions_and_exclusions(cx: &mut TestAppContext) {
+async fn test_ignore_exclusions(cx: &mut TestAppContext) {
     let dir = temp_tree(json!({
-        ".git": {
-            "index": "blah"
-        },
         ".gitignore": "**/target\n/node_modules\n",
         "target": {
-            "index2": "blah2"
+            "index": "blah2"
         },
         "node_modules": {
             ".DS_Store": "",
@@ -932,24 +929,21 @@ async fn test_ignore_inclusions_and_exclusions(cx: &mut TestAppContext) {
     cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
         .await;
     tree.flush_fs_events(cx).await;
-    check_worktree_entries(
-        &tree,
-        &[
-            "src/foo/foo.rs",
-            "src/foo/another.rs",
-            // TODO kb
-            // "node_modules/.DS_Store",
-            // "src/.DS_Store",
-            // ".DS_Store",
-        ],
-        &[
-            ".git/index",
-            "target/index2",
-            "node_modules/prettier/package.json",
-        ],
-        &["src/lib.rs", "src/bar/bar.rs", ".gitignore"],
-        cx,
-    );
+    tree.read_with(cx, |tree, _| {
+        check_worktree_entries(
+            tree,
+            &[
+                "src/foo/foo.rs",
+                "src/foo/another.rs",
+                // TODO kb
+                // "node_modules/.DS_Store",
+                // "src/.DS_Store",
+                // ".DS_Store",
+            ],
+            &["target/index", "node_modules/prettier/package.json"],
+            &["src/lib.rs", "src/bar/bar.rs", ".gitignore"],
+        )
+    });
 
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _, _>(|store, cx| {
@@ -960,24 +954,25 @@ async fn test_ignore_inclusions_and_exclusions(cx: &mut TestAppContext) {
     });
     tree.flush_fs_events(cx).await;
     cx.foreground().run_until_parked();
-    check_worktree_entries(
-        &tree,
-        &[
-            "node_modules/prettier/package.json",
-            "node_modules/.DS_Store",
-        ],
-        &[".git/index", "target/index2"],
-        &[
-            ".gitignore",
-            "src/lib.rs",
-            "src/bar/bar.rs",
-            "src/foo/foo.rs",
-            "src/foo/another.rs",
-            "src/.DS_Store",
-            ".DS_Store",
-        ],
-        cx,
-    );
+    tree.read_with(cx, |tree, _| {
+        check_worktree_entries(
+            tree,
+            &[
+                "node_modules/prettier/package.json",
+                "node_modules/.DS_Store",
+            ],
+            &["target/index"],
+            &[
+                ".gitignore",
+                "src/lib.rs",
+                "src/bar/bar.rs",
+                "src/foo/foo.rs",
+                "src/foo/another.rs",
+                "src/.DS_Store",
+                ".DS_Store",
+            ],
+        )
+    });
 }
 
 #[gpui::test(iterations = 30)]
@@ -2243,34 +2238,32 @@ fn git_status(repo: &git2::Repository) -> collections::HashMap<String, git2::Sta
         .collect()
 }
 
+#[track_caller]
 fn check_worktree_entries(
-    tree: &ModelHandle<Worktree>,
+    tree: &Worktree,
     expected_excluded_paths: &[&str],
     expected_ignored_paths: &[&str],
     expected_tracked_paths: &[&str],
-    cx: &mut TestAppContext,
 ) {
-    tree.read_with(cx, |tree, _| {
-        for path in expected_excluded_paths {
-            let entry = tree.entry_for_path(path);
-            assert!(
-                entry.is_none(),
-                "expected path '{path}' to be excluded, but got entry: {entry:?}",
-            );
-        }
-        for path in expected_ignored_paths {
-            let entry = tree.entry_for_path(path).unwrap();
-            assert!(
-                entry.is_ignored,
-                "expected path '{path}' to be ignored, but got entry: {entry:?}",
-            );
-        }
-        for path in expected_tracked_paths {
-            let entry = tree.entry_for_path(path).unwrap();
-            assert!(
-                !entry.is_ignored,
-                "expected path '{path}' to be tracked, but got entry: {entry:?}",
-            );
-        }
-    });
+    for path in expected_excluded_paths {
+        let entry = tree.entry_for_path(path);
+        assert!(
+            entry.is_none(),
+            "expected path '{path}' to be excluded, but got entry: {entry:?}",
+        );
+    }
+    for path in expected_ignored_paths {
+        let entry = tree.entry_for_path(path).unwrap();
+        assert!(
+            entry.is_ignored,
+            "expected path '{path}' to be ignored, but got entry: {entry:?}",
+        );
+    }
+    for path in expected_tracked_paths {
+        let entry = tree.entry_for_path(path).unwrap();
+        assert!(
+            !entry.is_ignored,
+            "expected path '{path}' to be tracked, but got entry: {entry:?}",
+        );
+    }
 }

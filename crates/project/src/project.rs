@@ -5570,8 +5570,16 @@ impl Project {
             .iter()
             .filter_map(|(_, b)| {
                 let buffer = b.upgrade(cx)?;
-                let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
-                if let Some(path) = snapshot.file().map(|file| file.path()) {
+                let (is_ignored, snapshot) = buffer.update(cx, |buffer, cx| {
+                    let is_ignored = buffer
+                        .project_path(cx)
+                        .and_then(|path| self.entry_for_path(&path, cx))
+                        .map_or(false, |entry| entry.is_ignored);
+                    (is_ignored, buffer.snapshot())
+                });
+                if is_ignored && !query.include_ignored() {
+                    return None;
+                } else if let Some(path) = snapshot.file().map(|file| file.path()) {
                     Some((path.clone(), (buffer, snapshot)))
                 } else {
                     unnamed_files.push(buffer);
