@@ -157,7 +157,7 @@ impl Default for TextStyle {
 }
 
 impl TextStyle {
-    pub fn highlight(mut self, style: HighlightStyle) -> Result<Self> {
+    pub fn highlight(mut self, style: HighlightStyle) -> Self {
         if let Some(weight) = style.font_weight {
             self.font_weight = weight;
         }
@@ -177,7 +177,7 @@ impl TextStyle {
             self.underline = Some(underline);
         }
 
-        Ok(self)
+        self
     }
 
     pub fn font(&self) -> Font {

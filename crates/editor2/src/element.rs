@@ -2253,11 +2253,7 @@ impl LineWithInvisibles {
 
                 if !line_chunk.is_empty() && !line_exceeded_max_len {
                     let text_style = if let Some(style) = highlighted_chunk.style {
-                        text_style
-                            .clone()
-                            .highlight(style)
-                            .map(Cow::Owned)
-                            .unwrap_or_else(|_| Cow::Borrowed(text_style))
+                        Cow::Owned(text_style.clone().highlight(style))
                     } else {
                         Cow::Borrowed(text_style)
                     };

@@ -7798,20 +7798,15 @@ impl Editor {
                             render: Arc::new({
                                 let rename_editor = rename_editor.clone();
                                 move |cx: &mut BlockContext| {
-                                    let text_style = if let Some(highlight_style) = old_highlight_id
+                                    let mut text_style = cx.editor_style.text.clone();
+                                    if let Some(highlight_style) = old_highlight_id
                                         .and_then(|h| h.style(&cx.editor_style.syntax))
                                     {
-                                        cx.editor_style
-                                            .text
-                                            .clone()
-                                            .highlight(highlight_style)
-                                            .unwrap_or_else(|_| cx.editor_style.text.clone())
-                                    } else {
-                                        cx.editor_style.text.clone()
-                                    };
-                                    div().pl(cx.anchor_x).child(with_view(
-                                        &rename_editor,
-                                        |_, _| {
+                                        text_style = text_style.highlight(highlight_style);
+                                    }
+                                    div()
+                                        .pl(cx.anchor_x)
+                                        .child(with_view(&rename_editor, |_, _| {
                                             EditorElement::new(EditorStyle {
                                                 background: cx.theme().system().transparent,
                                                 local_player: cx.editor_style.local_player,
@@ -7823,8 +7818,8 @@ impl Editor {
                                                     .diagnostic_style
                                                     .clone(),
                                             })
-                                        },
-                                    ))
+                                        }))
+                                        .render()
                                 }
                             }),
                             disposition: BlockDisposition::Below,
