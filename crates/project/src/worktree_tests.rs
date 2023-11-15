@@ -2268,14 +2268,18 @@ fn check_worktree_entries(
         );
     }
     for path in expected_ignored_paths {
-        let entry = tree.entry_for_path(path).unwrap();
+        let entry = tree
+            .entry_for_path(path)
+            .unwrap_or_else(|| panic!("Missing entry for expected ignored path '{path}'"));
         assert!(
             entry.is_ignored,
             "expected path '{path}' to be ignored, but got entry: {entry:?}",
         );
     }
     for path in expected_tracked_paths {
-        let entry = tree.entry_for_path(path).unwrap();
+        let entry = tree
+            .entry_for_path(path)
+            .unwrap_or_else(|| panic!("Missing entry for expected tracked path '{path}'"));
         assert!(
             !entry.is_ignored,
             "expected path '{path}' to be tracked, but got entry: {entry:?}",

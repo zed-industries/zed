@@ -2253,9 +2253,7 @@ impl BackgroundScannerState {
         let ignore_stack = self.snapshot.ignore_stack_for_abs_path(&abs_path, true);
         let mut ancestor_inodes = self.snapshot.ancestor_inodes_for_path(&path);
         let mut containing_repository = None;
-        if !matches!(ignore_stack.as_ref(), &IgnoreStack::All)
-            && !self.snapshot.is_abs_path_excluded(&abs_path)
-        {
+        if !ignore_stack.is_all() && !self.snapshot.is_abs_path_excluded(&abs_path) {
             if let Some((workdir_path, repo)) = self.snapshot.local_repo_for_path(&path) {
                 if let Ok(repo_path) = path.strip_prefix(&workdir_path.0) {
                     containing_repository = Some((
@@ -3327,6 +3325,10 @@ impl BackgroundScanner {
                     log::debug!("ignoring event {relative_path:?} within unloaded directory");
                     return false;
                 }
+                if snapshot.is_abs_path_excluded(abs_path) {
+                    log::debug!("ignoring event {relative_path:?} within excluded directory");
+                    return false;
+                }
 
                 relative_paths.push(relative_path);
                 true
@@ -3678,7 +3680,9 @@ impl BackgroundScanner {
         for entry in &mut new_entries {
             state.reuse_entry_id(entry);
             if entry.is_dir() {
-                if state.should_scan_directory(&entry, &root_abs_path.join(&entry.path)) {
+                if !ignore_stack.is_all()
+                    && state.should_scan_directory(&entry, &root_abs_path.join(&entry.path))
+                {
                     job_ix += 1;
                 } else {
                     log::debug!("defer scanning directory {:?}", entry.path);
