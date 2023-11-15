@@ -189,7 +189,7 @@ impl Drop for FocusHandle {
 pub struct Window {
     pub(crate) handle: AnyWindowHandle,
     pub(crate) removed: bool,
-    platform_window: Box<dyn PlatformWindow>,
+    pub(crate) platform_window: Box<dyn PlatformWindow>,
     display_id: DisplayId,
     sprite_atlas: Arc<dyn PlatformAtlas>,
     rem_size: Pixels,

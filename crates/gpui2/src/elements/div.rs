@@ -229,6 +229,20 @@ pub trait InteractiveComponent<V: 'static>: Sized + Element<V> {
         mut self,
         listener: impl Fn(&mut V, &A, &mut ViewContext<V>) + 'static,
     ) -> Self {
+        // NOTE: this debug assert has the side-effect of working around
+        // a bug where a crate consisting only of action definitions does
+        // not register the actions in debug builds:
+        //
+        // https://github.com/rust-lang/rust/issues/47384
+        // https://github.com/mmastrac/rust-ctor/issues/280
+        //
+        // if we are relying on this side-effect still, removing the debug_assert!
+        // likely breaks the command_palette tests.
+        debug_assert!(
+            A::is_registered(),
+            "{:?} is not registered as an action",
+            A::qualified_name()
+        );
         self.interactivity().action_listeners.push((
             TypeId::of::<A>(),
             Box::new(move |view, action, phase, cx| {
