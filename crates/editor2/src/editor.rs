@@ -39,12 +39,12 @@ use futures::FutureExt;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use git::diff_hunk_to_display;
 use gpui::{
-    action, actions, div, point, prelude::*, px, relative, rems, render_view, size, uniform_list,
-    AnyElement, AppContext, AsyncWindowContext, BackgroundExecutor, Bounds, ClipboardItem,
-    Component, Context, EventEmitter, FocusHandle, FontFeatures, FontStyle, FontWeight,
-    HighlightStyle, Hsla, InputHandler, KeyContext, Model, MouseButton, ParentComponent, Pixels,
-    Render, Styled, Subscription, Task, TextStyle, UniformListScrollHandle, View, ViewContext,
-    VisualContext, WeakView, WindowContext,
+    action, actions, div, point, prelude::*, px, relative, rems, size, uniform_list, AnyElement,
+    AppContext, AsyncWindowContext, BackgroundExecutor, Bounds, ClipboardItem, Component, Context,
+    EventEmitter, FocusHandle, FontFeatures, FontStyle, FontWeight, HighlightStyle, Hsla,
+    InputHandler, KeyContext, Model, MouseButton, ParentComponent, Pixels, Render, Styled,
+    Subscription, Task, TextStyle, UniformListScrollHandle, View, ViewContext, VisualContext,
+    WeakView, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -7777,25 +7777,18 @@ impl Editor {
                                     }
                                     div()
                                         .pl(cx.anchor_x)
-                                        .child(render_view(
+                                        .child(rename_editor.render_with(EditorElement::new(
                                             &rename_editor,
-                                            EditorElement::new(
-                                                &rename_editor,
-                                                EditorStyle {
-                                                    background: cx.theme().system().transparent,
-                                                    local_player: cx.editor_style.local_player,
-                                                    text: text_style,
-                                                    scrollbar_width: cx
-                                                        .editor_style
-                                                        .scrollbar_width,
-                                                    syntax: cx.editor_style.syntax.clone(),
-                                                    diagnostic_style: cx
-                                                        .editor_style
-                                                        .diagnostic_style
-                                                        .clone(),
-                                                },
-                                            ),
-                                        ))
+                                            EditorStyle {
+                                                background: cx.theme().system().transparent,
+                                                local_player: cx.editor_style.local_player,
+                                                text: text_style,
+                                                scrollbar_width: cx.editor_style.scrollbar_width,
+                                                syntax: cx.editor_style.syntax.clone(),
+                                                diagnostic_style:
+                                                    cx.editor_style.diagnostic_style.clone(),
+                                            },
+                                        )))
                                         .render()
                                 }
                             }),
