@@ -225,12 +225,26 @@ impl TestAppContext {
         self.background_executor.run_until_parked()
     }
 
+    /// simulate_keystrokes takes a space-separated list of keys to type.
+    /// cx.simulate_keystrokes("cmd-shift-p b k s p enter")
+    /// will run backspace on the current editor through the command palette.
     pub fn simulate_keystrokes(&mut self, window: AnyWindowHandle, keystrokes: &str) {
         for keystroke in keystrokes
             .split(" ")
             .map(Keystroke::parse)
             .map(Result::unwrap)
         {
+            self.dispatch_keystroke(window, keystroke.into(), false);
+        }
+
+        self.background_executor.run_until_parked()
+    }
+
+    /// simulate_input takes a string of text to type.
+    /// cx.simulate_input("abc")
+    /// will type abc into your current editor.
+    pub fn simulate_input(&mut self, window: AnyWindowHandle, input: &str) {
+        for keystroke in input.split("").map(Keystroke::parse).map(Result::unwrap) {
             self.dispatch_keystroke(window, keystroke.into(), false);
         }
 
@@ -454,6 +468,10 @@ impl<'a> VisualTestContext<'a> {
 
     pub fn simulate_keystrokes(&mut self, keystrokes: &str) {
         self.cx.simulate_keystrokes(self.window, keystrokes)
+    }
+
+    pub fn simulate_input(&mut self, input: &str) {
+        self.cx.simulate_input(self.window, input)
     }
 }
 

@@ -403,7 +403,7 @@ mod tests {
 
         let palette = workspace.update(cx, |workspace, cx| {
             workspace
-                .current_modal::<CommandPalette>(cx)
+                .active_modal::<CommandPalette>(cx)
                 .unwrap()
                 .read(cx)
                 .picker
@@ -426,7 +426,7 @@ mod tests {
         cx.simulate_keystrokes("enter");
 
         workspace.update(cx, |workspace, cx| {
-            assert!(workspace.current_modal::<CommandPalette>(cx).is_none());
+            assert!(workspace.active_modal::<CommandPalette>(cx).is_none());
             assert_eq!(editor.read(cx).text(cx), "ab")
         });
 
@@ -443,7 +443,7 @@ mod tests {
 
         let palette = workspace.update(cx, |workspace, cx| {
             workspace
-                .current_modal::<CommandPalette>(cx)
+                .active_modal::<CommandPalette>(cx)
                 .unwrap()
                 .read(cx)
                 .picker

@@ -38,9 +38,9 @@ use futures::{
 use gpui::{
     actions, div, point, prelude::*, rems, size, Action, AnyModel, AnyView, AnyWeakView,
     AppContext, AsyncAppContext, AsyncWindowContext, Bounds, Component, Div, Entity, EntityId,
-    EventEmitter, FocusHandle, GlobalPixels, KeyContext, Model, ModelContext, ParentComponent,
-    Point, Render, Size, Styled, Subscription, Task, View, ViewContext, WeakView, WindowBounds,
-    WindowContext, WindowHandle, WindowOptions,
+    EventEmitter, GlobalPixels, KeyContext, Model, ModelContext, ParentComponent, Point, Render,
+    Size, Styled, Subscription, Task, View, ViewContext, WeakView, WindowBounds, WindowContext,
+    WindowHandle, WindowOptions,
 };
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, ProjectItem};
 use itertools::Itertools;
@@ -433,7 +433,6 @@ pub enum Event {
 
 pub struct Workspace {
     weak_self: WeakView<Self>,
-    focus_handle: FocusHandle,
     workspace_actions: Vec<Box<dyn Fn(Div<Workspace>) -> Div<Workspace>>>,
     zoomed: Option<AnyWeakView>,
     zoomed_position: Option<DockPosition>,
@@ -651,7 +650,6 @@ impl Workspace {
         cx.defer(|this, cx| this.update_window_title(cx));
         Workspace {
             weak_self: weak_handle.clone(),
-            focus_handle: cx.focus_handle(),
             zoomed: None,
             zoomed_position: None,
             center: PaneGroup::new(center_pane.clone()),
@@ -1450,6 +1448,11 @@ impl Workspace {
         self.active_pane().read(cx).active_item()
     }
 
+    pub fn active_item_as<I: 'static>(&self, cx: &AppContext) -> Option<View<I>> {
+        let item = self.active_item(cx)?;
+        item.to_any().downcast::<I>().ok()
+    }
+
     fn active_project_path(&self, cx: &ViewContext<Self>) -> Option<ProjectPath> {
         self.active_item(cx).and_then(|item| item.project_path(cx))
     }
@@ -1570,7 +1573,7 @@ impl Workspace {
         }
 
         if focus_center {
-            cx.focus(&self.focus_handle);
+            self.active_pane.update(cx, |pane, cx| pane.focus(cx))
         }
 
         cx.notify();
@@ -1704,7 +1707,7 @@ impl Workspace {
         }
 
         if focus_center {
-            cx.focus(&self.focus_handle);
+            self.active_pane.update(cx, |pane, cx| pane.focus(cx))
         }
 
         if self.zoomed_position != dock_to_reveal {
@@ -3475,8 +3478,8 @@ impl Workspace {
         div
     }
 
-    pub fn current_modal<V: Modal + 'static>(&mut self, cx: &ViewContext<Self>) -> Option<View<V>> {
-        self.modal_layer.read(cx).current_modal()
+    pub fn active_modal<V: Modal + 'static>(&mut self, cx: &ViewContext<Self>) -> Option<View<V>> {
+        self.modal_layer.read(cx).active_modal()
     }
 
     pub fn toggle_modal<V: Modal, B>(&mut self, cx: &mut ViewContext<Self>, build: B)
