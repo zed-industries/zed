@@ -1,8 +1,8 @@
 use crate::{
     div, Action, AnyView, AnyWindowHandle, AppCell, AppContext, AsyncAppContext,
     BackgroundExecutor, Context, Div, EventEmitter, ForegroundExecutor, InputEvent, KeyDownEvent,
-    Keystroke, Model, ModelContext, Render, Result, Task, TestDispatcher, TestPlatform, View,
-    ViewContext, VisualContext, WindowContext, WindowHandle, WindowOptions,
+    Keystroke, Model, ModelContext, Render, Result, Task, TestDispatcher, TestPlatform, TestWindow,
+    View, ViewContext, VisualContext, WindowContext, WindowHandle, WindowOptions,
 };
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt};
@@ -220,7 +220,21 @@ impl TestAppContext {
     {
         window
             .update(self, |_, cx| cx.dispatch_action(action.boxed_clone()))
-            .unwrap()
+            .unwrap();
+
+        self.background_executor.run_until_parked()
+    }
+
+    pub fn simulate_keystrokes(&mut self, window: AnyWindowHandle, keystrokes: &str) {
+        for keystroke in keystrokes
+            .split(" ")
+            .map(Keystroke::parse)
+            .map(Result::unwrap)
+        {
+            self.dispatch_keystroke(window, keystroke.into(), false);
+        }
+
+        self.background_executor.run_until_parked()
     }
 
     pub fn dispatch_keystroke(
@@ -229,15 +243,41 @@ impl TestAppContext {
         keystroke: Keystroke,
         is_held: bool,
     ) {
+        let keystroke2 = keystroke.clone();
         let handled = window
             .update(self, |_, cx| {
                 cx.dispatch_event(InputEvent::KeyDown(KeyDownEvent { keystroke, is_held }))
             })
             .is_ok_and(|handled| handled);
-
-        if !handled {
-            // todo!() simluate input here
+        if handled {
+            return;
         }
+
+        let input_handler = self.update_test_window(window, |window| window.input_handler.clone());
+        let Some(input_handler) = input_handler else {
+            panic!(
+                "dispatch_keystroke {:?} failed to dispatch action or input",
+                &keystroke2
+            );
+        };
+        let text = keystroke2.ime_key.unwrap_or(keystroke2.key);
+        input_handler.lock().replace_text_in_range(None, &text);
+    }
+
+    pub fn update_test_window<R>(
+        &mut self,
+        window: AnyWindowHandle,
+        f: impl FnOnce(&mut TestWindow) -> R,
+    ) -> R {
+        window
+            .update(self, |_, cx| {
+                f(cx.window
+                    .platform_window
+                    .as_any_mut()
+                    .downcast_mut::<TestWindow>()
+                    .unwrap())
+            })
+            .unwrap()
     }
 
     pub fn notifications<T: 'static>(&mut self, entity: &Model<T>) -> impl Stream<Item = ()> {
@@ -401,11 +441,19 @@ impl<'a> VisualTestContext<'a> {
         Self { cx, window }
     }
 
+    pub fn run_until_parked(&self) {
+        self.cx.background_executor.run_until_parked();
+    }
+
     pub fn dispatch_action<A>(&mut self, action: A)
     where
         A: Action,
     {
         self.cx.dispatch_action(self.window, action)
+    }
+
+    pub fn simulate_keystrokes(&mut self, keystrokes: &str) {
+        self.cx.simulate_keystrokes(self.window, keystrokes)
     }
 }
 

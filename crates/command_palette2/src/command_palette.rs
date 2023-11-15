@@ -354,129 +354,117 @@ impl std::fmt::Debug for Command {
     }
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use std::sync::Arc;
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
 
-//     use super::*;
-//     use editor::Editor;
-//     use gpui::{executor::Deterministic, TestAppContext};
-//     use project::Project;
-//     use workspace::{AppState, Workspace};
+    use super::*;
+    use editor::Editor;
+    use gpui::TestAppContext;
+    use project::Project;
+    use workspace::{AppState, Workspace};
 
-//     #[test]
-//     fn test_humanize_action_name() {
-//         assert_eq!(
-//             humanize_action_name("editor::GoToDefinition"),
-//             "editor: go to definition"
-//         );
-//         assert_eq!(
-//             humanize_action_name("editor::Backspace"),
-//             "editor: backspace"
-//         );
-//         assert_eq!(
-//             humanize_action_name("go_to_line::Deploy"),
-//             "go to line: deploy"
-//         );
-//     }
+    #[test]
+    fn test_humanize_action_name() {
+        assert_eq!(
+            humanize_action_name("editor::GoToDefinition"),
+            "editor: go to definition"
+        );
+        assert_eq!(
+            humanize_action_name("editor::Backspace"),
+            "editor: backspace"
+        );
+        assert_eq!(
+            humanize_action_name("go_to_line::Deploy"),
+            "go to line: deploy"
+        );
+    }
 
-//     #[gpui::test]
-//     async fn test_command_palette(deterministic: Arc<Deterministic>, cx: &mut TestAppContext) {
-//         let app_state = init_test(cx);
+    #[gpui::test]
+    async fn test_command_palette(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
 
-//         let project = Project::test(app_state.fs.clone(), [], cx).await;
-//         let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
-//         let workspace = window.root(cx);
-//         let editor = window.add_view(cx, |cx| {
-//             let mut editor = Editor::single_line(None, cx);
-//             editor.set_text("abc", cx);
-//             editor
-//         });
+        let project = Project::test(app_state.fs.clone(), [], cx).await;
+        let (workspace, mut cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
+        let cx = &mut cx;
 
-//         workspace.update(cx, |workspace, cx| {
-//             cx.focus(&editor);
-//             workspace.add_item(Box::new(editor.clone()), cx)
-//         });
+        let editor = cx.build_view(|cx| {
+            let mut editor = Editor::single_line(cx);
+            editor.set_text("abc", cx);
+            editor
+        });
 
-//         workspace.update(cx, |workspace, cx| {
-//             toggle_command_palette(workspace, &Toggle, cx);
-//         });
+        workspace.update(cx, |workspace, cx| {
+            workspace.add_item(Box::new(editor.clone()), cx);
+            editor.update(cx, |editor, cx| editor.focus(cx))
+        });
 
-//         let palette = workspace.read_with(cx, |workspace, _| {
-//             workspace.modal::<CommandPalette>().unwrap()
-//         });
+        cx.simulate_keystrokes("cmd-shift-p");
 
-//         palette
-//             .update(cx, |palette, cx| {
-//                 // Fill up palette's command list by running an empty query;
-//                 // we only need it to subsequently assert that the palette is initially
-//                 // sorted by command's name.
-//                 palette.delegate_mut().update_matches("".to_string(), cx)
-//             })
-//             .await;
+        let palette = workspace.update(cx, |workspace, cx| {
+            workspace
+                .current_modal::<CommandPalette>(cx)
+                .unwrap()
+                .read(cx)
+                .picker
+                .clone()
+        });
 
-//         palette.update(cx, |palette, _| {
-//             let is_sorted =
-//                 |actions: &[Command]| actions.windows(2).all(|pair| pair[0].name <= pair[1].name);
-//             assert!(is_sorted(&palette.delegate().actions));
-//         });
+        palette.update(cx, |palette, _| {
+            assert!(palette.delegate.commands.len() > 5);
+            let is_sorted =
+                |actions: &[Command]| actions.windows(2).all(|pair| pair[0].name <= pair[1].name);
+            assert!(is_sorted(&palette.delegate.commands));
+        });
 
-//         palette
-//             .update(cx, |palette, cx| {
-//                 palette
-//                     .delegate_mut()
-//                     .update_matches("bcksp".to_string(), cx)
-//             })
-//             .await;
+        cx.simulate_keystrokes("b c k s p");
 
-//         palette.update(cx, |palette, cx| {
-//             assert_eq!(palette.delegate().matches[0].string, "editor: backspace");
-//             palette.confirm(&Default::default(), cx);
-//         });
-//         deterministic.run_until_parked();
-//         editor.read_with(cx, |editor, cx| {
-//             assert_eq!(editor.text(cx), "ab");
-//         });
+        palette.update(cx, |palette, _| {
+            assert_eq!(palette.delegate.matches[0].string, "editor: backspace");
+        });
 
-//         // Add namespace filter, and redeploy the palette
-//         cx.update(|cx| {
-//             cx.update_default_global::<CommandPaletteFilter, _, _>(|filter, _| {
-//                 filter.filtered_namespaces.insert("editor");
-//             })
-//         });
+        cx.simulate_keystrokes("enter");
 
-//         workspace.update(cx, |workspace, cx| {
-//             toggle_command_palette(workspace, &Toggle, cx);
-//         });
+        workspace.update(cx, |workspace, cx| {
+            assert!(workspace.current_modal::<CommandPalette>(cx).is_none());
+            assert_eq!(editor.read(cx).text(cx), "ab")
+        });
 
-//         // Assert editor command not present
-//         let palette = workspace.read_with(cx, |workspace, _| {
-//             workspace.modal::<CommandPalette>().unwrap()
-//         });
+        // Add namespace filter, and redeploy the palette
+        cx.update(|cx| {
+            cx.set_global(CommandPaletteFilter::default());
+            cx.update_global::<CommandPaletteFilter, _>(|filter, _| {
+                filter.filtered_namespaces.insert("editor");
+            })
+        });
 
-//         palette
-//             .update(cx, |palette, cx| {
-//                 palette
-//                     .delegate_mut()
-//                     .update_matches("bcksp".to_string(), cx)
-//             })
-//             .await;
+        cx.simulate_keystrokes("cmd-shift-p");
+        cx.simulate_keystrokes("b c k s p");
 
-//         palette.update(cx, |palette, _| {
-//             assert!(palette.delegate().matches.is_empty())
-//         });
-//     }
+        let palette = workspace.update(cx, |workspace, cx| {
+            workspace
+                .current_modal::<CommandPalette>(cx)
+                .unwrap()
+                .read(cx)
+                .picker
+                .clone()
+        });
+        palette.update(cx, |palette, _| {
+            assert!(palette.delegate.matches.is_empty())
+        });
+    }
 
-//     fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
-//         cx.update(|cx| {
-//             let app_state = AppState::test(cx);
-//             theme::init(cx);
-//             language::init(cx);
-//             editor::init(cx);
-//             workspace::init(app_state.clone(), cx);
-//             init(cx);
-//             Project::init_settings(cx);
-//             app_state
-//         })
-//     }
-// }
+    fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
+        cx.update(|cx| {
+            let app_state = AppState::test(cx);
+            theme::init(cx);
+            language::init(cx);
+            editor::init(cx);
+            workspace::init(app_state.clone(), cx);
+            init(cx);
+            Project::init_settings(cx);
+            settings::load_default_keymap(cx);
+            app_state
+        })
+    }
+}
