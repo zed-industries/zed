@@ -39,12 +39,12 @@ use futures::FutureExt;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use git::diff_hunk_to_display;
 use gpui::{
-    action, actions, div, point, prelude::*, px, relative, rems, size, uniform_list, AnyElement,
-    AppContext, AsyncWindowContext, BackgroundExecutor, Bounds, ClipboardItem, Component, Context,
-    EventEmitter, FocusHandle, FontFeatures, FontStyle, FontWeight, HighlightStyle, Hsla,
-    InputHandler, KeyContext, Model, MouseButton, ParentComponent, Pixels, Render, Styled,
-    Subscription, Task, TextStyle, UniformListScrollHandle, View, ViewContext, VisualContext,
-    WeakView, WindowContext,
+    action, actions, div, point, prelude::*, px, relative, rems, render_view, size, uniform_list,
+    AnyElement, AppContext, AsyncWindowContext, BackgroundExecutor, Bounds, ClipboardItem,
+    Component, Context, EventEmitter, FocusHandle, FontFeatures, FontStyle, FontWeight,
+    HighlightStyle, Hsla, InputHandler, KeyContext, Model, MouseButton, ParentComponent, Pixels,
+    Render, Styled, Subscription, Task, TextStyle, UniformListScrollHandle, View, ViewContext,
+    VisualContext, WeakView, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -100,7 +100,9 @@ use theme::{
 use ui::{v_stack, HighlightedLabel, IconButton, StyledExt, TextTooltip};
 use util::{post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::{
-    item::ItemEvent, searchable::SearchEvent, ItemNavHistory, SplitDirection, ViewId, Workspace,
+    item::{ItemEvent, ItemHandle},
+    searchable::SearchEvent,
+    ItemNavHistory, SplitDirection, ViewId, Workspace,
 };
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
@@ -1878,10 +1880,8 @@ impl Editor {
         );
 
         let focus_handle = cx.focus_handle();
-        cx.on_focus_in(&focus_handle, Self::handle_focus_in)
-            .detach();
-        cx.on_focus_out(&focus_handle, Self::handle_focus_out)
-            .detach();
+        cx.on_focus(&focus_handle, Self::handle_focus).detach();
+        cx.on_blur(&focus_handle, Self::handle_blur).detach();
 
         let mut this = Self {
             handle: cx.view().downgrade(),
@@ -7690,183 +7690,210 @@ impl Editor {
         }
     }
 
-    // pub fn rename(&mut self, _: &Rename, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
-    //     use language::ToOffset as _;
+    pub fn rename(&mut self, _: &Rename, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
+        use language::ToOffset as _;
 
-    //     let project = self.project.clone()?;
-    //     let selection = self.selections.newest_anchor().clone();
-    //     let (cursor_buffer, cursor_buffer_position) = self
-    //         .buffer
-    //         .read(cx)
-    //         .text_anchor_for_position(selection.head(), cx)?;
-    //     let (tail_buffer, _) = self
-    //         .buffer
-    //         .read(cx)
-    //         .text_anchor_for_position(selection.tail(), cx)?;
-    //     if tail_buffer != cursor_buffer {
-    //         return None;
-    //     }
+        let project = self.project.clone()?;
+        let selection = self.selections.newest_anchor().clone();
+        let (cursor_buffer, cursor_buffer_position) = self
+            .buffer
+            .read(cx)
+            .text_anchor_for_position(selection.head(), cx)?;
+        let (tail_buffer, _) = self
+            .buffer
+            .read(cx)
+            .text_anchor_for_position(selection.tail(), cx)?;
+        if tail_buffer != cursor_buffer {
+            return None;
+        }
 
-    //     let snapshot = cursor_buffer.read(cx).snapshot();
-    //     let cursor_buffer_offset = cursor_buffer_position.to_offset(&snapshot);
-    //     let prepare_rename = project.update(cx, |project, cx| {
-    //         project.prepare_rename(cursor_buffer, cursor_buffer_offset, cx)
-    //     });
+        let snapshot = cursor_buffer.read(cx).snapshot();
+        let cursor_buffer_offset = cursor_buffer_position.to_offset(&snapshot);
+        let prepare_rename = project.update(cx, |project, cx| {
+            project.prepare_rename(cursor_buffer, cursor_buffer_offset, cx)
+        });
 
-    //     Some(cx.spawn(|this, mut cx| async move {
-    //         let rename_range = if let Some(range) = prepare_rename.await? {
-    //             Some(range)
-    //         } else {
-    //             this.update(&mut cx, |this, cx| {
-    //                 let buffer = this.buffer.read(cx).snapshot(cx);
-    //                 let mut buffer_highlights = this
-    //                     .document_highlights_for_position(selection.head(), &buffer)
-    //                     .filter(|highlight| {
-    //                         highlight.start.excerpt_id == selection.head().excerpt_id
-    //                             && highlight.end.excerpt_id == selection.head().excerpt_id
-    //                     });
-    //                 buffer_highlights
-    //                     .next()
-    //                     .map(|highlight| highlight.start.text_anchor..highlight.end.text_anchor)
-    //             })?
-    //         };
-    //         if let Some(rename_range) = rename_range {
-    //             let rename_buffer_range = rename_range.to_offset(&snapshot);
-    //             let cursor_offset_in_rename_range =
-    //                 cursor_buffer_offset.saturating_sub(rename_buffer_range.start);
+        Some(cx.spawn(|this, mut cx| async move {
+            let rename_range = if let Some(range) = prepare_rename.await? {
+                Some(range)
+            } else {
+                this.update(&mut cx, |this, cx| {
+                    let buffer = this.buffer.read(cx).snapshot(cx);
+                    let mut buffer_highlights = this
+                        .document_highlights_for_position(selection.head(), &buffer)
+                        .filter(|highlight| {
+                            highlight.start.excerpt_id == selection.head().excerpt_id
+                                && highlight.end.excerpt_id == selection.head().excerpt_id
+                        });
+                    buffer_highlights
+                        .next()
+                        .map(|highlight| highlight.start.text_anchor..highlight.end.text_anchor)
+                })?
+            };
+            if let Some(rename_range) = rename_range {
+                let rename_buffer_range = rename_range.to_offset(&snapshot);
+                let cursor_offset_in_rename_range =
+                    cursor_buffer_offset.saturating_sub(rename_buffer_range.start);
 
-    //             this.update(&mut cx, |this, cx| {
-    //                 this.take_rename(false, cx);
-    //                 let buffer = this.buffer.read(cx).read(cx);
-    //                 let cursor_offset = selection.head().to_offset(&buffer);
-    //                 let rename_start = cursor_offset.saturating_sub(cursor_offset_in_rename_range);
-    //                 let rename_end = rename_start + rename_buffer_range.len();
-    //                 let range = buffer.anchor_before(rename_start)..buffer.anchor_after(rename_end);
-    //                 let mut old_highlight_id = None;
-    //                 let old_name: Arc<str> = buffer
-    //                     .chunks(rename_start..rename_end, true)
-    //                     .map(|chunk| {
-    //                         if old_highlight_id.is_none() {
-    //                             old_highlight_id = chunk.syntax_highlight_id;
-    //                         }
-    //                         chunk.text
-    //                     })
-    //                     .collect::<String>()
-    //                     .into();
+                this.update(&mut cx, |this, cx| {
+                    this.take_rename(false, cx);
+                    let buffer = this.buffer.read(cx).read(cx);
+                    let cursor_offset = selection.head().to_offset(&buffer);
+                    let rename_start = cursor_offset.saturating_sub(cursor_offset_in_rename_range);
+                    let rename_end = rename_start + rename_buffer_range.len();
+                    let range = buffer.anchor_before(rename_start)..buffer.anchor_after(rename_end);
+                    let mut old_highlight_id = None;
+                    let old_name: Arc<str> = buffer
+                        .chunks(rename_start..rename_end, true)
+                        .map(|chunk| {
+                            if old_highlight_id.is_none() {
+                                old_highlight_id = chunk.syntax_highlight_id;
+                            }
+                            chunk.text
+                        })
+                        .collect::<String>()
+                        .into();
 
-    //                 drop(buffer);
+                    drop(buffer);
 
-    //                 // Position the selection in the rename editor so that it matches the current selection.
-    //                 this.show_local_selections = false;
-    //                 let rename_editor = cx.build_view(|cx| {
-    //                     let mut editor = Editor::single_line(cx);
-    //                     if let Some(old_highlight_id) = old_highlight_id {
-    //                         editor.override_text_style =
-    //                             Some(Box::new(move |style| old_highlight_id.style(&style.syntax)));
-    //                     }
-    //                     editor.buffer.update(cx, |buffer, cx| {
-    //                         buffer.edit([(0..0, old_name.clone())], None, cx)
-    //                     });
-    //                     editor.select_all(&SelectAll, cx);
-    //                     editor
-    //                 });
+                    // Position the selection in the rename editor so that it matches the current selection.
+                    this.show_local_selections = false;
+                    let rename_editor = cx.build_view(|cx| {
+                        let mut editor = Editor::single_line(cx);
+                        editor.buffer.update(cx, |buffer, cx| {
+                            buffer.edit([(0..0, old_name.clone())], None, cx)
+                        });
+                        editor.select_all(&SelectAll, cx);
+                        editor
+                    });
 
-    //                 let ranges = this
-    //                     .clear_background_highlights::<DocumentHighlightWrite>(cx)
-    //                     .into_iter()
-    //                     .flat_map(|(_, ranges)| ranges.into_iter())
-    //                     .chain(
-    //                         this.clear_background_highlights::<DocumentHighlightRead>(cx)
-    //                             .into_iter()
-    //                             .flat_map(|(_, ranges)| ranges.into_iter()),
-    //                     )
-    //                     .collect();
+                    let ranges = this
+                        .clear_background_highlights::<DocumentHighlightWrite>(cx)
+                        .into_iter()
+                        .flat_map(|(_, ranges)| ranges.into_iter())
+                        .chain(
+                            this.clear_background_highlights::<DocumentHighlightRead>(cx)
+                                .into_iter()
+                                .flat_map(|(_, ranges)| ranges.into_iter()),
+                        )
+                        .collect();
 
-    //                 this.highlight_text::<Rename>(
-    //                     ranges,
-    //                     HighlightStyle {
-    //                         fade_out: Some(style.rename_fade),
-    //                         ..Default::default()
-    //                     },
-    //                     cx,
-    //                 );
-    //                 cx.focus(&rename_editor);
-    //                 let block_id = this.insert_blocks(
-    //                     [BlockProperties {
-    //                         style: BlockStyle::Flex,
-    //                         position: range.start.clone(),
-    //                         height: 1,
-    //                         render: Arc::new({
-    //                             let editor = rename_editor.clone();
-    //                             move |cx: &mut BlockContext| {
-    //                                 ChildView::new(&editor, cx)
-    //                                     .contained()
-    //                                     .with_padding_left(cx.anchor_x)
-    //                                     .into_any()
-    //                             }
-    //                         }),
-    //                         disposition: BlockDisposition::Below,
-    //                     }],
-    //                     Some(Autoscroll::fit()),
-    //                     cx,
-    //                 )[0];
-    //                 this.pending_rename = Some(RenameState {
-    //                     range,
-    //                     old_name,
-    //                     editor: rename_editor,
-    //                     block_id,
-    //                 });
-    //             })?;
-    //         }
+                    this.highlight_text::<Rename>(
+                        ranges,
+                        HighlightStyle {
+                            fade_out: Some(0.6),
+                            ..Default::default()
+                        },
+                        cx,
+                    );
+                    let rename_focus_handle = rename_editor.focus_handle(cx);
+                    cx.focus(&rename_focus_handle);
+                    let block_id = this.insert_blocks(
+                        [BlockProperties {
+                            style: BlockStyle::Flex,
+                            position: range.start.clone(),
+                            height: 1,
+                            render: Arc::new({
+                                let rename_editor = rename_editor.clone();
+                                move |cx: &mut BlockContext| {
+                                    let mut text_style = cx.editor_style.text.clone();
+                                    if let Some(highlight_style) = old_highlight_id
+                                        .and_then(|h| h.style(&cx.editor_style.syntax))
+                                    {
+                                        text_style = text_style.highlight(highlight_style);
+                                    }
+                                    div()
+                                        .pl(cx.anchor_x)
+                                        .child(render_view(
+                                            &rename_editor,
+                                            EditorElement::new(
+                                                &rename_editor,
+                                                EditorStyle {
+                                                    background: cx.theme().system().transparent,
+                                                    local_player: cx.editor_style.local_player,
+                                                    text: text_style,
+                                                    scrollbar_width: cx
+                                                        .editor_style
+                                                        .scrollbar_width,
+                                                    syntax: cx.editor_style.syntax.clone(),
+                                                    diagnostic_style: cx
+                                                        .editor_style
+                                                        .diagnostic_style
+                                                        .clone(),
+                                                },
+                                            ),
+                                        ))
+                                        .render()
+                                }
+                            }),
+                            disposition: BlockDisposition::Below,
+                        }],
+                        Some(Autoscroll::fit()),
+                        cx,
+                    )[0];
+                    this.pending_rename = Some(RenameState {
+                        range,
+                        old_name,
+                        editor: rename_editor,
+                        block_id,
+                    });
+                })?;
+            }
 
-    //         Ok(())
-    //     }))
-    // }
+            Ok(())
+        }))
+    }
 
-    //     pub fn confirm_rename(
-    //         workspace: &mut Workspace,
-    //         _: &ConfirmRename,
-    //         cx: &mut ViewContext<Workspace>,
-    //     ) -> Option<Task<Result<()>>> {
-    //         let editor = workspace.active_item(cx)?.act_as::<Editor>(cx)?;
+    pub fn confirm_rename(
+        &mut self,
+        _: &ConfirmRename,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<Task<Result<()>>> {
+        let rename = self.take_rename(false, cx)?;
+        let workspace = self.workspace()?;
+        let (start_buffer, start) = self
+            .buffer
+            .read(cx)
+            .text_anchor_for_position(rename.range.start.clone(), cx)?;
+        let (end_buffer, end) = self
+            .buffer
+            .read(cx)
+            .text_anchor_for_position(rename.range.end.clone(), cx)?;
+        if start_buffer != end_buffer {
+            return None;
+        }
 
-    //         let (buffer, range, old_name, new_name) = editor.update(cx, |editor, cx| {
-    //             let rename = editor.take_rename(false, cx)?;
-    //             let buffer = editor.buffer.read(cx);
-    //             let (start_buffer, start) =
-    //                 buffer.text_anchor_for_position(rename.range.start.clone(), cx)?;
-    //             let (end_buffer, end) =
-    //                 buffer.text_anchor_for_position(rename.range.end.clone(), cx)?;
-    //             if start_buffer == end_buffer {
-    //                 let new_name = rename.editor.read(cx).text(cx);
-    //                 Some((start_buffer, start..end, rename.old_name, new_name))
-    //             } else {
-    //                 None
-    //             }
-    //         })?;
+        let buffer = start_buffer;
+        let range = start..end;
+        let old_name = rename.old_name;
+        let new_name = rename.editor.read(cx).text(cx);
 
-    //         let rename = workspace.project().clone().update(cx, |project, cx| {
-    //             project.perform_rename(buffer.clone(), range.start, new_name.clone(), true, cx)
-    //         });
+        let rename = workspace
+            .read(cx)
+            .project()
+            .clone()
+            .update(cx, |project, cx| {
+                project.perform_rename(buffer.clone(), range.start, new_name.clone(), true, cx)
+            });
+        let workspace = workspace.downgrade();
 
-    //         let editor = editor.downgrade();
-    //         Some(cx.spawn(|workspace, mut cx| async move {
-    //             let project_transaction = rename.await?;
-    //             Self::open_project_transaction(
-    //                 &editor,
-    //                 workspace,
-    //                 project_transaction,
-    //                 format!("Rename: {} → {}", old_name, new_name),
-    //                 cx.clone(),
-    //             )
-    //             .await?;
+        Some(cx.spawn(|editor, mut cx| async move {
+            let project_transaction = rename.await?;
+            Self::open_project_transaction(
+                &editor,
+                workspace,
+                project_transaction,
+                format!("Rename: {} → {}", old_name, new_name),
+                cx.clone(),
+            )
+            .await?;
 
-    //             editor.update(&mut cx, |editor, cx| {
-    //                 editor.refresh_document_highlights(cx);
-    //             })?;
-    //             Ok(())
-    //         }))
-    //     }
+            editor.update(&mut cx, |editor, cx| {
+                editor.refresh_document_highlights(cx);
+            })?;
+            Ok(())
+        }))
+    }
 
     fn take_rename(
         &mut self,
@@ -7874,6 +7901,10 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) -> Option<RenameState> {
         let rename = self.pending_rename.take()?;
+        if rename.editor.focus_handle(cx).is_focused(cx) {
+            cx.focus(&self.focus_handle);
+        }
+
         self.remove_blocks(
             [rename.block_id].into_iter().collect(),
             Some(Autoscroll::fit()),
@@ -9172,17 +9203,13 @@ impl Editor {
         self.focus_handle.is_focused(cx)
     }
 
-    fn handle_focus_in(&mut self, cx: &mut ViewContext<Self>) {
-        if self.focus_handle.is_focused(cx) {
-            // todo!()
-            // let focused_event = EditorFocused(cx.handle());
-            // cx.emit_global(focused_event);
-            cx.emit(Event::Focused);
-        }
+    fn handle_focus(&mut self, cx: &mut ViewContext<Self>) {
+        cx.emit(Event::Focused);
+
         if let Some(rename) = self.pending_rename.as_ref() {
             let rename_editor_focus_handle = rename.editor.read(cx).focus_handle.clone();
             cx.focus(&rename_editor_focus_handle);
-        } else if self.focus_handle.is_focused(cx) {
+        } else {
             self.blink_manager.update(cx, BlinkManager::enable);
             self.buffer.update(cx, |buffer, cx| {
                 buffer.finalize_last_transaction(cx);
@@ -9198,7 +9225,7 @@ impl Editor {
         }
     }
 
-    fn handle_focus_out(&mut self, cx: &mut ViewContext<Self>) {
+    fn handle_blur(&mut self, cx: &mut ViewContext<Self>) {
         // todo!()
         // let blurred_event = EditorBlurred(cx.handle());
         // cx.emit_global(blurred_event);

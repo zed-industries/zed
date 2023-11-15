@@ -1,8 +1,8 @@
 use crate::{
     black, phi, point, rems, AbsoluteLength, BorrowAppContext, BorrowWindow, Bounds, ContentMask,
     Corners, CornersRefinement, CursorStyle, DefiniteLength, Edges, EdgesRefinement, Font,
-    FontFeatures, FontStyle, FontWeight, Hsla, Length, Pixels, Point, PointRefinement, Result,
-    Rgba, SharedString, Size, SizeRefinement, Styled, TextRun, ViewContext,
+    FontFeatures, FontStyle, FontWeight, Hsla, Length, Pixels, Point, PointRefinement, Rgba,
+    SharedString, Size, SizeRefinement, Styled, TextRun, ViewContext,
 };
 use refineable::{Cascade, Refineable};
 use smallvec::SmallVec;
@@ -157,7 +157,7 @@ impl Default for TextStyle {
 }
 
 impl TextStyle {
-    pub fn highlight(mut self, style: HighlightStyle) -> Result<Self> {
+    pub fn highlight(mut self, style: HighlightStyle) -> Self {
         if let Some(weight) = style.font_weight {
             self.font_weight = weight;
         }
@@ -177,7 +177,7 @@ impl TextStyle {
             self.underline = Some(underline);
         }
 
-        Ok(self)
+        self
     }
 
     pub fn font(&self) -> Font {

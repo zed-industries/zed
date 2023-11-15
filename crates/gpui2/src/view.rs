@@ -1,7 +1,7 @@
 use crate::{
     private::Sealed, AnyBox, AnyElement, AnyModel, AnyWeakModel, AppContext, AvailableSpace,
-    Bounds, Component, Element, ElementId, Entity, EntityId, Flatten, LayoutId, Model, Pixels,
-    Size, ViewContext, VisualContext, WeakModel, WindowContext,
+    BorrowWindow, Bounds, Component, Element, ElementId, Entity, EntityId, Flatten, LayoutId,
+    Model, Pixels, Size, ViewContext, VisualContext, WeakModel, WindowContext,
 };
 use anyhow::{Context, Result};
 use std::{
@@ -278,6 +278,84 @@ where
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         (self)(cx)
+    }
+}
+
+pub struct RenderView<C, V> {
+    view: View<V>,
+    component: Option<C>,
+}
+
+impl<C, ParentViewState, ViewState> Component<ParentViewState> for RenderView<C, ViewState>
+where
+    C: 'static + Component<ViewState>,
+    ParentViewState: 'static,
+    ViewState: 'static,
+{
+    fn render(self) -> AnyElement<ParentViewState> {
+        AnyElement::new(self)
+    }
+}
+
+impl<C, ParentViewState, ViewState> Element<ParentViewState> for RenderView<C, ViewState>
+where
+    C: 'static + Component<ViewState>,
+    ParentViewState: 'static,
+    ViewState: 'static,
+{
+    type ElementState = AnyElement<ViewState>;
+
+    fn element_id(&self) -> Option<ElementId> {
+        Some(self.view.entity_id().into())
+    }
+
+    fn initialize(
+        &mut self,
+        _: &mut ParentViewState,
+        _: Option<Self::ElementState>,
+        cx: &mut ViewContext<ParentViewState>,
+    ) -> Self::ElementState {
+        cx.with_element_id(Some(self.view.entity_id()), |cx| {
+            self.view.update(cx, |view, cx| {
+                let mut element = self.component.take().unwrap().render();
+                element.initialize(view, cx);
+                element
+            })
+        })
+    }
+
+    fn layout(
+        &mut self,
+        _: &mut ParentViewState,
+        element: &mut Self::ElementState,
+        cx: &mut ViewContext<ParentViewState>,
+    ) -> LayoutId {
+        cx.with_element_id(Some(self.view.entity_id()), |cx| {
+            self.view.update(cx, |view, cx| element.layout(view, cx))
+        })
+    }
+
+    fn paint(
+        &mut self,
+        _: Bounds<Pixels>,
+        _: &mut ParentViewState,
+        element: &mut Self::ElementState,
+        cx: &mut ViewContext<ParentViewState>,
+    ) {
+        cx.with_element_id(Some(self.view.entity_id()), |cx| {
+            self.view.update(cx, |view, cx| element.paint(view, cx))
+        })
+    }
+}
+
+pub fn render_view<C, V>(view: &View<V>, component: C) -> RenderView<C, V>
+where
+    C: 'static + Component<V>,
+    V: 'static,
+{
+    RenderView {
+        view: view.clone(),
+        component: Some(component),
     }
 }
 

@@ -578,12 +578,7 @@ impl DisplaySnapshot {
             line.push_str(chunk.chunk);
 
             let text_style = if let Some(style) = chunk.style {
-                editor_style
-                    .text
-                    .clone()
-                    .highlight(style)
-                    .map(Cow::Owned)
-                    .unwrap_or_else(|_| Cow::Borrowed(&editor_style.text))
+                Cow::Owned(editor_style.text.clone().highlight(style))
             } else {
                 Cow::Borrowed(&editor_style.text)
             };
