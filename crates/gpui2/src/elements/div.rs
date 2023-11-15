@@ -597,7 +597,7 @@ impl<V: 'static> ParentComponent<V> for Div<V> {
 }
 
 impl<V: 'static> Element<V> for Div<V> {
-    type ElementState = NodeState;
+    type ElementState = DivState;
 
     fn element_id(&self) -> Option<ElementId> {
         self.interactivity.element_id.clone()
@@ -617,7 +617,7 @@ impl<V: 'static> Element<V> for Div<V> {
             child.initialize(view_state, cx);
         }
 
-        NodeState {
+        DivState {
             interactive_state,
             child_layout_ids: SmallVec::new(),
         }
@@ -706,7 +706,7 @@ impl<V: 'static> Component<V> for Div<V> {
     }
 }
 
-pub struct NodeState {
+pub struct DivState {
     child_layout_ids: SmallVec<[LayoutId; 4]>,
     interactive_state: InteractiveElementState,
 }
@@ -911,11 +911,13 @@ where
                         }
                     }
                     *pending_mouse_down.lock() = None;
+                    cx.notify();
                 });
             } else {
-                cx.on_mouse_event(move |_state, event: &MouseDownEvent, phase, _cx| {
+                cx.on_mouse_event(move |_view_state, event: &MouseDownEvent, phase, cx| {
                     if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position) {
                         *pending_mouse_down.lock() = Some(event.clone());
+                        cx.notify();
                     }
                 });
             }
