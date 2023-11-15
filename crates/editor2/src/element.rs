@@ -2464,7 +2464,9 @@ impl Element<Editor> for EditorElement {
                         self.paint_text(text_bounds, &mut layout, editor, cx);
 
                         if !layout.blocks.is_empty() {
-                            self.paint_blocks(bounds, &mut layout, editor, cx);
+                            cx.with_element_id(Some("editor_blocks"), |cx| {
+                                self.paint_blocks(bounds, &mut layout, editor, cx);
+                            })
                         }
                     });
                 });
