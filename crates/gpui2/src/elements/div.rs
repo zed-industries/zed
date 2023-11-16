@@ -22,7 +22,6 @@ use util::ResultExt;
 
 const DRAG_THRESHOLD: f64 = 2.;
 const TOOLTIP_DELAY: Duration = Duration::from_millis(500);
-const TOOLTIP_OFFSET: Point<Pixels> = Point::new(px(10.0), px(8.0));
 
 pub struct GroupStyle {
     pub group: SharedString,
@@ -419,9 +418,8 @@ pub trait StatefulInteractiveComponent<V: 'static, E: Element<V>>: InteractiveCo
             self.interactivity().tooltip_builder.is_none(),
             "calling tooltip more than once on the same element is not supported"
         );
-        self.interactivity().tooltip_builder = Some(Rc::new(move |view_state, cx| {
-            build_tooltip(view_state, cx).into()
-        }));
+        self.interactivity().tooltip_builder =
+            Some(Rc::new(move |view_state, cx| build_tooltip(view_state, cx)));
 
         self
     }
@@ -965,7 +963,7 @@ where
                                     waiting: None,
                                     tooltip: Some(AnyTooltip {
                                         view: tooltip_builder(view_state, cx),
-                                        cursor_offset: cx.mouse_position() + TOOLTIP_OFFSET,
+                                        cursor_offset: cx.mouse_position(),
                                     }),
                                 });
                                 cx.notify();
