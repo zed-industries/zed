@@ -72,7 +72,7 @@ impl<V: 'static> IconButton<V> {
     fn render(mut self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         let icon_color = match (self.state, self.color) {
             (InteractionState::Disabled, _) => TextColor::Disabled,
-            (InteractionState::Active, _) => TextColor::Error,
+            (InteractionState::Active, _) => TextColor::Selected,
             _ => self.color,
         };
 
