@@ -16,7 +16,7 @@ use crate::{
 };
 use anyhow::{anyhow, Result};
 pub use clock::ReplicaId;
-use futures::FutureExt as _;
+use futures::channel::oneshot;
 use gpui::{AppContext, EventEmitter, HighlightStyle, ModelContext, Task, TaskLabel};
 use lazy_static::lazy_static;
 use lsp::LanguageServerId;
@@ -45,7 +45,7 @@ pub use text::{Buffer as TextBuffer, BufferSnapshot as TextBufferSnapshot, *};
 use theme::SyntaxTheme;
 #[cfg(any(test, feature = "test-support"))]
 use util::RandomCharIter;
-use util::{RangeExt, TryFutureExt as _};
+use util::RangeExt;
 
 #[cfg(any(test, feature = "test-support"))]
 pub use {tree_sitter_rust, tree_sitter_typescript};
@@ -66,6 +66,7 @@ pub struct Buffer {
     saved_mtime: SystemTime,
     transaction_depth: usize,
     was_dirty_before_starting_transaction: Option<bool>,
+    reload_task: Option<Task<Result<()>>>,
     language: Option<Arc<Language>>,
     autoindent_requests: Vec<Arc<AutoindentRequest>>,
     pending_autoindent: Option<Task<()>>,
@@ -473,6 +474,7 @@ impl Buffer {
             saved_mtime,
             saved_version: buffer.version(),
             saved_version_fingerprint: buffer.as_rope().fingerprint(),
+            reload_task: None,
             transaction_depth: 0,
             was_dirty_before_starting_transaction: None,
             text: buffer,
@@ -572,37 +574,52 @@ impl Buffer {
         cx.notify();
     }
 
-    pub fn reload(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<Option<Transaction>>> {
-        cx.spawn(|this, mut cx| async move {
-            if let Some((new_mtime, new_text)) = this.update(&mut cx, |this, cx| {
+    pub fn reload(
+        &mut self,
+        cx: &mut ModelContext<Self>,
+    ) -> oneshot::Receiver<Option<Transaction>> {
+        let (tx, rx) = futures::channel::oneshot::channel();
+        let prev_version = self.text.version();
+        self.reload_task = Some(cx.spawn(|this, mut cx| async move {
+            let Some((new_mtime, new_text)) = this.update(&mut cx, |this, cx| {
                 let file = this.file.as_ref()?.as_local()?;
                 Some((file.mtime(), file.load(cx)))
-            })? {
-                let new_text = new_text.await?;
-                let diff = this
-                    .update(&mut cx, |this, cx| this.diff(new_text, cx))?
-                    .await;
-                this.update(&mut cx, |this, cx| {
-                    if this.version() == diff.base_version {
-                        this.finalize_last_transaction();
-                        this.apply_diff(diff, cx);
-                        if let Some(transaction) = this.finalize_last_transaction().cloned() {
-                            this.did_reload(
-                                this.version(),
-                                this.as_rope().fingerprint(),
-                                this.line_ending(),
-                                new_mtime,
-                                cx,
-                            );
-                            return Some(transaction);
-                        }
-                    }
-                    None
-                })
-            } else {
-                Ok(None)
-            }
-        })
+            })?
+            else {
+                return Ok(());
+            };
+
+            let new_text = new_text.await?;
+            let diff = this
+                .update(&mut cx, |this, cx| this.diff(new_text.clone(), cx))?
+                .await;
+            this.update(&mut cx, |this, cx| {
+                if this.version() == diff.base_version {
+                    this.finalize_last_transaction();
+                    this.apply_diff(diff, cx);
+                    tx.send(this.finalize_last_transaction().cloned()).ok();
+
+                    this.did_reload(
+                        this.version(),
+                        this.as_rope().fingerprint(),
+                        this.line_ending(),
+                        new_mtime,
+                        cx,
+                    );
+                } else {
+                    this.did_reload(
+                        prev_version,
+                        Rope::text_fingerprint(&new_text),
+                        this.line_ending(),
+                        new_mtime,
+                        cx,
+                    );
+                }
+
+                this.reload_task.take();
+            })
+        }));
+        rx
     }
 
     pub fn did_reload(
@@ -631,13 +648,8 @@ impl Buffer {
         cx.notify();
     }
 
-    pub fn file_updated(
-        &mut self,
-        new_file: Arc<dyn File>,
-        cx: &mut ModelContext<Self>,
-    ) -> Task<()> {
+    pub fn file_updated(&mut self, new_file: Arc<dyn File>, cx: &mut ModelContext<Self>) {
         let mut file_changed = false;
-        let mut task = Task::ready(());
 
         if let Some(old_file) = self.file.as_ref() {
             if new_file.path() != old_file.path() {
@@ -657,8 +669,7 @@ impl Buffer {
                     file_changed = true;
 
                     if !self.is_dirty() {
-                        let reload = self.reload(cx).log_err().map(drop);
-                        task = cx.background_executor().spawn(reload);
+                        self.reload(cx).close();
                     }
                 }
             }
@@ -672,7 +683,6 @@ impl Buffer {
             cx.emit(Event::FileHandleChanged);
             cx.notify();
         }
-        task
     }
 
     pub fn diff_base(&self) -> Option<&str> {

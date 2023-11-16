@@ -2587,6 +2587,70 @@ async fn test_save_file(cx: &mut gpui::TestAppContext) {
     assert_eq!(new_text, buffer.update(cx, |buffer, _| buffer.text()));
 }
 
+#[gpui::test(iterations = 10)]
+async fn test_file_changes_multiple_times_on_disk(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor().clone());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            "file1": "the original contents",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+    let worktree = project.read_with(cx, |project, _| project.worktrees().next().unwrap());
+    let buffer = project
+        .update(cx, |p, cx| p.open_local_buffer("/dir/file1", cx))
+        .await
+        .unwrap();
+
+    // Simulate buffer diffs being slow, so that they don't complete before
+    // the next file change occurs.
+    cx.executor().deprioritize_task(*language::BUFFER_DIFF_TASK);
+
+    // Change the buffer's file on disk, and then wait for the file change
+    // to be detected by the worktree, so that the buffer starts reloading.
+    fs.save(
+        "/dir/file1".as_ref(),
+        &"the first contents".into(),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    worktree.next_event(cx);
+
+    // Change the buffer's file again. Depending on the random seed, the
+    // previous file change may still be in progress.
+    fs.save(
+        "/dir/file1".as_ref(),
+        &"the second contents".into(),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    worktree.next_event(cx);
+
+    cx.executor().run_until_parked();
+    let on_disk_text = fs.load(Path::new("/dir/file1")).await.unwrap();
+    buffer.read_with(cx, |buffer, _| {
+        let buffer_text = buffer.text();
+        if buffer_text == on_disk_text {
+            assert!(!buffer.is_dirty(), "buffer shouldn't be dirty. text: {buffer_text:?}, disk text: {on_disk_text:?}");
+        }
+        // If the file change occurred while the buffer was processing the first
+        // change, the buffer may be in a conflicting state.
+        else {
+            assert!(
+                buffer.is_dirty(),
+                "buffer should report that it is dirty. text: {buffer_text:?}, disk text: {on_disk_text:?}"
+            );
+        }
+    });
+}
+
 #[gpui::test]
 async fn test_save_in_single_file_worktree(cx: &mut gpui::TestAppContext) {
     init_test(cx);
