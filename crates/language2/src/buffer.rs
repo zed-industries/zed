@@ -1122,26 +1122,59 @@ impl Buffer {
             let old_text = old_text.to_string();
             let line_ending = LineEnding::detect(&new_text);
             LineEnding::normalize(&mut new_text);
+
             let diff = TextDiff::from_chars(old_text.as_str(), new_text.as_str());
-            let mut edits = Vec::new();
-            let mut offset = 0;
             let empty: Arc<str> = "".into();
-            for change in diff.iter_all_changes() {
-                let value = change.value();
-                let end_offset = offset + value.len();
-                match change.tag() {
-                    ChangeTag::Equal => {
-                        offset = end_offset;
+
+            let mut edits = Vec::new();
+            let mut old_offset = 0;
+            let mut new_offset = 0;
+            let mut last_edit: Option<(Range<usize>, Range<usize>)> = None;
+            for change in diff.iter_all_changes().map(Some).chain([None]) {
+                if let Some(change) = &change {
+                    let len = change.value().len();
+                    match change.tag() {
+                        ChangeTag::Equal => {
+                            old_offset += len;
+                            new_offset += len;
+                        }
+                        ChangeTag::Delete => {
+                            let old_end_offset = old_offset + len;
+                            if let Some((last_old_range, _)) = &mut last_edit {
+                                last_old_range.end = old_end_offset;
+                            } else {
+                                last_edit =
+                                    Some((old_offset..old_end_offset, new_offset..new_offset));
+                            }
+                            old_offset = old_end_offset;
+                        }
+                        ChangeTag::Insert => {
+                            let new_end_offset = new_offset + len;
+                            if let Some((_, last_new_range)) = &mut last_edit {
+                                last_new_range.end = new_end_offset;
+                            } else {
+                                last_edit =
+                                    Some((old_offset..old_offset, new_offset..new_end_offset));
+                            }
+                            new_offset = new_end_offset;
+                        }
                     }
-                    ChangeTag::Delete => {
-                        edits.push((offset..end_offset, empty.clone()));
-                        offset = end_offset;
-                    }
-                    ChangeTag::Insert => {
-                        edits.push((offset..offset, value.into()));
+                }
+
+                if let Some((old_range, new_range)) = &last_edit {
+                    if old_offset > old_range.end || new_offset > new_range.end || change.is_none()
+                    {
+                        let text = if new_range.is_empty() {
+                            empty.clone()
+                        } else {
+                            new_text[new_range.clone()].into()
+                        };
+                        edits.push((old_range.clone(), text));
+                        last_edit.take();
                     }
                 }
             }
+
             Diff {
                 base_version,
                 line_ending,
