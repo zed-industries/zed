@@ -456,7 +456,7 @@ mod tests {
     fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
         cx.update(|cx| {
             let app_state = AppState::test(cx);
-            theme::init(cx);
+            theme::init(theme::LoadThemes::JustBase, cx);
             language::init(cx);
             editor::init(cx);
             workspace::init(app_state.clone(), cx);
