@@ -1076,26 +1076,22 @@ impl<'a> WindowContext<'a> {
 
         self.with_z_index(0, |cx| {
             let available_space = cx.window.viewport_size.map(Into::into);
-            root_view.draw(available_space, cx);
+            root_view.draw(Point::zero(), available_space, cx);
         });
 
         if let Some(active_drag) = self.app.active_drag.take() {
             self.with_z_index(1, |cx| {
                 let offset = cx.mouse_position() - active_drag.cursor_offset;
-                cx.with_element_offset(offset, |cx| {
-                    let available_space =
-                        size(AvailableSpace::MinContent, AvailableSpace::MinContent);
-                    active_drag.view.draw(available_space, cx);
-                    cx.active_drag = Some(active_drag);
-                });
+                let available_space = size(AvailableSpace::MinContent, AvailableSpace::MinContent);
+                active_drag.view.draw(offset, available_space, cx);
+                cx.active_drag = Some(active_drag);
             });
         } else if let Some(active_tooltip) = self.app.active_tooltip.take() {
             self.with_z_index(1, |cx| {
-                cx.with_element_offset(active_tooltip.cursor_offset, |cx| {
-                    let available_space =
-                        size(AvailableSpace::MinContent, AvailableSpace::MinContent);
-                    active_tooltip.view.draw(available_space, cx);
-                });
+                let available_space = size(AvailableSpace::MinContent, AvailableSpace::MinContent);
+                active_tooltip
+                    .view
+                    .draw(active_tooltip.cursor_offset, available_space, cx);
             });
         }
 
@@ -1633,8 +1629,8 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
         }
     }
 
-    /// Update the global element offset based on the given offset. This is used to implement
-    /// scrolling and position drag handles.
+    /// Update the global element offset relative to the current offset. This is used to implement
+    /// scrolling.
     fn with_element_offset<R>(
         &mut self,
         offset: Point<Pixels>,
@@ -1644,7 +1640,17 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
             return f(self);
         };
 
-        let offset = self.element_offset() + offset;
+        let abs_offset = self.element_offset() + offset;
+        self.with_absolute_element_offset(abs_offset, f)
+    }
+
+    /// Update the global element offset based on the given offset. This is used to implement
+    /// drag handles and other manual painting of elements.
+    fn with_absolute_element_offset<R>(
+        &mut self,
+        offset: Point<Pixels>,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
         self.window_mut()
             .current_frame
             .element_offset_stack
