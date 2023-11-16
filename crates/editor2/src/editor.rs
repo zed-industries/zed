@@ -9379,18 +9379,16 @@ impl Render for Editor {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         let settings = ThemeSettings::get_global(cx);
         let text_style = match self.mode {
-            EditorMode::SingleLine => {
-                TextStyle {
-                    color: cx.theme().colors().text,
-                    font_family: settings.ui_font.family.clone(), // todo!()
-                    font_features: settings.ui_font.features,
-                    font_size: rems(0.875).into(),
-                    font_weight: FontWeight::NORMAL,
-                    font_style: FontStyle::Normal,
-                    line_height: relative(1.3).into(), // TODO relative(settings.buffer_line_height.value()),
-                    underline: None,
-                }
-            }
+            EditorMode::SingleLine => TextStyle {
+                color: cx.theme().colors().text,
+                font_family: settings.ui_font.family.clone(),
+                font_features: settings.ui_font.features,
+                font_size: rems(0.875).into(),
+                font_weight: FontWeight::NORMAL,
+                font_style: FontStyle::Normal,
+                line_height: relative(1.).into(),
+                underline: None,
+            },
 
             EditorMode::AutoHeight { max_lines } => todo!(),
 
