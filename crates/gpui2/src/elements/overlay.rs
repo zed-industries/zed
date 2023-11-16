@@ -1,8 +1,9 @@
 use smallvec::SmallVec;
+use taffy::style::Position;
 
 use crate::{
-    point, AnyElement, BorrowWindow, Bounds, Component, Element, LayoutId, ParentComponent, Pixels,
-    Point, Size, Style,
+    point, px, AbsoluteLength, AnyElement, BorrowWindow, Bounds, Component, Element, LayoutId,
+    ParentComponent, Pixels, Point, Size, Style,
 };
 
 pub struct OverlayState {
@@ -72,8 +73,9 @@ impl<V: 'static> Element<V> for Overlay<V> {
             .iter_mut()
             .map(|child| child.layout(view_state, cx))
             .collect::<SmallVec<_>>();
+
         let mut overlay_style = Style::default();
-        overlay_style.position = crate::Position::Absolute;
+        overlay_style.position = Position::Absolute;
 
         let layout_id = cx.request_layout(&overlay_style, child_layout_ids.iter().copied());
 
@@ -106,6 +108,7 @@ impl<V: 'static> Element<V> for Overlay<V> {
             origin: Point::zero(),
             size: cx.viewport_size(),
         };
+        dbg!(bounds, desired, limits);
 
         match self.fit_mode {
             OverlayFitMode::SnapToWindow => {

@@ -87,7 +87,7 @@ pub struct TerminalView {
     has_new_content: bool,
     //Currently using iTerm bell, show bell emoji in tab until input is received
     has_bell: bool,
-    context_menu: Option<ContextMenu>,
+    context_menu: Option<View<ContextMenu>>,
     blink_state: bool,
     blinking_on: bool,
     blinking_paused: bool,
@@ -302,10 +302,14 @@ impl TerminalView {
         position: gpui::Point<Pixels>,
         cx: &mut ViewContext<Self>,
     ) {
-        self.context_menu = Some(ContextMenu::new(vec![
-            ContextMenuItem::entry(Label::new("Clear"), Clear),
-            ContextMenuItem::entry(Label::new("Close"), CloseActiveItem { save_intent: None }),
-        ]));
+        self.context_menu = Some(cx.build_view(|cx| {
+            ContextMenu::new(cx)
+                .entry(Label::new("Clear"), Box::new(Clear))
+                .entry(
+                    Label::new("Close"),
+                    Box::new(CloseActiveItem { save_intent: None }),
+                )
+        }));
         dbg!(&position);
         // todo!()
         //     self.context_menu
