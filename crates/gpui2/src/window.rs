@@ -574,6 +574,7 @@ impl<'a> WindowContext<'a> {
         result
     }
 
+    #[must_use]
     /// Add a node to the layout tree for the current frame. Takes the `Style` of the element for which
     /// layout is being requested, along with the layout ids of any children. This method is called during
     /// calls to the `Element::layout` trait method and enables any element to participate in layout.

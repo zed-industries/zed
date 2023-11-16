@@ -1,13 +1,16 @@
 use crate::{status_bar::StatusItemView, Axis, Workspace};
 use gpui::{
-    div, px, Action, AnyView, AppContext, Component, Div, Entity, EntityId, EventEmitter,
-    FocusHandle, FocusableView, ParentComponent, Render, SharedString, Styled, Subscription, View,
-    ViewContext, WeakView, WindowContext,
+    div, overlay, point, px, Action, AnyElement, AnyView, AppContext, Component, DispatchPhase,
+    Div, Element, ElementId, Entity, EntityId, EventEmitter, FocusHandle, FocusableView,
+    InteractiveComponent, LayoutId, MouseButton, MouseDownEvent, ParentComponent, Pixels, Point,
+    Render, SharedString, Style, Styled, Subscription, View, ViewContext, VisualContext, WeakView,
+    WindowContext,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
-use ui::{h_stack, IconButton, InteractionState, Tooltip};
+use smallvec::SmallVec;
+use std::{cell::RefCell, rc::Rc, sync::Arc};
+use ui::{h_stack, IconButton, InteractionState, Label, Tooltip};
 
 pub enum PanelEvent {
     ChangePosition,
@@ -656,6 +659,118 @@ impl PanelButtons {
 //     }
 // }
 
+pub struct MenuHandle<V: 'static> {
+    id: ElementId,
+    children: SmallVec<[AnyElement<V>; 2]>,
+    builder: Rc<dyn Fn(&mut V, &mut ViewContext<V>) -> AnyView + 'static>,
+}
+
+impl<V: 'static> ParentComponent<V> for MenuHandle<V> {
+    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<V>; 2]> {
+        &mut self.children
+    }
+}
+
+impl<V: 'static> MenuHandle<V> {
+    fn new(
+        id: impl Into<ElementId>,
+        builder: impl Fn(&mut V, &mut ViewContext<V>) -> AnyView + 'static,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            children: SmallVec::new(),
+            builder: Rc::new(builder),
+        }
+    }
+}
+
+pub struct MenuState<V> {
+    open: Rc<RefCell<bool>>,
+    menu: Option<AnyElement<V>>,
+}
+// Here be dragons
+impl<V: 'static> Element<V> for MenuHandle<V> {
+    type ElementState = MenuState<V>;
+
+    fn element_id(&self) -> Option<gpui::ElementId> {
+        Some(self.id.clone())
+    }
+
+    fn layout(
+        &mut self,
+        view_state: &mut V,
+        element_state: Option<Self::ElementState>,
+        cx: &mut crate::ViewContext<V>,
+    ) -> (gpui::LayoutId, Self::ElementState) {
+        let mut child_layout_ids = self
+            .children
+            .iter_mut()
+            .map(|child| child.layout(view_state, cx))
+            .collect::<SmallVec<[LayoutId; 2]>>();
+
+        let open = if let Some(element_state) = element_state {
+            element_state.open
+        } else {
+            Rc::new(RefCell::new(false))
+        };
+
+        let mut menu = None;
+        if *open.borrow() {
+            let mut view = (self.builder)(view_state, cx).render();
+            child_layout_ids.push(view.layout(view_state, cx));
+            menu.replace(view);
+        }
+        let layout_id = cx.request_layout(&gpui::Style::default(), child_layout_ids.into_iter());
+
+        (layout_id, MenuState { open, menu })
+    }
+
+    fn paint(
+        &mut self,
+        bounds: crate::Bounds<gpui::Pixels>,
+        view_state: &mut V,
+        element_state: &mut Self::ElementState,
+        cx: &mut crate::ViewContext<V>,
+    ) {
+        for child in &mut self.children {
+            child.paint(view_state, cx);
+        }
+
+        if let Some(mut menu) = element_state.menu.as_mut() {
+            menu.paint(view_state, cx);
+            return;
+        }
+
+        let open = element_state.open.clone();
+        cx.on_mouse_event(move |view_state, event: &MouseDownEvent, phase, cx| {
+            dbg!(&event, &phase);
+            if phase == DispatchPhase::Bubble
+                && event.button == MouseButton::Right
+                && bounds.contains_point(&event.position)
+            {
+                *open.borrow_mut() = true;
+                cx.notify();
+            }
+        });
+    }
+}
+
+impl<V: 'static> Component<V> for MenuHandle<V> {
+    fn render(self) -> AnyElement<V> {
+        AnyElement::new(self)
+    }
+}
+
+struct TestMenu {}
+impl Render for TestMenu {
+    type Element = Div<Self>;
+
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+        div().child("0MG!")
+    }
+}
+
+// here be kittens
 impl Render for PanelButtons {
     type Element = Div<Self>;
 
@@ -689,7 +804,13 @@ impl Render for PanelButtons {
                         .tooltip(move |_, cx| Tooltip::for_action(name, &*action, cx))
                 };
 
-                Some(button)
+                Some(
+                    MenuHandle::new(
+                        SharedString::from(format!("{} tooltip", name)),
+                        move |_, cx| Tooltip::text("HELLOOOOOOOOOOOOOO", cx),
+                    )
+                    .child(button),
+                )
             });
 
         h_stack().children(buttons)
