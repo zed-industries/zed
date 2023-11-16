@@ -546,12 +546,15 @@ impl Render for TerminalView {
             .on_action(TerminalView::clear)
             .on_action(TerminalView::show_character_palette)
             .on_action(TerminalView::select_all)
-            .child(TerminalElement::new(
-                terminal_handle,
-                focused,
-                self.should_show_cursor(focused, cx),
-                self.can_navigate_to_selected_word,
-            ))
+            // todo!()
+            .child(
+                "TERMINAL HERE", //     TerminalElement::new(
+                                 //     terminal_handle,
+                                 //     focused,
+                                 //     self.should_show_cursor(focused, cx),
+                                 //     self.can_navigate_to_selected_word,
+                                 // )
+            )
         // todo!()
         // .child(ChildView::new(&self.context_menu, cx))
     }
