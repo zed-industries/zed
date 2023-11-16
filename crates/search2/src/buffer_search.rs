@@ -1,10 +1,10 @@
 use crate::{
     history::SearchHistory,
-    mode::{next_mode, SearchMode, Side},
+    mode::{next_mode, SearchMode},
     search_bar::{render_nav_button, render_search_mode_button},
-    CycleMode, NextHistoryQuery, PreviousHistoryQuery, ReplaceAll, ReplaceNext, SearchOptions,
-    SelectAllMatches, SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleReplace,
-    ToggleWholeWord,
+    ActivateRegexMode, ActivateTextMode, CycleMode, NextHistoryQuery, PreviousHistoryQuery,
+    ReplaceAll, ReplaceNext, SearchOptions, SelectAllMatches, SelectNextMatch, SelectPrevMatch,
+    ToggleCaseSensitive, ToggleReplace, ToggleWholeWord,
 };
 use collections::HashMap;
 use editor::Editor;
@@ -16,7 +16,6 @@ use gpui::{
 };
 use project::search::SearchQuery;
 use std::{any::Any, sync::Arc};
-use theme::ActiveTheme;
 
 use ui::{h_stack, ButtonGroup, Icon, IconButton, IconElement};
 use util::ResultExt;
@@ -129,18 +128,12 @@ impl Render for BufferSearchBar {
             editor.set_placeholder_text("Replace with...", cx);
         });
 
-        let search_button_for_mode = |mode, side, cx: &mut ViewContext<BufferSearchBar>| {
+        let search_button_for_mode = |mode| {
             let is_active = self.current_mode == mode;
 
-            render_search_mode_button(
-                mode,
-                side,
-                is_active,
-                move |this, cx| {
-                    this.activate_search_mode(mode, cx);
-                },
-                cx,
-            )
+            render_search_mode_button(mode, is_active, move |this: &mut Self, cx| {
+                this.activate_search_mode(mode, cx);
+            })
         };
         let search_option_button = |option| {
             let is_active = self.search_options.contains(option);
@@ -164,16 +157,14 @@ impl Render for BufferSearchBar {
 
                 Some(ui::Label::new(message))
             });
-        let nav_button_for_direction = |icon, direction, cx: &mut ViewContext<Self>| {
+        let nav_button_for_direction = |icon, direction| {
             render_nav_button(
                 icon,
-                direction,
                 self.active_match_index.is_some(),
-                move |this, cx| match direction {
+                move |this: &mut Self, cx| match direction {
                     Direction::Prev => this.select_prev_match(&Default::default(), cx),
                     Direction::Next => this.select_next_match(&Default::default(), cx),
                 },
-                cx,
             )
         };
         let should_show_replace_input = self.replace_enabled && supported_options.replacement;
@@ -231,8 +222,8 @@ impl Render for BufferSearchBar {
                 h_stack()
                     .flex_none()
                     .child(ButtonGroup::new(vec![
-                        search_button_for_mode(SearchMode::Text, Some(Side::Left), cx),
-                        search_button_for_mode(SearchMode::Regex, Some(Side::Right), cx),
+                        search_button_for_mode(SearchMode::Text),
+                        search_button_for_mode(SearchMode::Regex),
                     ]))
                     .when(supported_options.replacement, |this| {
                         this.child(super::toggle_replace_button(self.replace_enabled))
@@ -252,17 +243,15 @@ impl Render for BufferSearchBar {
                 h_stack()
                     .gap_0p5()
                     .flex_none()
-                    .child(self.render_action_button(cx))
+                    .child(self.render_action_button())
                     .children(match_count)
                     .child(nav_button_for_direction(
                         ui::Icon::ChevronLeft,
                         Direction::Prev,
-                        cx,
                     ))
                     .child(nav_button_for_direction(
                         ui::Icon::ChevronRight,
                         Direction::Next,
-                        cx,
                     )),
             )
 
@@ -428,6 +417,46 @@ impl BufferSearchBar {
                 })
             });
         });
+        fn register_action<A: Action>(
+            workspace: &mut Workspace,
+            update: fn(&mut BufferSearchBar, &A, &mut ViewContext<BufferSearchBar>),
+        ) {
+            workspace.register_action(move |workspace, action: &A, cx| {
+                workspace.active_pane().update(cx, move |this, cx| {
+                    this.toolbar().update(cx, move |this, cx| {
+                        if let Some(search_bar) = this.item_of_type::<BufferSearchBar>() {
+                            search_bar.update(cx, move |this, cx| update(this, action, cx));
+                            cx.notify();
+                        }
+                    })
+                });
+            });
+        }
+
+        register_action(workspace, |this, action: &ToggleCaseSensitive, cx| {
+            this.toggle_case_sensitive(action, cx);
+        });
+        register_action(workspace, |this, action: &ToggleWholeWord, cx| {
+            this.toggle_whole_word(action, cx);
+        });
+        register_action(workspace, |this, action: &ToggleReplace, cx| {
+            this.toggle_replace(action, cx);
+        });
+        register_action(workspace, |this, action: &ActivateRegexMode, cx| {
+            this.activate_search_mode(SearchMode::Regex, cx);
+        });
+        register_action(workspace, |this, action: &ActivateTextMode, cx| {
+            this.activate_search_mode(SearchMode::Text, cx);
+        });
+        register_action(workspace, |this, action: &SelectNextMatch, cx| {
+            this.select_next_match(action, cx);
+        });
+        register_action(workspace, |this, action: &SelectPrevMatch, cx| {
+            this.select_prev_match(action, cx);
+        });
+        register_action(workspace, |this, action: &SelectAllMatches, cx| {
+            this.select_all_matches(action, cx);
+        });
     }
     pub fn new(cx: &mut ViewContext<Self>) -> Self {
         let query_editor = cx.build_view(|cx| Editor::single_line(cx));
@@ -587,7 +616,7 @@ impl BufferSearchBar {
         self.update_matches(cx)
     }
 
-    fn render_action_button(&self, cx: &mut ViewContext<Self>) -> impl Component<Self> {
+    fn render_action_button(&self) -> impl Component<Self> {
         // let tooltip_style = theme.tooltip.clone();
 
         // let style = theme.search.action_button.clone();
@@ -686,13 +715,8 @@ impl BufferSearchBar {
                     .searchable_items_with_matches
                     .get(&searchable_item.downgrade())
                 {
-                    let new_match_index = searchable_item.match_index_for_direction(
-                        matches,
-                        index,
-                        direction,
-                        dbg!(count),
-                        cx,
-                    );
+                    let new_match_index = searchable_item
+                        .match_index_for_direction(matches, index, direction, count, cx);
                     searchable_item.update_matches(matches, cx);
                     searchable_item.activate_match(new_match_index, matches, cx);
                 }
@@ -765,7 +789,6 @@ impl BufferSearchBar {
     }
 
     fn on_active_searchable_item_event(&mut self, event: &SearchEvent, cx: &mut ViewContext<Self>) {
-        dbg!(&event);
         match event {
             SearchEvent::MatchesInvalidated => {
                 let _ = self.update_matches(cx);

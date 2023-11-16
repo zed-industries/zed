@@ -10,12 +10,6 @@ pub enum SearchMode {
     Regex,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub(crate) enum Side {
-    Left,
-    Right,
-}
-
 impl SearchMode {
     pub(crate) fn label(&self) -> &'static str {
         match self {
