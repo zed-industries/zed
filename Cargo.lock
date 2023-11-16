@@ -10132,6 +10132,7 @@ dependencies = [
  "chrono",
  "gpui2",
  "itertools 0.11.0",
+ "menu2",
  "rand 0.8.5",
  "serde",
  "settings2",

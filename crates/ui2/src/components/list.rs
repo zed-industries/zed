@@ -1,11 +1,10 @@
-use gpui::div;
+use gpui::{div, Action};
 
-use crate::prelude::*;
 use crate::settings::user_settings;
 use crate::{
-    disclosure_control, h_stack, v_stack, Avatar, GraphicSlot, Icon, IconElement, IconSize, Label,
-    TextColor, Toggle,
+    disclosure_control, h_stack, v_stack, Avatar, Icon, IconElement, IconSize, Label, Toggle,
 };
+use crate::{prelude::*, GraphicSlot};
 
 #[derive(Clone, Copy, Default, Debug, PartialEq)]
 pub enum ListItemVariant {
@@ -232,6 +231,7 @@ pub struct ListEntry {
     size: ListEntrySize,
     toggle: Toggle,
     variant: ListItemVariant,
+    on_click: Option<Box<dyn Action>>,
 }
 
 impl ListEntry {
@@ -245,7 +245,13 @@ impl ListEntry {
             size: ListEntrySize::default(),
             toggle: Toggle::NotToggleable,
             variant: ListItemVariant::default(),
+            on_click: Default::default(),
         }
+    }
+
+    pub fn on_click(mut self, action: impl Into<Box<dyn Action>>) -> Self {
+        self.on_click = Some(action.into());
+        self
     }
 
     pub fn variant(mut self, variant: ListItemVariant) -> Self {
@@ -303,9 +309,21 @@ impl ListEntry {
             ListEntrySize::Small => div().h_6(),
             ListEntrySize::Medium => div().h_7(),
         };
-
         div()
             .relative()
+            .hover(|mut style| {
+                style.background = Some(cx.theme().colors().editor_background.into());
+                style
+            })
+            .on_mouse_down(gpui::MouseButton::Left, {
+                let action = self.on_click.map(|action| action.boxed_clone());
+
+                move |entry: &mut V, event, cx| {
+                    if let Some(action) = action.as_ref() {
+                        cx.dispatch_action(action.boxed_clone());
+                    }
+                }
+            })
             .group("")
             .bg(cx.theme().colors().surface_background)
             // TODO: Add focus state
@@ -401,7 +419,7 @@ impl List {
         v_stack()
             .w_full()
             .py_1()
-            .children(self.header)
+            .children(self.header.map(|header| header))
             .child(list_content)
     }
 }
