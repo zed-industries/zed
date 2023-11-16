@@ -408,13 +408,12 @@ pub trait StatefulInteractiveComponent<V: 'static, E: Element<V>>: InteractiveCo
         self
     }
 
-    fn tooltip<W>(
+    fn tooltip(
         mut self,
-        build_tooltip: impl Fn(&mut V, &mut ViewContext<V>) -> View<W> + 'static,
+        build_tooltip: impl Fn(&mut V, &mut ViewContext<V>) -> AnyView + 'static,
     ) -> Self
     where
         Self: Sized,
-        W: 'static + Render,
     {
         debug_assert!(
             self.interactivity().tooltip_builder.is_none(),

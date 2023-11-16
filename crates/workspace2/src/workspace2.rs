@@ -29,7 +29,7 @@ use client2::{
     Client, TypedEnvelope, UserStore,
 };
 use collections::{hash_map, HashMap, HashSet};
-use dock::{Dock, DockPosition, Panel, PanelButtons, PanelHandle as _};
+use dock::{Dock, DockPosition, Panel, PanelButtons, PanelHandle};
 use futures::{
     channel::{mpsc, oneshot},
     future::try_join_all,
@@ -1599,52 +1599,52 @@ impl Workspace {
     //             .downcast()
     //     }
 
-    //     /// Focus the panel of the given type if it isn't already focused. If it is
-    //     /// already focused, then transfer focus back to the workspace center.
-    //     pub fn toggle_panel_focus<T: Panel>(&mut self, cx: &mut ViewContext<Self>) {
-    //         self.focus_or_unfocus_panel::<T>(cx, |panel, cx| !panel.has_focus(cx));
-    //     }
+    /// Focus the panel of the given type if it isn't already focused. If it is
+    /// already focused, then transfer focus back to the workspace center.
+    pub fn toggle_panel_focus<T: Panel>(&mut self, cx: &mut ViewContext<Self>) {
+        self.focus_or_unfocus_panel::<T>(cx, |panel, cx| !panel.has_focus(cx));
+    }
 
-    //     /// Focus or unfocus the given panel type, depending on the given callback.
-    //     fn focus_or_unfocus_panel<T: Panel>(
-    //         &mut self,
-    //         cx: &mut ViewContext<Self>,
-    //         should_focus: impl Fn(&dyn PanelHandle, &mut ViewContext<Dock>) -> bool,
-    //     ) -> Option<Rc<dyn PanelHandle>> {
-    //         for dock in [&self.left_dock, &self.bottom_dock, &self.right_dock] {
-    //             if let Some(panel_index) = dock.read(cx).panel_index_for_type::<T>() {
-    //                 let mut focus_center = false;
-    //                 let mut reveal_dock = false;
-    //                 let panel = dock.update(cx, |dock, cx| {
-    //                     dock.activate_panel(panel_index, cx);
+    /// Focus or unfocus the given panel type, depending on the given callback.
+    fn focus_or_unfocus_panel<T: Panel>(
+        &mut self,
+        cx: &mut ViewContext<Self>,
+        should_focus: impl Fn(&dyn PanelHandle, &mut ViewContext<Dock>) -> bool,
+    ) -> Option<Arc<dyn PanelHandle>> {
+        for dock in [&self.left_dock, &self.bottom_dock, &self.right_dock] {
+            if let Some(panel_index) = dock.read(cx).panel_index_for_type::<T>() {
+                let mut focus_center = false;
+                let mut reveal_dock = false;
+                let panel = dock.update(cx, |dock, cx| {
+                    dock.activate_panel(panel_index, cx);
 
-    //                     let panel = dock.active_panel().cloned();
-    //                     if let Some(panel) = panel.as_ref() {
-    //                         if should_focus(&**panel, cx) {
-    //                             dock.set_open(true, cx);
-    //                             cx.focus(panel.as_any());
-    //                             reveal_dock = true;
-    //                         } else {
-    //                             // if panel.is_zoomed(cx) {
-    //                             //     dock.set_open(false, cx);
-    //                             // }
-    //                             focus_center = true;
-    //                         }
-    //                     }
-    //                     panel
-    //                 });
+                    let panel = dock.active_panel().cloned();
+                    if let Some(panel) = panel.as_ref() {
+                        if should_focus(&**panel, cx) {
+                            dock.set_open(true, cx);
+                            panel.focus_handle(cx).focus(cx);
+                            reveal_dock = true;
+                        } else {
+                            // if panel.is_zoomed(cx) {
+                            //     dock.set_open(false, cx);
+                            // }
+                            focus_center = true;
+                        }
+                    }
+                    panel
+                });
 
-    //                 if focus_center {
-    //                     cx.focus_self();
-    //                 }
+                if focus_center {
+                    self.active_pane.update(cx, |pane, cx| pane.focus(cx))
+                }
 
-    //                 self.serialize_workspace(cx);
-    //                 cx.notify();
-    //                 return panel;
-    //             }
-    //         }
-    //         None
-    //     }
+                self.serialize_workspace(cx);
+                cx.notify();
+                return panel;
+            }
+        }
+        None
+    }
 
     //     pub fn panel<T: Panel>(&self, cx: &WindowContext) -> Option<View<T>> {
     //         for dock in [&self.left_dock, &self.bottom_dock, &self.right_dock] {

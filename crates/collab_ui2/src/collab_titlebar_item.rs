@@ -37,7 +37,7 @@ use gpui::{
 };
 use project::Project;
 use theme::ActiveTheme;
-use ui::{h_stack, Button, ButtonVariant, KeyBinding, Label, TextColor, TextTooltip};
+use ui::{h_stack, Button, ButtonVariant, KeyBinding, Label, TextColor, Tooltip};
 use workspace::Workspace;
 
 // const MAX_PROJECT_NAME_LENGTH: usize = 40;
@@ -111,18 +111,14 @@ impl Render for CollabTitlebarItem {
                                     .variant(ButtonVariant::Ghost)
                                     .color(Some(TextColor::Player(0))),
                             )
-                            .tooltip(move |_, cx| {
-                                cx.build_view(|_| TextTooltip::new("Toggle following"))
-                            }),
+                            .tooltip(move |_, cx| Tooltip::text("Toggle following", cx)),
                     )
                     // TODO - Add project menu
                     .child(
                         div()
                             .id("titlebar_project_menu_button")
                             .child(Button::new("project_name").variant(ButtonVariant::Ghost))
-                            .tooltip(move |_, cx| {
-                                cx.build_view(|_| TextTooltip::new("Recent Projects"))
-                            }),
+                            .tooltip(move |_, cx| Tooltip::text("Recent Projects", cx)),
                     )
                     // TODO - Add git menu
                     .child(
@@ -137,9 +133,8 @@ impl Render for CollabTitlebarItem {
                                 // todo!() Replace with real action.
                                 #[gpui::action]
                                 struct NoAction {}
-
                                 cx.build_view(|_| {
-                                    TextTooltip::new("Recent Branches")
+                                    Tooltip::new("Recent Branches")
                                         .key_binding(KeyBinding::new(gpui::KeyBinding::new(
                                             "cmd-b",
                                             NoAction {},
@@ -147,6 +142,7 @@ impl Render for CollabTitlebarItem {
                                         )))
                                         .meta("Only local branches shown")
                                 })
+                                .into()
                             }),
                     ),
             ) // self.titlebar_item

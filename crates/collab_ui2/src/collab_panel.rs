@@ -158,8 +158,9 @@ actions!(
 use std::sync::Arc;
 
 use gpui::{
-    actions, div, AppContext, AsyncWindowContext, Div, EventEmitter, FocusHandle, ParentComponent,
-    Render, Task, View, ViewContext, VisualContext, WeakView,
+    actions, div, AppContext, AsyncWindowContext, Div, EventEmitter, FocusHandle, Focusable,
+    InteractiveComponent, ParentComponent, Render, Task, View, ViewContext, VisualContext,
+    WeakView,
 };
 use project::Fs;
 use settings::Settings;
@@ -171,6 +172,12 @@ use workspace::{
 use crate::CollaborationPanelSettings;
 
 pub fn init(cx: &mut AppContext) {
+    cx.observe_new_views(|workspace: &mut Workspace, _| {
+        workspace.register_action(|workspace, _: &ToggleFocus, cx| {
+            workspace.toggle_panel_focus::<CollabPanel>(cx);
+        });
+    })
+    .detach();
     //     contact_finder::init(cx);
     //     channel_modal::init(cx);
     //     channel_view::init(cx);
@@ -3293,10 +3300,13 @@ impl CollabPanel {
 // }
 
 impl Render for CollabPanel {
-    type Element = Div<Self>;
+    type Element = Focusable<Self, Div<Self>>;
 
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
-        div().child("COLLAB PANEL")
+        div()
+            .key_context("CollabPanel")
+            .track_focus(&self.focus_handle)
+            .child("COLLAB PANEL")
     }
 }
 
@@ -3430,17 +3440,14 @@ impl Panel for CollabPanel {
         cx.notify();
     }
 
-    fn icon_path(&self, cx: &gpui::WindowContext) -> Option<&'static str> {
+    fn icon(&self, cx: &gpui::WindowContext) -> Option<ui::Icon> {
         CollaborationPanelSettings::get_global(cx)
             .button
-            .then(|| "icons/user_group_16.svg")
+            .then(|| ui::Icon::Collab)
     }
 
-    fn icon_tooltip(&self) -> (String, Option<Box<dyn gpui::Action>>) {
-        (
-            "Collaboration Panel".to_string(),
-            Some(Box::new(ToggleFocus)),
-        )
+    fn toggle_action(&self) -> Box<dyn gpui::Action> {
+        Box::new(ToggleFocus)
     }
 
     fn has_focus(&self, cx: &gpui::WindowContext) -> bool {
@@ -3448,10 +3455,10 @@ impl Panel for CollabPanel {
     }
 
     fn persistent_name(&self) -> &'static str {
-        "Collab Panel"
+        "Collaboration Panel"
     }
 
-    fn focus_handle(&self, cx: &ui::prelude::WindowContext) -> gpui::FocusHandle {
+    fn focus_handle(&self, _cx: &ui::prelude::WindowContext) -> gpui::FocusHandle {
         self.focus_handle.clone()
     }
 }

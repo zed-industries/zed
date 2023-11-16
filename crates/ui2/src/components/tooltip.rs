@@ -1,17 +1,53 @@
-use gpui::{Div, Render};
+use gpui::{Action, AnyView, Div, Render, VisualContext};
 use settings2::Settings;
 use theme2::{ActiveTheme, ThemeSettings};
 
 use crate::prelude::*;
 use crate::{h_stack, v_stack, KeyBinding, Label, LabelSize, StyledExt, TextColor};
 
-pub struct TextTooltip {
+pub struct Tooltip {
     title: SharedString,
     meta: Option<SharedString>,
     key_binding: Option<KeyBinding>,
 }
 
-impl TextTooltip {
+impl Tooltip {
+    pub fn text(title: impl Into<SharedString>, cx: &mut WindowContext) -> AnyView {
+        cx.build_view(|cx| Self {
+            title: title.into(),
+            meta: None,
+            key_binding: None,
+        })
+        .into()
+    }
+
+    pub fn for_action(
+        title: impl Into<SharedString>,
+        action: &dyn Action,
+        cx: &mut WindowContext,
+    ) -> AnyView {
+        cx.build_view(|cx| Self {
+            title: title.into(),
+            meta: None,
+            key_binding: KeyBinding::for_action(action, cx),
+        })
+        .into()
+    }
+
+    pub fn with_meta(
+        title: impl Into<SharedString>,
+        action: Option<&dyn Action>,
+        meta: impl Into<SharedString>,
+        cx: &mut WindowContext,
+    ) -> AnyView {
+        cx.build_view(|cx| Self {
+            title: title.into(),
+            meta: Some(meta.into()),
+            key_binding: action.and_then(|action| KeyBinding::for_action(action, cx)),
+        })
+        .into()
+    }
+
     pub fn new(title: impl Into<SharedString>) -> Self {
         Self {
             title: title.into(),
@@ -31,7 +67,7 @@ impl TextTooltip {
     }
 }
 
-impl Render for TextTooltip {
+impl Render for Tooltip {
     type Element = Div<Self>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {

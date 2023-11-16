@@ -1092,8 +1092,11 @@ impl<'a> WindowContext<'a> {
         } else if let Some(active_tooltip) = self.app.active_tooltip.take() {
             self.with_z_index(1, |cx| {
                 cx.with_element_offset(active_tooltip.cursor_offset, |cx| {
-                    let available_space =
-                        size(AvailableSpace::MinContent, AvailableSpace::MinContent);
+                    let available_space = Size {
+                        width: cx.window.viewport_size.width - active_tooltip.cursor_offset.x,
+                        height: cx.window.viewport_size.height - active_tooltip.cursor_offset.y,
+                    }
+                    .map(Into::into);
                     active_tooltip.view.draw(available_space, cx);
                 });
             });
