@@ -108,62 +108,54 @@ impl<V: 'static> Element<V> for UniformList<V> {
         Some(self.id.clone())
     }
 
-    fn initialize(
+    fn layout(
         &mut self,
         view_state: &mut V,
         element_state: Option<Self::ElementState>,
         cx: &mut ViewContext<V>,
-    ) -> Self::ElementState {
-        if let Some(mut element_state) = element_state {
-            element_state.interactive = self
-                .interactivity
-                .initialize(Some(element_state.interactive), cx);
-            element_state
-        } else {
-            let item_size = self.measure_item(view_state, None, cx);
-            UniformListState {
-                interactive: self.interactivity.initialize(None, cx),
-                item_size,
-            }
-        }
-    }
-
-    fn layout(
-        &mut self,
-        _view_state: &mut V,
-        element_state: &mut Self::ElementState,
-        cx: &mut ViewContext<V>,
-    ) -> LayoutId {
+    ) -> (LayoutId, Self::ElementState) {
         let max_items = self.item_count;
-        let item_size = element_state.item_size;
         let rem_size = cx.rem_size();
+        let item_size = element_state
+            .as_ref()
+            .map(|s| s.item_size)
+            .unwrap_or_else(|| self.measure_item(view_state, None, cx));
 
-        self.interactivity
-            .layout(&mut element_state.interactive, cx, |style, cx| {
-                cx.request_measured_layout(
-                    style,
-                    rem_size,
-                    move |known_dimensions: Size<Option<Pixels>>,
-                          available_space: Size<AvailableSpace>| {
-                        let desired_height = item_size.height * max_items;
-                        let width = known_dimensions
-                            .width
-                            .unwrap_or(match available_space.width {
-                                AvailableSpace::Definite(x) => x,
+        let (layout_id, interactive) =
+            self.interactivity
+                .layout(element_state.map(|s| s.interactive), cx, |style, cx| {
+                    cx.request_measured_layout(
+                        style,
+                        rem_size,
+                        move |known_dimensions: Size<Option<Pixels>>,
+                              available_space: Size<AvailableSpace>| {
+                            let desired_height = item_size.height * max_items;
+                            let width =
+                                known_dimensions
+                                    .width
+                                    .unwrap_or(match available_space.width {
+                                        AvailableSpace::Definite(x) => x,
+                                        AvailableSpace::MinContent | AvailableSpace::MaxContent => {
+                                            item_size.width
+                                        }
+                                    });
+                            let height = match available_space.height {
+                                AvailableSpace::Definite(x) => desired_height.min(x),
                                 AvailableSpace::MinContent | AvailableSpace::MaxContent => {
-                                    item_size.width
+                                    desired_height
                                 }
-                            });
-                        let height = match available_space.height {
-                            AvailableSpace::Definite(x) => desired_height.min(x),
-                            AvailableSpace::MinContent | AvailableSpace::MaxContent => {
-                                desired_height
-                            }
-                        };
-                        size(width, height)
-                    },
-                )
-            })
+                            };
+                            size(width, height)
+                        },
+                    )
+                });
+
+        let element_state = UniformListState {
+            interactive,
+            item_size,
+        };
+
+        (layout_id, element_state)
     }
 
     fn paint(

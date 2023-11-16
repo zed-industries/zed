@@ -206,7 +206,7 @@ fn main() {
         // activity_indicator::init(cx);
         // language_tools::init(cx);
         call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
-        // collab_ui::init(&app_state, cx);
+        collab_ui::init(&app_state, cx);
         // feedback::init(cx);
         // welcome::init(cx);
         // zed::init(&app_state, cx);

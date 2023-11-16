@@ -25,7 +25,7 @@ use std::{
     },
 };
 use ui::v_stack;
-use ui::{prelude::*, Icon, IconButton, IconElement, TextColor, TextTooltip};
+use ui::{prelude::*, Icon, IconButton, IconElement, TextColor, Tooltip};
 use util::truncate_and_remove_front;
 
 #[derive(PartialEq, Clone, Copy, Deserialize, Debug)]
@@ -1392,7 +1392,7 @@ impl Pane {
             .id(item.id())
             .cursor_pointer()
             .when_some(item.tab_tooltip_text(cx), |div, text| {
-                div.tooltip(move |_, cx| cx.build_view(|cx| TextTooltip::new(text.clone())))
+                div.tooltip(move |_, cx| cx.build_view(|cx| Tooltip::new(text.clone())).into())
             })
             .on_click(move |v: &mut Self, e, cx| v.activate_item(ix, true, true, cx))
             // .on_drag(move |pane, cx| pane.render_tab(ix, item.boxed_clone(), detail, cx))

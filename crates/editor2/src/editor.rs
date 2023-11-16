@@ -97,7 +97,7 @@ use text::{OffsetUtf16, Rope};
 use theme::{
     ActiveTheme, DiagnosticStyle, PlayerColor, SyntaxTheme, Theme, ThemeColors, ThemeSettings,
 };
-use ui::{v_stack, HighlightedLabel, IconButton, StyledExt, TextTooltip};
+use ui::{v_stack, HighlightedLabel, IconButton, StyledExt, Tooltip};
 use util::{post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::{
     item::{ItemEvent, ItemHandle},
@@ -9991,7 +9991,7 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, is_valid: bool) -> Rend
             .on_click(move |_, _, cx| {
                 cx.write_to_clipboard(ClipboardItem::new(message.clone()));
             })
-            .tooltip(|_, cx| cx.build_view(|cx| TextTooltip::new("Copy diagnostic message")))
+            .tooltip(|_, cx| Tooltip::text("Copy diagnostic message", cx))
             .render()
     })
 }

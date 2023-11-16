@@ -12,8 +12,8 @@ use crate::{
     },
     scroll::scroll_amount::ScrollAmount,
     CursorShape, DisplayPoint, Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle,
-    HalfPageDown, HalfPageUp, LineDown, LineUp, MoveDown, PageDown, PageUp, Point, SelectPhase,
-    Selection, SoftWrap, ToPoint, MAX_LINE_LEN,
+    HalfPageDown, HalfPageUp, LineDown, LineUp, MoveDown, OpenExcerpts, PageDown, PageUp, Point,
+    SelectPhase, Selection, SoftWrap, ToPoint, MAX_LINE_LEN,
 };
 use anyhow::Result;
 use collections::{BTreeMap, HashMap};
@@ -45,7 +45,7 @@ use std::{
 };
 use sum_tree::Bias;
 use theme::{ActiveTheme, PlayerColor};
-use ui::{h_stack, IconButton};
+use ui::{h_stack, IconButton, Tooltip};
 use util::ResultExt;
 use workspace::item::Item;
 
@@ -2036,7 +2036,9 @@ impl EditorElement {
                             .on_click(move |editor: &mut Editor, cx| {
                                 editor.jump(jump_path.clone(), jump_position, jump_anchor, cx);
                             })
-                            .tooltip("Jump to Buffer") // todo!(pass an action as well to show key binding)
+                            .tooltip(move |_, cx| {
+                                Tooltip::for_action("Jump to Buffer", &OpenExcerpts, cx)
+                            })
                     });
 
                     let element = if *starts_new_buffer {
@@ -2398,21 +2400,14 @@ impl Element<Editor> for EditorElement {
         Some(self.editor_id.into())
     }
 
-    fn initialize(
+    fn layout(
         &mut self,
         editor: &mut Editor,
         element_state: Option<Self::ElementState>,
         cx: &mut gpui::ViewContext<Editor>,
-    ) -> Self::ElementState {
+    ) -> (gpui::LayoutId, Self::ElementState) {
         editor.style = Some(self.style.clone()); // Long-term, we'd like to eliminate this.
-    }
 
-    fn layout(
-        &mut self,
-        editor: &mut Editor,
-        element_state: &mut Self::ElementState,
-        cx: &mut gpui::ViewContext<Editor>,
-    ) -> gpui::LayoutId {
         let rem_size = cx.rem_size();
         let mut style = Style::default();
         style.size.width = relative(1.).into();
@@ -2421,7 +2416,8 @@ impl Element<Editor> for EditorElement {
             EditorMode::AutoHeight { .. } => todo!(),
             EditorMode::Full => relative(1.).into(),
         };
-        cx.request_layout(&style, None)
+        let layout_id = cx.request_layout(&style, None);
+        (layout_id, ())
     }
 
     fn paint(

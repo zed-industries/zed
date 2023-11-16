@@ -176,8 +176,8 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             let project_panel = ProjectPanel::load(workspace_handle.clone(), cx.clone());
             // let terminal_panel = TerminalPanel::load(workspace_handle.clone(), cx.clone());
             // let assistant_panel = AssistantPanel::load(workspace_handle.clone(), cx.clone());
-            // let channels_panel =
-            //     collab_ui::collab_panel::CollabPanel::load(workspace_handle.clone(), cx.clone());
+            let channels_panel =
+                collab_ui::collab_panel::CollabPanel::load(workspace_handle.clone(), cx.clone());
             // let chat_panel =
             //     collab_ui::chat_panel::ChatPanel::load(workspace_handle.clone(), cx.clone());
             // let notification_panel = collab_ui::notification_panel::NotificationPanel::load(
@@ -188,14 +188,14 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 project_panel,
                 //     terminal_panel,
                 //     assistant_panel,
-                //     channels_panel,
+                channels_panel,
                 //     chat_panel,
                 //     notification_panel,
             ) = futures::try_join!(
                 project_panel,
                 //     terminal_panel,
                 //     assistant_panel,
-                //     channels_panel,
+                channels_panel,
                 //     chat_panel,
                 //     notification_panel,
             )?;
@@ -205,7 +205,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 workspace.add_panel(project_panel, cx);
                 //     workspace.add_panel(terminal_panel, cx);
                 //     workspace.add_panel(assistant_panel, cx);
-                //     workspace.add_panel(channels_panel, cx);
+                workspace.add_panel(channels_panel, cx);
                 //     workspace.add_panel(chat_panel, cx);
                 //     workspace.add_panel(notification_panel, cx);
 

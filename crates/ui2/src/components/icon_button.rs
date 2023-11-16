@@ -1,5 +1,5 @@
-use crate::{h_stack, prelude::*, ClickHandler, Icon, IconElement, TextTooltip};
-use gpui::{prelude::*, MouseButton, VisualContext};
+use crate::{h_stack, prelude::*, ClickHandler, Icon, IconElement};
+use gpui::{prelude::*, AnyView, MouseButton};
 use std::sync::Arc;
 
 struct IconButtonHandlers<V: 'static> {
@@ -19,7 +19,7 @@ pub struct IconButton<V: 'static> {
     color: TextColor,
     variant: ButtonVariant,
     state: InteractionState,
-    tooltip: Option<SharedString>,
+    tooltip: Option<Box<dyn Fn(&mut V, &mut ViewContext<V>) -> AnyView + 'static>>,
     handlers: IconButtonHandlers<V>,
 }
 
@@ -56,22 +56,23 @@ impl<V: 'static> IconButton<V> {
         self
     }
 
-    pub fn tooltip(mut self, tooltip: impl Into<SharedString>) -> Self {
-        self.tooltip = Some(tooltip.into());
+    pub fn tooltip(
+        mut self,
+        tooltip: impl Fn(&mut V, &mut ViewContext<V>) -> AnyView + 'static,
+    ) -> Self {
+        self.tooltip = Some(Box::new(tooltip));
         self
     }
 
-    pub fn on_click(
-        mut self,
-        handler: impl 'static + Fn(&mut V, &mut ViewContext<V>) + Send + Sync,
-    ) -> Self {
+    pub fn on_click(mut self, handler: impl 'static + Fn(&mut V, &mut ViewContext<V>)) -> Self {
         self.handlers.click = Some(Arc::new(handler));
         self
     }
 
-    fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render(mut self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         let icon_color = match (self.state, self.color) {
             (InteractionState::Disabled, _) => TextColor::Disabled,
+            (InteractionState::Active, _) => TextColor::Error,
             _ => self.color,
         };
 
@@ -99,15 +100,16 @@ impl<V: 'static> IconButton<V> {
             .child(IconElement::new(self.icon).color(icon_color));
 
         if let Some(click_handler) = self.handlers.click.clone() {
-            button = button.on_mouse_down(MouseButton::Left, move |state, event, cx| {
-                cx.stop_propagation();
-                click_handler(state, cx);
-            });
+            button = button
+                .on_mouse_down(MouseButton::Left, move |state, event, cx| {
+                    cx.stop_propagation();
+                    click_handler(state, cx);
+                })
+                .cursor_pointer();
         }
 
-        if let Some(tooltip) = self.tooltip.clone() {
-            button =
-                button.tooltip(move |_, cx| cx.build_view(|cx| TextTooltip::new(tooltip.clone())));
+        if let Some(tooltip) = self.tooltip.take() {
+            button = button.tooltip(move |view: &mut V, cx| (tooltip)(view, cx))
         }
 
         button

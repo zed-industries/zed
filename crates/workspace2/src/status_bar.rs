@@ -6,6 +6,7 @@ use gpui::{
     WindowContext,
 };
 use theme2::ActiveTheme;
+use ui::h_stack;
 use util::ResultExt;
 
 pub trait StatusItemView: Render {
@@ -53,16 +54,14 @@ impl Render for StatusBar {
 
 impl StatusBar {
     fn render_left_tools(&self, cx: &mut ViewContext<Self>) -> impl Component<Self> {
-        div()
-            .flex()
+        h_stack()
             .items_center()
             .gap_1()
             .children(self.left_items.iter().map(|item| item.to_any()))
     }
 
     fn render_right_tools(&self, cx: &mut ViewContext<Self>) -> impl Component<Self> {
-        div()
-            .flex()
+        h_stack()
             .items_center()
             .gap_2()
             .children(self.right_items.iter().map(|item| item.to_any()))
