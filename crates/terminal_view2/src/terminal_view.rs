@@ -7,27 +7,18 @@ pub mod terminal_panel;
 
 // todo!()
 // use crate::terminal_element::TerminalElement;
-use anyhow::Context;
-use dirs::home_dir;
+use context_menu::{ContextMenu, ContextMenuItem};
 use editor::{scroll::autoscroll::Autoscroll, Editor};
 use gpui::{
-    actions, div, img, red, register_action, AnyElement, AppContext, Component, DispatchPhase, Div,
-    EventEmitter, FocusEvent, FocusHandle, Focusable, FocusableComponent, FocusableView,
-    InputHandler, InteractiveComponent, KeyDownEvent, Keystroke, Model, ParentComponent, Pixels,
-    Render, SharedString, Styled, Task, View, ViewContext, VisualContext, WeakView,
+    actions, div, img, red, register_action, AnchorCorner, AnyElement, AppContext, Component,
+    DispatchPhase, Div, EventEmitter, FocusEvent, FocusHandle, Focusable, FocusableComponent,
+    FocusableView, InputHandler, InteractiveComponent, KeyDownEvent, Keystroke, Model,
+    ParentComponent, Pixels, Render, SharedString, Styled, Task, View, ViewContext, VisualContext,
+    WeakView,
 };
 use language::Bias;
 use persistence::TERMINAL_DB;
 use project::{search::SearchQuery, LocalWorktree, Project};
-use serde::Deserialize;
-use settings::Settings;
-use smol::Timer;
-use std::{
-    ops::RangeInclusive,
-    path::{Path, PathBuf},
-    sync::Arc,
-    time::Duration,
-};
 use terminal::{
     alacritty_terminal::{
         index::Point,
@@ -42,7 +33,20 @@ use workspace::{
     notifications::NotifyResultExt,
     register_deserializable_item,
     searchable::{SearchEvent, SearchOptions, SearchableItem},
-    NewCenterTerminal, Pane, ToolbarItemLocation, Workspace, WorkspaceId,
+    CloseActiveItem, NewCenterTerminal, Pane, ToolbarItemLocation, Workspace, WorkspaceId,
+};
+
+use anyhow::Context;
+use dirs::home_dir;
+use serde::Deserialize;
+use settings::Settings;
+use smol::Timer;
+
+use std::{
+    ops::RangeInclusive,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
 };
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
@@ -82,7 +86,7 @@ pub struct TerminalView {
     has_new_content: bool,
     //Currently using iTerm bell, show bell emoji in tab until input is received
     has_bell: bool,
-    // context_menu: View<ContextMenu>,
+    context_menu: View<ContextMenu>,
     blink_state: bool,
     blinking_on: bool,
     blinking_paused: bool,
@@ -265,8 +269,7 @@ impl TerminalView {
             has_new_content: true,
             has_bell: false,
             focus_handle: cx.focus_handle(),
-            // todo!()
-            // context_menu: cx.build_view(|cx| ContextMenu::new(view_id, cx)),
+            context_menu: cx.build_view(|cx| ContextMenu::new(view_id, cx)),
             blink_state: true,
             blinking_on: false,
             blinking_paused: false,
@@ -293,18 +296,21 @@ impl TerminalView {
         cx.emit(Event::Wakeup);
     }
 
-    pub fn deploy_context_menu(&mut self, _position: Point<Pixels>, _cx: &mut ViewContext<Self>) {
-        //todo!(context_menu)
-        // let menu_entries = vec![
-        //     ContextMenuItem::action("Clear", Clear),
-        //     ContextMenuItem::action("Close", pane::CloseActiveItem { save_intent: None }),
-        // ];
+    pub fn deploy_context_menu(
+        &mut self,
+        position: gpui::Point<Pixels>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let menu_entries = vec![
+            ContextMenuItem::action("Clear", Clear),
+            ContextMenuItem::action("Close", CloseActiveItem { save_intent: None }),
+        ];
 
-        // self.context_menu.update(cx, |menu, cx| {
-        //     menu.show(position, AnchorCorner::TopLeft, menu_entries, cx)
-        // });
+        self.context_menu.update(cx, |menu, cx| {
+            menu.show(position, AnchorCorner::TopLeft, menu_entries, cx)
+        });
 
-        // cx.notify();
+        cx.notify();
     }
 
     fn show_character_palette(&mut self, _: &ShowCharacterPalette, cx: &mut ViewContext<Self>) {
@@ -561,8 +567,7 @@ impl Render for TerminalView {
                                  //     self.can_navigate_to_selected_word,
                                  // )
             )
-        // todo!()
-        // .child(ChildView::new(&self.context_menu, cx))
+            .child(self.context_menu.clone())
     }
 }
 

@@ -27,7 +27,7 @@ collab_ui = { package = "collab_ui2", path = "../collab_ui2" }
 collections = { path = "../collections" }
 command_palette = { package="command_palette2", path = "../command_palette2" }
 # component_test = { path = "../component_test" }
-# context_menu = { path = "../context_menu" }
+context_menu = { package = "context_menu2", path = "../context_menu2" }
 client = { package = "client2", path = "../client2" }
 # clock = { path = "../clock" }
 copilot = { package = "copilot2", path = "../copilot2" }

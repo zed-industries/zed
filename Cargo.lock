@@ -1990,6 +1990,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "context_menu2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gpui2",
+ "menu2",
+ "settings2",
+ "smallvec",
+ "theme2",
+ "workspace2",
+]
+
+[[package]]
 name = "convert_case"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9181,6 +9194,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "client2",
+ "context_menu2",
  "db2",
  "dirs 4.0.0",
  "editor2",
@@ -11518,6 +11532,7 @@ dependencies = [
  "collab_ui2",
  "collections",
  "command_palette2",
+ "context_menu2",
  "copilot2",
  "ctor",
  "db2",

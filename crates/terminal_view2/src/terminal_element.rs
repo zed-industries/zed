@@ -23,6 +23,7 @@
 //     TerminalSize,
 // };
 // use theme::ThemeSettings;
+// use workspace::ElementId;
 
 // use std::mem;
 // use std::{fmt::Debug, ops::RangeInclusive};
@@ -809,7 +810,7 @@
 //         });
 //     }
 
-//     fn element_id(&self) -> Option<workspace::ui::prelude::ElementId> {
+//     fn element_id(&self) -> Option<ElementId> {
 //         todo!()
 //     }
 

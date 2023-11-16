@@ -24,6 +24,7 @@ members = [
     "crates/command_palette2",
     "crates/component_test",
     "crates/context_menu",
+    "crates/context_menu2",
     "crates/copilot",
     "crates/copilot2",
     "crates/copilot_button",
