@@ -1,7 +1,7 @@
 use crate::{
     private::Sealed, AnyBox, AnyElement, AnyModel, AnyWeakModel, AppContext, AvailableSpace,
-    Bounds, Component, Element, ElementId, Entity, EntityId, Flatten, LayoutId, Model, Pixels,
-    Size, ViewContext, VisualContext, WeakModel, WindowContext,
+    Bounds, Component, Element, ElementId, Entity, EntityId, Flatten, FocusHandle, FocusableView,
+    LayoutId, Model, Pixels, Size, ViewContext, VisualContext, WeakModel, WindowContext,
 };
 use anyhow::{Context, Result};
 use std::{
@@ -72,6 +72,13 @@ impl<V: 'static> View<V> {
             view: self.clone(),
             component: Some(component),
         }
+    }
+
+    pub fn focus_handle(&self, cx: &AppContext) -> FocusHandle
+    where
+        V: FocusableView,
+    {
+        self.read(cx).focus_handle(cx)
     }
 }
 

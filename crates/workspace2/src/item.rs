@@ -12,8 +12,9 @@ use client2::{
     Client,
 };
 use gpui::{
-    AnyElement, AnyView, AppContext, Entity, EntityId, EventEmitter, FocusHandle, HighlightStyle,
-    Model, Pixels, Point, Render, SharedString, Task, View, ViewContext, WeakView, WindowContext,
+    AnyElement, AnyView, AppContext, Entity, EntityId, EventEmitter, FocusHandle, FocusableView,
+    HighlightStyle, Model, Pixels, Point, SharedString, Task, View, ViewContext, WeakView,
+    WindowContext,
 };
 use project2::{Project, ProjectEntryId, ProjectPath};
 use schemars::JsonSchema;
@@ -91,8 +92,7 @@ pub struct BreadcrumbText {
     pub highlights: Option<Vec<(Range<usize>, HighlightStyle)>>,
 }
 
-pub trait Item: Render + EventEmitter<ItemEvent> {
-    fn focus_handle(&self) -> FocusHandle;
+pub trait Item: FocusableView + EventEmitter<ItemEvent> {
     fn deactivated(&mut self, _: &mut ViewContext<Self>) {}
     fn workspace_deactivated(&mut self, _: &mut ViewContext<Self>) {}
     fn navigate(&mut self, _: Box<dyn Any>, _: &mut ViewContext<Self>) -> bool {
@@ -286,7 +286,7 @@ impl dyn ItemHandle {
 
 impl<T: Item> ItemHandle for View<T> {
     fn focus_handle(&self, cx: &WindowContext) -> FocusHandle {
-        self.read(cx).focus_handle()
+        self.focus_handle(cx)
     }
 
     fn subscribe_to_item_events(

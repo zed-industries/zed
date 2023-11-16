@@ -527,10 +527,6 @@ fn deserialize_anchor(buffer: &MultiBufferSnapshot, anchor: proto::EditorAnchor)
 }
 
 impl Item for Editor {
-    fn focus_handle(&self) -> FocusHandle {
-        self.focus_handle.clone()
-    }
-
     fn navigate(&mut self, data: Box<dyn std::any::Any>, cx: &mut ViewContext<Self>) -> bool {
         todo!();
         // if let Ok(data) = data.downcast::<NavigationData>() {

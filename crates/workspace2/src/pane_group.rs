@@ -148,6 +148,10 @@ impl PaneGroup {
         self.root.collect_panes(&mut panes);
         panes
     }
+
+    pub(crate) fn first_pane(&self) -> View<Pane> {
+        self.root.first_pane()
+    }
 }
 
 #[derive(Clone, PartialEq)]
@@ -178,6 +182,13 @@ impl Member {
         match self {
             Member::Axis(axis) => axis.members.iter().any(|member| member.contains(needle)),
             Member::Pane(pane) => pane == needle,
+        }
+    }
+
+    fn first_pane(&self) -> View<Pane> {
+        match self {
+            Member::Axis(axis) => axis.members[0].first_pane(),
+            Member::Pane(pane) => pane.clone(),
         }
     }
 

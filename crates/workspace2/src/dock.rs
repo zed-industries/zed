@@ -1,8 +1,8 @@
 use crate::{status_bar::StatusItemView, Axis, Workspace};
 use gpui::{
     div, px, Action, AnyView, AppContext, Component, Div, Entity, EntityId, EventEmitter,
-    FocusHandle, ParentComponent, Render, Styled, Subscription, View, ViewContext, WeakView,
-    WindowContext,
+    FocusHandle, FocusableView, ParentComponent, Render, Styled, Subscription, View, ViewContext,
+    WeakView, WindowContext,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -17,8 +17,8 @@ pub enum PanelEvent {
     Focus,
 }
 
-pub trait Panel: Render + EventEmitter<PanelEvent> {
-    fn persistent_name(&self) -> &'static str;
+pub trait Panel: FocusableView + EventEmitter<PanelEvent> {
+    fn persistent_name() -> &'static str;
     fn position(&self, cx: &WindowContext) -> DockPosition;
     fn position_is_valid(&self, position: DockPosition) -> bool;
     fn set_position(&mut self, position: DockPosition, cx: &mut ViewContext<Self>);
@@ -35,12 +35,11 @@ pub trait Panel: Render + EventEmitter<PanelEvent> {
     fn set_zoomed(&mut self, _zoomed: bool, _cx: &mut ViewContext<Self>) {}
     fn set_active(&mut self, _active: bool, _cx: &mut ViewContext<Self>) {}
     fn has_focus(&self, cx: &WindowContext) -> bool;
-    fn focus_handle(&self, cx: &WindowContext) -> FocusHandle;
 }
 
 pub trait PanelHandle: Send + Sync {
     fn id(&self) -> EntityId;
-    fn persistent_name(&self, cx: &WindowContext) -> &'static str;
+    fn persistent_name(&self) -> &'static str;
     fn position(&self, cx: &WindowContext) -> DockPosition;
     fn position_is_valid(&self, position: DockPosition, cx: &WindowContext) -> bool;
     fn set_position(&self, position: DockPosition, cx: &mut WindowContext);
@@ -53,7 +52,7 @@ pub trait PanelHandle: Send + Sync {
     fn icon_tooltip(&self, cx: &WindowContext) -> (String, Option<Box<dyn Action>>);
     fn icon_label(&self, cx: &WindowContext) -> Option<String>;
     fn has_focus(&self, cx: &WindowContext) -> bool;
-    fn focus_handle(&self, cx: &WindowContext) -> FocusHandle;
+    fn focus_handle(&self, cx: &AppContext) -> FocusHandle;
     fn to_any(&self) -> AnyView;
 }
 
@@ -65,8 +64,8 @@ where
         self.entity_id()
     }
 
-    fn persistent_name(&self, cx: &WindowContext) -> &'static str {
-        self.read(cx).persistent_name()
+    fn persistent_name(&self) -> &'static str {
+        T::persistent_name()
     }
 
     fn position(&self, cx: &WindowContext) -> DockPosition {
@@ -121,7 +120,7 @@ where
         self.clone().into()
     }
 
-    fn focus_handle(&self, cx: &WindowContext) -> FocusHandle {
+    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
         self.read(cx).focus_handle(cx).clone()
     }
 }
@@ -137,6 +136,14 @@ pub struct Dock {
     panel_entries: Vec<PanelEntry>,
     is_open: bool,
     active_panel_index: usize,
+}
+
+impl FocusableView for Dock {
+    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+        self.panel_entries[self.active_panel_index]
+            .panel
+            .focus_handle(cx)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -220,12 +227,14 @@ impl Dock {
     //             .position(|entry| entry.panel.as_any().is::<T>())
     //     }
 
-    pub fn panel_index_for_ui_name(&self, _ui_name: &str, _cx: &AppContext) -> Option<usize> {
-        todo!()
-        // self.panel_entries.iter().position(|entry| {
-        //     let panel = entry.panel.as_any();
-        //     cx.view_ui_name(panel.window(), panel.id()) == Some(ui_name)
-        // })
+    pub fn panel_index_for_persistent_name(
+        &self,
+        ui_name: &str,
+        _cx: &AppContext,
+    ) -> Option<usize> {
+        self.panel_entries
+            .iter()
+            .position(|entry| entry.panel.persistent_name() == ui_name)
     }
 
     pub fn active_panel_index(&self) -> usize {
@@ -647,7 +656,7 @@ impl Render for PanelButtons {
         div().children(
             dock.panel_entries
                 .iter()
-                .map(|panel| panel.panel.persistent_name(cx)),
+                .map(|panel| panel.panel.persistent_name()),
         )
     }
 }
@@ -698,7 +707,7 @@ pub mod test {
     }
 
     impl Panel for TestPanel {
-        fn persistent_name(&self) -> &'static str {
+        fn persistent_name() -> &'static str {
             "TestPanel"
         }
 
@@ -746,8 +755,10 @@ pub mod test {
         fn has_focus(&self, _cx: &WindowContext) -> bool {
             self.has_focus
         }
+    }
 
-        fn focus_handle(&self, cx: &WindowContext) -> FocusHandle {
+    impl FocusableView for TestPanel {
+        fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
             unimplemented!()
         }
     }

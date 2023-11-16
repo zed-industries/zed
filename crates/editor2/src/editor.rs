@@ -41,8 +41,8 @@ use git::diff_hunk_to_display;
 use gpui::{
     action, actions, div, point, prelude::*, px, relative, rems, size, uniform_list, AnyElement,
     AppContext, AsyncWindowContext, BackgroundExecutor, Bounds, ClipboardItem, Component, Context,
-    EventEmitter, FocusHandle, FontFeatures, FontStyle, FontWeight, HighlightStyle, Hsla,
-    InputHandler, KeyContext, Model, MouseButton, ParentComponent, Pixels, Render, Styled,
+    EventEmitter, FocusHandle, FocusableView, FontFeatures, FontStyle, FontWeight, HighlightStyle,
+    Hsla, InputHandler, KeyContext, Model, MouseButton, ParentComponent, Pixels, Render, Styled,
     Subscription, Task, TextStyle, UniformListScrollHandle, View, ViewContext, VisualContext,
     WeakView, WindowContext,
 };
@@ -9366,6 +9366,12 @@ pub struct EditorReleased(pub WeakView<Editor>);
 // }
 //
 impl EventEmitter<Event> for Editor {}
+
+impl FocusableView for Editor {
+    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
 
 impl Render for Editor {
     type Element = EditorElement;

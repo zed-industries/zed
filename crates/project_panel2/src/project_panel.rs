@@ -9,10 +9,10 @@ use file_associations::FileAssociations;
 use anyhow::{anyhow, Result};
 use gpui::{
     actions, div, px, uniform_list, Action, AppContext, AssetSource, AsyncWindowContext,
-    ClipboardItem, Component, Div, EventEmitter, FocusHandle, Focusable, InteractiveComponent,
-    Model, MouseButton, ParentComponent, Pixels, Point, PromptLevel, Render, Stateful,
-    StatefulInteractiveComponent, Styled, Task, UniformListScrollHandle, View, ViewContext,
-    VisualContext as _, WeakView, WindowContext,
+    ClipboardItem, Component, Div, EventEmitter, FocusHandle, Focusable, FocusableView,
+    InteractiveComponent, Model, MouseButton, ParentComponent, Pixels, Point, PromptLevel, Render,
+    Stateful, StatefulInteractiveComponent, Styled, Task, UniformListScrollHandle, View,
+    ViewContext, VisualContext as _, WeakView, WindowContext,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
 use project::{
@@ -1524,25 +1524,19 @@ impl workspace::dock::Panel for ProjectPanel {
         ("Project Panel".into(), Some(Box::new(ToggleFocus)))
     }
 
-    // fn should_change_position_on_event(event: &Self::Event) -> bool {
-    //     matches!(event, Event::DockPositionChanged)
-    // }
-
     fn has_focus(&self, _: &WindowContext) -> bool {
         self.has_focus
     }
 
-    fn persistent_name(&self) -> &'static str {
+    fn persistent_name() -> &'static str {
         "Project Panel"
     }
+}
 
-    fn focus_handle(&self, _cx: &WindowContext) -> FocusHandle {
+impl FocusableView for ProjectPanel {
+    fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
         self.focus_handle.clone()
     }
-
-    // fn is_focus_event(event: &Self::Event) -> bool {
-    //     matches!(event, Event::Focus)
-    // }
 }
 
 impl ClipboardEntry {

@@ -8,8 +8,8 @@ use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
 use gpui::{
     actions, prelude::*, register_action, AppContext, AsyncWindowContext, Component, Div, EntityId,
-    EventEmitter, FocusHandle, Focusable, Model, PromptLevel, Render, Task, View, ViewContext,
-    VisualContext, WeakView, WindowContext,
+    EventEmitter, FocusHandle, Focusable, FocusableView, Model, PromptLevel, Render, Task, View,
+    ViewContext, VisualContext, WeakView, WindowContext,
 };
 use parking_lot::Mutex;
 use project2::{Project, ProjectEntryId, ProjectPath};
@@ -1896,6 +1896,12 @@ impl Pane {
 
     pub fn is_zoomed(&self) -> bool {
         self.zoomed
+    }
+}
+
+impl FocusableView for Pane {
+    fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
+        self.focus_handle.clone()
     }
 }
 
