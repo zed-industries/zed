@@ -17,7 +17,8 @@ use crate::{
 use anyhow::{anyhow, Result};
 pub use clock::ReplicaId;
 use futures::FutureExt as _;
-use gpui::{AppContext, EventEmitter, HighlightStyle, ModelContext, Task};
+use gpui::{AppContext, EventEmitter, HighlightStyle, ModelContext, Task, TaskLabel};
+use lazy_static::lazy_static;
 use lsp::LanguageServerId;
 use parking_lot::Mutex;
 use similar::{ChangeTag, TextDiff};
@@ -50,6 +51,10 @@ use util::{RangeExt, TryFutureExt as _};
 pub use {tree_sitter_rust, tree_sitter_typescript};
 
 pub use lsp::DiagnosticSeverity;
+
+lazy_static! {
+    pub static ref BUFFER_DIFF_TASK: TaskLabel = TaskLabel::new();
+}
 
 pub struct Buffer {
     text: TextBuffer,
@@ -1118,69 +1123,72 @@ impl Buffer {
     pub fn diff(&self, mut new_text: String, cx: &AppContext) -> Task<Diff> {
         let old_text = self.as_rope().clone();
         let base_version = self.version();
-        cx.background_executor().spawn(async move {
-            let old_text = old_text.to_string();
-            let line_ending = LineEnding::detect(&new_text);
-            LineEnding::normalize(&mut new_text);
+        cx.background_executor()
+            .spawn_labeled(*BUFFER_DIFF_TASK, async move {
+                let old_text = old_text.to_string();
+                let line_ending = LineEnding::detect(&new_text);
+                LineEnding::normalize(&mut new_text);
 
-            let diff = TextDiff::from_chars(old_text.as_str(), new_text.as_str());
-            let empty: Arc<str> = "".into();
+                let diff = TextDiff::from_chars(old_text.as_str(), new_text.as_str());
+                let empty: Arc<str> = "".into();
 
-            let mut edits = Vec::new();
-            let mut old_offset = 0;
-            let mut new_offset = 0;
-            let mut last_edit: Option<(Range<usize>, Range<usize>)> = None;
-            for change in diff.iter_all_changes().map(Some).chain([None]) {
-                if let Some(change) = &change {
-                    let len = change.value().len();
-                    match change.tag() {
-                        ChangeTag::Equal => {
-                            old_offset += len;
-                            new_offset += len;
-                        }
-                        ChangeTag::Delete => {
-                            let old_end_offset = old_offset + len;
-                            if let Some((last_old_range, _)) = &mut last_edit {
-                                last_old_range.end = old_end_offset;
-                            } else {
-                                last_edit =
-                                    Some((old_offset..old_end_offset, new_offset..new_offset));
+                let mut edits = Vec::new();
+                let mut old_offset = 0;
+                let mut new_offset = 0;
+                let mut last_edit: Option<(Range<usize>, Range<usize>)> = None;
+                for change in diff.iter_all_changes().map(Some).chain([None]) {
+                    if let Some(change) = &change {
+                        let len = change.value().len();
+                        match change.tag() {
+                            ChangeTag::Equal => {
+                                old_offset += len;
+                                new_offset += len;
                             }
-                            old_offset = old_end_offset;
-                        }
-                        ChangeTag::Insert => {
-                            let new_end_offset = new_offset + len;
-                            if let Some((_, last_new_range)) = &mut last_edit {
-                                last_new_range.end = new_end_offset;
-                            } else {
-                                last_edit =
-                                    Some((old_offset..old_offset, new_offset..new_end_offset));
+                            ChangeTag::Delete => {
+                                let old_end_offset = old_offset + len;
+                                if let Some((last_old_range, _)) = &mut last_edit {
+                                    last_old_range.end = old_end_offset;
+                                } else {
+                                    last_edit =
+                                        Some((old_offset..old_end_offset, new_offset..new_offset));
+                                }
+                                old_offset = old_end_offset;
                             }
-                            new_offset = new_end_offset;
+                            ChangeTag::Insert => {
+                                let new_end_offset = new_offset + len;
+                                if let Some((_, last_new_range)) = &mut last_edit {
+                                    last_new_range.end = new_end_offset;
+                                } else {
+                                    last_edit =
+                                        Some((old_offset..old_offset, new_offset..new_end_offset));
+                                }
+                                new_offset = new_end_offset;
+                            }
+                        }
+                    }
+
+                    if let Some((old_range, new_range)) = &last_edit {
+                        if old_offset > old_range.end
+                            || new_offset > new_range.end
+                            || change.is_none()
+                        {
+                            let text = if new_range.is_empty() {
+                                empty.clone()
+                            } else {
+                                new_text[new_range.clone()].into()
+                            };
+                            edits.push((old_range.clone(), text));
+                            last_edit.take();
                         }
                     }
                 }
 
-                if let Some((old_range, new_range)) = &last_edit {
-                    if old_offset > old_range.end || new_offset > new_range.end || change.is_none()
-                    {
-                        let text = if new_range.is_empty() {
-                            empty.clone()
-                        } else {
-                            new_text[new_range.clone()].into()
-                        };
-                        edits.push((old_range.clone(), text));
-                        last_edit.take();
-                    }
+                Diff {
+                    base_version,
+                    line_ending,
+                    edits,
                 }
-            }
-
-            Diff {
-                base_version,
-                line_ending,
-                edits,
-            }
-        })
+            })
     }
 
     /// Spawn a background task that searches the buffer for any whitespace
