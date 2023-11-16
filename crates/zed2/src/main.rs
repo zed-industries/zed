@@ -40,7 +40,7 @@ use std::{
     thread,
     time::{SystemTime, UNIX_EPOCH},
 };
-use theme::{ActiveTheme, ThemeRegistry};
+use theme::ActiveTheme;
 use util::{
     async_maybe,
     channel::{parse_zed_link, ReleaseChannel, RELEASE_CHANNEL},
