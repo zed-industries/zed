@@ -1,5 +1,5 @@
 use crate::{h_stack, prelude::*, ClickHandler, Icon, IconElement};
-use gpui::{prelude::*, AnyView, MouseButton};
+use gpui::{prelude::*, Action, AnyView, MouseButton};
 use std::sync::Arc;
 
 struct IconButtonHandlers<V: 'static> {
@@ -67,6 +67,10 @@ impl<V: 'static> IconButton<V> {
     pub fn on_click(mut self, handler: impl 'static + Fn(&mut V, &mut ViewContext<V>)) -> Self {
         self.handlers.click = Some(Arc::new(handler));
         self
+    }
+
+    pub fn action(self, action: Box<dyn Action>) -> Self {
+        self.on_click(move |this, cx| cx.dispatch_action(action.boxed_clone()))
     }
 
     fn render(mut self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
