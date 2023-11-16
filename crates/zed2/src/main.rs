@@ -198,7 +198,7 @@ fn main() {
         // search::init(cx);
         // semantic_index::init(fs.clone(), http.clone(), languages.clone(), cx);
         // vim::init(cx);
-        // terminal_view::init(cx);
+        terminal_view::init(cx);
 
         // journal2::init(app_state.clone(), cx);
         // language_selector::init(cx);

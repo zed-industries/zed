@@ -15,13 +15,6 @@ mod status_bar;
 mod toolbar;
 mod workspace_settings;
 
-pub use crate::persistence::{
-    model::{
-        DockData, DockStructure, ItemId, SerializedItem, SerializedPane, SerializedPaneGroup,
-        SerializedWorkspace,
-    },
-    WorkspaceDb,
-};
 use anyhow::{anyhow, Context as _, Result};
 use call2::ActiveCall;
 use client2::{
@@ -36,11 +29,11 @@ use futures::{
     Future, FutureExt, StreamExt,
 };
 use gpui::{
-    actions, div, point, prelude::*, size, Action, AnyModel, AnyView, AnyWeakView, AppContext,
-    AsyncAppContext, AsyncWindowContext, Bounds, Div, Entity, EntityId, EventEmitter, FocusHandle,
-    FocusableView, GlobalPixels, KeyContext, Model, ModelContext, ParentComponent, Point, Render,
-    Size, Styled, Subscription, Task, View, ViewContext, WeakView, WindowBounds, WindowContext,
-    WindowHandle, WindowOptions,
+    actions, div, point, register_action, size, Action, AnyModel, AnyView, AnyWeakView, AppContext,
+    AsyncAppContext, AsyncWindowContext, Bounds, Context, Div, Entity, EntityId, EventEmitter,
+    FocusHandle, FocusableView, GlobalPixels, InteractiveComponent, KeyContext, Model,
+    ModelContext, ParentComponent, Point, Render, Size, Styled, Subscription, Task, View,
+    ViewContext, VisualContext, WeakView, WindowBounds, WindowContext, WindowHandle, WindowOptions,
 };
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, ProjectItem};
 use itertools::Itertools;
@@ -51,7 +44,10 @@ use node_runtime::NodeRuntime;
 use notifications::{simple_message_notification::MessageNotification, NotificationHandle};
 pub use pane::*;
 pub use pane_group::*;
-use persistence::{model::WorkspaceLocation, DB};
+pub use persistence::{
+    model::{ItemId, SerializedWorkspace, WorkspaceLocation},
+    WorkspaceDb, DB,
+};
 use postage::stream::Stream;
 use project2::{Project, ProjectEntryId, ProjectPath, Worktree};
 use serde::Deserialize;
@@ -68,9 +64,14 @@ use std::{
 };
 use theme2::{ActiveTheme, ThemeSettings};
 pub use toolbar::{ToolbarItemLocation, ToolbarItemView};
+pub use ui;
 use util::ResultExt;
 use uuid::Uuid;
 pub use workspace_settings::{AutosaveSetting, WorkspaceSettings};
+
+use crate::persistence::model::{
+    DockData, DockStructure, SerializedItem, SerializedPane, SerializedPaneGroup,
+};
 
 lazy_static! {
     static ref ZED_WINDOW_SIZE: Option<Size<GlobalPixels>> = env::var("ZED_WINDOW_SIZE")
@@ -193,10 +194,11 @@ impl Clone for Toast {
     }
 }
 
-// #[derive(Clone, Deserialize, PartialEq)]
-// pub struct OpenTerminal {
-//     pub working_directory: PathBuf,
-// }
+#[register_action]
+#[derive(Debug, Default, Clone, Deserialize, PartialEq)]
+pub struct OpenTerminal {
+    pub working_directory: PathBuf,
+}
 
 // impl_actions!(
 //     workspace,
@@ -206,7 +208,6 @@ impl Clone for Toast {
 //         SwapPaneInDirection,
 //         NewFileInDirection,
 //         Toast,
-//         OpenTerminal,
 //         SaveAll,
 //         Save,
 //         CloseAllItemsAndPanes,
@@ -1581,13 +1582,11 @@ impl Workspace {
         self.serialize_workspace(cx);
     }
 
-    //     /// Transfer focus to the panel of the given type.
-    //     pub fn focus_panel<T: Panel>(&mut self, cx: &mut ViewContext<Self>) -> Option<View<T>> {
-    //         self.focus_or_unfocus_panel::<T>(cx, |_, _| true)?
-    //             .as_any()
-    //             .clone()
-    //             .downcast()
-    //     }
+    /// Transfer focus to the panel of the given type.
+    pub fn focus_panel<T: Panel>(&mut self, cx: &mut ViewContext<Self>) -> Option<View<T>> {
+        let panel = self.focus_or_unfocus_panel::<T>(cx, |_, _| true)?;
+        panel.to_any().downcast().ok()
+    }
 
     /// Focus the panel of the given type if it isn't already focused. If it is
     /// already focused, then transfer focus back to the workspace center.
@@ -2980,7 +2979,7 @@ impl Workspace {
                         .filter_map(|item_handle| {
                             Some(SerializedItem {
                                 kind: Arc::from(item_handle.serialized_item_kind()?),
-                                item_id: item_handle.id().as_u64() as usize,
+                                item_id: item_handle.id().as_u64(),
                                 active: Some(item_handle.id()) == active_item_id,
                             })
                         })

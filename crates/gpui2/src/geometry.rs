@@ -335,6 +335,10 @@ where
         };
         Bounds { origin, size }
     }
+
+    pub fn new(origin: Point<T>, size: Size<T>) -> Self {
+        Bounds { origin, size }
+    }
 }
 
 impl<T> Bounds<T>

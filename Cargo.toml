@@ -98,6 +98,7 @@ members = [
     "crates/sum_tree",
     "crates/terminal",
     "crates/terminal2",
+    "crates/terminal_view2",
     "crates/text",
     "crates/theme",
     "crates/theme2",

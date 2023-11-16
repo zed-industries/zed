@@ -164,6 +164,23 @@ impl Column for i64 {
     }
 }
 
+impl StaticColumnCount for u64 {}
+impl Bind for u64 {
+    fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
+        statement
+            .bind_int64(start_index, (*self) as i64)
+            .with_context(|| format!("Failed to bind i64 at index {start_index}"))?;
+        Ok(start_index + 1)
+    }
+}
+
+impl Column for u64 {
+    fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
+        let result = statement.column_int64(start_index)? as u64;
+        Ok((result, start_index + 1))
+    }
+}
+
 impl StaticColumnCount for u32 {}
 impl Bind for u32 {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
