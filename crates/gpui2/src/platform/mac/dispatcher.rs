@@ -2,7 +2,7 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use crate::PlatformDispatcher;
+use crate::{PlatformDispatcher, TaskLabel};
 use async_task::Runnable;
 use objc::{
     class, msg_send,
@@ -37,7 +37,7 @@ impl PlatformDispatcher for MacDispatcher {
         is_main_thread == YES
     }
 
-    fn dispatch(&self, runnable: Runnable) {
+    fn dispatch(&self, runnable: Runnable, _: Option<TaskLabel>) {
         unsafe {
             dispatch_async_f(
                 dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT.try_into().unwrap(), 0),

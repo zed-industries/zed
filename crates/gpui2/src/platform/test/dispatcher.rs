@@ -1,7 +1,7 @@
-use crate::PlatformDispatcher;
+use crate::{PlatformDispatcher, TaskLabel};
 use async_task::Runnable;
 use backtrace::Backtrace;
-use collections::{HashMap, VecDeque};
+use collections::{HashMap, HashSet, VecDeque};
 use parking::{Parker, Unparker};
 use parking_lot::Mutex;
 use rand::prelude::*;
@@ -28,12 +28,14 @@ struct TestDispatcherState {
     random: StdRng,
     foreground: HashMap<TestDispatcherId, VecDeque<Runnable>>,
     background: Vec<Runnable>,
+    deprioritized_background: Vec<Runnable>,
     delayed: Vec<(Duration, Runnable)>,
     time: Duration,
     is_main_thread: bool,
     next_id: TestDispatcherId,
     allow_parking: bool,
     waiting_backtrace: Option<Backtrace>,
+    deprioritized_task_labels: HashSet<TaskLabel>,
 }
 
 impl TestDispatcher {
@@ -43,12 +45,14 @@ impl TestDispatcher {
             random,
             foreground: HashMap::default(),
             background: Vec::new(),
+            deprioritized_background: Vec::new(),
             delayed: Vec::new(),
             time: Duration::ZERO,
             is_main_thread: true,
             next_id: TestDispatcherId(1),
             allow_parking: false,
             waiting_backtrace: None,
+            deprioritized_task_labels: Default::default(),
         };
 
         TestDispatcher {
@@ -101,6 +105,13 @@ impl TestDispatcher {
         }
     }
 
+    pub fn deprioritize(&self, task_label: TaskLabel) {
+        self.state
+            .lock()
+            .deprioritized_task_labels
+            .insert(task_label);
+    }
+
     pub fn run_until_parked(&self) {
         while self.poll(false) {}
     }
@@ -150,8 +161,17 @@ impl PlatformDispatcher for TestDispatcher {
         self.state.lock().is_main_thread
     }
 
-    fn dispatch(&self, runnable: Runnable) {
-        self.state.lock().background.push(runnable);
+    fn dispatch(&self, runnable: Runnable, label: Option<TaskLabel>) {
+        {
+            let mut state = self.state.lock();
+            if label.map_or(false, |label| {
+                state.deprioritized_task_labels.contains(&label)
+            }) {
+                state.deprioritized_background.push(runnable);
+            } else {
+                state.background.push(runnable);
+            }
+        }
         self.unparker.unpark();
     }
 
@@ -196,34 +216,41 @@ impl PlatformDispatcher for TestDispatcher {
         };
         let background_len = state.background.len();
 
+        let runnable;
+        let main_thread;
         if foreground_len == 0 && background_len == 0 {
-            return false;
-        }
-
-        let main_thread = state.random.gen_ratio(
-            foreground_len as u32,
-            (foreground_len + background_len) as u32,
-        );
-        let was_main_thread = state.is_main_thread;
-        state.is_main_thread = main_thread;
-
-        let runnable = if main_thread {
-            let state = &mut *state;
-            let runnables = state
-                .foreground
-                .values_mut()
-                .filter(|runnables| !runnables.is_empty())
-                .choose(&mut state.random)
-                .unwrap();
-            runnables.pop_front().unwrap()
+            let deprioritized_background_len = state.deprioritized_background.len();
+            if deprioritized_background_len == 0 {
+                return false;
+            }
+            let ix = state.random.gen_range(0..deprioritized_background_len);
+            main_thread = false;
+            runnable = state.deprioritized_background.swap_remove(ix);
         } else {
-            let ix = state.random.gen_range(0..background_len);
-            state.background.swap_remove(ix)
+            main_thread = state.random.gen_ratio(
+                foreground_len as u32,
+                (foreground_len + background_len) as u32,
+            );
+            if main_thread {
+                let state = &mut *state;
+                runnable = state
+                    .foreground
+                    .values_mut()
+                    .filter(|runnables| !runnables.is_empty())
+                    .choose(&mut state.random)
+                    .unwrap()
+                    .pop_front()
+                    .unwrap();
+            } else {
+                let ix = state.random.gen_range(0..background_len);
+                runnable = state.background.swap_remove(ix);
+            };
         };
 
+        let was_main_thread = state.is_main_thread;
+        state.is_main_thread = main_thread;
         drop(state);
         runnable.run();
-
         self.state.lock().is_main_thread = was_main_thread;
 
         true

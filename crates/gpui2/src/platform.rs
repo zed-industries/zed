@@ -8,7 +8,7 @@ use crate::{
     point, size, AnyWindowHandle, BackgroundExecutor, Bounds, DevicePixels, Font, FontId,
     FontMetrics, FontRun, ForegroundExecutor, GlobalPixels, GlyphId, InputEvent, LineLayout,
     Pixels, Point, RenderGlyphParams, RenderImageParams, RenderSvgParams, Result, Scene,
-    SharedString, Size,
+    SharedString, Size, TaskLabel,
 };
 use anyhow::{anyhow, bail};
 use async_task::Runnable;
@@ -162,7 +162,7 @@ pub(crate) trait PlatformWindow {
 
 pub trait PlatformDispatcher: Send + Sync {
     fn is_main_thread(&self) -> bool;
-    fn dispatch(&self, runnable: Runnable);
+    fn dispatch(&self, runnable: Runnable, label: Option<TaskLabel>);
     fn dispatch_on_main_thread(&self, runnable: Runnable);
     fn dispatch_after(&self, duration: Duration, runnable: Runnable);
     fn poll(&self, background_only: bool) -> bool;
