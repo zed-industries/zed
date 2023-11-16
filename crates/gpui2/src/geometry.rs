@@ -421,6 +421,22 @@ impl<T> Bounds<T>
 where
     T: Add<T, Output = T> + Clone + Default + Debug,
 {
+    pub fn top(&self) -> T {
+        self.origin.y.clone()
+    }
+
+    pub fn bottom(&self) -> T {
+        self.origin.y.clone() + self.size.height.clone()
+    }
+
+    pub fn left(&self) -> T {
+        self.origin.x.clone()
+    }
+
+    pub fn right(&self) -> T {
+        self.origin.x.clone() + self.size.width.clone()
+    }
+
     pub fn upper_right(&self) -> Point<T> {
         Point {
             x: self.origin.x.clone() + self.size.width.clone(),

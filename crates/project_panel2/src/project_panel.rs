@@ -130,6 +130,13 @@ pub fn init_settings(cx: &mut AppContext) {
 pub fn init(assets: impl AssetSource, cx: &mut AppContext) {
     init_settings(cx);
     file_associations::init(assets, cx);
+
+    cx.observe_new_views(|workspace: &mut Workspace, _| {
+        workspace.register_action(|workspace, _: &ToggleFocus, cx| {
+            workspace.toggle_panel_focus::<ProjectPanel>(cx);
+        });
+    })
+    .detach();
 }
 
 #[derive(Debug)]
@@ -1516,12 +1523,12 @@ impl workspace::dock::Panel for ProjectPanel {
         cx.notify();
     }
 
-    fn icon_path(&self, _: &WindowContext) -> Option<&'static str> {
-        Some("icons/project.svg")
+    fn icon(&self, _: &WindowContext) -> Option<ui::Icon> {
+        Some(ui::Icon::FileTree)
     }
 
-    fn icon_tooltip(&self) -> (String, Option<Box<dyn Action>>) {
-        ("Project Panel".into(), Some(Box::new(ToggleFocus)))
+    fn toggle_action(&self) -> Box<dyn Action> {
+        Box::new(ToggleFocus)
     }
 
     // fn should_change_position_on_event(event: &Self::Event) -> bool {

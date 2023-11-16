@@ -7,6 +7,7 @@ use gpui::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use ui::{h_stack, IconButton, InteractionState, Tooltip};
 
 pub enum PanelEvent {
     ChangePosition,
@@ -24,8 +25,8 @@ pub trait Panel: Render + EventEmitter<PanelEvent> {
     fn set_position(&mut self, position: DockPosition, cx: &mut ViewContext<Self>);
     fn size(&self, cx: &WindowContext) -> f32;
     fn set_size(&mut self, size: Option<f32>, cx: &mut ViewContext<Self>);
-    fn icon_path(&self, cx: &WindowContext) -> Option<&'static str>;
-    fn icon_tooltip(&self) -> (String, Option<Box<dyn Action>>);
+    fn icon(&self, cx: &WindowContext) -> Option<ui::Icon>;
+    fn toggle_action(&self) -> Box<dyn Action>;
     fn icon_label(&self, _: &WindowContext) -> Option<String> {
         None
     }
@@ -49,8 +50,8 @@ pub trait PanelHandle: Send + Sync {
     fn set_active(&self, active: bool, cx: &mut WindowContext);
     fn size(&self, cx: &WindowContext) -> f32;
     fn set_size(&self, size: Option<f32>, cx: &mut WindowContext);
-    fn icon_path(&self, cx: &WindowContext) -> Option<&'static str>;
-    fn icon_tooltip(&self, cx: &WindowContext) -> (String, Option<Box<dyn Action>>);
+    fn icon(&self, cx: &WindowContext) -> Option<ui::Icon>;
+    fn toggle_action(&self, cx: &WindowContext) -> Box<dyn Action>;
     fn icon_label(&self, cx: &WindowContext) -> Option<String>;
     fn has_focus(&self, cx: &WindowContext) -> bool;
     fn focus_handle(&self, cx: &WindowContext) -> FocusHandle;
@@ -101,12 +102,12 @@ where
         self.update(cx, |this, cx| this.set_size(size, cx))
     }
 
-    fn icon_path(&self, cx: &WindowContext) -> Option<&'static str> {
-        self.read(cx).icon_path(cx)
+    fn icon(&self, cx: &WindowContext) -> Option<ui::Icon> {
+        self.read(cx).icon(cx)
     }
 
-    fn icon_tooltip(&self, cx: &WindowContext) -> (String, Option<Box<dyn Action>>) {
-        self.read(cx).icon_tooltip()
+    fn toggle_action(&self, cx: &WindowContext) -> Box<dyn Action> {
+        self.read(cx).toggle_action()
     }
 
     fn icon_label(&self, cx: &WindowContext) -> Option<String> {
@@ -214,11 +215,11 @@ impl Dock {
     //             .find_map(|entry| entry.panel.as_any().clone().downcast())
     //     }
 
-    //     pub fn panel_index_for_type<T: Panel>(&self) -> Option<usize> {
-    //         self.panel_entries
-    //             .iter()
-    //             .position(|entry| entry.panel.as_any().is::<T>())
-    //     }
+    pub fn panel_index_for_type<T: Panel>(&self) -> Option<usize> {
+        self.panel_entries
+            .iter()
+            .position(|entry| entry.panel.to_any().downcast::<T>().is_ok())
+    }
 
     pub fn panel_index_for_ui_name(&self, _ui_name: &str, _cx: &AppContext) -> Option<usize> {
         todo!()
@@ -644,11 +645,28 @@ impl Render for PanelButtons {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         // todo!()
         let dock = self.dock.read(cx);
-        div().children(
-            dock.panel_entries
-                .iter()
-                .map(|panel| panel.panel.persistent_name(cx)),
-        )
+        let active_index = dock.active_panel_index;
+        let is_open = dock.is_open;
+
+        let buttons = dock
+            .panel_entries
+            .iter()
+            .enumerate()
+            .filter_map(|(i, panel)| {
+                let icon = panel.panel.icon(cx)?;
+                let name = panel.panel.persistent_name(cx);
+                let action = panel.panel.toggle_action(cx);
+                let action2 = action.boxed_clone();
+
+                let mut button = IconButton::new(panel.panel.persistent_name(cx), icon)
+                    .when(i == active_index, |el| el.state(InteractionState::Active))
+                    .on_click(move |this, cx| cx.dispatch_action(action.boxed_clone()))
+                    .tooltip(move |_, cx| Tooltip::for_action(name, &*action2, cx));
+
+                Some(button)
+            });
+
+        h_stack().children(buttons)
     }
 }
 
@@ -665,7 +683,7 @@ impl StatusItemView for PanelButtons {
 #[cfg(any(test, feature = "test-support"))]
 pub mod test {
     use super::*;
-    use gpui::{div, Div, ViewContext, WindowContext};
+    use gpui::{actions, div, Div, ViewContext, WindowContext};
 
     pub struct TestPanel {
         pub position: DockPosition,
@@ -674,6 +692,7 @@ pub mod test {
         pub has_focus: bool,
         pub size: f32,
     }
+    actions!(ToggleTestPanel);
 
     impl EventEmitter<PanelEvent> for TestPanel {}
 
@@ -723,12 +742,12 @@ pub mod test {
             self.size = size.unwrap_or(300.);
         }
 
-        fn icon_path(&self, _: &WindowContext) -> Option<&'static str> {
-            Some("icons/test_panel.svg")
+        fn icon(&self, _: &WindowContext) -> Option<ui::Icon> {
+            None
         }
 
-        fn icon_tooltip(&self) -> (String, Option<Box<dyn Action>>) {
-            ("Test Panel".into(), None)
+        fn toggle_action(&self) -> Box<dyn Action> {
+            ToggleTestPanel.boxed_clone()
         }
 
         fn is_zoomed(&self, _: &WindowContext) -> bool {
