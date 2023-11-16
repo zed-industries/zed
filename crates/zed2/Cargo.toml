@@ -66,7 +66,7 @@ feature_flags = { package = "feature_flags2", path = "../feature_flags2" }
 sum_tree = { path = "../sum_tree" }
 shellexpand = "2.1.0"
 text = { package = "text2", path = "../text2" }
-# terminal_view = { path = "../terminal_view" }
+terminal_view = { package = "terminal_view2", path = "../terminal_view2" }
 theme = { package = "theme2", path = "../theme2" }
 # theme_selector = { path = "../theme_selector" }
 util = { path = "../util" }

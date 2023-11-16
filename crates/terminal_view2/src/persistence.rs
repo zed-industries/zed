@@ -1,7 +1,6 @@
 use std::path::PathBuf;
 
 use db::{define_connection, query, sqlez_macros::sql};
-use gpui::EntityId;
 use workspace::{ItemId, WorkspaceDb, WorkspaceId};
 
 define_connection! {

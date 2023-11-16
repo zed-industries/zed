@@ -1,22 +1,23 @@
 #![allow(unused_variables)]
 //todo!(remove)
 
-// mod persistence;
+mod persistence;
 pub mod terminal_element;
 pub mod terminal_panel;
 
-use crate::terminal_element::TerminalElement;
+// todo!()
+// use crate::terminal_element::TerminalElement;
 use anyhow::Context;
 use dirs::home_dir;
 use editor::{scroll::autoscroll::Autoscroll, Editor};
 use gpui::{
     actions, div, img, red, register_action, AnyElement, AppContext, Component, DispatchPhase, Div,
-    EventEmitter, FocusEvent, FocusHandle, Focusable, FocusableKeyDispatch, InputHandler,
-    KeyDownEvent, Keystroke, Model, ParentElement, Pixels, Render, SharedString,
-    StatefulInteractivity, StatelessInteractive, Styled, Task, View, ViewContext, VisualContext,
-    WeakView,
+    EventEmitter, FocusEvent, FocusHandle, Focusable, FocusableComponent, FocusableView,
+    InputHandler, InteractiveComponent, KeyDownEvent, Keystroke, Model, ParentComponent, Pixels,
+    Render, SharedString, Styled, Task, View, ViewContext, VisualContext, WeakView,
 };
 use language::Bias;
+use persistence::TERMINAL_DB;
 use project::{search::SearchQuery, LocalWorktree, Project};
 use serde::Deserialize;
 use settings::Settings;
@@ -68,7 +69,7 @@ pub fn init(cx: &mut AppContext) {
 
     cx.observe_new_views(
         |workspace: &mut Workspace, cx: &mut ViewContext<Workspace>| {
-            workspace.register_action(TerminalView::deploy)
+            workspace.register_action(TerminalView::deploy);
         },
     )
     .detach();
@@ -93,6 +94,12 @@ pub struct TerminalView {
 impl EventEmitter<Event> for TerminalView {}
 impl EventEmitter<ItemEvent> for TerminalView {}
 impl EventEmitter<SearchEvent> for TerminalView {}
+
+impl FocusableView for TerminalView {
+    fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
 
 impl TerminalView {
     ///Create a new Terminal in the current working directory or the user's home directory
@@ -159,15 +166,14 @@ impl TerminalView {
 
                     let item_id = cx.entity_id();
                     let workspace_id = this.workspace_id;
-                    // todo!(persistence)
-                    // cx.background_executor()
-                    //     .spawn(async move {
-                    //         TERMINAL_DB
-                    //             .save_working_directory(item_id, workspace_id, cwd)
-                    //             .await
-                    //             .log_err();
-                    //     })
-                    //     .detach();
+                    cx.background_executor()
+                        .spawn(async move {
+                            TERMINAL_DB
+                                .save_working_directory(item_id.as_u64(), workspace_id, cwd)
+                                .await
+                                .log_err();
+                        })
+                        .detach();
                 }
             }
 
@@ -526,7 +532,7 @@ impl TerminalView {
 }
 
 impl Render for TerminalView {
-    type Element = Div<Self, StatefulInteractivity<Self>, FocusableKeyDispatch<Self>>;
+    type Element = Focusable<Self, Div<Self>>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         let terminal_handle = self.terminal.clone().downgrade();
@@ -536,7 +542,7 @@ impl Render for TerminalView {
 
         div()
             .track_focus(&self.focus_handle)
-            .on_focus_in(Self::focus_out)
+            .on_focus_in(Self::focus_in)
             .on_focus_out(Self::focus_out)
             .on_key_down(Self::key_down)
             .on_action(TerminalView::send_text)
@@ -827,10 +833,6 @@ impl Item for TerminalView {
         //     ))
         //     .detach();
         self.workspace_id = workspace.database_id();
-    }
-
-    fn focus_handle(&self) -> FocusHandle {
-        self.focus_handle.clone()
     }
 }
 

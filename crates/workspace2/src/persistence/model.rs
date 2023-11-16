@@ -277,7 +277,7 @@ impl SerializedPane {
 
 pub type GroupId = i64;
 pub type PaneId = i64;
-pub type ItemId = usize;
+pub type ItemId = u64;
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct SerializedItem {

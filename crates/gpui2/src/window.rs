@@ -1830,8 +1830,8 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         self.view
     }
 
-    pub fn model(&self) -> Model<V> {
-        self.view.model.clone()
+    pub fn model(&self) -> &Model<V> {
+        &self.view.model
     }
 
     /// Access the underlying window context.
@@ -2163,7 +2163,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
 
     pub fn observe_global<G: 'static>(
         &mut self,
-        f: impl Fn(&mut V, &mut ViewContext<'_, V>) + 'static,
+        mut f: impl FnMut(&mut V, &mut ViewContext<'_, V>) + 'static,
     ) -> Subscription {
         let window_handle = self.window.handle;
         let view = self.view().downgrade();

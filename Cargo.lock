@@ -11567,6 +11567,7 @@ dependencies = [
  "smol",
  "sum_tree",
  "tempdir",
+ "terminal_view2",
  "text2",
  "theme2",
  "thiserror",

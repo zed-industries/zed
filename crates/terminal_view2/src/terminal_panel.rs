@@ -3,8 +3,9 @@ use std::{path::PathBuf, sync::Arc};
 use crate::TerminalView;
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
-    actions, serde_json, Action, AppContext, AsyncAppContext, Entity, EventEmitter, Render,
-    Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
+    actions, div, serde_json, AppContext, AsyncWindowContext, Div, Entity, EventEmitter,
+    FocusHandle, FocusableView, ParentComponent, Render, Subscription, Task, View, ViewContext,
+    VisualContext, WeakView, WindowContext,
 };
 use project::Fs;
 use serde::{Deserialize, Serialize};
@@ -14,7 +15,9 @@ use util::{ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     item::Item,
-    pane, Pane, Workspace,
+    pane,
+    ui::Icon,
+    Pane, Workspace,
 };
 
 use anyhow::Result;
@@ -28,18 +31,12 @@ pub fn init(cx: &mut AppContext) {
         |workspace: &mut Workspace, _: &mut ViewContext<Workspace>| {
             workspace.register_action(TerminalPanel::new_terminal);
             workspace.register_action(TerminalPanel::open_terminal);
+            workspace.register_action(|workspace, _: &ToggleFocus, cx| {
+                workspace.toggle_panel_focus::<TerminalPanel>(cx);
+            });
         },
     )
     .detach();
-}
-
-#[derive(Debug)]
-pub enum Event {
-    Close,
-    DockPositionChanged,
-    ZoomIn,
-    ZoomOut,
-    Focus,
 }
 
 pub struct TerminalPanel {
@@ -54,9 +51,9 @@ pub struct TerminalPanel {
 
 impl TerminalPanel {
     fn new(workspace: &Workspace, cx: &mut ViewContext<Self>) -> Self {
-        let weak_self = cx.weak_handle();
+        let _weak_self = cx.view().downgrade();
         let pane = cx.build_view(|cx| {
-            let window = cx.window_handle();
+            let _window = cx.window_handle();
             let mut pane = Pane::new(
                 workspace.weak_handle(),
                 workspace.project().clone(),
@@ -65,54 +62,55 @@ impl TerminalPanel {
             );
             pane.set_can_split(false, cx);
             pane.set_can_navigate(false, cx);
-            pane.on_can_drop(move |drag_and_drop, cx| {
-                drag_and_drop
-                    .currently_dragged::<DraggedItem>(window)
-                    .map_or(false, |(_, item)| {
-                        item.handle.act_as::<TerminalView>(cx).is_some()
-                    })
-            });
-            pane.set_render_tab_bar_buttons(cx, move |pane, cx| {
-                let this = weak_self.clone();
-                Flex::row()
-                    .with_child(Pane::render_tab_bar_button(
-                        0,
-                        "icons/plus.svg",
-                        false,
-                        Some(("New Terminal", Some(Box::new(workspace::NewTerminal)))),
-                        cx,
-                        move |_, cx| {
-                            let this = this.clone();
-                            cx.window_context().defer(move |cx| {
-                                if let Some(this) = this.upgrade() {
-                                    this.update(cx, |this, cx| {
-                                        this.add_terminal(None, cx);
-                                    });
-                                }
-                            })
-                        },
-                        |_, _| {},
-                        None,
-                    ))
-                    .with_child(Pane::render_tab_bar_button(
-                        1,
-                        if pane.is_zoomed() {
-                            "icons/minimize.svg"
-                        } else {
-                            "icons/maximize.svg"
-                        },
-                        pane.is_zoomed(),
-                        Some(("Toggle Zoom".into(), Some(Box::new(workspace::ToggleZoom)))),
-                        cx,
-                        move |pane, cx| pane.toggle_zoom(&Default::default(), cx),
-                        |_, _| {},
-                        None,
-                    ))
-                    .into_any()
-            });
-            let buffer_search_bar = cx.build_view(search::BufferSearchBar::new);
-            pane.toolbar()
-                .update(cx, |toolbar, cx| toolbar.add_item(buffer_search_bar, cx));
+            // todo!()
+            // pane.on_can_drop(move |drag_and_drop, cx| {
+            //     drag_and_drop
+            //         .currently_dragged::<DraggedItem>(window)
+            //         .map_or(false, |(_, item)| {
+            //             item.handle.act_as::<TerminalView>(cx).is_some()
+            //         })
+            // });
+            // pane.set_render_tab_bar_buttons(cx, move |pane, cx| {
+            //     let this = weak_self.clone();
+            //     Flex::row()
+            //         .with_child(Pane::render_tab_bar_button(
+            //             0,
+            //             "icons/plus.svg",
+            //             false,
+            //             Some(("New Terminal", Some(Box::new(workspace::NewTerminal)))),
+            //             cx,
+            //             move |_, cx| {
+            //                 let this = this.clone();
+            //                 cx.window_context().defer(move |cx| {
+            //                     if let Some(this) = this.upgrade() {
+            //                         this.update(cx, |this, cx| {
+            //                             this.add_terminal(None, cx);
+            //                         });
+            //                     }
+            //                 })
+            //             },
+            //             |_, _| {},
+            //             None,
+            //         ))
+            //         .with_child(Pane::render_tab_bar_button(
+            //             1,
+            //             if pane.is_zoomed() {
+            //                 "icons/minimize.svg"
+            //             } else {
+            //                 "icons/maximize.svg"
+            //             },
+            //             pane.is_zoomed(),
+            //             Some(("Toggle Zoom".into(), Some(Box::new(workspace::ToggleZoom)))),
+            //             cx,
+            //             move |pane, cx| pane.toggle_zoom(&Default::default(), cx),
+            //             |_, _| {},
+            //             None,
+            //         ))
+            //         .into_any()
+            // });
+            // let buffer_search_bar = cx.build_view(search::BufferSearchBar::new);
+            // pane.toolbar()
+            //     .update(cx, |toolbar, cx| toolbar.add_item(buffer_search_bar, cx));
             pane
         });
         let subscriptions = vec![
@@ -133,80 +131,81 @@ impl TerminalPanel {
             let new_dock_position = this.position(cx);
             if new_dock_position != old_dock_position {
                 old_dock_position = new_dock_position;
-                cx.emit(Event::DockPositionChanged);
+                cx.emit(PanelEvent::ChangePosition);
             }
         })
         .detach();
         this
     }
 
-    pub fn load(workspace: WeakView<Workspace>, cx: AsyncAppContext) -> Task<Result<View<Self>>> {
-        cx.spawn(|mut cx| async move {
-            let serialized_panel = if let Some(panel) = cx
-                .background_executor()
-                .spawn(async move { KEY_VALUE_STORE.read_kvp(TERMINAL_PANEL_KEY) })
-                .await
-                .log_err()
-                .flatten()
-            {
-                Some(serde_json::from_str::<SerializedTerminalPanel>(&panel)?)
-            } else {
-                None
-            };
-            let (panel, pane, items) = workspace.update(&mut cx, |workspace, cx| {
-                let panel = cx.build_view(|cx| TerminalPanel::new(workspace, cx));
-                let items = if let Some(serialized_panel) = serialized_panel.as_ref() {
-                    panel.update(cx, |panel, cx| {
-                        cx.notify();
-                        panel.height = serialized_panel.height;
-                        panel.width = serialized_panel.width;
-                        panel.pane.update(cx, |_, cx| {
-                            serialized_panel
-                                .items
-                                .iter()
-                                .map(|item_id| {
-                                    TerminalView::deserialize(
-                                        workspace.project().clone(),
-                                        workspace.weak_handle(),
-                                        workspace.database_id(),
-                                        *item_id,
-                                        cx,
-                                    )
-                                })
-                                .collect::<Vec<_>>()
-                        })
-                    })
-                } else {
-                    Default::default()
-                };
-                let pane = panel.read(cx).pane.clone();
-                (panel, pane, items)
-            })?;
+    pub async fn load(
+        workspace: WeakView<Workspace>,
+        mut cx: AsyncWindowContext,
+    ) -> Result<View<Self>> {
+        let serialized_panel = cx
+            .background_executor()
+            .spawn(async move { KEY_VALUE_STORE.read_kvp(TERMINAL_PANEL_KEY) })
+            .await
+            .log_err()
+            .flatten()
+            .map(|panel| serde_json::from_str::<SerializedTerminalPanel>(&panel))
+            .transpose()
+            .log_err()
+            .flatten();
 
-            let pane = pane.downgrade();
-            let items = futures::future::join_all(items).await;
-            pane.update(&mut cx, |pane, cx| {
-                let active_item_id = serialized_panel
-                    .as_ref()
-                    .and_then(|panel| panel.active_item_id);
-                let mut active_ix = None;
-                for item in items {
-                    if let Some(item) = item.log_err() {
-                        let item_id = item.entity_id().as_u64();
-                        pane.add_item(Box::new(item), false, false, None, cx);
-                        if Some(item_id) == active_item_id {
-                            active_ix = Some(pane.items_len() - 1);
-                        }
+        let (panel, pane, items) = workspace.update(&mut cx, |workspace, cx| {
+            let panel = cx.build_view(|cx| TerminalPanel::new(workspace, cx));
+            let items = if let Some(serialized_panel) = serialized_panel.as_ref() {
+                panel.update(cx, |panel, cx| {
+                    cx.notify();
+                    panel.height = serialized_panel.height;
+                    panel.width = serialized_panel.width;
+                    panel.pane.update(cx, |_, cx| {
+                        serialized_panel
+                            .items
+                            .iter()
+                            .map(|item_id| {
+                                TerminalView::deserialize(
+                                    workspace.project().clone(),
+                                    workspace.weak_handle(),
+                                    workspace.database_id(),
+                                    *item_id,
+                                    cx,
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                })
+            } else {
+                Default::default()
+            };
+            let pane = panel.read(cx).pane.clone();
+            (panel, pane, items)
+        })?;
+
+        let pane = pane.downgrade();
+        let items = futures::future::join_all(items).await;
+        pane.update(&mut cx, |pane, cx| {
+            let active_item_id = serialized_panel
+                .as_ref()
+                .and_then(|panel| panel.active_item_id);
+            let mut active_ix = None;
+            for item in items {
+                if let Some(item) = item.log_err() {
+                    let item_id = item.entity_id().as_u64();
+                    pane.add_item(Box::new(item), false, false, None, cx);
+                    if Some(item_id) == active_item_id {
+                        active_ix = Some(pane.items_len() - 1);
                     }
                 }
+            }
 
-                if let Some(active_ix) = active_ix {
-                    pane.activate_item(active_ix, false, false, cx)
-                }
-            })?;
+            if let Some(active_ix) = active_ix {
+                pane.activate_item(active_ix, false, false, cx)
+            }
+        })?;
 
-            Ok(panel)
-        })
+        Ok(panel)
     }
 
     fn handle_pane_event(
@@ -218,10 +217,10 @@ impl TerminalPanel {
         match event {
             pane::Event::ActivateItem { .. } => self.serialize(cx),
             pane::Event::RemoveItem { .. } => self.serialize(cx),
-            pane::Event::Remove => cx.emit(Event::Close),
-            pane::Event::ZoomIn => cx.emit(Event::ZoomIn),
-            pane::Event::ZoomOut => cx.emit(Event::ZoomOut),
-            pane::Event::Focus => cx.emit(Event::Focus),
+            pane::Event::Remove => cx.emit(PanelEvent::Close),
+            pane::Event::ZoomIn => cx.emit(PanelEvent::ZoomIn),
+            pane::Event::ZoomOut => cx.emit(PanelEvent::ZoomOut),
+            pane::Event::Focus => cx.emit(PanelEvent::Focus),
 
             pane::Event::AddItem { item } => {
                 if let Some(workspace) = self.workspace.upgrade() {
@@ -334,20 +333,20 @@ impl TerminalPanel {
     }
 }
 
-impl EventEmitter<Event> for TerminalPanel {}
 impl EventEmitter<PanelEvent> for TerminalPanel {}
 
 impl Render for TerminalPanel {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> gpui::AnyElement<Self> {
-        ChildView::new(&self.pane, cx).into_any()
-    }
+    type Element = Div<Self>;
 
-    // todo!()
-    // fn focus_in(&mut self, _: gpui::AnyView, cx: &mut ViewContext<Self>) {
-    //     if cx.is_self_focused() {
-    //         cx.focus(&self.pane);
-    //     }
-    // }
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
+        div().child(self.pane.clone())
+    }
+}
+
+impl FocusableView for TerminalPanel {
+    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+        self.pane.focus_handle(cx)
+    }
 }
 
 impl Panel for TerminalPanel {
@@ -407,14 +406,6 @@ impl Panel for TerminalPanel {
         }
     }
 
-    fn icon_path(&self, _: &WindowContext) -> Option<&'static str> {
-        Some("icons/terminal.svg")
-    }
-
-    fn icon_tooltip(&self) -> (String, Option<Box<dyn Action>>) {
-        ("Terminal Panel".into(), Some(Box::new(ToggleFocus)))
-    }
-
     fn icon_label(&self, cx: &WindowContext) -> Option<String> {
         let count = self.pane.read(cx).items_len();
         if count == 0 {
@@ -428,34 +419,22 @@ impl Panel for TerminalPanel {
         self.pane.read(cx).has_focus(cx)
     }
 
-    fn persistent_name(&self) -> &'static str {
-        todo!()
+    fn persistent_name() -> &'static str {
+        "TerminalPanel"
     }
 
-    // todo!() is it needed?
-    // fn should_change_position_on_event(event: &Self::Event) -> bool {
-    //     matches!(event, Event::DockPositionChanged)
+    // todo!()
+    // fn icon_tooltip(&self) -> (String, Option<Box<dyn Action>>) {
+    //     ("Terminal Panel".into(), Some(Box::new(ToggleFocus)))
     // }
 
-    // fn should_activate_on_event(_: &Self::Event) -> bool {
-    //     false
-    // }
+    fn icon(&self, _cx: &WindowContext) -> Option<Icon> {
+        Some(Icon::Terminal)
+    }
 
-    // fn should_close_on_event(event: &Event) -> bool {
-    //     matches!(event, Event::Close)
-    // }
-
-    // fn is_focus_event(event: &Self::Event) -> bool {
-    //     matches!(event, Event::Focus)
-    // }
-
-    // fn should_zoom_in_on_event(event: &Event) -> bool {
-    //     matches!(event, Event::ZoomIn)
-    // }
-
-    // fn should_zoom_out_on_event(event: &Event) -> bool {
-    //     matches!(event, Event::ZoomOut)
-    // }
+    fn toggle_action(&self) -> Box<dyn gpui::Action> {
+        Box::new(ToggleFocus)
+    }
 }
 
 #[derive(Serialize, Deserialize)]
