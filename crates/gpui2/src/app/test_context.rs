@@ -354,10 +354,18 @@ impl<T: Send> Model<T> {
             })
         });
 
-        cx.executor().run_until_parked();
-        rx.try_next()
-            .expect("no event received")
-            .expect("model was dropped")
+        loop {
+            match rx.try_next() {
+                Ok(Some(event)) => return event,
+                Ok(None) => panic!("model was dropped"),
+                Err(_) => {
+                    if !cx.executor().run_step() {
+                        break;
+                    }
+                }
+            }
+        }
+        panic!("no event received")
     }
 }
 
