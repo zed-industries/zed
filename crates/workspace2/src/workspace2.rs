@@ -3614,7 +3614,16 @@ impl Render for Workspace {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         let mut context = KeyContext::default();
         context.add("Workspace");
-        let ui_font = ThemeSettings::get_global(cx).ui_font.family.clone();
+
+        let (ui_font, ui_font_size) = {
+            let theme_settings = ThemeSettings::get_global(cx);
+            (
+                theme_settings.ui_font.family.clone(),
+                theme_settings.ui_font_size.clone(),
+            )
+        };
+
+        cx.set_rem_size(ui_font_size);
 
         self.add_workspace_actions_listeners(div())
             .key_context(context)
