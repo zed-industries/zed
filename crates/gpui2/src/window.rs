@@ -185,6 +185,10 @@ impl Drop for FocusHandle {
     }
 }
 
+pub trait FocusableView: Render {
+    fn focus_handle(&self, cx: &AppContext) -> FocusHandle;
+}
+
 // Holds the state for a specific window.
 pub struct Window {
     pub(crate) handle: AnyWindowHandle,
@@ -1546,6 +1550,12 @@ impl VisualContext for WindowContext<'_> {
         self.window.root_view = Some(view.clone().into());
         view
     }
+
+    fn focus_view<V: crate::FocusableView>(&mut self, view: &View<V>) -> Self::Result<()> {
+        self.update_view(view, |view, cx| {
+            view.focus_handle(cx).clone().focus(cx);
+        })
+    }
 }
 
 impl<'a> std::ops::Deref for WindowContext<'a> {
@@ -2219,9 +2229,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
                 .set_input_handler(Box::new(input_handler));
         }
     }
-}
 
-impl<V> ViewContext<'_, V> {
     pub fn emit<Evt>(&mut self, event: Evt)
     where
         Evt: 'static,
@@ -2233,6 +2241,13 @@ impl<V> ViewContext<'_, V> {
             event_type: TypeId::of::<Evt>(),
             event: Box::new(event),
         });
+    }
+
+    pub fn focus_self(&mut self)
+    where
+        V: FocusableView,
+    {
+        self.defer(|view, cx| view.focus_handle(cx).focus(cx))
     }
 }
 
@@ -2308,6 +2323,10 @@ impl<V: 'static> VisualContext for ViewContext<'_, V> {
         W: Render,
     {
         self.window_cx.replace_root_view(build_view)
+    }
+
+    fn focus_view<W: FocusableView>(&mut self, view: &View<W>) -> Self::Result<()> {
+        self.window_cx.focus_view(view)
     }
 }
 

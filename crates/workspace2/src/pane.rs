@@ -8,8 +8,8 @@ use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
 use gpui::{
     actions, prelude::*, register_action, AppContext, AsyncWindowContext, Component, Div, EntityId,
-    EventEmitter, FocusHandle, Focusable, Model, PromptLevel, Render, Task, View, ViewContext,
-    VisualContext, WeakView, WindowContext,
+    EventEmitter, FocusHandle, Focusable, FocusableView, Model, PromptLevel, Render, Task, View,
+    ViewContext, VisualContext, WeakView, WindowContext,
 };
 use parking_lot::Mutex;
 use project2::{Project, ProjectEntryId, ProjectPath};
@@ -125,10 +125,6 @@ pub fn init(cx: &mut AppContext) {
     //     cx.add_async_action(Pane::close_items_to_the_left);
     //     cx.add_async_action(Pane::close_items_to_the_right);
     //     cx.add_async_action(Pane::close_all_items);
-    //     cx.add_action(|pane: &mut Pane, _: &SplitLeft, cx| pane.split(SplitDirection::Left, cx));
-    //     cx.add_action(|pane: &mut Pane, _: &SplitUp, cx| pane.split(SplitDirection::Up, cx));
-    //     cx.add_action(|pane: &mut Pane, _: &SplitRight, cx| pane.split(SplitDirection::Right, cx));
-    //     cx.add_action(|pane: &mut Pane, _: &SplitDown, cx| pane.split(SplitDirection::Down, cx));
 }
 
 pub enum Event {
@@ -1195,9 +1191,9 @@ impl Pane {
         }
     }
 
-    //     pub fn split(&mut self, direction: SplitDirection, cx: &mut ViewContext<Self>) {
-    //         cx.emit(Event::Split(direction));
-    //     }
+    pub fn split(&mut self, direction: SplitDirection, cx: &mut ViewContext<Self>) {
+        cx.emit(Event::Split(direction));
+    }
 
     //     fn deploy_split_menu(&mut self, cx: &mut ViewContext<Self>) {
     //         self.tab_bar_context_menu.handle.update(cx, |menu, cx| {
@@ -1398,6 +1394,7 @@ impl Pane {
             .when_some(item.tab_tooltip_text(cx), |div, text| {
                 div.tooltip(move |_, cx| cx.build_view(|cx| Tooltip::new(text.clone())).into())
             })
+            .on_click(move |v: &mut Self, e, cx| v.activate_item(ix, true, true, cx))
             // .on_drag(move |pane, cx| pane.render_tab(ix, item.boxed_clone(), detail, cx))
             // .drag_over::<DraggedTab>(|d| d.bg(cx.theme().colors().element_drop_target))
             // .on_drop(|_view, state: View<DraggedTab>, cx| {
@@ -1430,32 +1427,22 @@ impl Pane {
                     .items_center()
                     .gap_1()
                     .text_color(text_color)
-                    .children(if item.has_conflict(cx) {
-                        Some(
-                            IconElement::new(Icon::ExclamationTriangle)
-                                .size(ui::IconSize::Small)
-                                .color(TextColor::Warning),
-                        )
-                    } else if item.is_dirty(cx) {
-                        Some(
-                            IconElement::new(Icon::ExclamationTriangle)
-                                .size(ui::IconSize::Small)
-                                .color(TextColor::Info),
-                        )
-                    } else {
-                        None
-                    })
-                    .children(if !close_right {
-                        Some(close_icon())
-                    } else {
-                        None
-                    })
+                    .children(
+                        item.has_conflict(cx)
+                            .then(|| {
+                                IconElement::new(Icon::ExclamationTriangle)
+                                    .size(ui::IconSize::Small)
+                                    .color(TextColor::Warning)
+                            })
+                            .or(item.is_dirty(cx).then(|| {
+                                IconElement::new(Icon::ExclamationTriangle)
+                                    .size(ui::IconSize::Small)
+                                    .color(TextColor::Info)
+                            })),
+                    )
+                    .children((!close_right).then(|| close_icon()))
                     .child(label)
-                    .children(if close_right {
-                        Some(close_icon())
-                    } else {
-                        None
-                    }),
+                    .children(close_right.then(|| close_icon())),
             )
     }
 
@@ -1912,9 +1899,11 @@ impl Pane {
     }
 }
 
-// impl Entity for Pane {
-//     type Event = Event;
-// }
+impl FocusableView for Pane {
+    fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
 
 impl Render for Pane {
     type Element = Focusable<Self, Div<Self>>;
@@ -1923,6 +1912,10 @@ impl Render for Pane {
         v_stack()
             .key_context("Pane")
             .track_focus(&self.focus_handle)
+            .on_action(|pane: &mut Pane, _: &SplitLeft, cx| pane.split(SplitDirection::Left, cx))
+            .on_action(|pane: &mut Pane, _: &SplitUp, cx| pane.split(SplitDirection::Up, cx))
+            .on_action(|pane: &mut Pane, _: &SplitRight, cx| pane.split(SplitDirection::Right, cx))
+            .on_action(|pane: &mut Pane, _: &SplitDown, cx| pane.split(SplitDirection::Down, cx))
             .size_full()
             .on_action(|pane: &mut Self, action, cx| {
                 pane.close_active_item(action, cx)

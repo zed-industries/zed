@@ -37,9 +37,10 @@ use futures::{
 };
 use gpui::{
     actions, div, point, prelude::*, size, Action, AnyModel, AnyView, AnyWeakView, AppContext,
-    AsyncAppContext, AsyncWindowContext, Bounds, Div, Entity, EntityId, EventEmitter, GlobalPixels,
-    KeyContext, Model, ModelContext, ParentComponent, Point, Render, Size, Styled, Subscription,
-    Task, View, ViewContext, WeakView, WindowBounds, WindowContext, WindowHandle, WindowOptions,
+    AsyncAppContext, AsyncWindowContext, Bounds, Div, Entity, EntityId, EventEmitter, FocusHandle,
+    FocusableView, GlobalPixels, KeyContext, Model, ModelContext, ParentComponent, Point, Render,
+    Size, Styled, Subscription, Task, View, ViewContext, WeakView, WindowBounds, WindowContext,
+    WindowHandle, WindowOptions,
 };
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, ProjectItem};
 use itertools::Itertools;
@@ -319,12 +320,6 @@ pub struct AppState {
     pub fs: Arc<dyn fs2::Fs>,
     pub build_window_options:
         fn(Option<WindowBounds>, Option<Uuid>, &mut AppContext) -> WindowOptions,
-    pub initialize_workspace: fn(
-        WeakView<Workspace>,
-        bool,
-        Arc<AppState>,
-        AsyncWindowContext,
-    ) -> Task<anyhow::Result<()>>,
     pub node_runtime: Arc<dyn NodeRuntime>,
 }
 
@@ -370,7 +365,6 @@ impl AppState {
             user_store,
             workspace_store,
             node_runtime: FakeNodeRuntime::new(),
-            initialize_workspace: |_, _, _, _| Task::ready(Ok(())),
             build_window_options: |_, _, _| Default::default(),
         })
     }
@@ -682,7 +676,7 @@ impl Workspace {
     fn new_local(
         abs_paths: Vec<PathBuf>,
         app_state: Arc<AppState>,
-        _requesting_window: Option<WindowHandle<Workspace>>,
+        requesting_window: Option<WindowHandle<Workspace>>,
         cx: &mut AppContext,
     ) -> Task<
         anyhow::Result<(
@@ -700,7 +694,8 @@ impl Workspace {
         );
 
         cx.spawn(|mut cx| async move {
-            let serialized_workspace: Option<SerializedWorkspace> = None; //persistence::DB.workspace_for_roots(&abs_paths.as_slice());
+            let serialized_workspace: Option<SerializedWorkspace> =
+                persistence::DB.workspace_for_roots(&abs_paths.as_slice());
 
             let paths_to_open = Arc::new(abs_paths);
 
@@ -729,15 +724,14 @@ impl Workspace {
                 DB.next_id().await.unwrap_or(0)
             };
 
-            // todo!()
-            let window = /*if let Some(window) = requesting_window {
+            let window = if let Some(window) = requesting_window {
                 cx.update_window(window.into(), |old_workspace, cx| {
                     cx.replace_root_view(|cx| {
                         Workspace::new(workspace_id, project_handle.clone(), app_state.clone(), cx)
                     });
-                });
+                })?;
                 window
-                } else */ {
+            } else {
                 let window_bounds_override = window_bounds_env_override(&cx);
                 let (bounds, display) = if let Some(bounds) = window_bounds_override {
                     (Some(bounds), None)
@@ -751,12 +745,13 @@ impl Workspace {
                             // Stored bounds are relative to the containing display.
                             // So convert back to global coordinates if that screen still exists
                             if let WindowBounds::Fixed(mut window_bounds) = bounds {
-                                let screen =
-                                    cx.update(|cx|
-                                        cx.displays()
-                                            .into_iter()
-                                            .find(|display| display.uuid().ok() == Some(serialized_display))
-                                    ).ok()??;
+                                let screen = cx
+                                    .update(|cx| {
+                                        cx.displays().into_iter().find(|display| {
+                                            display.uuid().ok() == Some(serialized_display)
+                                        })
+                                    })
+                                    .ok()??;
                                 let screen_bounds = screen.bounds();
                                 window_bounds.origin.x += screen_bounds.origin.x;
                                 window_bounds.origin.y += screen_bounds.origin.y;
@@ -785,17 +780,17 @@ impl Workspace {
             };
 
             // todo!() Ask how to do this
-            let weak_view = window.update(&mut cx, |_, cx| cx.view().downgrade())?;
-            let async_cx = window.update(&mut cx, |_, cx| cx.to_async())?;
+            // let weak_view = window.update(&mut cx, |_, cx| cx.view().downgrade())?;
+            // let async_cx = window.update(&mut cx, |_, cx| cx.to_async())?;
 
-            (app_state.initialize_workspace)(
-                weak_view,
-                serialized_workspace.is_some(),
-                app_state.clone(),
-                async_cx,
-            )
-            .await
-            .log_err();
+            // (app_state.initialize_workspace)(
+            //     weak_view,
+            //     serialized_workspace.is_some(),
+            //     app_state.clone(),
+            //     async_cx,
+            // )
+            // .await
+            // .log_err();
 
             window
                 .update(&mut cx, |_, cx| cx.activate_window())
@@ -804,12 +799,7 @@ impl Workspace {
             notify_if_database_failed(window, &mut cx);
             let opened_items = window
                 .update(&mut cx, |_workspace, cx| {
-                    open_items(
-                        serialized_workspace,
-                        project_paths,
-                        app_state,
-                        cx,
-                    )
+                    open_items(serialized_workspace, project_paths, app_state, cx)
                 })?
                 .await
                 .unwrap_or_default();
@@ -2970,13 +2960,15 @@ impl Workspace {
         cx.notify();
     }
 
-    //     fn schedule_serialize(&mut self, cx: &mut ViewContext<Self>) {
-    //         self._schedule_serialize = Some(cx.spawn(|this, cx| async move {
-    //             cx.background().timer(Duration::from_millis(100)).await;
-    //             this.read_with(&cx, |this, cx| this.serialize_workspace(cx))
-    //                 .ok();
-    //         }));
-    //     }
+    fn schedule_serialize(&mut self, cx: &mut ViewContext<Self>) {
+        self._schedule_serialize = Some(cx.spawn(|this, mut cx| async move {
+            cx.background_executor()
+                .timer(Duration::from_millis(100))
+                .await;
+            this.update(&mut cx, |this, cx| this.serialize_workspace(cx))
+                .log_err();
+        }));
+    }
 
     fn serialize_workspace(&self, cx: &mut ViewContext<Self>) {
         fn serialize_pane_handle(pane_handle: &View<Pane>, cx: &WindowContext) -> SerializedPane {
@@ -3032,7 +3024,7 @@ impl Workspace {
             let left_visible = left_dock.is_open();
             let left_active_panel = left_dock
                 .visible_panel()
-                .and_then(|panel| Some(panel.persistent_name(cx).to_string()));
+                .and_then(|panel| Some(panel.persistent_name().to_string()));
             let left_dock_zoom = left_dock
                 .visible_panel()
                 .map(|panel| panel.is_zoomed(cx))
@@ -3042,7 +3034,7 @@ impl Workspace {
             let right_visible = right_dock.is_open();
             let right_active_panel = right_dock
                 .visible_panel()
-                .and_then(|panel| Some(panel.persistent_name(cx).to_string()));
+                .and_then(|panel| Some(panel.persistent_name().to_string()));
             let right_dock_zoom = right_dock
                 .visible_panel()
                 .map(|panel| panel.is_zoomed(cx))
@@ -3052,7 +3044,7 @@ impl Workspace {
             let bottom_visible = bottom_dock.is_open();
             let bottom_active_panel = bottom_dock
                 .visible_panel()
-                .and_then(|panel| Some(panel.persistent_name(cx).to_string()));
+                .and_then(|panel| Some(panel.persistent_name().to_string()));
             let bottom_dock_zoom = bottom_dock
                 .visible_panel()
                 .map(|panel| panel.is_zoomed(cx))
@@ -3158,45 +3150,34 @@ impl Workspace {
 
                     // Swap workspace center group
                     workspace.center = PaneGroup::with_root(center_group);
-
-                    // Change the focus to the workspace first so that we retrigger focus in on the pane.
-                    // todo!()
-                    // cx.focus_self();
-                    // if let Some(active_pane) = active_pane {
-                    //     cx.focus(&active_pane);
-                    // } else {
-                    //     cx.focus(workspace.panes.last().unwrap());
-                    // }
-                } else {
-                    // todo!()
-                    // let old_center_handle = old_center_pane.and_then(|weak| weak.upgrade());
-                    // if let Some(old_center_handle) = old_center_handle {
-                    //     cx.focus(&old_center_handle)
-                    // } else {
-                    //     cx.focus_self()
-                    // }
+                    workspace.last_active_center_pane = active_pane.as_ref().map(|p| p.downgrade());
+                    if let Some(active_pane) = active_pane {
+                        workspace.active_pane = active_pane;
+                        cx.focus_self();
+                    } else {
+                        workspace.active_pane = workspace.center.first_pane().clone();
+                    }
                 }
 
                 let docks = serialized_workspace.docks;
                 workspace.left_dock.update(cx, |dock, cx| {
                     dock.set_open(docks.left.visible, cx);
                     if let Some(active_panel) = docks.left.active_panel {
-                        if let Some(ix) = dock.panel_index_for_ui_name(&active_panel, cx) {
+                        if let Some(ix) = dock.panel_index_for_persistent_name(&active_panel, cx) {
                             dock.activate_panel(ix, cx);
                         }
                     }
                     dock.active_panel()
                         .map(|panel| panel.set_zoomed(docks.left.zoom, cx));
                     if docks.left.visible && docks.left.zoom {
-                        // todo!()
-                        // cx.focus_self()
+                        cx.focus_self()
                     }
                 });
                 // TODO: I think the bug is that setting zoom or active undoes the bottom zoom or something
                 workspace.right_dock.update(cx, |dock, cx| {
                     dock.set_open(docks.right.visible, cx);
                     if let Some(active_panel) = docks.right.active_panel {
-                        if let Some(ix) = dock.panel_index_for_ui_name(&active_panel, cx) {
+                        if let Some(ix) = dock.panel_index_for_persistent_name(&active_panel, cx) {
                             dock.activate_panel(ix, cx);
                         }
                     }
@@ -3204,14 +3185,13 @@ impl Workspace {
                         .map(|panel| panel.set_zoomed(docks.right.zoom, cx));
 
                     if docks.right.visible && docks.right.zoom {
-                        // todo!()
-                        // cx.focus_self()
+                        cx.focus_self()
                     }
                 });
                 workspace.bottom_dock.update(cx, |dock, cx| {
                     dock.set_open(docks.bottom.visible, cx);
                     if let Some(active_panel) = docks.bottom.active_panel {
-                        if let Some(ix) = dock.panel_index_for_ui_name(&active_panel, cx) {
+                        if let Some(ix) = dock.panel_index_for_persistent_name(&active_panel, cx) {
                             dock.activate_panel(ix, cx);
                         }
                     }
@@ -3220,8 +3200,7 @@ impl Workspace {
                         .map(|panel| panel.set_zoomed(docks.bottom.zoom, cx));
 
                     if docks.bottom.visible && docks.bottom.zoom {
-                        // todo!()
-                        // cx.focus_self()
+                        cx.focus_self()
                     }
                 });
 
@@ -3283,7 +3262,6 @@ impl Workspace {
             //         },
             //     );
             .on_action(|this, e: &ToggleLeftDock, cx| {
-                println!("TOGGLING DOCK");
                 this.toggle_dock(DockPosition::Left, cx);
             })
         //     cx.add_action(|workspace: &mut Workspace, _: &ToggleRightDock, cx| {
@@ -3347,7 +3325,6 @@ impl Workspace {
             user_store,
             fs: project.read(cx).fs().clone(),
             build_window_options: |_, _, _| Default::default(),
-            initialize_workspace: |_, _, _, _| Task::ready(Ok(())),
             node_runtime: FakeNodeRuntime::new(),
         });
         let workspace = Self::new(0, project, app_state, cx);
@@ -3625,6 +3602,12 @@ fn notify_if_database_failed(workspace: WindowHandle<Workspace>, cx: &mut AsyncA
 }
 
 impl EventEmitter<Event> for Workspace {}
+
+impl FocusableView for Workspace {
+    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+        self.active_pane.focus_handle(cx)
+    }
+}
 
 impl Render for Workspace {
     type Element = Div<Self>;

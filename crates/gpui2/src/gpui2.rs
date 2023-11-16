@@ -135,6 +135,10 @@ pub trait VisualContext: Context {
     ) -> Self::Result<View<V>>
     where
         V: Render;
+
+    fn focus_view<V>(&mut self, view: &View<V>) -> Self::Result<()>
+    where
+        V: FocusableView;
 }
 
 pub trait Entity<T>: Sealed {

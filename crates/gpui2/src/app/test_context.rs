@@ -562,6 +562,14 @@ impl<'a> VisualContext for VisualTestContext<'a> {
             .update(self.cx, |_, cx| cx.replace_root_view(build_view))
             .unwrap()
     }
+
+    fn focus_view<V: crate::FocusableView>(&mut self, view: &View<V>) -> Self::Result<()> {
+        self.window
+            .update(self.cx, |_, cx| {
+                view.read(cx).focus_handle(cx).clone().focus(cx)
+            })
+            .unwrap()
+    }
 }
 
 impl AnyWindowHandle {

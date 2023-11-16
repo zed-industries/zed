@@ -153,17 +153,20 @@ actions!(
 //     channel_id: ChannelId,
 // }
 
-// const COLLABORATION_PANEL_KEY: &'static str = "CollaborationPanel";
+const COLLABORATION_PANEL_KEY: &'static str = "CollaborationPanel";
 
 use std::sync::Arc;
 
+use db::kvp::KEY_VALUE_STORE;
 use gpui::{
-    actions, div, AppContext, AsyncWindowContext, Div, EventEmitter, FocusHandle, Focusable,
-    InteractiveComponent, ParentComponent, Render, Task, View, ViewContext, VisualContext,
-    WeakView,
+    actions, div, serde_json, AppContext, AsyncWindowContext, Div, EventEmitter, FocusHandle,
+    Focusable, FocusableView, InteractiveComponent, ParentComponent, Render, View, ViewContext,
+    VisualContext, WeakView,
 };
 use project::Fs;
+use serde_derive::{Deserialize, Serialize};
 use settings::Settings;
+use util::ResultExt;
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     Workspace,
@@ -317,11 +320,11 @@ pub struct CollabPanel {
 //     Channel(ChannelId),
 // }
 
-// #[derive(Serialize, Deserialize)]
-// struct SerializedCollabPanel {
-//     width: Option<f32>,
-//     collapsed_channels: Option<Vec<ChannelId>>,
-// }
+#[derive(Serialize, Deserialize)]
+struct SerializedCollabPanel {
+    width: Option<f32>,
+    collapsed_channels: Option<Vec<u64>>,
+}
 
 // #[derive(Debug)]
 // pub enum Event {
@@ -660,43 +663,34 @@ impl CollabPanel {
         })
     }
 
-    pub fn load(
+    pub async fn load(
         workspace: WeakView<Workspace>,
-        cx: AsyncWindowContext,
-    ) -> Task<anyhow::Result<View<Self>>> {
-        cx.spawn(|mut cx| async move {
-            // todo!()
-            // let serialized_panel = if let Some(panel) = cx
-            //     .background()
-            //     .spawn(async move { KEY_VALUE_STORE.read_kvp(COLLABORATION_PANEL_KEY) })
-            //     .await
-            //     .log_err()
-            //     .flatten()
-            // {
-            //     match serde_json::from_str::<SerializedCollabPanel>(&panel) {
-            //         Ok(panel) => Some(panel),
-            //         Err(err) => {
-            //             log::error!("Failed to deserialize collaboration panel: {}", err);
-            //             None
-            //         }
-            //     }
-            // } else {
-            //     None
-            // };
+        mut cx: AsyncWindowContext,
+    ) -> anyhow::Result<View<Self>> {
+        let serialized_panel = cx
+            .background_executor()
+            .spawn(async move { KEY_VALUE_STORE.read_kvp(COLLABORATION_PANEL_KEY) })
+            .await
+            .map_err(|_| anyhow::anyhow!("Failed to read collaboration panel from key value store"))
+            .log_err()
+            .flatten()
+            .map(|panel| serde_json::from_str::<SerializedCollabPanel>(&panel))
+            .transpose()
+            .log_err()
+            .flatten();
 
-            workspace.update(&mut cx, |workspace, cx| {
-                let panel = CollabPanel::new(workspace, cx);
-                // if let Some(serialized_panel) = serialized_panel {
-                //     panel.update(cx, |panel, cx| {
-                //         panel.width = serialized_panel.width;
-                //         panel.collapsed_channels = serialized_panel
-                //             .collapsed_channels
-                //             .unwrap_or_else(|| Vec::new());
-                //         cx.notify();
-                //     });
-                // }
-                panel
-            })
+        workspace.update(&mut cx, |workspace, cx| {
+            let panel = CollabPanel::new(workspace, cx);
+            if let Some(serialized_panel) = serialized_panel {
+                panel.update(cx, |panel, cx| {
+                    panel.width = serialized_panel.width;
+                    // panel.collapsed_channels = serialized_panel
+                    //     .collapsed_channels
+                    //     .unwrap_or_else(|| Vec::new());
+                    cx.notify();
+                });
+            }
+            panel
         })
     }
 
@@ -3454,11 +3448,13 @@ impl Panel for CollabPanel {
         self.focus_handle.contains_focused(cx)
     }
 
-    fn persistent_name(&self) -> &'static str {
-        "Collaboration Panel"
+    fn persistent_name() -> &'static str {
+        "CollabPanel"
     }
+}
 
-    fn focus_handle(&self, _cx: &ui::prelude::WindowContext) -> gpui::FocusHandle {
+impl FocusableView for CollabPanel {
+    fn focus_handle(&self, _cx: &AppContext) -> gpui::FocusHandle {
         self.focus_handle.clone()
     }
 }
