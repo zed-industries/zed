@@ -322,12 +322,6 @@ pub struct AppState {
     pub fs: Arc<dyn fs2::Fs>,
     pub build_window_options:
         fn(Option<WindowBounds>, Option<Uuid>, &mut AppContext) -> WindowOptions,
-    pub initialize_workspace: fn(
-        WeakView<Workspace>,
-        bool,
-        Arc<AppState>,
-        AsyncWindowContext,
-    ) -> Task<anyhow::Result<()>>,
     pub node_runtime: Arc<dyn NodeRuntime>,
 }
 
@@ -373,7 +367,6 @@ impl AppState {
             user_store,
             workspace_store,
             node_runtime: FakeNodeRuntime::new(),
-            initialize_workspace: |_, _, _, _| Task::ready(Ok(())),
             build_window_options: |_, _, _| Default::default(),
         })
     }
@@ -789,17 +782,17 @@ impl Workspace {
             };
 
             // todo!() Ask how to do this
-            let weak_view = window.update(&mut cx, |_, cx| cx.view().downgrade())?;
-            let async_cx = window.update(&mut cx, |_, cx| cx.to_async())?;
+            // let weak_view = window.update(&mut cx, |_, cx| cx.view().downgrade())?;
+            // let async_cx = window.update(&mut cx, |_, cx| cx.to_async())?;
 
-            (app_state.initialize_workspace)(
-                weak_view,
-                serialized_workspace.is_some(),
-                app_state.clone(),
-                async_cx,
-            )
-            .await
-            .log_err();
+            // (app_state.initialize_workspace)(
+            //     weak_view,
+            //     serialized_workspace.is_some(),
+            //     app_state.clone(),
+            //     async_cx,
+            // )
+            // .await
+            // .log_err();
 
             window
                 .update(&mut cx, |_, cx| cx.activate_window())
@@ -3341,7 +3334,6 @@ impl Workspace {
             //         },
             //     );
             .on_action(|this, e: &ToggleLeftDock, cx| {
-                println!("TOGGLING DOCK");
                 this.toggle_dock(DockPosition::Left, cx);
             })
         //     cx.add_action(|workspace: &mut Workspace, _: &ToggleRightDock, cx| {
@@ -3405,7 +3397,6 @@ impl Workspace {
             user_store,
             fs: project.read(cx).fs().clone(),
             build_window_options: |_, _, _| Default::default(),
-            initialize_workspace: |_, _, _, _| Task::ready(Ok(())),
             node_runtime: FakeNodeRuntime::new(),
         });
         let workspace = Self::new(0, project, app_state, cx);

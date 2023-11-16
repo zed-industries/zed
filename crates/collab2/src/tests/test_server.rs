@@ -220,7 +220,6 @@ impl TestServer {
             languages: Arc::new(language_registry),
             fs: fs.clone(),
             build_window_options: |_, _, _| Default::default(),
-            initialize_workspace: |_, _, _, _| gpui::Task::ready(Ok(())),
             node_runtime: FakeNodeRuntime::new(),
         });
 

@@ -32,7 +32,7 @@ use std::{
 use theme::ActiveTheme as _;
 use ui::{h_stack, v_stack, IconElement, Label};
 use unicase::UniCase;
-use util::{maybe, TryFutureExt};
+use util::{maybe, ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, PanelEvent},
     Workspace,
@@ -303,32 +303,31 @@ impl ProjectPanel {
         project_panel
     }
 
-    pub fn load(
+    pub async fn load(
         workspace: WeakView<Workspace>,
-        cx: AsyncWindowContext,
-    ) -> Task<Result<View<Self>>> {
-        cx.spawn(|mut cx| async move {
-            // let serialized_panel = if let Some(panel) = cx
-            //     .background_executor()
-            //     .spawn(async move { KEY_VALUE_STORE.read_kvp(PROJECT_PANEL_KEY) })
-            //     .await
-            //     .log_err()
-            //     .flatten()
-            // {
-            //     Some(serde_json::from_str::<SerializedProjectPanel>(&panel)?)
-            // } else {
-            //     None
-            // };
-            workspace.update(&mut cx, |workspace, cx| {
-                let panel = ProjectPanel::new(workspace, cx);
-                // if let Some(serialized_panel) = serialized_panel {
-                //     panel.update(cx, |panel, cx| {
-                //         panel.width = serialized_panel.width;
-                //         cx.notify();
-                //     });
-                // }
-                panel
-            })
+        mut cx: AsyncWindowContext,
+    ) -> Result<View<Self>> {
+        let serialized_panel = cx
+            .background_executor()
+            .spawn(async move { KEY_VALUE_STORE.read_kvp(PROJECT_PANEL_KEY) })
+            .await
+            .map_err(|e| anyhow!("Failed to load project panel: {}", e))
+            .log_err()
+            .flatten()
+            .map(|panel| serde_json::from_str::<SerializedProjectPanel>(&panel))
+            .transpose()
+            .log_err()
+            .flatten();
+
+        workspace.update(&mut cx, |workspace, cx| {
+            let panel = ProjectPanel::new(workspace, cx);
+            if let Some(serialized_panel) = serialized_panel {
+                panel.update(cx, |panel, cx| {
+                    panel.width = serialized_panel.width;
+                    cx.notify();
+                });
+            }
+            panel
         })
     }
 
