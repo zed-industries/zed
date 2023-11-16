@@ -7,6 +7,7 @@ use gpui::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use theme2::ActiveTheme;
 use ui::{h_stack, IconButton, InteractionState, Tooltip};
 
 pub enum PanelEvent {
@@ -443,9 +444,15 @@ impl Render for Dock {
             let size = entry.panel.size(cx);
 
             div()
+                .border_color(cx.theme().colors().border)
                 .map(|this| match self.position().axis() {
                     Axis::Horizontal => this.w(px(size)).h_full(),
                     Axis::Vertical => this.h(px(size)).w_full(),
+                })
+                .map(|this| match self.position() {
+                    DockPosition::Left => this.border_r(),
+                    DockPosition::Right => this.border_l(),
+                    DockPosition::Bottom => this.border_t(),
                 })
                 .child(entry.panel.to_any())
         } else {
@@ -675,7 +682,7 @@ impl Render for PanelButtons {
                 Some(button)
             });
 
-        h_stack().children(buttons)
+        h_stack().gap_0p5().children(buttons)
     }
 }
 
