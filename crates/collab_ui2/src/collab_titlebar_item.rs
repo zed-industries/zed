@@ -31,9 +31,9 @@ use std::sync::Arc;
 use call::ActiveCall;
 use client::{Client, UserStore};
 use gpui::{
-    div, rems, AppContext, Component, Div, InteractiveComponent, Model, ParentComponent, Render,
-    Stateful, StatefulInteractiveComponent, Styled, Subscription, ViewContext, VisualContext,
-    WeakView, WindowBounds,
+    div, px, rems, AppContext, Component, Div, InteractiveComponent, Model, ParentComponent,
+    Render, Stateful, StatefulInteractiveComponent, Styled, Subscription, ViewContext,
+    VisualContext, WeakView, WindowBounds,
 };
 use project::Project;
 use theme::ActiveTheme;
@@ -88,12 +88,17 @@ impl Render for CollabTitlebarItem {
         h_stack()
             .id("titlebar")
             .justify_between()
-            .when(
-                !matches!(cx.window_bounds(), WindowBounds::Fullscreen),
-                |s| s.pl_20(),
-            )
             .w_full()
             .h(rems(1.75))
+            // Set a non-scaling min-height here to ensure the titlebar is
+            // always at least the height of the traffic lights.
+            .min_h(px(32.))
+            .when(
+                !matches!(cx.window_bounds(), WindowBounds::Fullscreen),
+                // Use pixels here instead of a rem-based size because the macOS traffic
+                // lights are a static size, and don't scale with the rest of the UI.
+                |s| s.pl(px(68.)),
+            )
             .bg(cx.theme().colors().title_bar_background)
             .on_click(|_, event, cx| {
                 if event.up.click_count == 2 {
@@ -102,6 +107,7 @@ impl Render for CollabTitlebarItem {
             })
             .child(
                 h_stack()
+                    .gap_1()
                     // TODO - Add player menu
                     .child(
                         div()
