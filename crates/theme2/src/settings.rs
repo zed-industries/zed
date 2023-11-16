@@ -117,7 +117,7 @@ impl settings::Settings for ThemeSettings {
         user_values: &[&Self::FileContent],
         cx: &mut AppContext,
     ) -> Result<Self> {
-        let themes = cx.default_global::<Arc<ThemeRegistry>>();
+        let themes = cx.default_global::<ThemeRegistry>();
 
         let mut this = Self {
             ui_font_size: defaults.ui_font_size.unwrap_or(16.).into(),
