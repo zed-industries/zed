@@ -57,7 +57,6 @@ impl Render for FocusStory {
             .size_full()
             .bg(color_1)
             .focus(|style| style.bg(color_2))
-            .focus_in(|style| style.bg(color_3))
             .child(
                 div()
                     .track_focus(&self.child_1_focus)

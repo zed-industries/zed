@@ -436,14 +436,6 @@ pub trait FocusableComponent<V: 'static>: InteractiveComponent<V> {
         self
     }
 
-    fn focus_in(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self
-    where
-        Self: Sized,
-    {
-        self.interactivity().focus_in_style = f(StyleRefinement::default());
-        self
-    }
-
     fn in_focus(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self
     where
         Self: Sized,
@@ -616,46 +608,36 @@ impl<V: 'static> Element<V> for Div<V> {
         self.interactivity.element_id.clone()
     }
 
-    fn initialize(
+    fn layout(
         &mut self,
         view_state: &mut V,
         element_state: Option<Self::ElementState>,
         cx: &mut ViewContext<V>,
-    ) -> Self::ElementState {
-        let interactive_state = self
-            .interactivity
-            .initialize(element_state.map(|s| s.interactive_state), cx);
-
-        for child in &mut self.children {
-            child.initialize(view_state, cx);
-        }
-
-        DivState {
-            interactive_state,
-            child_layout_ids: SmallVec::new(),
-        }
-    }
-
-    fn layout(
-        &mut self,
-        view_state: &mut V,
-        element_state: &mut Self::ElementState,
-        cx: &mut ViewContext<V>,
-    ) -> crate::LayoutId {
+    ) -> (LayoutId, Self::ElementState) {
+        let mut child_layout_ids = SmallVec::new();
         let mut interactivity = mem::take(&mut self.interactivity);
-        let layout_id =
-            interactivity.layout(&mut element_state.interactive_state, cx, |style, cx| {
+        let (layout_id, interactive_state) = interactivity.layout(
+            element_state.map(|s| s.interactive_state),
+            cx,
+            |style, cx| {
                 cx.with_text_style(style.text_style().cloned(), |cx| {
-                    element_state.child_layout_ids = self
+                    child_layout_ids = self
                         .children
                         .iter_mut()
                         .map(|child| child.layout(view_state, cx))
                         .collect::<SmallVec<_>>();
-                    cx.request_layout(&style, element_state.child_layout_ids.iter().copied())
+                    cx.request_layout(&style, child_layout_ids.iter().copied())
                 })
-            });
+            },
+        );
         self.interactivity = interactivity;
-        layout_id
+        (
+            layout_id,
+            DivState {
+                interactive_state,
+                child_layout_ids,
+            },
+        )
     }
 
     fn paint(
@@ -739,7 +721,6 @@ pub struct Interactivity<V> {
     pub group: Option<SharedString>,
     pub base_style: StyleRefinement,
     pub focus_style: StyleRefinement,
-    pub focus_in_style: StyleRefinement,
     pub in_focus_style: StyleRefinement,
     pub hover_style: StyleRefinement,
     pub group_hover_style: Option<GroupStyle>,
@@ -765,11 +746,12 @@ impl<V> Interactivity<V>
 where
     V: 'static,
 {
-    pub fn initialize(
+    pub fn layout(
         &mut self,
         element_state: Option<InteractiveElementState>,
         cx: &mut ViewContext<V>,
-    ) -> InteractiveElementState {
+        f: impl FnOnce(Style, &mut ViewContext<V>) -> LayoutId,
+    ) -> (LayoutId, InteractiveElementState) {
         let mut element_state = element_state.unwrap_or_default();
 
         // Ensure we store a focus handle in our element state if we're focusable.
@@ -784,17 +766,9 @@ where
             });
         }
 
-        element_state
-    }
-
-    pub fn layout(
-        &mut self,
-        element_state: &mut InteractiveElementState,
-        cx: &mut ViewContext<V>,
-        f: impl FnOnce(Style, &mut ViewContext<V>) -> LayoutId,
-    ) -> LayoutId {
-        let style = self.compute_style(None, element_state, cx);
-        f(style, cx)
+        let style = self.compute_style(None, &mut element_state, cx);
+        let layout_id = f(style, cx);
+        (layout_id, element_state)
     }
 
     pub fn paint(
@@ -1129,10 +1103,6 @@ where
         style.refine(&self.base_style);
 
         if let Some(focus_handle) = self.tracked_focus_handle.as_ref() {
-            if focus_handle.contains_focused(cx) {
-                style.refine(&self.focus_in_style);
-            }
-
             if focus_handle.within_focused(cx) {
                 style.refine(&self.in_focus_style);
             }
@@ -1205,7 +1175,6 @@ impl<V: 'static> Default for Interactivity<V> {
             group: None,
             base_style: StyleRefinement::default(),
             focus_style: StyleRefinement::default(),
-            focus_in_style: StyleRefinement::default(),
             in_focus_style: StyleRefinement::default(),
             hover_style: StyleRefinement::default(),
             group_hover_style: None,
@@ -1326,21 +1295,12 @@ where
         self.element.element_id()
     }
 
-    fn initialize(
+    fn layout(
         &mut self,
         view_state: &mut V,
         element_state: Option<Self::ElementState>,
         cx: &mut ViewContext<V>,
-    ) -> Self::ElementState {
-        self.element.initialize(view_state, element_state, cx)
-    }
-
-    fn layout(
-        &mut self,
-        view_state: &mut V,
-        element_state: &mut Self::ElementState,
-        cx: &mut ViewContext<V>,
-    ) -> LayoutId {
+    ) -> (LayoutId, Self::ElementState) {
         self.element.layout(view_state, element_state, cx)
     }
 
@@ -1421,21 +1381,12 @@ where
         self.element.element_id()
     }
 
-    fn initialize(
+    fn layout(
         &mut self,
         view_state: &mut V,
         element_state: Option<Self::ElementState>,
         cx: &mut ViewContext<V>,
-    ) -> Self::ElementState {
-        self.element.initialize(view_state, element_state, cx)
-    }
-
-    fn layout(
-        &mut self,
-        view_state: &mut V,
-        element_state: &mut Self::ElementState,
-        cx: &mut ViewContext<V>,
-    ) -> LayoutId {
+    ) -> (LayoutId, Self::ElementState) {
         self.element.layout(view_state, element_state, cx)
     }
 

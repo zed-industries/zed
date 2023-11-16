@@ -2400,21 +2400,14 @@ impl Element<Editor> for EditorElement {
         Some(self.editor_id.into())
     }
 
-    fn initialize(
+    fn layout(
         &mut self,
         editor: &mut Editor,
         element_state: Option<Self::ElementState>,
         cx: &mut gpui::ViewContext<Editor>,
-    ) -> Self::ElementState {
+    ) -> (gpui::LayoutId, Self::ElementState) {
         editor.style = Some(self.style.clone()); // Long-term, we'd like to eliminate this.
-    }
 
-    fn layout(
-        &mut self,
-        editor: &mut Editor,
-        element_state: &mut Self::ElementState,
-        cx: &mut gpui::ViewContext<Editor>,
-    ) -> gpui::LayoutId {
         let rem_size = cx.rem_size();
         let mut style = Style::default();
         style.size.width = relative(1.).into();
@@ -2423,7 +2416,8 @@ impl Element<Editor> for EditorElement {
             EditorMode::AutoHeight { .. } => todo!(),
             EditorMode::Full => relative(1.).into(),
         };
-        cx.request_layout(&style, None)
+        let layout_id = cx.request_layout(&style, None);
+        (layout_id, ())
     }
 
     fn paint(

@@ -76,21 +76,13 @@ impl<V: 'static> Element<V> for Text<V> {
         None
     }
 
-    fn initialize(
-        &mut self,
-        _view_state: &mut V,
-        element_state: Option<Self::ElementState>,
-        _cx: &mut ViewContext<V>,
-    ) -> Self::ElementState {
-        element_state.unwrap_or_default()
-    }
-
     fn layout(
         &mut self,
         _view: &mut V,
-        element_state: &mut Self::ElementState,
+        element_state: Option<Self::ElementState>,
         cx: &mut ViewContext<V>,
-    ) -> LayoutId {
+    ) -> (LayoutId, Self::ElementState) {
+        let element_state = element_state.unwrap_or_default();
         let text_system = cx.text_system().clone();
         let text_style = cx.text_style();
         let font_size = text_style.font_size.to_pixels(cx.rem_size());
@@ -148,7 +140,7 @@ impl<V: 'static> Element<V> for Text<V> {
             }
         });
 
-        layout_id
+        (layout_id, element_state)
     }
 
     fn paint(
