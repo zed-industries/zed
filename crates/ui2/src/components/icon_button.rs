@@ -72,7 +72,7 @@ impl<V: 'static> IconButton<V> {
     fn render(mut self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         let icon_color = match (self.state, self.color) {
             (InteractionState::Disabled, _) => TextColor::Disabled,
-            (InteractionState::Active, _) => TextColor::Error,
+            (InteractionState::Active, _) => TextColor::Selected,
             _ => self.color,
         };
 
@@ -95,17 +95,16 @@ impl<V: 'static> IconButton<V> {
             .rounded_md()
             .p_1()
             .bg(bg_color)
+            .cursor_pointer()
             .hover(|style| style.bg(bg_hover_color))
             .active(|style| style.bg(bg_active_color))
             .child(IconElement::new(self.icon).color(icon_color));
 
         if let Some(click_handler) = self.handlers.click.clone() {
-            button = button
-                .on_mouse_down(MouseButton::Left, move |state, event, cx| {
-                    cx.stop_propagation();
-                    click_handler(state, cx);
-                })
-                .cursor_pointer();
+            button = button.on_mouse_down(MouseButton::Left, move |state, event, cx| {
+                cx.stop_propagation();
+                click_handler(state, cx);
+            })
         }
 
         if let Some(tooltip) = self.tooltip.take() {
