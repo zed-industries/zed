@@ -1,8 +1,8 @@
 // use editor::{Cursor, HighlightedRange, HighlightedRangeLine};
 // use gpui::{
-//     AnyElement, AppContext, Bounds, Component, Element, HighlightStyle, Hsla, LayoutId, Line,
-//     ModelContext, MouseButton, Pixels, Point, TextStyle, Underline, ViewContext, WeakModel,
-//     WindowContext,
+//     point, transparent_black, AnyElement, AppContext, Bounds, Component, CursorStyle, Element,
+//     FontStyle, FontWeight, HighlightStyle, Hsla, LayoutId, Line, ModelContext, MouseButton,
+//     Overlay, Pixels, Point, Quad, TextStyle, Underline, ViewContext, WeakModel, WindowContext,
 // };
 // use itertools::Itertools;
 // use language::CursorShape;
@@ -130,23 +130,24 @@
 //         cx: &mut ViewContext<TerminalView>,
 //     ) {
 //         let position = {
-//             let point = self.point;
-//             vec2f(
-//                 (origin.x() + point.column as f32 * layout.size.cell_width).floor(),
-//                 origin.y() + point.line as f32 * layout.size.line_height,
+//             let alac_point = self.point;
+//             point(
+//                 (origin.x + alac_point.column as f32 * layout.size.cell_width).floor(),
+//                 origin.y + alac_point.line as f32 * layout.size.line_height,
 //             )
 //         };
-//         let size = vec2f(
+//         let size = point(
 //             (layout.size.cell_width * self.num_of_cells as f32).ceil(),
 //             layout.size.line_height,
-//         );
+//         )
+//         .into();
 
 //         cx.paint_quad(
 //             Bounds::new(position, size),
 //             Default::default(),
 //             self.color,
 //             Default::default(),
-//             Default::default(),
+//             transparent_black(),
 //         );
 //     }
 // }
@@ -281,9 +282,9 @@
 //         cursor_point: DisplayCursor,
 //         size: TerminalSize,
 //         text_fragment: &Line,
-//     ) -> Option<(Vector2F, f32)> {
+//     ) -> Option<(Point<Pixels>, Pixels)> {
 //         if cursor_point.line() < size.total_lines() as i32 {
-//             let cursor_width = if text_fragment.width == 0. {
+//             let cursor_width = if text_fragment.width == Pixels::ZERO {
 //                 size.cell_width()
 //             } else {
 //                 text_fragment.width
@@ -292,7 +293,7 @@
 //             //Cursor should always surround as much of the text as possible,
 //             //hence when on pixel boundaries round the origin down and the width up
 //             Some((
-//                 vec2f(
+//                 point(
 //                     (cursor_point.col() as f32 * size.cell_width()).floor(),
 //                     (cursor_point.line() as f32 * size.line_height()).floor(),
 //                 ),
@@ -332,15 +333,15 @@
 
 //         let mut properties = Properties::new();
 //         if indexed.flags.intersects(Flags::BOLD | Flags::DIM_BOLD) {
-//             properties = *properties.weight(Weight::BOLD);
+//             properties = *properties.weight(FontWeight::BOLD);
 //         }
 //         if indexed.flags.intersects(Flags::ITALIC) {
-//             properties = *properties.style(Italic);
+//             properties = *properties.style(FontStyle::Italic);
 //         }
 
 //         let font_id = font_cache
-//             .select_font(text_style.font_family_id, &properties)
-//             .unwrap_or(8text_style.font_id);
+//             .select_font(text_style.font_family, &properties)
+//             .unwrap_or(text_style.font_id);
 
 //         let mut result = RunStyle {
 //             color: fg,
@@ -366,7 +367,7 @@
 //     fn generic_button_handler<E>(
 //         connection: WeakModel<Terminal>,
 //         origin: Point<Pixels>,
-//         f: impl Fn(&mut Terminal, Vector2F, E, &mut ModelContext<Terminal>),
+//         f: impl Fn(&mut Terminal, Point<Pixels>, E, &mut ModelContext<Terminal>),
 //     ) -> impl Fn(E, &mut TerminalView, &mut EventContext<TerminalView>) {
 //         move |event, _: &mut TerminalView, cx| {
 //             cx.focus_parent();
@@ -522,9 +523,9 @@
 //     fn layout(
 //         &mut self,
 //         view_state: &mut TerminalView,
-//         element_state: &mut Self::ElementState,
+//         element_state: Option<Self::ElementState>,
 //         cx: &mut ViewContext<TerminalView>,
-//     ) -> LayoutId {
+//     ) -> (LayoutId, Self::ElementState) {
 //         let settings = ThemeSettings::get_global(cx);
 //         let terminal_settings = TerminalSettings::get_global(cx);
 
@@ -569,7 +570,7 @@
 //             let cell_width = font_cache.em_advance(text_style.font_id, text_style.font_size);
 //             gutter = cell_width;
 
-//             let size = constraint.max - vec2f(gutter, 0.);
+//             let size = constraint.max - point(gutter, 0.);
 //             TerminalSize::new(line_height, cell_width, size)
 //         };
 
@@ -607,11 +608,11 @@
 //                         cx,
 //                     ),
 //             )
-//             .with_position_mode(gpui::elements::OverlayPositionMode::Local)
+//             .with_position_mode(gpui::OverlayPositionMode::Local)
 //             .into_any();
 
 //             tooltip.layout(
-//                 SizeConstraint::new(Vector2F::zero(), cx.window_size()),
+//                 SizeConstraint::new(Point::zero(), cx.window_size()),
 //                 view_state,
 //                 cx,
 //             );
@@ -735,7 +736,7 @@
 //         let clip_bounds = Some(visible_bounds);
 
 //         cx.paint_layer(clip_bounds, |cx| {
-//             let origin = bounds.origin() + vec2f(element_state.gutter, 0.);
+//             let origin = bounds.origin + point(element_state.gutter, 0.);
 
 //             // Elements are ephemeral, only at paint time do we know what could be clicked by a mouse
 //             self.attach_mouse_handlers(origin, visible_bounds, element_state.mode, cx);
@@ -808,7 +809,7 @@
 //         });
 //     }
 
-//     fn id(&self) -> Option<gpui::ElementId> {
+//     fn element_id(&self) -> Option<workspace::ui::prelude::ElementId> {
 //         todo!()
 //     }
 
@@ -842,12 +843,12 @@
 //     // ) -> Option<Bounds<Pixels>> {
 //     //     // Use the same origin that's passed to `Cursor::paint` in the paint
 //     //     // method bove.
-//     //     let mut origin = bounds.origin() + vec2f(layout.size.cell_width, 0.);
+//     //     let mut origin = bounds.origin() + point(layout.size.cell_width, 0.);
 
 //     //     // TODO - Why is it necessary to move downward one line to get correct
 //     //     // positioning? I would think that we'd want the same rect that is
 //     //     // painted for the cursor.
-//     //     origin += vec2f(0., layout.size.line_height);
+//     //     origin += point(0., layout.size.line_height);
 
 //     //     Some(layout.cursor.as_ref()?.bounding_rect(origin))
 //     // }
@@ -886,7 +887,7 @@
 //     range: &RangeInclusive<AlacPoint>,
 //     layout: &LayoutState,
 //     origin: Point<Pixels>,
-// ) -> Option<(f32, Vec<HighlightedRangeLine>)> {
+// ) -> Option<(Pixels, Vec<HighlightedRangeLine>)> {
 //     // Step 1. Normalize the points to be viewport relative.
 //     // When display_offset = 1, here's how the grid is arranged:
 //     //-2,0 -2,1...
@@ -937,8 +938,8 @@
 //         }
 
 //         highlighted_range_lines.push(HighlightedRangeLine {
-//             start_x: origin.x() + line_start as f32 * layout.size.cell_width,
-//             end_x: origin.x() + line_end as f32 * layout.size.cell_width,
+//             start_x: origin.x + line_start as f32 * layout.size.cell_width,
+//             end_x: origin.x + line_end as f32 * layout.size.cell_width,
 //         });
 //     }
 
