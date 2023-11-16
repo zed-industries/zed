@@ -20,10 +20,6 @@ impl IgnoreStack {
         Arc::new(Self::All)
     }
 
-    pub fn is_all(&self) -> bool {
-        matches!(self, Self::All)
-    }
-
     pub fn append(self: Arc<Self>, abs_base_path: Arc<Path>, ignore: Arc<Gitignore>) -> Arc<Self> {
         match self.as_ref() {
             IgnoreStack::All => self,

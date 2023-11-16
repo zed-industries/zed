@@ -946,7 +946,7 @@ async fn test_file_scan_exclusions(cx: &mut TestAppContext) {
                 "src/.DS_Store",
                 ".DS_Store",
             ],
-            &["target/index", "node_modules/prettier/package.json"],
+            &["target", "node_modules"],
             &["src/lib.rs", "src/bar/bar.rs", ".gitignore"],
         )
     });
@@ -967,8 +967,9 @@ async fn test_file_scan_exclusions(cx: &mut TestAppContext) {
             &[
                 "node_modules/prettier/package.json",
                 "node_modules/.DS_Store",
+                "node_modules",
             ],
-            &["target/index"],
+            &["target"],
             &[
                 ".gitignore",
                 "src/lib.rs",
