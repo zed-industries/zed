@@ -40,7 +40,7 @@ use std::{
     thread,
     time::{SystemTime, UNIX_EPOCH},
 };
-use theme::ActiveTheme;
+use theme::{ActiveTheme, ThemeRegistry};
 use util::{
     async_maybe,
     channel::{parse_zed_link, ReleaseChannel, RELEASE_CHANNEL},
@@ -140,7 +140,7 @@ fn main() {
 
         cx.set_global(client.clone());
 
-        theme::init(cx);
+        theme::init(theme::LoadThemes::All, cx);
         project::Project::init(&client, cx);
         client::init(&client, cx);
         command_palette::init(cx);
