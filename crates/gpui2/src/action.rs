@@ -200,3 +200,43 @@ macro_rules! actions {
         actions!($($rest)*);
     };
 }
+
+/// This type must be public so that our macros can build it in other crates.
+/// But this is an implementation detail and should not be used directly.
+#[doc(hidden)]
+pub struct ActionData {
+    pub name: &'static str,
+    pub build: ActionBuilder,
+    pub type_id: TypeId,
+}
+
+/// This type must be public so that our macros can build it in other crates.
+/// But this is an implementation detail and should not be used directly.
+#[doc(hidden)]
+pub type MacroActionBuilder = fn() -> ActionData;
+
+/// This constant must be public to be accessible from other crates.
+/// But it's existence is an implementation detail and should not be used directly.
+#[doc(hidden)]
+#[linkme::distributed_slice]
+pub static __GPUI_ACTIONS: [MacroActionBuilder];
+
+fn qualify_name(action_name: &'static str) -> SharedString {
+    let mut separator_matches = action_name.rmatch_indices("::");
+    separator_matches.next().unwrap();
+    let name_start_ix = separator_matches.next().map_or(0, |(ix, _)| ix + 2);
+    // todo!() remove the 2 replacement when migration is done
+    action_name[name_start_ix..].replace("2::", "::").into()
+}
+
+pub(crate) fn load_actions_2() {
+    let mut lock = ACTION_REGISTRY.write();
+
+    for action in __GPUI_ACTIONS {
+        let action = action();
+        let name = qualify_name(action.name);
+        lock.builders_by_name.insert(name.clone(), action.build);
+        lock.names_by_type_id.insert(action.type_id, name.clone());
+        lock.all_names.push(name);
+    }
+}

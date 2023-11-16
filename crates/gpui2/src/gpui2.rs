@@ -49,6 +49,7 @@ pub use input::*;
 pub use interactive::*;
 pub use key_dispatch::*;
 pub use keymap::*;
+pub use linkme;
 pub use platform::*;
 use private::Sealed;
 pub use refineable::*;
