@@ -56,6 +56,9 @@ pub trait Action: std::fmt::Debug + 'static {
     fn build(value: Option<serde_json::Value>) -> Result<Box<dyn Action>>
     where
         Self: Sized;
+    fn is_registered() -> bool
+    where
+        Self: Sized;
 
     fn partial_eq(&self, action: &dyn Action) -> bool;
     fn boxed_clone(&self) -> Box<dyn Action>;
@@ -65,7 +68,7 @@ pub trait Action: std::fmt::Debug + 'static {
 // Types become actions by satisfying a list of trait bounds.
 impl<A> Action for A
 where
-    A: for<'a> Deserialize<'a> + PartialEq + Clone + Default + std::fmt::Debug + 'static,
+    A: for<'a> Deserialize<'a> + PartialEq + Default + Clone + std::fmt::Debug + 'static,
 {
     fn qualified_name() -> SharedString {
         let name = type_name::<A>();
@@ -86,6 +89,14 @@ where
             Self::default()
         };
         Ok(Box::new(action))
+    }
+
+    fn is_registered() -> bool {
+        ACTION_REGISTRY
+            .read()
+            .names_by_type_id
+            .get(&TypeId::of::<A>())
+            .is_some()
     }
 
     fn partial_eq(&self, action: &dyn Action) -> bool {

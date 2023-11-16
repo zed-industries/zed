@@ -3684,7 +3684,7 @@ impl BackgroundScanner {
                 }
                 Err(err) => {
                     // TODO - create a special 'error' entry in the entries tree to mark this
-                    log::error!("error reading file on event {:?}", err);
+                    log::error!("error reading file {abs_path:?} on event: {err:#}");
                 }
             }
         }

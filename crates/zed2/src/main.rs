@@ -50,8 +50,8 @@ use util::{
 use uuid::Uuid;
 use workspace::{AppState, WorkspaceStore};
 use zed2::{
-    build_window_options, ensure_only_instance, handle_cli_connection, init_zed_actions,
-    initialize_workspace, languages, Assets, IsOnlyInstance, OpenListener, OpenRequest,
+    build_window_options, ensure_only_instance, handle_cli_connection, initialize_workspace,
+    languages, Assets, IsOnlyInstance, OpenListener, OpenRequest,
 };
 
 mod open_listener;
@@ -141,7 +141,6 @@ fn main() {
         cx.set_global(client.clone());
 
         theme::init(cx);
-        // context_menu::init(cx);
         project::Project::init(&client, cx);
         client::init(&client, cx);
         command_palette::init(cx);
@@ -176,7 +175,6 @@ fn main() {
             user_store,
             fs,
             build_window_options,
-            initialize_workspace,
             // background_actions: todo!("ask Mikayla"),
             workspace_store,
             node_runtime,
@@ -199,7 +197,7 @@ fn main() {
         search::init(cx);
         // semantic_index::init(fs.clone(), http.clone(), languages.clone(), cx);
         // vim::init(cx);
-        // terminal_view::init(cx);
+        terminal_view::init(cx);
 
         // journal2::init(app_state.clone(), cx);
         // language_selector::init(cx);
@@ -207,13 +205,13 @@ fn main() {
         // activity_indicator::init(cx);
         // language_tools::init(cx);
         call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
-        // collab_ui::init(&app_state, cx);
+        collab_ui::init(&app_state, cx);
         // feedback::init(cx);
         // welcome::init(cx);
         // zed::init(&app_state, cx);
 
         // cx.set_menus(menus::menus());
-        init_zed_actions(app_state.clone(), cx);
+        initialize_workspace(app_state.clone(), cx);
 
         if stdout_is_a_pty() {
             cx.activate(true);

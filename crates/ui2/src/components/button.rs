@@ -61,7 +61,7 @@ impl ButtonVariant {
     }
 }
 
-pub type ClickHandler<V> = Arc<dyn Fn(&mut V, &mut ViewContext<V>) + Send + Sync>;
+pub type ClickHandler<V> = Arc<dyn Fn(&mut V, &mut ViewContext<V>)>;
 
 struct ButtonHandlers<V: 'static> {
     click: Option<ClickHandler<V>>,

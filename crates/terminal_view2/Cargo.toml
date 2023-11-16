@@ -1,0 +1,45 @@
+[package]
+name = "terminal_view2"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+path = "src/terminal_view.rs"
+doctest = false
+
+[dependencies]
+editor = { package = "editor2", path = "../editor2" }
+language = { package = "language2", path = "../language2" }
+gpui = { package = "gpui2", path = "../gpui2" }
+project = { package = "project2", path = "../project2" }
+# search = { package = "search2", path = "../search2" }
+settings = { package = "settings2", path = "../settings2" }
+theme = { package = "theme2", path = "../theme2" }
+util = { path = "../util" }
+workspace = { package = "workspace2", path = "../workspace2" }
+db = { package = "db2", path = "../db2" }
+procinfo = { git = "https://github.com/zed-industries/wezterm", rev = "5cd757e5f2eb039ed0c6bb6512223e69d5efc64d", default-features = false }
+terminal = { package = "terminal2", path = "../terminal2" }
+smallvec.workspace = true
+smol.workspace = true
+mio-extras = "2.0.6"
+futures.workspace = true
+ordered-float.workspace = true
+itertools = "0.10"
+dirs = "4.0.0"
+shellexpand = "2.1.0"
+libc = "0.2"
+anyhow.workspace = true
+thiserror.workspace = true
+lazy_static.workspace = true
+serde.workspace = true
+serde_derive.workspace = true
+
+[dev-dependencies]
+editor = { package = "editor2", path = "../editor2", features = ["test-support"] }
+gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"] }
+client = { package = "client2", path = "../client2", features = ["test-support"]}
+project = { package = "project2", path = "../project2", features = ["test-support"]}
+workspace = { package = "workspace2", path = "../workspace2", features = ["test-support"] }
+rand.workspace = true

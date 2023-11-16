@@ -23,11 +23,10 @@ ai = { package = "ai2", path = "../ai2"}
 call = { package = "call2", path = "../call2" }
 # channel = { path = "../channel" }
 cli = { path = "../cli" }
-# collab_ui = { path = "../collab_ui" }
+collab_ui = { package = "collab_ui2", path = "../collab_ui2" }
 collections = { path = "../collections" }
 command_palette = { package="command_palette2", path = "../command_palette2" }
 # component_test = { path = "../component_test" }
-# context_menu = { path = "../context_menu" }
 client = { package = "client2", path = "../client2" }
 # clock = { path = "../clock" }
 copilot = { package = "copilot2", path = "../copilot2" }
@@ -66,7 +65,7 @@ feature_flags = { package = "feature_flags2", path = "../feature_flags2" }
 sum_tree = { path = "../sum_tree" }
 shellexpand = "2.1.0"
 text = { package = "text2", path = "../text2" }
-# terminal_view = { path = "../terminal_view" }
+terminal_view = { package = "terminal_view2", path = "../terminal_view2" }
 theme = { package = "theme2", path = "../theme2" }
 # theme_selector = { path = "../theme_selector" }
 util = { path = "../util" }

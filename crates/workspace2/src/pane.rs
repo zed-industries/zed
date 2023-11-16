@@ -8,8 +8,8 @@ use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
 use gpui::{
     actions, prelude::*, register_action, AppContext, AsyncWindowContext, Component, Div, EntityId,
-    EventEmitter, FocusHandle, Model, PromptLevel, Render, Task, View, ViewContext, VisualContext,
-    WeakView, WindowContext,
+    EventEmitter, FocusHandle, Focusable, FocusableView, Model, PromptLevel, Render, Task, View,
+    ViewContext, VisualContext, WeakView, WindowContext,
 };
 use parking_lot::Mutex;
 use project2::{Project, ProjectEntryId, ProjectPath};
@@ -25,7 +25,7 @@ use std::{
     },
 };
 use ui::v_stack;
-use ui::{prelude::*, Icon, IconButton, IconElement, TextColor, TextTooltip};
+use ui::{prelude::*, Icon, IconButton, IconElement, TextColor, Tooltip};
 use util::truncate_and_remove_front;
 
 #[derive(PartialEq, Clone, Copy, Deserialize, Debug)]
@@ -125,10 +125,6 @@ pub fn init(cx: &mut AppContext) {
     //     cx.add_async_action(Pane::close_items_to_the_left);
     //     cx.add_async_action(Pane::close_items_to_the_right);
     //     cx.add_async_action(Pane::close_all_items);
-    //     cx.add_action(|pane: &mut Pane, _: &SplitLeft, cx| pane.split(SplitDirection::Left, cx));
-    //     cx.add_action(|pane: &mut Pane, _: &SplitUp, cx| pane.split(SplitDirection::Up, cx));
-    //     cx.add_action(|pane: &mut Pane, _: &SplitRight, cx| pane.split(SplitDirection::Right, cx));
-    //     cx.add_action(|pane: &mut Pane, _: &SplitDown, cx| pane.split(SplitDirection::Down, cx));
 }
 
 pub enum Event {
@@ -183,7 +179,7 @@ pub struct Pane {
     workspace: WeakView<Workspace>,
     project: Model<Project>,
     //     can_drop: Rc<dyn Fn(&DragAndDrop<Workspace>, &WindowContext) -> bool>,
-    //     can_split: bool,
+    can_split: bool,
     //     render_tab_bar_buttons: Rc<dyn Fn(&mut Pane, &mut ViewContext<Pane>) -> AnyElement<Pane>>,
 }
 
@@ -351,7 +347,7 @@ impl Pane {
             workspace,
             project,
             // can_drop: Rc::new(|_, _| true),
-            // can_split: true,
+            can_split: true,
             // render_tab_bar_buttons: Rc::new(move |pane, cx| {
             //     Flex::row()
             //         // New menu
@@ -431,17 +427,17 @@ impl Pane {
     //         self.can_drop = Rc::new(can_drop);
     //     }
 
-    //     pub fn set_can_split(&mut self, can_split: bool, cx: &mut ViewContext<Self>) {
-    //         self.can_split = can_split;
-    //         cx.notify();
-    //     }
+    pub fn set_can_split(&mut self, can_split: bool, cx: &mut ViewContext<Self>) {
+        self.can_split = can_split;
+        cx.notify();
+    }
 
-    //     pub fn set_can_navigate(&mut self, can_navigate: bool, cx: &mut ViewContext<Self>) {
-    //         self.toolbar.update(cx, |toolbar, cx| {
-    //             toolbar.set_can_navigate(can_navigate, cx);
-    //         });
-    //         cx.notify();
-    //     }
+    pub fn set_can_navigate(&mut self, can_navigate: bool, cx: &mut ViewContext<Self>) {
+        self.toolbar.update(cx, |toolbar, cx| {
+            toolbar.set_can_navigate(can_navigate, cx);
+        });
+        cx.notify();
+    }
 
     //     pub fn set_render_tab_bar_buttons<F>(&mut self, cx: &mut ViewContext<Self>, render: F)
     //     where
@@ -1017,7 +1013,11 @@ impl Pane {
                 .unwrap_or_else(|| item_index.min(self.items.len()).saturating_sub(1));
 
             let should_activate = activate_pane || self.has_focus(cx);
-            self.activate_item(index_to_activate, should_activate, should_activate, cx);
+            if self.items.len() == 1 && should_activate {
+                self.focus_handle.focus(cx);
+            } else {
+                self.activate_item(index_to_activate, should_activate, should_activate, cx);
+            }
         }
 
         let item = self.items.remove(item_index);
@@ -1191,9 +1191,9 @@ impl Pane {
         }
     }
 
-    //     pub fn split(&mut self, direction: SplitDirection, cx: &mut ViewContext<Self>) {
-    //         cx.emit(Event::Split(direction));
-    //     }
+    pub fn split(&mut self, direction: SplitDirection, cx: &mut ViewContext<Self>) {
+        cx.emit(Event::Split(direction));
+    }
 
     //     fn deploy_split_menu(&mut self, cx: &mut ViewContext<Self>) {
     //         self.tab_bar_context_menu.handle.update(cx, |menu, cx| {
@@ -1392,8 +1392,9 @@ impl Pane {
             .id(item.id())
             .cursor_pointer()
             .when_some(item.tab_tooltip_text(cx), |div, text| {
-                div.tooltip(move |_, cx| cx.build_view(|cx| TextTooltip::new(text.clone())))
+                div.tooltip(move |_, cx| cx.build_view(|cx| Tooltip::new(text.clone())).into())
             })
+            .on_click(move |v: &mut Self, e, cx| v.activate_item(ix, true, true, cx))
             // .on_drag(move |pane, cx| pane.render_tab(ix, item.boxed_clone(), detail, cx))
             // .drag_over::<DraggedTab>(|d| d.bg(cx.theme().colors().element_drop_target))
             // .on_drop(|_view, state: View<DraggedTab>, cx| {
@@ -1426,32 +1427,22 @@ impl Pane {
                     .items_center()
                     .gap_1()
                     .text_color(text_color)
-                    .children(if item.has_conflict(cx) {
-                        Some(
-                            IconElement::new(Icon::ExclamationTriangle)
-                                .size(ui::IconSize::Small)
-                                .color(TextColor::Warning),
-                        )
-                    } else if item.is_dirty(cx) {
-                        Some(
-                            IconElement::new(Icon::ExclamationTriangle)
-                                .size(ui::IconSize::Small)
-                                .color(TextColor::Info),
-                        )
-                    } else {
-                        None
-                    })
-                    .children(if !close_right {
-                        Some(close_icon())
-                    } else {
-                        None
-                    })
+                    .children(
+                        item.has_conflict(cx)
+                            .then(|| {
+                                IconElement::new(Icon::ExclamationTriangle)
+                                    .size(ui::IconSize::Small)
+                                    .color(TextColor::Warning)
+                            })
+                            .or(item.is_dirty(cx).then(|| {
+                                IconElement::new(Icon::ExclamationTriangle)
+                                    .size(ui::IconSize::Small)
+                                    .color(TextColor::Info)
+                            })),
+                    )
+                    .children((!close_right).then(|| close_icon()))
                     .child(label)
-                    .children(if close_right {
-                        Some(close_icon())
-                    } else {
-                        None
-                    }),
+                    .children(close_right.then(|| close_icon())),
             )
     }
 
@@ -1908,16 +1899,23 @@ impl Pane {
     }
 }
 
-// impl Entity for Pane {
-//     type Event = Event;
-// }
+impl FocusableView for Pane {
+    fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
 
 impl Render for Pane {
-    type Element = Div<Self>;
+    type Element = Focusable<Self, Div<Self>>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         v_stack()
             .key_context("Pane")
+            .track_focus(&self.focus_handle)
+            .on_action(|pane: &mut Pane, _: &SplitLeft, cx| pane.split(SplitDirection::Left, cx))
+            .on_action(|pane: &mut Pane, _: &SplitUp, cx| pane.split(SplitDirection::Up, cx))
+            .on_action(|pane: &mut Pane, _: &SplitRight, cx| pane.split(SplitDirection::Right, cx))
+            .on_action(|pane: &mut Pane, _: &SplitDown, cx| pane.split(SplitDirection::Down, cx))
             .size_full()
             .on_action(|pane: &mut Self, action, cx| {
                 pane.close_active_item(action, cx)

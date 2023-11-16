@@ -1,4 +1,4 @@
-use gpui::{AppContext, FontFeatures};
+use gpui::{AppContext, FontFeatures, Pixels};
 use schemars::JsonSchema;
 use serde_derive::{Deserialize, Serialize};
 use std::{collections::HashMap, path::PathBuf};
@@ -15,7 +15,7 @@ pub enum TerminalDockPosition {
 pub struct TerminalSettings {
     pub shell: Shell,
     pub working_directory: WorkingDirectory,
-    font_size: Option<f32>,
+    pub font_size: Option<Pixels>,
     pub font_family: Option<String>,
     pub line_height: TerminalLineHeight,
     pub font_features: Option<FontFeatures>,
@@ -88,14 +88,6 @@ pub struct TerminalSettingsContent {
     pub default_width: Option<f32>,
     pub default_height: Option<f32>,
     pub detect_venv: Option<VenvSettings>,
-}
-
-impl TerminalSettings {
-    // todo!("move to terminal element")
-    // pub fn font_size(&self, cx: &AppContext) -> Option<f32> {
-    //     self.font_size
-    //         .map(|size| theme2::adjusted_font_size(size, cx))
-    // }
 }
 
 impl settings::Settings for TerminalSettings {

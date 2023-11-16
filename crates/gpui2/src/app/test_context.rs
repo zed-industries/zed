@@ -1,8 +1,8 @@
 use crate::{
     div, Action, AnyView, AnyWindowHandle, AppCell, AppContext, AsyncAppContext,
     BackgroundExecutor, Context, Div, EventEmitter, ForegroundExecutor, InputEvent, KeyDownEvent,
-    Keystroke, Model, ModelContext, Render, Result, Task, TestDispatcher, TestPlatform, View,
-    ViewContext, VisualContext, WindowContext, WindowHandle, WindowOptions,
+    Keystroke, Model, ModelContext, Render, Result, Task, TestDispatcher, TestPlatform, TestWindow,
+    View, ViewContext, VisualContext, WindowContext, WindowHandle, WindowOptions,
 };
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt};
@@ -140,7 +140,7 @@ impl TestAppContext {
         .any_handle
     }
 
-    pub fn add_window_view<F, V>(&mut self, build_window: F) -> (View<V>, VisualTestContext)
+    pub fn add_window_view<F, V>(&mut self, build_window: F) -> (View<V>, &mut VisualTestContext)
     where
         F: FnOnce(&mut ViewContext<V>) -> V,
         V: Render,
@@ -149,7 +149,9 @@ impl TestAppContext {
         let window = cx.open_window(WindowOptions::default(), |cx| cx.build_view(build_window));
         drop(cx);
         let view = window.root_view(self).unwrap();
-        (view, VisualTestContext::from_window(*window.deref(), self))
+        let cx = Box::new(VisualTestContext::from_window(*window.deref(), self));
+        // it might be nice to try and cleanup these at the end of each test.
+        (view, Box::leak(cx))
     }
 
     pub fn simulate_new_path_selection(
@@ -220,7 +222,35 @@ impl TestAppContext {
     {
         window
             .update(self, |_, cx| cx.dispatch_action(action.boxed_clone()))
-            .unwrap()
+            .unwrap();
+
+        self.background_executor.run_until_parked()
+    }
+
+    /// simulate_keystrokes takes a space-separated list of keys to type.
+    /// cx.simulate_keystrokes("cmd-shift-p b k s p enter")
+    /// will run backspace on the current editor through the command palette.
+    pub fn simulate_keystrokes(&mut self, window: AnyWindowHandle, keystrokes: &str) {
+        for keystroke in keystrokes
+            .split(" ")
+            .map(Keystroke::parse)
+            .map(Result::unwrap)
+        {
+            self.dispatch_keystroke(window, keystroke.into(), false);
+        }
+
+        self.background_executor.run_until_parked()
+    }
+
+    /// simulate_input takes a string of text to type.
+    /// cx.simulate_input("abc")
+    /// will type abc into your current editor.
+    pub fn simulate_input(&mut self, window: AnyWindowHandle, input: &str) {
+        for keystroke in input.split("").map(Keystroke::parse).map(Result::unwrap) {
+            self.dispatch_keystroke(window, keystroke.into(), false);
+        }
+
+        self.background_executor.run_until_parked()
     }
 
     pub fn dispatch_keystroke(
@@ -229,15 +259,41 @@ impl TestAppContext {
         keystroke: Keystroke,
         is_held: bool,
     ) {
+        let keystroke2 = keystroke.clone();
         let handled = window
             .update(self, |_, cx| {
                 cx.dispatch_event(InputEvent::KeyDown(KeyDownEvent { keystroke, is_held }))
             })
             .is_ok_and(|handled| handled);
-
-        if !handled {
-            // todo!() simluate input here
+        if handled {
+            return;
         }
+
+        let input_handler = self.update_test_window(window, |window| window.input_handler.clone());
+        let Some(input_handler) = input_handler else {
+            panic!(
+                "dispatch_keystroke {:?} failed to dispatch action or input",
+                &keystroke2
+            );
+        };
+        let text = keystroke2.ime_key.unwrap_or(keystroke2.key);
+        input_handler.lock().replace_text_in_range(None, &text);
+    }
+
+    pub fn update_test_window<R>(
+        &mut self,
+        window: AnyWindowHandle,
+        f: impl FnOnce(&mut TestWindow) -> R,
+    ) -> R {
+        window
+            .update(self, |_, cx| {
+                f(cx.window
+                    .platform_window
+                    .as_any_mut()
+                    .downcast_mut::<TestWindow>()
+                    .unwrap())
+            })
+            .unwrap()
     }
 
     pub fn notifications<T: 'static>(&mut self, entity: &Model<T>) -> impl Stream<Item = ()> {
@@ -401,11 +457,23 @@ impl<'a> VisualTestContext<'a> {
         Self { cx, window }
     }
 
+    pub fn run_until_parked(&self) {
+        self.cx.background_executor.run_until_parked();
+    }
+
     pub fn dispatch_action<A>(&mut self, action: A)
     where
         A: Action,
     {
         self.cx.dispatch_action(self.window, action)
+    }
+
+    pub fn simulate_keystrokes(&mut self, keystrokes: &str) {
+        self.cx.simulate_keystrokes(self.window, keystrokes)
+    }
+
+    pub fn simulate_input(&mut self, input: &str) {
+        self.cx.simulate_input(self.window, input)
     }
 }
 
@@ -492,6 +560,14 @@ impl<'a> VisualContext for VisualTestContext<'a> {
     {
         self.window
             .update(self.cx, |_, cx| cx.replace_root_view(build_view))
+            .unwrap()
+    }
+
+    fn focus_view<V: crate::FocusableView>(&mut self, view: &View<V>) -> Self::Result<()> {
+        self.window
+            .update(self.cx, |_, cx| {
+                view.read(cx).focus_handle(cx).clone().focus(cx)
+            })
             .unwrap()
     }
 }

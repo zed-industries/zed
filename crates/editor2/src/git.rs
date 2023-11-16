@@ -60,8 +60,8 @@ pub fn diff_hunk_to_display(hunk: DiffHunk<u32>, snapshot: &DisplaySnapshot) -> 
     let folds_end = Point::new(hunk.buffer_range.end + 2, 0);
     let folds_range = folds_start..folds_end;
 
-    let containing_fold = snapshot.folds_in_range(folds_range).find(|fold_range| {
-        let fold_point_range = fold_range.to_point(&snapshot.buffer_snapshot);
+    let containing_fold = snapshot.folds_in_range(folds_range).find(|fold| {
+        let fold_point_range = fold.range.to_point(&snapshot.buffer_snapshot);
         let fold_point_range = fold_point_range.start..=fold_point_range.end;
 
         let folded_start = fold_point_range.contains(&hunk_start_point);
@@ -72,7 +72,7 @@ pub fn diff_hunk_to_display(hunk: DiffHunk<u32>, snapshot: &DisplaySnapshot) -> 
     });
 
     if let Some(fold) = containing_fold {
-        let row = fold.start.to_display_point(snapshot).row();
+        let row = fold.range.start.to_display_point(snapshot).row();
         DisplayDiffHunk::Folded { display_row: row }
     } else {
         let start = hunk_start_point.to_display_point(snapshot).row();

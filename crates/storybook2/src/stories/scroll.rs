@@ -1,5 +1,6 @@
 use gpui::{div, prelude::*, px, Div, Render, SharedString, Stateful, Styled, View, WindowContext};
 use theme2::ActiveTheme;
+use ui::Tooltip;
 
 pub struct ScrollStory;
 
@@ -35,16 +36,18 @@ impl Render for ScrollStory {
                         } else {
                             color_2
                         };
-                        div().id(id).bg(bg).size(px(100. as f32)).when(
-                            row >= 5 && column >= 5,
-                            |d| {
+                        div()
+                            .id(id)
+                            .tooltip(move |_, cx| Tooltip::text(format!("{}, {}", row, column), cx))
+                            .bg(bg)
+                            .size(px(100. as f32))
+                            .when(row >= 5 && column >= 5, |d| {
                                 d.overflow_scroll()
                                     .child(div().size(px(50.)).bg(color_1))
                                     .child(div().size(px(50.)).bg(color_2))
                                     .child(div().size(px(50.)).bg(color_1))
                                     .child(div().size(px(50.)).bg(color_2))
-                            },
-                        )
+                            })
                     }))
             }))
     }

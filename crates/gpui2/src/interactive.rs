@@ -337,7 +337,6 @@ mod test {
             .update(cx, |test_view, cx| cx.focus(&test_view.focus_handle))
             .unwrap();
 
-        cx.dispatch_keystroke(*window, Keystroke::parse("space").unwrap(), false);
         cx.dispatch_keystroke(*window, Keystroke::parse("ctrl-g").unwrap(), false);
 
         window

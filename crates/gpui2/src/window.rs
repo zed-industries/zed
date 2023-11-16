@@ -185,11 +185,15 @@ impl Drop for FocusHandle {
     }
 }
 
+pub trait FocusableView: Render {
+    fn focus_handle(&self, cx: &AppContext) -> FocusHandle;
+}
+
 // Holds the state for a specific window.
 pub struct Window {
     pub(crate) handle: AnyWindowHandle,
     pub(crate) removed: bool,
-    platform_window: Box<dyn PlatformWindow>,
+    pub(crate) platform_window: Box<dyn PlatformWindow>,
     display_id: DisplayId,
     sprite_atlas: Arc<dyn PlatformAtlas>,
     rem_size: Pixels,
@@ -216,7 +220,7 @@ pub struct Window {
 
 // #[derive(Default)]
 pub(crate) struct Frame {
-    element_states: HashMap<GlobalElementId, AnyBox>,
+    pub(crate) element_states: HashMap<GlobalElementId, AnyBox>,
     mouse_listeners: HashMap<TypeId, Vec<(StackingOrder, AnyMouseListener)>>,
     pub(crate) dispatch_tree: DispatchTree,
     pub(crate) focus_listeners: Vec<AnyFocusListener>,
@@ -393,6 +397,10 @@ impl<'a> WindowContext<'a> {
 
     /// Move focus to the element associated with the given `FocusHandle`.
     pub fn focus(&mut self, handle: &FocusHandle) {
+        if self.window.focus == Some(handle.id) {
+            return;
+        }
+
         let focus_id = handle.id;
 
         if self.window.last_blur.is_none() {
@@ -400,6 +408,10 @@ impl<'a> WindowContext<'a> {
         }
 
         self.window.focus = Some(focus_id);
+        self.window
+            .current_frame
+            .dispatch_tree
+            .clear_keystroke_matchers();
         self.app.push_effect(Effect::FocusChanged {
             window_handle: self.window.handle,
             focused: Some(focus_id),
@@ -1068,28 +1080,32 @@ impl<'a> WindowContext<'a> {
 
         self.with_z_index(0, |cx| {
             let available_space = cx.window.viewport_size.map(Into::into);
-            root_view.draw(available_space, cx);
+            root_view.draw(Point::zero(), available_space, cx);
         });
 
         if let Some(active_drag) = self.app.active_drag.take() {
             self.with_z_index(1, |cx| {
                 let offset = cx.mouse_position() - active_drag.cursor_offset;
-                cx.with_element_offset(offset, |cx| {
-                    let available_space =
-                        size(AvailableSpace::MinContent, AvailableSpace::MinContent);
-                    active_drag.view.draw(available_space, cx);
-                    cx.active_drag = Some(active_drag);
-                });
+                let available_space = size(AvailableSpace::MinContent, AvailableSpace::MinContent);
+                active_drag.view.draw(offset, available_space, cx);
+                cx.active_drag = Some(active_drag);
             });
         } else if let Some(active_tooltip) = self.app.active_tooltip.take() {
             self.with_z_index(1, |cx| {
-                cx.with_element_offset(active_tooltip.cursor_offset, |cx| {
-                    let available_space =
-                        size(AvailableSpace::MinContent, AvailableSpace::MinContent);
-                    active_tooltip.view.draw(available_space, cx);
-                });
+                let available_space = size(AvailableSpace::MinContent, AvailableSpace::MinContent);
+                active_tooltip
+                    .view
+                    .draw(active_tooltip.cursor_offset, available_space, cx);
             });
         }
+
+        self.window
+            .current_frame
+            .dispatch_tree
+            .preserve_keystroke_matchers(
+                &mut self.window.previous_frame.dispatch_tree,
+                self.window.focus,
+            );
 
         self.window.root_view = Some(root_view);
         let scene = self.window.current_frame.scene_builder.build();
@@ -1534,6 +1550,12 @@ impl VisualContext for WindowContext<'_> {
         self.window.root_view = Some(view.clone().into());
         view
     }
+
+    fn focus_view<V: crate::FocusableView>(&mut self, view: &View<V>) -> Self::Result<()> {
+        self.update_view(view, |view, cx| {
+            view.focus_handle(cx).clone().focus(cx);
+        })
+    }
 }
 
 impl<'a> std::ops::Deref for WindowContext<'a> {
@@ -1617,8 +1639,8 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
         }
     }
 
-    /// Update the global element offset based on the given offset. This is used to implement
-    /// scrolling and position drag handles.
+    /// Update the global element offset relative to the current offset. This is used to implement
+    /// scrolling.
     fn with_element_offset<R>(
         &mut self,
         offset: Point<Pixels>,
@@ -1628,7 +1650,17 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
             return f(self);
         };
 
-        let offset = self.element_offset() + offset;
+        let abs_offset = self.element_offset() + offset;
+        self.with_absolute_element_offset(abs_offset, f)
+    }
+
+    /// Update the global element offset based on the given offset. This is used to implement
+    /// drag handles and other manual painting of elements.
+    fn with_absolute_element_offset<R>(
+        &mut self,
+        offset: Point<Pixels>,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
         self.window_mut()
             .current_frame
             .element_offset_stack
@@ -1798,8 +1830,8 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         self.view
     }
 
-    pub fn model(&self) -> Model<V> {
-        self.view.model.clone()
+    pub fn model(&self) -> &Model<V> {
+        &self.view.model
     }
 
     /// Access the underlying window context.
@@ -2093,7 +2125,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         window
             .current_frame
             .dispatch_tree
-            .push_node(context.clone(), &mut window.previous_frame.dispatch_tree);
+            .push_node(context.clone());
         if let Some(focus_handle) = focus_handle.as_ref() {
             window
                 .current_frame
@@ -2131,7 +2163,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
 
     pub fn observe_global<G: 'static>(
         &mut self,
-        f: impl Fn(&mut V, &mut ViewContext<'_, V>) + 'static,
+        mut f: impl FnMut(&mut V, &mut ViewContext<'_, V>) + 'static,
     ) -> Subscription {
         let window_handle = self.window.handle;
         let view = self.view().downgrade();
@@ -2197,9 +2229,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
                 .set_input_handler(Box::new(input_handler));
         }
     }
-}
 
-impl<V> ViewContext<'_, V> {
     pub fn emit<Evt>(&mut self, event: Evt)
     where
         Evt: 'static,
@@ -2211,6 +2241,13 @@ impl<V> ViewContext<'_, V> {
             event_type: TypeId::of::<Evt>(),
             event: Box::new(event),
         });
+    }
+
+    pub fn focus_self(&mut self)
+    where
+        V: FocusableView,
+    {
+        self.defer(|view, cx| view.focus_handle(cx).focus(cx))
     }
 }
 
@@ -2286,6 +2323,10 @@ impl<V: 'static> VisualContext for ViewContext<'_, V> {
         W: Render,
     {
         self.window_cx.replace_root_view(build_view)
+    }
+
+    fn focus_view<W: FocusableView>(&mut self, view: &View<W>) -> Self::Result<()> {
+        self.window_cx.focus_view(view)
     }
 }
 
@@ -2471,7 +2512,7 @@ impl From<SmallVec<[u32; 16]>> for StackingOrder {
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub enum ElementId {
     View(EntityId),
-    Number(usize),
+    Integer(usize),
     Name(SharedString),
     FocusHandle(FocusId),
 }
@@ -2484,13 +2525,13 @@ impl From<EntityId> for ElementId {
 
 impl From<usize> for ElementId {
     fn from(id: usize) -> Self {
-        ElementId::Number(id)
+        ElementId::Integer(id)
     }
 }
 
 impl From<i32> for ElementId {
     fn from(id: i32) -> Self {
-        Self::Number(id as usize)
+        Self::Integer(id as usize)
     }
 }
 

@@ -68,6 +68,7 @@ impl EntityMap {
     }
 
     /// Move an entity to the stack.
+    #[track_caller]
     pub fn lease<'a, T>(&mut self, model: &'a Model<T>) -> Lease<'a, T> {
         self.assert_valid_context(model);
         let entity = Some(

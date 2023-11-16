@@ -39,12 +39,12 @@ use futures::FutureExt;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use git::diff_hunk_to_display;
 use gpui::{
-    action, actions, div, point, prelude::*, px, relative, rems, render_view, size, uniform_list,
-    AnyElement, AppContext, AsyncWindowContext, BackgroundExecutor, Bounds, ClipboardItem,
-    Component, Context, EventEmitter, FocusHandle, FontFeatures, FontStyle, FontWeight,
-    HighlightStyle, Hsla, InputHandler, KeyContext, Model, MouseButton, ParentComponent, Pixels,
-    Render, Styled, Subscription, Task, TextStyle, UniformListScrollHandle, View, ViewContext,
-    VisualContext, WeakView, WindowContext,
+    action, actions, div, point, prelude::*, px, relative, rems, size, uniform_list, AnyElement,
+    AppContext, AsyncWindowContext, BackgroundExecutor, Bounds, ClipboardItem, Component, Context,
+    EventEmitter, FocusHandle, FocusableView, FontFeatures, FontStyle, FontWeight, HighlightStyle,
+    Hsla, InputHandler, KeyContext, Model, MouseButton, ParentComponent, Pixels, Render, Styled,
+    Subscription, Task, TextStyle, UniformListScrollHandle, View, ViewContext, VisualContext,
+    WeakView, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -97,7 +97,7 @@ use text::{OffsetUtf16, Rope};
 use theme::{
     ActiveTheme, DiagnosticStyle, PlayerColor, SyntaxTheme, Theme, ThemeColors, ThemeSettings,
 };
-use ui::{v_stack, HighlightedLabel, IconButton, StyledExt, TextTooltip};
+use ui::{v_stack, HighlightedLabel, IconButton, StyledExt, Tooltip};
 use util::{post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::{
     item::{ItemEvent, ItemHandle},
@@ -4372,69 +4372,42 @@ impl Editor {
         }
     }
 
-    //     pub fn render_fold_indicators(
-    //         &self,
-    //         fold_data: Vec<Option<(FoldStatus, u32, bool)>>,
-    //         style: &EditorStyle,
-    //         gutter_hovered: bool,
-    //         line_height: f32,
-    //         gutter_margin: f32,
-    //         cx: &mut ViewContext<Self>,
-    //     ) -> Vec<Option<AnyElement<Self>>> {
-    //         enum FoldIndicators {}
-
-    //         let style = style.folds.clone();
-
-    //         fold_data
-    //             .iter()
-    //             .enumerate()
-    //             .map(|(ix, fold_data)| {
-    //                 fold_data
-    //                     .map(|(fold_status, buffer_row, active)| {
-    //                         (active || gutter_hovered || fold_status == FoldStatus::Folded).then(|| {
-    //                             MouseEventHandler::new::<FoldIndicators, _>(
-    //                                 ix as usize,
-    //                                 cx,
-    //                                 |mouse_state, _| {
-    //                                     Svg::new(match fold_status {
-    //                                         FoldStatus::Folded => style.folded_icon.clone(),
-    //                                         FoldStatus::Foldable => style.foldable_icon.clone(),
-    //                                     })
-    //                                     .with_color(
-    //                                         style
-    //                                             .indicator
-    //                                             .in_state(fold_status == FoldStatus::Folded)
-    //                                             .style_for(mouse_state)
-    //                                             .color,
-    //                                     )
-    //                                     .constrained()
-    //                                     .with_width(gutter_margin * style.icon_margin_scale)
-    //                                     .aligned()
-    //                                     .constrained()
-    //                                     .with_height(line_height)
-    //                                     .with_width(gutter_margin)
-    //                                     .aligned()
-    //                                 },
-    //                             )
-    //                             .with_cursor_style(CursorStyle::PointingHand)
-    //                             .with_padding(Padding::uniform(3.))
-    //                             .on_click(MouseButton::Left, {
-    //                                 move |_, editor, cx| match fold_status {
-    //                                     FoldStatus::Folded => {
-    //                                         editor.unfold_at(&UnfoldAt { buffer_row }, cx);
-    //                                     }
-    //                                     FoldStatus::Foldable => {
-    //                                         editor.fold_at(&FoldAt { buffer_row }, cx);
-    //                                     }
-    //                                 }
-    //                             })
-    //                             .into_any()
-    //                         })
-    //                     })
-    //                     .flatten()
-    //             })
-    //             .collect()
-    //     }
+    pub fn render_fold_indicators(
+        &self,
+        fold_data: Vec<Option<(FoldStatus, u32, bool)>>,
+        style: &EditorStyle,
+        gutter_hovered: bool,
+        line_height: Pixels,
+        gutter_margin: Pixels,
+        cx: &mut ViewContext<Self>,
+    ) -> Vec<Option<AnyElement<Self>>> {
+        fold_data
+            .iter()
+            .enumerate()
+            .map(|(ix, fold_data)| {
+                fold_data
+                    .map(|(fold_status, buffer_row, active)| {
+                        (active || gutter_hovered || fold_status == FoldStatus::Folded).then(|| {
+                            let icon = match fold_status {
+                                FoldStatus::Folded => ui::Icon::ChevronRight,
+                                FoldStatus::Foldable => ui::Icon::ChevronDown,
+                            };
+                            IconButton::new(ix as usize, icon)
+                                .on_click(move |editor: &mut Editor, cx| match fold_status {
+                                    FoldStatus::Folded => {
+                                        editor.unfold_at(&UnfoldAt { buffer_row }, cx);
+                                    }
+                                    FoldStatus::Foldable => {
+                                        editor.fold_at(&FoldAt { buffer_row }, cx);
+                                    }
+                                })
+                                .render()
+                        })
+                    })
+                    .flatten()
+            })
+            .collect()
+    }
 
     pub fn context_menu_visible(&self) -> bool {
         self.context_menu
@@ -5330,8 +5303,8 @@ impl Editor {
                         buffer.anchor_before(range_to_move.start)
                             ..buffer.anchor_after(range_to_move.end),
                     ) {
-                        let mut start = fold.start.to_point(&buffer);
-                        let mut end = fold.end.to_point(&buffer);
+                        let mut start = fold.range.start.to_point(&buffer);
+                        let mut end = fold.range.end.to_point(&buffer);
                         start.row -= row_delta;
                         end.row -= row_delta;
                         refold_ranges.push(start..end);
@@ -5421,8 +5394,8 @@ impl Editor {
                         buffer.anchor_before(range_to_move.start)
                             ..buffer.anchor_after(range_to_move.end),
                     ) {
-                        let mut start = fold.start.to_point(&buffer);
-                        let mut end = fold.end.to_point(&buffer);
+                        let mut start = fold.range.start.to_point(&buffer);
+                        let mut end = fold.range.end.to_point(&buffer);
                         start.row += row_delta;
                         end.row += row_delta;
                         refold_ranges.push(start..end);
@@ -7804,25 +7777,18 @@ impl Editor {
                                     }
                                     div()
                                         .pl(cx.anchor_x)
-                                        .child(render_view(
+                                        .child(rename_editor.render_with(EditorElement::new(
                                             &rename_editor,
-                                            EditorElement::new(
-                                                &rename_editor,
-                                                EditorStyle {
-                                                    background: cx.theme().system().transparent,
-                                                    local_player: cx.editor_style.local_player,
-                                                    text: text_style,
-                                                    scrollbar_width: cx
-                                                        .editor_style
-                                                        .scrollbar_width,
-                                                    syntax: cx.editor_style.syntax.clone(),
-                                                    diagnostic_style: cx
-                                                        .editor_style
-                                                        .diagnostic_style
-                                                        .clone(),
-                                                },
-                                            ),
-                                        ))
+                                            EditorStyle {
+                                                background: cx.theme().system().transparent,
+                                                local_player: cx.editor_style.local_player,
+                                                text: text_style,
+                                                scrollbar_width: cx.editor_style.scrollbar_width,
+                                                syntax: cx.editor_style.syntax.clone(),
+                                                diagnostic_style:
+                                                    cx.editor_style.diagnostic_style.clone(),
+                                            },
+                                        )))
                                         .render()
                                 }
                             }),
@@ -9401,6 +9367,12 @@ pub struct EditorReleased(pub WeakView<Editor>);
 //
 impl EventEmitter<Event> for Editor {}
 
+impl FocusableView for Editor {
+    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
 impl Render for Editor {
     type Element = EditorElement;
 
@@ -10019,7 +9991,7 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, is_valid: bool) -> Rend
             .on_click(move |_, _, cx| {
                 cx.write_to_clipboard(ClipboardItem::new(message.clone()));
             })
-            .tooltip(|_, cx| cx.build_view(|cx| TextTooltip::new("Copy diagnostic message")))
+            .tooltip(|_, cx| Tooltip::text("Copy diagnostic message", cx))
             .render()
     })
 }

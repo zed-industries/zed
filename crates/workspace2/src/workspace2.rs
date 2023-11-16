@@ -15,13 +15,6 @@ mod status_bar;
 mod toolbar;
 mod workspace_settings;
 
-pub use crate::persistence::{
-    model::{
-        DockData, DockStructure, ItemId, SerializedItem, SerializedPane, SerializedPaneGroup,
-        SerializedWorkspace,
-    },
-    WorkspaceDb,
-};
 use anyhow::{anyhow, Context as _, Result};
 use call2::ActiveCall;
 use client2::{
@@ -29,18 +22,18 @@ use client2::{
     Client, TypedEnvelope, UserStore,
 };
 use collections::{hash_map, HashMap, HashSet};
-use dock::{Dock, DockPosition, Panel, PanelButtons, PanelHandle as _};
+use dock::{Dock, DockPosition, Panel, PanelButtons, PanelHandle};
 use futures::{
     channel::{mpsc, oneshot},
     future::try_join_all,
     Future, FutureExt, StreamExt,
 };
 use gpui::{
-    actions, div, point, prelude::*, rems, size, Action, AnyModel, AnyView, AnyWeakView,
-    AppContext, AsyncAppContext, AsyncWindowContext, Bounds, Component, Div, Entity, EntityId,
-    EventEmitter, FocusHandle, GlobalPixels, KeyContext, Model, ModelContext, ParentComponent,
-    Point, Render, Size, Styled, Subscription, Task, View, ViewContext, WeakView, WindowBounds,
-    WindowContext, WindowHandle, WindowOptions,
+    actions, div, point, register_action, size, Action, AnyModel, AnyView, AnyWeakView, AppContext,
+    AsyncAppContext, AsyncWindowContext, Bounds, Context, Div, Entity, EntityId, EventEmitter,
+    FocusHandle, FocusableView, GlobalPixels, InteractiveComponent, KeyContext, Model,
+    ModelContext, ParentComponent, Point, Render, Size, Styled, Subscription, Task, View,
+    ViewContext, VisualContext, WeakView, WindowBounds, WindowContext, WindowHandle, WindowOptions,
 };
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, ProjectItem};
 use itertools::Itertools;
@@ -51,7 +44,10 @@ use node_runtime::NodeRuntime;
 use notifications::{simple_message_notification::MessageNotification, NotificationHandle};
 pub use pane::*;
 pub use pane_group::*;
-use persistence::{model::WorkspaceLocation, DB};
+pub use persistence::{
+    model::{ItemId, SerializedWorkspace, WorkspaceLocation},
+    WorkspaceDb, DB,
+};
 use postage::stream::Stream;
 use project2::{Project, ProjectEntryId, ProjectPath, Worktree};
 use serde::Deserialize;
@@ -68,11 +64,15 @@ use std::{
 };
 use theme2::{ActiveTheme, ThemeSettings};
 pub use toolbar::{ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
-use ui::TextColor;
-use ui::{h_stack, Button, ButtonVariant, KeyBinding, Label, TextTooltip};
+
+pub use ui;
 use util::ResultExt;
 use uuid::Uuid;
 pub use workspace_settings::{AutosaveSetting, WorkspaceSettings};
+
+use crate::persistence::model::{
+    DockData, DockStructure, SerializedItem, SerializedPane, SerializedPaneGroup,
+};
 
 lazy_static! {
     static ref ZED_WINDOW_SIZE: Option<Size<GlobalPixels>> = env::var("ZED_WINDOW_SIZE")
@@ -195,10 +195,11 @@ impl Clone for Toast {
     }
 }
 
-// #[derive(Clone, Deserialize, PartialEq)]
-// pub struct OpenTerminal {
-//     pub working_directory: PathBuf,
-// }
+#[register_action]
+#[derive(Debug, Default, Clone, Deserialize, PartialEq)]
+pub struct OpenTerminal {
+    pub working_directory: PathBuf,
+}
 
 // impl_actions!(
 //     workspace,
@@ -208,7 +209,6 @@ impl Clone for Toast {
 //         SwapPaneInDirection,
 //         NewFileInDirection,
 //         Toast,
-//         OpenTerminal,
 //         SaveAll,
 //         Save,
 //         CloseAllItemsAndPanes,
@@ -322,12 +322,6 @@ pub struct AppState {
     pub fs: Arc<dyn fs2::Fs>,
     pub build_window_options:
         fn(Option<WindowBounds>, Option<Uuid>, &mut AppContext) -> WindowOptions,
-    pub initialize_workspace: fn(
-        WeakView<Workspace>,
-        bool,
-        Arc<AppState>,
-        AsyncWindowContext,
-    ) -> Task<anyhow::Result<()>>,
     pub node_runtime: Arc<dyn NodeRuntime>,
 }
 
@@ -373,7 +367,6 @@ impl AppState {
             user_store,
             workspace_store,
             node_runtime: FakeNodeRuntime::new(),
-            initialize_workspace: |_, _, _, _| Task::ready(Ok(())),
             build_window_options: |_, _, _| Default::default(),
         })
     }
@@ -433,7 +426,6 @@ pub enum Event {
 
 pub struct Workspace {
     weak_self: WeakView<Self>,
-    focus_handle: FocusHandle,
     workspace_actions: Vec<Box<dyn Fn(Div<Workspace>) -> Div<Workspace>>>,
     zoomed: Option<AnyWeakView>,
     zoomed_position: Option<DockPosition>,
@@ -448,7 +440,7 @@ pub struct Workspace {
     last_active_view_id: Option<proto::ViewId>,
     status_bar: View<StatusBar>,
     modal_layer: View<ModalLayer>,
-    //     titlebar_item: Option<AnyViewHandle>,
+    titlebar_item: Option<AnyView>,
     notifications: Vec<(TypeId, usize, Box<dyn NotificationHandle>)>,
     project: Model<Project>,
     follower_states: HashMap<View<Pane>, FollowerState>,
@@ -651,7 +643,6 @@ impl Workspace {
         cx.defer(|this, cx| this.update_window_title(cx));
         Workspace {
             weak_self: weak_handle.clone(),
-            focus_handle: cx.focus_handle(),
             zoomed: None,
             zoomed_position: None,
             center: PaneGroup::new(center_pane.clone()),
@@ -662,7 +653,7 @@ impl Workspace {
             last_active_view_id: None,
             status_bar,
             modal_layer,
-            // titlebar_item: None,
+            titlebar_item: None,
             notifications: Default::default(),
             left_dock,
             bottom_dock,
@@ -687,7 +678,7 @@ impl Workspace {
     fn new_local(
         abs_paths: Vec<PathBuf>,
         app_state: Arc<AppState>,
-        _requesting_window: Option<WindowHandle<Workspace>>,
+        requesting_window: Option<WindowHandle<Workspace>>,
         cx: &mut AppContext,
     ) -> Task<
         anyhow::Result<(
@@ -705,7 +696,8 @@ impl Workspace {
         );
 
         cx.spawn(|mut cx| async move {
-            let serialized_workspace: Option<SerializedWorkspace> = None; //persistence::DB.workspace_for_roots(&abs_paths.as_slice());
+            let serialized_workspace: Option<SerializedWorkspace> =
+                persistence::DB.workspace_for_roots(&abs_paths.as_slice());
 
             let paths_to_open = Arc::new(abs_paths);
 
@@ -734,15 +726,14 @@ impl Workspace {
                 DB.next_id().await.unwrap_or(0)
             };
 
-            // todo!()
-            let window = /*if let Some(window) = requesting_window {
+            let window = if let Some(window) = requesting_window {
                 cx.update_window(window.into(), |old_workspace, cx| {
                     cx.replace_root_view(|cx| {
                         Workspace::new(workspace_id, project_handle.clone(), app_state.clone(), cx)
                     });
-                });
+                })?;
                 window
-                } else */ {
+            } else {
                 let window_bounds_override = window_bounds_env_override(&cx);
                 let (bounds, display) = if let Some(bounds) = window_bounds_override {
                     (Some(bounds), None)
@@ -756,12 +747,13 @@ impl Workspace {
                             // Stored bounds are relative to the containing display.
                             // So convert back to global coordinates if that screen still exists
                             if let WindowBounds::Fixed(mut window_bounds) = bounds {
-                                let screen =
-                                    cx.update(|cx|
-                                        cx.displays()
-                                            .into_iter()
-                                            .find(|display| display.uuid().ok() == Some(serialized_display))
-                                    ).ok()??;
+                                let screen = cx
+                                    .update(|cx| {
+                                        cx.displays().into_iter().find(|display| {
+                                            display.uuid().ok() == Some(serialized_display)
+                                        })
+                                    })
+                                    .ok()??;
                                 let screen_bounds = screen.bounds();
                                 window_bounds.origin.x += screen_bounds.origin.x;
                                 window_bounds.origin.y += screen_bounds.origin.y;
@@ -790,17 +782,17 @@ impl Workspace {
             };
 
             // todo!() Ask how to do this
-            let weak_view = window.update(&mut cx, |_, cx| cx.view().downgrade())?;
-            let async_cx = window.update(&mut cx, |_, cx| cx.to_async())?;
+            // let weak_view = window.update(&mut cx, |_, cx| cx.view().downgrade())?;
+            // let async_cx = window.update(&mut cx, |_, cx| cx.to_async())?;
 
-            (app_state.initialize_workspace)(
-                weak_view,
-                serialized_workspace.is_some(),
-                app_state.clone(),
-                async_cx,
-            )
-            .await
-            .log_err();
+            // (app_state.initialize_workspace)(
+            //     weak_view,
+            //     serialized_workspace.is_some(),
+            //     app_state.clone(),
+            //     async_cx,
+            // )
+            // .await
+            // .log_err();
 
             window
                 .update(&mut cx, |_, cx| cx.activate_window())
@@ -809,12 +801,7 @@ impl Workspace {
             notify_if_database_failed(window, &mut cx);
             let opened_items = window
                 .update(&mut cx, |_workspace, cx| {
-                    open_items(
-                        serialized_workspace,
-                        project_paths,
-                        app_state,
-                        cx,
-                    )
+                    open_items(serialized_workspace, project_paths, app_state, cx)
                 })?
                 .await
                 .unwrap_or_default();
@@ -1035,15 +1022,14 @@ impl Workspace {
         &self.app_state.client
     }
 
-    // todo!()
-    // pub fn set_titlebar_item(&mut self, item: AnyViewHandle, cx: &mut ViewContext<Self>) {
-    //     self.titlebar_item = Some(item);
-    //     cx.notify();
-    // }
+    pub fn set_titlebar_item(&mut self, item: AnyView, cx: &mut ViewContext<Self>) {
+        self.titlebar_item = Some(item);
+        cx.notify();
+    }
 
-    // pub fn titlebar_item(&self) -> Option<AnyViewHandle> {
-    //     self.titlebar_item.clone()
-    // }
+    pub fn titlebar_item(&self) -> Option<AnyView> {
+        self.titlebar_item.clone()
+    }
 
     /// Call the given callback with a workspace whose project is local.
     ///
@@ -1450,6 +1436,11 @@ impl Workspace {
         self.active_pane().read(cx).active_item()
     }
 
+    pub fn active_item_as<I: 'static>(&self, cx: &AppContext) -> Option<View<I>> {
+        let item = self.active_item(cx)?;
+        item.to_any().downcast::<I>().ok()
+    }
+
     fn active_project_path(&self, cx: &ViewContext<Self>) -> Option<ProjectPath> {
         self.active_item(cx).and_then(|item| item.project_path(cx))
     }
@@ -1570,7 +1561,7 @@ impl Workspace {
         }
 
         if focus_center {
-            cx.focus(&self.focus_handle);
+            self.active_pane.update(cx, |pane, cx| pane.focus(cx))
         }
 
         cx.notify();
@@ -1592,60 +1583,58 @@ impl Workspace {
         self.serialize_workspace(cx);
     }
 
-    //     /// Transfer focus to the panel of the given type.
-    //     pub fn focus_panel<T: Panel>(&mut self, cx: &mut ViewContext<Self>) -> Option<View<T>> {
-    //         self.focus_or_unfocus_panel::<T>(cx, |_, _| true)?
-    //             .as_any()
-    //             .clone()
-    //             .downcast()
-    //     }
+    /// Transfer focus to the panel of the given type.
+    pub fn focus_panel<T: Panel>(&mut self, cx: &mut ViewContext<Self>) -> Option<View<T>> {
+        let panel = self.focus_or_unfocus_panel::<T>(cx, |_, _| true)?;
+        panel.to_any().downcast().ok()
+    }
 
-    //     /// Focus the panel of the given type if it isn't already focused. If it is
-    //     /// already focused, then transfer focus back to the workspace center.
-    //     pub fn toggle_panel_focus<T: Panel>(&mut self, cx: &mut ViewContext<Self>) {
-    //         self.focus_or_unfocus_panel::<T>(cx, |panel, cx| !panel.has_focus(cx));
-    //     }
+    /// Focus the panel of the given type if it isn't already focused. If it is
+    /// already focused, then transfer focus back to the workspace center.
+    pub fn toggle_panel_focus<T: Panel>(&mut self, cx: &mut ViewContext<Self>) {
+        self.focus_or_unfocus_panel::<T>(cx, |panel, cx| !panel.has_focus(cx));
+    }
 
-    //     /// Focus or unfocus the given panel type, depending on the given callback.
-    //     fn focus_or_unfocus_panel<T: Panel>(
-    //         &mut self,
-    //         cx: &mut ViewContext<Self>,
-    //         should_focus: impl Fn(&dyn PanelHandle, &mut ViewContext<Dock>) -> bool,
-    //     ) -> Option<Rc<dyn PanelHandle>> {
-    //         for dock in [&self.left_dock, &self.bottom_dock, &self.right_dock] {
-    //             if let Some(panel_index) = dock.read(cx).panel_index_for_type::<T>() {
-    //                 let mut focus_center = false;
-    //                 let mut reveal_dock = false;
-    //                 let panel = dock.update(cx, |dock, cx| {
-    //                     dock.activate_panel(panel_index, cx);
+    /// Focus or unfocus the given panel type, depending on the given callback.
+    fn focus_or_unfocus_panel<T: Panel>(
+        &mut self,
+        cx: &mut ViewContext<Self>,
+        should_focus: impl Fn(&dyn PanelHandle, &mut ViewContext<Dock>) -> bool,
+    ) -> Option<Arc<dyn PanelHandle>> {
+        for dock in [&self.left_dock, &self.bottom_dock, &self.right_dock] {
+            if let Some(panel_index) = dock.read(cx).panel_index_for_type::<T>() {
+                let mut focus_center = false;
+                let mut reveal_dock = false;
+                let panel = dock.update(cx, |dock, cx| {
+                    dock.activate_panel(panel_index, cx);
 
-    //                     let panel = dock.active_panel().cloned();
-    //                     if let Some(panel) = panel.as_ref() {
-    //                         if should_focus(&**panel, cx) {
-    //                             dock.set_open(true, cx);
-    //                             cx.focus(panel.as_any());
-    //                             reveal_dock = true;
-    //                         } else {
-    //                             // if panel.is_zoomed(cx) {
-    //                             //     dock.set_open(false, cx);
-    //                             // }
-    //                             focus_center = true;
-    //                         }
-    //                     }
-    //                     panel
-    //                 });
+                    let panel = dock.active_panel().cloned();
+                    if let Some(panel) = panel.as_ref() {
+                        if should_focus(&**panel, cx) {
+                            dock.set_open(true, cx);
+                            panel.focus_handle(cx).focus(cx);
+                            reveal_dock = true;
+                        } else {
+                            // if panel.is_zoomed(cx) {
+                            //     dock.set_open(false, cx);
+                            // }
+                            focus_center = true;
+                        }
+                    }
+                    panel
+                });
 
-    //                 if focus_center {
-    //                     cx.focus_self();
-    //                 }
+                if focus_center {
+                    self.active_pane.update(cx, |pane, cx| pane.focus(cx))
+                }
 
-    //                 self.serialize_workspace(cx);
-    //                 cx.notify();
-    //                 return panel;
-    //             }
-    //         }
-    //         None
-    //     }
+                self.serialize_workspace(cx);
+                cx.notify();
+                return panel;
+            }
+        }
+        None
+    }
 
     //     pub fn panel<T: Panel>(&self, cx: &WindowContext) -> Option<View<T>> {
     //         for dock in [&self.left_dock, &self.bottom_dock, &self.right_dock] {
@@ -1704,7 +1693,7 @@ impl Workspace {
         }
 
         if focus_center {
-            cx.focus(&self.focus_handle);
+            self.active_pane.update(cx, |pane, cx| pane.focus(cx))
         }
 
         if self.zoomed_position != dock_to_reveal {
@@ -2445,75 +2434,6 @@ impl Workspace {
     //             .any(|state| state.leader_id == peer_id)
     //     }
 
-    fn render_titlebar(&self, cx: &mut ViewContext<Self>) -> impl Component<Self> {
-        h_stack()
-            .id("titlebar")
-            .justify_between()
-            .when(
-                !matches!(cx.window_bounds(), WindowBounds::Fullscreen),
-                |s| s.pl_20(),
-            )
-            .w_full()
-            .h(rems(1.75))
-            .bg(cx.theme().colors().title_bar_background)
-            .on_click(|_, event, cx| {
-                if event.up.click_count == 2 {
-                    cx.zoom_window();
-                }
-            })
-            .child(
-                h_stack()
-                    // TODO - Add player menu
-                    .child(
-                        div()
-                            .id("project_owner_indicator")
-                            .child(
-                                Button::new("player")
-                                    .variant(ButtonVariant::Ghost)
-                                    .color(Some(TextColor::Player(0))),
-                            )
-                            .tooltip(move |_, cx| {
-                                cx.build_view(|cx| TextTooltip::new("Toggle following"))
-                            }),
-                    )
-                    // TODO - Add project menu
-                    .child(
-                        div()
-                            .id("titlebar_project_menu_button")
-                            .child(Button::new("project_name").variant(ButtonVariant::Ghost))
-                            .tooltip(move |_, cx| {
-                                cx.build_view(|cx| TextTooltip::new("Recent Projects"))
-                            }),
-                    )
-                    // TODO - Add git menu
-                    .child(
-                        div()
-                            .id("titlebar_git_menu_button")
-                            .child(
-                                Button::new("branch_name")
-                                    .variant(ButtonVariant::Ghost)
-                                    .color(Some(TextColor::Muted)),
-                            )
-                            .tooltip(move |_, cx| {
-                                // todo!() Replace with real action.
-                                #[gpui::action]
-                                struct NoAction {}
-
-                                cx.build_view(|cx| {
-                                    TextTooltip::new("Recent Branches")
-                                        .key_binding(KeyBinding::new(gpui::KeyBinding::new(
-                                            "cmd-b",
-                                            NoAction {},
-                                            None,
-                                        )))
-                                        .meta("Only local branches shown")
-                                })
-                            }),
-                    ),
-            ) // self.titlebar_item
-            .child(h_stack().child(Label::new("Right side titlebar item")))
-    }
-
     fn active_item_path_changed(&mut self, cx: &mut ViewContext<Self>) {
         let active_entry = self.active_project_path(cx);
         self.project
@@ -3040,13 +2960,15 @@ impl Workspace {
         cx.notify();
     }
 
-    //     fn schedule_serialize(&mut self, cx: &mut ViewContext<Self>) {
-    //         self._schedule_serialize = Some(cx.spawn(|this, cx| async move {
-    //             cx.background().timer(Duration::from_millis(100)).await;
-    //             this.read_with(&cx, |this, cx| this.serialize_workspace(cx))
-    //                 .ok();
-    //         }));
-    //     }
+    fn schedule_serialize(&mut self, cx: &mut ViewContext<Self>) {
+        self._schedule_serialize = Some(cx.spawn(|this, mut cx| async move {
+            cx.background_executor()
+                .timer(Duration::from_millis(100))
+                .await;
+            this.update(&mut cx, |this, cx| this.serialize_workspace(cx))
+                .log_err();
+        }));
+    }
 
     fn serialize_workspace(&self, cx: &mut ViewContext<Self>) {
         fn serialize_pane_handle(pane_handle: &View<Pane>, cx: &WindowContext) -> SerializedPane {
@@ -3058,7 +2980,7 @@ impl Workspace {
                         .filter_map(|item_handle| {
                             Some(SerializedItem {
                                 kind: Arc::from(item_handle.serialized_item_kind()?),
-                                item_id: item_handle.id().as_u64() as usize,
+                                item_id: item_handle.id().as_u64(),
                                 active: Some(item_handle.id()) == active_item_id,
                             })
                         })
@@ -3102,7 +3024,7 @@ impl Workspace {
             let left_visible = left_dock.is_open();
             let left_active_panel = left_dock
                 .visible_panel()
-                .and_then(|panel| Some(panel.persistent_name(cx).to_string()));
+                .and_then(|panel| Some(panel.persistent_name().to_string()));
             let left_dock_zoom = left_dock
                 .visible_panel()
                 .map(|panel| panel.is_zoomed(cx))
@@ -3112,7 +3034,7 @@ impl Workspace {
             let right_visible = right_dock.is_open();
             let right_active_panel = right_dock
                 .visible_panel()
-                .and_then(|panel| Some(panel.persistent_name(cx).to_string()));
+                .and_then(|panel| Some(panel.persistent_name().to_string()));
             let right_dock_zoom = right_dock
                 .visible_panel()
                 .map(|panel| panel.is_zoomed(cx))
@@ -3122,7 +3044,7 @@ impl Workspace {
             let bottom_visible = bottom_dock.is_open();
             let bottom_active_panel = bottom_dock
                 .visible_panel()
-                .and_then(|panel| Some(panel.persistent_name(cx).to_string()));
+                .and_then(|panel| Some(panel.persistent_name().to_string()));
             let bottom_dock_zoom = bottom_dock
                 .visible_panel()
                 .map(|panel| panel.is_zoomed(cx))
@@ -3228,45 +3150,34 @@ impl Workspace {
 
                     // Swap workspace center group
                     workspace.center = PaneGroup::with_root(center_group);
-
-                    // Change the focus to the workspace first so that we retrigger focus in on the pane.
-                    // todo!()
-                    // cx.focus_self();
-                    // if let Some(active_pane) = active_pane {
-                    //     cx.focus(&active_pane);
-                    // } else {
-                    //     cx.focus(workspace.panes.last().unwrap());
-                    // }
-                } else {
-                    // todo!()
-                    // let old_center_handle = old_center_pane.and_then(|weak| weak.upgrade());
-                    // if let Some(old_center_handle) = old_center_handle {
-                    //     cx.focus(&old_center_handle)
-                    // } else {
-                    //     cx.focus_self()
-                    // }
+                    workspace.last_active_center_pane = active_pane.as_ref().map(|p| p.downgrade());
+                    if let Some(active_pane) = active_pane {
+                        workspace.active_pane = active_pane;
+                        cx.focus_self();
+                    } else {
+                        workspace.active_pane = workspace.center.first_pane().clone();
+                    }
                 }
 
                 let docks = serialized_workspace.docks;
                 workspace.left_dock.update(cx, |dock, cx| {
                     dock.set_open(docks.left.visible, cx);
                     if let Some(active_panel) = docks.left.active_panel {
-                        if let Some(ix) = dock.panel_index_for_ui_name(&active_panel, cx) {
+                        if let Some(ix) = dock.panel_index_for_persistent_name(&active_panel, cx) {
                             dock.activate_panel(ix, cx);
                         }
                     }
                     dock.active_panel()
                         .map(|panel| panel.set_zoomed(docks.left.zoom, cx));
                     if docks.left.visible && docks.left.zoom {
-                        // todo!()
-                        // cx.focus_self()
+                        cx.focus_self()
                     }
                 });
                 // TODO: I think the bug is that setting zoom or active undoes the bottom zoom or something
                 workspace.right_dock.update(cx, |dock, cx| {
                     dock.set_open(docks.right.visible, cx);
                     if let Some(active_panel) = docks.right.active_panel {
-                        if let Some(ix) = dock.panel_index_for_ui_name(&active_panel, cx) {
+                        if let Some(ix) = dock.panel_index_for_persistent_name(&active_panel, cx) {
                             dock.activate_panel(ix, cx);
                         }
                     }
@@ -3274,14 +3185,13 @@ impl Workspace {
                         .map(|panel| panel.set_zoomed(docks.right.zoom, cx));
 
                     if docks.right.visible && docks.right.zoom {
-                        // todo!()
-                        // cx.focus_self()
+                        cx.focus_self()
                     }
                 });
                 workspace.bottom_dock.update(cx, |dock, cx| {
                     dock.set_open(docks.bottom.visible, cx);
                     if let Some(active_panel) = docks.bottom.active_panel {
-                        if let Some(ix) = dock.panel_index_for_ui_name(&active_panel, cx) {
+                        if let Some(ix) = dock.panel_index_for_persistent_name(&active_panel, cx) {
                             dock.activate_panel(ix, cx);
                         }
                     }
@@ -3290,8 +3200,7 @@ impl Workspace {
                         .map(|panel| panel.set_zoomed(docks.bottom.zoom, cx));
 
                     if docks.bottom.visible && docks.bottom.zoom {
-                        // todo!()
-                        // cx.focus_self()
+                        cx.focus_self()
                     }
                 });
 
@@ -3353,7 +3262,6 @@ impl Workspace {
             //         },
             //     );
             .on_action(|this, e: &ToggleLeftDock, cx| {
-                println!("TOGGLING DOCK");
                 this.toggle_dock(DockPosition::Left, cx);
             })
         //     cx.add_action(|workspace: &mut Workspace, _: &ToggleRightDock, cx| {
@@ -3417,7 +3325,6 @@ impl Workspace {
             user_store,
             fs: project.read(cx).fs().clone(),
             build_window_options: |_, _, _| Default::default(),
-            initialize_workspace: |_, _, _, _| Task::ready(Ok(())),
             node_runtime: FakeNodeRuntime::new(),
         });
         let workspace = Self::new(0, project, app_state, cx);
@@ -3475,8 +3382,8 @@ impl Workspace {
         div
     }
 
-    pub fn current_modal<V: Modal + 'static>(&mut self, cx: &ViewContext<Self>) -> Option<View<V>> {
-        self.modal_layer.read(cx).current_modal()
+    pub fn active_modal<V: Modal + 'static>(&mut self, cx: &ViewContext<Self>) -> Option<View<V>> {
+        self.modal_layer.read(cx).active_modal()
     }
 
     pub fn toggle_modal<V: Modal, B>(&mut self, cx: &mut ViewContext<Self>, build: B)
@@ -3696,6 +3603,12 @@ fn notify_if_database_failed(workspace: WindowHandle<Workspace>, cx: &mut AsyncA
 
 impl EventEmitter<Event> for Workspace {}
 
+impl FocusableView for Workspace {
+    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+        self.active_pane.focus_handle(cx)
+    }
+}
+
 impl Render for Workspace {
     type Element = Div<Self>;
 
@@ -3716,7 +3629,7 @@ impl Render for Workspace {
             .items_start()
             .text_color(cx.theme().colors().text)
             .bg(cx.theme().colors().background)
-            .child(self.render_titlebar(cx))
+            .children(self.titlebar_item.clone())
             .child(
                 // todo! should this be a component a view?
                 div()

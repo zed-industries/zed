@@ -18,6 +18,7 @@ members = [
     "crates/collab",
     "crates/collab2",
     "crates/collab_ui",
+    "crates/collab_ui2",
     "crates/collections",
     "crates/command_palette",
     "crates/command_palette2",
@@ -98,6 +99,7 @@ members = [
     "crates/sum_tree",
     "crates/terminal",
     "crates/terminal2",
+    "crates/terminal_view2",
     "crates/text",
     "crates/theme",
     "crates/theme2",
@@ -203,6 +205,9 @@ core-graphics = { git = "https://github.com/servo/core-foundation-rs", rev = "07
 
 [profile.dev]
 split-debuginfo = "unpacked"
+
+[profile.dev.package.taffy]
+opt-level = 3
 
 [profile.release]
 debug = true
