@@ -72,7 +72,10 @@ impl<V: 'static> Element<V> for Overlay<V> {
             .iter_mut()
             .map(|child| child.layout(view_state, cx))
             .collect::<SmallVec<_>>();
-        let layout_id = cx.request_layout(&Style::default(), child_layout_ids.iter().copied());
+        let mut overlay_style = Style::default();
+        overlay_style.position = crate::Position::Absolute;
+
+        let layout_id = cx.request_layout(&overlay_style, child_layout_ids.iter().copied());
 
         (layout_id, OverlayState { child_layout_ids })
     }
