@@ -585,7 +585,7 @@ pub enum SoftWrap {
     Column(u32),
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct EditorStyle {
     pub background: Hsla,
     pub local_player: PlayerColor,

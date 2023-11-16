@@ -14,8 +14,8 @@ use editor::{
 use futures::future::try_join_all;
 use gpui::{
     actions, div, AnyElement, AnyView, AppContext, Component, Context, Div, EventEmitter,
-    FocusHandle, Model, ParentComponent, Render, SharedString, Styled, Subscription, Task, View,
-    ViewContext, VisualContext, WeakView,
+    FocusHandle, InteractiveComponent, Model, ParentComponent, Render, SharedString, Styled,
+    Subscription, Task, View, ViewContext, VisualContext, WeakView,
 };
 use language::{
     Anchor, Bias, Buffer, Diagnostic, DiagnosticEntry, DiagnosticSeverity, Point, Selection,
@@ -27,7 +27,6 @@ use project_diagnostics_settings::ProjectDiagnosticsSettings;
 use settings::Settings;
 use std::{
     any::{Any, TypeId},
-    borrow::Cow,
     cmp::Ordering,
     mem,
     ops::Range,
@@ -52,7 +51,6 @@ pub fn init(cx: &mut AppContext) {
     // todo!()
     // cx.add_action(ProjectDiagnosticsEditor::deploy);
     // cx.add_action(ProjectDiagnosticsEditor::toggle_warnings);
-    // items::init(cx);
 }
 
 struct ProjectDiagnosticsEditor {
@@ -101,10 +99,6 @@ impl Render for ProjectDiagnosticsEditor {
 }
 
 // impl View for ProjectDiagnosticsEditor {
-//     fn ui_name() -> &'static str {
-//         "ProjectDiagnosticsEditor"
-//     }
-
 //     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
 //         if self.path_states.is_empty() {
 //             let theme = &theme::current(cx).project_diagnostics;
@@ -126,34 +120,6 @@ impl Render for ProjectDiagnosticsEditor {
 //         if cx.is_self_focused() && !self.path_states.is_empty() {
 //             cx.focus(&self.editor);
 //         }
-//     }
-
-//     fn debug_json(&self, cx: &AppContext) -> serde_json::Value {
-//         let project = self.project.read(cx);
-//         json!({
-//             "project": json!({
-//                 "language_servers": project.language_server_statuses().collect::<Vec<_>>(),
-//                 "summary": project.diagnostic_summary(cx),
-//             }),
-//             "summary": self.summary,
-//             "paths_to_update": self.paths_to_update.iter().map(|(server_id, paths)|
-//                 (server_id.0, paths.into_iter().map(|path| path.path.to_string_lossy()).collect::<Vec<_>>())
-//             ).collect::<HashMap<_, _>>(),
-//             "current_diagnostics": self.current_diagnostics.iter().map(|(server_id, paths)|
-//                 (server_id.0, paths.into_iter().map(|path| path.path.to_string_lossy()).collect::<Vec<_>>())
-//             ).collect::<HashMap<_, _>>(),
-//             "paths_states": self.path_states.iter().map(|state|
-//                 json!({
-//                     "path": state.path.path.to_string_lossy(),
-//                     "groups": state.diagnostic_groups.iter().map(|group|
-//                         json!({
-//                             "block_count": group.blocks.len(),
-//                             "excerpt_count": group.excerpts.len(),
-//                         })
-//                     ).collect::<Vec<_>>(),
-//                 })
-//             ).collect::<Vec<_>>(),
-//         })
 //     }
 // }
 
@@ -224,23 +190,33 @@ impl ProjectDiagnosticsEditor {
     fn emit_item_event_for_editor_event(event: &EditorEvent, cx: &mut ViewContext<Self>) {
         match event {
             EditorEvent::Closed => cx.emit(ItemEvent::CloseItem),
+
             EditorEvent::Saved | EditorEvent::TitleChanged => {
                 cx.emit(ItemEvent::UpdateTab);
                 cx.emit(ItemEvent::UpdateBreadcrumbs);
             }
+
             EditorEvent::Reparsed => {
                 cx.emit(ItemEvent::UpdateBreadcrumbs);
             }
+
             EditorEvent::SelectionsChanged { local } if *local => {
                 cx.emit(ItemEvent::UpdateBreadcrumbs);
             }
+
             EditorEvent::DirtyChanged => {
                 cx.emit(ItemEvent::UpdateTab);
             }
+
             EditorEvent::BufferEdited => {
                 cx.emit(ItemEvent::Edit);
                 cx.emit(ItemEvent::UpdateBreadcrumbs);
             }
+
+            EditorEvent::ExcerptsAdded { .. } | EditorEvent::ExcerptsRemoved { .. } => {
+                cx.emit(ItemEvent::Edit);
+            }
+
             _ => {}
         }
     }
@@ -793,7 +769,7 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
     let (message, highlights) = highlight_diagnostic_message(Vec::new(), &diagnostic.message);
     Arc::new(move |cx| {
         let settings = ThemeSettings::get_global(cx);
-        div().render()
+        div().id("diagnostic header").render()
         // let font_size = (style.text_scale_factor * settings.buffer_font_size(cx)).round();
         // let icon = if diagnostic.severity == DiagnosticSeverity::ERROR {
         //     Svg::new("icons/error.svg").with_color(theme.error_diagnostic.message.text.color)
@@ -920,7 +896,7 @@ mod tests {
         display_map::{BlockContext, TransformBlock},
         DisplayPoint,
     };
-    use gpui::{px, TestAppContext, WindowContext};
+    use gpui::{px, TestAppContext, VisualTestContext, WindowContext};
     use language::{Diagnostic, DiagnosticEntry, DiagnosticSeverity, PointUtf16, Unclipped};
     use project::FakeFs;
     use serde_json::json;
@@ -961,7 +937,8 @@ mod tests {
         let language_server_id = LanguageServerId(0);
         let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
         let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
-        let workspace = window.root(cx);
+        let cx = &mut VisualTestContext::from_window(*window, cx);
+        let workspace = window.root(cx).unwrap();
 
         // Create some diagnostics
         project.update(cx, |project, cx| {
@@ -1355,7 +1332,8 @@ mod tests {
         let server_id_2 = LanguageServerId(101);
         let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
         let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
-        let workspace = window.root(cx);
+        let cx = &mut VisualTestContext::from_window(*window, cx);
+        let workspace = window.root(cx).unwrap();
 
         let view = window.build_view(cx, |cx| {
             ProjectDiagnosticsEditor::new(project.clone(), workspace.downgrade(), cx)
@@ -1602,7 +1580,8 @@ mod tests {
 
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            cx.set_global(SettingsStore::test(cx));
+            let settings = SettingsStore::test(cx);
+            cx.set_global(settings);
             theme::init(cx);
             language::init(cx);
             client::init_settings(cx);
@@ -1629,10 +1608,11 @@ mod tests {
                                 line_height: px(0.),
                                 em_width: px(0.),
                                 block_id: ix,
+                                editor_style: &editor::EditorStyle::default(),
                             })
                             .element_id()?
                             .try_into()
-                            .expect("All blocks must have string ID"),
+                            .ok()?,
 
                         TransformBlock::ExcerptHeader {
                             starts_new_buffer, ..

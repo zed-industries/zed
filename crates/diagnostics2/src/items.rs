@@ -91,7 +91,6 @@ impl DiagnosticIndicator {
     }
 }
 
-// todo: is this nessesary anymore?
 impl EventEmitter<ToolbarItemEvent> for DiagnosticIndicator {}
 
 // impl View for DiagnosticIndicator {

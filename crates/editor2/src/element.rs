@@ -20,10 +20,10 @@ use collections::{BTreeMap, HashMap};
 use gpui::{
     div, point, px, relative, size, transparent_black, Action, AnyElement, AvailableSpace,
     BorrowWindow, Bounds, Component, ContentMask, Corners, DispatchPhase, Edges, Element,
-    ElementId, ElementInputHandler, Entity, EntityId, Hsla,
-    InteractiveComponent, Line, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    ParentComponent, Pixels, ScrollWheelEvent, Size, StatefulInteractiveComponent, Style, Styled,
-    TextRun, TextStyle, View, ViewContext, WindowContext,
+    ElementId, ElementInputHandler, Entity, EntityId, Hsla, InteractiveComponent, Line,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentComponent, Pixels,
+    ScrollWheelEvent, Size, StatefulInteractiveComponent, Style, Styled, TextRun, TextStyle, View,
+    ViewContext, WindowContext,
 };
 use itertools::Itertools;
 use language::language_settings::ShowWhitespaceSetting;
@@ -1977,6 +1977,7 @@ impl EditorElement {
                 TransformBlock::ExcerptHeader { .. } => false,
                 TransformBlock::Custom(block) => block.style() == BlockStyle::Fixed,
             });
+
         let mut render_block = |block: &TransformBlock,
                                 available_space: Size<AvailableSpace>,
                                 block_id: usize,
@@ -2010,6 +2011,7 @@ impl EditorElement {
                         editor_style: &self.style,
                     })
                 }
+
                 TransformBlock::ExcerptHeader {
                     buffer,
                     range,
