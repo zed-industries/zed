@@ -3502,6 +3502,7 @@ impl BackgroundScanner {
             let state = self.state.lock();
             let snapshot = &state.snapshot;
             root_abs_path = snapshot.abs_path().clone();
+            // TODO kb we need `DOT_GIT` and `GITIGNORE` entries always processed.
             if snapshot.is_abs_path_excluded(&job.abs_path) {
                 log::error!("skipping excluded directory {:?}", job.path);
                 return Ok(());

@@ -268,7 +268,9 @@
     // Whether to show warnings or not by default.
     "include_warnings": true
   },
-  // TODO kb docs
+  // Add files or globs of files that will be excluded by Zed entirely:
+  // they will be skipped during FS scan(s), file tree and file search
+  // will lack the corresponding file entries.
   "file_scan_exclusions": [
     "**/.git",
     "**/.svn",
