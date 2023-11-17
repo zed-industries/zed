@@ -121,9 +121,7 @@ fn view_release_notes(_: &ViewReleaseNotes, cx: &mut AppContext) {
         if cx.has_global::<ReleaseChannel>() {
             match cx.global::<ReleaseChannel>() {
                 ReleaseChannel::Dev => {}
-                ReleaseChannel::Nightly => cx
-                    .platform()
-                    .open_url(&format!("{server_url}/releases/nightly/{current_version}")),
+                ReleaseChannel::Nightly => {}
                 ReleaseChannel::Preview => cx
                     .platform()
                     .open_url(&format!("{server_url}/releases/preview/{current_version}")),
