@@ -6190,7 +6190,7 @@ impl Project {
                                 .log_err();
                         }
 
-                        buffer.file_updated(Arc::new(new_file), cx).detach();
+                        buffer.file_updated(Arc::new(new_file), cx);
                     }
                 }
             });
@@ -7182,7 +7182,7 @@ impl Project {
                     .ok_or_else(|| anyhow!("no such worktree"))?;
                 let file = File::from_proto(file, worktree, cx)?;
                 buffer.update(cx, |buffer, cx| {
-                    buffer.file_updated(Arc::new(file), cx).detach();
+                    buffer.file_updated(Arc::new(file), cx);
                 });
                 this.detect_language_for_buffer(&buffer, cx);
             }

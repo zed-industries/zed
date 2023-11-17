@@ -1,4 +1,5 @@
-use gpui::action;
+use gpui::Action;
+use serde::Deserialize;
 
 // If the zed binary doesn't use anything in this crate, it will be optimized away
 // and the actions won't initialize. So we just provide an empty initialization function
@@ -9,12 +10,12 @@ use gpui::action;
 // https://github.com/mmastrac/rust-ctor/issues/280
 pub fn init() {}
 
-#[action]
+#[derive(Clone, PartialEq, Deserialize, Action)]
 pub struct OpenBrowser {
     pub url: String,
 }
 
-#[action]
+#[derive(Clone, PartialEq, Deserialize, Action)]
 pub struct OpenZedURL {
     pub url: String,
 }

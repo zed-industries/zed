@@ -178,6 +178,7 @@ impl<V: 'static> Button<V> {
             .text_ui()
             .rounded_md()
             .bg(self.variant.bg_color(cx))
+            .cursor_pointer()
             .hover(|style| style.bg(self.variant.bg_color_hover(cx)))
             .active(|style| style.bg(self.variant.bg_color_active(cx)));
 

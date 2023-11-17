@@ -14,12 +14,13 @@ use smallvec::SmallVec;
 pub use test_context::*;
 
 use crate::{
-    current_platform, image_cache::ImageCache, Action, AnyBox, AnyView, AnyWindowHandle,
-    AppMetadata, AssetSource, BackgroundExecutor, ClipboardItem, Context, DispatchPhase, DisplayId,
-    Entity, EventEmitter, FocusEvent, FocusHandle, FocusId, ForegroundExecutor, KeyBinding, Keymap,
-    LayoutId, PathPromptOptions, Pixels, Platform, PlatformDisplay, Point, Render, SubscriberSet,
-    Subscription, SvgRenderer, Task, TextStyle, TextStyleRefinement, TextSystem, View, ViewContext,
-    Window, WindowContext, WindowHandle, WindowId,
+    current_platform, image_cache::ImageCache, Action, ActionRegistry, AnyBox, AnyView,
+    AnyWindowHandle, AppMetadata, AssetSource, BackgroundExecutor, ClipboardItem, Context,
+    DispatchPhase, DisplayId, Entity, EventEmitter, FocusEvent, FocusHandle, FocusId,
+    ForegroundExecutor, KeyBinding, Keymap, LayoutId, PathPromptOptions, Pixels, Platform,
+    PlatformDisplay, Point, Render, SharedString, SubscriberSet, Subscription, SvgRenderer, Task,
+    TextStyle, TextStyleRefinement, TextSystem, View, ViewContext, Window, WindowContext,
+    WindowHandle, WindowId,
 };
 use anyhow::{anyhow, Result};
 use collections::{HashMap, HashSet, VecDeque};
@@ -182,6 +183,7 @@ pub struct AppContext {
     text_system: Arc<TextSystem>,
     flushing_effects: bool,
     pending_updates: usize,
+    pub(crate) actions: Rc<ActionRegistry>,
     pub(crate) active_drag: Option<AnyDrag>,
     pub(crate) active_tooltip: Option<AnyTooltip>,
     pub(crate) next_frame_callbacks: HashMap<DisplayId, Vec<FrameCallback>>,
@@ -240,6 +242,7 @@ impl AppContext {
                 platform: platform.clone(),
                 app_metadata,
                 text_system,
+                actions: Rc::new(ActionRegistry::default()),
                 flushing_effects: false,
                 pending_updates: 0,
                 active_drag: None,
@@ -963,6 +966,18 @@ impl AppContext {
     /// this method before effects are flushed.
     pub fn propagate(&mut self) {
         self.propagate_event = true;
+    }
+
+    pub fn build_action(
+        &self,
+        name: &str,
+        data: Option<serde_json::Value>,
+    ) -> Result<Box<dyn Action>> {
+        self.actions.build_action(name, data)
+    }
+
+    pub fn all_action_names(&self) -> &[SharedString] {
+        self.actions.all_action_names()
     }
 }
 

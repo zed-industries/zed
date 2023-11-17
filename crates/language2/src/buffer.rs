@@ -16,8 +16,9 @@ use crate::{
 };
 use anyhow::{anyhow, Result};
 pub use clock::ReplicaId;
-use futures::FutureExt as _;
-use gpui::{AppContext, EventEmitter, HighlightStyle, ModelContext, Task};
+use futures::channel::oneshot;
+use gpui::{AppContext, EventEmitter, HighlightStyle, ModelContext, Task, TaskLabel};
+use lazy_static::lazy_static;
 use lsp::LanguageServerId;
 use parking_lot::Mutex;
 use similar::{ChangeTag, TextDiff};
@@ -44,23 +45,33 @@ pub use text::{Buffer as TextBuffer, BufferSnapshot as TextBufferSnapshot, *};
 use theme::SyntaxTheme;
 #[cfg(any(test, feature = "test-support"))]
 use util::RandomCharIter;
-use util::{RangeExt, TryFutureExt as _};
+use util::RangeExt;
 
 #[cfg(any(test, feature = "test-support"))]
 pub use {tree_sitter_rust, tree_sitter_typescript};
 
 pub use lsp::DiagnosticSeverity;
 
+lazy_static! {
+    pub static ref BUFFER_DIFF_TASK: TaskLabel = TaskLabel::new();
+}
+
 pub struct Buffer {
     text: TextBuffer,
     diff_base: Option<String>,
     git_diff: git::diff::BufferDiff,
     file: Option<Arc<dyn File>>,
-    saved_version: clock::Global,
-    saved_version_fingerprint: RopeFingerprint,
+    /// The mtime of the file when this buffer was last loaded from
+    /// or saved to disk.
     saved_mtime: SystemTime,
+    /// The version vector when this buffer was last loaded from
+    /// or saved to disk.
+    saved_version: clock::Global,
+    /// A hash of the current contents of the buffer's file.
+    file_fingerprint: RopeFingerprint,
     transaction_depth: usize,
     was_dirty_before_starting_transaction: Option<bool>,
+    reload_task: Option<Task<Result<()>>>,
     language: Option<Arc<Language>>,
     autoindent_requests: Vec<Arc<AutoindentRequest>>,
     pending_autoindent: Option<Task<()>>,
@@ -380,8 +391,7 @@ impl Buffer {
                 .ok_or_else(|| anyhow!("missing line_ending"))?,
         ));
         this.saved_version = proto::deserialize_version(&message.saved_version);
-        this.saved_version_fingerprint =
-            proto::deserialize_fingerprint(&message.saved_version_fingerprint)?;
+        this.file_fingerprint = proto::deserialize_fingerprint(&message.saved_version_fingerprint)?;
         this.saved_mtime = message
             .saved_mtime
             .ok_or_else(|| anyhow!("invalid saved_mtime"))?
@@ -397,7 +407,7 @@ impl Buffer {
             diff_base: self.diff_base.as_ref().map(|h| h.to_string()),
             line_ending: proto::serialize_line_ending(self.line_ending()) as i32,
             saved_version: proto::serialize_version(&self.saved_version),
-            saved_version_fingerprint: proto::serialize_fingerprint(self.saved_version_fingerprint),
+            saved_version_fingerprint: proto::serialize_fingerprint(self.file_fingerprint),
             saved_mtime: Some(self.saved_mtime.into()),
         }
     }
@@ -467,7 +477,8 @@ impl Buffer {
         Self {
             saved_mtime,
             saved_version: buffer.version(),
-            saved_version_fingerprint: buffer.as_rope().fingerprint(),
+            file_fingerprint: buffer.as_rope().fingerprint(),
+            reload_task: None,
             transaction_depth: 0,
             was_dirty_before_starting_transaction: None,
             text: buffer,
@@ -533,7 +544,7 @@ impl Buffer {
     }
 
     pub fn saved_version_fingerprint(&self) -> RopeFingerprint {
-        self.saved_version_fingerprint
+        self.file_fingerprint
     }
 
     pub fn saved_mtime(&self) -> SystemTime {
@@ -561,43 +572,58 @@ impl Buffer {
         cx: &mut ModelContext<Self>,
     ) {
         self.saved_version = version;
-        self.saved_version_fingerprint = fingerprint;
+        self.file_fingerprint = fingerprint;
         self.saved_mtime = mtime;
         cx.emit(Event::Saved);
         cx.notify();
     }
 
-    pub fn reload(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<Option<Transaction>>> {
-        cx.spawn(|this, mut cx| async move {
-            if let Some((new_mtime, new_text)) = this.update(&mut cx, |this, cx| {
+    pub fn reload(
+        &mut self,
+        cx: &mut ModelContext<Self>,
+    ) -> oneshot::Receiver<Option<Transaction>> {
+        let (tx, rx) = futures::channel::oneshot::channel();
+        let prev_version = self.text.version();
+        self.reload_task = Some(cx.spawn(|this, mut cx| async move {
+            let Some((new_mtime, new_text)) = this.update(&mut cx, |this, cx| {
                 let file = this.file.as_ref()?.as_local()?;
                 Some((file.mtime(), file.load(cx)))
-            })? {
-                let new_text = new_text.await?;
-                let diff = this
-                    .update(&mut cx, |this, cx| this.diff(new_text, cx))?
-                    .await;
-                this.update(&mut cx, |this, cx| {
-                    if this.version() == diff.base_version {
-                        this.finalize_last_transaction();
-                        this.apply_diff(diff, cx);
-                        if let Some(transaction) = this.finalize_last_transaction().cloned() {
-                            this.did_reload(
-                                this.version(),
-                                this.as_rope().fingerprint(),
-                                this.line_ending(),
-                                new_mtime,
-                                cx,
-                            );
-                            return Some(transaction);
-                        }
-                    }
-                    None
-                })
-            } else {
-                Ok(None)
-            }
-        })
+            })?
+            else {
+                return Ok(());
+            };
+
+            let new_text = new_text.await?;
+            let diff = this
+                .update(&mut cx, |this, cx| this.diff(new_text.clone(), cx))?
+                .await;
+            this.update(&mut cx, |this, cx| {
+                if this.version() == diff.base_version {
+                    this.finalize_last_transaction();
+                    this.apply_diff(diff, cx);
+                    tx.send(this.finalize_last_transaction().cloned()).ok();
+
+                    this.did_reload(
+                        this.version(),
+                        this.as_rope().fingerprint(),
+                        this.line_ending(),
+                        new_mtime,
+                        cx,
+                    );
+                } else {
+                    this.did_reload(
+                        prev_version,
+                        Rope::text_fingerprint(&new_text),
+                        this.line_ending(),
+                        this.saved_mtime,
+                        cx,
+                    );
+                }
+
+                this.reload_task.take();
+            })
+        }));
+        rx
     }
 
     pub fn did_reload(
@@ -609,14 +635,14 @@ impl Buffer {
         cx: &mut ModelContext<Self>,
     ) {
         self.saved_version = version;
-        self.saved_version_fingerprint = fingerprint;
+        self.file_fingerprint = fingerprint;
         self.text.set_line_ending(line_ending);
         self.saved_mtime = mtime;
         if let Some(file) = self.file.as_ref().and_then(|f| f.as_local()) {
             file.buffer_reloaded(
                 self.remote_id(),
                 &self.saved_version,
-                self.saved_version_fingerprint,
+                self.file_fingerprint,
                 self.line_ending(),
                 self.saved_mtime,
                 cx,
@@ -626,13 +652,8 @@ impl Buffer {
         cx.notify();
     }
 
-    pub fn file_updated(
-        &mut self,
-        new_file: Arc<dyn File>,
-        cx: &mut ModelContext<Self>,
-    ) -> Task<()> {
+    pub fn file_updated(&mut self, new_file: Arc<dyn File>, cx: &mut ModelContext<Self>) {
         let mut file_changed = false;
-        let mut task = Task::ready(());
 
         if let Some(old_file) = self.file.as_ref() {
             if new_file.path() != old_file.path() {
@@ -652,8 +673,7 @@ impl Buffer {
                     file_changed = true;
 
                     if !self.is_dirty() {
-                        let reload = self.reload(cx).log_err().map(drop);
-                        task = cx.background_executor().spawn(reload);
+                        self.reload(cx).close();
                     }
                 }
             }
@@ -667,7 +687,6 @@ impl Buffer {
             cx.emit(Event::FileHandleChanged);
             cx.notify();
         }
-        task
     }
 
     pub fn diff_base(&self) -> Option<&str> {
@@ -1118,36 +1137,72 @@ impl Buffer {
     pub fn diff(&self, mut new_text: String, cx: &AppContext) -> Task<Diff> {
         let old_text = self.as_rope().clone();
         let base_version = self.version();
-        cx.background_executor().spawn(async move {
-            let old_text = old_text.to_string();
-            let line_ending = LineEnding::detect(&new_text);
-            LineEnding::normalize(&mut new_text);
-            let diff = TextDiff::from_chars(old_text.as_str(), new_text.as_str());
-            let mut edits = Vec::new();
-            let mut offset = 0;
-            let empty: Arc<str> = "".into();
-            for change in diff.iter_all_changes() {
-                let value = change.value();
-                let end_offset = offset + value.len();
-                match change.tag() {
-                    ChangeTag::Equal => {
-                        offset = end_offset;
+        cx.background_executor()
+            .spawn_labeled(*BUFFER_DIFF_TASK, async move {
+                let old_text = old_text.to_string();
+                let line_ending = LineEnding::detect(&new_text);
+                LineEnding::normalize(&mut new_text);
+
+                let diff = TextDiff::from_chars(old_text.as_str(), new_text.as_str());
+                let empty: Arc<str> = "".into();
+
+                let mut edits = Vec::new();
+                let mut old_offset = 0;
+                let mut new_offset = 0;
+                let mut last_edit: Option<(Range<usize>, Range<usize>)> = None;
+                for change in diff.iter_all_changes().map(Some).chain([None]) {
+                    if let Some(change) = &change {
+                        let len = change.value().len();
+                        match change.tag() {
+                            ChangeTag::Equal => {
+                                old_offset += len;
+                                new_offset += len;
+                            }
+                            ChangeTag::Delete => {
+                                let old_end_offset = old_offset + len;
+                                if let Some((last_old_range, _)) = &mut last_edit {
+                                    last_old_range.end = old_end_offset;
+                                } else {
+                                    last_edit =
+                                        Some((old_offset..old_end_offset, new_offset..new_offset));
+                                }
+                                old_offset = old_end_offset;
+                            }
+                            ChangeTag::Insert => {
+                                let new_end_offset = new_offset + len;
+                                if let Some((_, last_new_range)) = &mut last_edit {
+                                    last_new_range.end = new_end_offset;
+                                } else {
+                                    last_edit =
+                                        Some((old_offset..old_offset, new_offset..new_end_offset));
+                                }
+                                new_offset = new_end_offset;
+                            }
+                        }
                     }
-                    ChangeTag::Delete => {
-                        edits.push((offset..end_offset, empty.clone()));
-                        offset = end_offset;
-                    }
-                    ChangeTag::Insert => {
-                        edits.push((offset..offset, value.into()));
+
+                    if let Some((old_range, new_range)) = &last_edit {
+                        if old_offset > old_range.end
+                            || new_offset > new_range.end
+                            || change.is_none()
+                        {
+                            let text = if new_range.is_empty() {
+                                empty.clone()
+                            } else {
+                                new_text[new_range.clone()].into()
+                            };
+                            edits.push((old_range.clone(), text));
+                            last_edit.take();
+                        }
                     }
                 }
-            }
-            Diff {
-                base_version,
-                line_ending,
-                edits,
-            }
-        })
+
+                Diff {
+                    base_version,
+                    line_ending,
+                    edits,
+                }
+            })
     }
 
     /// Spawn a background task that searches the buffer for any whitespace
@@ -1231,12 +1286,12 @@ impl Buffer {
     }
 
     pub fn is_dirty(&self) -> bool {
-        self.saved_version_fingerprint != self.as_rope().fingerprint()
+        self.file_fingerprint != self.as_rope().fingerprint()
             || self.file.as_ref().map_or(false, |file| file.is_deleted())
     }
 
     pub fn has_conflict(&self) -> bool {
-        self.saved_version_fingerprint != self.as_rope().fingerprint()
+        self.file_fingerprint != self.as_rope().fingerprint()
             && self
                 .file
                 .as_ref()

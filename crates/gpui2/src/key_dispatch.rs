@@ -1,6 +1,6 @@
 use crate::{
-    build_action_from_type, Action, DispatchPhase, FocusId, KeyBinding, KeyContext, KeyMatch,
-    Keymap, Keystroke, KeystrokeMatcher, WindowContext,
+    Action, ActionRegistry, DispatchPhase, FocusId, KeyBinding, KeyContext, KeyMatch, Keymap,
+    Keystroke, KeystrokeMatcher, WindowContext,
 };
 use collections::HashMap;
 use parking_lot::Mutex;
@@ -10,7 +10,6 @@ use std::{
     rc::Rc,
     sync::Arc,
 };
-use util::ResultExt;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub struct DispatchNodeId(usize);
@@ -22,6 +21,7 @@ pub(crate) struct DispatchTree {
     focusable_node_ids: HashMap<FocusId, DispatchNodeId>,
     keystroke_matchers: HashMap<SmallVec<[KeyContext; 4]>, KeystrokeMatcher>,
     keymap: Arc<Mutex<Keymap>>,
+    action_registry: Rc<ActionRegistry>,
 }
 
 #[derive(Default)]
@@ -41,7 +41,7 @@ pub(crate) struct DispatchActionListener {
 }
 
 impl DispatchTree {
-    pub fn new(keymap: Arc<Mutex<Keymap>>) -> Self {
+    pub fn new(keymap: Arc<Mutex<Keymap>>, action_registry: Rc<ActionRegistry>) -> Self {
         Self {
             node_stack: Vec::new(),
             context_stack: Vec::new(),
@@ -49,6 +49,7 @@ impl DispatchTree {
             focusable_node_ids: HashMap::default(),
             keystroke_matchers: HashMap::default(),
             keymap,
+            action_registry,
         }
     }
 
@@ -153,7 +154,9 @@ impl DispatchTree {
             for node_id in self.dispatch_path(*node) {
                 let node = &self.nodes[node_id.0];
                 for DispatchActionListener { action_type, .. } in &node.action_listeners {
-                    actions.extend(build_action_from_type(action_type).log_err());
+                    // Intentionally silence these errors without logging.
+                    // If an action cannot be built by default, it's not available.
+                    actions.extend(self.action_registry.build_action_type(action_type).ok());
                 }
             }
         }

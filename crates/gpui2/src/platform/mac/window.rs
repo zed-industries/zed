@@ -1141,7 +1141,7 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
     let event = unsafe { InputEvent::from_native(native_event, Some(window_height)) };
 
     if let Some(mut event) = event {
-        let synthesized_second_event = match &mut event {
+        match &mut event {
             InputEvent::MouseDown(
                 event @ MouseDownEvent {
                     button: MouseButton::Left,
@@ -1149,6 +1149,7 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
                     ..
                 },
             ) => {
+                // On mac, a ctrl-left click should be handled as a right click.
                 *event = MouseDownEvent {
                     button: MouseButton::Right,
                     modifiers: Modifiers {
@@ -1158,26 +1159,30 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
                     click_count: 1,
                     ..*event
                 };
-
-                Some(InputEvent::MouseDown(MouseDownEvent {
-                    button: MouseButton::Right,
-                    ..*event
-                }))
             }
 
             // Because we map a ctrl-left_down to a right_down -> right_up let's ignore
             // the ctrl-left_up to avoid having a mismatch in button down/up events if the
             // user is still holding ctrl when releasing the left mouse button
-            InputEvent::MouseUp(MouseUpEvent {
-                button: MouseButton::Left,
-                modifiers: Modifiers { control: true, .. },
-                ..
-            }) => {
-                lock.synthetic_drag_counter += 1;
-                return;
+            InputEvent::MouseUp(
+                event @ MouseUpEvent {
+                    button: MouseButton::Left,
+                    modifiers: Modifiers { control: true, .. },
+                    ..
+                },
+            ) => {
+                *event = MouseUpEvent {
+                    button: MouseButton::Right,
+                    modifiers: Modifiers {
+                        control: false,
+                        ..event.modifiers
+                    },
+                    click_count: 1,
+                    ..*event
+                };
             }
 
-            _ => None,
+            _ => {}
         };
 
         match &event {
@@ -1227,9 +1232,6 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
         if let Some(mut callback) = lock.event_callback.take() {
             drop(lock);
             callback(event);
-            if let Some(event) = synthesized_second_event {
-                callback(event);
-            }
             window_state.lock().event_callback = Some(callback);
         }
     }

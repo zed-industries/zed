@@ -1579,7 +1579,7 @@ mod tests {
         path::{Path, PathBuf},
         sync::atomic::{self, AtomicUsize},
     };
-    use workspace::{pane, AppState};
+    use workspace::AppState;
 
     #[gpui::test]
     async fn test_visible_list(cx: &mut gpui::TestAppContext) {
@@ -2785,7 +2785,7 @@ mod tests {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
             init_settings(cx);
-            theme::init(cx);
+            theme::init(theme::LoadThemes::JustBase, cx);
             language::init(cx);
             editor::init_settings(cx);
             crate::init((), cx);
@@ -2798,11 +2798,10 @@ mod tests {
     fn init_test_with_editor(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let app_state = AppState::test(cx);
-            theme::init(cx);
+            theme::init(theme::LoadThemes::JustBase, cx);
             init_settings(cx);
             language::init(cx);
             editor::init(cx);
-            pane::init(cx);
             crate::init((), cx);
             workspace::init(app_state.clone(), cx);
             Project::init_settings(cx);

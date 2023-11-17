@@ -240,7 +240,7 @@ impl From<&Box<dyn SearchableItemHandle>> for AnyView {
 
 impl PartialEq for Box<dyn SearchableItemHandle> {
     fn eq(&self, other: &Self) -> bool {
-        self.id() == other.id()
+        self.item_id() == other.item_id()
     }
 }
 

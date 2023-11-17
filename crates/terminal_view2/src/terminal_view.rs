@@ -9,7 +9,7 @@ pub mod terminal_panel;
 // use crate::terminal_element::TerminalElement;
 use editor::{scroll::autoscroll::Autoscroll, Editor};
 use gpui::{
-    actions, div, img, red, register_action, AnyElement, AppContext, Component, DispatchPhase, Div,
+    actions, div, img, red, Action, AnyElement, AppContext, Component, DispatchPhase, Div,
     EventEmitter, FocusEvent, FocusHandle, Focusable, FocusableComponent, FocusableView,
     InputHandler, InteractiveComponent, KeyDownEvent, Keystroke, Model, MouseButton,
     ParentComponent, Pixels, Render, SharedString, Styled, Task, View, ViewContext, VisualContext,
@@ -32,7 +32,7 @@ use workspace::{
     notifications::NotifyResultExt,
     register_deserializable_item,
     searchable::{SearchEvent, SearchOptions, SearchableItem},
-    ui::{ContextMenu, ContextMenuItem, Label},
+    ui::{ContextMenu, Label},
     CloseActiveItem, NewCenterTerminal, Pane, ToolbarItemLocation, Workspace, WorkspaceId,
 };
 
@@ -55,12 +55,10 @@ const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 #[derive(Clone, Debug, PartialEq)]
 pub struct ScrollTerminal(pub i32);
 
-#[register_action]
-#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Action)]
 pub struct SendText(String);
 
-#[register_action]
-#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Action)]
 pub struct SendKeystroke(String);
 
 actions!(Clear, Copy, Paste, ShowCharacterPalette, SearchTest);
@@ -87,7 +85,7 @@ pub struct TerminalView {
     has_new_content: bool,
     //Currently using iTerm bell, show bell emoji in tab until input is received
     has_bell: bool,
-    context_menu: Option<ContextMenu>,
+    context_menu: Option<View<ContextMenu>>,
     blink_state: bool,
     blinking_on: bool,
     blinking_paused: bool,
@@ -302,10 +300,14 @@ impl TerminalView {
         position: gpui::Point<Pixels>,
         cx: &mut ViewContext<Self>,
     ) {
-        self.context_menu = Some(ContextMenu::new(vec![
-            ContextMenuItem::entry(Label::new("Clear"), Clear),
-            ContextMenuItem::entry(Label::new("Close"), CloseActiveItem { save_intent: None }),
-        ]));
+        self.context_menu = Some(cx.build_view(|cx| {
+            ContextMenu::new(cx)
+                .entry(Label::new("Clear"), Box::new(Clear))
+                .entry(
+                    Label::new("Close"),
+                    Box::new(CloseActiveItem { save_intent: None }),
+                )
+        }));
         dbg!(&position);
         // todo!()
         //     self.context_menu
@@ -1126,7 +1128,7 @@ mod tests {
     pub async fn init_test(cx: &mut TestAppContext) -> (Model<Project>, View<Workspace>) {
         let params = cx.update(AppState::test);
         cx.update(|cx| {
-            theme::init(cx);
+            theme::init(theme::LoadThemes::JustBase, cx);
             Project::init_settings(cx);
             language::init(cx);
         });

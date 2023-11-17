@@ -98,7 +98,7 @@ pub fn up_by_rows(
         SelectionGoal::HorizontalPosition(x) => x.into(), // todo!("Can the fields in SelectionGoal by Pixels? We should extract a geometry crate and depend on that.")
         SelectionGoal::WrappedHorizontalPosition((_, x)) => x.into(),
         SelectionGoal::HorizontalRange { end, .. } => end.into(),
-        _ => map.x_for_point(start, text_layout_details),
+        _ => map.x_for_display_point(start, text_layout_details),
     };
 
     let prev_row = start.row().saturating_sub(row_count);
@@ -107,7 +107,7 @@ pub fn up_by_rows(
         Bias::Left,
     );
     if point.row() < start.row() {
-        *point.column_mut() = map.column_for_x(point.row(), goal_x, text_layout_details)
+        *point.column_mut() = map.display_column_for_x(point.row(), goal_x, text_layout_details)
     } else if preserve_column_at_start {
         return (start, goal);
     } else {
@@ -137,18 +137,18 @@ pub fn down_by_rows(
         SelectionGoal::HorizontalPosition(x) => x.into(),
         SelectionGoal::WrappedHorizontalPosition((_, x)) => x.into(),
         SelectionGoal::HorizontalRange { end, .. } => end.into(),
-        _ => map.x_for_point(start, text_layout_details),
+        _ => map.x_for_display_point(start, text_layout_details),
     };
 
     let new_row = start.row() + row_count;
     let mut point = map.clip_point(DisplayPoint::new(new_row, 0), Bias::Right);
     if point.row() > start.row() {
-        *point.column_mut() = map.column_for_x(point.row(), goal_x, text_layout_details)
+        *point.column_mut() = map.display_column_for_x(point.row(), goal_x, text_layout_details)
     } else if preserve_column_at_end {
         return (start, goal);
     } else {
         point = map.max_point();
-        goal_x = map.x_for_point(point, text_layout_details)
+        goal_x = map.x_for_display_point(point, text_layout_details)
     }
 
     let mut clipped_point = map.clip_point(point, Bias::Right);

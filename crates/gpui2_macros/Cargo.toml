@@ -9,6 +9,6 @@ path = "src/gpui2_macros.rs"
 proc-macro = true
 
 [dependencies]
-syn = "1.0.72"
+syn = { version = "1.0.72", features = ["full"] }
 quote = "1.0.9"
 proc-macro2 = "1.0.66"

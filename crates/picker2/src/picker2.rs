@@ -1,7 +1,7 @@
 use editor::Editor;
 use gpui::{
-    div, prelude::*, uniform_list, Component, Div, MouseButton, Render, Task,
-    UniformListScrollHandle, View, ViewContext, WindowContext,
+    div, prelude::*, uniform_list, AppContext, Component, Div, FocusHandle, FocusableView,
+    MouseButton, Render, Task, UniformListScrollHandle, View, ViewContext, WindowContext,
 };
 use std::{cmp, sync::Arc};
 use ui::{prelude::*, v_stack, Divider, Label, TextColor};
@@ -33,6 +33,12 @@ pub trait PickerDelegate: Sized + 'static {
         selected: bool,
         cx: &mut ViewContext<Picker<Self>>,
     ) -> Self::ListItem;
+}
+
+impl<D: PickerDelegate> FocusableView for Picker<D> {
+    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+        self.editor.focus_handle(cx)
+    }
 }
 
 impl<D: PickerDelegate> Picker<D> {

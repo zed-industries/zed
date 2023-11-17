@@ -304,13 +304,13 @@ impl TerminalPanel {
             .pane
             .read(cx)
             .items()
-            .map(|item| item.id().as_u64())
+            .map(|item| item.item_id().as_u64())
             .collect::<Vec<_>>();
         let active_item_id = self
             .pane
             .read(cx)
             .active_item()
-            .map(|item| item.id().as_u64());
+            .map(|item| item.item_id().as_u64());
         let height = self.height;
         let width = self.width;
         self.pending_serialization = cx.background_executor().spawn(
