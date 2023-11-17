@@ -3179,7 +3179,7 @@ all hints should be invalidated and requeried for all of its visible excerpts"
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
-            theme::init(cx);
+            theme::init(theme::LoadThemes::JustBase, cx);
             client::init_settings(cx);
             language::init(cx);
             Project::init_settings(cx);

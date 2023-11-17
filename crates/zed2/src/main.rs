@@ -140,8 +140,7 @@ fn main() {
 
         cx.set_global(client.clone());
 
-        theme::init(cx);
-        // context_menu::init(cx);
+        theme::init(theme::LoadThemes::All, cx);
         project::Project::init(&client, cx);
         client::init(&client, cx);
         command_palette::init(cx);

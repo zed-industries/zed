@@ -224,7 +224,7 @@ impl TestServer {
         });
 
         cx.update(|cx| {
-            theme::init(cx);
+            theme::init(theme::LoadThemes::JustBase, cx);
             Project::init(&client, cx);
             client::init(&client, cx);
             language::init(cx);

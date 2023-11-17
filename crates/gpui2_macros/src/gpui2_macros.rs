@@ -11,14 +11,14 @@ pub fn style_helpers(args: TokenStream) -> TokenStream {
     style_helpers::style_helpers(args)
 }
 
-#[proc_macro_attribute]
-pub fn action(attr: TokenStream, item: TokenStream) -> TokenStream {
-    action::action(attr, item)
+#[proc_macro_derive(Action)]
+pub fn action(input: TokenStream) -> TokenStream {
+    action::action(input)
 }
 
 #[proc_macro_attribute]
 pub fn register_action(attr: TokenStream, item: TokenStream) -> TokenStream {
-    register_action::register_action(attr, item)
+    register_action::register_action_macro(attr, item)
 }
 
 #[proc_macro_derive(Component, attributes(component))]

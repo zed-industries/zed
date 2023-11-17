@@ -73,9 +73,9 @@ impl KeymapFile {
                                     "Expected first item in array to be a string."
                                 )));
                             };
-                            gpui::build_action(&name, Some(data))
+                            cx.build_action(&name, Some(data))
                         }
-                        Value::String(name) => gpui::build_action(&name, None),
+                        Value::String(name) => cx.build_action(&name, None),
                         Value::Null => Ok(no_action()),
                         _ => {
                             return Some(Err(anyhow!("Expected two-element array, got {action:?}")))

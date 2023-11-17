@@ -1,7 +1,10 @@
-use crate::{KeyBinding, KeyBindingContextPredicate, Keystroke};
+use crate::{KeyBinding, KeyBindingContextPredicate, Keystroke, NoAction};
 use collections::HashSet;
 use smallvec::SmallVec;
-use std::{any::TypeId, collections::HashMap};
+use std::{
+    any::{Any, TypeId},
+    collections::HashMap,
+};
 
 #[derive(Copy, Clone, Eq, PartialEq, Default)]
 pub struct KeymapVersion(usize);
@@ -37,20 +40,19 @@ impl Keymap {
     }
 
     pub fn add_bindings<T: IntoIterator<Item = KeyBinding>>(&mut self, bindings: T) {
-        // todo!("no action")
-        // let no_action_id = (NoAction {}).id();
+        let no_action_id = &(NoAction {}).type_id();
         let mut new_bindings = Vec::new();
-        let has_new_disabled_keystrokes = false;
+        let mut has_new_disabled_keystrokes = false;
         for binding in bindings {
-            // if binding.action().id() == no_action_id {
-            //     has_new_disabled_keystrokes |= self
-            //         .disabled_keystrokes
-            //         .entry(binding.keystrokes)
-            //         .or_default()
-            //         .insert(binding.context_predicate);
-            // } else {
-            new_bindings.push(binding);
-            // }
+            if binding.action.type_id() == *no_action_id {
+                has_new_disabled_keystrokes |= self
+                    .disabled_keystrokes
+                    .entry(binding.keystrokes)
+                    .or_default()
+                    .insert(binding.context_predicate);
+            } else {
+                new_bindings.push(binding);
+            }
         }
 
         if has_new_disabled_keystrokes {

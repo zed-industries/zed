@@ -237,11 +237,11 @@ pub trait InteractiveComponent<V: 'static>: Sized + Element<V> {
         //
         // if we are relying on this side-effect still, removing the debug_assert!
         // likely breaks the command_palette tests.
-        debug_assert!(
-            A::is_registered(),
-            "{:?} is not registered as an action",
-            A::qualified_name()
-        );
+        // debug_assert!(
+        //     A::is_registered(),
+        //     "{:?} is not registered as an action",
+        //     A::qualified_name()
+        // );
         self.interactivity().action_listeners.push((
             TypeId::of::<A>(),
             Box::new(move |view, action, phase, cx| {
@@ -960,11 +960,11 @@ where
                             cx.background_executor().timer(TOOLTIP_DELAY).await;
                             view.update(&mut cx, move |view_state, cx| {
                                 active_tooltip.borrow_mut().replace(ActiveTooltip {
-                                    waiting: None,
                                     tooltip: Some(AnyTooltip {
                                         view: tooltip_builder(view_state, cx),
                                         cursor_offset: cx.mouse_position(),
                                     }),
+                                    _task: None,
                                 });
                                 cx.notify();
                             })
@@ -972,10 +972,15 @@ where
                         }
                     });
                     active_tooltip.borrow_mut().replace(ActiveTooltip {
-                        waiting: Some(task),
                         tooltip: None,
+                        _task: Some(task),
                     });
                 }
+            });
+
+            let active_tooltip = element_state.active_tooltip.clone();
+            cx.on_mouse_event(move |_, _: &MouseDownEvent, _, _| {
+                active_tooltip.borrow_mut().take();
             });
 
             if let Some(active_tooltip) = element_state.active_tooltip.borrow().as_ref() {
@@ -1207,9 +1212,8 @@ pub struct InteractiveElementState {
 }
 
 pub struct ActiveTooltip {
-    #[allow(unused)] // used to drop the task
-    waiting: Option<Task<()>>,
     tooltip: Option<AnyTooltip>,
+    _task: Option<Task<()>>,
 }
 
 /// Whether or not the element or a group that contains it is clicked by the mouse.

@@ -7,27 +7,17 @@ pub mod terminal_panel;
 
 // todo!()
 // use crate::terminal_element::TerminalElement;
-use anyhow::Context;
-use dirs::home_dir;
 use editor::{scroll::autoscroll::Autoscroll, Editor};
 use gpui::{
-    actions, div, img, red, register_action, AnyElement, AppContext, Component, DispatchPhase, Div,
+    actions, div, img, red, Action, AnyElement, AppContext, Component, DispatchPhase, Div,
     EventEmitter, FocusEvent, FocusHandle, Focusable, FocusableComponent, FocusableView,
-    InputHandler, InteractiveComponent, KeyDownEvent, Keystroke, Model, ParentComponent, Pixels,
-    Render, SharedString, Styled, Task, View, ViewContext, VisualContext, WeakView,
+    InputHandler, InteractiveComponent, KeyDownEvent, Keystroke, Model, MouseButton,
+    ParentComponent, Pixels, Render, SharedString, Styled, Task, View, ViewContext, VisualContext,
+    WeakView,
 };
 use language::Bias;
 use persistence::TERMINAL_DB;
 use project::{search::SearchQuery, LocalWorktree, Project};
-use serde::Deserialize;
-use settings::Settings;
-use smol::Timer;
-use std::{
-    ops::RangeInclusive,
-    path::{Path, PathBuf},
-    sync::Arc,
-    time::Duration,
-};
 use terminal::{
     alacritty_terminal::{
         index::Point,
@@ -42,7 +32,21 @@ use workspace::{
     notifications::NotifyResultExt,
     register_deserializable_item,
     searchable::{SearchEvent, SearchOptions, SearchableItem},
-    NewCenterTerminal, Pane, ToolbarItemLocation, Workspace, WorkspaceId,
+    ui::{ContextMenu, Label},
+    CloseActiveItem, NewCenterTerminal, Pane, ToolbarItemLocation, Workspace, WorkspaceId,
+};
+
+use anyhow::Context;
+use dirs::home_dir;
+use serde::Deserialize;
+use settings::Settings;
+use smol::Timer;
+
+use std::{
+    ops::RangeInclusive,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
 };
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
@@ -51,17 +55,16 @@ const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 #[derive(Clone, Debug, PartialEq)]
 pub struct ScrollTerminal(pub i32);
 
-#[register_action]
-#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Action)]
 pub struct SendText(String);
 
-#[register_action]
-#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Action)]
 pub struct SendKeystroke(String);
 
 actions!(Clear, Copy, Paste, ShowCharacterPalette, SearchTest);
 
 pub fn init(cx: &mut AppContext) {
+    workspace::ui::init(cx);
     terminal_panel::init(cx);
     terminal::init(cx);
 
@@ -82,7 +85,7 @@ pub struct TerminalView {
     has_new_content: bool,
     //Currently using iTerm bell, show bell emoji in tab until input is received
     has_bell: bool,
-    // context_menu: View<ContextMenu>,
+    context_menu: Option<View<ContextMenu>>,
     blink_state: bool,
     blinking_on: bool,
     blinking_paused: bool,
@@ -265,8 +268,7 @@ impl TerminalView {
             has_new_content: true,
             has_bell: false,
             focus_handle: cx.focus_handle(),
-            // todo!()
-            // context_menu: cx.build_view(|cx| ContextMenu::new(view_id, cx)),
+            context_menu: None,
             blink_state: true,
             blinking_on: false,
             blinking_paused: false,
@@ -293,18 +295,24 @@ impl TerminalView {
         cx.emit(Event::Wakeup);
     }
 
-    pub fn deploy_context_menu(&mut self, _position: Point<Pixels>, _cx: &mut ViewContext<Self>) {
-        //todo!(context_menu)
-        // let menu_entries = vec![
-        //     ContextMenuItem::action("Clear", Clear),
-        //     ContextMenuItem::action("Close", pane::CloseActiveItem { save_intent: None }),
-        // ];
-
-        // self.context_menu.update(cx, |menu, cx| {
-        //     menu.show(position, AnchorCorner::TopLeft, menu_entries, cx)
-        // });
-
-        // cx.notify();
+    pub fn deploy_context_menu(
+        &mut self,
+        position: gpui::Point<Pixels>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.context_menu = Some(cx.build_view(|cx| {
+            ContextMenu::new(cx)
+                .entry(Label::new("Clear"), Box::new(Clear))
+                .entry(
+                    Label::new("Close"),
+                    Box::new(CloseActiveItem { save_intent: None }),
+                )
+        }));
+        dbg!(&position);
+        // todo!()
+        //     self.context_menu
+        //         .show(position, AnchorCorner::TopLeft, menu_entries, cx);
+        //     cx.notify();
     }
 
     fn show_character_palette(&mut self, _: &ShowCharacterPalette, cx: &mut ViewContext<Self>) {
@@ -541,28 +549,41 @@ impl Render for TerminalView {
         let focused = self.focus_handle.is_focused(cx);
 
         div()
+            .relative()
+            .child(
+                div()
+                    .z_index(0)
+                    .absolute()
+                    .on_key_down(Self::key_down)
+                    .on_action(TerminalView::send_text)
+                    .on_action(TerminalView::send_keystroke)
+                    .on_action(TerminalView::copy)
+                    .on_action(TerminalView::paste)
+                    .on_action(TerminalView::clear)
+                    .on_action(TerminalView::show_character_palette)
+                    .on_action(TerminalView::select_all)
+                    // todo!()
+                    .child(
+                        "TERMINAL HERE", //     TerminalElement::new(
+                                         //     terminal_handle,
+                                         //     focused,
+                                         //     self.should_show_cursor(focused, cx),
+                                         //     self.can_navigate_to_selected_word,
+                                         // )
+                    )
+                    .on_mouse_down(MouseButton::Right, |this, event, cx| {
+                        this.deploy_context_menu(event.position, cx);
+                        cx.notify();
+                    }),
+            )
+            .children(
+                self.context_menu
+                    .clone()
+                    .map(|context_menu| div().z_index(1).absolute().child(context_menu.render())),
+            )
             .track_focus(&self.focus_handle)
             .on_focus_in(Self::focus_in)
             .on_focus_out(Self::focus_out)
-            .on_key_down(Self::key_down)
-            .on_action(TerminalView::send_text)
-            .on_action(TerminalView::send_keystroke)
-            .on_action(TerminalView::copy)
-            .on_action(TerminalView::paste)
-            .on_action(TerminalView::clear)
-            .on_action(TerminalView::show_character_palette)
-            .on_action(TerminalView::select_all)
-            // todo!()
-            .child(
-                "TERMINAL HERE", //     TerminalElement::new(
-                                 //     terminal_handle,
-                                 //     focused,
-                                 //     self.should_show_cursor(focused, cx),
-                                 //     self.can_navigate_to_selected_word,
-                                 // )
-            )
-        // todo!()
-        // .child(ChildView::new(&self.context_menu, cx))
     }
 }
 
@@ -1107,7 +1128,7 @@ mod tests {
     pub async fn init_test(cx: &mut TestAppContext) -> (Model<Project>, View<Workspace>) {
         let params = cx.update(AppState::test);
         cx.update(|cx| {
-            theme::init(cx);
+            theme::init(theme::LoadThemes::JustBase, cx);
             Project::init_settings(cx);
             language::init(cx);
         });
