@@ -2,7 +2,7 @@ use collections::{CommandPaletteFilter, HashMap};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     actions, div, prelude::*, Action, AppContext, Component, Div, EventEmitter, FocusHandle,
-    FocusableView, Keystroke, ManagedView, ParentComponent, Render, Styled, View, ViewContext,
+    FocusableView, Keystroke, ManagedEvent, ParentComponent, Render, Styled, View, ViewContext,
     VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};
@@ -69,7 +69,7 @@ impl CommandPalette {
     }
 }
 
-impl EventEmitter<ManagedView> for CommandPalette {}
+impl EventEmitter<ManagedEvent> for CommandPalette {}
 
 impl FocusableView for CommandPalette {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
@@ -268,7 +268,7 @@ impl PickerDelegate for CommandPaletteDelegate {
 
     fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>) {
         self.command_palette
-            .update(cx, |_, cx| cx.emit(ManagedView::Dismiss))
+            .update(cx, |_, cx| cx.emit(ManagedEvent::Dismiss))
             .log_err();
     }
 

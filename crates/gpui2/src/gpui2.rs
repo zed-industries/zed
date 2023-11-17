@@ -141,6 +141,10 @@ pub trait VisualContext: Context {
     fn focus_view<V>(&mut self, view: &View<V>) -> Self::Result<()>
     where
         V: FocusableView;
+
+    fn dismiss_view<V>(&mut self, view: &View<V>) -> Self::Result<()>
+    where
+        V: ManagedView;
 }
 
 pub trait Entity<T>: Sealed {

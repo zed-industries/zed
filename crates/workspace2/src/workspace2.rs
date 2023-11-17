@@ -31,10 +31,10 @@ use futures::{
 use gpui::{
     actions, div, point, size, Action, AnyModel, AnyView, AnyWeakView, AppContext, AsyncAppContext,
     AsyncWindowContext, Bounds, Context, Div, Entity, EntityId, EventEmitter, FocusHandle,
-    FocusableView, GlobalPixels, InteractiveComponent, KeyContext, Managed, Model, ModelContext,
-    ParentComponent, PathPromptOptions, Point, PromptLevel, Render, Size, Styled, Subscription,
-    Task, View, ViewContext, VisualContext, WeakView, WindowBounds, WindowContext, WindowHandle,
-    WindowOptions,
+    FocusableView, GlobalPixels, InteractiveComponent, KeyContext, ManagedView, Model,
+    ModelContext, ParentComponent, PathPromptOptions, Point, PromptLevel, Render, Size, Styled,
+    Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowBounds, WindowContext,
+    WindowHandle, WindowOptions,
 };
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, ProjectItem};
 use itertools::Itertools;
@@ -3364,14 +3364,14 @@ impl Workspace {
         div
     }
 
-    pub fn active_modal<V: Managed + 'static>(
+    pub fn active_modal<V: ManagedView + 'static>(
         &mut self,
         cx: &ViewContext<Self>,
     ) -> Option<View<V>> {
         self.modal_layer.read(cx).active_modal()
     }
 
-    pub fn toggle_modal<V: Managed, B>(&mut self, cx: &mut ViewContext<Self>, build: B)
+    pub fn toggle_modal<V: ManagedView, B>(&mut self, cx: &mut ViewContext<Self>, build: B)
     where
         B: FnOnce(&mut ViewContext<V>) -> V,
     {
