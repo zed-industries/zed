@@ -2587,7 +2587,7 @@ async fn test_save_file(cx: &mut gpui::TestAppContext) {
     assert_eq!(new_text, buffer.update(cx, |buffer, _| buffer.text()));
 }
 
-#[gpui::test(iterations = 10)]
+#[gpui::test(iterations = 30)]
 async fn test_file_changes_multiple_times_on_disk(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
@@ -2638,14 +2638,17 @@ async fn test_file_changes_multiple_times_on_disk(cx: &mut gpui::TestAppContext)
     buffer.read_with(cx, |buffer, _| {
         let buffer_text = buffer.text();
         if buffer_text == on_disk_text {
-            assert!(!buffer.is_dirty(), "buffer shouldn't be dirty. text: {buffer_text:?}, disk text: {on_disk_text:?}");
+            assert!(
+                !buffer.is_dirty() && !buffer.has_conflict(),
+                "buffer shouldn't be dirty. text: {buffer_text:?}, disk text: {on_disk_text:?}",
+            );
         }
         // If the file change occurred while the buffer was processing the first
-        // change, the buffer may be in a conflicting state.
+        // change, the buffer will be in a conflicting state.
         else {
             assert!(
-                buffer.is_dirty(),
-                "buffer should report that it is dirty. text: {buffer_text:?}, disk text: {on_disk_text:?}"
+                buffer.is_dirty() && buffer.has_conflict(),
+                "buffer should report that it has a conflict. text: {buffer_text:?}, disk text: {on_disk_text:?}"
             );
         }
     });

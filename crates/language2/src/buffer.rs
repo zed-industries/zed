@@ -61,9 +61,14 @@ pub struct Buffer {
     diff_base: Option<String>,
     git_diff: git::diff::BufferDiff,
     file: Option<Arc<dyn File>>,
-    saved_version: clock::Global,
-    saved_version_fingerprint: RopeFingerprint,
+    /// The mtime of the file when this buffer was last loaded from
+    /// or saved to disk.
     saved_mtime: SystemTime,
+    /// The version vector when this buffer was last loaded from
+    /// or saved to disk.
+    saved_version: clock::Global,
+    /// A hash of the current contents of the buffer's file.
+    file_fingerprint: RopeFingerprint,
     transaction_depth: usize,
     was_dirty_before_starting_transaction: Option<bool>,
     reload_task: Option<Task<Result<()>>>,
@@ -386,8 +391,7 @@ impl Buffer {
                 .ok_or_else(|| anyhow!("missing line_ending"))?,
         ));
         this.saved_version = proto::deserialize_version(&message.saved_version);
-        this.saved_version_fingerprint =
-            proto::deserialize_fingerprint(&message.saved_version_fingerprint)?;
+        this.file_fingerprint = proto::deserialize_fingerprint(&message.saved_version_fingerprint)?;
         this.saved_mtime = message
             .saved_mtime
             .ok_or_else(|| anyhow!("invalid saved_mtime"))?
@@ -403,7 +407,7 @@ impl Buffer {
             diff_base: self.diff_base.as_ref().map(|h| h.to_string()),
             line_ending: proto::serialize_line_ending(self.line_ending()) as i32,
             saved_version: proto::serialize_version(&self.saved_version),
-            saved_version_fingerprint: proto::serialize_fingerprint(self.saved_version_fingerprint),
+            saved_version_fingerprint: proto::serialize_fingerprint(self.file_fingerprint),
             saved_mtime: Some(self.saved_mtime.into()),
         }
     }
@@ -473,7 +477,7 @@ impl Buffer {
         Self {
             saved_mtime,
             saved_version: buffer.version(),
-            saved_version_fingerprint: buffer.as_rope().fingerprint(),
+            file_fingerprint: buffer.as_rope().fingerprint(),
             reload_task: None,
             transaction_depth: 0,
             was_dirty_before_starting_transaction: None,
@@ -540,7 +544,7 @@ impl Buffer {
     }
 
     pub fn saved_version_fingerprint(&self) -> RopeFingerprint {
-        self.saved_version_fingerprint
+        self.file_fingerprint
     }
 
     pub fn saved_mtime(&self) -> SystemTime {
@@ -568,7 +572,7 @@ impl Buffer {
         cx: &mut ModelContext<Self>,
     ) {
         self.saved_version = version;
-        self.saved_version_fingerprint = fingerprint;
+        self.file_fingerprint = fingerprint;
         self.saved_mtime = mtime;
         cx.emit(Event::Saved);
         cx.notify();
@@ -611,7 +615,7 @@ impl Buffer {
                         prev_version,
                         Rope::text_fingerprint(&new_text),
                         this.line_ending(),
-                        new_mtime,
+                        this.saved_mtime,
                         cx,
                     );
                 }
@@ -631,14 +635,14 @@ impl Buffer {
         cx: &mut ModelContext<Self>,
     ) {
         self.saved_version = version;
-        self.saved_version_fingerprint = fingerprint;
+        self.file_fingerprint = fingerprint;
         self.text.set_line_ending(line_ending);
         self.saved_mtime = mtime;
         if let Some(file) = self.file.as_ref().and_then(|f| f.as_local()) {
             file.buffer_reloaded(
                 self.remote_id(),
                 &self.saved_version,
-                self.saved_version_fingerprint,
+                self.file_fingerprint,
                 self.line_ending(),
                 self.saved_mtime,
                 cx,
@@ -1282,12 +1286,12 @@ impl Buffer {
     }
 
     pub fn is_dirty(&self) -> bool {
-        self.saved_version_fingerprint != self.as_rope().fingerprint()
+        self.file_fingerprint != self.as_rope().fingerprint()
             || self.file.as_ref().map_or(false, |file| file.is_deleted())
     }
 
     pub fn has_conflict(&self) -> bool {
-        self.saved_version_fingerprint != self.as_rope().fingerprint()
+        self.file_fingerprint != self.as_rope().fingerprint()
             && self
                 .file
                 .as_ref()

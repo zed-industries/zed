@@ -646,7 +646,7 @@ impl Buffer {
                         prev_version,
                         Rope::text_fingerprint(&new_text),
                         this.line_ending(),
-                        new_mtime,
+                        this.saved_mtime,
                         cx,
                     );
                 }
