@@ -10,8 +10,8 @@ pub use assets::*;
 use collections::VecDeque;
 use editor::{Editor, MultiBuffer};
 use gpui::{
-    actions, point, px, AppContext, Context, PromptLevel, TitlebarOptions, ViewContext,
-    VisualContext, WindowBounds, WindowKind, WindowOptions,
+    actions, point, px, AppContext, Context, FocusableView, PromptLevel, TitlebarOptions,
+    ViewContext, VisualContext, WindowBounds, WindowKind, WindowOptions,
 };
 pub use only_instance::*;
 pub use open_listener::*;
@@ -425,6 +425,8 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                     }
                 }
             });
+
+        workspace.focus_handle(cx).focus(cx);
         //todo!()
         // load_default_keymap(cx);
     })
