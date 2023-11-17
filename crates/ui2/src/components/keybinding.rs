@@ -81,13 +81,12 @@ pub use stories::*;
 mod stories {
     use super::*;
     use crate::Story;
-    use gpui::{action, Div, Render};
+    use gpui::{actions, Div, Render};
     use itertools::Itertools;
 
     pub struct KeybindingStory;
 
-    #[action]
-    struct NoAction {}
+    actions!(NoAction);
 
     pub fn binding(key: &str) -> gpui::KeyBinding {
         gpui::KeyBinding::new(key, NoAction {}, None)

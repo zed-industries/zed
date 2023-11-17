@@ -47,7 +47,7 @@ impl CommandPalette {
             .available_actions()
             .into_iter()
             .filter_map(|action| {
-                let name = action.name();
+                let name = gpui::remove_the_2(action.name());
                 let namespace = name.split("::").next().unwrap_or("malformed action name");
                 if filter.is_some_and(|f| f.filtered_namespaces.contains(namespace)) {
                     return None;

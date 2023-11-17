@@ -1,7 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 use futures::StreamExt;
-use gpui::KeyBinding;
+use gpui::{Action, KeyBinding};
 use live_kit_client2::{
     LocalAudioTrack, LocalVideoTrack, RemoteAudioTrackUpdate, RemoteVideoTrackUpdate, Room,
 };
@@ -10,7 +10,7 @@ use log::LevelFilter;
 use serde_derive::Deserialize;
 use simplelog::SimpleLogger;
 
-#[derive(Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Deserialize, Debug, Clone, Copy, PartialEq, Action)]
 struct Quit;
 
 fn main() {

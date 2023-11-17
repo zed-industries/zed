@@ -29,11 +29,11 @@ use futures::{
     Future, FutureExt, StreamExt,
 };
 use gpui::{
-    actions, div, point, register_action, size, Action, AnyModel, AnyView, AnyWeakView, AppContext,
-    AsyncAppContext, AsyncWindowContext, Bounds, Context, Div, Entity, EntityId, EventEmitter,
-    FocusHandle, FocusableView, GlobalPixels, InteractiveComponent, KeyContext, Model,
-    ModelContext, ParentComponent, Point, Render, Size, Styled, Subscription, Task, View,
-    ViewContext, VisualContext, WeakView, WindowBounds, WindowContext, WindowHandle, WindowOptions,
+    actions, div, point, size, Action, AnyModel, AnyView, AnyWeakView, AppContext, AsyncAppContext,
+    AsyncWindowContext, Bounds, Context, Div, Entity, EntityId, EventEmitter, FocusHandle,
+    FocusableView, GlobalPixels, InteractiveComponent, KeyContext, Model, ModelContext,
+    ParentComponent, Point, Render, Size, Styled, Subscription, Task, View, ViewContext,
+    VisualContext, WeakView, WindowBounds, WindowContext, WindowHandle, WindowOptions,
 };
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, ProjectItem};
 use itertools::Itertools;
@@ -194,8 +194,7 @@ impl Clone for Toast {
     }
 }
 
-#[register_action]
-#[derive(Debug, Default, Clone, Deserialize, PartialEq)]
+#[derive(Debug, Default, Clone, Deserialize, PartialEq, Action)]
 pub struct OpenTerminal {
     pub working_directory: PathBuf,
 }

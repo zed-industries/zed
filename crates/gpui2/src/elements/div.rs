@@ -237,11 +237,11 @@ pub trait InteractiveComponent<V: 'static>: Sized + Element<V> {
         //
         // if we are relying on this side-effect still, removing the debug_assert!
         // likely breaks the command_palette tests.
-        debug_assert!(
-            A::is_registered(),
-            "{:?} is not registered as an action",
-            A::qualified_name()
-        );
+        // debug_assert!(
+        //     A::is_registered(),
+        //     "{:?} is not registered as an action",
+        //     A::qualified_name()
+        // );
         self.interactivity().action_listeners.push((
             TypeId::of::<A>(),
             Box::new(move |view, action, phase, cx| {
