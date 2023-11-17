@@ -20,10 +20,10 @@ use collections::{BTreeMap, HashMap};
 use gpui::{
     div, point, px, relative, size, transparent_black, Action, AnyElement, AvailableSpace,
     BorrowWindow, Bounds, Component, ContentMask, Corners, DispatchPhase, Edges, Element,
-    ElementId, ElementInputHandler, Entity, EntityId, Hsla, InteractiveComponent, Line,
+    ElementId, ElementInputHandler, Entity, EntityId, Hsla, InteractiveComponent, LineLayout,
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentComponent, Pixels,
-    ScrollWheelEvent, Size, StatefulInteractiveComponent, Style, Styled, TextRun, TextStyle, View,
-    ViewContext, WindowContext,
+    ScrollWheelEvent, ShapedLine, SharedString, Size, StatefulInteractiveComponent, Style, Styled,
+    TextRun, TextStyle, View, ViewContext, WindowContext, WrappedLine,
 };
 use itertools::Itertools;
 use language::language_settings::ShowWhitespaceSetting;
@@ -476,7 +476,7 @@ impl EditorElement {
             Self::paint_diff_hunks(bounds, layout, cx);
         }
 
-        for (ix, line) in layout.line_number_layouts.iter().enumerate() {
+        for (ix, line) in layout.line_numbers.iter().enumerate() {
             if let Some(line) = line {
                 let line_origin = bounds.origin
                     + point(
@@ -775,21 +775,21 @@ impl EditorElement {
                                         .chars_at(cursor_position)
                                         .next()
                                         .and_then(|(character, _)| {
-                                            let text = character.to_string();
+                                            let text = SharedString::from(character.to_string());
+                                            let len = text.len();
                                             cx.text_system()
-                                                .layout_text(
-                                                    &text,
+                                                .shape_line(
+                                                    text,
                                                     cursor_row_layout.font_size,
                                                     &[TextRun {
-                                                        len: text.len(),
+                                                        len,
                                                         font: self.style.text.font(),
                                                         color: self.style.background,
+                                                        background_color: None,
                                                         underline: None,
                                                     }],
-                                                    None,
                                                 )
-                                                .unwrap()
-                                                .pop()
+                                                .log_err()
                                         })
                                 } else {
                                     None
@@ -1244,20 +1244,20 @@ impl EditorElement {
         let font_size = style.text.font_size.to_pixels(cx.rem_size());
         let layout = cx
             .text_system()
-            .layout_text(
-                " ".repeat(column).as_str(),
+            .shape_line(
+                SharedString::from(" ".repeat(column)),
                 font_size,
                 &[TextRun {
                     len: column,
                     font: style.text.font(),
                     color: Hsla::default(),
+                    background_color: None,
                     underline: None,
                 }],
-                None,
             )
             .unwrap();
 
-        layout[0].width
+        layout.width
     }
 
     fn max_line_number_width(&self, snapshot: &EditorSnapshot, cx: &ViewContext<Editor>) -> Pixels {
@@ -1338,7 +1338,7 @@ impl EditorElement {
         relative_rows
     }
 
-    fn layout_line_numbers(
+    fn shape_line_numbers(
         &self,
         rows: Range<u32>,
         active_rows: &BTreeMap<u32, bool>,
@@ -1347,12 +1347,12 @@ impl EditorElement {
         snapshot: &EditorSnapshot,
         cx: &ViewContext<Editor>,
     ) -> (
-        Vec<Option<gpui::Line>>,
+        Vec<Option<ShapedLine>>,
         Vec<Option<(FoldStatus, BufferRow, bool)>>,
     ) {
         let font_size = self.style.text.font_size.to_pixels(cx.rem_size());
         let include_line_numbers = snapshot.mode == EditorMode::Full;
-        let mut line_number_layouts = Vec::with_capacity(rows.len());
+        let mut shaped_line_numbers = Vec::with_capacity(rows.len());
         let mut fold_statuses = Vec::with_capacity(rows.len());
         let mut line_number = String::new();
         let is_relative = EditorSettings::get_global(cx).relative_line_numbers;
@@ -1387,15 +1387,14 @@ impl EditorElement {
                         len: line_number.len(),
                         font: self.style.text.font(),
                         color,
+                        background_color: None,
                         underline: None,
                     };
-                    let layout = cx
+                    let shaped_line = cx
                         .text_system()
-                        .layout_text(&line_number, font_size, &[run], None)
-                        .unwrap()
-                        .pop()
+                        .shape_line(line_number.clone().into(), font_size, &[run])
                         .unwrap();
-                    line_number_layouts.push(Some(layout));
+                    shaped_line_numbers.push(Some(shaped_line));
                     fold_statuses.push(
                         is_singleton
                             .then(|| {
@@ -1408,17 +1407,17 @@ impl EditorElement {
                 }
             } else {
                 fold_statuses.push(None);
-                line_number_layouts.push(None);
+                shaped_line_numbers.push(None);
             }
         }
 
-        (line_number_layouts, fold_statuses)
+        (shaped_line_numbers, fold_statuses)
     }
 
     fn layout_lines(
         &mut self,
         rows: Range<u32>,
-        line_number_layouts: &[Option<Line>],
+        line_number_layouts: &[Option<ShapedLine>],
         snapshot: &EditorSnapshot,
         cx: &ViewContext<Editor>,
     ) -> Vec<LineWithInvisibles> {
@@ -1439,18 +1438,17 @@ impl EditorElement {
                 .chain(iter::repeat(""))
                 .take(rows.len());
             placeholder_lines
-                .map(|line| {
+                .filter_map(move |line| {
                     let run = TextRun {
                         len: line.len(),
                         font: self.style.text.font(),
                         color: placeholder_color,
+                        background_color: None,
                         underline: Default::default(),
                     };
                     cx.text_system()
-                        .layout_text(line, font_size, &[run], None)
-                        .unwrap()
-                        .pop()
-                        .unwrap()
+                        .shape_line(line.to_string().into(), font_size, &[run])
+                        .log_err()
                 })
                 .map(|line| LineWithInvisibles {
                     line,
@@ -1726,7 +1724,7 @@ impl EditorElement {
             .head
         });
 
-        let (line_number_layouts, fold_statuses) = self.layout_line_numbers(
+        let (line_numbers, fold_statuses) = self.shape_line_numbers(
             start_row..end_row,
             &active_rows,
             head_for_relative,
@@ -1740,8 +1738,7 @@ impl EditorElement {
         let scrollbar_row_range = scroll_position.y..(scroll_position.y + height_in_lines);
 
         let mut max_visible_line_width = Pixels::ZERO;
-        let line_layouts =
-            self.layout_lines(start_row..end_row, &line_number_layouts, &snapshot, cx);
+        let line_layouts = self.layout_lines(start_row..end_row, &line_numbers, &snapshot, cx);
         for line_with_invisibles in &line_layouts {
             if line_with_invisibles.line.width > max_visible_line_width {
                 max_visible_line_width = line_with_invisibles.line.width;
@@ -1879,35 +1876,31 @@ impl EditorElement {
         let invisible_symbol_font_size = font_size / 2.;
         let tab_invisible = cx
             .text_system()
-            .layout_text(
-                "→",
+            .shape_line(
+                "→".into(),
                 invisible_symbol_font_size,
                 &[TextRun {
                     len: "→".len(),
                     font: self.style.text.font(),
                     color: cx.theme().colors().editor_invisible,
+                    background_color: None,
                     underline: None,
                 }],
-                None,
             )
-            .unwrap()
-            .pop()
             .unwrap();
         let space_invisible = cx
             .text_system()
-            .layout_text(
-                "•",
+            .shape_line(
+                "•".into(),
                 invisible_symbol_font_size,
                 &[TextRun {
                     len: "•".len(),
                     font: self.style.text.font(),
                     color: cx.theme().colors().editor_invisible,
+                    background_color: None,
                     underline: None,
                 }],
-                None,
             )
-            .unwrap()
-            .pop()
             .unwrap();
 
         LayoutState {
@@ -1939,7 +1932,7 @@ impl EditorElement {
             active_rows,
             highlighted_rows,
             highlighted_ranges,
-            line_number_layouts,
+            line_numbers,
             display_hunks,
             blocks,
             selections,
@@ -2199,7 +2192,7 @@ impl EditorElement {
 
 #[derive(Debug)]
 pub struct LineWithInvisibles {
-    pub line: Line,
+    pub line: ShapedLine,
     invisibles: Vec<Invisible>,
 }
 
@@ -2209,7 +2202,7 @@ impl LineWithInvisibles {
         text_style: &TextStyle,
         max_line_len: usize,
         max_line_count: usize,
-        line_number_layouts: &[Option<Line>],
+        line_number_layouts: &[Option<ShapedLine>],
         editor_mode: EditorMode,
         cx: &WindowContext,
     ) -> Vec<Self> {
@@ -2229,11 +2222,12 @@ impl LineWithInvisibles {
         }]) {
             for (ix, mut line_chunk) in highlighted_chunk.chunk.split('\n').enumerate() {
                 if ix > 0 {
-                    let layout = cx
+                    let shaped_line = cx
                         .text_system()
-                        .layout_text(&line, font_size, &styles, None);
+                        .shape_line(line.clone().into(), font_size, &styles)
+                        .unwrap();
                     layouts.push(Self {
-                        line: layout.unwrap().pop().unwrap(),
+                        line: shaped_line,
                         invisibles: invisibles.drain(..).collect(),
                     });
 
@@ -2267,6 +2261,7 @@ impl LineWithInvisibles {
                         len: line_chunk.len(),
                         font: text_style.font(),
                         color: text_style.color,
+                        background_color: None,
                         underline: text_style.underline,
                     });
 
@@ -3087,7 +3082,7 @@ pub struct LayoutState {
     visible_display_row_range: Range<u32>,
     active_rows: BTreeMap<u32, bool>,
     highlighted_rows: Option<Range<u32>>,
-    line_number_layouts: Vec<Option<gpui::Line>>,
+    line_numbers: Vec<Option<ShapedLine>>,
     display_hunks: Vec<DisplayDiffHunk>,
     blocks: Vec<BlockLayout>,
     highlighted_ranges: Vec<(Range<DisplayPoint>, Hsla)>,
@@ -3100,8 +3095,8 @@ pub struct LayoutState {
     code_actions_indicator: Option<CodeActionsIndicator>,
     // hover_popovers: Option<(DisplayPoint, Vec<AnyElement<Editor>>)>,
     fold_indicators: Vec<Option<AnyElement<Editor>>>,
-    tab_invisible: Line,
-    space_invisible: Line,
+    tab_invisible: ShapedLine,
+    space_invisible: ShapedLine,
 }
 
 struct CodeActionsIndicator {
@@ -3201,7 +3196,7 @@ fn layout_line(
     snapshot: &EditorSnapshot,
     style: &EditorStyle,
     cx: &WindowContext,
-) -> Result<Line> {
+) -> Result<ShapedLine> {
     let mut line = snapshot.line(row);
 
     if line.len() > MAX_LINE_LEN {
@@ -3213,21 +3208,17 @@ fn layout_line(
         line.truncate(len);
     }
 
-    Ok(cx
-        .text_system()
-        .layout_text(
-            &line,
-            style.text.font_size.to_pixels(cx.rem_size()),
-            &[TextRun {
-                len: snapshot.line_len(row) as usize,
-                font: style.text.font(),
-                color: Hsla::default(),
-                underline: None,
-            }],
-            None,
-        )?
-        .pop()
-        .unwrap())
+    cx.text_system().shape_line(
+        line.into(),
+        style.text.font_size.to_pixels(cx.rem_size()),
+        &[TextRun {
+            len: snapshot.line_len(row) as usize,
+            font: style.text.font(),
+            color: Hsla::default(),
+            background_color: None,
+            underline: None,
+        }],
+    )
 }
 
 #[derive(Debug)]
@@ -3237,7 +3228,7 @@ pub struct Cursor {
     line_height: Pixels,
     color: Hsla,
     shape: CursorShape,
-    block_text: Option<Line>,
+    block_text: Option<ShapedLine>,
 }
 
 impl Cursor {
@@ -3247,7 +3238,7 @@ impl Cursor {
         line_height: Pixels,
         color: Hsla,
         shape: CursorShape,
-        block_text: Option<Line>,
+        block_text: Option<ShapedLine>,
     ) -> Cursor {
         Cursor {
             origin,
