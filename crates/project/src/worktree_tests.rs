@@ -731,6 +731,13 @@ async fn test_dirs_no_longer_ignored(cx: &mut TestAppContext) {
 #[gpui::test(iterations = 10)]
 async fn test_rescan_with_gitignore(cx: &mut TestAppContext) {
     init_test(cx);
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _, _>(|store, cx| {
+            store.update_user_settings::<ProjectSettings>(cx, |project_settings| {
+                project_settings.file_scan_exclusions = Some(Vec::new());
+            });
+        });
+    });
     let fs = FakeFs::new(cx.background());
     fs.insert_tree(
         "/root",
@@ -1860,6 +1867,14 @@ async fn test_git_repository_for_path(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_git_status(deterministic: Arc<Deterministic>, cx: &mut TestAppContext) {
     init_test(cx);
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _, _>(|store, cx| {
+            store.update_user_settings::<ProjectSettings>(cx, |project_settings| {
+                project_settings.file_scan_exclusions =
+                    Some(vec!["**/.git".to_string(), "**/.gitignore".to_string()]);
+            });
+        });
+    });
     const IGNORE_RULE: &'static str = "**/target";
 
     let root = temp_tree(json!({

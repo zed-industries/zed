@@ -2464,14 +2464,17 @@ impl BackgroundScannerState {
 
         // Remove any git repositories whose .git entry no longer exists.
         let snapshot = &mut self.snapshot;
+        // TODO kb stop cleaning those up here?
         let mut repositories = mem::take(&mut snapshot.git_repositories);
         let mut repository_entries = mem::take(&mut snapshot.repository_entries);
-        repositories.retain(|work_directory_id, _| {
-            snapshot
-                .entry_for_id(*work_directory_id)
-                .map_or(false, |entry| {
-                    snapshot.entry_for_path(entry.path.join(*DOT_GIT)).is_some()
-                })
+        repositories.retain(|_, entry| {
+            // TODO kb use fs
+            snapshot.abs_path().join(&entry.git_dir_path).exists()
+            // snapshot
+            //     .entry_for_id(*work_directory_id)
+            //     .map_or(false, |entry| {
+            //         snapshot.entry_for_path(entry.path.join(*DOT_GIT)).is_some()
+            //     })
         });
         repository_entries.retain(|_, entry| repositories.get(&entry.work_directory.0).is_some());
         snapshot.git_repositories = repositories;
@@ -3322,11 +3325,11 @@ impl BackgroundScanner {
                         .entry_for_path(parent)
                         .map_or(false, |entry| entry.kind == EntryKind::Dir)
                 });
-                if !parent_dir_is_loaded {
+                if !parent_dir_is_loaded && !is_git_related(&abs_path) {
                     log::debug!("ignoring event {relative_path:?} within unloaded directory");
                     return false;
                 }
-                if snapshot.is_abs_path_excluded(abs_path) {
+                if snapshot.is_abs_path_excluded(abs_path) && !is_git_related(&abs_path) {
                     log::debug!(
                         "ignoring FS event for path {relative_path:?} within excluded directory"
                     );
@@ -3502,7 +3505,6 @@ impl BackgroundScanner {
             let state = self.state.lock();
             let snapshot = &state.snapshot;
             root_abs_path = snapshot.abs_path().clone();
-            // TODO kb we need `DOT_GIT` and `GITIGNORE` entries always processed.
             if snapshot.is_abs_path_excluded(&job.abs_path) {
                 log::error!("skipping excluded directory {:?}", job.path);
                 return Ok(());
@@ -3529,27 +3531,7 @@ impl BackgroundScanner {
                 }
             };
             let child_name = child_abs_path.file_name().unwrap();
-            {
-                let mut state = self.state.lock();
-                if state.snapshot.is_abs_path_excluded(&child_abs_path) {
-                    let relative_path = job.path.join(child_name);
-                    log::debug!("skipping excluded child entry {relative_path:?}");
-                    state.remove_path(&relative_path);
-                    continue;
-                }
-                drop(state);
-            }
-
             let child_path: Arc<Path> = job.path.join(child_name).into();
-            let child_metadata = match self.fs.metadata(&child_abs_path).await {
-                Ok(Some(metadata)) => metadata,
-                Ok(None) => continue,
-                Err(err) => {
-                    log::error!("error processing {:?}: {:?}", child_abs_path, err);
-                    continue;
-                }
-            };
-
             // If we find a .gitignore, add it to the stack of ignores used to determine which paths are ignored
             if child_name == *GITIGNORE {
                 match build_gitignore(&child_abs_path, self.fs.as_ref()).await {
@@ -3591,7 +3573,32 @@ impl BackgroundScanner {
             // If we find a .git, we'll need to load the repository.
             else if child_name == *DOT_GIT {
                 dotgit_path = Some(child_path.clone());
+                {
+                    let mut state = self.state.lock();
+                    state.build_git_repository(child_path.clone(), self.fs.as_ref());
+                    drop(state);
+                }
             }
+
+            {
+                let mut state = self.state.lock();
+                if state.snapshot.is_abs_path_excluded(&child_abs_path) {
+                    let relative_path = job.path.join(child_name);
+                    log::debug!("skipping excluded child entry {relative_path:?}");
+                    state.remove_path(&relative_path);
+                    continue;
+                }
+                drop(state);
+            }
+
+            let child_metadata = match self.fs.metadata(&child_abs_path).await {
+                Ok(Some(metadata)) => metadata,
+                Ok(None) => continue,
+                Err(err) => {
+                    log::error!("error processing {:?}: {:?}", child_abs_path, err);
+                    continue;
+                }
+            };
 
             let mut child_entry = Entry::new(
                 child_path.clone(),
@@ -4115,6 +4122,12 @@ impl BackgroundScanner {
 
         smol::Timer::after(Duration::from_millis(100)).await;
     }
+}
+
+fn is_git_related(abs_path: &&PathBuf) -> bool {
+    abs_path
+        .components()
+        .any(|c| c.as_os_str() == *DOT_GIT || c.as_os_str() == *GITIGNORE)
 }
 
 fn char_bag_for_path(root_char_bag: CharBag, path: &Path) -> CharBag {
