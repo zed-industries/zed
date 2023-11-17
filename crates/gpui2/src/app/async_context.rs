@@ -1,7 +1,7 @@
 use crate::{
-    AnyView, AnyWindowHandle, AppCell, AppContext, BackgroundExecutor, Context, ForegroundExecutor,
-    Model, ModelContext, Render, Result, Task, View, ViewContext, VisualContext, WindowContext,
-    WindowHandle,
+    AnyView, AnyWindowHandle, AppCell, AppContext, BackgroundExecutor, Context, FocusableView,
+    ForegroundExecutor, Model, ModelContext, Render, Result, Task, View, ViewContext,
+    VisualContext, WindowContext, WindowHandle,
 };
 use anyhow::{anyhow, Context as _};
 use derive_more::{Deref, DerefMut};
@@ -182,6 +182,10 @@ pub struct AsyncWindowContext {
 }
 
 impl AsyncWindowContext {
+    pub fn window_handle(&self) -> AnyWindowHandle {
+        self.window
+    }
+
     pub(crate) fn new(app: AsyncAppContext, window: AnyWindowHandle) -> Self {
         Self { app, window }
     }
@@ -306,5 +310,14 @@ impl VisualContext for AsyncWindowContext {
     {
         self.window
             .update(self, |_, cx| cx.replace_root_view(build_view))
+    }
+
+    fn focus_view<V>(&mut self, view: &View<V>) -> Self::Result<()>
+    where
+        V: FocusableView,
+    {
+        self.window.update(self, |_, cx| {
+            view.read(cx).focus_handle(cx).clone().focus(cx);
+        })
     }
 }

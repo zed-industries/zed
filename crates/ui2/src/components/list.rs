@@ -1,11 +1,10 @@
-use gpui::div;
+use gpui::{div, Action};
 
-use crate::prelude::*;
 use crate::settings::user_settings;
 use crate::{
-    disclosure_control, h_stack, v_stack, Avatar, GraphicSlot, Icon, IconElement, IconSize, Label,
-    TextColor, Toggle,
+    disclosure_control, h_stack, v_stack, Avatar, Icon, IconElement, IconSize, Label, Toggle,
 };
+use crate::{prelude::*, GraphicSlot};
 
 #[derive(Clone, Copy, Default, Debug, PartialEq)]
 pub enum ListItemVariant {
@@ -118,7 +117,7 @@ impl ListHeader {
     }
 }
 
-#[derive(Component)]
+#[derive(Component, Clone)]
 pub struct ListSubHeader {
     label: SharedString,
     left_icon: Option<Icon>,
@@ -173,7 +172,7 @@ pub enum ListEntrySize {
     Medium,
 }
 
-#[derive(Component)]
+#[derive(Component, Clone)]
 pub enum ListItem {
     Entry(ListEntry),
     Separator(ListSeparator),
@@ -232,6 +231,25 @@ pub struct ListEntry {
     size: ListEntrySize,
     toggle: Toggle,
     variant: ListItemVariant,
+    on_click: Option<Box<dyn Action>>,
+}
+
+impl Clone for ListEntry {
+    fn clone(&self) -> Self {
+        Self {
+            disabled: self.disabled,
+            // TODO: Reintroduce this
+            // disclosure_control_style: DisclosureControlVisibility,
+            indent_level: self.indent_level,
+            label: self.label.clone(),
+            left_slot: self.left_slot.clone(),
+            overflow: self.overflow,
+            size: self.size,
+            toggle: self.toggle,
+            variant: self.variant,
+            on_click: self.on_click.as_ref().map(|opt| opt.boxed_clone()),
+        }
+    }
 }
 
 impl ListEntry {
@@ -245,7 +263,13 @@ impl ListEntry {
             size: ListEntrySize::default(),
             toggle: Toggle::NotToggleable,
             variant: ListItemVariant::default(),
+            on_click: Default::default(),
         }
+    }
+
+    pub fn action(mut self, action: impl Into<Box<dyn Action>>) -> Self {
+        self.on_click = Some(action.into());
+        self
     }
 
     pub fn variant(mut self, variant: ListItemVariant) -> Self {
@@ -303,9 +327,21 @@ impl ListEntry {
             ListEntrySize::Small => div().h_6(),
             ListEntrySize::Medium => div().h_7(),
         };
-
         div()
             .relative()
+            .hover(|mut style| {
+                style.background = Some(cx.theme().colors().editor_background.into());
+                style
+            })
+            .on_mouse_down(gpui::MouseButton::Left, {
+                let action = self.on_click.map(|action| action.boxed_clone());
+
+                move |entry: &mut V, event, cx| {
+                    if let Some(action) = action.as_ref() {
+                        cx.dispatch_action(action.boxed_clone());
+                    }
+                }
+            })
             .group("")
             .bg(cx.theme().colors().surface_background)
             // TODO: Add focus state
@@ -401,7 +437,7 @@ impl List {
         v_stack()
             .w_full()
             .py_1()
-            .children(self.header)
+            .children(self.header.map(|header| header))
             .child(list_content)
     }
 }

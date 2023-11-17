@@ -48,21 +48,12 @@ impl<V> Element<V> for Img<V> {
         self.interactivity.element_id.clone()
     }
 
-    fn initialize(
+    fn layout(
         &mut self,
         _view_state: &mut V,
         element_state: Option<Self::ElementState>,
         cx: &mut ViewContext<V>,
-    ) -> Self::ElementState {
-        self.interactivity.initialize(element_state, cx)
-    }
-
-    fn layout(
-        &mut self,
-        _view_state: &mut V,
-        element_state: &mut Self::ElementState,
-        cx: &mut ViewContext<V>,
-    ) -> LayoutId {
+    ) -> (LayoutId, Self::ElementState) {
         self.interactivity.layout(element_state, cx, |style, cx| {
             cx.request_layout(&style, None)
         })

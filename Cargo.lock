@@ -1830,6 +1830,47 @@ dependencies = [
 ]
 
 [[package]]
+name = "collab_ui2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "call2",
+ "channel2",
+ "client2",
+ "clock",
+ "collections",
+ "db2",
+ "editor2",
+ "feature_flags2",
+ "futures 0.3.28",
+ "fuzzy",
+ "gpui2",
+ "language2",
+ "lazy_static",
+ "log",
+ "menu2",
+ "notifications2",
+ "picker2",
+ "postage",
+ "pretty_assertions",
+ "project2",
+ "rich_text2",
+ "rpc2",
+ "schemars",
+ "serde",
+ "serde_derive",
+ "settings2",
+ "smallvec",
+ "theme2",
+ "time",
+ "tree-sitter-markdown",
+ "ui2",
+ "util",
+ "workspace2",
+ "zed_actions2",
+]
+
+[[package]]
 name = "collections"
 version = "0.1.0"
 dependencies = [
@@ -3784,6 +3825,7 @@ dependencies = [
  "image",
  "itertools 0.10.5",
  "lazy_static",
+ "linkme",
  "log",
  "media",
  "metal",
@@ -4801,6 +4843,26 @@ name = "linked-hash-map"
 version = "0.5.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0717cef1bc8b636c6e1c1bbdefc09e6322da8a9321966e8928ef80d20f7f770f"
+
+[[package]]
+name = "linkme"
+version = "0.3.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "91ed2ee9464ff9707af8e9ad834cffa4802f072caad90639c583dd3c62e6e608"
+dependencies = [
+ "linkme-impl",
+]
+
+[[package]]
+name = "linkme-impl"
+version = "0.3.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ba125974b109d512fccbc6c0244e7580143e460895dfd6ea7f8bbb692fd94396"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.37",
+]
 
 [[package]]
 name = "linux-raw-sys"
@@ -8790,6 +8852,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "storybook3"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gpui2",
+ "settings2",
+ "theme2",
+ "ui2",
+]
+
+[[package]]
 name = "stringprep"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9160,6 +9233,39 @@ dependencies = [
  "thiserror",
  "util",
  "workspace",
+]
+
+[[package]]
+name = "terminal_view2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "client2",
+ "db2",
+ "dirs 4.0.0",
+ "editor2",
+ "futures 0.3.28",
+ "gpui2",
+ "itertools 0.10.5",
+ "language2",
+ "lazy_static",
+ "libc",
+ "mio-extras",
+ "ordered-float 2.10.0",
+ "procinfo",
+ "project2",
+ "rand 0.8.5",
+ "serde",
+ "serde_derive",
+ "settings2",
+ "shellexpand",
+ "smallvec",
+ "smol",
+ "terminal2",
+ "theme2",
+ "thiserror",
+ "util",
+ "workspace2",
 ]
 
 [[package]]
@@ -10086,6 +10192,7 @@ dependencies = [
  "chrono",
  "gpui2",
  "itertools 0.11.0",
+ "menu2",
  "rand 0.8.5",
  "serde",
  "settings2",
@@ -11469,6 +11576,7 @@ dependencies = [
  "chrono",
  "cli",
  "client2",
+ "collab_ui2",
  "collections",
  "command_palette2",
  "copilot2",
@@ -11521,6 +11629,7 @@ dependencies = [
  "smol",
  "sum_tree",
  "tempdir",
+ "terminal_view2",
  "text2",
  "theme2",
  "thiserror",

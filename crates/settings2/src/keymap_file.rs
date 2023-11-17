@@ -9,7 +9,7 @@ use schemars::{
 };
 use serde::Deserialize;
 use serde_json::Value;
-use util::asset_str;
+use util::{asset_str, ResultExt};
 
 #[derive(Debug, Deserialize, Default, Clone, JsonSchema)]
 #[serde(transparent)]
@@ -73,9 +73,9 @@ impl KeymapFile {
                                     "Expected first item in array to be a string."
                                 )));
                             };
-                            gpui::build_action(&name, Some(data))
+                            cx.build_action(&name, Some(data))
                         }
-                        Value::String(name) => gpui::build_action(&name, None),
+                        Value::String(name) => cx.build_action(&name, None),
                         Value::Null => Ok(no_action()),
                         _ => {
                             return Some(Err(anyhow!("Expected two-element array, got {action:?}")))
@@ -86,9 +86,7 @@ impl KeymapFile {
                             "invalid binding value for keystroke {keystroke}, context {context:?}"
                         )
                     })
-                    // todo!()
-                    .ok()
-                    // .log_err()
+                    .log_err()
                     .map(|action| KeyBinding::load(&keystroke, action, context.as_deref()))
                 })
                 .collect::<Result<Vec<_>>>()?;

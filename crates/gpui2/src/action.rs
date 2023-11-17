@@ -1,10 +1,12 @@
 use crate::SharedString;
 use anyhow::{anyhow, Context, Result};
 use collections::HashMap;
-use lazy_static::lazy_static;
-use parking_lot::{MappedRwLockReadGuard, RwLock, RwLockReadGuard};
-use serde::Deserialize;
-use std::any::{type_name, Any, TypeId};
+pub use no_action::NoAction;
+use serde_json::json;
+use std::{
+    any::{Any, TypeId},
+    ops::Deref,
+};
 
 /// Actions are used to implement keyboard-driven UI.
 /// When you declare an action, you can bind keys to the action in the keymap and
@@ -15,24 +17,16 @@ use std::any::{type_name, Any, TypeId};
 /// ```rust
 /// actions!(MoveUp, MoveDown, MoveLeft, MoveRight, Newline);
 /// ```
-/// More complex data types can also be actions. If you annotate your type with the `#[action]` proc macro,
-/// it will automatically
+/// More complex data types can also be actions. If you annotate your type with the action derive macro
+/// it will be implemented and registered automatically.
 /// ```
-/// #[action]
+/// #[derive(Clone, PartialEq, serde_derive::Deserialize, Action)]
 /// pub struct SelectNext {
 ///     pub replace_newest: bool,
 /// }
 ///
-/// Any type A that satisfies the following bounds is automatically an action:
-///
-/// ```
-/// A: for<'a> Deserialize<'a> + PartialEq + Clone + Default + std::fmt::Debug + 'static,
-/// ```
-///
-/// The `#[action]` annotation will derive these implementations for your struct automatically. If you
-/// want to control them manually, you can use the lower-level `#[register_action]` macro, which only
-/// generates the code needed to register your action before `main`. Then you'll need to implement all
-/// the traits manually.
+/// If you want to control the behavior of the action trait manually, you can use the lower-level `#[register_action]`
+/// macro, which only generates the code needed to register your action before `main`.
 ///
 /// ```
 /// #[gpui::register_action]
@@ -41,77 +35,29 @@ use std::any::{type_name, Any, TypeId};
 ///     pub content: SharedString,
 /// }
 ///
-/// impl std::default::Default for Paste {
-///     fn default() -> Self {
-///         Self {
-///             content: SharedString::from("🍝"),
-///         }
-///     }
+/// impl gpui::Action for Paste {
+///      ///...
 /// }
 /// ```
-pub trait Action: std::fmt::Debug + 'static {
-    fn qualified_name() -> SharedString
-    where
-        Self: Sized;
-    fn build(value: Option<serde_json::Value>) -> Result<Box<dyn Action>>
-    where
-        Self: Sized;
-    fn is_registered() -> bool
-    where
-        Self: Sized;
-
-    fn partial_eq(&self, action: &dyn Action) -> bool;
+pub trait Action: 'static {
     fn boxed_clone(&self) -> Box<dyn Action>;
     fn as_any(&self) -> &dyn Any;
+    fn partial_eq(&self, action: &dyn Action) -> bool;
+    fn name(&self) -> &str;
+
+    fn debug_name() -> &'static str
+    where
+        Self: Sized;
+    fn build(value: serde_json::Value) -> Result<Box<dyn Action>>
+    where
+        Self: Sized;
 }
 
-// Types become actions by satisfying a list of trait bounds.
-impl<A> Action for A
-where
-    A: for<'a> Deserialize<'a> + PartialEq + Clone + Default + std::fmt::Debug + 'static,
-{
-    fn qualified_name() -> SharedString {
-        let name = type_name::<A>();
-        let mut separator_matches = name.rmatch_indices("::");
-        separator_matches.next().unwrap();
-        let name_start_ix = separator_matches.next().map_or(0, |(ix, _)| ix + 2);
-        // todo!() remove the 2 replacement when migration is done
-        name[name_start_ix..].replace("2::", "::").into()
-    }
-
-    fn build(params: Option<serde_json::Value>) -> Result<Box<dyn Action>>
-    where
-        Self: Sized,
-    {
-        let action = if let Some(params) = params {
-            serde_json::from_value(params).context("failed to deserialize action")?
-        } else {
-            Self::default()
-        };
-        Ok(Box::new(action))
-    }
-
-    fn is_registered() -> bool {
-        ACTION_REGISTRY
-            .read()
-            .names_by_type_id
-            .get(&TypeId::of::<A>())
-            .is_some()
-    }
-
-    fn partial_eq(&self, action: &dyn Action) -> bool {
-        action
-            .as_any()
-            .downcast_ref::<Self>()
-            .map_or(false, |a| self == a)
-    }
-
-    fn boxed_clone(&self) -> Box<dyn Action> {
-        Box::new(self.clone())
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
+impl std::fmt::Debug for dyn Action {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("dyn Action")
+            .field("type_name", &self.name())
+            .finish()
     }
 }
 
@@ -119,69 +65,93 @@ impl dyn Action {
     pub fn type_id(&self) -> TypeId {
         self.as_any().type_id()
     }
-
-    pub fn name(&self) -> SharedString {
-        ACTION_REGISTRY
-            .read()
-            .names_by_type_id
-            .get(&self.type_id())
-            .expect("type is not a registered action")
-            .clone()
-    }
 }
 
-type ActionBuilder = fn(json: Option<serde_json::Value>) -> anyhow::Result<Box<dyn Action>>;
+type ActionBuilder = fn(json: serde_json::Value) -> anyhow::Result<Box<dyn Action>>;
 
-lazy_static! {
-    static ref ACTION_REGISTRY: RwLock<ActionRegistry> = RwLock::default();
-}
-
-#[derive(Default)]
-struct ActionRegistry {
+pub(crate) struct ActionRegistry {
     builders_by_name: HashMap<SharedString, ActionBuilder>,
     names_by_type_id: HashMap<TypeId, SharedString>,
     all_names: Vec<SharedString>, // So we can return a static slice.
 }
 
-/// Register an action type to allow it to be referenced in keymaps.
-pub fn register_action<A: Action>() {
-    let name = A::qualified_name();
-    let mut lock = ACTION_REGISTRY.write();
-    lock.builders_by_name.insert(name.clone(), A::build);
-    lock.names_by_type_id
-        .insert(TypeId::of::<A>(), name.clone());
-    lock.all_names.push(name);
+impl Default for ActionRegistry {
+    fn default() -> Self {
+        let mut this = ActionRegistry {
+            builders_by_name: Default::default(),
+            names_by_type_id: Default::default(),
+            all_names: Default::default(),
+        };
+
+        this.load_actions();
+
+        this
+    }
 }
 
-/// Construct an action based on its name and optional JSON parameters sourced from the keymap.
-pub fn build_action_from_type(type_id: &TypeId) -> Result<Box<dyn Action>> {
-    let lock = ACTION_REGISTRY.read();
-    let name = lock
-        .names_by_type_id
-        .get(type_id)
-        .ok_or_else(|| anyhow!("no action type registered for {:?}", type_id))?
-        .clone();
-    drop(lock);
+/// This type must be public so that our macros can build it in other crates.
+/// But this is an implementation detail and should not be used directly.
+#[doc(hidden)]
+pub type MacroActionBuilder = fn() -> ActionData;
 
-    build_action(&name, None)
+/// This type must be public so that our macros can build it in other crates.
+/// But this is an implementation detail and should not be used directly.
+#[doc(hidden)]
+pub struct ActionData {
+    pub name: &'static str,
+    pub type_id: TypeId,
+    pub build: ActionBuilder,
 }
 
-/// Construct an action based on its name and optional JSON parameters sourced from the keymap.
-pub fn build_action(name: &str, params: Option<serde_json::Value>) -> Result<Box<dyn Action>> {
-    let lock = ACTION_REGISTRY.read();
+/// This constant must be public to be accessible from other crates.
+/// But it's existence is an implementation detail and should not be used directly.
+#[doc(hidden)]
+#[linkme::distributed_slice]
+pub static __GPUI_ACTIONS: [MacroActionBuilder];
 
-    let build_action = lock
-        .builders_by_name
-        .get(name)
-        .ok_or_else(|| anyhow!("no action type registered for {}", name))?;
-    (build_action)(params)
-}
+impl ActionRegistry {
+    /// Load all registered actions into the registry.
+    pub(crate) fn load_actions(&mut self) {
+        for builder in __GPUI_ACTIONS {
+            let action = builder();
+            //todo(remove)
+            let name: SharedString = remove_the_2(action.name).into();
+            self.builders_by_name.insert(name.clone(), action.build);
+            self.names_by_type_id.insert(action.type_id, name.clone());
+            self.all_names.push(name);
+        }
+    }
 
-pub fn all_action_names() -> MappedRwLockReadGuard<'static, [SharedString]> {
-    let lock = ACTION_REGISTRY.read();
-    RwLockReadGuard::map(lock, |registry: &ActionRegistry| {
-        registry.all_names.as_slice()
-    })
+    /// Construct an action based on its name and optional JSON parameters sourced from the keymap.
+    pub fn build_action_type(&self, type_id: &TypeId) -> Result<Box<dyn Action>> {
+        let name = self
+            .names_by_type_id
+            .get(type_id)
+            .ok_or_else(|| anyhow!("no action type registered for {:?}", type_id))?
+            .clone();
+
+        self.build_action(&name, None)
+    }
+
+    /// Construct an action based on its name and optional JSON parameters sourced from the keymap.
+    pub fn build_action(
+        &self,
+        name: &str,
+        params: Option<serde_json::Value>,
+    ) -> Result<Box<dyn Action>> {
+        //todo(remove)
+        let name = remove_the_2(name);
+        let build_action = self
+            .builders_by_name
+            .get(name.deref())
+            .ok_or_else(|| anyhow!("no action type registered for {}", name))?;
+        (build_action)(params.unwrap_or_else(|| json!({})))
+            .with_context(|| format!("Attempting to build action {}", name))
+    }
+
+    pub fn all_action_names(&self) -> &[SharedString] {
+        self.all_names.as_slice()
+    }
 }
 
 /// Defines unit structs that can be used as actions.
@@ -191,7 +161,7 @@ macro_rules! actions {
     () => {};
 
     ( $name:ident ) => {
-        #[gpui::action]
+        #[derive(::std::cmp::PartialEq, ::std::clone::Clone, ::std::default::Default, gpui::serde_derive::Deserialize, gpui::Action)]
         pub struct $name;
     };
 
@@ -199,4 +169,21 @@ macro_rules! actions {
         actions!($name);
         actions!($($rest)*);
     };
+}
+
+//todo!(remove)
+pub fn remove_the_2(action_name: &str) -> String {
+    let mut separator_matches = action_name.rmatch_indices("::");
+    separator_matches.next().unwrap();
+    let name_start_ix = separator_matches.next().map_or(0, |(ix, _)| ix + 2);
+    // todo!() remove the 2 replacement when migration is done
+    action_name[name_start_ix..]
+        .replace("2::", "::")
+        .to_string()
+}
+
+mod no_action {
+    use crate as gpui;
+
+    actions!(NoAction);
 }

@@ -8277,7 +8277,7 @@ pub(crate) fn init_test(cx: &mut TestAppContext, f: fn(&mut AllLanguageSettingsC
     cx.update(|cx| {
         let store = SettingsStore::test(cx);
         cx.set_global(store);
-        theme::init(cx);
+        theme::init(theme::LoadThemes::JustBase, cx);
         client::init_settings(cx);
         language::init(cx);
         Project::init_settings(cx);

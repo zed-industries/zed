@@ -1,5 +1,4 @@
-use crate::{px, FontId, GlyphId, Pixels, PlatformTextSystem, Point, SharedString};
-use derive_more::{Deref, DerefMut};
+use crate::{px, FontId, GlyphId, Pixels, PlatformTextSystem, Point, Size};
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use smallvec::SmallVec;
 use std::{
@@ -149,13 +148,11 @@ impl LineLayout {
     }
 }
 
-#[derive(Deref, DerefMut, Default, Debug)]
+#[derive(Default, Debug)]
 pub struct WrappedLineLayout {
-    #[deref]
-    #[deref_mut]
-    pub layout: LineLayout,
-    pub text: SharedString,
+    pub unwrapped_layout: Arc<LineLayout>,
     pub wrap_boundaries: SmallVec<[WrapBoundary; 1]>,
+    pub wrap_width: Option<Pixels>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -164,31 +161,74 @@ pub struct WrapBoundary {
     pub glyph_ix: usize,
 }
 
+impl WrappedLineLayout {
+    pub fn len(&self) -> usize {
+        self.unwrapped_layout.len
+    }
+
+    pub fn width(&self) -> Pixels {
+        self.wrap_width
+            .unwrap_or(Pixels::MAX)
+            .min(self.unwrapped_layout.width)
+    }
+
+    pub fn size(&self, line_height: Pixels) -> Size<Pixels> {
+        Size {
+            width: self.width(),
+            height: line_height * (self.wrap_boundaries.len() + 1),
+        }
+    }
+
+    pub fn ascent(&self) -> Pixels {
+        self.unwrapped_layout.ascent
+    }
+
+    pub fn descent(&self) -> Pixels {
+        self.unwrapped_layout.descent
+    }
+
+    pub fn wrap_boundaries(&self) -> &[WrapBoundary] {
+        &self.wrap_boundaries
+    }
+
+    pub fn font_size(&self) -> Pixels {
+        self.unwrapped_layout.font_size
+    }
+
+    pub fn runs(&self) -> &[ShapedRun] {
+        &self.unwrapped_layout.runs
+    }
+}
+
 pub(crate) struct LineLayoutCache {
-    prev_frame: Mutex<HashMap<CacheKey, Arc<WrappedLineLayout>>>,
-    curr_frame: RwLock<HashMap<CacheKey, Arc<WrappedLineLayout>>>,
+    previous_frame: Mutex<HashMap<CacheKey, Arc<LineLayout>>>,
+    current_frame: RwLock<HashMap<CacheKey, Arc<LineLayout>>>,
+    previous_frame_wrapped: Mutex<HashMap<CacheKey, Arc<WrappedLineLayout>>>,
+    current_frame_wrapped: RwLock<HashMap<CacheKey, Arc<WrappedLineLayout>>>,
     platform_text_system: Arc<dyn PlatformTextSystem>,
 }
 
 impl LineLayoutCache {
     pub fn new(platform_text_system: Arc<dyn PlatformTextSystem>) -> Self {
         Self {
-            prev_frame: Mutex::new(HashMap::new()),
-            curr_frame: RwLock::new(HashMap::new()),
+            previous_frame: Mutex::default(),
+            current_frame: RwLock::default(),
+            previous_frame_wrapped: Mutex::default(),
+            current_frame_wrapped: RwLock::default(),
             platform_text_system,
         }
     }
 
     pub fn start_frame(&self) {
-        let mut prev_frame = self.prev_frame.lock();
-        let mut curr_frame = self.curr_frame.write();
+        let mut prev_frame = self.previous_frame.lock();
+        let mut curr_frame = self.current_frame.write();
         std::mem::swap(&mut *prev_frame, &mut *curr_frame);
         curr_frame.clear();
     }
 
-    pub fn layout_line(
+    pub fn layout_wrapped_line(
         &self,
-        text: &SharedString,
+        text: &str,
         font_size: Pixels,
         runs: &[FontRun],
         wrap_width: Option<Pixels>,
@@ -199,34 +239,66 @@ impl LineLayoutCache {
             runs,
             wrap_width,
         } as &dyn AsCacheKeyRef;
-        let curr_frame = self.curr_frame.upgradable_read();
-        if let Some(layout) = curr_frame.get(key) {
+
+        let current_frame = self.current_frame_wrapped.upgradable_read();
+        if let Some(layout) = current_frame.get(key) {
             return layout.clone();
         }
 
-        let mut curr_frame = RwLockUpgradableReadGuard::upgrade(curr_frame);
-        if let Some((key, layout)) = self.prev_frame.lock().remove_entry(key) {
-            curr_frame.insert(key, layout.clone());
+        let mut current_frame = RwLockUpgradableReadGuard::upgrade(current_frame);
+        if let Some((key, layout)) = self.previous_frame_wrapped.lock().remove_entry(key) {
+            current_frame.insert(key, layout.clone());
             layout
         } else {
-            let layout = self.platform_text_system.layout_line(text, font_size, runs);
-            let wrap_boundaries = wrap_width
-                .map(|wrap_width| layout.compute_wrap_boundaries(text.as_ref(), wrap_width))
-                .unwrap_or_default();
-            let wrapped_line = Arc::new(WrappedLineLayout {
-                layout,
-                text: text.clone(),
+            let unwrapped_layout = self.layout_line(text, font_size, runs);
+            let wrap_boundaries = if let Some(wrap_width) = wrap_width {
+                unwrapped_layout.compute_wrap_boundaries(text.as_ref(), wrap_width)
+            } else {
+                SmallVec::new()
+            };
+            let layout = Arc::new(WrappedLineLayout {
+                unwrapped_layout,
                 wrap_boundaries,
+                wrap_width,
             });
-
             let key = CacheKey {
-                text: text.clone(),
+                text: text.into(),
                 font_size,
                 runs: SmallVec::from(runs),
                 wrap_width,
             };
-            curr_frame.insert(key, wrapped_line.clone());
-            wrapped_line
+            current_frame.insert(key, layout.clone());
+            layout
+        }
+    }
+
+    pub fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> Arc<LineLayout> {
+        let key = &CacheKeyRef {
+            text,
+            font_size,
+            runs,
+            wrap_width: None,
+        } as &dyn AsCacheKeyRef;
+
+        let current_frame = self.current_frame.upgradable_read();
+        if let Some(layout) = current_frame.get(key) {
+            return layout.clone();
+        }
+
+        let mut current_frame = RwLockUpgradableReadGuard::upgrade(current_frame);
+        if let Some((key, layout)) = self.previous_frame.lock().remove_entry(key) {
+            current_frame.insert(key, layout.clone());
+            layout
+        } else {
+            let layout = Arc::new(self.platform_text_system.layout_line(text, font_size, runs));
+            let key = CacheKey {
+                text: text.into(),
+                font_size,
+                runs: SmallVec::from(runs),
+                wrap_width: None,
+            };
+            current_frame.insert(key, layout.clone());
+            layout
         }
     }
 }
@@ -243,7 +315,7 @@ trait AsCacheKeyRef {
 
 #[derive(Eq)]
 struct CacheKey {
-    text: SharedString,
+    text: String,
     font_size: Pixels,
     runs: SmallVec<[FontRun; 1]>,
     wrap_width: Option<Pixels>,

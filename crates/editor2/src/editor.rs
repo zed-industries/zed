@@ -39,10 +39,10 @@ use futures::FutureExt;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use git::diff_hunk_to_display;
 use gpui::{
-    action, actions, div, point, prelude::*, px, relative, rems, size, uniform_list, AnyElement,
+    actions, div, point, prelude::*, px, relative, rems, size, uniform_list, Action, AnyElement,
     AppContext, AsyncWindowContext, BackgroundExecutor, Bounds, ClipboardItem, Component, Context,
-    EventEmitter, FocusHandle, FontFeatures, FontStyle, FontWeight, HighlightStyle, Hsla,
-    InputHandler, KeyContext, Model, MouseButton, ParentComponent, Pixels, Render, Styled,
+    EventEmitter, FocusHandle, FocusableView, FontFeatures, FontStyle, FontWeight, HighlightStyle,
+    Hsla, InputHandler, KeyContext, Model, MouseButton, ParentComponent, Pixels, Render, Styled,
     Subscription, Task, TextStyle, UniformListScrollHandle, View, ViewContext, VisualContext,
     WeakView, WindowContext,
 };
@@ -97,7 +97,7 @@ use text::{OffsetUtf16, Rope};
 use theme::{
     ActiveTheme, DiagnosticStyle, PlayerColor, SyntaxTheme, Theme, ThemeColors, ThemeSettings,
 };
-use ui::{v_stack, HighlightedLabel, IconButton, StyledExt, TextTooltip};
+use ui::{v_stack, HighlightedLabel, IconButton, StyledExt, Tooltip};
 use util::{post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::{
     item::{ItemEvent, ItemHandle},
@@ -180,78 +180,78 @@ pub const FORMAT_TIMEOUT: Duration = Duration::from_secs(2);
 //     //     .with_soft_wrap(true)
 // }
 
-#[action]
+#[derive(PartialEq, Clone, Deserialize, Default, Action)]
 pub struct SelectNext {
     #[serde(default)]
     pub replace_newest: bool,
 }
 
-#[action]
+#[derive(PartialEq, Clone, Deserialize, Default, Action)]
 pub struct SelectPrevious {
     #[serde(default)]
     pub replace_newest: bool,
 }
 
-#[action]
+#[derive(PartialEq, Clone, Deserialize, Default, Action)]
 pub struct SelectAllMatches {
     #[serde(default)]
     pub replace_newest: bool,
 }
 
-#[action]
+#[derive(PartialEq, Clone, Deserialize, Default, Action)]
 pub struct SelectToBeginningOfLine {
     #[serde(default)]
     stop_at_soft_wraps: bool,
 }
 
-#[action]
+#[derive(PartialEq, Clone, Deserialize, Default, Action)]
 pub struct MovePageUp {
     #[serde(default)]
     center_cursor: bool,
 }
 
-#[action]
+#[derive(PartialEq, Clone, Deserialize, Default, Action)]
 pub struct MovePageDown {
     #[serde(default)]
     center_cursor: bool,
 }
 
-#[action]
+#[derive(PartialEq, Clone, Deserialize, Default, Action)]
 pub struct SelectToEndOfLine {
     #[serde(default)]
     stop_at_soft_wraps: bool,
 }
 
-#[action]
+#[derive(PartialEq, Clone, Deserialize, Default, Action)]
 pub struct ToggleCodeActions {
     #[serde(default)]
     pub deployed_from_indicator: bool,
 }
 
-#[action]
+#[derive(PartialEq, Clone, Deserialize, Default, Action)]
 pub struct ConfirmCompletion {
     #[serde(default)]
     pub item_ix: Option<usize>,
 }
 
-#[action]
+#[derive(PartialEq, Clone, Deserialize, Default, Action)]
 pub struct ConfirmCodeAction {
     #[serde(default)]
     pub item_ix: Option<usize>,
 }
 
-#[action]
+#[derive(PartialEq, Clone, Deserialize, Default, Action)]
 pub struct ToggleComments {
     #[serde(default)]
     pub advance_downwards: bool,
 }
 
-#[action]
+#[derive(PartialEq, Clone, Deserialize, Default, Action)]
 pub struct FoldAt {
     pub buffer_row: u32,
 }
 
-#[action]
+#[derive(PartialEq, Clone, Deserialize, Default, Action)]
 pub struct UnfoldAt {
     pub buffer_row: u32,
 }
@@ -5445,7 +5445,9 @@ impl Editor {
                     *head.column_mut() += 1;
                     head = display_map.clip_point(head, Bias::Right);
                     let goal = SelectionGoal::HorizontalPosition(
-                        display_map.x_for_point(head, &text_layout_details).into(),
+                        display_map
+                            .x_for_display_point(head, &text_layout_details)
+                            .into(),
                     );
                     selection.collapse_to(head, goal);
 
@@ -6391,8 +6393,8 @@ impl Editor {
             let oldest_selection = selections.iter().min_by_key(|s| s.id).unwrap().clone();
             let range = oldest_selection.display_range(&display_map).sorted();
 
-            let start_x = display_map.x_for_point(range.start, &text_layout_details);
-            let end_x = display_map.x_for_point(range.end, &text_layout_details);
+            let start_x = display_map.x_for_display_point(range.start, &text_layout_details);
+            let end_x = display_map.x_for_display_point(range.end, &text_layout_details);
             let positions = start_x.min(end_x)..start_x.max(end_x);
 
             selections.clear();
@@ -6431,15 +6433,16 @@ impl Editor {
                     let range = selection.display_range(&display_map).sorted();
                     debug_assert_eq!(range.start.row(), range.end.row());
                     let mut row = range.start.row();
-                    let positions = if let SelectionGoal::HorizontalRange { start, end } =
-                        selection.goal
-                    {
-                        px(start)..px(end)
-                    } else {
-                        let start_x = display_map.x_for_point(range.start, &text_layout_details);
-                        let end_x = display_map.x_for_point(range.end, &text_layout_details);
-                        start_x.min(end_x)..start_x.max(end_x)
-                    };
+                    let positions =
+                        if let SelectionGoal::HorizontalRange { start, end } = selection.goal {
+                            px(start)..px(end)
+                        } else {
+                            let start_x =
+                                display_map.x_for_display_point(range.start, &text_layout_details);
+                            let end_x =
+                                display_map.x_for_display_point(range.end, &text_layout_details);
+                            start_x.min(end_x)..start_x.max(end_x)
+                        };
 
                     while row != end_row {
                         if above {
@@ -6992,7 +6995,7 @@ impl Editor {
                         let display_point = point.to_display_point(display_snapshot);
                         let goal = SelectionGoal::HorizontalPosition(
                             display_snapshot
-                                .x_for_point(display_point, &text_layout_details)
+                                .x_for_display_point(display_point, &text_layout_details)
                                 .into(),
                         );
                         (display_point, goal)
@@ -9372,24 +9375,28 @@ pub struct EditorReleased(pub WeakView<Editor>);
 //
 impl EventEmitter<EditorEvent> for Editor {}
 
+impl FocusableView for Editor {
+    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
 impl Render for Editor {
     type Element = EditorElement;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         let settings = ThemeSettings::get_global(cx);
         let text_style = match self.mode {
-            EditorMode::SingleLine => {
-                TextStyle {
-                    color: cx.theme().colors().text,
-                    font_family: settings.ui_font.family.clone(), // todo!()
-                    font_features: settings.ui_font.features,
-                    font_size: rems(0.875).into(),
-                    font_weight: FontWeight::NORMAL,
-                    font_style: FontStyle::Normal,
-                    line_height: relative(1.3).into(), // TODO relative(settings.buffer_line_height.value()),
-                    underline: None,
-                }
-            }
+            EditorMode::SingleLine => TextStyle {
+                color: cx.theme().colors().text,
+                font_family: settings.ui_font.family.clone(),
+                font_features: settings.ui_font.features,
+                font_size: rems(0.875).into(),
+                font_weight: FontWeight::NORMAL,
+                font_style: FontStyle::Normal,
+                line_height: relative(1.).into(),
+                underline: None,
+            },
 
             EditorMode::AutoHeight { max_lines } => todo!(),
 
@@ -9760,7 +9767,8 @@ impl InputHandler for Editor {
         let scroll_left = scroll_position.x * em_width;
 
         let start = OffsetUtf16(range_utf16.start).to_display_point(&snapshot);
-        let x = snapshot.x_for_point(start, &text_layout_details) - scroll_left + self.gutter_width;
+        let x = snapshot.x_for_display_point(start, &text_layout_details) - scroll_left
+            + self.gutter_width;
         let y = line_height * (start.row() as f32 - scroll_position.y);
 
         Some(Bounds {
@@ -9990,7 +9998,7 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, is_valid: bool) -> Rend
             .on_click(move |_, _, cx| {
                 cx.write_to_clipboard(ClipboardItem::new(message.clone()));
             })
-            .tooltip(|_, cx| cx.build_view(|cx| TextTooltip::new("Copy diagnostic message")))
+            .tooltip(|_, cx| Tooltip::text("Copy diagnostic message", cx))
             .render()
     })
 }

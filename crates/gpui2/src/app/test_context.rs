@@ -370,10 +370,19 @@ impl<T: Send> Model<T> {
             })
         });
 
-        cx.executor().run_until_parked();
-        rx.try_next()
-            .expect("no event received")
-            .expect("model was dropped")
+        // Run other tasks until the event is emitted.
+        loop {
+            match rx.try_next() {
+                Ok(Some(event)) => return event,
+                Ok(None) => panic!("model was dropped"),
+                Err(_) => {
+                    if !cx.executor().tick() {
+                        break;
+                    }
+                }
+            }
+        }
+        panic!("no event received")
     }
 }
 
@@ -586,6 +595,14 @@ impl<'a> VisualContext for VisualTestContext<'a> {
     {
         self.window
             .update(self.cx, |_, cx| cx.replace_root_view(build_view))
+            .unwrap()
+    }
+
+    fn focus_view<V: crate::FocusableView>(&mut self, view: &View<V>) -> Self::Result<()> {
+        self.window
+            .update(self.cx, |_, cx| {
+                view.read(cx).focus_handle(cx).clone().focus(cx)
+            })
             .unwrap()
     }
 }

@@ -22,7 +22,6 @@ use util::ResultExt;
 
 const DRAG_THRESHOLD: f64 = 2.;
 const TOOLTIP_DELAY: Duration = Duration::from_millis(500);
-const TOOLTIP_OFFSET: Point<Pixels> = Point::new(px(10.0), px(8.0));
 
 pub struct GroupStyle {
     pub group: SharedString,
@@ -238,11 +237,11 @@ pub trait InteractiveComponent<V: 'static>: Sized + Element<V> {
         //
         // if we are relying on this side-effect still, removing the debug_assert!
         // likely breaks the command_palette tests.
-        debug_assert!(
-            A::is_registered(),
-            "{:?} is not registered as an action",
-            A::qualified_name()
-        );
+        // debug_assert!(
+        //     A::is_registered(),
+        //     "{:?} is not registered as an action",
+        //     A::qualified_name()
+        // );
         self.interactivity().action_listeners.push((
             TypeId::of::<A>(),
             Box::new(move |view, action, phase, cx| {
@@ -408,21 +407,19 @@ pub trait StatefulInteractiveComponent<V: 'static, E: Element<V>>: InteractiveCo
         self
     }
 
-    fn tooltip<W>(
+    fn tooltip(
         mut self,
-        build_tooltip: impl Fn(&mut V, &mut ViewContext<V>) -> View<W> + 'static,
+        build_tooltip: impl Fn(&mut V, &mut ViewContext<V>) -> AnyView + 'static,
     ) -> Self
     where
         Self: Sized,
-        W: 'static + Render,
     {
         debug_assert!(
             self.interactivity().tooltip_builder.is_none(),
             "calling tooltip more than once on the same element is not supported"
         );
-        self.interactivity().tooltip_builder = Some(Rc::new(move |view_state, cx| {
-            build_tooltip(view_state, cx).into()
-        }));
+        self.interactivity().tooltip_builder =
+            Some(Rc::new(move |view_state, cx| build_tooltip(view_state, cx)));
 
         self
     }
@@ -434,14 +431,6 @@ pub trait FocusableComponent<V: 'static>: InteractiveComponent<V> {
         Self: Sized,
     {
         self.interactivity().focus_style = f(StyleRefinement::default());
-        self
-    }
-
-    fn focus_in(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self
-    where
-        Self: Sized,
-    {
-        self.interactivity().focus_in_style = f(StyleRefinement::default());
         self
     }
 
@@ -617,46 +606,36 @@ impl<V: 'static> Element<V> for Div<V> {
         self.interactivity.element_id.clone()
     }
 
-    fn initialize(
+    fn layout(
         &mut self,
         view_state: &mut V,
         element_state: Option<Self::ElementState>,
         cx: &mut ViewContext<V>,
-    ) -> Self::ElementState {
-        let interactive_state = self
-            .interactivity
-            .initialize(element_state.map(|s| s.interactive_state), cx);
-
-        for child in &mut self.children {
-            child.initialize(view_state, cx);
-        }
-
-        DivState {
-            interactive_state,
-            child_layout_ids: SmallVec::new(),
-        }
-    }
-
-    fn layout(
-        &mut self,
-        view_state: &mut V,
-        element_state: &mut Self::ElementState,
-        cx: &mut ViewContext<V>,
-    ) -> crate::LayoutId {
+    ) -> (LayoutId, Self::ElementState) {
+        let mut child_layout_ids = SmallVec::new();
         let mut interactivity = mem::take(&mut self.interactivity);
-        let layout_id =
-            interactivity.layout(&mut element_state.interactive_state, cx, |style, cx| {
+        let (layout_id, interactive_state) = interactivity.layout(
+            element_state.map(|s| s.interactive_state),
+            cx,
+            |style, cx| {
                 cx.with_text_style(style.text_style().cloned(), |cx| {
-                    element_state.child_layout_ids = self
+                    child_layout_ids = self
                         .children
                         .iter_mut()
                         .map(|child| child.layout(view_state, cx))
                         .collect::<SmallVec<_>>();
-                    cx.request_layout(&style, element_state.child_layout_ids.iter().copied())
+                    cx.request_layout(&style, child_layout_ids.iter().copied())
                 })
-            });
+            },
+        );
         self.interactivity = interactivity;
-        layout_id
+        (
+            layout_id,
+            DivState {
+                interactive_state,
+                child_layout_ids,
+            },
+        )
     }
 
     fn paint(
@@ -740,7 +719,6 @@ pub struct Interactivity<V> {
     pub group: Option<SharedString>,
     pub base_style: StyleRefinement,
     pub focus_style: StyleRefinement,
-    pub focus_in_style: StyleRefinement,
     pub in_focus_style: StyleRefinement,
     pub hover_style: StyleRefinement,
     pub group_hover_style: Option<GroupStyle>,
@@ -766,11 +744,12 @@ impl<V> Interactivity<V>
 where
     V: 'static,
 {
-    pub fn initialize(
+    pub fn layout(
         &mut self,
         element_state: Option<InteractiveElementState>,
         cx: &mut ViewContext<V>,
-    ) -> InteractiveElementState {
+        f: impl FnOnce(Style, &mut ViewContext<V>) -> LayoutId,
+    ) -> (LayoutId, InteractiveElementState) {
         let mut element_state = element_state.unwrap_or_default();
 
         // Ensure we store a focus handle in our element state if we're focusable.
@@ -785,17 +764,9 @@ where
             });
         }
 
-        element_state
-    }
-
-    pub fn layout(
-        &mut self,
-        element_state: &mut InteractiveElementState,
-        cx: &mut ViewContext<V>,
-        f: impl FnOnce(Style, &mut ViewContext<V>) -> LayoutId,
-    ) -> LayoutId {
-        let style = self.compute_style(None, element_state, cx);
-        f(style, cx)
+        let style = self.compute_style(None, &mut element_state, cx);
+        let layout_id = f(style, cx);
+        (layout_id, element_state)
     }
 
     pub fn paint(
@@ -989,11 +960,11 @@ where
                             cx.background_executor().timer(TOOLTIP_DELAY).await;
                             view.update(&mut cx, move |view_state, cx| {
                                 active_tooltip.borrow_mut().replace(ActiveTooltip {
-                                    waiting: None,
                                     tooltip: Some(AnyTooltip {
                                         view: tooltip_builder(view_state, cx),
-                                        cursor_offset: cx.mouse_position() + TOOLTIP_OFFSET,
+                                        cursor_offset: cx.mouse_position(),
                                     }),
+                                    _task: None,
                                 });
                                 cx.notify();
                             })
@@ -1001,10 +972,15 @@ where
                         }
                     });
                     active_tooltip.borrow_mut().replace(ActiveTooltip {
-                        waiting: Some(task),
                         tooltip: None,
+                        _task: Some(task),
                     });
                 }
+            });
+
+            let active_tooltip = element_state.active_tooltip.clone();
+            cx.on_mouse_event(move |_, _: &MouseDownEvent, _, _| {
+                active_tooltip.borrow_mut().take();
             });
 
             if let Some(active_tooltip) = element_state.active_tooltip.borrow().as_ref() {
@@ -1130,10 +1106,6 @@ where
         style.refine(&self.base_style);
 
         if let Some(focus_handle) = self.tracked_focus_handle.as_ref() {
-            if focus_handle.contains_focused(cx) {
-                style.refine(&self.focus_in_style);
-            }
-
             if focus_handle.within_focused(cx) {
                 style.refine(&self.in_focus_style);
             }
@@ -1206,7 +1178,6 @@ impl<V: 'static> Default for Interactivity<V> {
             group: None,
             base_style: StyleRefinement::default(),
             focus_style: StyleRefinement::default(),
-            focus_in_style: StyleRefinement::default(),
             in_focus_style: StyleRefinement::default(),
             hover_style: StyleRefinement::default(),
             group_hover_style: None,
@@ -1241,9 +1212,8 @@ pub struct InteractiveElementState {
 }
 
 pub struct ActiveTooltip {
-    #[allow(unused)] // used to drop the task
-    waiting: Option<Task<()>>,
     tooltip: Option<AnyTooltip>,
+    _task: Option<Task<()>>,
 }
 
 /// Whether or not the element or a group that contains it is clicked by the mouse.
@@ -1327,21 +1297,12 @@ where
         self.element.element_id()
     }
 
-    fn initialize(
+    fn layout(
         &mut self,
         view_state: &mut V,
         element_state: Option<Self::ElementState>,
         cx: &mut ViewContext<V>,
-    ) -> Self::ElementState {
-        self.element.initialize(view_state, element_state, cx)
-    }
-
-    fn layout(
-        &mut self,
-        view_state: &mut V,
-        element_state: &mut Self::ElementState,
-        cx: &mut ViewContext<V>,
-    ) -> LayoutId {
+    ) -> (LayoutId, Self::ElementState) {
         self.element.layout(view_state, element_state, cx)
     }
 
@@ -1422,21 +1383,12 @@ where
         self.element.element_id()
     }
 
-    fn initialize(
+    fn layout(
         &mut self,
         view_state: &mut V,
         element_state: Option<Self::ElementState>,
         cx: &mut ViewContext<V>,
-    ) -> Self::ElementState {
-        self.element.initialize(view_state, element_state, cx)
-    }
-
-    fn layout(
-        &mut self,
-        view_state: &mut V,
-        element_state: &mut Self::ElementState,
-        cx: &mut ViewContext<V>,
-    ) -> LayoutId {
+    ) -> (LayoutId, Self::ElementState) {
         self.element.layout(view_state, element_state, cx)
     }
 

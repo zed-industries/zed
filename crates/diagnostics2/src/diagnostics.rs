@@ -14,8 +14,8 @@ use editor::{
 use futures::future::try_join_all;
 use gpui::{
     actions, div, AnyElement, AnyView, AppContext, Component, Context, Div, EventEmitter,
-    FocusEvent, FocusHandle, Focusable, FocusableComponent, InteractiveComponent, Model,
-    ParentComponent, Render, SharedString, Styled, Subscription, Task, View, ViewContext,
+    FocusEvent, FocusHandle, Focusable, FocusableComponent, InteractiveComponent, ManagedView,
+    Model, ParentComponent, Render, SharedString, Styled, Subscription, Task, View, ViewContext,
     VisualContext, WeakView,
 };
 use language::{
@@ -641,11 +641,13 @@ impl ProjectDiagnosticsEditor {
     }
 }
 
-impl Item for ProjectDiagnosticsEditor {
-    fn focus_handle(&self) -> FocusHandle {
+impl ManagedView for ProjectDiagnosticsEditor {
+    fn focus_handle(&self, _: &AppContext) -> FocusHandle {
         self.focus_handle.clone()
     }
+}
 
+impl Item for ProjectDiagnosticsEditor {
     fn deactivated(&mut self, cx: &mut ViewContext<Self>) {
         self.editor.update(cx, |editor, cx| editor.deactivated(cx));
     }
@@ -1583,7 +1585,7 @@ mod tests {
         cx.update(|cx| {
             let settings = SettingsStore::test(cx);
             cx.set_global(settings);
-            theme::init(cx);
+            theme::init(theme::LoadThemes::JustBase, cx);
             language::init(cx);
             client::init_settings(cx);
             workspace::init_settings(cx);

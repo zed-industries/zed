@@ -1,96 +1,51 @@
 use crate::{
-    AnyElement, BorrowWindow, Bounds, Component, Element, LayoutId, Line, Pixels, SharedString,
-    Size, TextRun, ViewContext,
+    AnyElement, BorrowWindow, Bounds, Component, Element, ElementId, LayoutId, Pixels,
+    SharedString, Size, TextRun, ViewContext, WrappedLine,
 };
-use parking_lot::Mutex;
+use parking_lot::{Mutex, MutexGuard};
 use smallvec::SmallVec;
-use std::{marker::PhantomData, sync::Arc};
+use std::{cell::Cell, rc::Rc, sync::Arc};
 use util::ResultExt;
 
-impl<V: 'static> Component<V> for SharedString {
-    fn render(self) -> AnyElement<V> {
-        Text {
-            text: self,
-            runs: None,
-            state_type: PhantomData,
-        }
-        .render()
-    }
-}
-
-impl<V: 'static> Component<V> for &'static str {
-    fn render(self) -> AnyElement<V> {
-        Text {
-            text: self.into(),
-            runs: None,
-            state_type: PhantomData,
-        }
-        .render()
-    }
-}
-
-// TODO: Figure out how to pass `String` to `child` without this.
-// This impl doesn't exist in the `gpui2` crate.
-impl<V: 'static> Component<V> for String {
-    fn render(self) -> AnyElement<V> {
-        Text {
-            text: self.into(),
-            runs: None,
-            state_type: PhantomData,
-        }
-        .render()
-    }
-}
-
-pub struct Text<V> {
+pub struct Text {
     text: SharedString,
     runs: Option<Vec<TextRun>>,
-    state_type: PhantomData<V>,
 }
 
-impl<V: 'static> Text<V> {
-    /// styled renders text that has different runs of different styles.
-    /// callers are responsible for setting the correct style for each run.
-    ////
-    /// For uniform text you can usually just pass a string as a child, and
-    /// cx.text_style() will be used automatically.
+impl Text {
+    /// Renders text with runs of different styles.
+    ///
+    /// Callers are responsible for setting the correct style for each run.
+    /// For text with a uniform style, you can usually avoid calling this constructor
+    /// and just pass text directly.
     pub fn styled(text: SharedString, runs: Vec<TextRun>) -> Self {
         Text {
             text,
             runs: Some(runs),
-            state_type: Default::default(),
         }
     }
 }
 
-impl<V: 'static> Component<V> for Text<V> {
+impl<V: 'static> Component<V> for Text {
     fn render(self) -> AnyElement<V> {
         AnyElement::new(self)
     }
 }
 
-impl<V: 'static> Element<V> for Text<V> {
-    type ElementState = Arc<Mutex<Option<TextElementState>>>;
+impl<V: 'static> Element<V> for Text {
+    type ElementState = TextState;
 
     fn element_id(&self) -> Option<crate::ElementId> {
         None
     }
 
-    fn initialize(
-        &mut self,
-        _view_state: &mut V,
-        element_state: Option<Self::ElementState>,
-        _cx: &mut ViewContext<V>,
-    ) -> Self::ElementState {
-        element_state.unwrap_or_default()
-    }
-
     fn layout(
         &mut self,
         _view: &mut V,
-        element_state: &mut Self::ElementState,
+        element_state: Option<Self::ElementState>,
         cx: &mut ViewContext<V>,
-    ) -> LayoutId {
+    ) -> (LayoutId, Self::ElementState) {
+        let element_state = element_state.unwrap_or_default();
         let text_system = cx.text_system().clone();
         let text_style = cx.text_style();
         let font_size = text_style.font_size.to_pixels(cx.rem_size());
@@ -111,7 +66,7 @@ impl<V: 'static> Element<V> for Text<V> {
             let element_state = element_state.clone();
             move |known_dimensions, _| {
                 let Some(lines) = text_system
-                    .layout_text(
+                    .shape_text(
                         &text,
                         font_size,
                         &runs[..],
@@ -119,36 +74,29 @@ impl<V: 'static> Element<V> for Text<V> {
                     )
                     .log_err()
                 else {
-                    element_state.lock().replace(TextElementState {
+                    element_state.lock().replace(TextStateInner {
                         lines: Default::default(),
                         line_height,
                     });
                     return Size::default();
                 };
 
-                let line_count = lines
-                    .iter()
-                    .map(|line| line.wrap_count() + 1)
-                    .sum::<usize>();
-                let size = Size {
-                    width: lines
-                        .iter()
-                        .map(|line| line.layout.width)
-                        .max()
-                        .unwrap()
-                        .ceil(),
-                    height: line_height * line_count,
-                };
+                let mut size: Size<Pixels> = Size::default();
+                for line in &lines {
+                    let line_size = line.size(line_height);
+                    size.height += line_size.height;
+                    size.width = size.width.max(line_size.width);
+                }
 
                 element_state
                     .lock()
-                    .replace(TextElementState { lines, line_height });
+                    .replace(TextStateInner { lines, line_height });
 
                 size
             }
         });
 
-        layout_id
+        (layout_id, element_state)
     }
 
     fn paint(
@@ -173,7 +121,104 @@ impl<V: 'static> Element<V> for Text<V> {
     }
 }
 
-pub struct TextElementState {
-    lines: SmallVec<[Line; 1]>,
+#[derive(Default, Clone)]
+pub struct TextState(Arc<Mutex<Option<TextStateInner>>>);
+
+impl TextState {
+    fn lock(&self) -> MutexGuard<Option<TextStateInner>> {
+        self.0.lock()
+    }
+}
+
+struct TextStateInner {
+    lines: SmallVec<[WrappedLine; 1]>,
     line_height: Pixels,
+}
+
+struct InteractiveText {
+    id: ElementId,
+    text: Text,
+}
+
+struct InteractiveTextState {
+    text_state: TextState,
+    clicked_range_ixs: Rc<Cell<SmallVec<[usize; 1]>>>,
+}
+
+impl<V: 'static> Element<V> for InteractiveText {
+    type ElementState = InteractiveTextState;
+
+    fn element_id(&self) -> Option<ElementId> {
+        Some(self.id.clone())
+    }
+
+    fn layout(
+        &mut self,
+        view_state: &mut V,
+        element_state: Option<Self::ElementState>,
+        cx: &mut ViewContext<V>,
+    ) -> (LayoutId, Self::ElementState) {
+        if let Some(InteractiveTextState {
+            text_state,
+            clicked_range_ixs,
+        }) = element_state
+        {
+            let (layout_id, text_state) = self.text.layout(view_state, Some(text_state), cx);
+            let element_state = InteractiveTextState {
+                text_state,
+                clicked_range_ixs,
+            };
+            (layout_id, element_state)
+        } else {
+            let (layout_id, text_state) = self.text.layout(view_state, None, cx);
+            let element_state = InteractiveTextState {
+                text_state,
+                clicked_range_ixs: Rc::default(),
+            };
+            (layout_id, element_state)
+        }
+    }
+
+    fn paint(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        view_state: &mut V,
+        element_state: &mut Self::ElementState,
+        cx: &mut ViewContext<V>,
+    ) {
+        self.text
+            .paint(bounds, view_state, &mut element_state.text_state, cx)
+    }
+}
+
+impl<V: 'static> Component<V> for SharedString {
+    fn render(self) -> AnyElement<V> {
+        Text {
+            text: self,
+            runs: None,
+        }
+        .render()
+    }
+}
+
+impl<V: 'static> Component<V> for &'static str {
+    fn render(self) -> AnyElement<V> {
+        Text {
+            text: self.into(),
+            runs: None,
+        }
+        .render()
+    }
+}
+
+// TODO: Figure out how to pass `String` to `child` without this.
+// This impl doesn't exist in the `gpui2` crate.
+impl<V: 'static> Component<V> for String {
+    fn render(self) -> AnyElement<V> {
+        Text {
+            text: self.into(),
+            runs: None,
+        }
+        .render()
+    }
 }

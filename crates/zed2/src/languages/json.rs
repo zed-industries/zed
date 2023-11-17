@@ -107,7 +107,7 @@ impl LspAdapter for JsonLspAdapter {
         &self,
         cx: &mut AppContext,
     ) -> BoxFuture<'static, serde_json::Value> {
-        let action_names = gpui::all_action_names();
+        let action_names = cx.all_action_names();
         let staff_mode = cx.is_staff();
         let language_names = &self.languages.language_names();
         let settings_schema = cx.global::<SettingsStore>().json_schema(

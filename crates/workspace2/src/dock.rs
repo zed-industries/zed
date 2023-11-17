@@ -1,12 +1,14 @@
 use crate::{status_bar::StatusItemView, Axis, Workspace};
 use gpui::{
-    div, px, Action, AnyView, AppContext, Component, Div, Entity, EntityId, EventEmitter,
-    FocusHandle, ParentComponent, Render, Styled, Subscription, View, ViewContext, WeakView,
-    WindowContext,
+    div, px, Action, AnchorCorner, AnyView, AppContext, Component, Div, Entity, EntityId,
+    EventEmitter, FocusHandle, FocusableView, ParentComponent, Render, SharedString, Styled,
+    Subscription, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use theme2::ActiveTheme;
+use ui::{h_stack, menu_handle, ContextMenu, IconButton, InteractionState, Tooltip};
 
 pub enum PanelEvent {
     ChangePosition,
@@ -17,15 +19,15 @@ pub enum PanelEvent {
     Focus,
 }
 
-pub trait Panel: Render + EventEmitter<PanelEvent> {
-    fn persistent_name(&self) -> &'static str;
+pub trait Panel: FocusableView + EventEmitter<PanelEvent> {
+    fn persistent_name() -> &'static str;
     fn position(&self, cx: &WindowContext) -> DockPosition;
     fn position_is_valid(&self, position: DockPosition) -> bool;
     fn set_position(&mut self, position: DockPosition, cx: &mut ViewContext<Self>);
     fn size(&self, cx: &WindowContext) -> f32;
     fn set_size(&mut self, size: Option<f32>, cx: &mut ViewContext<Self>);
-    fn icon_path(&self, cx: &WindowContext) -> Option<&'static str>;
-    fn icon_tooltip(&self) -> (String, Option<Box<dyn Action>>);
+    fn icon(&self, cx: &WindowContext) -> Option<ui::Icon>;
+    fn toggle_action(&self) -> Box<dyn Action>;
     fn icon_label(&self, _: &WindowContext) -> Option<String> {
         None
     }
@@ -35,12 +37,11 @@ pub trait Panel: Render + EventEmitter<PanelEvent> {
     fn set_zoomed(&mut self, _zoomed: bool, _cx: &mut ViewContext<Self>) {}
     fn set_active(&mut self, _active: bool, _cx: &mut ViewContext<Self>) {}
     fn has_focus(&self, cx: &WindowContext) -> bool;
-    fn focus_handle(&self, cx: &WindowContext) -> FocusHandle;
 }
 
 pub trait PanelHandle: Send + Sync {
     fn id(&self) -> EntityId;
-    fn persistent_name(&self, cx: &WindowContext) -> &'static str;
+    fn persistent_name(&self) -> &'static str;
     fn position(&self, cx: &WindowContext) -> DockPosition;
     fn position_is_valid(&self, position: DockPosition, cx: &WindowContext) -> bool;
     fn set_position(&self, position: DockPosition, cx: &mut WindowContext);
@@ -49,11 +50,11 @@ pub trait PanelHandle: Send + Sync {
     fn set_active(&self, active: bool, cx: &mut WindowContext);
     fn size(&self, cx: &WindowContext) -> f32;
     fn set_size(&self, size: Option<f32>, cx: &mut WindowContext);
-    fn icon_path(&self, cx: &WindowContext) -> Option<&'static str>;
-    fn icon_tooltip(&self, cx: &WindowContext) -> (String, Option<Box<dyn Action>>);
+    fn icon(&self, cx: &WindowContext) -> Option<ui::Icon>;
+    fn toggle_action(&self, cx: &WindowContext) -> Box<dyn Action>;
     fn icon_label(&self, cx: &WindowContext) -> Option<String>;
     fn has_focus(&self, cx: &WindowContext) -> bool;
-    fn focus_handle(&self, cx: &WindowContext) -> FocusHandle;
+    fn focus_handle(&self, cx: &AppContext) -> FocusHandle;
     fn to_any(&self) -> AnyView;
 }
 
@@ -65,8 +66,8 @@ where
         self.entity_id()
     }
 
-    fn persistent_name(&self, cx: &WindowContext) -> &'static str {
-        self.read(cx).persistent_name()
+    fn persistent_name(&self) -> &'static str {
+        T::persistent_name()
     }
 
     fn position(&self, cx: &WindowContext) -> DockPosition {
@@ -101,12 +102,12 @@ where
         self.update(cx, |this, cx| this.set_size(size, cx))
     }
 
-    fn icon_path(&self, cx: &WindowContext) -> Option<&'static str> {
-        self.read(cx).icon_path(cx)
+    fn icon(&self, cx: &WindowContext) -> Option<ui::Icon> {
+        self.read(cx).icon(cx)
     }
 
-    fn icon_tooltip(&self, cx: &WindowContext) -> (String, Option<Box<dyn Action>>) {
-        self.read(cx).icon_tooltip()
+    fn toggle_action(&self, cx: &WindowContext) -> Box<dyn Action> {
+        self.read(cx).toggle_action()
     }
 
     fn icon_label(&self, cx: &WindowContext) -> Option<String> {
@@ -121,7 +122,7 @@ where
         self.clone().into()
     }
 
-    fn focus_handle(&self, cx: &WindowContext) -> FocusHandle {
+    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
         self.read(cx).focus_handle(cx).clone()
     }
 }
@@ -137,6 +138,14 @@ pub struct Dock {
     panel_entries: Vec<PanelEntry>,
     is_open: bool,
     active_panel_index: usize,
+}
+
+impl FocusableView for Dock {
+    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+        self.panel_entries[self.active_panel_index]
+            .panel
+            .focus_handle(cx)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -208,24 +217,26 @@ impl Dock {
     //             .map_or(false, |panel| panel.has_focus(cx))
     //     }
 
-    //     pub fn panel<T: Panel>(&self) -> Option<View<T>> {
-    //         self.panel_entries
-    //             .iter()
-    //             .find_map(|entry| entry.panel.as_any().clone().downcast())
-    //     }
+    pub fn panel<T: Panel>(&self) -> Option<View<T>> {
+        self.panel_entries
+            .iter()
+            .find_map(|entry| entry.panel.to_any().clone().downcast().ok())
+    }
 
-    //     pub fn panel_index_for_type<T: Panel>(&self) -> Option<usize> {
-    //         self.panel_entries
-    //             .iter()
-    //             .position(|entry| entry.panel.as_any().is::<T>())
-    //     }
+    pub fn panel_index_for_type<T: Panel>(&self) -> Option<usize> {
+        self.panel_entries
+            .iter()
+            .position(|entry| entry.panel.to_any().downcast::<T>().is_ok())
+    }
 
-    pub fn panel_index_for_ui_name(&self, _ui_name: &str, _cx: &AppContext) -> Option<usize> {
-        todo!()
-        // self.panel_entries.iter().position(|entry| {
-        //     let panel = entry.panel.as_any();
-        //     cx.view_ui_name(panel.window(), panel.id()) == Some(ui_name)
-        // })
+    pub fn panel_index_for_persistent_name(
+        &self,
+        ui_name: &str,
+        _cx: &AppContext,
+    ) -> Option<usize> {
+        self.panel_entries
+            .iter()
+            .position(|entry| entry.panel.persistent_name() == ui_name)
     }
 
     pub fn active_panel_index(&self) -> usize {
@@ -406,23 +417,13 @@ impl Dock {
         }
     }
 
-    //     pub fn render_placeholder(&self, cx: &WindowContext) -> AnyElement<Workspace> {
-    //         todo!()
-    // if let Some(active_entry) = self.visible_entry() {
-    //     Empty::new()
-    //         .into_any()
-    //         .contained()
-    //         .with_style(self.style(cx))
-    //         .resizable::<WorkspaceBounds>(
-    //             self.position.to_resize_handle_side(),
-    //             active_entry.panel.size(cx),
-    //             |_, _, _| {},
-    //         )
-    //         .into_any()
-    // } else {
-    //     Empty::new().into_any()
-    // }
-    //     }
+    pub fn toggle_action(&self) -> Box<dyn Action> {
+        match self.position {
+            DockPosition::Left => crate::ToggleLeftDock.boxed_clone(),
+            DockPosition::Bottom => crate::ToggleBottomDock.boxed_clone(),
+            DockPosition::Right => crate::ToggleRightDock.boxed_clone(),
+        }
+    }
 }
 
 impl Render for Dock {
@@ -433,9 +434,15 @@ impl Render for Dock {
             let size = entry.panel.size(cx);
 
             div()
+                .border_color(cx.theme().colors().border)
                 .map(|this| match self.position().axis() {
                     Axis::Horizontal => this.w(px(size)).h_full(),
                     Axis::Vertical => this.h(px(size)).w_full(),
+                })
+                .map(|this| match self.position() {
+                    DockPosition::Left => this.border_r(),
+                    DockPosition::Right => this.border_l(),
+                    DockPosition::Bottom => this.border_t(),
                 })
                 .child(entry.panel.to_any())
         } else {
@@ -443,40 +450,6 @@ impl Render for Dock {
         }
     }
 }
-
-// todo!()
-// impl View for Dock {
-//     fn ui_name() -> &'static str {
-//         "Dock"
-//     }
-
-//     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-//         if let Some(active_entry) = self.visible_entry() {
-//             let style = self.style(cx);
-//             ChildView::new(active_entry.panel.as_any(), cx)
-//                 .contained()
-//                 .with_style(style)
-//                 .resizable::<WorkspaceBounds>(
-//                     self.position.to_resize_handle_side(),
-//                     active_entry.panel.size(cx),
-//                     |dock: &mut Self, size, cx| dock.resize_active_panel(size, cx),
-//                 )
-//                 .into_any()
-//         } else {
-//             Empty::new().into_any()
-//         }
-//     }
-
-//     fn focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
-//         if cx.is_self_focused() {
-//             if let Some(active_entry) = self.visible_entry() {
-//                 cx.focus(active_entry.panel.as_any());
-//             } else {
-//                 cx.focus_parent();
-//             }
-//         }
-//     }
-// }
 
 impl PanelButtons {
     pub fn new(
@@ -638,17 +611,60 @@ impl PanelButtons {
 //     }
 // }
 
+// here be kittens
 impl Render for PanelButtons {
     type Element = Div<Self>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         // todo!()
         let dock = self.dock.read(cx);
-        div().children(
-            dock.panel_entries
-                .iter()
-                .map(|panel| panel.panel.persistent_name(cx)),
-        )
+        let active_index = dock.active_panel_index;
+        let is_open = dock.is_open;
+
+        let (menu_anchor, menu_attach) = match dock.position {
+            DockPosition::Left => (AnchorCorner::BottomLeft, AnchorCorner::TopLeft),
+            DockPosition::Bottom | DockPosition::Right => {
+                (AnchorCorner::BottomRight, AnchorCorner::TopRight)
+            }
+        };
+
+        let buttons = dock
+            .panel_entries
+            .iter()
+            .enumerate()
+            .filter_map(|(i, panel)| {
+                let icon = panel.panel.icon(cx)?;
+                let name = panel.panel.persistent_name();
+
+                let mut button: IconButton<Self> = if i == active_index && is_open {
+                    let action = dock.toggle_action();
+                    let tooltip: SharedString =
+                        format!("Close {} dock", dock.position.to_label()).into();
+                    IconButton::new(name, icon)
+                        .state(InteractionState::Active)
+                        .action(action.boxed_clone())
+                        .tooltip(move |_, cx| Tooltip::for_action(tooltip.clone(), &*action, cx))
+                } else {
+                    let action = panel.panel.toggle_action(cx);
+
+                    IconButton::new(name, icon)
+                        .action(action.boxed_clone())
+                        .tooltip(move |_, cx| Tooltip::for_action(name, &*action, cx))
+                };
+
+                Some(
+                    menu_handle()
+                        .id(name)
+                        .menu(move |_, cx| {
+                            cx.build_view(|cx| ContextMenu::new(cx).header("SECTION"))
+                        })
+                        .anchor(menu_anchor)
+                        .attach(menu_attach)
+                        .child(|is_open| button.selected(is_open)),
+                )
+            });
+
+        h_stack().gap_0p5().children(buttons)
     }
 }
 
@@ -665,7 +681,7 @@ impl StatusItemView for PanelButtons {
 #[cfg(any(test, feature = "test-support"))]
 pub mod test {
     use super::*;
-    use gpui::{div, Div, ViewContext, WindowContext};
+    use gpui::{actions, div, Div, ViewContext, WindowContext};
 
     pub struct TestPanel {
         pub position: DockPosition,
@@ -674,6 +690,7 @@ pub mod test {
         pub has_focus: bool,
         pub size: f32,
     }
+    actions!(ToggleTestPanel);
 
     impl EventEmitter<PanelEvent> for TestPanel {}
 
@@ -698,7 +715,7 @@ pub mod test {
     }
 
     impl Panel for TestPanel {
-        fn persistent_name(&self) -> &'static str {
+        fn persistent_name() -> &'static str {
             "TestPanel"
         }
 
@@ -723,12 +740,12 @@ pub mod test {
             self.size = size.unwrap_or(300.);
         }
 
-        fn icon_path(&self, _: &WindowContext) -> Option<&'static str> {
-            Some("icons/test_panel.svg")
+        fn icon(&self, _: &WindowContext) -> Option<ui::Icon> {
+            None
         }
 
-        fn icon_tooltip(&self) -> (String, Option<Box<dyn Action>>) {
-            ("Test Panel".into(), None)
+        fn toggle_action(&self) -> Box<dyn Action> {
+            ToggleTestPanel.boxed_clone()
         }
 
         fn is_zoomed(&self, _: &WindowContext) -> bool {
@@ -746,8 +763,10 @@ pub mod test {
         fn has_focus(&self, _cx: &WindowContext) -> bool {
             self.has_focus
         }
+    }
 
-        fn focus_handle(&self, cx: &WindowContext) -> FocusHandle {
+    impl FocusableView for TestPanel {
+        fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
             unimplemented!()
         }
     }

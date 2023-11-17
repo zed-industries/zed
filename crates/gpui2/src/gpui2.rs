@@ -49,11 +49,13 @@ pub use input::*;
 pub use interactive::*;
 pub use key_dispatch::*;
 pub use keymap::*;
+pub use linkme;
 pub use platform::*;
 use private::Sealed;
 pub use refineable::*;
 pub use scene::*;
 pub use serde;
+pub use serde_derive;
 pub use serde_json;
 pub use smallvec;
 pub use smol::Timer;
@@ -135,6 +137,10 @@ pub trait VisualContext: Context {
     ) -> Self::Result<View<V>>
     where
         V: Render;
+
+    fn focus_view<V>(&mut self, view: &View<V>) -> Self::Result<()>
+    where
+        V: FocusableView;
 }
 
 pub trait Entity<T>: Sealed {

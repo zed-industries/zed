@@ -9,10 +9,10 @@ use file_associations::FileAssociations;
 use anyhow::{anyhow, Result};
 use gpui::{
     actions, div, px, uniform_list, Action, AppContext, AssetSource, AsyncWindowContext,
-    ClipboardItem, Component, Div, EventEmitter, FocusHandle, Focusable, InteractiveComponent,
-    Model, MouseButton, ParentComponent, Pixels, Point, PromptLevel, Render, Stateful,
-    StatefulInteractiveComponent, Styled, Task, UniformListScrollHandle, View, ViewContext,
-    VisualContext as _, WeakView, WindowContext,
+    ClipboardItem, Component, Div, EventEmitter, FocusHandle, Focusable, FocusableView,
+    InteractiveComponent, Model, MouseButton, ParentComponent, Pixels, Point, PromptLevel, Render,
+    Stateful, StatefulInteractiveComponent, Styled, Task, UniformListScrollHandle, View,
+    ViewContext, VisualContext as _, WeakView, WindowContext,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
 use project::{
@@ -32,7 +32,7 @@ use std::{
 use theme::ActiveTheme as _;
 use ui::{h_stack, v_stack, IconElement, Label};
 use unicase::UniCase;
-use util::{maybe, TryFutureExt};
+use util::{maybe, ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, PanelEvent},
     Workspace,
@@ -130,6 +130,13 @@ pub fn init_settings(cx: &mut AppContext) {
 pub fn init(assets: impl AssetSource, cx: &mut AppContext) {
     init_settings(cx);
     file_associations::init(assets, cx);
+
+    cx.observe_new_views(|workspace: &mut Workspace, _| {
+        workspace.register_action(|workspace, _: &ToggleFocus, cx| {
+            workspace.toggle_panel_focus::<ProjectPanel>(cx);
+        });
+    })
+    .detach();
 }
 
 #[derive(Debug)]
@@ -304,32 +311,31 @@ impl ProjectPanel {
         project_panel
     }
 
-    pub fn load(
+    pub async fn load(
         workspace: WeakView<Workspace>,
-        cx: AsyncWindowContext,
-    ) -> Task<Result<View<Self>>> {
-        cx.spawn(|mut cx| async move {
-            // let serialized_panel = if let Some(panel) = cx
-            //     .background_executor()
-            //     .spawn(async move { KEY_VALUE_STORE.read_kvp(PROJECT_PANEL_KEY) })
-            //     .await
-            //     .log_err()
-            //     .flatten()
-            // {
-            //     Some(serde_json::from_str::<SerializedProjectPanel>(&panel)?)
-            // } else {
-            //     None
-            // };
-            workspace.update(&mut cx, |workspace, cx| {
-                let panel = ProjectPanel::new(workspace, cx);
-                // if let Some(serialized_panel) = serialized_panel {
-                //     panel.update(cx, |panel, cx| {
-                //         panel.width = serialized_panel.width;
-                //         cx.notify();
-                //     });
-                // }
-                panel
-            })
+        mut cx: AsyncWindowContext,
+    ) -> Result<View<Self>> {
+        let serialized_panel = cx
+            .background_executor()
+            .spawn(async move { KEY_VALUE_STORE.read_kvp(PROJECT_PANEL_KEY) })
+            .await
+            .map_err(|e| anyhow!("Failed to load project panel: {}", e))
+            .log_err()
+            .flatten()
+            .map(|panel| serde_json::from_str::<SerializedProjectPanel>(&panel))
+            .transpose()
+            .log_err()
+            .flatten();
+
+        workspace.update(&mut cx, |workspace, cx| {
+            let panel = ProjectPanel::new(workspace, cx);
+            if let Some(serialized_panel) = serialized_panel {
+                panel.update(cx, |panel, cx| {
+                    panel.width = serialized_panel.width;
+                    cx.notify();
+                });
+            }
+            panel
         })
     }
 
@@ -1517,33 +1523,27 @@ impl workspace::dock::Panel for ProjectPanel {
         cx.notify();
     }
 
-    fn icon_path(&self, _: &WindowContext) -> Option<&'static str> {
-        Some("icons/project.svg")
+    fn icon(&self, _: &WindowContext) -> Option<ui::Icon> {
+        Some(ui::Icon::FileTree)
     }
 
-    fn icon_tooltip(&self) -> (String, Option<Box<dyn Action>>) {
-        ("Project Panel".into(), Some(Box::new(ToggleFocus)))
+    fn toggle_action(&self) -> Box<dyn Action> {
+        Box::new(ToggleFocus)
     }
-
-    // fn should_change_position_on_event(event: &Self::Event) -> bool {
-    //     matches!(event, Event::DockPositionChanged)
-    // }
 
     fn has_focus(&self, _: &WindowContext) -> bool {
         self.has_focus
     }
 
-    fn persistent_name(&self) -> &'static str {
+    fn persistent_name() -> &'static str {
         "Project Panel"
     }
+}
 
-    fn focus_handle(&self, _cx: &WindowContext) -> FocusHandle {
+impl FocusableView for ProjectPanel {
+    fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
         self.focus_handle.clone()
     }
-
-    // fn is_focus_event(event: &Self::Event) -> bool {
-    //     matches!(event, Event::Focus)
-    // }
 }
 
 impl ClipboardEntry {
@@ -1580,7 +1580,7 @@ mod tests {
         path::{Path, PathBuf},
         sync::atomic::{self, AtomicUsize},
     };
-    use workspace::{pane, AppState};
+    use workspace::AppState;
 
     #[gpui::test]
     async fn test_visible_list(cx: &mut gpui::TestAppContext) {
@@ -2786,7 +2786,7 @@ mod tests {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
             init_settings(cx);
-            theme::init(cx);
+            theme::init(theme::LoadThemes::JustBase, cx);
             language::init(cx);
             editor::init_settings(cx);
             crate::init((), cx);
@@ -2799,11 +2799,10 @@ mod tests {
     fn init_test_with_editor(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let app_state = AppState::test(cx);
-            theme::init(cx);
+            theme::init(theme::LoadThemes::JustBase, cx);
             init_settings(cx);
             language::init(cx);
             editor::init(cx);
-            pane::init(cx);
             crate::init((), cx);
             workspace::init(app_state.clone(), cx);
             Project::init_settings(cx);

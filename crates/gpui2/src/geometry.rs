@@ -335,11 +335,15 @@ where
         };
         Bounds { origin, size }
     }
+
+    pub fn new(origin: Point<T>, size: Size<T>) -> Self {
+        Bounds { origin, size }
+    }
 }
 
 impl<T> Bounds<T>
 where
-    T: Clone + Debug + PartialOrd + Add<T, Output = T> + Sub<Output = T> + Default,
+    T: Clone + Debug + PartialOrd + Add<T, Output = T> + Sub<Output = T> + Default + Half,
 {
     pub fn intersects(&self, other: &Bounds<T>) -> bool {
         let my_lower_right = self.lower_right();
@@ -357,6 +361,13 @@ where
         let double_amount = amount.clone() + amount;
         self.size.width = self.size.width.clone() + double_amount.clone();
         self.size.height = self.size.height.clone() + double_amount;
+    }
+
+    pub fn center(&self) -> Point<T> {
+        Point {
+            x: self.origin.x.clone() + self.size.width.clone().half(),
+            y: self.origin.y.clone() + self.size.height.clone().half(),
+        }
     }
 }
 
@@ -421,6 +432,22 @@ impl<T> Bounds<T>
 where
     T: Add<T, Output = T> + Clone + Default + Debug,
 {
+    pub fn top(&self) -> T {
+        self.origin.y.clone()
+    }
+
+    pub fn bottom(&self) -> T {
+        self.origin.y.clone() + self.size.height.clone()
+    }
+
+    pub fn left(&self) -> T {
+        self.origin.x.clone()
+    }
+
+    pub fn right(&self) -> T {
+        self.origin.x.clone() + self.size.width.clone()
+    }
+
     pub fn upper_right(&self) -> Point<T> {
         Point {
             x: self.origin.x.clone() + self.size.width.clone(),
@@ -1188,6 +1215,46 @@ impl Default for Length {
 impl From<()> for Length {
     fn from(_: ()) -> Self {
         Self::Definite(DefiniteLength::default())
+    }
+}
+
+pub trait Half {
+    fn half(&self) -> Self;
+}
+
+impl Half for f32 {
+    fn half(&self) -> Self {
+        self / 2.
+    }
+}
+
+impl Half for DevicePixels {
+    fn half(&self) -> Self {
+        Self(self.0 / 2)
+    }
+}
+
+impl Half for ScaledPixels {
+    fn half(&self) -> Self {
+        Self(self.0 / 2.)
+    }
+}
+
+impl Half for Pixels {
+    fn half(&self) -> Self {
+        Self(self.0 / 2.)
+    }
+}
+
+impl Half for Rems {
+    fn half(&self) -> Self {
+        Self(self.0 / 2.)
+    }
+}
+
+impl Half for GlobalPixels {
+    fn half(&self) -> Self {
+        Self(self.0 / 2.)
     }
 }
 

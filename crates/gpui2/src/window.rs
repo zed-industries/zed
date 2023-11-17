@@ -185,6 +185,27 @@ impl Drop for FocusHandle {
     }
 }
 
+/// FocusableView allows users of your view to easily
+/// focus it (using cx.focus_view(view))
+pub trait FocusableView: Render {
+    fn focus_handle(&self, cx: &AppContext) -> FocusHandle;
+}
+
+/// ManagedView is a view (like a Modal, Popover, Menu, etc.)
+/// where the lifecycle of the view is handled by another view.
+pub trait ManagedView: Render {
+    fn focus_handle(&self, cx: &AppContext) -> FocusHandle;
+}
+
+pub struct Dismiss;
+impl<T: ManagedView> EventEmitter<Dismiss> for T {}
+
+impl<T: ManagedView> FocusableView for T {
+    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+        self.focus_handle(cx)
+    }
+}
+
 // Holds the state for a specific window.
 pub struct Window {
     pub(crate) handle: AnyWindowHandle,
@@ -307,8 +328,8 @@ impl Window {
             layout_engine: TaffyLayoutEngine::new(),
             root_view: None,
             element_id_stack: GlobalElementId::default(),
-            previous_frame: Frame::new(DispatchTree::new(cx.keymap.clone())),
-            current_frame: Frame::new(DispatchTree::new(cx.keymap.clone())),
+            previous_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
+            current_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
             focus_handles: Arc::new(RwLock::new(SlotMap::with_key())),
             focus_listeners: SubscriberSet::new(),
             default_prevented: true,
@@ -570,6 +591,7 @@ impl<'a> WindowContext<'a> {
         result
     }
 
+    #[must_use]
     /// Add a node to the layout tree for the current frame. Takes the `Style` of the element for which
     /// layout is being requested, along with the layout ids of any children. This method is called during
     /// calls to the `Element::layout` trait method and enables any element to participate in layout.
@@ -1076,26 +1098,22 @@ impl<'a> WindowContext<'a> {
 
         self.with_z_index(0, |cx| {
             let available_space = cx.window.viewport_size.map(Into::into);
-            root_view.draw(available_space, cx);
+            root_view.draw(Point::zero(), available_space, cx);
         });
 
         if let Some(active_drag) = self.app.active_drag.take() {
             self.with_z_index(1, |cx| {
                 let offset = cx.mouse_position() - active_drag.cursor_offset;
-                cx.with_element_offset(offset, |cx| {
-                    let available_space =
-                        size(AvailableSpace::MinContent, AvailableSpace::MinContent);
-                    active_drag.view.draw(available_space, cx);
-                    cx.active_drag = Some(active_drag);
-                });
+                let available_space = size(AvailableSpace::MinContent, AvailableSpace::MinContent);
+                active_drag.view.draw(offset, available_space, cx);
+                cx.active_drag = Some(active_drag);
             });
         } else if let Some(active_tooltip) = self.app.active_tooltip.take() {
             self.with_z_index(1, |cx| {
-                cx.with_element_offset(active_tooltip.cursor_offset, |cx| {
-                    let available_space =
-                        size(AvailableSpace::MinContent, AvailableSpace::MinContent);
-                    active_tooltip.view.draw(available_space, cx);
-                });
+                let available_space = size(AvailableSpace::MinContent, AvailableSpace::MinContent);
+                active_tooltip
+                    .view
+                    .draw(active_tooltip.cursor_offset, available_space, cx);
             });
         }
 
@@ -1149,6 +1167,14 @@ impl<'a> WindowContext<'a> {
             InputEvent::MouseMove(mouse_move) => {
                 self.window.mouse_position = mouse_move.position;
                 InputEvent::MouseMove(mouse_move)
+            }
+            InputEvent::MouseDown(mouse_down) => {
+                self.window.mouse_position = mouse_down.position;
+                InputEvent::MouseDown(mouse_down)
+            }
+            InputEvent::MouseUp(mouse_up) => {
+                self.window.mouse_position = mouse_up.position;
+                InputEvent::MouseUp(mouse_up)
             }
             // Translate dragging and dropping of external files from the operating system
             // to internal drag and drop events.
@@ -1550,6 +1576,12 @@ impl VisualContext for WindowContext<'_> {
         self.window.root_view = Some(view.clone().into());
         view
     }
+
+    fn focus_view<V: crate::FocusableView>(&mut self, view: &View<V>) -> Self::Result<()> {
+        self.update_view(view, |view, cx| {
+            view.focus_handle(cx).clone().focus(cx);
+        })
+    }
 }
 
 impl<'a> std::ops::Deref for WindowContext<'a> {
@@ -1633,8 +1665,8 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
         }
     }
 
-    /// Update the global element offset based on the given offset. This is used to implement
-    /// scrolling and position drag handles.
+    /// Update the global element offset relative to the current offset. This is used to implement
+    /// scrolling.
     fn with_element_offset<R>(
         &mut self,
         offset: Point<Pixels>,
@@ -1644,7 +1676,17 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
             return f(self);
         };
 
-        let offset = self.element_offset() + offset;
+        let abs_offset = self.element_offset() + offset;
+        self.with_absolute_element_offset(abs_offset, f)
+    }
+
+    /// Update the global element offset based on the given offset. This is used to implement
+    /// drag handles and other manual painting of elements.
+    fn with_absolute_element_offset<R>(
+        &mut self,
+        offset: Point<Pixels>,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
         self.window_mut()
             .current_frame
             .element_offset_stack
@@ -1814,8 +1856,8 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         self.view
     }
 
-    pub fn model(&self) -> Model<V> {
-        self.view.model.clone()
+    pub fn model(&self) -> &Model<V> {
+        &self.view.model
     }
 
     /// Access the underlying window context.
@@ -2147,7 +2189,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
 
     pub fn observe_global<G: 'static>(
         &mut self,
-        f: impl Fn(&mut V, &mut ViewContext<'_, V>) + 'static,
+        mut f: impl FnMut(&mut V, &mut ViewContext<'_, V>) + 'static,
     ) -> Subscription {
         let window_handle = self.window.handle;
         let view = self.view().downgrade();
@@ -2213,9 +2255,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
                 .set_input_handler(Box::new(input_handler));
         }
     }
-}
 
-impl<V> ViewContext<'_, V> {
     pub fn emit<Evt>(&mut self, event: Evt)
     where
         Evt: 'static,
@@ -2227,6 +2267,13 @@ impl<V> ViewContext<'_, V> {
             event_type: TypeId::of::<Evt>(),
             event: Box::new(event),
         });
+    }
+
+    pub fn focus_self(&mut self)
+    where
+        V: FocusableView,
+    {
+        self.defer(|view, cx| view.focus_handle(cx).focus(cx))
     }
 }
 
@@ -2302,6 +2349,10 @@ impl<V: 'static> VisualContext for ViewContext<'_, V> {
         W: Render,
     {
         self.window_cx.replace_root_view(build_view)
+    }
+
+    fn focus_view<W: FocusableView>(&mut self, view: &View<W>) -> Self::Result<()> {
+        self.window_cx.focus_view(view)
     }
 }
 

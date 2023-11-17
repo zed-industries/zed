@@ -426,7 +426,7 @@ impl Editor {
 
     pub fn read_scroll_position_from_db(
         &mut self,
-        item_id: usize,
+        item_id: u64,
         workspace_id: WorkspaceId,
         cx: &mut ViewContext<Editor>,
     ) {

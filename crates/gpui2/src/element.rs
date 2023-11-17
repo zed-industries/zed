@@ -10,21 +10,12 @@ pub trait Element<V: 'static> {
 
     fn element_id(&self) -> Option<ElementId>;
 
-    /// Called to initialize this element for the current frame. If this
-    /// element had state in a previous frame, it will be passed in for the 3rd argument.
-    fn initialize(
+    fn layout(
         &mut self,
         view_state: &mut V,
         element_state: Option<Self::ElementState>,
         cx: &mut ViewContext<V>,
-    ) -> Self::ElementState;
-
-    fn layout(
-        &mut self,
-        view_state: &mut V,
-        element_state: &mut Self::ElementState,
-        cx: &mut ViewContext<V>,
-    ) -> LayoutId;
+    ) -> (LayoutId, Self::ElementState);
 
     fn paint(
         &mut self,
@@ -97,7 +88,6 @@ pub trait ParentComponent<V: 'static> {
 
 trait ElementObject<V> {
     fn element_id(&self) -> Option<ElementId>;
-    fn initialize(&mut self, view_state: &mut V, cx: &mut ViewContext<V>);
     fn layout(&mut self, view_state: &mut V, cx: &mut ViewContext<V>) -> LayoutId;
     fn paint(&mut self, view_state: &mut V, cx: &mut ViewContext<V>);
     fn measure(
@@ -124,9 +114,6 @@ struct RenderedElement<V: 'static, E: Element<V>> {
 enum ElementRenderPhase<V> {
     #[default]
     Start,
-    Initialized {
-        frame_state: Option<V>,
-    },
     LayoutRequested {
         layout_id: LayoutId,
         frame_state: Option<V>,
@@ -162,42 +149,19 @@ where
         self.element.element_id()
     }
 
-    fn initialize(&mut self, view_state: &mut V, cx: &mut ViewContext<V>) {
-        let frame_state = if let Some(id) = self.element.element_id() {
-            cx.with_element_state(id, |element_state, cx| {
-                let element_state = self.element.initialize(view_state, element_state, cx);
-                ((), element_state)
-            });
-            None
-        } else {
-            let frame_state = self.element.initialize(view_state, None, cx);
-            Some(frame_state)
-        };
-
-        self.phase = ElementRenderPhase::Initialized { frame_state };
-    }
-
     fn layout(&mut self, state: &mut V, cx: &mut ViewContext<V>) -> LayoutId {
-        let layout_id;
-        let mut frame_state;
-        match mem::take(&mut self.phase) {
-            ElementRenderPhase::Initialized {
-                frame_state: initial_frame_state,
-            } => {
-                frame_state = initial_frame_state;
+        let (layout_id, frame_state) = match mem::take(&mut self.phase) {
+            ElementRenderPhase::Start => {
                 if let Some(id) = self.element.element_id() {
-                    layout_id = cx.with_element_state(id, |element_state, cx| {
-                        let mut element_state = element_state.unwrap();
-                        let layout_id = self.element.layout(state, &mut element_state, cx);
-                        (layout_id, element_state)
+                    let layout_id = cx.with_element_state(id, |element_state, cx| {
+                        self.element.layout(state, element_state, cx)
                     });
+                    (layout_id, None)
                 } else {
-                    layout_id = self
-                        .element
-                        .layout(state, frame_state.as_mut().unwrap(), cx);
+                    let (layout_id, frame_state) = self.element.layout(state, None, cx);
+                    (layout_id, Some(frame_state))
                 }
             }
-            ElementRenderPhase::Start => panic!("must call initialize before layout"),
             ElementRenderPhase::LayoutRequested { .. }
             | ElementRenderPhase::LayoutComputed { .. }
             | ElementRenderPhase::Painted { .. } => {
@@ -249,10 +213,6 @@ where
         cx: &mut ViewContext<V>,
     ) -> Size<Pixels> {
         if matches!(&self.phase, ElementRenderPhase::Start) {
-            self.initialize(view_state, cx);
-        }
-
-        if matches!(&self.phase, ElementRenderPhase::Initialized { .. }) {
             self.layout(view_state, cx);
         }
 
@@ -289,16 +249,13 @@ where
 
     fn draw(
         &mut self,
-        mut origin: Point<Pixels>,
+        origin: Point<Pixels>,
         available_space: Size<AvailableSpace>,
         view_state: &mut V,
         cx: &mut ViewContext<V>,
     ) {
         self.measure(available_space, view_state, cx);
-        // Ignore the element offset when drawing this element, as the origin is already specified
-        // in absolute terms.
-        origin -= cx.element_offset();
-        cx.with_element_offset(origin, |cx| self.paint(view_state, cx))
+        cx.with_absolute_element_offset(origin, |cx| self.paint(view_state, cx))
     }
 }
 
@@ -316,10 +273,6 @@ impl<V> AnyElement<V> {
 
     pub fn element_id(&self) -> Option<ElementId> {
         self.0.element_id()
-    }
-
-    pub fn initialize(&mut self, view_state: &mut V, cx: &mut ViewContext<V>) {
-        self.0.initialize(view_state, cx);
     }
 
     pub fn layout(&mut self, view_state: &mut V, cx: &mut ViewContext<V>) -> LayoutId {
@@ -402,25 +355,16 @@ where
         None
     }
 
-    fn initialize(
-        &mut self,
-        view_state: &mut V,
-        _rendered_element: Option<Self::ElementState>,
-        cx: &mut ViewContext<V>,
-    ) -> Self::ElementState {
-        let render = self.take().unwrap();
-        let mut rendered_element = (render)(view_state, cx).render();
-        rendered_element.initialize(view_state, cx);
-        rendered_element
-    }
-
     fn layout(
         &mut self,
         view_state: &mut V,
-        rendered_element: &mut Self::ElementState,
+        _: Option<Self::ElementState>,
         cx: &mut ViewContext<V>,
-    ) -> LayoutId {
-        rendered_element.layout(view_state, cx)
+    ) -> (LayoutId, Self::ElementState) {
+        let render = self.take().unwrap();
+        let mut rendered_element = (render)(view_state, cx).render();
+        let layout_id = rendered_element.layout(view_state, cx);
+        (layout_id, rendered_element)
     }
 
     fn paint(

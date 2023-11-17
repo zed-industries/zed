@@ -12,8 +12,9 @@ use client2::{
     Client,
 };
 use gpui::{
-    AnyElement, AnyView, AppContext, Entity, EntityId, EventEmitter, FocusHandle, HighlightStyle,
-    Model, Pixels, Point, Render, SharedString, Task, View, ViewContext, WeakView, WindowContext,
+    AnyElement, AnyView, AppContext, Entity, EntityId, EventEmitter, FocusHandle, FocusableView,
+    HighlightStyle, Model, Pixels, Point, SharedString, Task, View, ViewContext, WeakView,
+    WindowContext,
 };
 use project2::{Project, ProjectEntryId, ProjectPath};
 use schemars::JsonSchema;
@@ -91,8 +92,7 @@ pub struct BreadcrumbText {
     pub highlights: Option<Vec<(Range<usize>, HighlightStyle)>>,
 }
 
-pub trait Item: Render + EventEmitter<ItemEvent> {
-    fn focus_handle(&self) -> FocusHandle;
+pub trait Item: FocusableView + EventEmitter<ItemEvent> {
     fn deactivated(&mut self, _: &mut ViewContext<Self>) {}
     fn workspace_deactivated(&mut self, _: &mut ViewContext<Self>) {}
     fn navigate(&mut self, _: Box<dyn Any>, _: &mut ViewContext<Self>) -> bool {
@@ -240,7 +240,7 @@ pub trait ItemHandle: 'static + Send {
     fn deactivated(&self, cx: &mut WindowContext);
     fn workspace_deactivated(&self, cx: &mut WindowContext);
     fn navigate(&self, data: Box<dyn Any>, cx: &mut WindowContext) -> bool;
-    fn id(&self) -> EntityId;
+    fn item_id(&self) -> EntityId;
     fn to_any(&self) -> AnyView;
     fn is_dirty(&self, cx: &AppContext) -> bool;
     fn has_conflict(&self, cx: &AppContext) -> bool;
@@ -286,7 +286,7 @@ impl dyn ItemHandle {
 
 impl<T: Item> ItemHandle for View<T> {
     fn focus_handle(&self, cx: &WindowContext) -> FocusHandle {
-        self.read(cx).focus_handle()
+        self.focus_handle(cx)
     }
 
     fn subscribe_to_item_events(
@@ -399,7 +399,7 @@ impl<T: Item> ItemHandle for View<T> {
 
         if workspace
             .panes_by_item
-            .insert(self.id(), pane.downgrade())
+            .insert(self.item_id(), pane.downgrade())
             .is_none()
         {
             let mut pending_autosave = DelayedDebouncedEditAction::new();
@@ -410,7 +410,7 @@ impl<T: Item> ItemHandle for View<T> {
                 Some(cx.subscribe(self, move |workspace, item, event, cx| {
                     let pane = if let Some(pane) = workspace
                         .panes_by_item
-                        .get(&item.id())
+                        .get(&item.item_id())
                         .and_then(|pane| pane.upgrade())
                     {
                         pane
@@ -463,7 +463,7 @@ impl<T: Item> ItemHandle for View<T> {
                     match event {
                         ItemEvent::CloseItem => {
                             pane.update(cx, |pane, cx| {
-                                pane.close_item_by_id(item.id(), crate::SaveIntent::Close, cx)
+                                pane.close_item_by_id(item.item_id(), crate::SaveIntent::Close, cx)
                             })
                             .detach_and_log_err(cx);
                             return;
@@ -502,7 +502,7 @@ impl<T: Item> ItemHandle for View<T> {
             // })
             // .detach();
 
-            let item_id = self.id();
+            let item_id = self.item_id();
             cx.observe_release(self, move |workspace, _, _| {
                 workspace.panes_by_item.remove(&item_id);
                 event_subscription.take();
@@ -527,7 +527,7 @@ impl<T: Item> ItemHandle for View<T> {
         self.update(cx, |this, cx| this.navigate(data, cx))
     }
 
-    fn id(&self) -> EntityId {
+    fn item_id(&self) -> EntityId {
         self.entity_id()
     }
 
@@ -712,7 +712,7 @@ impl<T: FollowableItem> FollowableItemHandle for View<T> {
         self.read(cx).remote_id().or_else(|| {
             client.peer_id().map(|creator| ViewId {
                 creator,
-                id: self.id().as_u64(),
+                id: self.item_id().as_u64(),
             })
         })
     }

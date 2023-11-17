@@ -3,20 +3,20 @@ mod line;
 mod line_layout;
 mod line_wrapper;
 
-use anyhow::anyhow;
 pub use font_features::*;
 pub use line::*;
 pub use line_layout::*;
 pub use line_wrapper::*;
-use smallvec::SmallVec;
 
 use crate::{
     px, Bounds, DevicePixels, Hsla, Pixels, PlatformTextSystem, Point, Result, SharedString, Size,
     UnderlineStyle,
 };
+use anyhow::anyhow;
 use collections::HashMap;
 use core::fmt;
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
+use smallvec::SmallVec;
 use std::{
     cmp,
     fmt::{Debug, Display, Formatter},
@@ -151,13 +151,79 @@ impl TextSystem {
         }
     }
 
-    pub fn layout_text(
+    pub fn layout_line(
         &self,
         text: &str,
         font_size: Pixels,
         runs: &[TextRun],
+    ) -> Result<Arc<LineLayout>> {
+        let mut font_runs = self.font_runs_pool.lock().pop().unwrap_or_default();
+        for run in runs.iter() {
+            let font_id = self.font_id(&run.font)?;
+            if let Some(last_run) = font_runs.last_mut() {
+                if last_run.font_id == font_id {
+                    last_run.len += run.len;
+                    continue;
+                }
+            }
+            font_runs.push(FontRun {
+                len: run.len,
+                font_id,
+            });
+        }
+
+        let layout = self
+            .line_layout_cache
+            .layout_line(&text, font_size, &font_runs);
+
+        font_runs.clear();
+        self.font_runs_pool.lock().push(font_runs);
+
+        Ok(layout)
+    }
+
+    pub fn shape_line(
+        &self,
+        text: SharedString,
+        font_size: Pixels,
+        runs: &[TextRun],
+    ) -> Result<ShapedLine> {
+        debug_assert!(
+            text.find('\n').is_none(),
+            "text argument should not contain newlines"
+        );
+
+        let mut decoration_runs = SmallVec::<[DecorationRun; 32]>::new();
+        for run in runs {
+            if let Some(last_run) = decoration_runs.last_mut() {
+                if last_run.color == run.color && last_run.underline == run.underline {
+                    last_run.len += run.len as u32;
+                    continue;
+                }
+            }
+            decoration_runs.push(DecorationRun {
+                len: run.len as u32,
+                color: run.color,
+                underline: run.underline.clone(),
+            });
+        }
+
+        let layout = self.layout_line(text.as_ref(), font_size, runs)?;
+
+        Ok(ShapedLine {
+            layout,
+            text,
+            decoration_runs,
+        })
+    }
+
+    pub fn shape_text(
+        &self,
+        text: &str, // todo!("pass a SharedString and preserve it when passed a single line?")
+        font_size: Pixels,
+        runs: &[TextRun],
         wrap_width: Option<Pixels>,
-    ) -> Result<SmallVec<[Line; 1]>> {
+    ) -> Result<SmallVec<[WrappedLine; 1]>> {
         let mut runs = runs.iter().cloned().peekable();
         let mut font_runs = self.font_runs_pool.lock().pop().unwrap_or_default();
 
@@ -210,10 +276,11 @@ impl TextSystem {
 
             let layout = self
                 .line_layout_cache
-                .layout_line(&line_text, font_size, &font_runs, wrap_width);
-            lines.push(Line {
+                .layout_wrapped_line(&line_text, font_size, &font_runs, wrap_width);
+            lines.push(WrappedLine {
                 layout,
-                decorations: decoration_runs,
+                decoration_runs,
+                text: SharedString::from(line_text),
             });
 
             line_start = line_end + 1; // Skip `\n` character.
@@ -384,6 +451,7 @@ pub struct TextRun {
     pub len: usize,
     pub font: Font,
     pub color: Hsla,
+    pub background_color: Option<Hsla>,
     pub underline: Option<UnderlineStyle>,
 }
 
