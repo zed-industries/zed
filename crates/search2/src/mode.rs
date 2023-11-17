@@ -1,6 +1,3 @@
-use gpui::Action;
-
-use crate::{ActivateRegexMode, ActivateSemanticMode, ActivateTextMode};
 // TODO: Update the default search mode to get from config
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
 pub enum SearchMode {
@@ -11,11 +8,11 @@ pub enum SearchMode {
 }
 
 impl SearchMode {
-    pub(crate) fn activate_action(&self) -> Box<dyn Action> {
+    pub(crate) fn label(&self) -> &'static str {
         match self {
-            SearchMode::Text => Box::new(ActivateTextMode),
-            SearchMode::Semantic => Box::new(ActivateSemanticMode),
-            SearchMode::Regex => Box::new(ActivateRegexMode),
+            SearchMode::Text => "Text",
+            SearchMode::Semantic => "Semantic",
+            SearchMode::Regex => "Regex",
         }
     }
 }

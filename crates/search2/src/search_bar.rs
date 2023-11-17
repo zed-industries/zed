@@ -1,6 +1,6 @@
-use std::{borrow::Cow, sync::Arc};
+use std::sync::Arc;
 
-use gpui::{div, Action, Component, ViewContext};
+use gpui::{Component, ViewContext};
 use ui::{Button, ButtonVariant, IconButton};
 
 use crate::mode::SearchMode;
