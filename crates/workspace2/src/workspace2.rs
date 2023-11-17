@@ -831,7 +831,9 @@ impl Workspace {
             DockPosition::Right => &self.right_dock,
         };
 
-        dock.update(cx, |dock, cx| dock.add_panel(panel, cx));
+        dock.update(cx, |dock, cx| {
+            dock.add_panel(panel, self.weak_self.clone(), cx)
+        });
     }
 
     pub fn status_bar(&self) -> &View<StatusBar> {

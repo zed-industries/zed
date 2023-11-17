@@ -42,7 +42,7 @@ pub trait Panel: FocusableView + EventEmitter<PanelEvent> {
 }
 
 pub trait PanelHandle: Send + Sync {
-    fn id(&self) -> EntityId;
+    fn entity_id(&self) -> EntityId;
     fn persistent_name(&self) -> &'static str;
     fn position(&self, cx: &WindowContext) -> DockPosition;
     fn position_is_valid(&self, position: DockPosition, cx: &WindowContext) -> bool;
@@ -64,8 +64,8 @@ impl<T> PanelHandle for View<T>
 where
     T: Panel,
 {
-    fn id(&self) -> EntityId {
-        self.entity_id()
+    fn entity_id(&self) -> EntityId {
+        Entity::entity_id(self)
     }
 
     fn persistent_name(&self) -> &'static str {
@@ -256,20 +256,19 @@ impl Dock {
         }
     }
 
-    // todo!()
-    // pub fn set_panel_zoomed(&mut self, panel: &AnyView, zoomed: bool, cx: &mut ViewContext<Self>) {
-    //     for entry in &mut self.panel_entries {
-    //         if entry.panel.as_any() == panel {
-    //             if zoomed != entry.panel.is_zoomed(cx) {
-    //                 entry.panel.set_zoomed(zoomed, cx);
-    //             }
-    //         } else if entry.panel.is_zoomed(cx) {
-    //             entry.panel.set_zoomed(false, cx);
-    //         }
-    //     }
+    pub fn set_panel_zoomed(&mut self, panel: &AnyView, zoomed: bool, cx: &mut ViewContext<Self>) {
+        for entry in &mut self.panel_entries {
+            if entry.panel.entity_id() == panel.entity_id() {
+                if zoomed != entry.panel.is_zoomed(cx) {
+                    entry.panel.set_zoomed(zoomed, cx);
+                }
+            } else if entry.panel.is_zoomed(cx) {
+                entry.panel.set_zoomed(false, cx);
+            }
+        }
 
-    //     cx.notify();
-    // }
+        cx.notify();
+    }
 
     pub fn zoom_out(&mut self, cx: &mut ViewContext<Self>) {
         for entry in &mut self.panel_entries {
@@ -279,42 +278,91 @@ impl Dock {
         }
     }
 
-    pub(crate) fn add_panel<T: Panel>(&mut self, panel: View<T>, cx: &mut ViewContext<Self>) {
+    pub(crate) fn add_panel<T: Panel>(
+        &mut self,
+        panel: View<T>,
+        workspace: WeakView<Workspace>,
+        cx: &mut ViewContext<Self>,
+    ) {
         let subscriptions = [
             cx.observe(&panel, |_, _, cx| cx.notify()),
-            cx.subscribe(&panel, |this, panel, event, cx| {
-                match event {
-                    PanelEvent::ChangePosition => {
-                        //todo!()
-                        // see: Workspace::add_panel_with_extra_event_handler
-                    }
-                    PanelEvent::ZoomIn => {
-                        //todo!()
-                        // see: Workspace::add_panel_with_extra_event_handler
-                    }
-                    PanelEvent::ZoomOut => {
-                        // todo!()
-                        // // see: Workspace::add_panel_with_extra_event_handler
-                    }
-                    PanelEvent::Activate => {
-                        if let Some(ix) = this
-                            .panel_entries
-                            .iter()
-                            .position(|entry| entry.panel.id() == panel.id())
-                        {
-                            this.set_open(true, cx);
-                            this.activate_panel(ix, cx);
-                            //` todo!()
-                            // cx.focus(&panel);
+            cx.subscribe(&panel, move |this, panel, event, cx| match event {
+                PanelEvent::ChangePosition => {
+                    let new_position = panel.read(cx).position(cx);
+
+                    let Ok(new_dock) = workspace.update(cx, |workspace, cx| {
+                        if panel.is_zoomed(cx) {
+                            workspace.zoomed_position = Some(new_position);
                         }
-                    }
-                    PanelEvent::Close => {
-                        if this.visible_panel().map_or(false, |p| p.id() == panel.id()) {
-                            this.set_open(false, cx);
+                        match new_position {
+                            DockPosition::Left => &workspace.left_dock,
+                            DockPosition::Bottom => &workspace.bottom_dock,
+                            DockPosition::Right => &workspace.right_dock,
                         }
-                    }
-                    PanelEvent::Focus => todo!(),
+                        .clone()
+                    }) else {
+                        return;
+                    };
+
+                    let was_visible = this.is_open()
+                        && this.visible_panel().map_or(false, |active_panel| {
+                            active_panel.entity_id() == Entity::entity_id(&panel)
+                        });
+
+                    this.remove_panel(&panel, cx);
+
+                    new_dock.update(cx, |new_dock, cx| {
+                        new_dock.add_panel(panel.clone(), workspace.clone(), cx);
+                        if was_visible {
+                            new_dock.set_open(true, cx);
+                            new_dock.activate_panel(this.panels_len() - 1, cx);
+                        }
+                    });
                 }
+                PanelEvent::ZoomIn => {
+                    this.set_panel_zoomed(&panel.to_any(), true, cx);
+                    if !panel.has_focus(cx) {
+                        cx.focus_view(&panel);
+                    }
+                    workspace
+                        .update(cx, |workspace, cx| {
+                            workspace.zoomed = Some(panel.downgrade().into());
+                            workspace.zoomed_position = Some(panel.read(cx).position(cx));
+                        })
+                        .ok();
+                }
+                PanelEvent::ZoomOut => {
+                    this.set_panel_zoomed(&panel.to_any(), false, cx);
+                    workspace
+                        .update(cx, |workspace, cx| {
+                            if workspace.zoomed_position == Some(this.position) {
+                                workspace.zoomed = None;
+                                workspace.zoomed_position = None;
+                            }
+                            cx.notify();
+                        })
+                        .ok();
+                }
+                PanelEvent::Activate => {
+                    if let Some(ix) = this
+                        .panel_entries
+                        .iter()
+                        .position(|entry| entry.panel.entity_id() == Entity::entity_id(&panel))
+                    {
+                        this.set_open(true, cx);
+                        this.activate_panel(ix, cx);
+                        cx.focus_view(&panel);
+                    }
+                }
+                PanelEvent::Close => {
+                    if this
+                        .visible_panel()
+                        .map_or(false, |p| p.entity_id() == Entity::entity_id(&panel))
+                    {
+                        this.set_open(false, cx);
+                    }
+                }
+                PanelEvent::Focus => todo!(),
             }),
         ];
 
@@ -337,7 +385,7 @@ impl Dock {
         if let Some(panel_ix) = self
             .panel_entries
             .iter()
-            .position(|entry| entry.panel.id() == panel.id())
+            .position(|entry| entry.panel.entity_id() == Entity::entity_id(panel))
         {
             if panel_ix == self.active_panel_index {
                 self.active_panel_index = 0;
@@ -398,7 +446,7 @@ impl Dock {
     pub fn panel_size(&self, panel: &dyn PanelHandle, cx: &WindowContext) -> Option<f32> {
         self.panel_entries
             .iter()
-            .find(|entry| entry.panel.id() == panel.id())
+            .find(|entry| entry.panel.entity_id() == panel.entity_id())
             .map(|entry| entry.panel.size(cx))
     }
 
