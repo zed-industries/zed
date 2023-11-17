@@ -1051,17 +1051,15 @@ mod tests {
         );
 
         // Ensure updates to the file are reflected in the LSP.
-        buffer_1
-            .update(cx, |buffer, cx| {
-                buffer.file_updated(
-                    Arc::new(File {
-                        abs_path: "/root/child/buffer-1".into(),
-                        path: Path::new("child/buffer-1").into(),
-                    }),
-                    cx,
-                )
-            })
-            .await;
+        buffer_1.update(cx, |buffer, cx| {
+            buffer.file_updated(
+                Arc::new(File {
+                    abs_path: "/root/child/buffer-1".into(),
+                    path: Path::new("child/buffer-1").into(),
+                }),
+                cx,
+            )
+        });
         assert_eq!(
             lsp.receive_notification::<lsp::notification::DidCloseTextDocument>()
                 .await,

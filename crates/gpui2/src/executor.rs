@@ -5,10 +5,11 @@ use std::{
     fmt::Debug,
     marker::PhantomData,
     mem,
+    num::NonZeroUsize,
     pin::Pin,
     rc::Rc,
     sync::{
-        atomic::{AtomicBool, Ordering::SeqCst},
+        atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst},
         Arc,
     },
     task::{Context, Poll},
@@ -71,30 +72,57 @@ impl<T> Future for Task<T> {
         }
     }
 }
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct TaskLabel(NonZeroUsize);
+
+impl TaskLabel {
+    pub fn new() -> Self {
+        static NEXT_TASK_LABEL: AtomicUsize = AtomicUsize::new(1);
+        Self(NEXT_TASK_LABEL.fetch_add(1, SeqCst).try_into().unwrap())
+    }
+}
+
 type AnyLocalFuture<R> = Pin<Box<dyn 'static + Future<Output = R>>>;
+
 type AnyFuture<R> = Pin<Box<dyn 'static + Send + Future<Output = R>>>;
+
 impl BackgroundExecutor {
     pub fn new(dispatcher: Arc<dyn PlatformDispatcher>) -> Self {
         Self { dispatcher }
     }
 
-    /// Enqueues the given closure to be run on any thread. The closure returns
-    /// a future which will be run to completion on any available thread.
+    /// Enqueues the given future to be run to completion on a background thread.
     pub fn spawn<R>(&self, future: impl Future<Output = R> + Send + 'static) -> Task<R>
     where
         R: Send + 'static,
     {
+        self.spawn_internal::<R>(Box::pin(future), None)
+    }
+
+    /// Enqueues the given future to be run to completion on a background thread.
+    /// The given label can be used to control the priority of the task in tests.
+    pub fn spawn_labeled<R>(
+        &self,
+        label: TaskLabel,
+        future: impl Future<Output = R> + Send + 'static,
+    ) -> Task<R>
+    where
+        R: Send + 'static,
+    {
+        self.spawn_internal::<R>(Box::pin(future), Some(label))
+    }
+
+    fn spawn_internal<R: Send + 'static>(
+        &self,
+        future: AnyFuture<R>,
+        label: Option<TaskLabel>,
+    ) -> Task<R> {
         let dispatcher = self.dispatcher.clone();
-        fn inner<R: Send + 'static>(
-            dispatcher: Arc<dyn PlatformDispatcher>,
-            future: AnyFuture<R>,
-        ) -> Task<R> {
-            let (runnable, task) =
-                async_task::spawn(future, move |runnable| dispatcher.dispatch(runnable));
-            runnable.schedule();
-            Task::Spawned(task)
-        }
-        inner::<R>(dispatcher, Box::pin(future))
+        let (runnable, task) =
+            async_task::spawn(future, move |runnable| dispatcher.dispatch(runnable, label));
+        runnable.schedule();
+        Task::Spawned(task)
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -130,7 +158,7 @@ impl BackgroundExecutor {
             match future.as_mut().poll(&mut cx) {
                 Poll::Ready(result) => return result,
                 Poll::Pending => {
-                    if !self.dispatcher.poll(background_only) {
+                    if !self.dispatcher.tick(background_only) {
                         if awoken.swap(false, SeqCst) {
                             continue;
                         }
@@ -217,8 +245,18 @@ impl BackgroundExecutor {
     }
 
     #[cfg(any(test, feature = "test-support"))]
+    pub fn deprioritize(&self, task_label: TaskLabel) {
+        self.dispatcher.as_test().unwrap().deprioritize(task_label)
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
     pub fn advance_clock(&self, duration: Duration) {
         self.dispatcher.as_test().unwrap().advance_clock(duration)
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn tick(&self) -> bool {
+        self.dispatcher.as_test().unwrap().tick(false)
     }
 
     #[cfg(any(test, feature = "test-support"))]

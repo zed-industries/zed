@@ -276,6 +276,7 @@ struct ShareState {
     _maintain_remote_snapshot: Task<Option<()>>,
 }
 
+#[derive(Clone)]
 pub enum Event {
     UpdatedEntries(UpdatedEntriesSet),
     UpdatedGitRepositories(UpdatedGitRepositoriesSet),
@@ -961,7 +962,7 @@ impl LocalWorktree {
 
                 buffer_handle.update(&mut cx, |buffer, cx| {
                     if has_changed_file {
-                        buffer.file_updated(new_file, cx).detach();
+                        buffer.file_updated(new_file, cx);
                     }
                 })?;
             }
