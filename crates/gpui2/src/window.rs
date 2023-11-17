@@ -193,17 +193,12 @@ pub trait FocusableView: Render {
 
 /// ManagedView is a view (like a Modal, Popover, Menu, etc.)
 /// where the lifecycle of the view is handled by another view.
-pub trait ManagedView: Render {
-    fn focus_handle(&self, cx: &AppContext) -> FocusHandle;
-}
+pub trait Managed: FocusableView + EventEmitter<ManagedView> {}
 
-pub struct Dismiss;
-impl<T: ManagedView> EventEmitter<Dismiss> for T {}
+impl<M: FocusableView + EventEmitter<ManagedView>> Managed for M {}
 
-impl<T: ManagedView> FocusableView for T {
-    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
-        self.focus_handle(cx)
-    }
+pub enum ManagedView {
+    Dismiss,
 }
 
 // Holds the state for a specific window.

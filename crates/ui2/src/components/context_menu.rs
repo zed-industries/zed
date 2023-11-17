@@ -4,8 +4,9 @@ use std::rc::Rc;
 use crate::prelude::*;
 use crate::{v_stack, Label, List, ListEntry, ListItem, ListSeparator, ListSubHeader};
 use gpui::{
-    overlay, px, Action, AnchorCorner, AnyElement, Bounds, Dismiss, DispatchPhase, Div,
-    FocusHandle, LayoutId, ManagedView, MouseButton, MouseDownEvent, Pixels, Point, Render, View,
+    overlay, px, Action, AnchorCorner, AnyElement, AppContext, Bounds, DispatchPhase, Div,
+    EventEmitter, FocusHandle, FocusableView, LayoutId, Managed, ManagedView, MouseButton,
+    MouseDownEvent, Pixels, Point, Render, View,
 };
 
 pub struct ContextMenu {
@@ -13,11 +14,13 @@ pub struct ContextMenu {
     focus_handle: FocusHandle,
 }
 
-impl ManagedView for ContextMenu {
-    fn focus_handle(&self, cx: &gpui::AppContext) -> FocusHandle {
+impl FocusableView for ContextMenu {
+    fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
         self.focus_handle.clone()
     }
 }
+
+impl EventEmitter<ManagedView> for ContextMenu {}
 
 impl ContextMenu {
     pub fn new(cx: &mut WindowContext) -> Self {
@@ -44,11 +47,11 @@ impl ContextMenu {
 
     pub fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
         // todo!()
-        cx.emit(Dismiss);
+        cx.emit(ManagedView::Dismiss);
     }
 
     pub fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
-        cx.emit(Dismiss);
+        cx.emit(ManagedView::Dismiss);
     }
 }
 
@@ -76,7 +79,7 @@ impl Render for ContextMenu {
     }
 }
 
-pub struct MenuHandle<V: 'static, M: ManagedView> {
+pub struct MenuHandle<V: 'static, M: Managed> {
     id: Option<ElementId>,
     child_builder: Option<Box<dyn FnOnce(bool) -> AnyElement<V> + 'static>>,
     menu_builder: Option<Rc<dyn Fn(&mut V, &mut ViewContext<V>) -> View<M> + 'static>>,
@@ -85,7 +88,7 @@ pub struct MenuHandle<V: 'static, M: ManagedView> {
     attach: Option<AnchorCorner>,
 }
 
-impl<V: 'static, M: ManagedView> MenuHandle<V, M> {
+impl<V: 'static, M: Managed> MenuHandle<V, M> {
     pub fn id(mut self, id: impl Into<ElementId>) -> Self {
         self.id = Some(id.into());
         self
@@ -115,7 +118,7 @@ impl<V: 'static, M: ManagedView> MenuHandle<V, M> {
     }
 }
 
-pub fn menu_handle<V: 'static, M: ManagedView>() -> MenuHandle<V, M> {
+pub fn menu_handle<V: 'static, M: Managed>() -> MenuHandle<V, M> {
     MenuHandle {
         id: None,
         child_builder: None,
@@ -132,7 +135,7 @@ pub struct MenuHandleState<V, M> {
     child_element: Option<AnyElement<V>>,
     menu_element: Option<AnyElement<V>>,
 }
-impl<V: 'static, M: ManagedView> Element<V> for MenuHandle<V, M> {
+impl<V: 'static, M: Managed> Element<V> for MenuHandle<V, M> {
     type ElementState = MenuHandleState<V, M>;
 
     fn element_id(&self) -> Option<gpui::ElementId> {
@@ -226,7 +229,7 @@ impl<V: 'static, M: ManagedView> Element<V> for MenuHandle<V, M> {
                 let new_menu = (builder)(view_state, cx);
                 let menu2 = menu.clone();
                 cx.subscribe(&new_menu, move |this, modal, e, cx| match e {
-                    &Dismiss => {
+                    &ManagedView::Dismiss => {
                         *menu2.borrow_mut() = None;
                         cx.notify();
                     }
@@ -247,7 +250,7 @@ impl<V: 'static, M: ManagedView> Element<V> for MenuHandle<V, M> {
     }
 }
 
-impl<V: 'static, M: ManagedView> Component<V> for MenuHandle<V, M> {
+impl<V: 'static, M: Managed> Component<V> for MenuHandle<V, M> {
     fn render(self) -> AnyElement<V> {
         AnyElement::new(self)
     }

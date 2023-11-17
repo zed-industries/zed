@@ -1,5 +1,5 @@
 use gpui::{
-    div, prelude::*, px, AnyView, Div, FocusHandle, ManagedView, Render, Subscription, View,
+    div, prelude::*, px, AnyView, Div, FocusHandle, Managed, Render, Subscription, View,
     ViewContext,
 };
 use ui::{h_stack, v_stack};
@@ -22,7 +22,7 @@ impl ModalLayer {
 
     pub fn toggle_modal<V, B>(&mut self, cx: &mut ViewContext<Self>, build_view: B)
     where
-        V: ManagedView,
+        V: Managed,
         B: FnOnce(&mut ViewContext<V>) -> V,
     {
         if let Some(active_modal) = &self.active_modal {
@@ -38,7 +38,7 @@ impl ModalLayer {
 
     pub fn show_modal<V>(&mut self, new_modal: View<V>, cx: &mut ViewContext<Self>)
     where
-        V: ManagedView,
+        V: Managed,
     {
         self.active_modal = Some(ActiveModal {
             modal: new_modal.clone().into(),
