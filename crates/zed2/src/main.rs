@@ -43,7 +43,7 @@ use std::{
 use theme::ActiveTheme;
 use util::{
     async_maybe,
-    channel::{parse_zed_link, ReleaseChannel, RELEASE_CHANNEL},
+    channel::{parse_zed_link, AppCommitSha, ReleaseChannel, RELEASE_CHANNEL},
     http::{self, HttpClient},
     paths, ResultExt,
 };
@@ -113,6 +113,10 @@ fn main() {
 
     app.run(move |cx| {
         cx.set_global(*RELEASE_CHANNEL);
+        if let Some(build_sha) = option_env!("ZED_COMMIT_SHA") {
+            cx.set_global(AppCommitSha(build_sha.into()))
+        }
+
         cx.set_global(listener.clone());
 
         load_embedded_fonts(cx);

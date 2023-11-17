@@ -1,6 +1,5 @@
-use std::env;
-
 use lazy_static::lazy_static;
+use std::env;
 
 lazy_static! {
     pub static ref RELEASE_CHANNEL_NAME: String = if cfg!(debug_assertions) {
@@ -17,6 +16,8 @@ lazy_static! {
         _ => panic!("invalid release channel {}", *RELEASE_CHANNEL_NAME),
     };
 }
+
+pub struct AppCommitSha(pub String);
 
 #[derive(Copy, Clone, PartialEq, Eq, Default)]
 pub enum ReleaseChannel {
@@ -40,7 +41,6 @@ impl ReleaseChannel {
     pub fn dev_name(&self) -> &'static str {
         match self {
             ReleaseChannel::Dev => "dev",
-            // TODO kb need to add DB data
             ReleaseChannel::Nightly => "nightly",
             ReleaseChannel::Preview => "preview",
             ReleaseChannel::Stable => "stable",
@@ -69,7 +69,6 @@ impl ReleaseChannel {
     pub fn release_query_param(&self) -> Option<&'static str> {
         match self {
             Self::Dev => None,
-            // TODO kb need to add server handling
             Self::Nightly => Some("nightly=1"),
             Self::Preview => Some("preview=1"),
             Self::Stable => None,
