@@ -3,7 +3,10 @@ use anyhow::{anyhow, Context, Result};
 use collections::HashMap;
 pub use no_action::NoAction;
 use serde_json::json;
-use std::any::{Any, TypeId};
+use std::{
+    any::{Any, TypeId},
+    ops::Deref,
+};
 
 /// Actions are used to implement keyboard-driven UI.
 /// When you declare an action, you can bind keys to the action in the keymap and
@@ -111,7 +114,8 @@ impl ActionRegistry {
     pub(crate) fn load_actions(&mut self) {
         for builder in __GPUI_ACTIONS {
             let action = builder();
-            let name: SharedString = qualify_action(action.name).into();
+            //todo(remove)
+            let name: SharedString = remove_the_2(action.name).into();
             self.builders_by_name.insert(name.clone(), action.build);
             self.names_by_type_id.insert(action.type_id, name.clone());
             self.all_names.push(name);
@@ -135,9 +139,11 @@ impl ActionRegistry {
         name: &str,
         params: Option<serde_json::Value>,
     ) -> Result<Box<dyn Action>> {
+        //todo(remove)
+        let name = remove_the_2(name);
         let build_action = self
             .builders_by_name
-            .get(name)
+            .get(name.deref())
             .ok_or_else(|| anyhow!("no action type registered for {}", name))?;
         (build_action)(params.unwrap_or_else(|| json!({})))
             .with_context(|| format!("Attempting to build action {}", name))
@@ -165,9 +171,8 @@ macro_rules! actions {
     };
 }
 
-/// This used by our macros to pre-process the action name deterministically
-#[doc(hidden)]
-pub fn qualify_action(action_name: &'static str) -> String {
+//todo!(remove)
+pub fn remove_the_2(action_name: &str) -> String {
     let mut separator_matches = action_name.rmatch_indices("::");
     separator_matches.next().unwrap();
     let name_start_ix = separator_matches.next().map_or(0, |(ix, _)| ix + 2);
