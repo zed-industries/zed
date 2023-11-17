@@ -23,19 +23,8 @@ jobs:
       - self-hosted
       - test
     steps:
-      - name: Install Rust
-        run: |
-          rustup set profile minimal
-          rustup update stable
-
-      - name: Checkout repo
-        uses: actions/checkout@v3
-        with:
-          clean: false
-          submodules: "recursive"
-
-      - name: cargo fmt
-        run: cargo fmt --all -- --check
+      - name: Run rustfmt
+        uses: ./.github/actions/rust_fmt
 
   tests:
     name: Run tests
@@ -43,41 +32,9 @@ jobs:
       - self-hosted
       - test
     needs: rustfmt
-    env:
-      RUSTFLAGS: -D warnings
     steps:
-      - name: Install Rust
-        run: |
-          rustup set profile minimal
-          rustup update stable
-          rustup target add wasm32-wasi
-          cargo install cargo-nextest
-
-      - name: Install Node
-        uses: actions/setup-node@v3
-        with:
-          node-version: "18"
-
-      - name: Checkout repo
-        uses: actions/checkout@v3
-        with:
-          clean: false
-          submodules: "recursive"
-
-      - name: Limit target directory size
-        run: script/clear-target-dir-if-larger-than 70
-
-      - name: Run check
-        run: cargo check --workspace
-
       - name: Run tests
-        run: cargo nextest run --workspace --no-fail-fast
-
-      - name: Build collab
-        run: cargo build -p collab
-
-      - name: Build other binaries
-        run: cargo build --workspace --bins --all-features
+        uses: ./.github/actions/run_tests
 
   bundle:
     name: Bundle app

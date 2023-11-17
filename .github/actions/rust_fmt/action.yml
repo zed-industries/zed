@@ -1,0 +1,21 @@
+name: 'Run rustfmt'
+description: 'Runs rustfmt'
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install Rust
+      shell: bash -euxo pipefail {0}
+      run: |
+        rustup set profile minimal
+        rustup update stable
+
+    - name: Checkout repo
+      uses: actions/checkout@v3
+      with:
+        clean: false
+        submodules: "recursive"
+
+    - name: cargo fmt
+      shell: bash -euxo pipefail {0}
+      run: cargo fmt --all -- --check
