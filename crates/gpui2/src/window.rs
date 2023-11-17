@@ -193,17 +193,12 @@ pub trait FocusableView: Render {
 
 /// ManagedView is a view (like a Modal, Popover, Menu, etc.)
 /// where the lifecycle of the view is handled by another view.
-pub trait ManagedView: Render {
-    fn focus_handle(&self, cx: &AppContext) -> FocusHandle;
-}
+pub trait ManagedView: FocusableView + EventEmitter<Manager> {}
 
-pub struct Dismiss;
-impl<T: ManagedView> EventEmitter<Dismiss> for T {}
+impl<M: FocusableView + EventEmitter<Manager>> ManagedView for M {}
 
-impl<T: ManagedView> FocusableView for T {
-    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
-        self.focus_handle(cx)
-    }
+pub enum Manager {
+    Dismiss,
 }
 
 // Holds the state for a specific window.
@@ -1582,6 +1577,13 @@ impl VisualContext for WindowContext<'_> {
             view.focus_handle(cx).clone().focus(cx);
         })
     }
+
+    fn dismiss_view<V>(&mut self, view: &View<V>) -> Self::Result<()>
+    where
+        V: ManagedView,
+    {
+        self.update_view(view, |_, cx| cx.emit(Manager::Dismiss))
+    }
 }
 
 impl<'a> std::ops::Deref for WindowContext<'a> {
@@ -2275,6 +2277,13 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     {
         self.defer(|view, cx| view.focus_handle(cx).focus(cx))
     }
+
+    pub fn dismiss_self(&mut self)
+    where
+        V: ManagedView,
+    {
+        self.defer(|_, cx| cx.emit(Manager::Dismiss))
+    }
 }
 
 impl<V> Context for ViewContext<'_, V> {
@@ -2353,6 +2362,10 @@ impl<V: 'static> VisualContext for ViewContext<'_, V> {
 
     fn focus_view<W: FocusableView>(&mut self, view: &View<W>) -> Self::Result<()> {
         self.window_cx.focus_view(view)
+    }
+
+    fn dismiss_view<W: ManagedView>(&mut self, view: &View<W>) -> Self::Result<()> {
+        self.window_cx.dismiss_view(view)
     }
 }
 

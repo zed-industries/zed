@@ -4,9 +4,9 @@ use std::rc::Rc;
 use crate::prelude::*;
 use crate::{v_stack, Label, List, ListEntry, ListItem, ListSeparator, ListSubHeader};
 use gpui::{
-    overlay, px, Action, AnchorCorner, AnyElement, Bounds, Dismiss, DispatchPhase, Div,
-    FocusHandle, LayoutId, ManagedView, MouseButton, MouseDownEvent, Pixels, Point, Render, View,
-    VisualContext, WeakView,
+    overlay, px, Action, AnchorCorner, AnyElement, AppContext, Bounds, DispatchPhase, Div,
+    EventEmitter, FocusHandle, FocusableView, LayoutId, ManagedView, Manager, MouseButton,
+    MouseDownEvent, Pixels, Point, Render, View, VisualContext, WeakView,
 };
 
 pub enum ContextMenuItem<V> {
@@ -24,11 +24,13 @@ pub struct ContextMenu<V> {
     handle: WeakView<V>,
 }
 
-impl<V: Render> ManagedView for ContextMenu<V> {
-    fn focus_handle(&self, cx: &gpui::AppContext) -> FocusHandle {
+impl<V: Render> FocusableView for ContextMenu<V> {
+    fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
         self.focus_handle.clone()
     }
 }
+
+impl<V: Render> EventEmitter<Manager> for ContextMenu<V> {}
 
 impl<V: Render> ContextMenu<V> {
     pub fn build(
@@ -76,11 +78,11 @@ impl<V: Render> ContextMenu<V> {
 
     pub fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
         // todo!()
-        cx.emit(Dismiss);
+        cx.emit(Manager::Dismiss);
     }
 
     pub fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
-        cx.emit(Dismiss);
+        cx.emit(Manager::Dismiss);
     }
 }
 
@@ -116,7 +118,7 @@ impl<V: Render> Render for ContextMenu<V> {
                                 let handle = self.handle.clone();
                                 ListItem::Entry(entry.clone().on_click(move |this, cx| {
                                     handle.update(cx, |view, cx| callback(view, cx)).ok();
-                                    cx.emit(Dismiss);
+                                    cx.emit(Manager::Dismiss);
                                 }))
                             }
                         })
@@ -276,7 +278,7 @@ impl<V: 'static, M: ManagedView> Element<V> for MenuHandle<V, M> {
                 let new_menu = (builder)(view_state, cx);
                 let menu2 = menu.clone();
                 cx.subscribe(&new_menu, move |this, modal, e, cx| match e {
-                    &Dismiss => {
+                    &Manager::Dismiss => {
                         *menu2.borrow_mut() = None;
                         cx.notify();
                     }
