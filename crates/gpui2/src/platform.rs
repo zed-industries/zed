@@ -165,7 +165,7 @@ pub trait PlatformDispatcher: Send + Sync {
     fn dispatch(&self, runnable: Runnable, label: Option<TaskLabel>);
     fn dispatch_on_main_thread(&self, runnable: Runnable);
     fn dispatch_after(&self, duration: Duration, runnable: Runnable);
-    fn poll(&self, background_only: bool) -> bool;
+    fn tick(&self, background_only: bool) -> bool;
     fn park(&self);
     fn unparker(&self) -> Unparker;
 

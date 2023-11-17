@@ -158,7 +158,7 @@ impl BackgroundExecutor {
             match future.as_mut().poll(&mut cx) {
                 Poll::Ready(result) => return result,
                 Poll::Pending => {
-                    if !self.dispatcher.poll(background_only) {
+                    if !self.dispatcher.tick(background_only) {
                         if awoken.swap(false, SeqCst) {
                             continue;
                         }
@@ -255,8 +255,8 @@ impl BackgroundExecutor {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn run_step(&self) -> bool {
-        self.dispatcher.as_test().unwrap().poll(false)
+    pub fn tick(&self) -> bool {
+        self.dispatcher.as_test().unwrap().tick(false)
     }
 
     #[cfg(any(test, feature = "test-support"))]

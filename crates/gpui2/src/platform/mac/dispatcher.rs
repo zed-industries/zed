@@ -71,7 +71,7 @@ impl PlatformDispatcher for MacDispatcher {
         }
     }
 
-    fn poll(&self, _background_only: bool) -> bool {
+    fn tick(&self, _background_only: bool) -> bool {
         false
     }
 

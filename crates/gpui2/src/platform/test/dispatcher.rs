@@ -113,7 +113,7 @@ impl TestDispatcher {
     }
 
     pub fn run_until_parked(&self) {
-        while self.poll(false) {}
+        while self.tick(false) {}
     }
 
     pub fn parking_allowed(&self) -> bool {
@@ -194,7 +194,7 @@ impl PlatformDispatcher for TestDispatcher {
         state.delayed.insert(ix, (next_time, runnable));
     }
 
-    fn poll(&self, background_only: bool) -> bool {
+    fn tick(&self, background_only: bool) -> bool {
         let mut state = self.state.lock();
 
         while let Some((deadline, _)) = state.delayed.first() {

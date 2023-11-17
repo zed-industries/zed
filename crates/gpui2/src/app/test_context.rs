@@ -359,7 +359,7 @@ impl<T: Send> Model<T> {
                 Ok(Some(event)) => return event,
                 Ok(None) => panic!("model was dropped"),
                 Err(_) => {
-                    if !cx.executor().run_step() {
+                    if !cx.executor().tick() {
                         break;
                     }
                 }
