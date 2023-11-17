@@ -95,6 +95,7 @@ members = [
     "crates/sqlez_macros",
     "crates/rich_text",
     "crates/storybook2",
+    "crates/storybook3",
     "crates/sum_tree",
     "crates/terminal",
     "crates/terminal2",

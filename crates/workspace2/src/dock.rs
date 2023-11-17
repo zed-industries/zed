@@ -1,14 +1,14 @@
 use crate::{status_bar::StatusItemView, Axis, Workspace};
 use gpui::{
-    div, px, Action, AnyView, AppContext, Component, Div, Entity, EntityId, EventEmitter,
-    FocusHandle, FocusableView, ParentComponent, Render, Styled, Subscription, View, ViewContext,
-    WeakView, WindowContext,
+    div, px, Action, AnchorCorner, AnyView, AppContext, Component, Div, Entity, EntityId,
+    EventEmitter, FocusHandle, FocusableView, ParentComponent, Render, SharedString, Styled,
+    Subscription, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use theme2::ActiveTheme;
-use ui::{h_stack, IconButton, InteractionState, Tooltip};
+use ui::{h_stack, menu_handle, ContextMenu, IconButton, InteractionState, Tooltip};
 
 pub enum PanelEvent {
     ChangePosition,
@@ -416,6 +416,14 @@ impl Dock {
             cx.notify();
         }
     }
+
+    pub fn toggle_action(&self) -> Box<dyn Action> {
+        match self.position {
+            DockPosition::Left => crate::ToggleLeftDock.boxed_clone(),
+            DockPosition::Bottom => crate::ToggleBottomDock.boxed_clone(),
+            DockPosition::Right => crate::ToggleRightDock.boxed_clone(),
+        }
+    }
 }
 
 impl Render for Dock {
@@ -603,6 +611,7 @@ impl PanelButtons {
 //     }
 // }
 
+// here be kittens
 impl Render for PanelButtons {
     type Element = Div<Self>;
 
@@ -612,6 +621,13 @@ impl Render for PanelButtons {
         let active_index = dock.active_panel_index;
         let is_open = dock.is_open;
 
+        let (menu_anchor, menu_attach) = match dock.position {
+            DockPosition::Left => (AnchorCorner::BottomLeft, AnchorCorner::TopLeft),
+            DockPosition::Bottom | DockPosition::Right => {
+                (AnchorCorner::BottomRight, AnchorCorner::TopRight)
+            }
+        };
+
         let buttons = dock
             .panel_entries
             .iter()
@@ -619,15 +635,33 @@ impl Render for PanelButtons {
             .filter_map(|(i, panel)| {
                 let icon = panel.panel.icon(cx)?;
                 let name = panel.panel.persistent_name();
-                let action = panel.panel.toggle_action(cx);
-                let action2 = action.boxed_clone();
 
-                let mut button = IconButton::new(panel.panel.persistent_name(), icon)
-                    .when(i == active_index, |el| el.state(InteractionState::Active))
-                    .on_click(move |this, cx| cx.dispatch_action(action.boxed_clone()))
-                    .tooltip(move |_, cx| Tooltip::for_action(name, &*action2, cx));
+                let mut button: IconButton<Self> = if i == active_index && is_open {
+                    let action = dock.toggle_action();
+                    let tooltip: SharedString =
+                        format!("Close {} dock", dock.position.to_label()).into();
+                    IconButton::new(name, icon)
+                        .state(InteractionState::Active)
+                        .action(action.boxed_clone())
+                        .tooltip(move |_, cx| Tooltip::for_action(tooltip.clone(), &*action, cx))
+                } else {
+                    let action = panel.panel.toggle_action(cx);
 
-                Some(button)
+                    IconButton::new(name, icon)
+                        .action(action.boxed_clone())
+                        .tooltip(move |_, cx| Tooltip::for_action(name, &*action, cx))
+                };
+
+                Some(
+                    menu_handle()
+                        .id(name)
+                        .menu(move |_, cx| {
+                            cx.build_view(|cx| ContextMenu::new(cx).header("SECTION"))
+                        })
+                        .anchor(menu_anchor)
+                        .attach(menu_attach)
+                        .child(|is_open| button.selected(is_open)),
+                )
             });
 
         h_stack().gap_0p5().children(buttons)

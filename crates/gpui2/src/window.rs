@@ -185,8 +185,25 @@ impl Drop for FocusHandle {
     }
 }
 
+/// FocusableView allows users of your view to easily
+/// focus it (using cx.focus_view(view))
 pub trait FocusableView: Render {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle;
+}
+
+/// ManagedView is a view (like a Modal, Popover, Menu, etc.)
+/// where the lifecycle of the view is handled by another view.
+pub trait ManagedView: Render {
+    fn focus_handle(&self, cx: &AppContext) -> FocusHandle;
+}
+
+pub struct Dismiss;
+impl<T: ManagedView> EventEmitter<Dismiss> for T {}
+
+impl<T: ManagedView> FocusableView for T {
+    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+        self.focus_handle(cx)
+    }
 }
 
 // Holds the state for a specific window.
@@ -574,6 +591,7 @@ impl<'a> WindowContext<'a> {
         result
     }
 
+    #[must_use]
     /// Add a node to the layout tree for the current frame. Takes the `Style` of the element for which
     /// layout is being requested, along with the layout ids of any children. This method is called during
     /// calls to the `Element::layout` trait method and enables any element to participate in layout.
@@ -1149,6 +1167,14 @@ impl<'a> WindowContext<'a> {
             InputEvent::MouseMove(mouse_move) => {
                 self.window.mouse_position = mouse_move.position;
                 InputEvent::MouseMove(mouse_move)
+            }
+            InputEvent::MouseDown(mouse_down) => {
+                self.window.mouse_position = mouse_down.position;
+                InputEvent::MouseDown(mouse_down)
+            }
+            InputEvent::MouseUp(mouse_up) => {
+                self.window.mouse_position = mouse_up.position;
+                InputEvent::MouseUp(mouse_up)
             }
             // Translate dragging and dropping of external files from the operating system
             // to internal drag and drop events.

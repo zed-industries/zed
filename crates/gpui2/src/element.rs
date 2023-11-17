@@ -13,7 +13,7 @@ pub trait Element<V: 'static> {
     fn layout(
         &mut self,
         view_state: &mut V,
-        previous_element_state: Option<Self::ElementState>,
+        element_state: Option<Self::ElementState>,
         cx: &mut ViewContext<V>,
     ) -> (LayoutId, Self::ElementState);
 

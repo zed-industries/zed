@@ -5445,7 +5445,9 @@ impl Editor {
                     *head.column_mut() += 1;
                     head = display_map.clip_point(head, Bias::Right);
                     let goal = SelectionGoal::HorizontalPosition(
-                        display_map.x_for_point(head, &text_layout_details).into(),
+                        display_map
+                            .x_for_display_point(head, &text_layout_details)
+                            .into(),
                     );
                     selection.collapse_to(head, goal);
 
@@ -6391,8 +6393,8 @@ impl Editor {
             let oldest_selection = selections.iter().min_by_key(|s| s.id).unwrap().clone();
             let range = oldest_selection.display_range(&display_map).sorted();
 
-            let start_x = display_map.x_for_point(range.start, &text_layout_details);
-            let end_x = display_map.x_for_point(range.end, &text_layout_details);
+            let start_x = display_map.x_for_display_point(range.start, &text_layout_details);
+            let end_x = display_map.x_for_display_point(range.end, &text_layout_details);
             let positions = start_x.min(end_x)..start_x.max(end_x);
 
             selections.clear();
@@ -6431,15 +6433,16 @@ impl Editor {
                     let range = selection.display_range(&display_map).sorted();
                     debug_assert_eq!(range.start.row(), range.end.row());
                     let mut row = range.start.row();
-                    let positions = if let SelectionGoal::HorizontalRange { start, end } =
-                        selection.goal
-                    {
-                        px(start)..px(end)
-                    } else {
-                        let start_x = display_map.x_for_point(range.start, &text_layout_details);
-                        let end_x = display_map.x_for_point(range.end, &text_layout_details);
-                        start_x.min(end_x)..start_x.max(end_x)
-                    };
+                    let positions =
+                        if let SelectionGoal::HorizontalRange { start, end } = selection.goal {
+                            px(start)..px(end)
+                        } else {
+                            let start_x =
+                                display_map.x_for_display_point(range.start, &text_layout_details);
+                            let end_x =
+                                display_map.x_for_display_point(range.end, &text_layout_details);
+                            start_x.min(end_x)..start_x.max(end_x)
+                        };
 
                     while row != end_row {
                         if above {
@@ -6992,7 +6995,7 @@ impl Editor {
                         let display_point = point.to_display_point(display_snapshot);
                         let goal = SelectionGoal::HorizontalPosition(
                             display_snapshot
-                                .x_for_point(display_point, &text_layout_details)
+                                .x_for_display_point(display_point, &text_layout_details)
                                 .into(),
                         );
                         (display_point, goal)
@@ -9759,7 +9762,8 @@ impl InputHandler for Editor {
         let scroll_left = scroll_position.x * em_width;
 
         let start = OffsetUtf16(range_utf16.start).to_display_point(&snapshot);
-        let x = snapshot.x_for_point(start, &text_layout_details) - scroll_left + self.gutter_width;
+        let x = snapshot.x_for_display_point(start, &text_layout_details) - scroll_left
+            + self.gutter_width;
         let y = line_height * (start.row() as f32 - scroll_position.y);
 
         Some(Bounds {

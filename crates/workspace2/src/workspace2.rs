@@ -31,10 +31,10 @@ use futures::{
 use gpui::{
     actions, div, point, size, Action, AnyModel, AnyView, AnyWeakView, AppContext, AsyncAppContext,
     AsyncWindowContext, Bounds, Context, Div, Entity, EntityId, EventEmitter, FocusHandle,
-    FocusableView, GlobalPixels, InteractiveComponent, KeyContext, Model, ModelContext,
-    ParentComponent, PathPromptOptions, Point, PromptLevel, Render, Size, Styled, Subscription,
-    Task, View, ViewContext, VisualContext, WeakView, WindowBounds, WindowContext, WindowHandle,
-    WindowOptions,
+    FocusableView, GlobalPixels, InteractiveComponent, KeyContext, ManagedView, Model,
+    ModelContext, ParentComponent, PathPromptOptions, Point, PromptLevel, Render, Size, Styled,
+    Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowBounds, WindowContext,
+    WindowHandle, WindowOptions,
 };
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, ProjectItem};
 use itertools::Itertools;
@@ -3202,8 +3202,9 @@ impl Workspace {
         })
     }
 
-    fn actions(div: Div<Self>) -> Div<Self> {
-        div.on_action(Self::open)
+    fn actions(&self, div: Div<Self>) -> Div<Self> {
+        self.add_workspace_actions_listeners(div)
+            //     cx.add_async_action(Workspace::open);
             //     cx.add_async_action(Workspace::follow_next_collaborator);
             //     cx.add_async_action(Workspace::close);
             .on_action(Self::close_inactive_items_and_panes)
@@ -3239,15 +3240,15 @@ impl Workspace {
             .on_action(|this, e: &ToggleLeftDock, cx| {
                 this.toggle_dock(DockPosition::Left, cx);
             })
-        //     cx.add_action(|workspace: &mut Workspace, _: &ToggleRightDock, cx| {
-        //         workspace.toggle_dock(DockPosition::Right, cx);
-        //     });
-        //     cx.add_action(|workspace: &mut Workspace, _: &ToggleBottomDock, cx| {
-        //         workspace.toggle_dock(DockPosition::Bottom, cx);
-        //     });
-        //     cx.add_action(|workspace: &mut Workspace, _: &CloseAllDocks, cx| {
-        //         workspace.close_all_docks(cx);
-        //     });
+            .on_action(|workspace: &mut Workspace, _: &ToggleRightDock, cx| {
+                workspace.toggle_dock(DockPosition::Right, cx);
+            })
+            .on_action(|workspace: &mut Workspace, _: &ToggleBottomDock, cx| {
+                workspace.toggle_dock(DockPosition::Bottom, cx);
+            })
+            .on_action(|workspace: &mut Workspace, _: &CloseAllDocks, cx| {
+                workspace.close_all_docks(cx);
+            })
         //     cx.add_action(Workspace::activate_pane_at_index);
         //     cx.add_action(|workspace: &mut Workspace, _: &ReopenClosedItem, cx| {
         //         workspace.reopen_closed_item(cx).detach();
@@ -3363,11 +3364,14 @@ impl Workspace {
         div
     }
 
-    pub fn active_modal<V: Modal + 'static>(&mut self, cx: &ViewContext<Self>) -> Option<View<V>> {
+    pub fn active_modal<V: ManagedView + 'static>(
+        &mut self,
+        cx: &ViewContext<Self>,
+    ) -> Option<View<V>> {
         self.modal_layer.read(cx).active_modal()
     }
 
-    pub fn toggle_modal<V: Modal, B>(&mut self, cx: &mut ViewContext<Self>, build: B)
+    pub fn toggle_modal<V: ManagedView, B>(&mut self, cx: &mut ViewContext<Self>, build: B)
     where
         B: FnOnce(&mut ViewContext<V>) -> V,
     {
@@ -3605,7 +3609,7 @@ impl Render for Workspace {
 
         cx.set_rem_size(ui_font_size);
 
-        Self::actions(self.add_workspace_actions_listeners(div()))
+        self.actions(div())
             .key_context(context)
             .relative()
             .size_full()

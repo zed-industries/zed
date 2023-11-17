@@ -117,7 +117,7 @@ impl ListHeader {
     }
 }
 
-#[derive(Component)]
+#[derive(Component, Clone)]
 pub struct ListSubHeader {
     label: SharedString,
     left_icon: Option<Icon>,
@@ -172,7 +172,7 @@ pub enum ListEntrySize {
     Medium,
 }
 
-#[derive(Component)]
+#[derive(Component, Clone)]
 pub enum ListItem {
     Entry(ListEntry),
     Separator(ListSeparator),
@@ -234,6 +234,24 @@ pub struct ListEntry {
     on_click: Option<Box<dyn Action>>,
 }
 
+impl Clone for ListEntry {
+    fn clone(&self) -> Self {
+        Self {
+            disabled: self.disabled,
+            // TODO: Reintroduce this
+            // disclosure_control_style: DisclosureControlVisibility,
+            indent_level: self.indent_level,
+            label: self.label.clone(),
+            left_slot: self.left_slot.clone(),
+            overflow: self.overflow,
+            size: self.size,
+            toggle: self.toggle,
+            variant: self.variant,
+            on_click: self.on_click.as_ref().map(|opt| opt.boxed_clone()),
+        }
+    }
+}
+
 impl ListEntry {
     pub fn new(label: Label) -> Self {
         Self {
@@ -249,7 +267,7 @@ impl ListEntry {
         }
     }
 
-    pub fn on_click(mut self, action: impl Into<Box<dyn Action>>) -> Self {
+    pub fn action(mut self, action: impl Into<Box<dyn Action>>) -> Self {
         self.on_click = Some(action.into());
         self
     }

@@ -1,9 +1,8 @@
 use collections::{CommandPaletteFilter, HashMap};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, div, prelude::*, Action, AppContext, Component, Div, EventEmitter, FocusHandle,
-    Keystroke, ParentComponent, Render, Styled, View, ViewContext, VisualContext, WeakView,
-    WindowContext,
+    actions, div, prelude::*, Action, AppContext, Component, Dismiss, Div, FocusHandle, Keystroke,
+    ManagedView, ParentComponent, Render, Styled, View, ViewContext, VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};
 use std::{
@@ -16,7 +15,7 @@ use util::{
     channel::{parse_zed_link, ReleaseChannel, RELEASE_CHANNEL},
     ResultExt,
 };
-use workspace::{Modal, ModalEvent, Workspace};
+use workspace::Workspace;
 use zed_actions::OpenZedURL;
 
 actions!(Toggle);
@@ -69,10 +68,9 @@ impl CommandPalette {
     }
 }
 
-impl EventEmitter<ModalEvent> for CommandPalette {}
-impl Modal for CommandPalette {
-    fn focus(&self, cx: &mut WindowContext) {
-        self.picker.update(cx, |picker, cx| picker.focus(cx));
+impl ManagedView for CommandPalette {
+    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+        self.picker.focus_handle(cx)
     }
 }
 
@@ -267,7 +265,7 @@ impl PickerDelegate for CommandPaletteDelegate {
 
     fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>) {
         self.command_palette
-            .update(cx, |_, cx| cx.emit(ModalEvent::Dismissed))
+            .update(cx, |_, cx| cx.emit(Dismiss))
             .log_err();
     }
 

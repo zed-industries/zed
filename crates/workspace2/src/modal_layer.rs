@@ -1,6 +1,6 @@
 use gpui::{
-    div, prelude::*, px, AnyView, Div, EventEmitter, FocusHandle, Render, Subscription, View,
-    ViewContext, WindowContext,
+    div, prelude::*, px, AnyView, Div, FocusHandle, ManagedView, Render, Subscription, View,
+    ViewContext,
 };
 use ui::{h_stack, v_stack};
 
@@ -15,14 +15,6 @@ pub struct ModalLayer {
     active_modal: Option<ActiveModal>,
 }
 
-pub trait Modal: Render + EventEmitter<ModalEvent> {
-    fn focus(&self, cx: &mut WindowContext);
-}
-
-pub enum ModalEvent {
-    Dismissed,
-}
-
 impl ModalLayer {
     pub fn new() -> Self {
         Self { active_modal: None }
@@ -30,7 +22,7 @@ impl ModalLayer {
 
     pub fn toggle_modal<V, B>(&mut self, cx: &mut ViewContext<Self>, build_view: B)
     where
-        V: Modal,
+        V: ManagedView,
         B: FnOnce(&mut ViewContext<V>) -> V,
     {
         if let Some(active_modal) = &self.active_modal {
@@ -46,17 +38,15 @@ impl ModalLayer {
 
     pub fn show_modal<V>(&mut self, new_modal: View<V>, cx: &mut ViewContext<Self>)
     where
-        V: Modal,
+        V: ManagedView,
     {
         self.active_modal = Some(ActiveModal {
             modal: new_modal.clone().into(),
-            subscription: cx.subscribe(&new_modal, |this, modal, e, cx| match e {
-                ModalEvent::Dismissed => this.hide_modal(cx),
-            }),
+            subscription: cx.subscribe(&new_modal, |this, modal, e, cx| this.hide_modal(cx)),
             previous_focus_handle: cx.focused(),
             focus_handle: cx.focus_handle(),
         });
-        new_modal.update(cx, |modal, cx| modal.focus(cx));
+        cx.focus_view(&new_modal);
         cx.notify();
     }
 
