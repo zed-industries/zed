@@ -1,11 +1,11 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::{h_stack, prelude::*, ListItemVariant};
+use crate::{prelude::*, ListItemVariant};
 use crate::{v_stack, Label, List, ListEntry, ListItem, ListSeparator, ListSubHeader};
 use gpui::{
-    overlay, px, Action, AnyElement, Bounds, DispatchPhase, Div, EventEmitter, FocusHandle,
-    Focusable, FocusableView, LayoutId, MouseButton, MouseDownEvent, Overlay, Render, View,
+    overlay, px, Action, AnyElement, Bounds, DispatchPhase, EventEmitter, FocusHandle,
+    FocusableView, LayoutId, MouseButton, MouseDownEvent, Overlay, Render, View,
 };
 use smallvec::SmallVec;
 

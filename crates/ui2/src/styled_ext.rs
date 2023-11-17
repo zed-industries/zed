@@ -5,6 +5,7 @@ use crate::{ElevationIndex, UITextSize};
 
 fn elevated<E: Styled, V: 'static>(this: E, cx: &mut ViewContext<V>, index: ElevationIndex) -> E {
     this.bg(cx.theme().colors().elevated_surface_background)
+        .z_index(index.z_index())
         .rounded_lg()
         .border()
         .border_color(cx.theme().colors().border_variant)
