@@ -13,7 +13,8 @@ pub use block_map::{BlockMap, BlockPoint};
 use collections::{BTreeMap, HashMap, HashSet};
 use fold_map::FoldMap;
 use gpui::{
-    Font, FontId, HighlightStyle, Hsla, Line, Model, ModelContext, Pixels, TextRun, UnderlineStyle,
+    Font, FontId, HighlightStyle, Hsla, LineLayout, Model, ModelContext, Pixels, ShapedLine,
+    TextRun, UnderlineStyle, WrappedLine,
 };
 use inlay_map::InlayMap;
 use language::{
@@ -561,7 +562,7 @@ impl DisplaySnapshot {
         })
     }
 
-    pub fn lay_out_line_for_row(
+    pub fn layout_row(
         &self,
         display_row: u32,
         TextLayoutDetails {
@@ -569,7 +570,7 @@ impl DisplaySnapshot {
             editor_style,
             rem_size,
         }: &TextLayoutDetails,
-    ) -> Line {
+    ) -> Arc<LineLayout> {
         let mut runs = Vec::new();
         let mut line = String::new();
 
@@ -598,29 +599,27 @@ impl DisplaySnapshot {
 
         let font_size = editor_style.text.font_size.to_pixels(*rem_size);
         text_system
-            .layout_text(&line, font_size, &runs, None)
-            .unwrap()
-            .pop()
-            .unwrap()
+            .layout_line(&line, font_size, &runs)
+            .expect("we expect the font to be loaded because it's rendered by the editor")
     }
 
-    pub fn x_for_point(
+    pub fn x_for_display_point(
         &self,
         display_point: DisplayPoint,
         text_layout_details: &TextLayoutDetails,
     ) -> Pixels {
-        let layout_line = self.lay_out_line_for_row(display_point.row(), text_layout_details);
-        layout_line.x_for_index(display_point.column() as usize)
+        let line = self.layout_row(display_point.row(), text_layout_details);
+        line.x_for_index(display_point.column() as usize)
     }
 
-    pub fn column_for_x(
+    pub fn display_column_for_x(
         &self,
         display_row: u32,
-        x_coordinate: Pixels,
-        text_layout_details: &TextLayoutDetails,
+        x: Pixels,
+        details: &TextLayoutDetails,
     ) -> u32 {
-        let layout_line = self.lay_out_line_for_row(display_row, text_layout_details);
-        layout_line.closest_index_for_x(x_coordinate) as u32
+        let layout_line = self.layout_row(display_row, details);
+        layout_line.closest_index_for_x(x) as u32
     }
 
     pub fn chars_at(

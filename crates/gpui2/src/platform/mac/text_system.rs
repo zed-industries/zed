@@ -343,10 +343,10 @@ impl MacTextSystemState {
         // Construct the attributed string, converting UTF8 ranges to UTF16 ranges.
         let mut string = CFMutableAttributedString::new();
         {
-            string.replace_str(&CFString::new(text), CFRange::init(0, 0));
+            string.replace_str(&CFString::new(text.as_ref()), CFRange::init(0, 0));
             let utf16_line_len = string.char_len() as usize;
 
-            let mut ix_converter = StringIndexConverter::new(text);
+            let mut ix_converter = StringIndexConverter::new(text.as_ref());
             for run in font_runs {
                 let utf8_end = ix_converter.utf8_ix + run.len;
                 let utf16_start = ix_converter.utf16_ix;
@@ -390,7 +390,7 @@ impl MacTextSystemState {
             };
             let font_id = self.id_for_native_font(font);
 
-            let mut ix_converter = StringIndexConverter::new(text);
+            let mut ix_converter = StringIndexConverter::new(text.as_ref());
             let mut glyphs = SmallVec::new();
             for ((glyph_id, position), glyph_utf16_ix) in run
                 .glyphs()
@@ -413,11 +413,11 @@ impl MacTextSystemState {
 
         let typographic_bounds = line.get_typographic_bounds();
         LineLayout {
+            runs,
+            font_size,
             width: typographic_bounds.width.into(),
             ascent: typographic_bounds.ascent.into(),
             descent: typographic_bounds.descent.into(),
-            runs,
-            font_size,
             len: text.len(),
         }
     }

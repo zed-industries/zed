@@ -203,6 +203,7 @@ impl TextStyle {
                 style: self.font_style,
             },
             color: self.color,
+            background_color: None,
             underline: self.underline.clone(),
         }
     }
