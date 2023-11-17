@@ -857,17 +857,33 @@ impl BufferSearchBar {
 mod tests {
     use super::*;
     use editor::{DisplayPoint, Editor};
-    use gpui::{color::Color, test::EmptyView, TestAppContext};
+    use gpui::{Context, EmptyView, Hsla, TestAppContext, VisualTestContext};
     use language::Buffer;
+    use smol::stream::StreamExt as _;
     use unindent::Unindent as _;
 
-    fn init_test(cx: &mut TestAppContext) -> (ViewHandle<Editor>, ViewHandle<BufferSearchBar>) {
-        crate::project_search::tests::init_test(cx);
-
-        let buffer = cx.add_model(|cx| {
+    fn init_globals(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let store = settings::SettingsStore::test(cx);
+            cx.set_global(store);
+            editor::init(cx);
+            ui::init(cx);
+            language::init(cx);
+            theme::init(theme::LoadThemes::JustBase, cx);
+        });
+    }
+    fn init_test(
+        cx: &mut TestAppContext,
+    ) -> (
+        View<Editor>,
+        View<BufferSearchBar>,
+        &mut VisualTestContext<'_>,
+    ) {
+        init_globals(cx);
+        let buffer = cx.build_model(|cx| {
             Buffer::new(
                 0,
-                cx.model_id() as u64,
+                cx.entity_id().as_u64(),
                 r#"
                 A regular expression (shortened as regex or regexp;[1] also referred to as
                 rational expression[2][3]) is a sequence of characters that specifies a search
@@ -877,22 +893,22 @@ mod tests {
                 .unindent(),
             )
         });
-        let window = cx.add_window(|_| EmptyView);
-        let editor = window.add_view(cx, |cx| Editor::for_buffer(buffer.clone(), None, cx));
+        let (window, cx) = cx.add_window_view(|_| EmptyView {});
+        let editor = cx.build_view(|cx| Editor::for_buffer(buffer.clone(), None, cx));
 
-        let search_bar = window.add_view(cx, |cx| {
+        let search_bar = cx.build_view(|cx| {
             let mut search_bar = BufferSearchBar::new(cx);
             search_bar.set_active_pane_item(Some(&editor), cx);
             search_bar.show(cx);
             search_bar
         });
 
-        (editor, search_bar)
+        (editor, search_bar, cx)
     }
 
     #[gpui::test]
     async fn test_search_simple(cx: &mut TestAppContext) {
-        let (editor, search_bar) = init_test(cx);
+        let (editor, search_bar, cx) = init_test(cx);
 
         // Search for a string that appears with different casing.
         // By default, search is case-insensitive.
@@ -906,11 +922,11 @@ mod tests {
                 &[
                     (
                         DisplayPoint::new(2, 17)..DisplayPoint::new(2, 19),
-                        Color::red(),
+                        Hsla::red(),
                     ),
                     (
                         DisplayPoint::new(2, 43)..DisplayPoint::new(2, 45),
-                        Color::red(),
+                        Hsla::red(),
                     ),
                 ]
             );
@@ -920,13 +936,14 @@ mod tests {
         search_bar.update(cx, |search_bar, cx| {
             search_bar.toggle_search_option(SearchOptions::CASE_SENSITIVE, cx);
         });
-        editor.next_notification(cx).await;
+        let mut editor_notifications = cx.notifications(&editor);
+        editor_notifications.next().await;
         editor.update(cx, |editor, cx| {
             assert_eq!(
                 editor.all_text_background_highlights(cx),
                 &[(
                     DisplayPoint::new(2, 43)..DisplayPoint::new(2, 45),
-                    Color::red(),
+                    Hsla::red(),
                 )]
             );
         });
@@ -943,31 +960,31 @@ mod tests {
                 &[
                     (
                         DisplayPoint::new(0, 24)..DisplayPoint::new(0, 26),
-                        Color::red(),
+                        Hsla::red(),
                     ),
                     (
                         DisplayPoint::new(0, 41)..DisplayPoint::new(0, 43),
-                        Color::red(),
+                        Hsla::red(),
                     ),
                     (
                         DisplayPoint::new(2, 71)..DisplayPoint::new(2, 73),
-                        Color::red(),
+                        Hsla::red(),
                     ),
                     (
                         DisplayPoint::new(3, 1)..DisplayPoint::new(3, 3),
-                        Color::red(),
+                        Hsla::red(),
                     ),
                     (
                         DisplayPoint::new(3, 11)..DisplayPoint::new(3, 13),
-                        Color::red(),
+                        Hsla::red(),
                     ),
                     (
                         DisplayPoint::new(3, 56)..DisplayPoint::new(3, 58),
-                        Color::red(),
+                        Hsla::red(),
                     ),
                     (
                         DisplayPoint::new(3, 60)..DisplayPoint::new(3, 62),
-                        Color::red(),
+                        Hsla::red(),
                     ),
                 ]
             );
@@ -977,22 +994,23 @@ mod tests {
         search_bar.update(cx, |search_bar, cx| {
             search_bar.toggle_search_option(SearchOptions::WHOLE_WORD, cx);
         });
-        editor.next_notification(cx).await;
+        let mut editor_notifications = cx.notifications(&editor);
+        editor_notifications.next().await;
         editor.update(cx, |editor, cx| {
             assert_eq!(
                 editor.all_text_background_highlights(cx),
                 &[
                     (
                         DisplayPoint::new(0, 41)..DisplayPoint::new(0, 43),
-                        Color::red(),
+                        Hsla::red(),
                     ),
                     (
                         DisplayPoint::new(3, 11)..DisplayPoint::new(3, 13),
-                        Color::red(),
+                        Hsla::red(),
                     ),
                     (
                         DisplayPoint::new(3, 56)..DisplayPoint::new(3, 58),
-                        Color::red(),
+                        Hsla::red(),
                     ),
                 ]
             );
@@ -1011,7 +1029,7 @@ mod tests {
                 [DisplayPoint::new(0, 41)..DisplayPoint::new(0, 43)]
             );
         });
-        search_bar.read_with(cx, |search_bar, _| {
+        search_bar.update(cx, |search_bar, _| {
             assert_eq!(search_bar.active_match_index, Some(0));
         });
 
@@ -1022,7 +1040,7 @@ mod tests {
                 [DisplayPoint::new(3, 11)..DisplayPoint::new(3, 13)]
             );
         });
-        search_bar.read_with(cx, |search_bar, _| {
+        search_bar.update(cx, |search_bar, _| {
             assert_eq!(search_bar.active_match_index, Some(1));
         });
 
@@ -1033,7 +1051,7 @@ mod tests {
                 [DisplayPoint::new(3, 56)..DisplayPoint::new(3, 58)]
             );
         });
-        search_bar.read_with(cx, |search_bar, _| {
+        search_bar.update(cx, |search_bar, _| {
             assert_eq!(search_bar.active_match_index, Some(2));
         });
 
@@ -1044,7 +1062,7 @@ mod tests {
                 [DisplayPoint::new(0, 41)..DisplayPoint::new(0, 43)]
             );
         });
-        search_bar.read_with(cx, |search_bar, _| {
+        search_bar.update(cx, |search_bar, _| {
             assert_eq!(search_bar.active_match_index, Some(0));
         });
 
@@ -1055,7 +1073,7 @@ mod tests {
                 [DisplayPoint::new(3, 56)..DisplayPoint::new(3, 58)]
             );
         });
-        search_bar.read_with(cx, |search_bar, _| {
+        search_bar.update(cx, |search_bar, _| {
             assert_eq!(search_bar.active_match_index, Some(2));
         });
 
@@ -1066,7 +1084,7 @@ mod tests {
                 [DisplayPoint::new(3, 11)..DisplayPoint::new(3, 13)]
             );
         });
-        search_bar.read_with(cx, |search_bar, _| {
+        search_bar.update(cx, |search_bar, _| {
             assert_eq!(search_bar.active_match_index, Some(1));
         });
 
@@ -1077,7 +1095,7 @@ mod tests {
                 [DisplayPoint::new(0, 41)..DisplayPoint::new(0, 43)]
             );
         });
-        search_bar.read_with(cx, |search_bar, _| {
+        search_bar.update(cx, |search_bar, _| {
             assert_eq!(search_bar.active_match_index, Some(0));
         });
 
@@ -1096,7 +1114,7 @@ mod tests {
                 [DisplayPoint::new(0, 41)..DisplayPoint::new(0, 43)]
             );
         });
-        search_bar.read_with(cx, |search_bar, _| {
+        search_bar.update(cx, |search_bar, _| {
             assert_eq!(search_bar.active_match_index, Some(0));
         });
 
@@ -1115,7 +1133,7 @@ mod tests {
                 [DisplayPoint::new(3, 11)..DisplayPoint::new(3, 13)]
             );
         });
-        search_bar.read_with(cx, |search_bar, _| {
+        search_bar.update(cx, |search_bar, _| {
             assert_eq!(search_bar.active_match_index, Some(1));
         });
 
@@ -1134,7 +1152,7 @@ mod tests {
                 [DisplayPoint::new(3, 56)..DisplayPoint::new(3, 58)]
             );
         });
-        search_bar.read_with(cx, |search_bar, _| {
+        search_bar.update(cx, |search_bar, _| {
             assert_eq!(search_bar.active_match_index, Some(2));
         });
 
@@ -1153,7 +1171,7 @@ mod tests {
                 [DisplayPoint::new(0, 41)..DisplayPoint::new(0, 43)]
             );
         });
-        search_bar.read_with(cx, |search_bar, _| {
+        search_bar.update(cx, |search_bar, _| {
             assert_eq!(search_bar.active_match_index, Some(0));
         });
 
@@ -1172,14 +1190,14 @@ mod tests {
                 [DisplayPoint::new(3, 56)..DisplayPoint::new(3, 58)]
             );
         });
-        search_bar.read_with(cx, |search_bar, _| {
+        search_bar.update(cx, |search_bar, _| {
             assert_eq!(search_bar.active_match_index, Some(2));
         });
     }
 
     #[gpui::test]
     async fn test_search_option_handling(cx: &mut TestAppContext) {
-        let (editor, search_bar) = init_test(cx);
+        let (editor, search_bar, cx) = init_test(cx);
 
         // show with options should make current search case sensitive
         search_bar
@@ -1194,7 +1212,7 @@ mod tests {
                 editor.all_text_background_highlights(cx),
                 &[(
                     DisplayPoint::new(2, 43)..DisplayPoint::new(2, 45),
-                    Color::red(),
+                    Hsla::red(),
                 )]
             );
         });
@@ -1215,13 +1233,14 @@ mod tests {
         search_bar.update(cx, |search_bar, cx| {
             search_bar.toggle_search_option(SearchOptions::WHOLE_WORD, cx)
         });
-        editor.next_notification(cx).await;
+        let mut editor_notifications = cx.notifications(&editor);
+        editor_notifications.next().await;
         editor.update(cx, |editor, cx| {
             assert_eq!(
                 editor.all_text_background_highlights(cx),
                 &[(
                     DisplayPoint::new(0, 35)..DisplayPoint::new(0, 40),
-                    Color::red(),
+                    Hsla::red(),
                 ),]
             );
         });
@@ -1238,8 +1257,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_search_select_all_matches(cx: &mut TestAppContext) {
-        crate::project_search::tests::init_test(cx);
-
+        init_globals(cx);
         let buffer_text = r#"
         A regular expression (shortened as regex or regexp;[1] also referred to as
         rational expression[2][3]) is a sequence of characters that specifies a search
@@ -1255,186 +1273,180 @@ mod tests {
             expected_query_matches_count > 1,
             "Should pick a query with multiple results"
         );
-        let buffer = cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, buffer_text));
-        let window = cx.add_window(|_| EmptyView);
-        let editor = window.add_view(cx, |cx| Editor::for_buffer(buffer.clone(), None, cx));
+        let buffer = cx.build_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), buffer_text));
+        let window = cx.add_window(|_| EmptyView {});
 
-        let search_bar = window.add_view(cx, |cx| {
+        let editor = window.build_view(cx, |cx| Editor::for_buffer(buffer.clone(), None, cx));
+
+        let search_bar = window.build_view(cx, |cx| {
             let mut search_bar = BufferSearchBar::new(cx);
             search_bar.set_active_pane_item(Some(&editor), cx);
             search_bar.show(cx);
             search_bar
         });
 
-        search_bar
-            .update(cx, |search_bar, cx| search_bar.search("a", None, cx))
-            .await
-            .unwrap();
-        search_bar.update(cx, |search_bar, cx| {
-            cx.focus(search_bar.query_editor.as_any());
-            search_bar.activate_current_match(cx);
-        });
-
-        window.read_with(cx, |cx| {
-            assert!(
-                !editor.is_focused(cx),
-                "Initially, the editor should not be focused"
-            );
-        });
-
-        let initial_selections = editor.update(cx, |editor, cx| {
-            let initial_selections = editor.selections.display_ranges(cx);
-            assert_eq!(
-                initial_selections.len(), 1,
-                "Expected to have only one selection before adding carets to all matches, but got: {initial_selections:?}",
-            );
-            initial_selections
-        });
-        search_bar.update(cx, |search_bar, _| {
-            assert_eq!(search_bar.active_match_index, Some(0));
-        });
-
-        search_bar.update(cx, |search_bar, cx| {
-            cx.focus(search_bar.query_editor.as_any());
-            search_bar.select_all_matches(&SelectAllMatches, cx);
-        });
-        window.read_with(cx, |cx| {
-            assert!(
-                editor.is_focused(cx),
-                "Should focus editor after successful SelectAllMatches"
-            );
-        });
-        search_bar.update(cx, |search_bar, cx| {
-            let all_selections =
-                editor.update(cx, |editor, cx| editor.selections.display_ranges(cx));
-            assert_eq!(
-                all_selections.len(),
-                expected_query_matches_count,
-                "Should select all `a` characters in the buffer, but got: {all_selections:?}"
-            );
-            assert_eq!(
-                search_bar.active_match_index,
-                Some(0),
-                "Match index should not change after selecting all matches"
-            );
-        });
-
-        search_bar.update(cx, |search_bar, cx| {
-            search_bar.select_next_match(&SelectNextMatch, cx);
-        });
-        window.read_with(cx, |cx| {
-            assert!(
-                editor.is_focused(cx),
-                "Should still have editor focused after SelectNextMatch"
-            );
-        });
-        search_bar.update(cx, |search_bar, cx| {
-            let all_selections =
-                editor.update(cx, |editor, cx| editor.selections.display_ranges(cx));
-            assert_eq!(
-                all_selections.len(),
-                1,
-                "On next match, should deselect items and select the next match"
-            );
-            assert_ne!(
-                all_selections, initial_selections,
-                "Next match should be different from the first selection"
-            );
-            assert_eq!(
-                search_bar.active_match_index,
-                Some(1),
-                "Match index should be updated to the next one"
-            );
-        });
-
-        search_bar.update(cx, |search_bar, cx| {
-            cx.focus(search_bar.query_editor.as_any());
-            search_bar.select_all_matches(&SelectAllMatches, cx);
-        });
-        window.read_with(cx, |cx| {
-            assert!(
-                editor.is_focused(cx),
-                "Should focus editor after successful SelectAllMatches"
-            );
-        });
-        search_bar.update(cx, |search_bar, cx| {
-            let all_selections =
-                editor.update(cx, |editor, cx| editor.selections.display_ranges(cx));
-            assert_eq!(
-                all_selections.len(),
-                expected_query_matches_count,
-                "Should select all `a` characters in the buffer, but got: {all_selections:?}"
-            );
-            assert_eq!(
-                search_bar.active_match_index,
-                Some(1),
-                "Match index should not change after selecting all matches"
-            );
-        });
-
-        search_bar.update(cx, |search_bar, cx| {
-            search_bar.select_prev_match(&SelectPrevMatch, cx);
-        });
-        window.read_with(cx, |cx| {
-            assert!(
-                editor.is_focused(cx),
-                "Should still have editor focused after SelectPrevMatch"
-            );
-        });
-        let last_match_selections = search_bar.update(cx, |search_bar, cx| {
-            let all_selections =
-                editor.update(cx, |editor, cx| editor.selections.display_ranges(cx));
-            assert_eq!(
-                all_selections.len(),
-                1,
-                "On previous match, should deselect items and select the previous item"
-            );
-            assert_eq!(
-                all_selections, initial_selections,
-                "Previous match should be the same as the first selection"
-            );
-            assert_eq!(
-                search_bar.active_match_index,
-                Some(0),
-                "Match index should be updated to the previous one"
-            );
-            all_selections
-        });
-
-        search_bar
-            .update(cx, |search_bar, cx| {
-                cx.focus(search_bar.query_editor.as_any());
-                search_bar.search("abas_nonexistent_match", None, cx)
+        window
+            .update(cx, |_, cx| {
+                search_bar.update(cx, |search_bar, cx| search_bar.search("a", None, cx))
             })
+            .unwrap()
             .await
             .unwrap();
-        search_bar.update(cx, |search_bar, cx| {
-            search_bar.select_all_matches(&SelectAllMatches, cx);
-        });
-        window.read_with(cx, |cx| {
+
+        let last_match_selections = window
+            .update(cx, |_, cx| {
+                search_bar.update(cx, |search_bar, cx| {
+                    let handle = search_bar.query_editor.focus_handle(cx);
+                    cx.focus(&handle);
+                    search_bar.activate_current_match(cx);
+                });
+                assert!(
+                    !editor.read(cx).is_focused(cx),
+                    "Initially, the editor should not be focused"
+                );
+                let initial_selections = editor.update(cx, |editor, cx| {
+                    let initial_selections = editor.selections.display_ranges(cx);
+                    assert_eq!(
+                        initial_selections.len(), 1,
+                        "Expected to have only one selection before adding carets to all matches, but got: {initial_selections:?}",
+                    );
+                    initial_selections
+                });
+                search_bar.update(cx, |search_bar, cx| {
+                    assert_eq!(search_bar.active_match_index, Some(0));
+                    let handle = search_bar.query_editor.focus_handle(cx);
+                    cx.focus(&handle);
+                    search_bar.select_all_matches(&SelectAllMatches, cx);
+                });
+                assert!(
+                    editor.read(cx).is_focused(cx),
+                    "Should focus editor after successful SelectAllMatches"
+                );
+                search_bar.update(cx, |search_bar, cx| {
+                    let all_selections =
+                        editor.update(cx, |editor, cx| editor.selections.display_ranges(cx));
+                    assert_eq!(
+                        all_selections.len(),
+                        expected_query_matches_count,
+                        "Should select all `a` characters in the buffer, but got: {all_selections:?}"
+                    );
+                    assert_eq!(
+                        search_bar.active_match_index,
+                        Some(0),
+                        "Match index should not change after selecting all matches"
+                    );
+                });
+                search_bar.update(cx, |this, cx| this.select_next_match(&SelectNextMatch, cx));
+                assert!(
+                    editor.read(cx).is_focused(cx),
+                    "Should still have editor focused after SelectNextMatch"
+                );
+                search_bar.update(cx, |search_bar, cx| {
+                    let all_selections =
+                        editor.update(cx, |editor, cx| editor.selections.display_ranges(cx));
+                    assert_eq!(
+                        all_selections.len(),
+                        1,
+                        "On next match, should deselect items and select the next match"
+                    );
+                    assert_ne!(
+                        all_selections, initial_selections,
+                        "Next match should be different from the first selection"
+                    );
+                    assert_eq!(
+                        search_bar.active_match_index,
+                        Some(1),
+                        "Match index should be updated to the next one"
+                    );
+                    let handle = search_bar.query_editor.focus_handle(cx);
+                    cx.focus(&handle);
+                    search_bar.select_all_matches(&SelectAllMatches, cx);
+                });
+                assert!(
+                    editor.read(cx).is_focused(cx),
+                    "Should focus editor after successful SelectAllMatches"
+                );
+                search_bar.update(cx, |search_bar, cx| {
+                    let all_selections =
+                        editor.update(cx, |editor, cx| editor.selections.display_ranges(cx));
+                    assert_eq!(
+                        all_selections.len(),
+                        expected_query_matches_count,
+                        "Should select all `a` characters in the buffer, but got: {all_selections:?}"
+                    );
+                    assert_eq!(
+                        search_bar.active_match_index,
+                        Some(1),
+                        "Match index should not change after selecting all matches"
+                    );
+                });
+                search_bar.update(cx, |search_bar, cx| {
+                    search_bar.select_prev_match(&SelectPrevMatch, cx);
+                });
+                assert!(
+                    editor.read(cx).is_focused(&cx),
+                    "Should still have editor focused after SelectPrevMatch"
+                );
+                search_bar.update(cx, |search_bar, cx| {
+                    let all_selections =
+                        editor.update(cx, |editor, cx| editor.selections.display_ranges(cx));
+                    assert_eq!(
+                        all_selections.len(),
+                        1,
+                        "On previous match, should deselect items and select the previous item"
+                    );
+                    assert_eq!(
+                        all_selections, initial_selections,
+                        "Previous match should be the same as the first selection"
+                    );
+                    assert_eq!(
+                        search_bar.active_match_index,
+                        Some(0),
+                        "Match index should be updated to the previous one"
+                    );
+                    all_selections
+                })
+            })
+            .unwrap();
+
+        window
+            .update(cx, |_, cx| {
+                search_bar.update(cx, |search_bar, cx| {
+                    let handle = search_bar.query_editor.focus_handle(cx);
+                    cx.focus(&handle);
+                    search_bar.search("abas_nonexistent_match", None, cx)
+                })
+            })
+            .unwrap()
+            .await
+            .unwrap();
+        window.update(cx, |_, cx| {
+            search_bar.update(cx, |search_bar, cx| {
+                search_bar.select_all_matches(&SelectAllMatches, cx);
+            });
             assert!(
-                !editor.is_focused(cx),
+                editor.update(cx, |this, cx| !this.is_focused(cx.window_context())),
                 "Should not switch focus to editor if SelectAllMatches does not find any matches"
             );
-        });
-        search_bar.update(cx, |search_bar, cx| {
-            let all_selections =
-                editor.update(cx, |editor, cx| editor.selections.display_ranges(cx));
-            assert_eq!(
-                all_selections, last_match_selections,
-                "Should not select anything new if there are no matches"
-            );
-            assert!(
-                search_bar.active_match_index.is_none(),
-                "For no matches, there should be no active match index"
-            );
+            search_bar.update(cx, |search_bar, cx| {
+                let all_selections =
+                    editor.update(cx, |editor, cx| editor.selections.display_ranges(cx));
+                assert_eq!(
+                    all_selections, last_match_selections,
+                    "Should not select anything new if there are no matches"
+                );
+                assert!(
+                    search_bar.active_match_index.is_none(),
+                    "For no matches, there should be no active match index"
+                );
+            });
         });
     }
 
     #[gpui::test]
     async fn test_search_query_history(cx: &mut TestAppContext) {
-        crate::project_search::tests::init_test(cx);
-
+        //crate::project_search::tests::init_test(cx);
+        init_globals(cx);
         let buffer_text = r#"
         A regular expression (shortened as regex or regexp;[1] also referred to as
         rational expression[2][3]) is a sequence of characters that specifies a search
@@ -1442,12 +1454,12 @@ mod tests {
         for "find" or "find and replace" operations on strings, or for input validation.
         "#
         .unindent();
-        let buffer = cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, buffer_text));
-        let window = cx.add_window(|_| EmptyView);
+        let buffer = cx.build_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), buffer_text));
+        let (window, cx) = cx.add_window_view(|_| EmptyView {});
 
-        let editor = window.add_view(cx, |cx| Editor::for_buffer(buffer.clone(), None, cx));
+        let editor = cx.build_view(|cx| Editor::for_buffer(buffer.clone(), None, cx));
 
-        let search_bar = window.add_view(cx, |cx| {
+        let search_bar = cx.build_view(|cx| {
             let mut search_bar = BufferSearchBar::new(cx);
             search_bar.set_active_pane_item(Some(&editor), cx);
             search_bar.show(cx);
@@ -1470,7 +1482,7 @@ mod tests {
             .await
             .unwrap();
         // Ensure that the latest search is active.
-        search_bar.read_with(cx, |search_bar, cx| {
+        search_bar.update(cx, |search_bar, cx| {
             assert_eq!(search_bar.query(cx), "c");
             assert_eq!(search_bar.search_options, SearchOptions::CASE_SENSITIVE);
         });
@@ -1479,14 +1491,14 @@ mod tests {
         search_bar.update(cx, |search_bar, cx| {
             search_bar.next_history_query(&NextHistoryQuery, cx);
         });
-        search_bar.read_with(cx, |search_bar, cx| {
+        search_bar.update(cx, |search_bar, cx| {
             assert_eq!(search_bar.query(cx), "");
             assert_eq!(search_bar.search_options, SearchOptions::CASE_SENSITIVE);
         });
         search_bar.update(cx, |search_bar, cx| {
             search_bar.next_history_query(&NextHistoryQuery, cx);
         });
-        search_bar.read_with(cx, |search_bar, cx| {
+        search_bar.update(cx, |search_bar, cx| {
             assert_eq!(search_bar.query(cx), "");
             assert_eq!(search_bar.search_options, SearchOptions::CASE_SENSITIVE);
         });
@@ -1495,7 +1507,7 @@ mod tests {
         search_bar.update(cx, |search_bar, cx| {
             search_bar.previous_history_query(&PreviousHistoryQuery, cx);
         });
-        search_bar.read_with(cx, |search_bar, cx| {
+        search_bar.update(cx, |search_bar, cx| {
             assert_eq!(search_bar.query(cx), "c");
             assert_eq!(search_bar.search_options, SearchOptions::CASE_SENSITIVE);
         });
@@ -1504,7 +1516,7 @@ mod tests {
         search_bar.update(cx, |search_bar, cx| {
             search_bar.previous_history_query(&PreviousHistoryQuery, cx);
         });
-        search_bar.read_with(cx, |search_bar, cx| {
+        search_bar.update(cx, |search_bar, cx| {
             assert_eq!(search_bar.query(cx), "b");
             assert_eq!(search_bar.search_options, SearchOptions::CASE_SENSITIVE);
         });
@@ -1513,14 +1525,14 @@ mod tests {
         search_bar.update(cx, |search_bar, cx| {
             search_bar.previous_history_query(&PreviousHistoryQuery, cx);
         });
-        search_bar.read_with(cx, |search_bar, cx| {
+        search_bar.update(cx, |search_bar, cx| {
             assert_eq!(search_bar.query(cx), "a");
             assert_eq!(search_bar.search_options, SearchOptions::CASE_SENSITIVE);
         });
         search_bar.update(cx, |search_bar, cx| {
             search_bar.previous_history_query(&PreviousHistoryQuery, cx);
         });
-        search_bar.read_with(cx, |search_bar, cx| {
+        search_bar.update(cx, |search_bar, cx| {
             assert_eq!(search_bar.query(cx), "a");
             assert_eq!(search_bar.search_options, SearchOptions::CASE_SENSITIVE);
         });
@@ -1529,7 +1541,7 @@ mod tests {
         search_bar.update(cx, |search_bar, cx| {
             search_bar.next_history_query(&NextHistoryQuery, cx);
         });
-        search_bar.read_with(cx, |search_bar, cx| {
+        search_bar.update(cx, |search_bar, cx| {
             assert_eq!(search_bar.query(cx), "b");
             assert_eq!(search_bar.search_options, SearchOptions::CASE_SENSITIVE);
         });
@@ -1538,7 +1550,7 @@ mod tests {
             .update(cx, |search_bar, cx| search_bar.search("ba", None, cx))
             .await
             .unwrap();
-        search_bar.read_with(cx, |search_bar, cx| {
+        search_bar.update(cx, |search_bar, cx| {
             assert_eq!(search_bar.query(cx), "ba");
             assert_eq!(search_bar.search_options, SearchOptions::NONE);
         });
@@ -1547,42 +1559,42 @@ mod tests {
         search_bar.update(cx, |search_bar, cx| {
             search_bar.previous_history_query(&PreviousHistoryQuery, cx);
         });
-        search_bar.read_with(cx, |search_bar, cx| {
+        search_bar.update(cx, |search_bar, cx| {
             assert_eq!(search_bar.query(cx), "c");
             assert_eq!(search_bar.search_options, SearchOptions::NONE);
         });
         search_bar.update(cx, |search_bar, cx| {
             search_bar.previous_history_query(&PreviousHistoryQuery, cx);
         });
-        search_bar.read_with(cx, |search_bar, cx| {
+        search_bar.update(cx, |search_bar, cx| {
             assert_eq!(search_bar.query(cx), "b");
             assert_eq!(search_bar.search_options, SearchOptions::NONE);
         });
         search_bar.update(cx, |search_bar, cx| {
             search_bar.next_history_query(&NextHistoryQuery, cx);
         });
-        search_bar.read_with(cx, |search_bar, cx| {
+        search_bar.update(cx, |search_bar, cx| {
             assert_eq!(search_bar.query(cx), "c");
             assert_eq!(search_bar.search_options, SearchOptions::NONE);
         });
         search_bar.update(cx, |search_bar, cx| {
             search_bar.next_history_query(&NextHistoryQuery, cx);
         });
-        search_bar.read_with(cx, |search_bar, cx| {
+        search_bar.update(cx, |search_bar, cx| {
             assert_eq!(search_bar.query(cx), "ba");
             assert_eq!(search_bar.search_options, SearchOptions::NONE);
         });
         search_bar.update(cx, |search_bar, cx| {
             search_bar.next_history_query(&NextHistoryQuery, cx);
         });
-        search_bar.read_with(cx, |search_bar, cx| {
+        search_bar.update(cx, |search_bar, cx| {
             assert_eq!(search_bar.query(cx), "");
             assert_eq!(search_bar.search_options, SearchOptions::NONE);
         });
     }
     #[gpui::test]
     async fn test_replace_simple(cx: &mut TestAppContext) {
-        let (editor, search_bar) = init_test(cx);
+        let (editor, search_bar, cx) = init_test(cx);
 
         search_bar
             .update(cx, |search_bar, cx| {
@@ -1599,7 +1611,7 @@ mod tests {
             search_bar.replace_all(&ReplaceAll, cx)
         });
         assert_eq!(
-            editor.read_with(cx, |this, cx| { this.text(cx) }),
+            editor.update(cx, |this, cx| { this.text(cx) }),
             r#"
         A regular expr$1 (shortened as regex or regexp;[1] also referred to as
         rational expr$1[2][3]) is a sequence of characters that specifies a search
@@ -1625,7 +1637,7 @@ mod tests {
         });
         // Notice how the first or in the text (shORtened) is not replaced. Neither are the remaining hits of `or` in the text.
         assert_eq!(
-            editor.read_with(cx, |this, cx| { this.text(cx) }),
+            editor.update(cx, |this, cx| { this.text(cx) }),
             r#"
         A regular expr$1 (shortened as regex banana regexp;[1] also referred to as
         rational expr$1[2][3]) is a sequence of characters that specifies a search
@@ -1649,7 +1661,7 @@ mod tests {
             search_bar.replace_all(&ReplaceAll, cx)
         });
         assert_eq!(
-            editor.read_with(cx, |this, cx| { this.text(cx) }),
+            editor.update(cx, |this, cx| { this.text(cx) }),
             r#"
         A regular expr$1 (shortened as regex banana regexp;1number also referred to as
         rational expr$12number3number) is a sequence of characters that specifies a search
@@ -1675,7 +1687,7 @@ mod tests {
         // The only word affected by this edit should be `algorithms`, even though there's a bunch
         // of words in this text that would match this regex if not for WHOLE_WORD.
         assert_eq!(
-            editor.read_with(cx, |this, cx| { this.text(cx) }),
+            editor.update(cx, |this, cx| { this.text(cx) }),
             r#"
         A regular expr$1 (shortened as regex banana regexp;1number also referred to as
         rational expr$12number3number) is a sequence of characters that specifies a search
