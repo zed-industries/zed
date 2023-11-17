@@ -25,7 +25,7 @@ runs:
       env:
         RUSTFLAGS: -D warnings
       shell: bash -euxo pipefail {0}
-      run: cargo check --test --workspace
+      run: cargo check --tests --workspace
 
     - name: Run tests
       env:
