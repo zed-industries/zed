@@ -2636,6 +2636,60 @@ async fn test_file_changes_multiple_times_on_disk(cx: &mut gpui::TestAppContext)
     cx.executor().run_until_parked();
     let on_disk_text = fs.load(Path::new("/dir/file1")).await.unwrap();
     buffer.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.text(), on_disk_text);
+        assert!(!buffer.is_dirty(), "buffer should not be dirty");
+        assert!(!buffer.has_conflict(), "buffer should not be dirty");
+    });
+}
+
+#[gpui::test(iterations = 30)]
+async fn test_edit_buffer_while_it_reloads(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor().clone());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            "file1": "the original contents",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+    let worktree = project.read_with(cx, |project, _| project.worktrees().next().unwrap());
+    let buffer = project
+        .update(cx, |p, cx| p.open_local_buffer("/dir/file1", cx))
+        .await
+        .unwrap();
+
+    // Simulate buffer diffs being slow, so that they don't complete before
+    // the next file change occurs.
+    cx.executor().deprioritize(*language::BUFFER_DIFF_TASK);
+
+    // Change the buffer's file on disk, and then wait for the file change
+    // to be detected by the worktree, so that the buffer starts reloading.
+    fs.save(
+        "/dir/file1".as_ref(),
+        &"the first contents".into(),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    worktree.next_event(cx);
+
+    cx.executor()
+        .spawn(cx.executor().simulate_random_delay())
+        .await;
+
+    // Perform a noop edit, causing the buffer's version to increase.
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit([(0..0, " ")], None, cx);
+        buffer.undo(cx);
+    });
+
+    cx.executor().run_until_parked();
+    let on_disk_text = fs.load(Path::new("/dir/file1")).await.unwrap();
+    buffer.read_with(cx, |buffer, _| {
         let buffer_text = buffer.text();
         if buffer_text == on_disk_text {
             assert!(
@@ -2646,10 +2700,8 @@ async fn test_file_changes_multiple_times_on_disk(cx: &mut gpui::TestAppContext)
         // If the file change occurred while the buffer was processing the first
         // change, the buffer will be in a conflicting state.
         else {
-            assert!(
-                buffer.is_dirty() && buffer.has_conflict(),
-                "buffer should report that it has a conflict. text: {buffer_text:?}, disk text: {on_disk_text:?}"
-            );
+            assert!(buffer.is_dirty(), "buffer should report that it is dirty. text: {buffer_text:?}, disk text: {on_disk_text:?}");
+            assert!(buffer.has_conflict(), "buffer should report that it is dirty. text: {buffer_text:?}, disk text: {on_disk_text:?}");
         }
     });
 }
@@ -4084,7 +4136,7 @@ async fn search(
 
 fn init_test(cx: &mut gpui::TestAppContext) {
     if std::env::var("RUST_LOG").is_ok() {
-        env_logger::init();
+        env_logger::try_init().ok();
     }
 
     cx.update(|cx| {
