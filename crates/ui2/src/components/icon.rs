@@ -64,7 +64,6 @@ pub enum Icon {
     Split,
     SplitMessage,
     Terminal,
-    Warning,
     XCircle,
 }
 
@@ -123,7 +122,6 @@ impl Icon {
             Icon::Split => "icons/split.svg",
             Icon::SplitMessage => "icons/split_message.svg",
             Icon::Terminal => "icons/terminal.svg",
-            Icon::Warning => "icons/warning.svg",
             Icon::XCircle => "icons/error.svg",
         }
     }

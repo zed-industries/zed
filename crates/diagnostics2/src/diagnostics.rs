@@ -14,8 +14,9 @@ use editor::{
 use futures::future::try_join_all;
 use gpui::{
     actions, div, AnyElement, AnyView, AppContext, Component, Context, Div, EventEmitter,
-    FocusHandle, InteractiveComponent, Model, ParentComponent, Render, SharedString, Styled,
-    Subscription, Task, View, ViewContext, VisualContext, WeakView,
+    FocusEvent, FocusHandle, Focusable, FocusableComponent, InteractiveComponent, Model,
+    ParentComponent, Render, SharedString, Styled, Subscription, Task, View, ViewContext,
+    VisualContext, WeakView,
 };
 use language::{
     Anchor, Bias, Buffer, Diagnostic, DiagnosticEntry, DiagnosticSeverity, Point, Selection,
@@ -48,9 +49,8 @@ const CONTEXT_LINE_COUNT: u32 = 1;
 
 pub fn init(cx: &mut AppContext) {
     ProjectDiagnosticsSettings::register(cx);
-    // todo!()
-    // cx.add_action(ProjectDiagnosticsEditor::deploy);
-    // cx.add_action(ProjectDiagnosticsEditor::toggle_warnings);
+    cx.observe_new_views(ProjectDiagnosticsEditor::register)
+        .detach();
 }
 
 struct ProjectDiagnosticsEditor {
@@ -91,39 +91,34 @@ struct DiagnosticGroupState {
 impl EventEmitter<ItemEvent> for ProjectDiagnosticsEditor {}
 
 impl Render for ProjectDiagnosticsEditor {
-    type Element = Div<Self>;
+    type Element = Focusable<Self, Div<Self>>;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-        div().size_full().bg(gpui::red())
+    fn render(&mut self, _: &mut ViewContext<Self>) -> Self::Element {
+        let child = if self.path_states.is_empty() {
+            div()
+                .flex()
+                .items_center()
+                .justify_center()
+                .size_full()
+                .child(Label::new("No problems in workspace"))
+        } else {
+            div().size_full().child(self.editor.clone())
+        };
+
+        div()
+            .track_focus(&self.focus_handle)
+            .size_full()
+            .on_focus_in(Self::focus_in)
+            .on_action(Self::toggle_warnings)
+            .child(child)
     }
 }
 
-// impl View for ProjectDiagnosticsEditor {
-//     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-//         if self.path_states.is_empty() {
-//             let theme = &theme::current(cx).project_diagnostics;
-//             PaneBackdrop::new(
-//                 cx.view_id(),
-//                 Label::new("No problems in workspace", theme.empty_message.clone())
-//                     .aligned()
-//                     .contained()
-//                     .with_style(theme.container)
-//                     .into_any(),
-//             )
-//             .into_any()
-//         } else {
-//             ChildView::new(&self.editor, cx).into_any()
-//         }
-//     }
-
-//     fn focus_in(&mut self, _: AnyView, cx: &mut ViewContext<Self>) {
-//         if cx.is_self_focused() && !self.path_states.is_empty() {
-//             cx.focus(&self.editor);
-//         }
-//     }
-// }
-
 impl ProjectDiagnosticsEditor {
+    fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
+        workspace.register_action(Self::deploy);
+    }
+
     fn new(
         project_handle: Model<Project>,
         workspace: WeakView<Workspace>,
@@ -238,6 +233,12 @@ impl ProjectDiagnosticsEditor {
         self.paths_to_update = self.current_diagnostics.clone();
         self.update_excerpts(None, cx);
         cx.notify();
+    }
+
+    fn focus_in(&mut self, _: &FocusEvent, cx: &mut ViewContext<Self>) {
+        if self.focus_handle.is_focused(cx) && !self.path_states.is_empty() {
+            self.editor.focus_handle(cx).focus(cx)
+        }
     }
 
     fn update_excerpts(

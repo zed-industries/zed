@@ -11474,6 +11474,7 @@ dependencies = [
  "copilot2",
  "ctor",
  "db2",
+ "diagnostics2",
  "editor2",
  "env_logger 0.9.3",
  "feature_flags2",

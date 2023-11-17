@@ -147,6 +147,7 @@ fn main() {
         command_palette::init(cx);
         language::init(cx);
         editor::init(cx);
+        diagnostics::init(cx);
         copilot::init(
             copilot_language_server_id,
             http.clone(),

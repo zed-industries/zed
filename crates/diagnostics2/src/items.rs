@@ -1,19 +1,17 @@
 use collections::HashSet;
 use editor::{Editor, GoToDiagnostic};
 use gpui::{
-    div, serde_json, AppContext, CursorStyle, Div, Entity, EventEmitter, MouseButton, Render,
-    Styled, Subscription, View, ViewContext, WeakView,
+    div, serde_json, svg, AppContext, CursorStyle, Div, Entity, EventEmitter, InteractiveComponent,
+    MouseButton, ParentComponent, Render, Stateful, Styled, Subscription, Svg, View, ViewContext,
+    WeakView,
 };
 use language::Diagnostic;
 use lsp::LanguageServerId;
+use theme::ActiveTheme;
+use ui::{Icon, IconElement, Label, TextColor};
 use workspace::{item::ItemHandle, StatusItemView, ToolbarItemEvent, Workspace};
 
 use crate::ProjectDiagnosticsEditor;
-
-// todo!()
-// pub fn init(cx: &mut AppContext) {
-//     cx.add_action(DiagnosticIndicator::go_to_next_diagnostic);
-// }
 
 pub struct DiagnosticIndicator {
     summary: project::DiagnosticSummary,
@@ -25,10 +23,33 @@ pub struct DiagnosticIndicator {
 }
 
 impl Render for DiagnosticIndicator {
-    type Element = Div<Self>;
+    type Element = Stateful<Self, Div<Self>>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-        div().size_full().bg(gpui::red())
+        let mut summary_row = div().flex().flex_row().size_full();
+
+        if self.summary.error_count > 0 {
+            summary_row =
+                summary_row.child(IconElement::new(Icon::XCircle).color(TextColor::Error));
+            summary_row = summary_row.child(Label::new(self.summary.error_count.to_string()));
+        }
+
+        if self.summary.warning_count > 0 {
+            summary_row = summary_row
+                .child(IconElement::new(Icon::ExclamationTriangle).color(TextColor::Warning));
+            summary_row = summary_row.child(Label::new(self.summary.warning_count.to_string()));
+        }
+
+        if self.summary.error_count == 0 && self.summary.warning_count == 0 {
+            summary_row =
+                summary_row.child(IconElement::new(Icon::Check).color(TextColor::Success));
+        }
+
+        div()
+            .id(cx.entity_id())
+            .on_action(Self::go_to_next_diagnostic)
+            .size_full()
+            .child(summary_row)
     }
 }
 
@@ -40,19 +61,23 @@ impl DiagnosticIndicator {
                 this.in_progress_checks.insert(*language_server_id);
                 cx.notify();
             }
+
             project::Event::DiskBasedDiagnosticsFinished { language_server_id }
             | project::Event::LanguageServerRemoved(language_server_id) => {
                 this.summary = project.read(cx).diagnostic_summary(cx);
                 this.in_progress_checks.remove(language_server_id);
                 cx.notify();
             }
+
             project::Event::DiagnosticsUpdated { .. } => {
                 this.summary = project.read(cx).diagnostic_summary(cx);
                 cx.notify();
             }
+
             _ => {}
         })
         .detach();
+
         Self {
             summary: project.read(cx).diagnostic_summary(cx),
             in_progress_checks: project

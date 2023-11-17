@@ -314,8 +314,8 @@ pub fn initialize_workspace(
                                 //         QuickActionBar::new(buffer_search_bar, workspace)
                                 //     });
                                 //     toolbar.add_item(quick_action_bar, cx);
-                                //     let diagnostic_editor_controls =
-                                //         cx.add_view(|_| diagnostics2::ToolbarControls::new());
+                                let diagnostic_editor_controls =
+                                    cx.build_view(|_| diagnostics::ToolbarControls::new());
                                 //     toolbar.add_item(diagnostic_editor_controls, cx);
                                 //     let project_search_bar = cx.add_view(|_| ProjectSearchBar::new());
                                 //     toolbar.add_item(project_search_bar, cx);
@@ -347,8 +347,8 @@ pub fn initialize_workspace(
 
             //     let copilot =
             //         cx.add_view(|cx| copilot_button::CopilotButton::new(app_state.fs.clone(), cx));
-            //     let diagnostic_summary =
-            //         cx.add_view(|cx| diagnostics::items::DiagnosticIndicator::new(workspace, cx));
+            let diagnostic_summary =
+                cx.build_view(|cx| diagnostics::items::DiagnosticIndicator::new(workspace, cx));
             //     let activity_indicator = activity_indicator::ActivityIndicator::new(
             //         workspace,
             //         app_state.languages.clone(),
