@@ -2,9 +2,9 @@ use collections::HashMap;
 use editor::{scroll::autoscroll::Autoscroll, Bias, Editor};
 use fuzzy::{CharBag, PathMatch, PathMatchCandidate};
 use gpui::{
-    actions, div, AppContext, Component, Div, EventEmitter, InteractiveComponent, Model,
-    ParentComponent, Render, Styled, Task, View, ViewContext, VisualContext, WeakView,
-    WindowContext,
+    actions, div, AppContext, Component, Dismiss, Div, FocusHandle, InteractiveComponent,
+    ManagedView, Model, ParentComponent, Render, Styled, Task, View, ViewContext, VisualContext,
+    WeakView,
 };
 use picker::{Picker, PickerDelegate};
 use project::{PathMatchCandidateSet, Project, ProjectPath, WorktreeId};
@@ -19,7 +19,7 @@ use text::Point;
 use theme::ActiveTheme;
 use ui::{v_stack, HighlightedLabel, StyledExt};
 use util::{paths::PathLikeWithPosition, post_inc, ResultExt};
-use workspace::{Modal, ModalEvent, Workspace};
+use workspace::Workspace;
 
 actions!(Toggle);
 
@@ -111,10 +111,9 @@ impl FileFinder {
     }
 }
 
-impl EventEmitter<ModalEvent> for FileFinder {}
-impl Modal for FileFinder {
-    fn focus(&self, cx: &mut WindowContext) {
-        self.picker.update(cx, |picker, cx| picker.focus(cx))
+impl ManagedView for FileFinder {
+    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+        self.picker.focus_handle(cx)
     }
 }
 impl Render for FileFinder {
@@ -689,9 +688,7 @@ impl PickerDelegate for FileFinderDelegate {
                                 .log_err();
                         }
                     }
-                    finder
-                        .update(&mut cx, |_, cx| cx.emit(ModalEvent::Dismissed))
-                        .ok()?;
+                    finder.update(&mut cx, |_, cx| cx.emit(Dismiss)).ok()?;
 
                     Some(())
                 })
@@ -702,7 +699,7 @@ impl PickerDelegate for FileFinderDelegate {
 
     fn dismissed(&mut self, cx: &mut ViewContext<Picker<FileFinderDelegate>>) {
         self.file_finder
-            .update(cx, |_, cx| cx.emit(ModalEvent::Dismissed))
+            .update(cx, |_, cx| cx.emit(Dismiss))
             .log_err();
     }
 

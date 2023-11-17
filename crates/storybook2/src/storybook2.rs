@@ -66,7 +66,6 @@ fn main() {
             story_selector.unwrap_or(StorySelector::Component(ComponentStory::Workspace));
 
         let theme_registry = cx.global::<ThemeRegistry>();
-
         let mut theme_settings = ThemeSettings::get_global(cx).clone();
         theme_settings.active_theme = theme_registry.get(&theme_name).unwrap();
         ThemeSettings::override_global(theme_settings, cx);
@@ -114,6 +113,7 @@ impl Render for StoryWrapper {
             .flex()
             .flex_col()
             .size_full()
+            .font("Zed Mono")
             .child(self.story.clone())
     }
 }

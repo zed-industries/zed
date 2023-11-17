@@ -12,7 +12,6 @@ impl Story {
             .flex_col()
             .pt_2()
             .px_4()
-            .font("Zed Mono")
             .bg(cx.theme().colors().background)
     }
 
