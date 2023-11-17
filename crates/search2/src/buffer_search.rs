@@ -10,11 +10,12 @@ use collections::HashMap;
 use editor::Editor;
 use futures::channel::oneshot;
 use gpui::{
-    action, actions, div, red, Action, AppContext, Component, Div, EventEmitter,
-    InteractiveComponent, ParentComponent as _, Render, Styled, Subscription, Task, View,
-    ViewContext, VisualContext as _, WindowContext,
+    actions, div, red, Action, AppContext, Component, Div, EventEmitter, InteractiveComponent,
+    ParentComponent as _, Render, Styled, Subscription, Task, View, ViewContext,
+    VisualContext as _, WindowContext,
 };
 use project::search::SearchQuery;
+use serde::Deserialize;
 use std::{any::Any, sync::Arc};
 
 use ui::{h_stack, ButtonGroup, Icon, IconButton, IconElement};
@@ -25,7 +26,7 @@ use workspace::{
     Pane, ToolbarItemLocation, ToolbarItemView, Workspace,
 };
 
-#[action]
+#[derive(PartialEq, Clone, Deserialize, Default, Action)]
 pub struct Deploy {
     pub focus: bool,
 }
