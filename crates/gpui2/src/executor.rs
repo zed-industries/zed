@@ -245,7 +245,7 @@ impl BackgroundExecutor {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn deprioritize_task(&self, task_label: TaskLabel) {
+    pub fn deprioritize(&self, task_label: TaskLabel) {
         self.dispatcher.as_test().unwrap().deprioritize(task_label)
     }
 

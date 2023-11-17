@@ -354,6 +354,7 @@ impl<T: Send> Model<T> {
             })
         });
 
+        // Run other tasks until the event is emitted.
         loop {
             match rx.try_next() {
                 Ok(Some(event)) => return event,

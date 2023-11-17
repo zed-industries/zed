@@ -2609,7 +2609,7 @@ async fn test_file_changes_multiple_times_on_disk(cx: &mut gpui::TestAppContext)
 
     // Simulate buffer diffs being slow, so that they don't complete before
     // the next file change occurs.
-    cx.executor().deprioritize_task(*language::BUFFER_DIFF_TASK);
+    cx.executor().deprioritize(*language::BUFFER_DIFF_TASK);
 
     // Change the buffer's file on disk, and then wait for the file change
     // to be detected by the worktree, so that the buffer starts reloading.
