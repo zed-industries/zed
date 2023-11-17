@@ -1732,7 +1732,7 @@ mod tests {
     use super::*;
     use gpui::{AnyWindowHandle, TestAppContext, ViewHandle, WindowHandle};
     use pretty_assertions::assert_eq;
-    use project::FakeFs;
+    use project::{project_settings::ProjectSettings, FakeFs};
     use serde_json::json;
     use settings::SettingsStore;
     use std::{
@@ -1828,6 +1828,123 @@ mod tests {
                 "    > C",
                 "      .dockerignore",
                 "v root2",
+            ]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_exclusions_in_visible_list(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _, _>(|store, cx| {
+                store.update_user_settings::<ProjectSettings>(cx, |project_settings| {
+                    project_settings.file_scan_exclusions =
+                        Some(vec!["**/.git".to_string(), "**/4/**".to_string()]);
+                });
+            });
+        });
+
+        let fs = FakeFs::new(cx.background());
+        fs.insert_tree(
+            "/root1",
+            json!({
+                ".dockerignore": "",
+                ".git": {
+                    "HEAD": "",
+                },
+                "a": {
+                    "0": { "q": "", "r": "", "s": "" },
+                    "1": { "t": "", "u": "" },
+                    "2": { "v": "", "w": "", "x": "", "y": "" },
+                },
+                "b": {
+                    "3": { "Q": "" },
+                    "4": { "R": "", "S": "", "T": "", "U": "" },
+                },
+                "C": {
+                    "5": {},
+                    "6": { "V": "", "W": "" },
+                    "7": { "X": "" },
+                    "8": { "Y": {}, "Z": "" }
+                }
+            }),
+        )
+        .await;
+        fs.insert_tree(
+            "/root2",
+            json!({
+                "d": {
+                    "4": ""
+                },
+                "e": {}
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
+        let workspace = cx
+            .add_window(|cx| Workspace::test_new(project.clone(), cx))
+            .root(cx);
+        let panel = workspace.update(cx, |workspace, cx| ProjectPanel::new(workspace, cx));
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..50, cx),
+            &[
+                "v root1",
+                "    > a",
+                "    > b",
+                "    > C",
+                "      .dockerignore",
+                "v root2",
+                "    > d",
+                "    > e",
+            ]
+        );
+
+        toggle_expand_dir(&panel, "root1/b", cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..50, cx),
+            &[
+                "v root1",
+                "    > a",
+                "    v b  <== selected",
+                "        > 3",
+                "    > C",
+                "      .dockerignore",
+                "v root2",
+                "    > d",
+                "    > e",
+            ]
+        );
+
+        toggle_expand_dir(&panel, "root2/d", cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..50, cx),
+            &[
+                "v root1",
+                "    > a",
+                "    v b",
+                "        > 3",
+                "    > C",
+                "      .dockerignore",
+                "v root2",
+                "    v d  <== selected",
+                "    > e",
+            ]
+        );
+
+        toggle_expand_dir(&panel, "root2/e", cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..50, cx),
+            &[
+                "v root1",
+                "    > a",
+                "    v b",
+                "        > 3",
+                "    > C",
+                "      .dockerignore",
+                "v root2",
+                "    v d",
+                "    v e  <== selected",
             ]
         );
     }
@@ -2929,6 +3046,12 @@ mod tests {
             workspace::init_settings(cx);
             client::init_settings(cx);
             Project::init_settings(cx);
+
+            cx.update_global::<SettingsStore, _, _>(|store, cx| {
+                store.update_user_settings::<ProjectSettings>(cx, |project_settings| {
+                    project_settings.file_scan_exclusions = Some(Vec::new());
+                });
+            });
         });
     }
 

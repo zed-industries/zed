@@ -605,6 +605,17 @@ impl<'a> VisualContext for VisualTestContext<'a> {
             })
             .unwrap()
     }
+
+    fn dismiss_view<V>(&mut self, view: &View<V>) -> Self::Result<()>
+    where
+        V: crate::ManagedView,
+    {
+        self.window
+            .update(self.cx, |_, cx| {
+                view.update(cx, |_, cx| cx.emit(crate::Manager::Dismiss))
+            })
+            .unwrap()
+    }
 }
 
 impl AnyWindowHandle {

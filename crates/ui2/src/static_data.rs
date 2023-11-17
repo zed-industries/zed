@@ -478,7 +478,7 @@ pub fn static_new_notification_items_2<V: 'static>() -> Vec<Notification<V>> {
     ]
 }
 
-pub fn static_project_panel_project_items() -> Vec<ListItem> {
+pub fn static_project_panel_project_items<V>() -> Vec<ListItem<V>> {
     vec![
         ListEntry::new(Label::new("zed"))
             .left_icon(Icon::FolderOpen.into())
@@ -605,7 +605,7 @@ pub fn static_project_panel_project_items() -> Vec<ListItem> {
     .collect()
 }
 
-pub fn static_project_panel_single_items() -> Vec<ListItem> {
+pub fn static_project_panel_single_items<V>() -> Vec<ListItem<V>> {
     vec![
         ListEntry::new(Label::new("todo.md"))
             .left_icon(Icon::FileDoc.into())
@@ -622,7 +622,7 @@ pub fn static_project_panel_single_items() -> Vec<ListItem> {
     .collect()
 }
 
-pub fn static_collab_panel_current_call() -> Vec<ListItem> {
+pub fn static_collab_panel_current_call<V>() -> Vec<ListItem<V>> {
     vec![
         ListEntry::new(Label::new("as-cii")).left_avatar("http://github.com/as-cii.png?s=50"),
         ListEntry::new(Label::new("nathansobo"))
@@ -635,7 +635,7 @@ pub fn static_collab_panel_current_call() -> Vec<ListItem> {
     .collect()
 }
 
-pub fn static_collab_panel_channels() -> Vec<ListItem> {
+pub fn static_collab_panel_channels<V>() -> Vec<ListItem<V>> {
     vec![
         ListEntry::new(Label::new("zed"))
             .left_icon(Icon::Hash.into())

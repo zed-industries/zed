@@ -884,6 +884,7 @@ message SearchProject {
     bool case_sensitive = 5;
     string files_to_include = 6;
     string files_to_exclude = 7;
+    bool include_ignored = 8;
 }
 
 message SearchProjectResponse {

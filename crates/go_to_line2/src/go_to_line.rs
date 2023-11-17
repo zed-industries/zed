@@ -1,7 +1,8 @@
 use editor::{display_map::ToDisplayPoint, scroll::autoscroll::Autoscroll, Editor};
 use gpui::{
-    actions, div, prelude::*, AppContext, Dismiss, Div, FocusHandle, ManagedView, ParentComponent,
-    Render, SharedString, Styled, Subscription, View, ViewContext, VisualContext, WindowContext,
+    actions, div, prelude::*, AppContext, Div, EventEmitter, FocusHandle, FocusableView, Manager,
+    ParentComponent, Render, SharedString, Styled, Subscription, View, ViewContext, VisualContext,
+    WindowContext,
 };
 use text::{Bias, Point};
 use theme::ActiveTheme;
@@ -23,11 +24,12 @@ pub struct GoToLine {
     _subscriptions: Vec<Subscription>,
 }
 
-impl ManagedView for GoToLine {
+impl FocusableView for GoToLine {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
-        self.line_editor.focus_handle(cx)
+        self.active_editor.focus_handle(cx)
     }
 }
+impl EventEmitter<Manager> for GoToLine {}
 
 impl GoToLine {
     fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
@@ -87,7 +89,7 @@ impl GoToLine {
     ) {
         match event {
             // todo!() this isn't working...
-            editor::EditorEvent::Blurred => cx.emit(Dismiss),
+            editor::EditorEvent::Blurred => cx.emit(Manager::Dismiss),
             editor::EditorEvent::BufferEdited { .. } => self.highlight_current_line(cx),
             _ => {}
         }
@@ -122,7 +124,7 @@ impl GoToLine {
     }
 
     fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
-        cx.emit(Dismiss);
+        cx.emit(Manager::Dismiss);
     }
 
     fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
@@ -139,7 +141,7 @@ impl GoToLine {
             self.prev_scroll_position.take();
         }
 
-        cx.emit(Dismiss);
+        cx.emit(Manager::Dismiss);
     }
 }
 

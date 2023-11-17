@@ -1205,10 +1205,7 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
 
             InputEvent::MouseMove(_) if !(is_active || lock.kind == WindowKind::PopUp) => return,
 
-            InputEvent::MouseUp(MouseUpEvent {
-                button: MouseButton::Left,
-                ..
-            }) => {
+            InputEvent::MouseUp(MouseUpEvent { .. }) => {
                 lock.synthetic_drag_counter += 1;
             }
 

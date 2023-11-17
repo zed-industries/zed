@@ -2,7 +2,7 @@ use crate::{ImageData, ImageId, SharedString};
 use collections::HashMap;
 use futures::{
     future::{BoxFuture, Shared},
-    AsyncReadExt, FutureExt,
+    AsyncReadExt, FutureExt, TryFutureExt,
 };
 use image::ImageError;
 use parking_lot::Mutex;
@@ -88,6 +88,14 @@ impl ImageCache {
                         Ok(Arc::new(ImageData::new(image)))
                     }
                 }
+                .map_err({
+                    let uri = uri.clone();
+
+                    move |error| {
+                        log::log!(log::Level::Error, "{:?} {:?}", &uri, &error);
+                        error
+                    }
+                })
                 .boxed()
                 .shared();
 

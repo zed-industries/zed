@@ -14,7 +14,7 @@ use editor::{
 use futures::future::try_join_all;
 use gpui::{
     actions, div, AnyElement, AnyView, AppContext, Component, Context, Div, EventEmitter,
-    FocusEvent, FocusHandle, Focusable, FocusableComponent, InteractiveComponent, ManagedView,
+    FocusEvent, FocusHandle, Focusable, FocusableComponent, FocusableView, InteractiveComponent,
     Model, ParentComponent, Render, SharedString, Styled, Subscription, Task, View, ViewContext,
     VisualContext, WeakView,
 };
@@ -640,7 +640,7 @@ impl ProjectDiagnosticsEditor {
     }
 }
 
-impl ManagedView for ProjectDiagnosticsEditor {
+impl FocusableView for ProjectDiagnosticsEditor {
     fn focus_handle(&self, _: &AppContext) -> FocusHandle {
         self.focus_handle.clone()
     }
