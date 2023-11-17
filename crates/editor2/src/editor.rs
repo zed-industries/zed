@@ -180,78 +180,78 @@ pub const FORMAT_TIMEOUT: Duration = Duration::from_secs(2);
 //     //     .with_soft_wrap(true)
 // }
 
-#[derive(PartialEq, Clone, Deserialize, Action)]
+#[derive(PartialEq, Clone, Deserialize, Default, Action)]
 pub struct SelectNext {
     #[serde(default)]
     pub replace_newest: bool,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Action)]
+#[derive(PartialEq, Clone, Deserialize, Default, Action)]
 pub struct SelectPrevious {
     #[serde(default)]
     pub replace_newest: bool,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Action)]
+#[derive(PartialEq, Clone, Deserialize, Default, Action)]
 pub struct SelectAllMatches {
     #[serde(default)]
     pub replace_newest: bool,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Action)]
+#[derive(PartialEq, Clone, Deserialize, Default, Action)]
 pub struct SelectToBeginningOfLine {
     #[serde(default)]
     stop_at_soft_wraps: bool,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Action)]
+#[derive(PartialEq, Clone, Deserialize, Default, Action)]
 pub struct MovePageUp {
     #[serde(default)]
     center_cursor: bool,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Action)]
+#[derive(PartialEq, Clone, Deserialize, Default, Action)]
 pub struct MovePageDown {
     #[serde(default)]
     center_cursor: bool,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Action)]
+#[derive(PartialEq, Clone, Deserialize, Default, Action)]
 pub struct SelectToEndOfLine {
     #[serde(default)]
     stop_at_soft_wraps: bool,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Action)]
+#[derive(PartialEq, Clone, Deserialize, Default, Action)]
 pub struct ToggleCodeActions {
     #[serde(default)]
     pub deployed_from_indicator: bool,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Action)]
+#[derive(PartialEq, Clone, Deserialize, Default, Action)]
 pub struct ConfirmCompletion {
     #[serde(default)]
     pub item_ix: Option<usize>,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Action)]
+#[derive(PartialEq, Clone, Deserialize, Default, Action)]
 pub struct ConfirmCodeAction {
     #[serde(default)]
     pub item_ix: Option<usize>,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Action)]
+#[derive(PartialEq, Clone, Deserialize, Default, Action)]
 pub struct ToggleComments {
     #[serde(default)]
     pub advance_downwards: bool,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Action)]
+#[derive(PartialEq, Clone, Deserialize, Default, Action)]
 pub struct FoldAt {
     pub buffer_row: u32,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Action)]
+#[derive(PartialEq, Clone, Deserialize, Default, Action)]
 pub struct UnfoldAt {
     pub buffer_row: u32,
 }
