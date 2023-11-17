@@ -217,11 +217,11 @@ impl Dock {
     //             .map_or(false, |panel| panel.has_focus(cx))
     //     }
 
-    //     pub fn panel<T: Panel>(&self) -> Option<View<T>> {
-    //         self.panel_entries
-    //             .iter()
-    //             .find_map(|entry| entry.panel.as_any().clone().downcast())
-    //     }
+    pub fn panel<T: Panel>(&self) -> Option<View<T>> {
+        self.panel_entries
+            .iter()
+            .find_map(|entry| entry.panel.to_any().clone().downcast().ok())
+    }
 
     pub fn panel_index_for_type<T: Panel>(&self) -> Option<usize> {
         self.panel_entries
@@ -416,24 +416,6 @@ impl Dock {
             cx.notify();
         }
     }
-
-    //     pub fn render_placeholder(&self, cx: &WindowContext) -> AnyElement<Workspace> {
-    //         todo!()
-    // if let Some(active_entry) = self.visible_entry() {
-    //     Empty::new()
-    //         .into_any()
-    //         .contained()
-    //         .with_style(self.style(cx))
-    //         .resizable::<WorkspaceBounds>(
-    //             self.position.to_resize_handle_side(),
-    //             active_entry.panel.size(cx),
-    //             |_, _, _| {},
-    //         )
-    //         .into_any()
-    // } else {
-    //     Empty::new().into_any()
-    // }
-    //     }
 }
 
 impl Render for Dock {
@@ -460,40 +442,6 @@ impl Render for Dock {
         }
     }
 }
-
-// todo!()
-// impl View for Dock {
-//     fn ui_name() -> &'static str {
-//         "Dock"
-//     }
-
-//     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-//         if let Some(active_entry) = self.visible_entry() {
-//             let style = self.style(cx);
-//             ChildView::new(active_entry.panel.as_any(), cx)
-//                 .contained()
-//                 .with_style(style)
-//                 .resizable::<WorkspaceBounds>(
-//                     self.position.to_resize_handle_side(),
-//                     active_entry.panel.size(cx),
-//                     |dock: &mut Self, size, cx| dock.resize_active_panel(size, cx),
-//                 )
-//                 .into_any()
-//         } else {
-//             Empty::new().into_any()
-//         }
-//     }
-
-//     fn focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
-//         if cx.is_self_focused() {
-//             if let Some(active_entry) = self.visible_entry() {
-//                 cx.focus(active_entry.panel.as_any());
-//             } else {
-//                 cx.focus_parent();
-//             }
-//         }
-//     }
-// }
 
 impl PanelButtons {
     pub fn new(
