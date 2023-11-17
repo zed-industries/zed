@@ -23,6 +23,7 @@ impl FocusableView for ContextMenu {
         self.focus_handle.clone()
     }
 }
+impl Menu for ContextMenu {}
 
 impl ContextMenu {
     pub fn new(cx: &mut WindowContext) -> Self {
@@ -81,25 +82,24 @@ impl Render for ContextMenu {
     }
 }
 
-pub struct MenuHandle<V: 'static> {
+pub trait Menu: Render + EventEmitter<MenuEvent> + FocusableView {}
+
+pub struct MenuHandle<V: 'static, M: Menu> {
     id: Option<ElementId>,
     child_builder: Option<Box<dyn FnOnce(bool) -> AnyElement<V> + 'static>>,
-    menu_builder: Option<Rc<dyn Fn(&mut V, &mut ViewContext<V>) -> View<ContextMenu> + 'static>>,
+    menu_builder: Option<Rc<dyn Fn(&mut V, &mut ViewContext<V>) -> View<M> + 'static>>,
 
     anchor: Option<AnchorCorner>,
     attach: Option<AnchorCorner>,
 }
 
-impl<V: 'static> MenuHandle<V> {
+impl<V: 'static, M: Menu> MenuHandle<V, M> {
     pub fn id(mut self, id: impl Into<ElementId>) -> Self {
         self.id = Some(id.into());
         self
     }
 
-    pub fn menu(
-        mut self,
-        f: impl Fn(&mut V, &mut ViewContext<V>) -> View<ContextMenu> + 'static,
-    ) -> Self {
+    pub fn menu(mut self, f: impl Fn(&mut V, &mut ViewContext<V>) -> View<M> + 'static) -> Self {
         self.menu_builder = Some(Rc::new(f));
         self
     }
@@ -123,7 +123,7 @@ impl<V: 'static> MenuHandle<V> {
     }
 }
 
-pub fn menu_handle<V: 'static>() -> MenuHandle<V> {
+pub fn menu_handle<V: 'static, M: Menu>() -> MenuHandle<V, M> {
     MenuHandle {
         id: None,
         child_builder: None,
@@ -133,15 +133,15 @@ pub fn menu_handle<V: 'static>() -> MenuHandle<V> {
     }
 }
 
-pub struct MenuHandleState<V> {
-    menu: Rc<RefCell<Option<View<ContextMenu>>>>,
+pub struct MenuHandleState<V, M> {
+    menu: Rc<RefCell<Option<View<M>>>>,
     position: Rc<RefCell<Point<Pixels>>>,
     child_layout_id: Option<LayoutId>,
     child_element: Option<AnyElement<V>>,
     menu_element: Option<AnyElement<V>>,
 }
-impl<V: 'static> Element<V> for MenuHandle<V> {
-    type ElementState = MenuHandleState<V>;
+impl<V: 'static, M: Menu> Element<V> for MenuHandle<V, M> {
+    type ElementState = MenuHandleState<V, M>;
 
     fn element_id(&self) -> Option<gpui::ElementId> {
         Some(self.id.clone().expect("menu_handle must have an id()"))
@@ -255,7 +255,7 @@ impl<V: 'static> Element<V> for MenuHandle<V> {
     }
 }
 
-impl<V: 'static> Component<V> for MenuHandle<V> {
+impl<V: 'static, M: Menu> Component<V> for MenuHandle<V, M> {
     fn render(self) -> AnyElement<V> {
         AnyElement::new(self)
     }

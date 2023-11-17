@@ -1,7 +1,7 @@
 use anyhow::Result;
 use gpui::AssetSource;
 use gpui::{
-    div, hsla, px, size, AnyView, Bounds, Div, Render, ViewContext, VisualContext, WindowBounds,
+    div, px, size, AnyView, Bounds, Div, Render, ViewContext, VisualContext, WindowBounds,
     WindowOptions,
 };
 use settings::{default_settings, Settings, SettingsStore};
