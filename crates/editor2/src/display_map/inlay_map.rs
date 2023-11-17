@@ -1891,6 +1891,6 @@ mod tests {
     fn init_test(cx: &mut AppContext) {
         let store = SettingsStore::test(cx);
         cx.set_global(store);
-        theme::init(cx);
+        theme::init(theme::LoadThemes::JustBase, cx);
     }
 }

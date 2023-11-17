@@ -1,19 +1,14 @@
 use crate::{status_bar::StatusItemView, Axis, Workspace};
 use gpui::{
-    div, overlay, point, px, Action, AnchorCorner, AnyElement, AnyView, AppContext, Component,
-    DispatchPhase, Div, Element, ElementId, Entity, EntityId, EventEmitter, FocusHandle,
-    FocusableView, InteractiveComponent, LayoutId, MouseButton, MouseDownEvent, ParentComponent,
-    Pixels, Point, Render, SharedString, Style, Styled, Subscription, View, ViewContext,
-    VisualContext, WeakView, WindowContext,
+    div, px, Action, AnchorCorner, AnyView, AppContext, Component, Div, Entity, EntityId,
+    EventEmitter, FocusHandle, FocusableView, ParentComponent, Render, SharedString, Styled,
+    Subscription, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use smallvec::SmallVec;
-use std::{cell::RefCell, rc::Rc, sync::Arc};
-use ui::{
-    h_stack, menu_handle, ContextMenu, IconButton, InteractionState, Label, MenuEvent, MenuHandle,
-    Tooltip,
-};
+use std::sync::Arc;
+use theme2::ActiveTheme;
+use ui::{h_stack, menu_handle, ContextMenu, IconButton, InteractionState, Tooltip};
 
 pub enum PanelEvent {
     ChangePosition,
@@ -457,9 +452,15 @@ impl Render for Dock {
             let size = entry.panel.size(cx);
 
             div()
+                .border_color(cx.theme().colors().border)
                 .map(|this| match self.position().axis() {
                     Axis::Horizontal => this.w(px(size)).h_full(),
                     Axis::Vertical => this.h(px(size)).w_full(),
+                })
+                .map(|this| match self.position() {
+                    DockPosition::Left => this.border_r(),
+                    DockPosition::Right => this.border_l(),
+                    DockPosition::Bottom => this.border_t(),
                 })
                 .child(entry.panel.to_any())
         } else {
@@ -715,7 +716,7 @@ impl Render for PanelButtons {
                 )
             });
 
-        h_stack().children(buttons)
+        h_stack().gap_0p5().children(buttons)
     }
 }
 

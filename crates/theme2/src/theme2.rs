@@ -31,8 +31,25 @@ pub enum Appearance {
     Dark,
 }
 
-pub fn init(cx: &mut AppContext) {
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum LoadThemes {
+    /// Only load the base theme.
+    ///
+    /// No user themes will be loaded.
+    JustBase,
+
+    /// Load all of the built-in themes.
+    All,
+}
+
+pub fn init(themes_to_load: LoadThemes, cx: &mut AppContext) {
     cx.set_global(ThemeRegistry::default());
+
+    match themes_to_load {
+        LoadThemes::JustBase => (),
+        LoadThemes::All => cx.global_mut::<ThemeRegistry>().load_user_themes(),
+    }
+
     ThemeSettings::register(cx);
 }
 

@@ -34,6 +34,10 @@ pub struct ThemeSettingsContent {
     #[serde(default)]
     pub ui_font_size: Option<f32>,
     #[serde(default)]
+    pub ui_font_family: Option<String>,
+    #[serde(default)]
+    pub ui_font_features: Option<FontFeatures>,
+    #[serde(default)]
     pub buffer_font_family: Option<String>,
     #[serde(default)]
     pub buffer_font_size: Option<f32>,
@@ -117,13 +121,13 @@ impl settings::Settings for ThemeSettings {
         user_values: &[&Self::FileContent],
         cx: &mut AppContext,
     ) -> Result<Self> {
-        let themes = cx.default_global::<Arc<ThemeRegistry>>();
+        let themes = cx.default_global::<ThemeRegistry>();
 
         let mut this = Self {
-            ui_font_size: defaults.ui_font_size.unwrap_or(16.).into(),
+            ui_font_size: defaults.ui_font_size.unwrap().into(),
             ui_font: Font {
-                family: "Helvetica".into(),
-                features: Default::default(),
+                family: defaults.ui_font_family.clone().unwrap().into(),
+                features: defaults.ui_font_features.clone().unwrap(),
                 weight: Default::default(),
                 style: Default::default(),
             },
@@ -147,6 +151,13 @@ impl settings::Settings for ThemeSettings {
             }
             if let Some(value) = value.buffer_font_features {
                 this.buffer_font.features = value;
+            }
+
+            if let Some(value) = value.ui_font_family {
+                this.ui_font.family = value.into();
+            }
+            if let Some(value) = value.ui_font_features {
+                this.ui_font.features = value;
             }
 
             if let Some(value) = &value.theme {

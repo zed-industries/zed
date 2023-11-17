@@ -100,6 +100,11 @@ impl ThemeRegistry {
             .ok_or_else(|| anyhow!("theme not found: {}", name))
             .cloned()
     }
+
+    pub fn load_user_themes(&mut self) {
+        #[cfg(not(feature = "importing-themes"))]
+        self.insert_user_theme_familes(crate::all_user_themes());
+    }
 }
 
 impl Default for ThemeRegistry {
@@ -109,9 +114,6 @@ impl Default for ThemeRegistry {
         };
 
         this.insert_theme_families([one_family()]);
-
-        #[cfg(not(feature = "importing-themes"))]
-        this.insert_user_theme_familes(crate::all_user_themes());
 
         this
     }

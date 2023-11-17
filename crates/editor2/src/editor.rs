@@ -39,7 +39,7 @@ use futures::FutureExt;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use git::diff_hunk_to_display;
 use gpui::{
-    action, actions, div, point, prelude::*, px, relative, rems, size, uniform_list, AnyElement,
+    actions, div, point, prelude::*, px, relative, rems, size, uniform_list, Action, AnyElement,
     AppContext, AsyncWindowContext, BackgroundExecutor, Bounds, ClipboardItem, Component, Context,
     EventEmitter, FocusHandle, FocusableView, FontFeatures, FontStyle, FontWeight, HighlightStyle,
     Hsla, InputHandler, KeyContext, Model, MouseButton, ParentComponent, Pixels, Render, Styled,
@@ -180,78 +180,78 @@ pub const FORMAT_TIMEOUT: Duration = Duration::from_secs(2);
 //     //     .with_soft_wrap(true)
 // }
 
-#[action]
+#[derive(PartialEq, Clone, Deserialize, Default, Action)]
 pub struct SelectNext {
     #[serde(default)]
     pub replace_newest: bool,
 }
 
-#[action]
+#[derive(PartialEq, Clone, Deserialize, Default, Action)]
 pub struct SelectPrevious {
     #[serde(default)]
     pub replace_newest: bool,
 }
 
-#[action]
+#[derive(PartialEq, Clone, Deserialize, Default, Action)]
 pub struct SelectAllMatches {
     #[serde(default)]
     pub replace_newest: bool,
 }
 
-#[action]
+#[derive(PartialEq, Clone, Deserialize, Default, Action)]
 pub struct SelectToBeginningOfLine {
     #[serde(default)]
     stop_at_soft_wraps: bool,
 }
 
-#[action]
+#[derive(PartialEq, Clone, Deserialize, Default, Action)]
 pub struct MovePageUp {
     #[serde(default)]
     center_cursor: bool,
 }
 
-#[action]
+#[derive(PartialEq, Clone, Deserialize, Default, Action)]
 pub struct MovePageDown {
     #[serde(default)]
     center_cursor: bool,
 }
 
-#[action]
+#[derive(PartialEq, Clone, Deserialize, Default, Action)]
 pub struct SelectToEndOfLine {
     #[serde(default)]
     stop_at_soft_wraps: bool,
 }
 
-#[action]
+#[derive(PartialEq, Clone, Deserialize, Default, Action)]
 pub struct ToggleCodeActions {
     #[serde(default)]
     pub deployed_from_indicator: bool,
 }
 
-#[action]
+#[derive(PartialEq, Clone, Deserialize, Default, Action)]
 pub struct ConfirmCompletion {
     #[serde(default)]
     pub item_ix: Option<usize>,
 }
 
-#[action]
+#[derive(PartialEq, Clone, Deserialize, Default, Action)]
 pub struct ConfirmCodeAction {
     #[serde(default)]
     pub item_ix: Option<usize>,
 }
 
-#[action]
+#[derive(PartialEq, Clone, Deserialize, Default, Action)]
 pub struct ToggleComments {
     #[serde(default)]
     pub advance_downwards: bool,
 }
 
-#[action]
+#[derive(PartialEq, Clone, Deserialize, Default, Action)]
 pub struct FoldAt {
     pub buffer_row: u32,
 }
 
-#[action]
+#[derive(PartialEq, Clone, Deserialize, Default, Action)]
 pub struct UnfoldAt {
     pub buffer_row: u32,
 }
@@ -9379,18 +9379,16 @@ impl Render for Editor {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         let settings = ThemeSettings::get_global(cx);
         let text_style = match self.mode {
-            EditorMode::SingleLine => {
-                TextStyle {
-                    color: cx.theme().colors().text,
-                    font_family: settings.ui_font.family.clone(), // todo!()
-                    font_features: settings.ui_font.features,
-                    font_size: rems(0.875).into(),
-                    font_weight: FontWeight::NORMAL,
-                    font_style: FontStyle::Normal,
-                    line_height: relative(1.3).into(), // TODO relative(settings.buffer_line_height.value()),
-                    underline: None,
-                }
-            }
+            EditorMode::SingleLine => TextStyle {
+                color: cx.theme().colors().text,
+                font_family: settings.ui_font.family.clone(),
+                font_features: settings.ui_font.features,
+                font_size: rems(0.875).into(),
+                font_weight: FontWeight::NORMAL,
+                font_style: FontStyle::Normal,
+                line_height: relative(1.).into(),
+                underline: None,
+            },
 
             EditorMode::AutoHeight { max_lines } => todo!(),
 

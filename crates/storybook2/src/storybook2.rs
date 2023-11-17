@@ -60,7 +60,7 @@ fn main() {
             .unwrap();
         cx.set_global(store);
 
-        theme2::init(cx);
+        theme2::init(theme2::LoadThemes::All, cx);
 
         let selector =
             story_selector.unwrap_or(StorySelector::Component(ComponentStory::Workspace));

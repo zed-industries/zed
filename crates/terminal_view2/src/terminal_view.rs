@@ -9,7 +9,7 @@ pub mod terminal_panel;
 // use crate::terminal_element::TerminalElement;
 use editor::{scroll::autoscroll::Autoscroll, Editor};
 use gpui::{
-    actions, div, img, red, register_action, AnyElement, AppContext, Component, DispatchPhase, Div,
+    actions, div, img, red, Action, AnyElement, AppContext, Component, DispatchPhase, Div,
     EventEmitter, FocusEvent, FocusHandle, Focusable, FocusableComponent, FocusableView,
     InputHandler, InteractiveComponent, KeyDownEvent, Keystroke, Model, MouseButton,
     ParentComponent, Pixels, Render, SharedString, Styled, Task, View, ViewContext, VisualContext,
@@ -55,12 +55,10 @@ const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 #[derive(Clone, Debug, PartialEq)]
 pub struct ScrollTerminal(pub i32);
 
-#[register_action]
-#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Action)]
 pub struct SendText(String);
 
-#[register_action]
-#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Action)]
 pub struct SendKeystroke(String);
 
 actions!(Clear, Copy, Paste, ShowCharacterPalette, SearchTest);
@@ -1130,7 +1128,7 @@ mod tests {
     pub async fn init_test(cx: &mut TestAppContext) -> (Model<Project>, View<Workspace>) {
         let params = cx.update(AppState::test);
         cx.update(|cx| {
-            theme::init(cx);
+            theme::init(theme::LoadThemes::JustBase, cx);
             Project::init_settings(cx);
             language::init(cx);
         });

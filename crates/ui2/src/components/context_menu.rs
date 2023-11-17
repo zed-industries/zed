@@ -7,7 +7,6 @@ use gpui::{
     overlay, px, Action, AnchorCorner, AnyElement, Bounds, DispatchPhase, Div, EventEmitter,
     FocusHandle, FocusableView, LayoutId, MouseButton, MouseDownEvent, Pixels, Point, Render, View,
 };
-use smallvec::SmallVec;
 
 pub struct ContextMenu {
     items: Vec<ListItem>,
@@ -269,16 +268,15 @@ pub use stories::*;
 mod stories {
     use super::*;
     use crate::story::Story;
-    use gpui::{action, Div, Render, VisualContext};
+    use gpui::{actions, Div, Render, VisualContext};
 
-    #[action]
-    struct PrintCurrentDate {}
+    actions!(PrintCurrentDate);
 
     fn build_menu(cx: &mut WindowContext, header: impl Into<SharedString>) -> View<ContextMenu> {
         cx.build_view(|cx| {
             ContextMenu::new(cx).header(header).separator().entry(
                 Label::new("Print current time"),
-                PrintCurrentDate {}.boxed_clone(),
+                PrintCurrentDate.boxed_clone(),
             )
         })
     }

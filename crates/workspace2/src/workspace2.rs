@@ -29,11 +29,11 @@ use futures::{
     Future, FutureExt, StreamExt,
 };
 use gpui::{
-    actions, div, point, register_action, size, Action, AnyModel, AnyView, AnyWeakView, AppContext,
-    AsyncAppContext, AsyncWindowContext, Bounds, Context, Div, Entity, EntityId, EventEmitter,
-    FocusHandle, FocusableView, GlobalPixels, InteractiveComponent, KeyContext, Model,
-    ModelContext, ParentComponent, Point, Render, Size, Styled, Subscription, Task, View,
-    ViewContext, VisualContext, WeakView, WindowBounds, WindowContext, WindowHandle, WindowOptions,
+    actions, div, point, size, Action, AnyModel, AnyView, AnyWeakView, AppContext, AsyncAppContext,
+    AsyncWindowContext, Bounds, Context, Div, Entity, EntityId, EventEmitter, FocusHandle,
+    FocusableView, GlobalPixels, InteractiveComponent, KeyContext, Model, ModelContext,
+    ParentComponent, Point, Render, Size, Styled, Subscription, Task, View, ViewContext,
+    VisualContext, WeakView, WindowBounds, WindowContext, WindowHandle, WindowOptions,
 };
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, ProjectItem};
 use itertools::Itertools;
@@ -194,8 +194,7 @@ impl Clone for Toast {
     }
 }
 
-#[register_action]
-#[derive(Debug, Default, Clone, Deserialize, PartialEq)]
+#[derive(Debug, Default, Clone, Deserialize, PartialEq, Action)]
 pub struct OpenTerminal {
     pub working_directory: PathBuf,
 }
@@ -355,7 +354,7 @@ impl AppState {
         let user_store = cx.build_model(|cx| UserStore::new(client.clone(), http_client, cx));
         let workspace_store = cx.build_model(|cx| WorkspaceStore::new(client.clone(), cx));
 
-        theme2::init(cx);
+        theme2::init(theme2::LoadThemes::JustBase, cx);
         client2::init(&client, cx);
         crate::init_settings(cx);
 
@@ -3614,7 +3613,16 @@ impl Render for Workspace {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         let mut context = KeyContext::default();
         context.add("Workspace");
-        let ui_font = ThemeSettings::get_global(cx).ui_font.family.clone();
+
+        let (ui_font, ui_font_size) = {
+            let theme_settings = ThemeSettings::get_global(cx);
+            (
+                theme_settings.ui_font.family.clone(),
+                theme_settings.ui_font_size.clone(),
+            )
+        };
+
+        cx.set_rem_size(ui_font_size);
 
         self.actions(div())
             .key_context(context)

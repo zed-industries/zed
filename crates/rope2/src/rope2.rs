@@ -41,6 +41,10 @@ impl Rope {
         Self::default()
     }
 
+    pub fn text_fingerprint(text: &str) -> RopeFingerprint {
+        bromberg_sl2::hash_strict(text.as_bytes())
+    }
+
     pub fn append(&mut self, rope: Rope) {
         let mut chunks = rope.chunks.cursor::<()>();
         chunks.next(&());
@@ -931,7 +935,7 @@ impl<'a> From<&'a str> for ChunkSummary {
     fn from(text: &'a str) -> Self {
         Self {
             text: TextSummary::from(text),
-            fingerprint: bromberg_sl2::hash_strict(text.as_bytes()),
+            fingerprint: Rope::text_fingerprint(text),
         }
     }
 }

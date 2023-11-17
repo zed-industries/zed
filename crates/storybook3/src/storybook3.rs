@@ -31,7 +31,7 @@ fn main() {
             .unwrap();
         cx.set_global(store);
         ui::settings::init(cx);
-        theme::init(cx);
+        theme::init(theme::LoadThemes::JustBase, cx);
 
         cx.open_window(
             WindowOptions {
@@ -64,8 +64,6 @@ impl Render for TestView {
 
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
         div()
-            .p(px(10.))
-            .bg(hsla(1., 1., 1., 0.))
             .flex()
             .flex_col()
             .size_full()
