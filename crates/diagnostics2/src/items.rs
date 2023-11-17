@@ -1,14 +1,13 @@
 use collections::HashSet;
 use editor::{Editor, GoToDiagnostic};
 use gpui::{
-    div, serde_json, svg, AppContext, CursorStyle, Div, Entity, EventEmitter, InteractiveComponent,
-    MouseButton, ParentComponent, Render, Stateful, Styled, Subscription, Svg, View, ViewContext,
-    WeakView,
+    div, Div, EventEmitter, InteractiveComponent, ParentComponent, Render, Stateful,
+    StatefulInteractiveComponent, Styled, Subscription, View, ViewContext, WeakView,
 };
 use language::Diagnostic;
 use lsp::LanguageServerId;
 use theme::ActiveTheme;
-use ui::{Icon, IconElement, Label, TextColor};
+use ui::{h_stack, Icon, IconElement, Label, TextColor, Tooltip};
 use workspace::{item::ItemHandle, StatusItemView, ToolbarItemEvent, Workspace};
 
 use crate::ProjectDiagnosticsEditor;
@@ -26,12 +25,35 @@ impl Render for DiagnosticIndicator {
     type Element = Stateful<Self, Div<Self>>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-        let mut summary_row = div().flex().flex_row().size_full();
+        let mut summary_row = h_stack()
+            .id(cx.entity_id())
+            .on_action(Self::go_to_next_diagnostic)
+            .rounded_md()
+            .p_1()
+            .cursor_pointer()
+            .bg(gpui::green())
+            .hover(|style| style.bg(cx.theme().colors().element_hover))
+            .active(|style| style.bg(cx.theme().colors().element_active))
+            .tooltip(|_, cx| Tooltip::text("Project Diagnostics", cx))
+            .on_click(|this, _, cx| {
+                if let Some(workspace) = this.workspace.upgrade() {
+                    workspace.update(cx, |workspace, cx| {
+                        ProjectDiagnosticsEditor::deploy(workspace, &Default::default(), cx)
+                    })
+                }
+            });
 
         if self.summary.error_count > 0 {
-            summary_row =
-                summary_row.child(IconElement::new(Icon::XCircle).color(TextColor::Error));
-            summary_row = summary_row.child(Label::new(self.summary.error_count.to_string()));
+            summary_row = summary_row.child(
+                div()
+                    .child(IconElement::new(Icon::XCircle).color(TextColor::Error))
+                    .bg(gpui::red()),
+            );
+            summary_row = summary_row.child(
+                div()
+                    .child(Label::new(self.summary.error_count.to_string()))
+                    .bg(gpui::yellow()),
+            );
         }
 
         if self.summary.warning_count > 0 {
@@ -45,11 +67,7 @@ impl Render for DiagnosticIndicator {
                 summary_row.child(IconElement::new(Icon::Check).color(TextColor::Success));
         }
 
-        div()
-            .id(cx.entity_id())
-            .on_action(Self::go_to_next_diagnostic)
-            .size_full()
-            .child(summary_row)
+        summary_row
     }
 }
 
@@ -117,143 +135,6 @@ impl DiagnosticIndicator {
 }
 
 impl EventEmitter<ToolbarItemEvent> for DiagnosticIndicator {}
-
-// impl View for DiagnosticIndicator {
-//     fn ui_name() -> &'static str {
-//         "DiagnosticIndicator"
-//     }
-
-//     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-//         enum Summary {}
-//         enum Message {}
-
-//         let tooltip_style = theme::current(cx).tooltip.clone();
-//         let in_progress = !self.in_progress_checks.is_empty();
-//         let mut element = Flex::row().with_child(
-//             MouseEventHandler::new::<Summary, _>(0, cx, |state, cx| {
-//                 let theme = theme::current(cx);
-//                 let style = theme
-//                     .workspace
-//                     .status_bar
-//                     .diagnostic_summary
-//                     .style_for(state);
-
-//                 let mut summary_row = Flex::row();
-//                 if self.summary.error_count > 0 {
-//                     summary_row.add_child(
-//                         Svg::new("icons/error.svg")
-//                             .with_color(style.icon_color_error)
-//                             .constrained()
-//                             .with_width(style.icon_width)
-//                             .aligned()
-//                             .contained()
-//                             .with_margin_right(style.icon_spacing),
-//                     );
-//                     summary_row.add_child(
-//                         Label::new(self.summary.error_count.to_string(), style.text.clone())
-//                             .aligned(),
-//                     );
-//                 }
-
-//                 if self.summary.warning_count > 0 {
-//                     summary_row.add_child(
-//                         Svg::new("icons/warning.svg")
-//                             .with_color(style.icon_color_warning)
-//                             .constrained()
-//                             .with_width(style.icon_width)
-//                             .aligned()
-//                             .contained()
-//                             .with_margin_right(style.icon_spacing)
-//                             .with_margin_left(if self.summary.error_count > 0 {
-//                                 style.summary_spacing
-//                             } else {
-//                                 0.
-//                             }),
-//                     );
-//                     summary_row.add_child(
-//                         Label::new(self.summary.warning_count.to_string(), style.text.clone())
-//                             .aligned(),
-//                     );
-//                 }
-
-//                 if self.summary.error_count == 0 && self.summary.warning_count == 0 {
-//                     summary_row.add_child(
-//                         Svg::new("icons/check_circle.svg")
-//                             .with_color(style.icon_color_ok)
-//                             .constrained()
-//                             .with_width(style.icon_width)
-//                             .aligned()
-//                             .into_any_named("ok-icon"),
-//                     );
-//                 }
-
-//                 summary_row
-//                     .constrained()
-//                     .with_height(style.height)
-//                     .contained()
-//                     .with_style(if self.summary.error_count > 0 {
-//                         style.container_error
-//                     } else if self.summary.warning_count > 0 {
-//                         style.container_warning
-//                     } else {
-//                         style.container_ok
-//                     })
-//             })
-//             .with_cursor_style(CursorStyle::PointingHand)
-//             .on_click(MouseButton::Left, |_, this, cx| {
-//                 if let Some(workspace) = this.workspace.upgrade(cx) {
-//                     workspace.update(cx, |workspace, cx| {
-//                         ProjectDiagnosticsEditor::deploy(workspace, &Default::default(), cx)
-//                     })
-//                 }
-//             })
-//             .with_tooltip::<Summary>(
-//                 0,
-//                 "Project Diagnostics",
-//                 Some(Box::new(crate::Deploy)),
-//                 tooltip_style,
-//                 cx,
-//             )
-//             .aligned()
-//             .into_any(),
-//         );
-
-//         let style = &theme::current(cx).workspace.status_bar;
-//         let item_spacing = style.item_spacing;
-
-//         if in_progress {
-//             element.add_child(
-//                 Label::new("Checking…", style.diagnostic_message.default.text.clone())
-//                     .aligned()
-//                     .contained()
-//                     .with_margin_left(item_spacing),
-//             );
-//         } else if let Some(diagnostic) = &self.current_diagnostic {
-//             let message_style = style.diagnostic_message.clone();
-//             element.add_child(
-//                 MouseEventHandler::new::<Message, _>(1, cx, |state, _| {
-//                     Label::new(
-//                         diagnostic.message.split('\n').next().unwrap().to_string(),
-//                         message_style.style_for(state).text.clone(),
-//                     )
-//                     .aligned()
-//                     .contained()
-//                     .with_margin_left(item_spacing)
-//                 })
-//                 .with_cursor_style(CursorStyle::PointingHand)
-//                 .on_click(MouseButton::Left, |_, this, cx| {
-//                     this.go_to_next_diagnostic(&Default::default(), cx)
-//                 }),
-//             );
-//         }
-
-//         element.into_any_named("diagnostic indicator")
-//     }
-
-//     fn debug_json(&self, _: &gpui::AppContext) -> serde_json::Value {
-//         serde_json::json!({ "summary": self.summary })
-//     }
-// }
 
 impl StatusItemView for DiagnosticIndicator {
     fn set_active_pane_item(
