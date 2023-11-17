@@ -35,35 +35,3 @@ pub(crate) fn render_search_mode_button<V: 'static>(
         .on_click(Arc::new(on_click))
         .variant(button_variant)
 }
-
-pub(crate) fn render_option_button_icon<V: 'static>(
-    _is_active: bool,
-    _icon: &'static str,
-    _id: usize,
-    _label: impl Into<Cow<'static, str>>,
-    _action: Box<dyn Action>,
-) -> impl Component<V> {
-    //let tooltip_style = cx.theme().tooltip.clone();
-    div()
-    // MouseEventHandler::new::<V, _>(id, cx, |state, cx| {
-    //     let theme = cx.theme();
-    //     let style = theme
-    //         .search
-    //         .option_button
-    //         .in_state(is_active)
-    //         .style_for(state);
-    //     Svg::new(icon)
-    //         .with_color(style.color.clone())
-    //         .constrained()
-    //         .with_width(style.icon_width)
-    //         .contained()
-    //         .with_style(style.container)
-    //         .constrained()
-    //         .with_height(theme.search.option_button_height)
-    //         .with_width(style.button_width)
-    // })
-    // .on_click(MouseButton::Left, on_click)
-    // .with_cursor_style(CursorStyle::PointingHand)
-    // .with_tooltip::<V>(id, label, Some(action), tooltip_style, cx)
-    // .into_any()
-}

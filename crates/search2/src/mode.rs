@@ -11,30 +11,6 @@ pub enum SearchMode {
 }
 
 impl SearchMode {
-    pub(crate) fn label(&self) -> &'static str {
-        match self {
-            SearchMode::Text => "Text",
-            SearchMode::Semantic => "Semantic",
-            SearchMode::Regex => "Regex",
-        }
-    }
-
-    pub(crate) fn region_id(&self) -> usize {
-        match self {
-            SearchMode::Text => 3,
-            SearchMode::Semantic => 4,
-            SearchMode::Regex => 5,
-        }
-    }
-
-    pub(crate) fn tooltip_text(&self) -> &'static str {
-        match self {
-            SearchMode::Text => "Activate Text Search",
-            SearchMode::Semantic => "Activate Semantic Search",
-            SearchMode::Regex => "Activate Regex Search",
-        }
-    }
-
     pub(crate) fn activate_action(&self) -> Box<dyn Action> {
         match self {
             SearchMode::Text => Box::new(ActivateTextMode),

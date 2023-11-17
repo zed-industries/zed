@@ -23,7 +23,7 @@ use util::ResultExt;
 use workspace::{
     item::ItemHandle,
     searchable::{Direction, SearchEvent, SearchableItemHandle, WeakSearchableItemHandle},
-    Pane, ToolbarItemLocation, ToolbarItemView, Workspace,
+    ToolbarItemLocation, ToolbarItemView, Workspace,
 };
 
 #[derive(PartialEq, Clone, Deserialize, Default, Action)]
@@ -71,11 +71,7 @@ impl Render for BufferSearchBar {
         // } else {
         //     theme.search.editor.input.container
         // };
-        let supported_options = self
-            .active_searchable_item
-            .as_ref()
-            .map(|active_searchable_item| active_searchable_item.supported_options())
-            .unwrap_or_default();
+        let supported_options = self.supported_options();
 
         let previous_query_keystrokes = cx
             .bindings_for_action(&PreviousHistoryQuery {})
@@ -184,18 +180,6 @@ impl Render for BufferSearchBar {
             })
             .on_action(Self::previous_history_query)
             .on_action(Self::next_history_query)
-            .when(supported_options.case, |this| {
-                this.on_action(Self::toggle_case_sensitive)
-            })
-            .when(supported_options.word, |this| {
-                this.on_action(Self::toggle_whole_word)
-            })
-            .when(supported_options.replacement, |this| {
-                this.on_action(Self::toggle_replace)
-            })
-            .on_action(Self::select_next_match)
-            .on_action(Self::select_prev_match)
-            .on_action(Self::cycle_mode)
             .w_full()
             .p_1()
             .child(
@@ -292,7 +276,6 @@ impl ToolbarItemView for BufferSearchBar {
                 return ToolbarItemLocation::Secondary;
             }
         }
-
         ToolbarItemLocation::Hidden
     }
 
@@ -334,22 +317,34 @@ impl BufferSearchBar {
         }
 
         register_action(workspace, |this, action: &ToggleCaseSensitive, cx| {
-            this.toggle_case_sensitive(action, cx);
+            if this.supported_options().case {
+                this.toggle_case_sensitive(action, cx);
+            }
         });
         register_action(workspace, |this, action: &ToggleWholeWord, cx| {
-            this.toggle_whole_word(action, cx);
+            if this.supported_options().word {
+                this.toggle_whole_word(action, cx);
+            }
         });
         register_action(workspace, |this, action: &ToggleReplace, cx| {
-            this.toggle_replace(action, cx);
+            if this.supported_options().replacement {
+                this.toggle_replace(action, cx);
+            }
         });
         register_action(workspace, |this, _: &ActivateRegexMode, cx| {
-            this.activate_search_mode(SearchMode::Regex, cx);
+            if this.supported_options().regex {
+                this.activate_search_mode(SearchMode::Regex, cx);
+            }
         });
         register_action(workspace, |this, _: &ActivateTextMode, cx| {
             this.activate_search_mode(SearchMode::Text, cx);
         });
         register_action(workspace, |this, action: &CycleMode, cx| {
-            this.cycle_mode(action, cx)
+            if this.supported_options().regex {
+                // If regex is not supported then search has just one mode (text) - in that case there's no point in supporting
+                // cycling.
+                this.cycle_mode(action, cx)
+            }
         });
         register_action(workspace, |this, action: &SelectNextMatch, cx| {
             this.select_next_match(action, cx);
@@ -359,6 +354,11 @@ impl BufferSearchBar {
         });
         register_action(workspace, |this, action: &SelectAllMatches, cx| {
             this.select_all_matches(action, cx);
+        });
+        register_action(workspace, |this, _: &editor::Cancel, cx| {
+            if !this.dismissed {
+                this.dismiss(&Dismiss, cx);
+            }
         });
     }
     pub fn new(cx: &mut ViewContext<Self>) -> Self {
@@ -393,7 +393,6 @@ impl BufferSearchBar {
 
     pub fn dismiss(&mut self, _: &Dismiss, cx: &mut ViewContext<Self>) {
         self.dismissed = true;
-
         for searchable_item in self.searchable_items_with_matches.keys() {
             if let Some(searchable_item) =
                 WeakSearchableItemHandle::upgrade(searchable_item.as_ref(), cx)
@@ -427,13 +426,18 @@ impl BufferSearchBar {
         if self.active_searchable_item.is_none() {
             return false;
         }
-
         self.dismissed = false;
         cx.notify();
         cx.emit(Event::UpdateLocation);
         true
     }
 
+    fn supported_options(&self) -> workspace::searchable::SearchOptions {
+        self.active_searchable_item
+            .as_deref()
+            .map(SearchableItemHandle::supported_options)
+            .unwrap_or_default()
+    }
     pub fn search_suggested(&mut self, cx: &mut ViewContext<Self>) {
         let search = self
             .query_suggestion(cx)
@@ -540,16 +544,6 @@ impl BufferSearchBar {
         self.current_mode = mode;
         let _ = self.update_matches(cx);
         cx.notify();
-    }
-
-    fn handle_editor_cancel(pane: &mut Pane, _: &editor::Cancel, cx: &mut ViewContext<Pane>) {
-        if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
-            if !search_bar.read(cx).dismissed {
-                search_bar.update(cx, |search_bar, cx| search_bar.dismiss(&Dismiss, cx));
-                cx.stop_propagation();
-                return;
-            }
-        }
     }
 
     pub fn focus_editor(&mut self, _: &FocusEditor, cx: &mut ViewContext<Self>) {
@@ -808,28 +802,6 @@ impl BufferSearchBar {
                 cx.focus(&handle);
             }
             cx.notify();
-        }
-    }
-    fn toggle_replace_on_a_pane(pane: &mut Pane, _: &ToggleReplace, cx: &mut ViewContext<Pane>) {
-        let mut should_propagate = true;
-        if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
-            search_bar.update(cx, |bar, cx| {
-                if let Some(_) = &bar.active_searchable_item {
-                    should_propagate = false;
-                    bar.replace_enabled = !bar.replace_enabled;
-                    if bar.dismissed {
-                        bar.show(cx);
-                    }
-                    if !bar.replace_enabled {
-                        let handle = bar.query_editor.focus_handle(cx);
-                        cx.focus(&handle);
-                    }
-                    cx.notify();
-                }
-            });
-        }
-        if !should_propagate {
-            cx.stop_propagation();
         }
     }
     fn replace_next(&mut self, _: &ReplaceNext, cx: &mut ViewContext<Self>) {
