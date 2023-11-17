@@ -31,7 +31,7 @@ client = { package = "client2", path = "../client2" }
 # clock = { path = "../clock" }
 copilot = { package = "copilot2", path = "../copilot2" }
 # copilot_button = { path = "../copilot_button" }
-# diagnostics = { path = "../diagnostics" }
+diagnostics = { package = "diagnostics2", path = "../diagnostics2" }
 db = { package = "db2", path = "../db2" }
 editor = { package="editor2", path = "../editor2" }
 # feedback = { path = "../feedback" }

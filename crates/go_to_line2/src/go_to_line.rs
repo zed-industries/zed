@@ -84,13 +84,13 @@ impl GoToLine {
     fn on_line_editor_event(
         &mut self,
         _: View<Editor>,
-        event: &editor::Event,
+        event: &editor::EditorEvent,
         cx: &mut ViewContext<Self>,
     ) {
         match event {
             // todo!() this isn't working...
-            editor::Event::Blurred => cx.emit(Manager::Dismiss),
-            editor::Event::BufferEdited { .. } => self.highlight_current_line(cx),
+            editor::EditorEvent::Blurred => cx.emit(Manager::Dismiss),
+            editor::EditorEvent::BufferEdited { .. } => self.highlight_current_line(cx),
             _ => {}
         }
     }

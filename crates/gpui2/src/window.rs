@@ -2,14 +2,14 @@ use crate::{
     key_dispatch::DispatchActionListener, px, size, Action, AnyBox, AnyDrag, AnyView, AppContext,
     AsyncWindowContext, AvailableSpace, Bounds, BoxShadow, Context, Corners, CursorStyle,
     DevicePixels, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity, EntityId,
-    EventEmitter, FileDropEvent, FocusEvent, FontId, GlobalElementId, GlyphId, Hsla, ImageData,
-    InputEvent, IsZero, KeyBinding, KeyContext, KeyDownEvent, LayoutId, Model, ModelContext,
-    Modifiers, MonochromeSprite, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Path,
-    Pixels, PlatformAtlas, PlatformDisplay, PlatformInputHandler, PlatformWindow, Point,
-    PolychromeSprite, PromptLevel, Quad, Render, RenderGlyphParams, RenderImageParams,
-    RenderSvgParams, ScaledPixels, SceneBuilder, Shadow, SharedString, Size, Style, SubscriberSet,
-    Subscription, TaffyLayoutEngine, Task, Underline, UnderlineStyle, View, VisualContext,
-    WeakView, WindowBounds, WindowOptions, SUBPIXEL_VARIANTS,
+    EventEmitter, FileDropEvent, Flatten, FocusEvent, FontId, GlobalElementId, GlyphId, Hsla,
+    ImageData, InputEvent, IsZero, KeyBinding, KeyContext, KeyDownEvent, LayoutId, Model,
+    ModelContext, Modifiers, MonochromeSprite, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInputHandler,
+    PlatformWindow, Point, PolychromeSprite, PromptLevel, Quad, Render, RenderGlyphParams,
+    RenderImageParams, RenderSvgParams, ScaledPixels, SceneBuilder, Shadow, SharedString, Size,
+    Style, SubscriberSet, Subscription, TaffyLayoutEngine, Task, Underline, UnderlineStyle, View,
+    VisualContext, WeakView, WindowBounds, WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::HashMap;
@@ -2411,6 +2411,17 @@ impl<V: 'static + Render> WindowHandle<V> {
         }
     }
 
+    pub fn root<C>(&self, cx: &mut C) -> Result<View<V>>
+    where
+        C: Context,
+    {
+        Flatten::flatten(cx.update_window(self.any_handle, |root_view, _| {
+            root_view
+                .downcast::<V>()
+                .map_err(|_| anyhow!("the type of the window's root view has changed"))
+        }))
+    }
+
     pub fn update<C, R>(
         &self,
         cx: &mut C,
@@ -2554,6 +2565,18 @@ pub enum ElementId {
     Integer(usize),
     Name(SharedString),
     FocusHandle(FocusId),
+}
+
+impl TryInto<SharedString> for ElementId {
+    type Error = anyhow::Error;
+
+    fn try_into(self) -> anyhow::Result<SharedString> {
+        if let ElementId::Name(name) = self {
+            Ok(name)
+        } else {
+            Err(anyhow!("element id is not string"))
+        }
+    }
 }
 
 impl From<EntityId> for ElementId {
