@@ -34,9 +34,8 @@ use std::{
     path::PathBuf,
     sync::Arc,
 };
-use theme::ThemeSettings;
 pub use toolbar_controls::ToolbarControls;
-use ui::Label;
+use ui::{h_stack, HighlightedLabel, Icon, IconElement, Label, TextColor};
 use util::TryFutureExt;
 use workspace::{
     item::{BreadcrumbText, Item, ItemEvent, ItemHandle},
@@ -661,7 +660,7 @@ impl Item for ProjectDiagnosticsEditor {
         Some("Project Diagnostics".into())
     }
 
-    fn tab_content<T: 'static>(&self, _detail: Option<usize>, cx: &AppContext) -> AnyElement<T> {
+    fn tab_content<T: 'static>(&self, _detail: Option<usize>, _: &AppContext) -> AnyElement<T> {
         render_summary(&self.summary)
     }
 
@@ -770,55 +769,28 @@ impl Item for ProjectDiagnosticsEditor {
 
 fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
     let (message, highlights) = highlight_diagnostic_message(Vec::new(), &diagnostic.message);
-    Arc::new(move |cx| {
-        let settings = ThemeSettings::get_global(cx);
-        div().id("diagnostic header").render()
-        // let font_size = (style.text_scale_factor * settings.buffer_font_size(cx)).round();
-        // let icon = if diagnostic.severity == DiagnosticSeverity::ERROR {
-        //     Svg::new("icons/error.svg").with_color(theme.error_diagnostic.message.text.color)
-        // } else {
-        //     Svg::new("icons/warning.svg").with_color(theme.warning_diagnostic.message.text.color)
-        // };
+    Arc::new(move |_| {
+        h_stack()
+            .id("diagnostic header")
+            .gap_3()
+            .bg(gpui::red())
+            .map(|stack| {
+                let icon = if diagnostic.severity == DiagnosticSeverity::ERROR {
+                    IconElement::new(Icon::XCircle).color(TextColor::Error)
+                } else {
+                    IconElement::new(Icon::ExclamationTriangle).color(TextColor::Warning)
+                };
 
-        // Flex::row()
-        //     .with_child(
-        //         icon.constrained()
-        //             .with_width(icon_width)
-        //             .aligned()
-        //             .contained()
-        //             .with_margin_right(cx.gutter_padding),
-        //     )
-        //     .with_children(diagnostic.source.as_ref().map(|source| {
-        //         Label::new(
-        //             format!("{source}: "),
-        //             style.source.label.clone().with_font_size(font_size),
-        //         )
-        //         .contained()
-        //         .with_style(style.message.container)
-        //         .aligned()
-        //     }))
-        //     .with_child(
-        //         Label::new(
-        //             message.clone(),
-        //             style.message.label.clone().with_font_size(font_size),
-        //         )
-        //         .with_highlights(highlights.clone())
-        //         .contained()
-        //         .with_style(style.message.container)
-        //         .aligned(),
-        //     )
-        //     .with_children(diagnostic.code.clone().map(|code| {
-        //         Label::new(code, style.code.text.clone().with_font_size(font_size))
-        //             .contained()
-        //             .with_style(style.code.container)
-        //             .aligned()
-        //     }))
-        //     .contained()
-        //     .with_style(style.container)
-        //     .with_padding_left(cx.gutter_padding)
-        //     .with_padding_right(cx.gutter_padding)
-        //     .expanded()
-        //     .into_any_named("diagnostic header")
+                stack.child(div().pl_8().child(icon))
+            })
+            .when_some(diagnostic.source.as_ref(), |stack, source| {
+                stack.child(Label::new(format!("{source}:")).color(TextColor::Accent))
+            })
+            .child(HighlightedLabel::new(message.clone(), highlights.clone()))
+            .when_some(diagnostic.code.as_ref(), |stack, code| {
+                stack.child(Label::new(code.clone()))
+            })
+            .render()
     })
 }
 
@@ -826,51 +798,13 @@ pub(crate) fn render_summary<T: 'static>(summary: &DiagnosticSummary) -> AnyElem
     if summary.error_count == 0 && summary.warning_count == 0 {
         Label::new("No problems").render()
     } else {
-        div()
+        h_stack()
             .bg(gpui::red())
-            .child(Label::new("TODO Show warnings/errors"))
+            .child(IconElement::new(Icon::XCircle))
+            .child(Label::new(summary.error_count.to_string()))
+            .child(IconElement::new(Icon::ExclamationTriangle))
+            .child(Label::new(summary.warning_count.to_string()))
             .render()
-        // Flex::row()
-        //     .with_child(
-        //         Svg::new("icons/error.svg")
-        //             .with_color(text_style.color)
-        //             .constrained()
-        //             .with_width(icon_width)
-        //             .aligned()
-        //             .contained()
-        //             .with_margin_right(icon_spacing),
-        //     )
-        //     .with_child(
-        //         Label::new(
-        //             summary.error_count.to_string(),
-        //             LabelStyle {
-        //                 text: text_style.clone(),
-        //                 highlight_text: None,
-        //             },
-        //         )
-        //         .aligned(),
-        //     )
-        //     .with_child(
-        //         Svg::new("icons/warning.svg")
-        //             .with_color(text_style.color)
-        //             .constrained()
-        //             .with_width(icon_width)
-        //             .aligned()
-        //             .contained()
-        //             .with_margin_left(summary_spacing)
-        //             .with_margin_right(icon_spacing),
-        //     )
-        //     .with_child(
-        //         Label::new(
-        //             summary.warning_count.to_string(),
-        //             LabelStyle {
-        //                 text: text_style.clone(),
-        //                 highlight_text: None,
-        //             },
-        //         )
-        //         .aligned(),
-        //     )
-        //     .into_any()
     }
 }
 

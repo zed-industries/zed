@@ -1,9 +1,6 @@
-use crate::{ProjectDiagnosticsEditor, ToggleWarnings};
-use gpui::{
-    div, Action, CursorStyle, Div, Entity, EventEmitter, MouseButton, ParentComponent, Render,
-    View, ViewContext, VisualContext, WeakView,
-};
-use ui::{Icon, IconButton, Label, StyledExt, Tooltip};
+use crate::ProjectDiagnosticsEditor;
+use gpui::{div, Div, EventEmitter, ParentComponent, Render, ViewContext, WeakView};
+use ui::{Icon, IconButton, Tooltip};
 use workspace::{item::ItemHandle, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 
 pub struct ToolbarControls {
