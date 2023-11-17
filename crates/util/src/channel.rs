@@ -11,6 +11,7 @@ lazy_static! {
     };
     pub static ref RELEASE_CHANNEL: ReleaseChannel = match RELEASE_CHANNEL_NAME.as_str() {
         "dev" => ReleaseChannel::Dev,
+        "nightly" => ReleaseChannel::Nightly,
         "preview" => ReleaseChannel::Preview,
         "stable" => ReleaseChannel::Stable,
         _ => panic!("invalid release channel {}", *RELEASE_CHANNEL_NAME),
@@ -21,6 +22,7 @@ lazy_static! {
 pub enum ReleaseChannel {
     #[default]
     Dev,
+    Nightly,
     Preview,
     Stable,
 }
@@ -29,6 +31,7 @@ impl ReleaseChannel {
     pub fn display_name(&self) -> &'static str {
         match self {
             ReleaseChannel::Dev => "Zed Dev",
+            ReleaseChannel::Nightly => "Zed Nightly",
             ReleaseChannel::Preview => "Zed Preview",
             ReleaseChannel::Stable => "Zed",
         }
@@ -37,6 +40,8 @@ impl ReleaseChannel {
     pub fn dev_name(&self) -> &'static str {
         match self {
             ReleaseChannel::Dev => "dev",
+            // TODO kb need to add DB data
+            ReleaseChannel::Nightly => "nightly",
             ReleaseChannel::Preview => "preview",
             ReleaseChannel::Stable => "stable",
         }
@@ -45,6 +50,7 @@ impl ReleaseChannel {
     pub fn url_scheme(&self) -> &'static str {
         match self {
             ReleaseChannel::Dev => "zed-dev://",
+            ReleaseChannel::Nightly => "zed-nightly://",
             ReleaseChannel::Preview => "zed-preview://",
             ReleaseChannel::Stable => "zed://",
         }
@@ -53,8 +59,20 @@ impl ReleaseChannel {
     pub fn link_prefix(&self) -> &'static str {
         match self {
             ReleaseChannel::Dev => "https://zed.dev/dev/",
+            // TODO kb need to add server handling
+            ReleaseChannel::Nightly => "https://zed.dev/nightly/",
             ReleaseChannel::Preview => "https://zed.dev/preview/",
             ReleaseChannel::Stable => "https://zed.dev/",
+        }
+    }
+
+    pub fn release_query_param(&self) -> Option<&'static str> {
+        match self {
+            Self::Dev => None,
+            // TODO kb need to add server handling
+            Self::Nightly => Some("nightly=1"),
+            Self::Preview => Some("preview=1"),
+            Self::Stable => None,
         }
     }
 }
@@ -62,6 +80,7 @@ impl ReleaseChannel {
 pub fn parse_zed_link(link: &str) -> Option<&str> {
     for release in [
         ReleaseChannel::Dev,
+        ReleaseChannel::Nightly,
         ReleaseChannel::Preview,
         ReleaseChannel::Stable,
     ] {

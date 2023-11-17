@@ -118,14 +118,20 @@ fn view_release_notes(_: &ViewReleaseNotes, cx: &mut AppContext) {
         let auto_updater = auto_updater.read(cx);
         let server_url = &auto_updater.server_url;
         let current_version = auto_updater.current_version;
-        let latest_release_url = if cx.has_global::<ReleaseChannel>()
-            && *cx.global::<ReleaseChannel>() == ReleaseChannel::Preview
-        {
-            format!("{server_url}/releases/preview/{current_version}")
-        } else {
-            format!("{server_url}/releases/stable/{current_version}")
-        };
-        cx.platform().open_url(&latest_release_url);
+        if cx.has_global::<ReleaseChannel>() {
+            match cx.global::<ReleaseChannel>() {
+                ReleaseChannel::Dev => {}
+                ReleaseChannel::Nightly => cx
+                    .platform()
+                    .open_url(&format!("{server_url}/releases/nightly/{current_version}")),
+                ReleaseChannel::Preview => cx
+                    .platform()
+                    .open_url(&format!("{server_url}/releases/preview/{current_version}")),
+                ReleaseChannel::Stable => cx
+                    .platform()
+                    .open_url(&format!("{server_url}/releases/stable/{current_version}")),
+            }
+        }
     }
 }
 
@@ -224,22 +230,19 @@ impl AutoUpdater {
             )
         });
 
-        let preview_param = cx.read(|cx| {
+        let mut url_string = format!(
+            "{server_url}/api/releases/latest?token={ZED_SECRET_CLIENT_TOKEN}&asset=Zed.dmg"
+        );
+        cx.read(|cx| {
             if cx.has_global::<ReleaseChannel>() {
-                if *cx.global::<ReleaseChannel>() == ReleaseChannel::Preview {
-                    return "&preview=1";
+                if let Some(param) = cx.global::<ReleaseChannel>().release_query_param() {
+                    url_string += "&";
+                    url_string += param;
                 }
             }
-            ""
         });
 
-        let mut response = client
-            .get(
-                &format!("{server_url}/api/releases/latest?token={ZED_SECRET_CLIENT_TOKEN}&asset=Zed.dmg{preview_param}"),
-                Default::default(),
-                true,
-            )
-            .await?;
+        let mut response = client.get(&url_string, Default::default(), true).await?;
 
         let mut body = Vec::new();
         response

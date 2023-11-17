@@ -17,6 +17,7 @@ fn address() -> SocketAddr {
         ReleaseChannel::Dev => 43737,
         ReleaseChannel::Preview => 43738,
         ReleaseChannel::Stable => 43739,
+        ReleaseChannel::Nightly => 43740,
     };
 
     SocketAddr::V4(SocketAddrV4::new(LOCALHOST, port))
@@ -25,6 +26,7 @@ fn address() -> SocketAddr {
 fn instance_handshake() -> &'static str {
     match *util::channel::RELEASE_CHANNEL {
         ReleaseChannel::Dev => "Zed Editor Dev Instance Running",
+        ReleaseChannel::Nightly => "Zed Editor Nightly Instance Running",
         ReleaseChannel::Preview => "Zed Editor Preview Instance Running",
         ReleaseChannel::Stable => "Zed Editor Stable Instance Running",
     }

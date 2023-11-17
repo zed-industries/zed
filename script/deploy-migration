@@ -4,6 +4,7 @@ set -eu
 source script/lib/deploy-helpers.sh
 
 if [[ $# < 2 ]]; then
+  # TODO kb nightly migrations?
   echo "Usage: $0 <production|staging|preview> <tag-name>"
   exit 1
 fi

@@ -4,6 +4,7 @@ set -eu
 source script/lib/deploy-helpers.sh
 
 if [[ $# < 1 ]]; then
+  # TODO kb infra for nightly?
   echo "Usage: $0 <production|staging|preview>"
   exit 1
 fi

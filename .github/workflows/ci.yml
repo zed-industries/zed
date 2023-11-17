@@ -130,6 +130,8 @@ jobs:
               expected_tag_name="v${version}";;
             preview)
               expected_tag_name="v${version}-pre";;
+            nightly)
+              expected_tag_name="v${version}-nightly";;
             *)
               echo "can't publish a release on channel ${channel}"
               exit 1;;
@@ -154,7 +156,9 @@ jobs:
 
       - uses: softprops/action-gh-release@v1
         name: Upload app bundle to release
-        if: ${{ env.RELEASE_CHANNEL }}
+        # TODO kb seems that zed.dev relies on GitHub releases for release version tracking.
+        # Find alternatives for `nightly` or just go on with more releases?
+        if: ${{ env.RELEASE_CHANNEL == 'preview' || env.RELEASE_CHANNEL == 'stable' }}
         with:
           draft: true
           prerelease: ${{ env.RELEASE_CHANNEL == 'preview' }}

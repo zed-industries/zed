@@ -20,7 +20,7 @@ pub struct Telemetry {
 #[derive(Default)]
 struct TelemetryState {
     metrics_id: Option<Arc<str>>,      // Per logged-in user
-    installation_id: Option<Arc<str>>, // Per app installation (different for dev, preview, and stable)
+    installation_id: Option<Arc<str>>, // Per app installation (different for dev, nightly, preview, and stable)
     session_id: Option<Arc<str>>,      // Per app launch
     app_version: Option<Arc<str>>,
     release_channel: Option<&'static str>,
