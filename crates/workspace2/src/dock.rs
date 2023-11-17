@@ -8,7 +8,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use theme2::ActiveTheme;
-use ui::{h_stack, menu_handle, ContextMenu, IconButton, InteractionState, Tooltip};
+use ui::{
+    h_stack, menu_handle, ContextMenu, IconButton, InteractionState, Label, ListEntry, Tooltip,
+};
 
 pub enum PanelEvent {
     ChangePosition,
@@ -672,6 +674,7 @@ impl Render for PanelButtons {
         let dock = self.dock.read(cx);
         let active_index = dock.active_panel_index;
         let is_open = dock.is_open;
+        let dock_position = dock.position;
 
         let (menu_anchor, menu_attach) = match dock.position {
             DockPosition::Left => (AnchorCorner::BottomLeft, AnchorCorner::TopLeft),
@@ -684,9 +687,10 @@ impl Render for PanelButtons {
             .panel_entries
             .iter()
             .enumerate()
-            .filter_map(|(i, panel)| {
-                let icon = panel.panel.icon(cx)?;
-                let name = panel.panel.persistent_name();
+            .filter_map(|(i, entry)| {
+                let icon = entry.panel.icon(cx)?;
+                let name = entry.panel.persistent_name();
+                let panel = entry.panel.clone();
 
                 let mut button: IconButton<Self> = if i == active_index && is_open {
                     let action = dock.toggle_action();
@@ -697,7 +701,7 @@ impl Render for PanelButtons {
                         .action(action.boxed_clone())
                         .tooltip(move |_, cx| Tooltip::for_action(tooltip.clone(), &*action, cx))
                 } else {
-                    let action = panel.panel.toggle_action(cx);
+                    let action = entry.panel.toggle_action(cx);
 
                     IconButton::new(name, icon)
                         .action(action.boxed_clone())
@@ -708,7 +712,30 @@ impl Render for PanelButtons {
                     menu_handle()
                         .id(name)
                         .menu(move |_, cx| {
-                            cx.build_view(|cx| ContextMenu::new(cx).header("SECTION"))
+                            const POSITIONS: [DockPosition; 3] = [
+                                DockPosition::Left,
+                                DockPosition::Right,
+                                DockPosition::Bottom,
+                            ];
+                            ContextMenu::build(cx, |mut menu, cx| {
+                                for position in POSITIONS {
+                                    if position != dock_position
+                                        && panel.position_is_valid(position, cx)
+                                    {
+                                        let panel = panel.clone();
+                                        menu = menu.entry(
+                                            ListEntry::new(Label::new(format!(
+                                                "Dock {}",
+                                                position.to_label()
+                                            ))),
+                                            move |_, cx| {
+                                                panel.set_position(position, cx);
+                                            },
+                                        )
+                                    }
+                                }
+                                menu
+                            })
                         })
                         .anchor(menu_anchor)
                         .attach(menu_attach)

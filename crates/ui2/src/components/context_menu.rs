@@ -69,6 +69,11 @@ impl<V: Render> ContextMenu<V> {
         self
     }
 
+    pub fn action(self, view: ListEntry<Self>, action: Box<dyn Action>) -> Self {
+        // todo: add the keybindings to the list entry
+        self.entry(view, move |_, cx| cx.dispatch_action(action.boxed_clone()))
+    }
+
     pub fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
         // todo!()
         cx.emit(Dismiss);
