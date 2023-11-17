@@ -19,6 +19,7 @@ pub struct IconButton<V: 'static> {
     color: TextColor,
     variant: ButtonVariant,
     state: InteractionState,
+    selected: bool,
     tooltip: Option<Box<dyn Fn(&mut V, &mut ViewContext<V>) -> AnyView + 'static>>,
     handlers: IconButtonHandlers<V>,
 }
@@ -31,6 +32,7 @@ impl<V: 'static> IconButton<V> {
             color: TextColor::default(),
             variant: ButtonVariant::default(),
             state: InteractionState::default(),
+            selected: false,
             tooltip: None,
             handlers: IconButtonHandlers::default(),
         }
@@ -53,6 +55,11 @@ impl<V: 'static> IconButton<V> {
 
     pub fn state(mut self, state: InteractionState) -> Self {
         self.state = state;
+        self
+    }
+
+    pub fn selected(mut self, selected: bool) -> Self {
+        self.selected = selected;
         self
     }
 
@@ -80,7 +87,7 @@ impl<V: 'static> IconButton<V> {
             _ => self.color,
         };
 
-        let (bg_color, bg_hover_color, bg_active_color) = match self.variant {
+        let (mut bg_color, bg_hover_color, bg_active_color) = match self.variant {
             ButtonVariant::Filled => (
                 cx.theme().colors().element_background,
                 cx.theme().colors().element_hover,
@@ -92,6 +99,10 @@ impl<V: 'static> IconButton<V> {
                 cx.theme().colors().ghost_element_active,
             ),
         };
+
+        if self.selected {
+            bg_color = bg_hover_color;
+        }
 
         let mut button = h_stack()
             .id(self.id.clone())
@@ -113,7 +124,9 @@ impl<V: 'static> IconButton<V> {
         }
 
         if let Some(tooltip) = self.tooltip.take() {
-            button = button.tooltip(move |view: &mut V, cx| (tooltip)(view, cx))
+            if !self.selected {
+                button = button.tooltip(move |view: &mut V, cx| (tooltip)(view, cx))
+            }
         }
 
         button

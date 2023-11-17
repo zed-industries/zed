@@ -1151,6 +1151,14 @@ impl<'a> WindowContext<'a> {
                 self.window.mouse_position = mouse_move.position;
                 InputEvent::MouseMove(mouse_move)
             }
+            InputEvent::MouseDown(mouse_down) => {
+                self.window.mouse_position = mouse_down.position;
+                InputEvent::MouseDown(mouse_down)
+            }
+            InputEvent::MouseUp(mouse_up) => {
+                self.window.mouse_position = mouse_up.position;
+                InputEvent::MouseUp(mouse_up)
+            }
             // Translate dragging and dropping of external files from the operating system
             // to internal drag and drop events.
             InputEvent::FileDrop(file_drop) => match file_drop {

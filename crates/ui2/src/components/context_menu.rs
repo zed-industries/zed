@@ -1,55 +1,13 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::{prelude::*, ListItemVariant};
+use crate::prelude::*;
 use crate::{v_stack, Label, List, ListEntry, ListItem, ListSeparator, ListSubHeader};
 use gpui::{
-    overlay, px, Action, AnyElement, Bounds, DispatchPhase, EventEmitter, FocusHandle,
-    FocusableView, LayoutId, MouseButton, MouseDownEvent, Overlay, Render, View,
+    overlay, px, Action, AnchorCorner, AnyElement, Bounds, DispatchPhase, Div, EventEmitter,
+    FocusHandle, FocusableView, LayoutId, MouseButton, MouseDownEvent, Pixels, Point, Render, View,
 };
 use smallvec::SmallVec;
-
-pub enum ContextMenuItem {
-    Header(SharedString),
-    Entry(Label, Box<dyn gpui::Action>),
-    Separator,
-}
-
-impl Clone for ContextMenuItem {
-    fn clone(&self) -> Self {
-        match self {
-            ContextMenuItem::Header(name) => ContextMenuItem::Header(name.clone()),
-            ContextMenuItem::Entry(label, action) => {
-                ContextMenuItem::Entry(label.clone(), action.boxed_clone())
-            }
-            ContextMenuItem::Separator => ContextMenuItem::Separator,
-        }
-    }
-}
-impl ContextMenuItem {
-    fn to_list_item(self) -> ListItem {
-        match self {
-            ContextMenuItem::Header(label) => ListSubHeader::new(label).into(),
-            ContextMenuItem::Entry(label, action) => ListEntry::new(label)
-                .variant(ListItemVariant::Inset)
-                .action(action)
-                .into(),
-            ContextMenuItem::Separator => ListSeparator::new().into(),
-        }
-    }
-
-    pub fn header(label: impl Into<SharedString>) -> Self {
-        Self::Header(label.into())
-    }
-
-    pub fn separator() -> Self {
-        Self::Separator
-    }
-
-    pub fn entry(label: Label, action: impl Action) -> Self {
-        Self::Entry(label, Box::new(action))
-    }
-}
 
 pub struct ContextMenu {
     items: Vec<ListItem>,
@@ -101,67 +59,93 @@ impl ContextMenu {
 }
 
 impl Render for ContextMenu {
-    type Element = Overlay<Self>;
+    type Element = Div<Self>;
     // todo!()
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-        overlay().child(
-            div().elevation_2(cx).flex().flex_row().child(
-                v_stack()
-                    .min_w(px(200.))
-                    .track_focus(&self.focus_handle)
-                    .on_mouse_down_out(|this: &mut Self, _, cx| {
-                        this.cancel(&Default::default(), cx)
-                    })
-                    // .on_action(ContextMenu::select_first)
-                    // .on_action(ContextMenu::select_last)
-                    // .on_action(ContextMenu::select_next)
-                    // .on_action(ContextMenu::select_prev)
-                    .on_action(ContextMenu::confirm)
-                    .on_action(ContextMenu::cancel)
-                    .flex_none()
-                    // .bg(cx.theme().colors().elevated_surface_background)
-                    // .border()
-                    // .border_color(cx.theme().colors().border)
-                    .child(List::new(self.items.clone())),
-            ),
+        div().elevation_2(cx).flex().flex_row().child(
+            v_stack()
+                .min_w(px(200.))
+                .track_focus(&self.focus_handle)
+                .on_mouse_down_out(|this: &mut Self, _, cx| this.cancel(&Default::default(), cx))
+                // .on_action(ContextMenu::select_first)
+                // .on_action(ContextMenu::select_last)
+                // .on_action(ContextMenu::select_next)
+                // .on_action(ContextMenu::select_prev)
+                .on_action(ContextMenu::confirm)
+                .on_action(ContextMenu::cancel)
+                .flex_none()
+                // .bg(cx.theme().colors().elevated_surface_background)
+                // .border()
+                // .border_color(cx.theme().colors().border)
+                .child(List::new(self.items.clone())),
         )
     }
 }
 
 pub struct MenuHandle<V: 'static> {
-    id: ElementId,
-    children: SmallVec<[AnyElement<V>; 2]>,
-    builder: Rc<dyn Fn(&mut V, &mut ViewContext<V>) -> View<ContextMenu> + 'static>,
-}
+    id: Option<ElementId>,
+    child_builder: Option<Box<dyn FnOnce(bool) -> AnyElement<V> + 'static>>,
+    menu_builder: Option<Rc<dyn Fn(&mut V, &mut ViewContext<V>) -> View<ContextMenu> + 'static>>,
 
-impl<V: 'static> ParentComponent<V> for MenuHandle<V> {
-    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<V>; 2]> {
-        &mut self.children
-    }
+    anchor: Option<AnchorCorner>,
+    attach: Option<AnchorCorner>,
 }
 
 impl<V: 'static> MenuHandle<V> {
-    pub fn new(
-        id: impl Into<ElementId>,
-        builder: impl Fn(&mut V, &mut ViewContext<V>) -> View<ContextMenu> + 'static,
+    pub fn id(mut self, id: impl Into<ElementId>) -> Self {
+        self.id = Some(id.into());
+        self
+    }
+
+    pub fn menu(
+        mut self,
+        f: impl Fn(&mut V, &mut ViewContext<V>) -> View<ContextMenu> + 'static,
     ) -> Self {
-        Self {
-            id: id.into(),
-            children: SmallVec::new(),
-            builder: Rc::new(builder),
-        }
+        self.menu_builder = Some(Rc::new(f));
+        self
+    }
+
+    pub fn child<R: Component<V>>(mut self, f: impl FnOnce(bool) -> R + 'static) -> Self {
+        self.child_builder = Some(Box::new(|b| f(b).render()));
+        self
+    }
+
+    /// anchor defines which corner of the menu to anchor to the attachment point
+    /// (by default the cursor position, but see attach)
+    pub fn anchor(mut self, anchor: AnchorCorner) -> Self {
+        self.anchor = Some(anchor);
+        self
+    }
+
+    /// attach defines which corner of the handle to attach the menu's anchor to
+    pub fn attach(mut self, attach: AnchorCorner) -> Self {
+        self.attach = Some(attach);
+        self
+    }
+}
+
+pub fn menu_handle<V: 'static>() -> MenuHandle<V> {
+    MenuHandle {
+        id: None,
+        child_builder: None,
+        menu_builder: None,
+        anchor: None,
+        attach: None,
     }
 }
 
 pub struct MenuHandleState<V> {
     menu: Rc<RefCell<Option<View<ContextMenu>>>>,
+    position: Rc<RefCell<Point<Pixels>>>,
+    child_layout_id: Option<LayoutId>,
+    child_element: Option<AnyElement<V>>,
     menu_element: Option<AnyElement<V>>,
 }
 impl<V: 'static> Element<V> for MenuHandle<V> {
     type ElementState = MenuHandleState<V>;
 
     fn element_id(&self) -> Option<gpui::ElementId> {
-        Some(self.id.clone())
+        Some(self.id.clone().expect("menu_handle must have an id()"))
     }
 
     fn layout(
@@ -170,27 +154,50 @@ impl<V: 'static> Element<V> for MenuHandle<V> {
         element_state: Option<Self::ElementState>,
         cx: &mut crate::ViewContext<V>,
     ) -> (gpui::LayoutId, Self::ElementState) {
-        let mut child_layout_ids = self
-            .children
-            .iter_mut()
-            .map(|child| child.layout(view_state, cx))
-            .collect::<SmallVec<[LayoutId; 2]>>();
-
-        let menu = if let Some(element_state) = element_state {
-            element_state.menu
+        let (menu, position) = if let Some(element_state) = element_state {
+            (element_state.menu, element_state.position)
         } else {
-            Rc::new(RefCell::new(None))
+            (Rc::default(), Rc::default())
         };
 
+        let mut menu_layout_id = None;
+
         let menu_element = menu.borrow_mut().as_mut().map(|menu| {
-            let mut view = menu.clone().render();
-            child_layout_ids.push(view.layout(view_state, cx));
+            let mut overlay = overlay::<V>().snap_to_window();
+            if let Some(anchor) = self.anchor {
+                overlay = overlay.anchor(anchor);
+            }
+            overlay = overlay.position(*position.borrow());
+
+            let mut view = overlay.child(menu.clone()).render();
+            menu_layout_id = Some(view.layout(view_state, cx));
             view
         });
 
-        let layout_id = cx.request_layout(&gpui::Style::default(), child_layout_ids.into_iter());
+        let mut child_element = self
+            .child_builder
+            .take()
+            .map(|child_builder| (child_builder)(menu.borrow().is_some()));
 
-        (layout_id, MenuHandleState { menu, menu_element })
+        let child_layout_id = child_element
+            .as_mut()
+            .map(|child_element| child_element.layout(view_state, cx));
+
+        let layout_id = cx.request_layout(
+            &gpui::Style::default(),
+            menu_layout_id.into_iter().chain(child_layout_id),
+        );
+
+        (
+            layout_id,
+            MenuHandleState {
+                menu,
+                position,
+                child_element,
+                child_layout_id,
+                menu_element,
+            },
+        )
     }
 
     fn paint(
@@ -200,7 +207,7 @@ impl<V: 'static> Element<V> for MenuHandle<V> {
         element_state: &mut Self::ElementState,
         cx: &mut crate::ViewContext<V>,
     ) {
-        for child in &mut self.children {
+        if let Some(child) = element_state.child_element.as_mut() {
             child.paint(view_state, cx);
         }
 
@@ -209,8 +216,14 @@ impl<V: 'static> Element<V> for MenuHandle<V> {
             return;
         }
 
+        let Some(builder) = self.menu_builder.clone() else {
+            return;
+        };
         let menu = element_state.menu.clone();
-        let builder = self.builder.clone();
+        let position = element_state.position.clone();
+        let attach = self.attach.clone();
+        let child_layout_id = element_state.child_layout_id.clone();
+
         cx.on_mouse_event(move |view_state, event: &MouseDownEvent, phase, cx| {
             if phase == DispatchPhase::Bubble
                 && event.button == MouseButton::Right
@@ -229,6 +242,14 @@ impl<V: 'static> Element<V> for MenuHandle<V> {
                 })
                 .detach();
                 *menu.borrow_mut() = Some(new_menu);
+
+                *position.borrow_mut() = if attach.is_some() && child_layout_id.is_some() {
+                    attach
+                        .unwrap()
+                        .corner(cx.layout_bounds(child_layout_id.unwrap()))
+                } else {
+                    cx.mouse_position()
+                };
                 cx.notify();
             }
         });
@@ -250,35 +271,101 @@ mod stories {
     use crate::story::Story;
     use gpui::{action, Div, Render, VisualContext};
 
+    #[action]
+    struct PrintCurrentDate {}
+
+    fn build_menu(cx: &mut WindowContext, header: impl Into<SharedString>) -> View<ContextMenu> {
+        cx.build_view(|cx| {
+            ContextMenu::new(cx).header(header).separator().entry(
+                Label::new("Print current time"),
+                PrintCurrentDate {}.boxed_clone(),
+            )
+        })
+    }
+
     pub struct ContextMenuStory;
 
     impl Render for ContextMenuStory {
         type Element = Div<Self>;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-            #[action]
-            struct PrintCurrentDate {}
-
             Story::container(cx)
-                .child(Story::title_for::<_, ContextMenu>(cx))
                 .on_action(|_, _: &PrintCurrentDate, _| {
                     if let Ok(unix_time) = std::time::UNIX_EPOCH.elapsed() {
                         println!("Current Unix time is {:?}", unix_time.as_secs());
                     }
                 })
+                .flex()
+                .flex_row()
+                .justify_between()
                 .child(
-                    MenuHandle::new("test", move |_, cx| {
-                        cx.build_view(|cx| {
-                            ContextMenu::new(cx)
-                                .header("Section header")
-                                .separator()
-                                .entry(
-                                    Label::new("Print current time"),
-                                    PrintCurrentDate {}.boxed_clone(),
-                                )
-                        })
-                    })
-                    .child(Label::new("RIGHT CLICK ME")),
+                    div()
+                        .flex()
+                        .flex_col()
+                        .justify_between()
+                        .child(
+                            menu_handle()
+                                .id("test2")
+                                .child(|is_open| {
+                                    Label::new(if is_open {
+                                        "TOP LEFT"
+                                    } else {
+                                        "RIGHT CLICK ME"
+                                    })
+                                    .render()
+                                })
+                                .menu(move |_, cx| build_menu(cx, "top left")),
+                        )
+                        .child(
+                            menu_handle()
+                                .id("test1")
+                                .child(|is_open| {
+                                    Label::new(if is_open {
+                                        "BOTTOM LEFT"
+                                    } else {
+                                        "RIGHT CLICK ME"
+                                    })
+                                    .render()
+                                })
+                                .anchor(AnchorCorner::BottomLeft)
+                                .attach(AnchorCorner::TopLeft)
+                                .menu(move |_, cx| build_menu(cx, "bottom left")),
+                        ),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .justify_between()
+                        .child(
+                            menu_handle()
+                                .id("test3")
+                                .child(|is_open| {
+                                    Label::new(if is_open {
+                                        "TOP RIGHT"
+                                    } else {
+                                        "RIGHT CLICK ME"
+                                    })
+                                    .render()
+                                })
+                                .anchor(AnchorCorner::TopRight)
+                                .menu(move |_, cx| build_menu(cx, "top right")),
+                        )
+                        .child(
+                            menu_handle()
+                                .id("test4")
+                                .child(|is_open| {
+                                    Label::new(if is_open {
+                                        "BOTTOM RIGHT"
+                                    } else {
+                                        "RIGHT CLICK ME"
+                                    })
+                                    .render()
+                                })
+                                .anchor(AnchorCorner::BottomRight)
+                                .attach(AnchorCorner::TopRight)
+                                .menu(move |_, cx| build_menu(cx, "bottom right")),
+                        ),
                 )
         }
     }

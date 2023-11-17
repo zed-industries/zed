@@ -15,7 +15,7 @@ pub struct Overlay<V> {
     anchor_corner: AnchorCorner,
     fit_mode: OverlayFitMode,
     // todo!();
-    // anchor_position: Option<Vector2F>,
+    anchor_position: Option<Point<Pixels>>,
     // position_mode: OverlayPositionMode,
 }
 
@@ -26,6 +26,7 @@ pub fn overlay<V: 'static>() -> Overlay<V> {
         children: SmallVec::new(),
         anchor_corner: AnchorCorner::TopLeft,
         fit_mode: OverlayFitMode::SwitchAnchor,
+        anchor_position: None,
     }
 }
 
@@ -33,6 +34,13 @@ impl<V> Overlay<V> {
     /// Sets which corner of the overlay should be anchored to the current position.
     pub fn anchor(mut self, anchor: AnchorCorner) -> Self {
         self.anchor_corner = anchor;
+        self
+    }
+
+    /// Sets the position in window co-ordinates
+    /// (otherwise the location the overlay is rendered is used)
+    pub fn position(mut self, anchor: Point<Pixels>) -> Self {
+        self.anchor_position = Some(anchor);
         self
     }
 
@@ -102,7 +110,7 @@ impl<V: 'static> Element<V> for Overlay<V> {
             child_max = child_max.max(&child_bounds.lower_right());
         }
         let size: Size<Pixels> = (child_max - child_min).into();
-        let origin = bounds.origin;
+        let origin = self.anchor_position.unwrap_or(bounds.origin);
 
         let mut desired = self.anchor_corner.get_bounds(origin, size);
         let limits = Bounds {
@@ -194,6 +202,15 @@ impl AnchorCorner {
         };
 
         Bounds { origin, size }
+    }
+
+    pub fn corner(&self, bounds: Bounds<Pixels>) -> Point<Pixels> {
+        match self {
+            Self::TopLeft => bounds.origin,
+            Self::TopRight => bounds.upper_right(),
+            Self::BottomLeft => bounds.lower_left(),
+            Self::BottomRight => bounds.lower_right(),
+        }
     }
 
     fn switch_axis(self, axis: Axis) -> Self {

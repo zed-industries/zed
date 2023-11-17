@@ -32,7 +32,7 @@ use workspace::{
     notifications::NotifyResultExt,
     register_deserializable_item,
     searchable::{SearchEvent, SearchOptions, SearchableItem},
-    ui::{ContextMenu, ContextMenuItem, Label},
+    ui::{ContextMenu, Label},
     CloseActiveItem, NewCenterTerminal, Pane, ToolbarItemLocation, Workspace, WorkspaceId,
 };
 

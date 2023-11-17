@@ -1,18 +1,18 @@
 use crate::{status_bar::StatusItemView, Axis, Workspace};
 use gpui::{
-    div, overlay, point, px, Action, AnyElement, AnyView, AppContext, Component, DispatchPhase,
-    Div, Element, ElementId, Entity, EntityId, EventEmitter, FocusHandle, FocusableView,
-    InteractiveComponent, LayoutId, MouseButton, MouseDownEvent, ParentComponent, Pixels, Point,
-    Render, SharedString, Style, Styled, Subscription, View, ViewContext, VisualContext, WeakView,
-    WindowContext,
+    div, overlay, point, px, Action, AnchorCorner, AnyElement, AnyView, AppContext, Component,
+    DispatchPhase, Div, Element, ElementId, Entity, EntityId, EventEmitter, FocusHandle,
+    FocusableView, InteractiveComponent, LayoutId, MouseButton, MouseDownEvent, ParentComponent,
+    Pixels, Point, Render, SharedString, Style, Styled, Subscription, View, ViewContext,
+    VisualContext, WeakView, WindowContext,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 use ui::{
-    h_stack, ContextMenu, ContextMenuItem, IconButton, InteractionState, Label, MenuEvent,
-    MenuHandle, Tooltip,
+    h_stack, menu_handle, ContextMenu, IconButton, InteractionState, Label, MenuEvent, MenuHandle,
+    Tooltip,
 };
 
 pub enum PanelEvent {
@@ -672,6 +672,13 @@ impl Render for PanelButtons {
         let active_index = dock.active_panel_index;
         let is_open = dock.is_open;
 
+        let (menu_anchor, menu_attach) = match dock.position {
+            DockPosition::Left => (AnchorCorner::BottomLeft, AnchorCorner::TopLeft),
+            DockPosition::Bottom | DockPosition::Right => {
+                (AnchorCorner::BottomRight, AnchorCorner::TopRight)
+            }
+        };
+
         let buttons = dock
             .panel_entries
             .iter()
@@ -697,11 +704,14 @@ impl Render for PanelButtons {
                 };
 
                 Some(
-                    MenuHandle::new(
-                        SharedString::from(format!("{} tooltip", name)),
-                        move |_, cx| cx.build_view(|cx| ContextMenu::new(cx).header("SECTION")),
-                    )
-                    .child(button),
+                    menu_handle()
+                        .id(name)
+                        .menu(move |_, cx| {
+                            cx.build_view(|cx| ContextMenu::new(cx).header("SECTION"))
+                        })
+                        .anchor(menu_anchor)
+                        .attach(menu_attach)
+                        .child(|is_open| button.selected(is_open)),
                 )
             });
 
