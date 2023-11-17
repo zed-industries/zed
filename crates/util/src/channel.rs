@@ -9,7 +9,7 @@ lazy_static! {
     } else {
         include_str!("../../zed/RELEASE_CHANNEL").to_string()
     };
-    pub static ref RELEASE_CHANNEL: ReleaseChannel = match RELEASE_CHANNEL_NAME.as_str() {
+    pub static ref RELEASE_CHANNEL: ReleaseChannel = match RELEASE_CHANNEL_NAME.as_str().trim() {
         "dev" => ReleaseChannel::Dev,
         "nightly" => ReleaseChannel::Nightly,
         "preview" => ReleaseChannel::Preview,
