@@ -185,8 +185,25 @@ impl Drop for FocusHandle {
     }
 }
 
+/// FocusableView allows users of your view to easily
+/// focus it (using cx.focus_view(view))
 pub trait FocusableView: Render {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle;
+}
+
+/// ManagedView is a view (like a Modal, Popover, Menu, etc.)
+/// where the lifecycle of the view is handled by another view.
+pub trait ManagedView: Render {
+    fn focus_handle(&self, cx: &AppContext) -> FocusHandle;
+}
+
+pub struct Dismiss;
+impl<T: ManagedView> EventEmitter<Dismiss> for T {}
+
+impl<T: ManagedView> FocusableView for T {
+    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+        self.focus_handle(cx)
+    }
 }
 
 // Holds the state for a specific window.
