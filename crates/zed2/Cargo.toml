@@ -11,7 +11,7 @@ path = "src/zed2.rs"
 doctest = false
 
 [[bin]]
-name = "Zed"
+name = "Zed2"
 path = "src/main.rs"
 
 [dependencies]

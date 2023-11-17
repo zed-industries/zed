@@ -10,7 +10,7 @@ path = "src/live_kit_client2.rs"
 doctest = false
 
 [[example]]
-name = "test_app"
+name = "test_app2"
 
 [features]
 test-support = [
