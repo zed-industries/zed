@@ -84,7 +84,8 @@ pub use stories::*;
 mod stories {
     use super::*;
     use crate::story::Story;
-    use gpui::{action, Div, Render};
+    use gpui::{Div, Render};
+    use serde::Deserialize;
 
     pub struct ContextMenuStory;
 
@@ -92,7 +93,7 @@ mod stories {
         type Element = Div<Self>;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-            #[action]
+            #[derive(PartialEq, Clone, Deserialize, gpui::Action)]
             struct PrintCurrentDate {}
 
             Story::container(cx)

@@ -55,6 +55,7 @@ use private::Sealed;
 pub use refineable::*;
 pub use scene::*;
 pub use serde;
+pub use serde_derive;
 pub use serde_json;
 pub use smallvec;
 pub use smol::Timer;

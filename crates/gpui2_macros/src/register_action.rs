@@ -12,13 +12,54 @@
 //     gpui2::register_action_builder::<Foo>()
 // }
 use proc_macro::TokenStream;
+use proc_macro2::Ident;
 use quote::{format_ident, quote};
-use syn::{parse_macro_input, DeriveInput};
+use syn::{parse_macro_input, DeriveInput, Error};
 
-pub fn register_action(_attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn register_action_macro(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as DeriveInput);
-    let type_name = &input.ident;
+    let registration = register_action(&input.ident);
 
+    let has_action_derive = input
+        .attrs
+        .iter()
+        .find(|attr| {
+            (|| {
+                let meta = attr.parse_meta().ok()?;
+                meta.path().is_ident("derive").then(|| match meta {
+                    syn::Meta::Path(_) => None,
+                    syn::Meta::NameValue(_) => None,
+                    syn::Meta::List(list) => list
+                        .nested
+                        .iter()
+                        .find(|list| match list {
+                            syn::NestedMeta::Meta(meta) => meta.path().is_ident("Action"),
+                            syn::NestedMeta::Lit(_) => false,
+                        })
+                        .map(|_| true),
+                })?
+            })()
+            .unwrap_or(false)
+        })
+        .is_some();
+
+    if has_action_derive {
+        return Error::new(
+            input.ident.span(),
+            "The Action derive macro has already registered this action",
+        )
+        .into_compile_error()
+        .into();
+    }
+
+    TokenStream::from(quote! {
+        #input
+
+        #registration
+    })
+}
+
+pub(crate) fn register_action(type_name: &Ident) -> proc_macro2::TokenStream {
     let static_slice_name =
         format_ident!("__GPUI_ACTIONS_{}", type_name.to_string().to_uppercase());
 
@@ -27,9 +68,7 @@ pub fn register_action(_attr: TokenStream, item: TokenStream) -> TokenStream {
         type_name.to_string().to_lowercase()
     );
 
-    let expanded = quote! {
-        #input
-
+    quote! {
         #[doc(hidden)]
         #[gpui::linkme::distributed_slice(gpui::__GPUI_ACTIONS)]
         #[linkme(crate = gpui::linkme)]
@@ -44,7 +83,5 @@ pub fn register_action(_attr: TokenStream, item: TokenStream) -> TokenStream {
                 build: <#type_name as gpui::Action>::build,
             }
         }
-    };
-
-    TokenStream::from(expanded)
+    }
 }

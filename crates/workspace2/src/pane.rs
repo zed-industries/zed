@@ -7,7 +7,7 @@ use crate::{
 use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
 use gpui::{
-    actions, prelude::*, register_action, AppContext, AsyncWindowContext, Component, Div, EntityId,
+    actions, prelude::*, Action, AppContext, AsyncWindowContext, Component, Div, EntityId,
     EventEmitter, FocusHandle, Focusable, FocusableView, Model, PromptLevel, Render, Task, View,
     ViewContext, VisualContext, WeakView, WindowContext,
 };
@@ -70,15 +70,13 @@ pub struct ActivateItem(pub usize);
 //     pub pane: WeakView<Pane>,
 // }
 
-#[register_action]
-#[derive(Clone, PartialEq, Debug, Deserialize, Default)]
+#[derive(Clone, PartialEq, Debug, Deserialize, Default, Action)]
 #[serde(rename_all = "camelCase")]
 pub struct CloseActiveItem {
     pub save_intent: Option<SaveIntent>,
 }
 
-#[register_action]
-#[derive(Clone, PartialEq, Debug, Deserialize, Default)]
+#[derive(Clone, PartialEq, Debug, Deserialize, Default, Action)]
 #[serde(rename_all = "camelCase")]
 pub struct CloseAllItems {
     pub save_intent: Option<SaveIntent>,
@@ -1917,7 +1915,7 @@ impl Render for Pane {
             .on_action(|pane: &mut Pane, _: &SplitRight, cx| pane.split(SplitDirection::Right, cx))
             .on_action(|pane: &mut Pane, _: &SplitDown, cx| pane.split(SplitDirection::Down, cx))
             .size_full()
-            .on_action(|pane: &mut Self, action, cx| {
+            .on_action(|pane: &mut Self, action: &CloseActiveItem, cx| {
                 pane.close_active_item(action, cx)
                     .map(|task| task.detach_and_log_err(cx));
             })

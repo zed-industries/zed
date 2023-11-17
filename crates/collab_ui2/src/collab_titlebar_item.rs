@@ -130,14 +130,12 @@ impl Render for CollabTitlebarItem {
                                     .color(Some(TextColor::Muted)),
                             )
                             .tooltip(move |_, cx| {
-                                // todo!() Replace with real action.
-                                #[gpui::action]
-                                struct NoAction {}
                                 cx.build_view(|_| {
                                     Tooltip::new("Recent Branches")
                                         .key_binding(KeyBinding::new(gpui::KeyBinding::new(
                                             "cmd-b",
-                                            NoAction {},
+                                            // todo!() Replace with real action.
+                                            gpui::NoAction,
                                             None,
                                         )))
                                         .meta("Only local branches shown")
