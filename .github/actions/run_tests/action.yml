@@ -17,12 +17,6 @@ runs:
       with:
         node-version: "18"
 
-    - name: Checkout repo
-      uses: actions/checkout@v3
-      with:
-        clean: false
-        submodules: "recursive"
-
     - name: Limit target directory size
       shell: bash -euxo pipefail {0}
       run: script/clear-target-dir-if-larger-than 70

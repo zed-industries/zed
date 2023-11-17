@@ -1,5 +1,5 @@
-name: 'Run rustfmt'
-description: 'Runs rustfmt'
+name: 'Check formatting'
+description: 'Checks code formatting use cargo fmt'
 
 runs:
   using: "composite"
@@ -9,12 +9,6 @@ runs:
       run: |
         rustup set profile minimal
         rustup update stable
-
-    - name: Checkout repo
-      uses: actions/checkout@v3
-      with:
-        clean: false
-        submodules: "recursive"
 
     - name: cargo fmt
       shell: bash -euxo pipefail {0}

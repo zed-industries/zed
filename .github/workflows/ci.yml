@@ -23,8 +23,14 @@ jobs:
       - self-hosted
       - test
     steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+        with:
+          clean: false
+          submodules: "recursive"
+
       - name: Run rustfmt
-        uses: ./.github/actions/rust_fmt
+        uses: ./.github/actions/check_formatting
 
   tests:
     name: Run tests
@@ -33,6 +39,12 @@ jobs:
       - test
     needs: rustfmt
     steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+        with:
+          clean: false
+          submodules: "recursive"
+
       - name: Run tests
         uses: ./.github/actions/run_tests
 
