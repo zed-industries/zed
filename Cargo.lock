@@ -725,6 +725,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "auto_update2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "client2",
+ "db2",
+ "gpui2",
+ "isahc",
+ "lazy_static",
+ "log",
+ "menu2",
+ "project2",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "settings2",
+ "smol",
+ "tempdir",
+ "theme2",
+ "util",
+ "workspace2",
+]
+
+[[package]]
 name = "autocfg"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11543,6 +11567,7 @@ dependencies = [
  "async-recursion 0.3.2",
  "async-tar",
  "async-trait",
+ "auto_update2",
  "backtrace",
  "call2",
  "chrono",

@@ -162,7 +162,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             // status_bar.add_right_item(cursor_position, cx);
         });
 
-        //     auto_update::notify_of_any_new_update(cx.weak_handle(), cx);
+        auto_update::notify_of_any_new_update(cx);
 
         //     vim::observe_keystrokes(cx);
 
