@@ -3,7 +3,6 @@ use std::{borrow::Cow, sync::Arc};
 use gpui::{div, Action, Component, ViewContext};
 use ui::{Button, ButtonVariant, IconButton};
 
-
 use crate::mode::SearchMode;
 
 pub(super) fn render_nav_button<V: 'static>(
