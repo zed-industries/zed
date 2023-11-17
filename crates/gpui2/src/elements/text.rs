@@ -1,11 +1,71 @@
 use crate::{
     AnyElement, BorrowWindow, Bounds, Component, Element, ElementId, LayoutId, Pixels,
-    SharedString, Size, TextRun, ViewContext, WrappedLine,
+    SharedString, Size, TextRun, ViewContext, WindowContext, WrappedLine,
 };
+use anyhow::anyhow;
 use parking_lot::{Mutex, MutexGuard};
 use smallvec::SmallVec;
 use std::{cell::Cell, rc::Rc, sync::Arc};
 use util::ResultExt;
+
+impl<V: 'static> Element<V> for &'static str {
+    type ElementState = TextState;
+
+    fn element_id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn layout(
+        &mut self,
+        _: &mut V,
+        _: Option<Self::ElementState>,
+        cx: &mut ViewContext<V>,
+    ) -> (LayoutId, Self::ElementState) {
+        let mut state = TextState::default();
+        let layout_id = state.layout(SharedString::from(*self), None, cx);
+        (layout_id, state)
+    }
+
+    fn paint(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        _: &mut V,
+        state: &mut TextState,
+        cx: &mut ViewContext<V>,
+    ) {
+        state.paint(bounds, self, cx)
+    }
+}
+
+impl<V: 'static> Element<V> for SharedString {
+    type ElementState = TextState;
+
+    fn element_id(&self) -> Option<ElementId> {
+        Some(self.clone().into())
+    }
+
+    fn layout(
+        &mut self,
+        _: &mut V,
+        _: Option<Self::ElementState>,
+        cx: &mut ViewContext<V>,
+    ) -> (LayoutId, Self::ElementState) {
+        let mut state = TextState::default();
+        let layout_id = state.layout(self.clone(), None, cx);
+        (layout_id, state)
+    }
+
+    fn paint(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        _: &mut V,
+        state: &mut TextState,
+        cx: &mut ViewContext<V>,
+    ) {
+        let text_str: &str = self.as_ref();
+        state.paint(bounds, text_str, cx)
+    }
+}
 
 pub struct Text {
     text: SharedString,
@@ -109,7 +169,7 @@ impl<V: 'static> Element<V> for Text {
         let element_state = element_state.lock();
         let element_state = element_state
             .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("measurement has not been performed on {}", &self.text))
+            .ok_or_else(|| anyhow!("measurement has not been performed on {}", &self.text))
             .unwrap();
 
         let line_height = element_state.line_height;
@@ -127,6 +187,80 @@ pub struct TextState(Arc<Mutex<Option<TextStateInner>>>);
 impl TextState {
     fn lock(&self) -> MutexGuard<Option<TextStateInner>> {
         self.0.lock()
+    }
+
+    fn layout(
+        &mut self,
+        text: SharedString,
+        runs: Option<Vec<TextRun>>,
+        cx: &mut WindowContext,
+    ) -> LayoutId {
+        let text_system = cx.text_system().clone();
+        let text_style = cx.text_style();
+        let font_size = text_style.font_size.to_pixels(cx.rem_size());
+        let line_height = text_style
+            .line_height
+            .to_pixels(font_size.into(), cx.rem_size());
+        let text = SharedString::from(text);
+
+        let rem_size = cx.rem_size();
+
+        let runs = if let Some(runs) = runs {
+            runs
+        } else {
+            vec![text_style.to_run(text.len())]
+        };
+
+        let layout_id = cx.request_measured_layout(Default::default(), rem_size, {
+            let element_state = self.clone();
+            move |known_dimensions, _| {
+                let Some(lines) = text_system
+                    .shape_text(
+                        &text,
+                        font_size,
+                        &runs[..],
+                        known_dimensions.width, // Wrap if we know the width.
+                    )
+                    .log_err()
+                else {
+                    element_state.lock().replace(TextStateInner {
+                        lines: Default::default(),
+                        line_height,
+                    });
+                    return Size::default();
+                };
+
+                let mut size: Size<Pixels> = Size::default();
+                for line in &lines {
+                    let line_size = line.size(line_height);
+                    size.height += line_size.height;
+                    size.width = size.width.max(line_size.width);
+                }
+
+                element_state
+                    .lock()
+                    .replace(TextStateInner { lines, line_height });
+
+                size
+            }
+        });
+
+        layout_id
+    }
+
+    fn paint(&mut self, bounds: Bounds<Pixels>, text: &str, cx: &mut WindowContext) {
+        let element_state = self.lock();
+        let element_state = element_state
+            .as_ref()
+            .ok_or_else(|| anyhow!("measurement has not been performed on {}", text))
+            .unwrap();
+
+        let line_height = element_state.line_height;
+        let mut line_origin = bounds.origin;
+        for line in &element_state.lines {
+            line.paint(line_origin, line_height, cx).log_err();
+            line_origin.y += line.size(line_height).height;
+        }
     }
 }
 
