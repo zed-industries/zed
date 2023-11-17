@@ -2464,21 +2464,30 @@ impl BackgroundScannerState {
 
         // Remove any git repositories whose .git entry no longer exists.
         let snapshot = &mut self.snapshot;
-        // TODO kb stop cleaning those up here?
-        let mut repositories = mem::take(&mut snapshot.git_repositories);
-        let mut repository_entries = mem::take(&mut snapshot.repository_entries);
-        repositories.retain(|_, entry| {
-            // TODO kb use fs
-            snapshot.abs_path().join(&entry.git_dir_path).exists()
-            // snapshot
-            //     .entry_for_id(*work_directory_id)
-            //     .map_or(false, |entry| {
-            //         snapshot.entry_for_path(entry.path.join(*DOT_GIT)).is_some()
-            //     })
-        });
-        repository_entries.retain(|_, entry| repositories.get(&entry.work_directory.0).is_some());
-        snapshot.git_repositories = repositories;
-        snapshot.repository_entries = repository_entries;
+        let mut ids_to_preserve = HashSet::default();
+        for (&work_directory_id, entry) in snapshot.git_repositories.iter() {
+            let exists_in_snapshot = snapshot
+                .entry_for_id(work_directory_id)
+                .map_or(false, |entry| {
+                    snapshot.entry_for_path(entry.path.join(*DOT_GIT)).is_some()
+                });
+            if exists_in_snapshot {
+                ids_to_preserve.insert(work_directory_id);
+            } else {
+                let git_dir_abs_path = snapshot.abs_path().join(&entry.git_dir_path);
+                if snapshot.is_abs_path_excluded(&git_dir_abs_path)
+                    && !matches!(smol::block_on(fs.metadata(&git_dir_abs_path)), Ok(None))
+                {
+                    ids_to_preserve.insert(work_directory_id);
+                }
+            }
+        }
+        snapshot
+            .git_repositories
+            .retain(|work_directory_id, _| ids_to_preserve.contains(work_directory_id));
+        snapshot
+            .repository_entries
+            .retain(|_, entry| ids_to_preserve.contains(&entry.work_directory.0));
     }
 
     fn build_git_repository(
@@ -3320,20 +3329,22 @@ impl BackgroundScanner {
                         return false;
                     };
 
-                let parent_dir_is_loaded = relative_path.parent().map_or(true, |parent| {
-                    snapshot
-                        .entry_for_path(parent)
-                        .map_or(false, |entry| entry.kind == EntryKind::Dir)
-                });
-                if !parent_dir_is_loaded && !is_git_related(&abs_path) {
-                    log::debug!("ignoring event {relative_path:?} within unloaded directory");
-                    return false;
-                }
-                if snapshot.is_abs_path_excluded(abs_path) && !is_git_related(&abs_path) {
-                    log::debug!(
+                if !is_git_related(&abs_path) {
+                    let parent_dir_is_loaded = relative_path.parent().map_or(true, |parent| {
+                        snapshot
+                            .entry_for_path(parent)
+                            .map_or(false, |entry| entry.kind == EntryKind::Dir)
+                    });
+                    if !parent_dir_is_loaded {
+                        log::debug!("ignoring event {relative_path:?} within unloaded directory");
+                        return false;
+                    }
+                    if snapshot.is_abs_path_excluded(abs_path) {
+                        log::debug!(
                         "ignoring FS event for path {relative_path:?} within excluded directory"
                     );
-                    return false;
+                        return false;
+                    }
                 }
 
                 relative_paths.push(relative_path);
@@ -3573,11 +3584,6 @@ impl BackgroundScanner {
             // If we find a .git, we'll need to load the repository.
             else if child_name == *DOT_GIT {
                 dotgit_path = Some(child_path.clone());
-                {
-                    let mut state = self.state.lock();
-                    state.build_git_repository(child_path.clone(), self.fs.as_ref());
-                    drop(state);
-                }
             }
 
             {
@@ -3595,7 +3601,7 @@ impl BackgroundScanner {
                 Ok(Some(metadata)) => metadata,
                 Ok(None) => continue,
                 Err(err) => {
-                    log::error!("error processing {:?}: {:?}", child_abs_path, err);
+                    log::error!("error processing {child_abs_path:?}: {err:?}");
                     continue;
                 }
             };
@@ -4124,7 +4130,7 @@ impl BackgroundScanner {
     }
 }
 
-fn is_git_related(abs_path: &&PathBuf) -> bool {
+fn is_git_related(abs_path: &Path) -> bool {
     abs_path
         .components()
         .any(|c| c.as_os_str() == *DOT_GIT || c.as_os_str() == *GITIGNORE)
