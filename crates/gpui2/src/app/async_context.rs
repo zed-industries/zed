@@ -182,6 +182,10 @@ pub struct AsyncWindowContext {
 }
 
 impl AsyncWindowContext {
+    pub fn window_handle(&self) -> AnyWindowHandle {
+        self.window
+    }
+
     pub(crate) fn new(app: AsyncAppContext, window: AnyWindowHandle) -> Self {
         Self { app, window }
     }

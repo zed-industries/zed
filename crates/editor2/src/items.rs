@@ -797,7 +797,7 @@ impl Item for Editor {
 
     fn added_to_workspace(&mut self, workspace: &mut Workspace, cx: &mut ViewContext<Self>) {
         let workspace_id = workspace.database_id();
-        let item_id = cx.view().entity_id().as_u64() as ItemId;
+        let item_id = cx.view().item_id().as_u64() as ItemId;
         self.workspace = Some((workspace.weak_handle(), workspace.database_id()));
 
         fn serialize(
@@ -828,7 +828,7 @@ impl Item for Editor {
                         serialize(
                             buffer,
                             *workspace_id,
-                            cx.view().entity_id().as_u64() as ItemId,
+                            cx.view().item_id().as_u64() as ItemId,
                             cx,
                         );
                     }

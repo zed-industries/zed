@@ -684,6 +684,7 @@ impl CollabPanel {
             if let Some(serialized_panel) = serialized_panel {
                 panel.update(cx, |panel, cx| {
                     panel.width = serialized_panel.width;
+                    //todo!(collapsed_channels)
                     // panel.collapsed_channels = serialized_panel
                     //     .collapsed_channels
                     //     .unwrap_or_else(|| Vec::new());
