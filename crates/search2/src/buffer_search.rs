@@ -254,107 +254,6 @@ impl Render for BufferSearchBar {
                         Direction::Next,
                     )),
             )
-
-        // let query_column = Flex::row()
-        //     .with_child(
-        //         Svg::for_style(theme.search.editor_icon.clone().icon)
-        //             .contained()
-        //             .with_style(theme.search.editor_icon.clone().container),
-        //     )
-        //     .with_child(ChildView::new(&self.query_editor, cx).flex(1., true))
-        //     .with_child(
-        //         Flex::row()
-        //             .with_children(
-        //                 supported_options
-        //                     .case
-        //                     .then(|| search_option_button(SearchOptions::CASE_SENSITIVE)),
-        //             )
-        //             .with_children(
-        //                 supported_options
-        //                     .word
-        //                     .then(|| search_option_button(SearchOptions::WHOLE_WORD)),
-        //             )
-        //             .flex_float()
-        //             .contained(),
-        //     )
-        //     .align_children_center()
-        //     .contained()
-        //     .with_style(query_container_style)
-        //     .constrained()
-        //     .with_min_width(theme.search.editor.min_width)
-        //     .with_max_width(theme.search.editor.max_width)
-        //     .with_height(theme.search.search_bar_row_height)
-        //     .flex(1., false);
-        // let should_show_replace_input = self.replace_enabled && supported_options.replacement;
-
-        // let replacement = should_show_replace_input.then(|| {
-        //     div()
-        //         .child(
-        //             Svg::for_style(theme.search.replace_icon.clone().icon)
-        //                 .contained()
-        //                 .with_style(theme.search.replace_icon.clone().container),
-        //         )
-        //         .child(self.replacement_editor)
-        //         .align_children_center()
-        //         .flex(1., true)
-        //         .contained()
-        //         .with_style(query_container_style)
-        //         .constrained()
-        //         .with_min_width(theme.search.editor.min_width)
-        //         .with_max_width(theme.search.editor.max_width)
-        //         .with_height(theme.search.search_bar_row_height)
-        //         .flex(1., false)
-        // });
-        // let replace_all =
-        //     should_show_replace_input.then(|| super::replace_action(ReplaceAll, "Replace all"));
-        // let replace_next =
-        //     should_show_replace_input.then(|| super::replace_action(ReplaceNext, "Replace next"));
-        // let switches_column = supported_options.replacement.then(|| {
-        //     Flex::row()
-        //         .align_children_center()
-        //         .with_child(super::toggle_replace_button(self.replace_enabled))
-        //         .constrained()
-        //         .with_height(theme.search.search_bar_row_height)
-        //         .contained()
-        //         .with_style(theme.search.option_button_group)
-        // });
-        // let mode_column = div()
-        //     .child(search_button_for_mode(
-        //         SearchMode::Text,
-        //         Some(Side::Left),
-        //         cx,
-        //     ))
-        //     .child(search_button_for_mode(
-        //         SearchMode::Regex,
-        //         Some(Side::Right),
-        //         cx,
-        //     ))
-        //     .contained()
-        //     .with_style(theme.search.modes_container)
-        //     .constrained()
-        //     .with_height(theme.search.search_bar_row_height);
-
-        // let nav_column = div()
-        //     .align_children_center()
-        //     .with_children(replace_next)
-        //     .with_children(replace_all)
-        //     .with_child(self.render_action_button("icons/select-all.svg", cx))
-        //     .with_child(div().children(match_count))
-        //     .with_child(nav_button_for_direction("<", Direction::Prev, cx))
-        //     .with_child(nav_button_for_direction(">", Direction::Next, cx))
-        //     .constrained()
-        //     .with_height(theme.search.search_bar_row_height)
-        //     .flex_float();
-
-        // div()
-        //     .child(query_column)
-        //     .child(mode_column)
-        //     .children(switches_column)
-        //     .children(replacement)
-        //     .child(nav_column)
-        //     .contained()
-        //     .with_style(theme.search.container)
-        //     .into_any_named("search bar")
     }
 }
 
@@ -442,11 +341,14 @@ impl BufferSearchBar {
         register_action(workspace, |this, action: &ToggleReplace, cx| {
             this.toggle_replace(action, cx);
         });
-        register_action(workspace, |this, action: &ActivateRegexMode, cx| {
+        register_action(workspace, |this, _: &ActivateRegexMode, cx| {
             this.activate_search_mode(SearchMode::Regex, cx);
         });
-        register_action(workspace, |this, action: &ActivateTextMode, cx| {
+        register_action(workspace, |this, _: &ActivateTextMode, cx| {
             this.activate_search_mode(SearchMode::Text, cx);
+        });
+        register_action(workspace, |this, action: &CycleMode, cx| {
+            this.cycle_mode(action, cx)
         });
         register_action(workspace, |this, action: &SelectNextMatch, cx| {
             this.select_next_match(action, cx);
@@ -639,20 +541,6 @@ impl BufferSearchBar {
         cx.notify();
     }
 
-    fn deploy_bar(pane: &mut Pane, action: &Deploy, cx: &mut ViewContext<Pane>) {
-        let mut propagate_action = true;
-        if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
-            search_bar.update(cx, |search_bar, cx| {
-                if search_bar.deploy(action, cx) {
-                    propagate_action = false;
-                }
-            });
-        }
-        if !propagate_action {
-            cx.stop_propagation();
-        }
-    }
-
     fn handle_editor_cancel(pane: &mut Pane, _: &editor::Cancel, cx: &mut ViewContext<Pane>) {
         if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
             if !search_bar.read(cx).dismissed {
@@ -737,36 +625,6 @@ impl BufferSearchBar {
                 searchable_item.update_matches(matches, cx);
                 searchable_item.activate_match(new_match_index, matches, cx);
             }
-        }
-    }
-
-    fn select_next_match_on_pane(
-        pane: &mut Pane,
-        action: &SelectNextMatch,
-        cx: &mut ViewContext<Pane>,
-    ) {
-        if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
-            search_bar.update(cx, |bar, cx| bar.select_next_match(action, cx));
-        }
-    }
-
-    fn select_prev_match_on_pane(
-        pane: &mut Pane,
-        action: &SelectPrevMatch,
-        cx: &mut ViewContext<Pane>,
-    ) {
-        if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
-            search_bar.update(cx, |bar, cx| bar.select_prev_match(action, cx));
-        }
-    }
-
-    fn select_all_matches_on_pane(
-        pane: &mut Pane,
-        action: &SelectAllMatches,
-        cx: &mut ViewContext<Pane>,
-    ) {
-        if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
-            search_bar.update(cx, |bar, cx| bar.select_all_matches(action, cx));
         }
     }
 
@@ -941,23 +799,6 @@ impl BufferSearchBar {
     fn cycle_mode(&mut self, _: &CycleMode, cx: &mut ViewContext<Self>) {
         self.activate_search_mode(next_mode(&self.current_mode, false), cx);
     }
-    fn cycle_mode_on_pane(pane: &mut Pane, action: &CycleMode, cx: &mut ViewContext<Pane>) {
-        let mut should_propagate = true;
-        if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
-            search_bar.update(cx, |bar, cx| {
-                if bar.show(cx) {
-                    should_propagate = false;
-                    bar.cycle_mode(action, cx);
-                    false
-                } else {
-                    true
-                }
-            });
-        }
-        if !should_propagate {
-            cx.stop_propagation();
-        }
-    }
     fn toggle_replace(&mut self, _: &ToggleReplace, cx: &mut ViewContext<Self>) {
         if let Some(_) = &self.active_searchable_item {
             self.replace_enabled = !self.replace_enabled;
@@ -1035,20 +876,6 @@ impl BufferSearchBar {
                     }
                 }
             }
-        }
-    }
-    fn replace_next_on_pane(pane: &mut Pane, action: &ReplaceNext, cx: &mut ViewContext<Pane>) {
-        if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
-            search_bar.update(cx, |bar, cx| bar.replace_next(action, cx));
-            cx.stop_propagation();
-            return;
-        }
-    }
-    fn replace_all_on_pane(pane: &mut Pane, action: &ReplaceAll, cx: &mut ViewContext<Pane>) {
-        if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
-            search_bar.update(cx, |bar, cx| bar.replace_all(action, cx));
-            cx.stop_propagation();
-            return;
         }
     }
 }

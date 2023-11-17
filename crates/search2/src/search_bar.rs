@@ -2,13 +2,13 @@ use std::{borrow::Cow, sync::Arc};
 
 use gpui::{div, Action, Component, ViewContext};
 use ui::{Button, ButtonVariant, IconButton};
-use workspace::searchable::Direction;
+
 
 use crate::mode::SearchMode;
 
 pub(super) fn render_nav_button<V: 'static>(
     icon: ui::Icon,
-    active: bool,
+    _active: bool,
     on_click: impl Fn(&mut V, &mut ViewContext<V>) + 'static + Send + Sync,
 ) -> impl Component<V> {
     // let tooltip_style = cx.theme().tooltip.clone();
@@ -38,11 +38,11 @@ pub(crate) fn render_search_mode_button<V: 'static>(
 }
 
 pub(crate) fn render_option_button_icon<V: 'static>(
-    is_active: bool,
-    icon: &'static str,
-    id: usize,
-    label: impl Into<Cow<'static, str>>,
-    action: Box<dyn Action>,
+    _is_active: bool,
+    _icon: &'static str,
+    _id: usize,
+    _label: impl Into<Cow<'static, str>>,
+    _action: Box<dyn Action>,
 ) -> impl Component<V> {
     //let tooltip_style = cx.theme().tooltip.clone();
     div()
