@@ -193,11 +193,11 @@ pub trait FocusableView: Render {
 
 /// ManagedView is a view (like a Modal, Popover, Menu, etc.)
 /// where the lifecycle of the view is handled by another view.
-pub trait ManagedView: FocusableView + EventEmitter<ManagedEvent> {}
+pub trait ManagedView: FocusableView + EventEmitter<Manager> {}
 
-impl<M: FocusableView + EventEmitter<ManagedEvent>> ManagedView for M {}
+impl<M: FocusableView + EventEmitter<Manager>> ManagedView for M {}
 
-pub enum ManagedEvent {
+pub enum Manager {
     Dismiss,
 }
 
@@ -1582,7 +1582,7 @@ impl VisualContext for WindowContext<'_> {
     where
         V: ManagedView,
     {
-        self.update_view(view, |_, cx| cx.emit(ManagedEvent::Dismiss))
+        self.update_view(view, |_, cx| cx.emit(Manager::Dismiss))
     }
 }
 
@@ -2282,7 +2282,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     where
         V: ManagedView,
     {
-        self.defer(|_, cx| cx.emit(ManagedEvent::Dismiss))
+        self.defer(|_, cx| cx.emit(Manager::Dismiss))
     }
 }
 

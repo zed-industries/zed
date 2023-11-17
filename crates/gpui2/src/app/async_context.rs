@@ -1,6 +1,6 @@
 use crate::{
     AnyView, AnyWindowHandle, AppCell, AppContext, BackgroundExecutor, Context, FocusableView,
-    ForegroundExecutor, ManagedEvent, Model, ModelContext, Render, Result, Task, View, ViewContext,
+    ForegroundExecutor, Manager, Model, ModelContext, Render, Result, Task, View, ViewContext,
     VisualContext, WindowContext, WindowHandle,
 };
 use anyhow::{anyhow, Context as _};
@@ -326,7 +326,7 @@ impl VisualContext for AsyncWindowContext {
         V: crate::ManagedView,
     {
         self.window.update(self, |_, cx| {
-            view.update(cx, |_, cx| cx.emit(ManagedEvent::Dismiss))
+            view.update(cx, |_, cx| cx.emit(Manager::Dismiss))
         })
     }
 }

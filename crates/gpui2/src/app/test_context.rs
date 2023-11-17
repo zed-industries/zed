@@ -586,7 +586,7 @@ impl<'a> VisualContext for VisualTestContext<'a> {
     {
         self.window
             .update(self.cx, |_, cx| {
-                view.update(cx, |_, cx| cx.emit(crate::ManagedEvent::Dismiss))
+                view.update(cx, |_, cx| cx.emit(crate::Manager::Dismiss))
             })
             .unwrap()
     }

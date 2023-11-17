@@ -191,6 +191,10 @@ impl AnyView {
         self.model.entity_type
     }
 
+    pub fn entity_id(&self) -> EntityId {
+        self.model.entity_id()
+    }
+
     pub(crate) fn draw(
         &self,
         origin: Point<Pixels>,

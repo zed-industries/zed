@@ -1,6 +1,6 @@
 pub mod file_associations;
 mod project_panel_settings;
-use settings::Settings;
+use settings::{Settings, SettingsStore};
 
 use db::kvp::KEY_VALUE_STORE;
 use editor::{scroll::autoscroll::Autoscroll, Cancel, Editor};
@@ -34,7 +34,7 @@ use ui::{h_stack, v_stack, IconElement, Label};
 use unicase::UniCase;
 use util::{maybe, ResultExt, TryFutureExt};
 use workspace::{
-    dock::{DockPosition, PanelEvent},
+    dock::{DockPosition, Panel, PanelEvent},
     Workspace,
 };
 
@@ -148,7 +148,6 @@ pub enum Event {
     SplitEntry {
         entry_id: ProjectEntryId,
     },
-    DockPositionChanged,
     Focus,
     NewSearchInDirectory {
         dir_entry: Entry,
@@ -244,16 +243,17 @@ impl ProjectPanel {
             this.update_visible_entries(None, cx);
 
             // Update the dock position when the setting changes.
-            // todo!()
-            // let mut old_dock_position = this.position(cx);
-            // cx.observe_global::<SettingsStore, _>(move |this, cx| {
-            //     let new_dock_position = this.position(cx);
-            //     if new_dock_position != old_dock_position {
-            //         old_dock_position = new_dock_position;
-            //         cx.emit(Event::DockPositionChanged);
-            //     }
-            // })
-            // .detach();
+            let mut old_dock_position = this.position(cx);
+            ProjectPanelSettings::register(cx);
+            cx.observe_global::<SettingsStore>(move |this, cx| {
+                dbg!("OLA!");
+                let new_dock_position = this.position(cx);
+                if new_dock_position != old_dock_position {
+                    old_dock_position = new_dock_position;
+                    cx.emit(PanelEvent::ChangePosition);
+                }
+            })
+            .detach();
 
             this
         });
@@ -1485,7 +1485,7 @@ impl EventEmitter<Event> for ProjectPanel {}
 
 impl EventEmitter<PanelEvent> for ProjectPanel {}
 
-impl workspace::dock::Panel for ProjectPanel {
+impl Panel for ProjectPanel {
     fn position(&self, cx: &WindowContext) -> DockPosition {
         match ProjectPanelSettings::get_global(cx).dock {
             ProjectPanelDockPosition::Left => DockPosition::Left,
