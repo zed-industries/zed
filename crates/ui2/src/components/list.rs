@@ -1,4 +1,6 @@
-use gpui::{div, Action};
+use std::rc::Rc;
+
+use gpui::{div, Div, Stateful, StatefulInteractiveComponent};
 
 use crate::settings::user_settings;
 use crate::{
@@ -172,35 +174,35 @@ pub enum ListEntrySize {
     Medium,
 }
 
-#[derive(Component, Clone)]
-pub enum ListItem {
-    Entry(ListEntry),
+#[derive(Clone)]
+pub enum ListItem<V: 'static> {
+    Entry(ListEntry<V>),
     Separator(ListSeparator),
     Header(ListSubHeader),
 }
 
-impl From<ListEntry> for ListItem {
-    fn from(entry: ListEntry) -> Self {
+impl<V: 'static> From<ListEntry<V>> for ListItem<V> {
+    fn from(entry: ListEntry<V>) -> Self {
         Self::Entry(entry)
     }
 }
 
-impl From<ListSeparator> for ListItem {
+impl<V: 'static> From<ListSeparator> for ListItem<V> {
     fn from(entry: ListSeparator) -> Self {
         Self::Separator(entry)
     }
 }
 
-impl From<ListSubHeader> for ListItem {
+impl<V: 'static> From<ListSubHeader> for ListItem<V> {
     fn from(entry: ListSubHeader) -> Self {
         Self::Header(entry)
     }
 }
 
-impl ListItem {
-    fn render<V: 'static>(self, view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+impl<V: 'static> ListItem<V> {
+    fn render(self, view: &mut V, ix: usize, cx: &mut ViewContext<V>) -> impl Component<V> {
         match self {
-            ListItem::Entry(entry) => div().child(entry.render(view, cx)),
+            ListItem::Entry(entry) => div().child(entry.render(ix, cx)),
             ListItem::Separator(separator) => div().child(separator.render(view, cx)),
             ListItem::Header(header) => div().child(header.render(view, cx)),
         }
@@ -210,7 +212,7 @@ impl ListItem {
         Self::Entry(ListEntry::new(label))
     }
 
-    pub fn as_entry(&mut self) -> Option<&mut ListEntry> {
+    pub fn as_entry(&mut self) -> Option<&mut ListEntry<V>> {
         if let Self::Entry(entry) = self {
             Some(entry)
         } else {
@@ -219,8 +221,7 @@ impl ListItem {
     }
 }
 
-#[derive(Component)]
-pub struct ListEntry {
+pub struct ListEntry<V> {
     disabled: bool,
     // TODO: Reintroduce this
     // disclosure_control_style: DisclosureControlVisibility,
@@ -231,15 +232,13 @@ pub struct ListEntry {
     size: ListEntrySize,
     toggle: Toggle,
     variant: ListItemVariant,
-    on_click: Option<Box<dyn Action>>,
+    on_click: Option<Rc<dyn Fn(&mut V, &mut ViewContext<V>) + 'static>>,
 }
 
-impl Clone for ListEntry {
+impl<V> Clone for ListEntry<V> {
     fn clone(&self) -> Self {
         Self {
             disabled: self.disabled,
-            // TODO: Reintroduce this
-            // disclosure_control_style: DisclosureControlVisibility,
             indent_level: self.indent_level,
             label: self.label.clone(),
             left_slot: self.left_slot.clone(),
@@ -247,12 +246,12 @@ impl Clone for ListEntry {
             size: self.size,
             toggle: self.toggle,
             variant: self.variant,
-            on_click: self.on_click.as_ref().map(|opt| opt.boxed_clone()),
+            on_click: self.on_click.clone(),
         }
     }
 }
 
-impl ListEntry {
+impl<V: 'static> ListEntry<V> {
     pub fn new(label: Label) -> Self {
         Self {
             disabled: false,
@@ -267,8 +266,8 @@ impl ListEntry {
         }
     }
 
-    pub fn action(mut self, action: impl Into<Box<dyn Action>>) -> Self {
-        self.on_click = Some(action.into());
+    pub fn on_click(mut self, handler: impl Fn(&mut V, &mut ViewContext<V>) + 'static) -> Self {
+        self.on_click = Some(Rc::new(handler));
         self
     }
 
@@ -307,7 +306,7 @@ impl ListEntry {
         self
     }
 
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render(self, ix: usize, cx: &mut ViewContext<V>) -> Stateful<V, Div<V>> {
         let settings = user_settings(cx);
 
         let left_content = match self.left_slot.clone() {
@@ -328,21 +327,21 @@ impl ListEntry {
             ListEntrySize::Medium => div().h_7(),
         };
         div()
+            .id(ix)
             .relative()
             .hover(|mut style| {
                 style.background = Some(cx.theme().colors().editor_background.into());
                 style
             })
-            .on_mouse_down(gpui::MouseButton::Left, {
-                let action = self.on_click.map(|action| action.boxed_clone());
+            .on_click({
+                let on_click = self.on_click.clone();
 
-                move |entry: &mut V, event, cx| {
-                    if let Some(action) = action.as_ref() {
-                        cx.dispatch_action(action.boxed_clone());
+                move |view: &mut V, event, cx| {
+                    if let Some(on_click) = &on_click {
+                        (on_click)(view, cx)
                     }
                 }
             })
-            .group("")
             .bg(cx.theme().colors().surface_background)
             // TODO: Add focus state
             // .when(self.state == InteractionState::Focused, |this| {
@@ -391,8 +390,8 @@ impl ListSeparator {
 }
 
 #[derive(Component)]
-pub struct List {
-    items: Vec<ListItem>,
+pub struct List<V: 'static> {
+    items: Vec<ListItem<V>>,
     /// Message to display when the list is empty
     /// Defaults to "No items"
     empty_message: SharedString,
@@ -400,8 +399,8 @@ pub struct List {
     toggle: Toggle,
 }
 
-impl List {
-    pub fn new(items: Vec<ListItem>) -> Self {
+impl<V: 'static> List<V> {
+    pub fn new(items: Vec<ListItem<V>>) -> Self {
         Self {
             items,
             empty_message: "No items".into(),
@@ -425,9 +424,14 @@ impl List {
         self
     }
 
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         let list_content = match (self.items.is_empty(), self.toggle) {
-            (false, _) => div().children(self.items),
+            (false, _) => div().children(
+                self.items
+                    .into_iter()
+                    .enumerate()
+                    .map(|(ix, item)| item.render(view, ix, cx)),
+            ),
             (true, Toggle::Toggled(false)) => div(),
             (true, _) => {
                 div().child(Label::new(self.empty_message.clone()).color(TextColor::Muted))
