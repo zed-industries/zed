@@ -9,11 +9,10 @@ pub mod terminal_panel;
 // use crate::terminal_element::TerminalElement;
 use editor::{scroll::autoscroll::Autoscroll, Editor};
 use gpui::{
-    actions, div, img, red, Action, AnyElement, AppContext, Component, DispatchPhase, Div,
-    EventEmitter, FocusEvent, FocusHandle, Focusable, FocusableComponent, FocusableView,
-    InputHandler, InteractiveComponent, KeyDownEvent, Keystroke, Model, MouseButton,
-    ParentComponent, Pixels, Render, SharedString, Styled, Task, View, ViewContext, VisualContext,
-    WeakView,
+    actions, div, Action, AnyElement, AppContext, Component, DispatchPhase, Div, EventEmitter,
+    FocusEvent, FocusHandle, Focusable, FocusableComponent, FocusableView, InputHandler,
+    InteractiveComponent, KeyDownEvent, Keystroke, Model, MouseButton, ParentComponent, Pixels,
+    Render, SharedString, Styled, Task, View, ViewContext, VisualContext, WeakView,
 };
 use language::Bias;
 use persistence::TERMINAL_DB;
@@ -32,7 +31,7 @@ use workspace::{
     notifications::NotifyResultExt,
     register_deserializable_item,
     searchable::{SearchEvent, SearchOptions, SearchableItem},
-    ui::{ContextMenu, Label, ListEntry},
+    ui::{ContextMenu, Icon, IconElement, Label, ListEntry},
     CloseActiveItem, NewCenterTerminal, Pane, ToolbarItemLocation, Workspace, WorkspaceId,
 };
 
@@ -755,7 +754,7 @@ impl Item for TerminalView {
         let title = self.terminal().read(cx).title();
 
         div()
-            .child(img().uri("icons/terminal.svg").bg(red()))
+            .child(IconElement::new(Icon::Terminal))
             .child(title)
             .render()
     }
