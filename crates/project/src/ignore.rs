@@ -35,6 +35,7 @@ impl IgnoreStack {
         if is_dir && abs_path.file_name() == Some(OsStr::new(".git")) {
             return true;
         }
+
         match self {
             Self::None => false,
             Self::All => true,

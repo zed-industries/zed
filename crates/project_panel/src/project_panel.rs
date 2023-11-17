@@ -3046,8 +3046,7 @@ mod tests {
             workspace::init_settings(cx);
             client::init_settings(cx);
             Project::init_settings(cx);
-        });
-        cx.update(|cx| {
+
             cx.update_global::<SettingsStore, _, _>(|store, cx| {
                 store.update_user_settings::<ProjectSettings>(cx, |project_settings| {
                     project_settings.file_scan_exclusions = Some(Vec::new());
