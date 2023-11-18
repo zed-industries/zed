@@ -34,6 +34,7 @@ use std::{
     path::PathBuf,
     sync::Arc,
 };
+use theme::ActiveTheme;
 pub use toolbar_controls::ToolbarControls;
 use ui::{h_stack, HighlightedLabel, Icon, IconElement, Label, TextColor};
 use util::TryFutureExt;
@@ -92,9 +93,10 @@ impl EventEmitter<ItemEvent> for ProjectDiagnosticsEditor {}
 impl Render for ProjectDiagnosticsEditor {
     type Element = Focusable<Self, Div<Self>>;
 
-    fn render(&mut self, _: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         let child = if self.path_states.is_empty() {
             div()
+                .bg(cx.theme().colors().editor_background)
                 .flex()
                 .items_center()
                 .justify_center()

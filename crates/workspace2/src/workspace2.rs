@@ -3666,7 +3666,7 @@ impl Render for Workspace {
                                         &self.app_state,
                                         cx,
                                     ))
-                                    .child(div().flex().flex_1().child(self.bottom_dock.clone())),
+                                    .child(self.bottom_dock.clone()),
                             )
                             // Right Dock
                             .child(
@@ -3679,19 +3679,6 @@ impl Render for Workspace {
                     ),
             )
             .child(self.status_bar.clone())
-            .z_index(8)
-            // Debug
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .z_index(9)
-                    .absolute()
-                    .top_20()
-                    .left_1_4()
-                    .w_40()
-                    .gap_2(),
-            )
     }
 }
 
