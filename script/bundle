@@ -118,7 +118,7 @@ if [ "$local_arch" = false ]; then
     echo "Creating fat binaries"
     lipo \
         -create \
-        target/{x86_64-apple-darwin,aarch64-apple-darwin}/${target_dir}/${zed_app_name} \
+        target/{x86_64-apple-darwin,aarch64-apple-darwin}/${target_dir}/"${zed_app_name}" \
         -output \
         "${app_path}/Contents/MacOS/${zed_crate}"
     lipo \
