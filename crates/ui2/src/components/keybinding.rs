@@ -24,7 +24,7 @@ impl KeyBinding {
         Self { key_binding }
     }
 
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
         div()
             .flex()
             .gap_2()
@@ -52,7 +52,7 @@ impl Key {
         Self { key: key.into() }
     }
 
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
         div()
             .px_2()
             .py_0()

@@ -164,7 +164,7 @@ impl<V: 'static> Button<V> {
         self.icon.map(|i| IconElement::new(i).color(icon_color))
     }
 
-    pub fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    pub fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
         let (icon_color, label_color) = match (self.disabled, self.color) {
             (true, _) => (TextColor::Disabled, TextColor::Disabled),
             (_, None) => (TextColor::Default, TextColor::Default),
@@ -222,7 +222,7 @@ impl<V: 'static> ButtonGroup<V> {
         Self { buttons }
     }
 
-    fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
         let mut el = h_stack().text_ui();
 
         for button in self.buttons {

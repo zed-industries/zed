@@ -100,7 +100,7 @@ impl Label {
         self
     }
 
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
         div()
             .when(self.strikethrough, |this| {
                 this.relative().child(
@@ -161,7 +161,7 @@ impl HighlightedLabel {
         self
     }
 
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
         let highlight_color = cx.theme().colors().text_accent;
         let mut text_style = cx.text_style().clone();
 

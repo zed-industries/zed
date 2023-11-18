@@ -10,7 +10,7 @@ impl UnreadIndicator {
         Self
     }
 
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
         div()
             .rounded_full()
             .border_2()

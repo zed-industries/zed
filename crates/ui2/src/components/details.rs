@@ -27,7 +27,7 @@ impl<V: 'static> Details<V> {
         self
     }
 
-    fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
         v_stack()
             .p_1()
             .gap_0p5()

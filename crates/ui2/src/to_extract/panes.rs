@@ -35,7 +35,7 @@ impl<V: 'static> Pane<V> {
         self
     }
 
-    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
         div()
             .id(self.id.clone())
             .flex()
@@ -89,7 +89,7 @@ impl<V: 'static> PaneGroup<V> {
         }
     }
 
-    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
         if !self.panes.is_empty() {
             let el = div()
                 .flex()

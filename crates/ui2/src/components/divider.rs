@@ -31,7 +31,7 @@ impl Divider {
         self
     }
 
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
         div()
             .map(|this| match self.direction {
                 DividerDirection::Horizontal => {

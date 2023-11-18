@@ -89,7 +89,7 @@ impl ZIndexExample {
         Self { z_index }
     }
 
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
         div()
             .relative()
             .size_full()

@@ -65,25 +65,26 @@ pub struct GlobalElementId(SmallVec<[ElementId; 32]>);
 pub trait ParentComponent<V: 'static> {
     fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<V>; 2]>;
 
-    fn child(mut self, child: impl Component<V>) -> Self
+    fn child(mut self, child: impl Element<V>) -> Self
     where
         Self: Sized,
     {
-        self.children_mut().push(child.render());
+        self.children_mut().push(child.into_any());
         self
     }
 
-    fn children(mut self, iter: impl IntoIterator<Item = impl Component<V>>) -> Self
+    fn children(mut self, children: impl IntoIterator<Item = impl Element<V>>) -> Self
     where
         Self: Sized,
     {
         self.children_mut()
-            .extend(iter.into_iter().map(|item| item.render()));
+            .extend(children.into_iter().map(Element::into_any));
         self
     }
 }
 
 trait ElementObject<V> {
+    fn element_id(&self) -> Option<ElementId>;
     fn layout(&mut self, view_state: &mut V, cx: &mut ViewContext<V>) -> LayoutId;
     fn paint(&mut self, view_state: &mut V, cx: &mut ViewContext<V>);
     fn measure(
@@ -130,6 +131,10 @@ impl<V, E: Element<V>> DrawableElement<V, E> {
             element: Some(element),
             phase: ElementDrawPhase::Start,
         }
+    }
+
+    fn element_id(&self) -> Option<ElementId> {
+        self.element.as_ref()?.element_id()
     }
 
     fn layout(&mut self, state: &mut V, cx: &mut ViewContext<V>) -> LayoutId {
@@ -256,6 +261,10 @@ where
     E: Element<V>,
     E::State: 'static,
 {
+    fn element_id(&self) -> Option<ElementId> {
+        self.as_ref().unwrap().element_id()
+    }
+
     fn layout(&mut self, view_state: &mut V, cx: &mut ViewContext<V>) -> LayoutId {
         DrawableElement::layout(self.as_mut().unwrap(), view_state, cx)
     }
@@ -302,6 +311,10 @@ impl<V> AnyElement<V> {
         AnyElement(Box::new(Some(DrawableElement::new(element))) as Box<dyn ElementObject<V>>)
     }
 
+    pub fn element_id(&self) -> Option<ElementId> {
+        self.0.element_id()
+    }
+
     pub fn layout(&mut self, view_state: &mut V, cx: &mut ViewContext<V>) -> LayoutId {
         self.0.layout(view_state, cx)
     }
@@ -329,6 +342,34 @@ impl<V> AnyElement<V> {
         cx: &mut ViewContext<V>,
     ) {
         self.0.draw(origin, available_space, view_state, cx)
+    }
+}
+
+impl<V: 'static> Element<V> for AnyElement<V> {
+    type State = ();
+
+    fn element_id(&self) -> Option<ElementId> {
+        AnyElement::element_id(self)
+    }
+
+    fn layout(
+        &mut self,
+        view_state: &mut V,
+        _: Option<Self::State>,
+        cx: &mut ViewContext<V>,
+    ) -> (LayoutId, Self::State) {
+        let layout_id = self.layout(view_state, cx);
+        (layout_id, ())
+    }
+
+    fn paint(
+        self,
+        bounds: Bounds<Pixels>,
+        view_state: &mut V,
+        _: &mut Self::State,
+        cx: &mut ViewContext<V>,
+    ) {
+        self.paint(view_state, cx);
     }
 }
 
@@ -426,3 +467,37 @@ where
         AnyElement::new(Some(self))
     }
 }
+
+// impl<V, E, F> Element<V> for F
+// where
+//     V: 'static,
+//     E: 'static + Component<V>,
+//     F: FnOnce(&mut V, &mut ViewContext<'_, V>) -> E + 'static,
+// {
+//     type State = Option<AnyElement<V>>;
+
+//     fn element_id(&self) -> Option<ElementId> {
+//         None
+//     }
+
+//     fn layout(
+//         &mut self,
+//         view_state: &mut V,
+//         element_state: Option<Self::State>,
+//         cx: &mut ViewContext<V>,
+//     ) -> (LayoutId, Self::State) {
+
+//         self(view_state)
+
+//     }
+
+//     fn paint(
+//         self,
+//         bounds: Bounds<Pixels>,
+//         view_state: &mut V,
+//         element_state: &mut Self::State,
+//         cx: &mut ViewContext<V>,
+//     ) {
+//         todo!()
+//     }
+// }

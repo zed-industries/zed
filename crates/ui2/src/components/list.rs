@@ -57,7 +57,7 @@ impl ListHeader {
         self
     }
 
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
         let disclosure_control = disclosure_control(self.toggle);
 
         let meta = match self.meta {
@@ -138,7 +138,7 @@ impl ListSubHeader {
         self
     }
 
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
         h_stack().flex_1().w_full().relative().py_1().child(
             div()
                 .h_6()
@@ -198,7 +198,7 @@ impl From<ListSubHeader> for ListItem {
 }
 
 impl ListItem {
-    fn render<V: 'static>(self, view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render<V: 'static>(self, view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
         match self {
             ListItem::Entry(entry) => div().child(entry.render(view, cx)),
             ListItem::Separator(separator) => div().child(separator.render(view, cx)),
@@ -307,7 +307,7 @@ impl ListEntry {
         self
     }
 
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
         let settings = user_settings(cx);
 
         let left_content = match self.left_slot.clone() {
@@ -385,7 +385,7 @@ impl ListSeparator {
         Self
     }
 
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
         div().h_px().w_full().bg(cx.theme().colors().border_variant)
     }
 }
@@ -425,7 +425,7 @@ impl List {
         self
     }
 
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
         let list_content = match (self.items.is_empty(), self.toggle) {
             (false, _) => div().children(self.items),
             (true, Toggle::Toggled(false)) => div(),

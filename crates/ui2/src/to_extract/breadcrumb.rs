@@ -22,7 +22,7 @@ impl Breadcrumb {
             .text_color(cx.theme().colors().text_muted)
     }
 
-    fn render<V: 'static>(self, view_state: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render<V: 'static>(self, view_state: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
         let symbols_len = self.symbols.len();
 
         h_stack()

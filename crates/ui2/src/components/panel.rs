@@ -92,7 +92,7 @@ impl<V: 'static> Panel<V> {
         self
     }
 
-    fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
         let current_size = self.width.unwrap_or(self.initial_width);
 
         v_stack()

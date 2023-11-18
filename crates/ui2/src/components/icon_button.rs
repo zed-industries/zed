@@ -80,7 +80,7 @@ impl<V: 'static> IconButton<V> {
         self.on_click(move |this, cx| cx.dispatch_action(action.boxed_clone()))
     }
 
-    fn render(mut self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render(mut self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
         let icon_color = match (self.state, self.color) {
             (InteractionState::Disabled, _) => TextColor::Disabled,
             (InteractionState::Active, _) => TextColor::Selected,

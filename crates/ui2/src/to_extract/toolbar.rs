@@ -20,7 +20,7 @@ impl<V: 'static> Toolbar<V> {
         }
     }
 
-    pub fn left_item(mut self, child: impl Component<V>) -> Self
+    pub fn left_item(mut self, child: impl Element<V>) -> Self
     where
         Self: Sized,
     {
@@ -28,7 +28,7 @@ impl<V: 'static> Toolbar<V> {
         self
     }
 
-    pub fn left_items(mut self, iter: impl IntoIterator<Item = impl Component<V>>) -> Self
+    pub fn left_items(mut self, iter: impl IntoIterator<Item = impl Element<V>>) -> Self
     where
         Self: Sized,
     {
@@ -37,7 +37,7 @@ impl<V: 'static> Toolbar<V> {
         self
     }
 
-    pub fn right_item(mut self, child: impl Component<V>) -> Self
+    pub fn right_item(mut self, child: impl Element<V>) -> Self
     where
         Self: Sized,
     {
@@ -45,7 +45,7 @@ impl<V: 'static> Toolbar<V> {
         self
     }
 
-    pub fn right_items(mut self, iter: impl IntoIterator<Item = impl Component<V>>) -> Self
+    pub fn right_items(mut self, iter: impl IntoIterator<Item = impl Element<V>>) -> Self
     where
         Self: Sized,
     {
@@ -54,7 +54,7 @@ impl<V: 'static> Toolbar<V> {
         self
     }
 
-    fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
         div()
             .bg(cx.theme().colors().toolbar_background)
             .p_2()

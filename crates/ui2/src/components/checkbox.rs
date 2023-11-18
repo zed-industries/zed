@@ -1,4 +1,4 @@
-use gpui::{div, prelude::*, Component, ElementId, Styled, ViewContext};
+use gpui::{div, prelude::*, Component, Element, ElementId, Styled, ViewContext};
 use std::sync::Arc;
 use theme2::ActiveTheme;
 
@@ -42,7 +42,7 @@ impl<V: 'static> Checkbox<V> {
         self
     }
 
-    pub fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    pub fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
         let group_id = format!("checkbox_group_{:?}", self.id);
 
         let icon = match self.checked {

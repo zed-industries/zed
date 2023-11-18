@@ -154,7 +154,7 @@ impl Buffer {
         self
     }
 
-    fn render_row<V: 'static>(row: BufferRow, cx: &WindowContext) -> impl Component<V> {
+    fn render_row<V: 'static>(row: BufferRow, cx: &WindowContext) -> impl Element<V> {
         let line_background = if row.current {
             cx.theme().colors().editor_active_line_background
         } else {
@@ -202,7 +202,7 @@ impl Buffer {
             }))
     }
 
-    fn render_rows<V: 'static>(&self, cx: &WindowContext) -> Vec<impl Component<V>> {
+    fn render_rows<V: 'static>(&self, cx: &WindowContext) -> Vec<impl Element<V>> {
         match &self.rows {
             Some(rows) => rows
                 .rows
@@ -213,7 +213,7 @@ impl Buffer {
         }
     }
 
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
         let rows = self.render_rows(cx);
 
         v_stack()

@@ -11,7 +11,7 @@ impl Terminal {
         Self
     }
 
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
         let can_navigate_back = true;
         let can_navigate_forward = false;
 

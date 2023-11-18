@@ -13,7 +13,7 @@ impl PlayerStack {
         }
     }
 
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
         let player = self.player_with_call_status.get_player();
 
         let followers = self

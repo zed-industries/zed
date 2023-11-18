@@ -21,10 +21,39 @@ pub enum ToastOrigin {
 /// they are actively showing the a process in progress.
 ///
 /// Only one toast may be visible at a time.
-#[derive(Component)]
 pub struct Toast<V: 'static> {
     origin: ToastOrigin,
     children: SmallVec<[AnyElement<V>; 2]>,
+}
+
+impl<V: 'static> Element<V> for Toast<V> {
+    type State = Option<AnyElement<V>>;
+
+    fn element_id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn layout(
+        &mut self,
+        view_state: &mut V,
+        _element_state: Option<Self::State>,
+        cx: &mut ViewContext<V>,
+    ) -> (gpui::LayoutId, Self::State) {
+        let mut element = self.render(view_state, cx).into_any();
+        let layout_id = element.layout(view_state, cx);
+        (layout_id, Some(element))
+    }
+
+    fn paint(
+        self,
+        bounds: gpui::Bounds<gpui::Pixels>,
+        view_state: &mut V,
+        element: &mut Self::State,
+        cx: &mut ViewContext<V>,
+    ) {
+        let element = element.take().unwrap();
+        element.paint(view_state, cx);
+    }
 }
 
 impl<V: 'static> Toast<V> {
@@ -35,7 +64,7 @@ impl<V: 'static> Toast<V> {
         }
     }
 
-    fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
         let mut div = div();
 
         if self.origin == ToastOrigin::Bottom {

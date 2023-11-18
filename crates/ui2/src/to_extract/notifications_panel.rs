@@ -15,7 +15,7 @@ impl NotificationsPanel {
         Self { id: id.into() }
     }
 
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
         div()
             .id(self.id.clone())
             .flex()
@@ -241,7 +241,7 @@ impl<V> Notification<V> {
         self
     }
 
-    fn render_meta_items(&self, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render_meta_items(&self, cx: &mut ViewContext<V>) -> impl Element<V> {
         if let Some(meta) = &self.meta {
             h_stack().children(
                 meta.items
@@ -260,14 +260,14 @@ impl<V> Notification<V> {
         }
     }
 
-    fn render_slot(&self, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render_slot(&self, cx: &mut ViewContext<V>) -> impl Element<V> {
         match &self.slot {
             ActorOrIcon::Actor(actor) => Avatar::new(actor.avatar.clone()).render(),
             ActorOrIcon::Icon(icon) => IconElement::new(icon.clone()).render(),
         }
     }
 
-    fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
         div()
             .relative()
             .id(self.id.clone())

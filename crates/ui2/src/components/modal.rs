@@ -38,7 +38,7 @@ impl<V: 'static> Modal<V> {
         self
     }
 
-    fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
         v_stack()
             .id(self.id.clone())
             .w_96()

@@ -86,7 +86,7 @@ impl Tab {
         self
     }
 
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
         let has_fs_conflict = self.fs_status == FileSystemStatus::Conflict;
         let is_deleted = self.fs_status == FileSystemStatus::Deleted;
 

@@ -11,7 +11,7 @@ impl ThemeSelector {
         Self { id: id.into() }
     }
 
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
         div().child(
             Palette::new(self.id.clone())
                 .items(vec![

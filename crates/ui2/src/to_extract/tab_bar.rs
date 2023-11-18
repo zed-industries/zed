@@ -23,7 +23,7 @@ impl TabBar {
         self
     }
 
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
         let (can_navigate_back, can_navigate_forward) = self.can_navigate;
 
         div()

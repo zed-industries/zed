@@ -14,7 +14,7 @@ impl CollabPanel {
         Self { id: id.into() }
     }
 
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
         v_stack()
             .id(self.id.clone())
             .h_full()

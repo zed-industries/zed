@@ -10,7 +10,7 @@ impl CopilotModal {
         Self { id: id.into() }
     }
 
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
         div().id(self.id.clone()).child(
             Modal::new("some-id")
                 .title("Connect Copilot to Zed")

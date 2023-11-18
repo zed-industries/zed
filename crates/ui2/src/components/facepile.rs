@@ -13,7 +13,7 @@ impl Facepile {
         }
     }
 
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
         let player_count = self.players.len();
         let player_list = self.players.iter().enumerate().map(|(ix, player)| {
             let isnt_last = ix < player_count - 1;

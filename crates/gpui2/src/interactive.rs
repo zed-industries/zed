@@ -307,12 +307,7 @@ mod test {
                     .key_context("parent")
                     .on_key_down(|this: &mut TestView, _, _, _| this.saw_key_down = true)
                     .on_action(|this: &mut TestView, _: &TestAction, _| this.saw_action = true)
-                    .child(|this: &mut Self, _cx: &mut ViewContext<Self>| {
-                        div()
-                            .key_context("nested")
-                            .track_focus(&this.focus_handle)
-                            .render()
-                    }),
+                    .child(div().key_context("nested").track_focus(&self.focus_handle)),
             )
         }
     }

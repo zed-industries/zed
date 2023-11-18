@@ -21,7 +21,7 @@ impl TrafficLight {
         }
     }
 
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
         let system_colors = &cx.theme().styles.system;
 
         let fill = match (self.window_has_focus, self.color) {
@@ -52,7 +52,7 @@ impl TrafficLights {
         self
     }
 
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
         div()
             .flex()
             .items_center()

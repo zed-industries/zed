@@ -21,7 +21,7 @@ impl AssistantPanel {
         self
     }
 
-    fn render<V: 'static>(self, view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render<V: 'static>(self, view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
         Panel::new(self.id.clone(), cx)
             .children(vec![div()
                 .flex()
