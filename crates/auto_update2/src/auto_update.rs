@@ -24,7 +24,13 @@ use workspace::Workspace;
 const SHOULD_SHOW_UPDATE_NOTIFICATION_KEY: &str = "auto-updater-should-show-updated-notification";
 const POLL_INTERVAL: Duration = Duration::from_secs(60 * 60);
 
-actions!(Check, DismissErrorMessage, ViewReleaseNotes);
+//todo!(remove CheckThatAutoUpdaterWorks)
+actions!(
+    Check,
+    DismissErrorMessage,
+    ViewReleaseNotes,
+    CheckThatAutoUpdaterWorks
+);
 
 #[derive(Serialize)]
 struct UpdateRequestBody {
@@ -79,7 +85,15 @@ pub fn init(http_client: Arc<dyn HttpClient>, server_url: String, cx: &mut AppCo
     AutoUpdateSetting::register(cx);
 
     cx.observe_new_views(|wokrspace: &mut Workspace, _cx| {
-        wokrspace.register_action(|_, action: &Check, cx| check(action, cx));
+        wokrspace
+            .register_action(|_, action: &Check, cx| check(action, cx))
+            .register_action(|_, _action: &CheckThatAutoUpdaterWorks, cx| {
+                let prompt = cx.prompt(gpui::PromptLevel::Info, "It does!", &["Ok"]);
+                cx.spawn(|_, _cx| async move {
+                    prompt.await.ok();
+                })
+                .detach();
+            });
     })
     .detach();
 
