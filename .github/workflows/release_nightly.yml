@@ -6,7 +6,7 @@ on:
     - cron: "0 1 * * *"
   push:
     tags:
-      - "nightly*"
+      - "nightly"
 
 env:
   CARGO_TERM_COLOR: always

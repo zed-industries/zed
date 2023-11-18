@@ -48,6 +48,12 @@ jobs:
       - name: Run tests
         uses: ./.github/actions/run_tests
 
+      - name: Build collab
+        run: cargo build -p collab
+
+      - name: Build other binaries
+        run: cargo build --workspace --bins --all-features
+
   bundle:
     name: Bundle app
     runs-on:

@@ -32,11 +32,3 @@ runs:
         RUSTFLAGS: -D warnings
       shell: bash -euxo pipefail {0}
       run: cargo nextest run --workspace --no-fail-fast
-
-    - name: Build collab
-      shell: bash -euxo pipefail {0}
-      run: cargo build -p collab
-
-    - name: Build other binaries
-      shell: bash -euxo pipefail {0}
-      run: cargo build --workspace --bins --all-features
