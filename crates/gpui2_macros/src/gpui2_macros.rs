@@ -1,5 +1,6 @@
 mod action;
 mod derive_component;
+mod derive_element;
 mod register_action;
 mod style_helpers;
 mod test;
@@ -25,6 +26,11 @@ pub fn register_action(attr: TokenStream, item: TokenStream) -> TokenStream {
 pub fn derive_component(input: TokenStream) -> TokenStream {
     derive_component::derive_component(input)
 }
+
+// #[proc_macro_derive(Element)]
+// pub fn derive_element(input: TokenStream) -> TokenStream {
+//     derive_element::derive_element(input)
+// }
 
 #[proc_macro_attribute]
 pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {

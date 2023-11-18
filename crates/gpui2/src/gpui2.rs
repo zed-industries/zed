@@ -78,8 +78,6 @@ use std::{
 };
 use taffy::TaffyLayoutEngine;
 
-type AnyBox = Box<dyn Any>;
-
 pub trait Context {
     type Result<T>;
 

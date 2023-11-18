@@ -4,7 +4,7 @@ use crate::{
     Point, Size, StyleRefinement, Styled, ViewContext,
 };
 use smallvec::SmallVec;
-use std::{cell::RefCell, cmp, mem, ops::Range, rc::Rc};
+use std::{cell::RefCell, cmp, ops::Range, rc::Rc};
 use taffy::style::Overflow;
 
 /// uniform_list provides lazy rendering for a set of items that are of uniform height.
@@ -102,7 +102,7 @@ pub struct UniformListState {
 }
 
 impl<V: 'static> Element<V> for UniformList<V> {
-    type ElementState = UniformListState;
+    type State = UniformListState;
 
     fn element_id(&self) -> Option<crate::ElementId> {
         Some(self.id.clone())
@@ -111,9 +111,9 @@ impl<V: 'static> Element<V> for UniformList<V> {
     fn layout(
         &mut self,
         view_state: &mut V,
-        element_state: Option<Self::ElementState>,
+        element_state: Option<Self::State>,
         cx: &mut ViewContext<V>,
-    ) -> (LayoutId, Self::ElementState) {
+    ) -> (LayoutId, Self::State) {
         let max_items = self.item_count;
         let rem_size = cx.rem_size();
         let item_size = element_state
@@ -159,10 +159,10 @@ impl<V: 'static> Element<V> for UniformList<V> {
     }
 
     fn paint(
-        &mut self,
+        self,
         bounds: Bounds<crate::Pixels>,
         view_state: &mut V,
-        element_state: &mut Self::ElementState,
+        element_state: &mut Self::State,
         cx: &mut ViewContext<V>,
     ) {
         let style =
@@ -183,14 +183,17 @@ impl<V: 'static> Element<V> for UniformList<V> {
             height: item_size.height * self.item_count,
         };
 
-        let mut interactivity = mem::take(&mut self.interactivity);
         let shared_scroll_offset = element_state
             .interactive
             .scroll_offset
             .get_or_insert_with(Rc::default)
             .clone();
 
-        interactivity.paint(
+        let item_height = self
+            .measure_item(view_state, Some(padded_bounds.size.width), cx)
+            .height;
+
+        self.interactivity.paint(
             bounds,
             content_size,
             &mut element_state.interactive,
@@ -209,9 +212,6 @@ impl<V: 'static> Element<V> for UniformList<V> {
                     style.paint(bounds, cx);
 
                     if self.item_count > 0 {
-                        let item_height = self
-                            .measure_item(view_state, Some(padded_bounds.size.width), cx)
-                            .height;
                         if let Some(scroll_handle) = self.scroll_handle.clone() {
                             scroll_handle.0.borrow_mut().replace(ScrollHandleState {
                                 item_height,
@@ -233,9 +233,9 @@ impl<V: 'static> Element<V> for UniformList<V> {
                                 self.item_count,
                             );
 
-                        let mut items = (self.render_items)(view_state, visible_range.clone(), cx);
+                        let items = (self.render_items)(view_state, visible_range.clone(), cx);
                         cx.with_z_index(1, |cx| {
-                            for (item, ix) in items.iter_mut().zip(visible_range) {
+                            for (item, ix) in items.into_iter().zip(visible_range) {
                                 let item_origin = padded_bounds.origin
                                     + point(px(0.), item_height * ix + scroll_offset.y);
                                 let available_space = size(
@@ -249,7 +249,6 @@ impl<V: 'static> Element<V> for UniformList<V> {
                 })
             },
         );
-        self.interactivity = interactivity;
     }
 }
 

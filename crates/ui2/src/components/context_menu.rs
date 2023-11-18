@@ -133,7 +133,7 @@ pub struct MenuHandleState<V, M> {
     menu_element: Option<AnyElement<V>>,
 }
 impl<V: 'static, M: ManagedView> Element<V> for MenuHandle<V, M> {
-    type ElementState = MenuHandleState<V, M>;
+    type State = MenuHandleState<V, M>;
 
     fn element_id(&self) -> Option<gpui::ElementId> {
         Some(self.id.clone().expect("menu_handle must have an id()"))
@@ -142,9 +142,9 @@ impl<V: 'static, M: ManagedView> Element<V> for MenuHandle<V, M> {
     fn layout(
         &mut self,
         view_state: &mut V,
-        element_state: Option<Self::ElementState>,
+        element_state: Option<Self::State>,
         cx: &mut crate::ViewContext<V>,
-    ) -> (gpui::LayoutId, Self::ElementState) {
+    ) -> (gpui::LayoutId, Self::State) {
         let (menu, position) = if let Some(element_state) = element_state {
             (element_state.menu, element_state.position)
         } else {
@@ -192,22 +192,22 @@ impl<V: 'static, M: ManagedView> Element<V> for MenuHandle<V, M> {
     }
 
     fn paint(
-        &mut self,
+        self,
         bounds: Bounds<gpui::Pixels>,
         view_state: &mut V,
-        element_state: &mut Self::ElementState,
+        element_state: &mut Self::State,
         cx: &mut crate::ViewContext<V>,
     ) {
-        if let Some(child) = element_state.child_element.as_mut() {
+        if let Some(child) = element_state.child_element.take() {
             child.paint(view_state, cx);
         }
 
-        if let Some(menu) = element_state.menu_element.as_mut() {
+        if let Some(menu) = element_state.menu_element.take() {
             menu.paint(view_state, cx);
             return;
         }
 
-        let Some(builder) = self.menu_builder.clone() else {
+        let Some(builder) = self.menu_builder else {
             return;
         };
         let menu = element_state.menu.clone();

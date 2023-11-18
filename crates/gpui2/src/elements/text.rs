@@ -9,7 +9,7 @@ use std::{cell::Cell, rc::Rc, sync::Arc};
 use util::ResultExt;
 
 impl<V: 'static> Element<V> for &'static str {
-    type ElementState = TextState;
+    type State = TextState;
 
     fn element_id(&self) -> Option<ElementId> {
         None
@@ -18,16 +18,16 @@ impl<V: 'static> Element<V> for &'static str {
     fn layout(
         &mut self,
         _: &mut V,
-        _: Option<Self::ElementState>,
+        _: Option<Self::State>,
         cx: &mut ViewContext<V>,
-    ) -> (LayoutId, Self::ElementState) {
+    ) -> (LayoutId, Self::State) {
         let mut state = TextState::default();
         let layout_id = state.layout(SharedString::from(*self), None, cx);
         (layout_id, state)
     }
 
     fn paint(
-        &mut self,
+        self,
         bounds: Bounds<Pixels>,
         _: &mut V,
         state: &mut TextState,
@@ -38,7 +38,7 @@ impl<V: 'static> Element<V> for &'static str {
 }
 
 impl<V: 'static> Element<V> for SharedString {
-    type ElementState = TextState;
+    type State = TextState;
 
     fn element_id(&self) -> Option<ElementId> {
         Some(self.clone().into())
@@ -47,16 +47,16 @@ impl<V: 'static> Element<V> for SharedString {
     fn layout(
         &mut self,
         _: &mut V,
-        _: Option<Self::ElementState>,
+        _: Option<Self::State>,
         cx: &mut ViewContext<V>,
-    ) -> (LayoutId, Self::ElementState) {
+    ) -> (LayoutId, Self::State) {
         let mut state = TextState::default();
         let layout_id = state.layout(self.clone(), None, cx);
         (layout_id, state)
     }
 
     fn paint(
-        &mut self,
+        self,
         bounds: Bounds<Pixels>,
         _: &mut V,
         state: &mut TextState,
@@ -93,7 +93,7 @@ impl<V: 'static> Component<V> for Text {
 }
 
 impl<V: 'static> Element<V> for Text {
-    type ElementState = TextState;
+    type State = TextState;
 
     fn element_id(&self) -> Option<crate::ElementId> {
         None
@@ -102,9 +102,9 @@ impl<V: 'static> Element<V> for Text {
     fn layout(
         &mut self,
         _view: &mut V,
-        element_state: Option<Self::ElementState>,
+        element_state: Option<Self::State>,
         cx: &mut ViewContext<V>,
-    ) -> (LayoutId, Self::ElementState) {
+    ) -> (LayoutId, Self::State) {
         let element_state = element_state.unwrap_or_default();
         let text_system = cx.text_system().clone();
         let text_style = cx.text_style();
@@ -160,10 +160,10 @@ impl<V: 'static> Element<V> for Text {
     }
 
     fn paint(
-        &mut self,
+        self,
         bounds: Bounds<Pixels>,
         _: &mut V,
-        element_state: &mut Self::ElementState,
+        element_state: &mut Self::State,
         cx: &mut ViewContext<V>,
     ) {
         let element_state = element_state.lock();
@@ -280,7 +280,7 @@ struct InteractiveTextState {
 }
 
 impl<V: 'static> Element<V> for InteractiveText {
-    type ElementState = InteractiveTextState;
+    type State = InteractiveTextState;
 
     fn element_id(&self) -> Option<ElementId> {
         Some(self.id.clone())
@@ -289,9 +289,9 @@ impl<V: 'static> Element<V> for InteractiveText {
     fn layout(
         &mut self,
         view_state: &mut V,
-        element_state: Option<Self::ElementState>,
+        element_state: Option<Self::State>,
         cx: &mut ViewContext<V>,
-    ) -> (LayoutId, Self::ElementState) {
+    ) -> (LayoutId, Self::State) {
         if let Some(InteractiveTextState {
             text_state,
             clicked_range_ixs,
@@ -314,10 +314,10 @@ impl<V: 'static> Element<V> for InteractiveText {
     }
 
     fn paint(
-        &mut self,
+        self,
         bounds: Bounds<Pixels>,
         view_state: &mut V,
-        element_state: &mut Self::ElementState,
+        element_state: &mut Self::State,
         cx: &mut ViewContext<V>,
     ) {
         self.text

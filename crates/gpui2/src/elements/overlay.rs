@@ -64,7 +64,7 @@ impl<V: 'static> Component<V> for Overlay<V> {
 }
 
 impl<V: 'static> Element<V> for Overlay<V> {
-    type ElementState = OverlayState;
+    type State = OverlayState;
 
     fn element_id(&self) -> Option<crate::ElementId> {
         None
@@ -73,9 +73,9 @@ impl<V: 'static> Element<V> for Overlay<V> {
     fn layout(
         &mut self,
         view_state: &mut V,
-        _: Option<Self::ElementState>,
+        _: Option<Self::State>,
         cx: &mut crate::ViewContext<V>,
-    ) -> (crate::LayoutId, Self::ElementState) {
+    ) -> (crate::LayoutId, Self::State) {
         let child_layout_ids = self
             .children
             .iter_mut()
@@ -92,10 +92,10 @@ impl<V: 'static> Element<V> for Overlay<V> {
     }
 
     fn paint(
-        &mut self,
+        self,
         bounds: crate::Bounds<crate::Pixels>,
         view_state: &mut V,
-        element_state: &mut Self::ElementState,
+        element_state: &mut Self::State,
         cx: &mut crate::ViewContext<V>,
     ) {
         if element_state.child_layout_ids.is_empty() {
@@ -156,7 +156,7 @@ impl<V: 'static> Element<V> for Overlay<V> {
         }
 
         cx.with_element_offset(desired.origin - bounds.origin, |cx| {
-            for child in &mut self.children {
+            for child in self.children {
                 child.paint(view_state, cx);
             }
         })

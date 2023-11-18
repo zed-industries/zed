@@ -31,7 +31,7 @@ impl<V> Component<V> for Svg<V> {
 }
 
 impl<V> Element<V> for Svg<V> {
-    type ElementState = InteractiveElementState;
+    type State = InteractiveElementState;
 
     fn element_id(&self) -> Option<ElementId> {
         self.interactivity.element_id.clone()
@@ -40,19 +40,19 @@ impl<V> Element<V> for Svg<V> {
     fn layout(
         &mut self,
         _view_state: &mut V,
-        element_state: Option<Self::ElementState>,
+        element_state: Option<Self::State>,
         cx: &mut ViewContext<V>,
-    ) -> (LayoutId, Self::ElementState) {
+    ) -> (LayoutId, Self::State) {
         self.interactivity.layout(element_state, cx, |style, cx| {
             cx.request_layout(&style, None)
         })
     }
 
     fn paint(
-        &mut self,
+        self,
         bounds: Bounds<Pixels>,
         _view_state: &mut V,
-        element_state: &mut Self::ElementState,
+        element_state: &mut Self::State,
         cx: &mut ViewContext<V>,
     ) where
         Self: Sized,

@@ -488,8 +488,8 @@ impl EditorElement {
             }
         }
 
-        for (ix, fold_indicator) in layout.fold_indicators.iter_mut().enumerate() {
-            if let Some(fold_indicator) = fold_indicator.as_mut() {
+        for (ix, fold_indicator) in layout.fold_indicators.drain(..).enumerate() {
+            if let Some(mut fold_indicator) = fold_indicator {
                 let available_space = size(
                     AvailableSpace::MinContent,
                     AvailableSpace::Definite(line_height * 0.55),
@@ -509,7 +509,7 @@ impl EditorElement {
             }
         }
 
-        if let Some(indicator) = layout.code_actions_indicator.as_mut() {
+        if let Some(mut indicator) = layout.code_actions_indicator.take() {
             let available_space = size(
                 AvailableSpace::MinContent,
                 AvailableSpace::Definite(line_height),
@@ -840,7 +840,7 @@ impl EditorElement {
                     }
                 });
 
-                if let Some((position, context_menu)) = layout.context_menu.as_mut() {
+                if let Some((position, mut context_menu)) = layout.context_menu.take() {
                     cx.with_z_index(1, |cx| {
                         let line_height = self.style.text.line_height_in_pixels(cx.rem_size());
                         let available_space = size(
@@ -1224,7 +1224,7 @@ impl EditorElement {
         let scroll_left = scroll_position.x * layout.position_map.em_width;
         let scroll_top = scroll_position.y * layout.position_map.line_height;
 
-        for block in &mut layout.blocks {
+        for block in layout.blocks.drain(..) {
             let mut origin = bounds.origin
                 + point(
                     Pixels::ZERO,
@@ -2389,7 +2389,7 @@ enum Invisible {
 }
 
 impl Element<Editor> for EditorElement {
-    type ElementState = ();
+    type State = ();
 
     fn element_id(&self) -> Option<gpui::ElementId> {
         Some(self.editor_id.into())
@@ -2398,9 +2398,9 @@ impl Element<Editor> for EditorElement {
     fn layout(
         &mut self,
         editor: &mut Editor,
-        element_state: Option<Self::ElementState>,
+        element_state: Option<Self::State>,
         cx: &mut gpui::ViewContext<Editor>,
-    ) -> (gpui::LayoutId, Self::ElementState) {
+    ) -> (gpui::LayoutId, Self::State) {
         editor.style = Some(self.style.clone()); // Long-term, we'd like to eliminate this.
 
         let rem_size = cx.rem_size();
@@ -2416,10 +2416,10 @@ impl Element<Editor> for EditorElement {
     }
 
     fn paint(
-        &mut self,
+        mut self,
         bounds: Bounds<gpui::Pixels>,
         editor: &mut Editor,
-        element_state: &mut Self::ElementState,
+        element_state: &mut Self::State,
         cx: &mut gpui::ViewContext<Editor>,
     ) {
         let mut layout = self.compute_layout(editor, cx, bounds);

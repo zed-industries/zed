@@ -14,7 +14,7 @@ use smallvec::SmallVec;
 pub use test_context::*;
 
 use crate::{
-    current_platform, image_cache::ImageCache, Action, ActionRegistry, AnyBox, AnyView,
+    current_platform, image_cache::ImageCache, Action, ActionRegistry, Any, AnyView,
     AnyWindowHandle, AppMetadata, AssetSource, BackgroundExecutor, ClipboardItem, Context,
     DispatchPhase, DisplayId, Entity, EventEmitter, FocusEvent, FocusHandle, FocusId,
     ForegroundExecutor, KeyBinding, Keymap, LayoutId, PathPromptOptions, Pixels, Platform,
@@ -28,7 +28,7 @@ use futures::{channel::oneshot, future::LocalBoxFuture, Future};
 use parking_lot::Mutex;
 use slotmap::SlotMap;
 use std::{
-    any::{type_name, Any, TypeId},
+    any::{type_name, TypeId},
     cell::{Ref, RefCell, RefMut},
     marker::PhantomData,
     mem,
@@ -194,7 +194,7 @@ pub struct AppContext {
     asset_source: Arc<dyn AssetSource>,
     pub(crate) image_cache: ImageCache,
     pub(crate) text_style_stack: Vec<TextStyleRefinement>,
-    pub(crate) globals_by_type: HashMap<TypeId, AnyBox>,
+    pub(crate) globals_by_type: HashMap<TypeId, Box<dyn Any>>,
     pub(crate) entities: EntityMap,
     pub(crate) new_view_observers: SubscriberSet<TypeId, NewViewListener>,
     pub(crate) windows: SlotMap<WindowId, Option<Window>>,
@@ -1100,12 +1100,12 @@ pub(crate) enum Effect {
 
 /// Wraps a global variable value during `update_global` while the value has been moved to the stack.
 pub(crate) struct GlobalLease<G: 'static> {
-    global: AnyBox,
+    global: Box<dyn Any>,
     global_type: PhantomData<G>,
 }
 
 impl<G: 'static> GlobalLease<G> {
-    fn new(global: AnyBox) -> Self {
+    fn new(global: Box<dyn Any>) -> Self {
         GlobalLease {
             global,
             global_type: PhantomData,

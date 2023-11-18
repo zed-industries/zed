@@ -1,8 +1,7 @@
 use crate::{
-    private::Sealed, AnyBox, AnyElement, AnyModel, AnyWeakModel, AppContext, AvailableSpace,
-    BorrowWindow, Bounds, Component, Element, ElementId, Entity, EntityId, Flatten, FocusHandle,
-    FocusableView, LayoutId, Model, Pixels, Point, Size, ViewContext, VisualContext, WeakModel,
-    WindowContext,
+    private::Sealed, AnyElement, AnyModel, AnyWeakModel, AppContext, AvailableSpace, BorrowWindow,
+    Bounds, Component, Element, ElementId, Entity, EntityId, Flatten, FocusHandle, FocusableView,
+    LayoutId, Model, Pixels, Point, Size, ViewContext, VisualContext, WeakModel, WindowContext,
 };
 use anyhow::{Context, Result};
 use std::{
@@ -164,7 +163,7 @@ impl<V> Eq for WeakView<V> {}
 pub struct AnyView {
     model: AnyModel,
     layout: fn(&AnyView, &mut WindowContext) -> (LayoutId, Box<dyn Any>),
-    paint: fn(&AnyView, &mut AnyBox, &mut WindowContext),
+    paint: fn(&AnyView, Box<dyn Any>, &mut WindowContext),
 }
 
 impl AnyView {
@@ -198,11 +197,11 @@ impl AnyView {
         cx: &mut WindowContext,
     ) {
         cx.with_absolute_element_offset(origin, |cx| {
-            let (layout_id, mut rendered_element) = (self.layout)(self, cx);
+            let (layout_id, rendered_element) = (self.layout)(self, cx);
             cx.window
                 .layout_engine
                 .compute_layout(layout_id, available_space);
-            (self.paint)(self, &mut rendered_element, cx);
+            (self.paint)(self, rendered_element, cx);
         })
     }
 }
@@ -224,7 +223,7 @@ impl<V: Render> From<View<V>> for AnyView {
 }
 
 impl<ParentViewState: 'static> Element<ParentViewState> for AnyView {
-    type ElementState = Box<dyn Any>;
+    type State = Option<Box<dyn Any>>;
 
     fn element_id(&self) -> Option<ElementId> {
         Some(self.model.entity_id.into())
@@ -233,27 +232,28 @@ impl<ParentViewState: 'static> Element<ParentViewState> for AnyView {
     fn layout(
         &mut self,
         _view_state: &mut ParentViewState,
-        _element_state: Option<Self::ElementState>,
+        _element_state: Option<Self::State>,
         cx: &mut ViewContext<ParentViewState>,
-    ) -> (LayoutId, Self::ElementState) {
-        (self.layout)(self, cx)
+    ) -> (LayoutId, Self::State) {
+        let (layout_id, rendered_element) = (self.layout)(self, cx);
+        (layout_id, Some(rendered_element))
     }
 
     fn paint(
-        &mut self,
+        mut self,
         _bounds: Bounds<Pixels>,
         _view_state: &mut ParentViewState,
-        rendered_element: &mut Self::ElementState,
+        rendered_element: &mut Self::State,
         cx: &mut ViewContext<ParentViewState>,
     ) {
-        (self.paint)(self, rendered_element, cx)
+        (self.paint)(&mut self, rendered_element.take().unwrap(), cx)
     }
 }
 
 pub struct AnyWeakView {
     model: AnyWeakModel,
     layout: fn(&AnyView, &mut WindowContext) -> (LayoutId, Box<dyn Any>),
-    paint: fn(&AnyView, &mut AnyBox, &mut WindowContext),
+    paint: fn(&AnyView, Box<dyn Any>, &mut WindowContext),
 }
 
 impl AnyWeakView {
@@ -311,7 +311,7 @@ where
     ParentViewState: 'static,
     ViewState: 'static,
 {
-    type ElementState = AnyElement<ViewState>;
+    type State = Option<AnyElement<ViewState>>;
 
     fn element_id(&self) -> Option<ElementId> {
         Some(self.view.entity_id().into())
@@ -320,24 +320,25 @@ where
     fn layout(
         &mut self,
         _: &mut ParentViewState,
-        _: Option<Self::ElementState>,
+        _: Option<Self::State>,
         cx: &mut ViewContext<ParentViewState>,
-    ) -> (LayoutId, Self::ElementState) {
+    ) -> (LayoutId, Self::State) {
         self.view.update(cx, |view, cx| {
             let mut element = self.component.take().unwrap().render();
             let layout_id = element.layout(view, cx);
-            (layout_id, element)
+            (layout_id, Some(element))
         })
     }
 
     fn paint(
-        &mut self,
+        self,
         _: Bounds<Pixels>,
         _: &mut ParentViewState,
-        element: &mut Self::ElementState,
+        element: &mut Self::State,
         cx: &mut ViewContext<ParentViewState>,
     ) {
-        self.view.update(cx, |view, cx| element.paint(view, cx))
+        self.view
+            .update(cx, |view, cx| element.take().unwrap().paint(view, cx))
     }
 }
 
@@ -359,14 +360,10 @@ mod any_view {
         })
     }
 
-    pub(crate) fn paint<V: Render>(
-        view: &AnyView,
-        element: &mut Box<dyn Any>,
-        cx: &mut WindowContext,
-    ) {
+    pub(crate) fn paint<V: Render>(view: &AnyView, element: Box<dyn Any>, cx: &mut WindowContext) {
         cx.with_element_id(Some(view.model.entity_id), |cx| {
             let view = view.clone().downcast::<V>().unwrap();
-            let element = element.downcast_mut::<AnyElement<V>>().unwrap();
+            let element = element.downcast::<AnyElement<V>>().unwrap();
             view.update(cx, |view, cx| element.paint(view, cx))
         })
     }

@@ -600,7 +600,7 @@ impl<V: 'static> ParentComponent<V> for Div<V> {
 }
 
 impl<V: 'static> Element<V> for Div<V> {
-    type ElementState = DivState;
+    type State = DivState;
 
     fn element_id(&self) -> Option<ElementId> {
         self.interactivity.element_id.clone()
@@ -609,9 +609,9 @@ impl<V: 'static> Element<V> for Div<V> {
     fn layout(
         &mut self,
         view_state: &mut V,
-        element_state: Option<Self::ElementState>,
+        element_state: Option<Self::State>,
         cx: &mut ViewContext<V>,
-    ) -> (LayoutId, Self::ElementState) {
+    ) -> (LayoutId, Self::State) {
         let mut child_layout_ids = SmallVec::new();
         let mut interactivity = mem::take(&mut self.interactivity);
         let (layout_id, interactive_state) = interactivity.layout(
@@ -639,10 +639,10 @@ impl<V: 'static> Element<V> for Div<V> {
     }
 
     fn paint(
-        &mut self,
+        self,
         bounds: Bounds<Pixels>,
         view_state: &mut V,
-        element_state: &mut Self::ElementState,
+        element_state: &mut Self::State,
         cx: &mut ViewContext<V>,
     ) {
         let mut child_min = point(Pixels::MAX, Pixels::MAX);
@@ -658,8 +658,7 @@ impl<V: 'static> Element<V> for Div<V> {
             (child_max - child_min).into()
         };
 
-        let mut interactivity = mem::take(&mut self.interactivity);
-        interactivity.paint(
+        self.interactivity.paint(
             bounds,
             content_size,
             &mut element_state.interactive_state,
@@ -679,7 +678,7 @@ impl<V: 'static> Element<V> for Div<V> {
                         cx.with_text_style(style.text_style().cloned(), |cx| {
                             cx.with_content_mask(style.overflow_mask(bounds), |cx| {
                                 cx.with_element_offset(scroll_offset, |cx| {
-                                    for child in &mut self.children {
+                                    for child in self.children {
                                         child.paint(view_state, cx);
                                     }
                                 })
@@ -689,7 +688,6 @@ impl<V: 'static> Element<V> for Div<V> {
                 })
             },
         );
-        self.interactivity = interactivity;
     }
 }
 
@@ -770,7 +768,7 @@ where
     }
 
     pub fn paint(
-        &mut self,
+        mut self,
         bounds: Bounds<Pixels>,
         content_size: Size<Pixels>,
         element_state: &mut InteractiveElementState,
@@ -786,25 +784,25 @@ where
             }
         }
 
-        for listener in self.mouse_down_listeners.drain(..) {
+        for listener in self.mouse_down_listeners {
             cx.on_mouse_event(move |state, event: &MouseDownEvent, phase, cx| {
                 listener(state, event, &bounds, phase, cx);
             })
         }
 
-        for listener in self.mouse_up_listeners.drain(..) {
+        for listener in self.mouse_up_listeners {
             cx.on_mouse_event(move |state, event: &MouseUpEvent, phase, cx| {
                 listener(state, event, &bounds, phase, cx);
             })
         }
 
-        for listener in self.mouse_move_listeners.drain(..) {
+        for listener in self.mouse_move_listeners {
             cx.on_mouse_event(move |state, event: &MouseMoveEvent, phase, cx| {
                 listener(state, event, &bounds, phase, cx);
             })
         }
 
-        for listener in self.scroll_wheel_listeners.drain(..) {
+        for listener in self.scroll_wheel_listeners {
             cx.on_mouse_event(move |state, event: &ScrollWheelEvent, phase, cx| {
                 listener(state, event, &bounds, phase, cx);
             })
@@ -840,7 +838,7 @@ where
         }
 
         if cx.active_drag.is_some() {
-            let drop_listeners = mem::take(&mut self.drop_listeners);
+            let drop_listeners = self.drop_listeners;
             cx.on_mouse_event(move |view, event: &MouseUpEvent, phase, cx| {
                 if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position) {
                     if let Some(drag_state_type) =
@@ -1062,24 +1060,24 @@ where
             self.key_context.clone(),
             element_state.focus_handle.clone(),
             |_, cx| {
-                for listener in self.key_down_listeners.drain(..) {
+                for listener in self.key_down_listeners {
                     cx.on_key_event(move |state, event: &KeyDownEvent, phase, cx| {
                         listener(state, event, phase, cx);
                     })
                 }
 
-                for listener in self.key_up_listeners.drain(..) {
+                for listener in self.key_up_listeners {
                     cx.on_key_event(move |state, event: &KeyUpEvent, phase, cx| {
                         listener(state, event, phase, cx);
                     })
                 }
 
-                for (action_type, listener) in self.action_listeners.drain(..) {
+                for (action_type, listener) in self.action_listeners {
                     cx.on_action(action_type, listener)
                 }
 
                 if let Some(focus_handle) = element_state.focus_handle.as_ref() {
-                    for listener in self.focus_listeners.drain(..) {
+                    for listener in self.focus_listeners {
                         let focus_handle = focus_handle.clone();
                         cx.on_focus_changed(move |view, event, cx| {
                             listener(view, &focus_handle, event, cx)
@@ -1291,7 +1289,7 @@ where
     V: 'static,
     E: Element<V>,
 {
-    type ElementState = E::ElementState;
+    type State = E::State;
 
     fn element_id(&self) -> Option<ElementId> {
         self.element.element_id()
@@ -1300,20 +1298,20 @@ where
     fn layout(
         &mut self,
         view_state: &mut V,
-        element_state: Option<Self::ElementState>,
+        element_state: Option<Self::State>,
         cx: &mut ViewContext<V>,
-    ) -> (LayoutId, Self::ElementState) {
+    ) -> (LayoutId, Self::State) {
         self.element.layout(view_state, element_state, cx)
     }
 
     fn paint(
-        &mut self,
+        self,
         bounds: Bounds<Pixels>,
         view_state: &mut V,
-        element_state: &mut Self::ElementState,
+        element_state: &mut Self::State,
         cx: &mut ViewContext<V>,
     ) {
-        self.element.paint(bounds, view_state, element_state, cx);
+        self.element.paint(bounds, view_state, element_state, cx)
     }
 }
 
@@ -1377,7 +1375,7 @@ where
     V: 'static,
     E: Element<V>,
 {
-    type ElementState = E::ElementState;
+    type State = E::State;
 
     fn element_id(&self) -> Option<ElementId> {
         self.element.element_id()
@@ -1386,17 +1384,17 @@ where
     fn layout(
         &mut self,
         view_state: &mut V,
-        element_state: Option<Self::ElementState>,
+        element_state: Option<Self::State>,
         cx: &mut ViewContext<V>,
-    ) -> (LayoutId, Self::ElementState) {
+    ) -> (LayoutId, Self::State) {
         self.element.layout(view_state, element_state, cx)
     }
 
     fn paint(
-        &mut self,
+        self,
         bounds: Bounds<Pixels>,
         view_state: &mut V,
-        element_state: &mut Self::ElementState,
+        element_state: &mut Self::State,
         cx: &mut ViewContext<V>,
     ) {
         self.element.paint(bounds, view_state, element_state, cx)
