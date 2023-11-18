@@ -78,6 +78,11 @@ impl Settings for AutoUpdateSetting {
 pub fn init(http_client: Arc<dyn HttpClient>, server_url: String, cx: &mut AppContext) {
     AutoUpdateSetting::register(cx);
 
+    cx.observe_new_views(|wokrspace: &mut Workspace, _cx| {
+        wokrspace.register_action(|_, action: &Check, cx| check(action, cx));
+    })
+    .detach();
+
     if let Some(version) = *ZED_APP_VERSION {
         let auto_updater = cx.build_model(|cx| {
             let updater = AutoUpdater::new(version, http_client, server_url);
@@ -101,7 +106,6 @@ pub fn init(http_client: Arc<dyn HttpClient>, server_url: String, cx: &mut AppCo
         });
         cx.set_global(Some(auto_updater));
         //todo!(action)
-        // cx.add_global_action(check);
         // cx.add_global_action(view_release_notes);
         // cx.add_action(UpdateNotification::dismiss);
     }

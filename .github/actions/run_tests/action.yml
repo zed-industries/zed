@@ -25,10 +25,10 @@ runs:
       env:
         RUSTFLAGS: -D warnings
       shell: bash -euxo pipefail {0}
-      run: echo cargo check --tests --workspace
+      run: cargo check --tests --workspace
 
     - name: Run tests
       env:
         RUSTFLAGS: -D warnings
       shell: bash -euxo pipefail {0}
-      run: echo cargo nextest run --workspace --no-fail-fast
+      run: cargo nextest run --workspace --no-fail-fast
