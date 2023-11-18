@@ -155,7 +155,7 @@ if [[ -n $MACOS_CERTIFICATE && -n $MACOS_CERTIFICATE_PASSWORD && -n $APPLE_NOTAR
         /usr/bin/codesign --deep --force --timestamp --options runtime --sign "Zed Industries, Inc." "${app_path}/Contents/MacOS/cli" -v
     fi
 
-    /usr/bin/codesign --deep --force --timestamp --options runtime --entitlements crates/${zed_crate}/resources/zed.entitlements --sign "Zed Industries, Inc." "${app_path}/Contents/MacOS/zed" -v
+    /usr/bin/codesign --deep --force --timestamp --options runtime --entitlements crates/${zed_crate}/resources/zed.entitlements --sign "Zed Industries, Inc." "${app_path}/Contents/MacOS/${zed_crate}" -v
     /usr/bin/codesign --force --timestamp --options runtime --entitlements crates/${zed_crate}/resources/zed.entitlements --sign "Zed Industries, Inc." "${app_path}" -v
 
     security default-keychain -s login.keychain
