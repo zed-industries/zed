@@ -1,8 +1,7 @@
+use crate::prelude::*;
 use gpui::img;
 
-use crate::prelude::*;
-
-#[derive(Component)]
+#[derive(Element)]
 pub struct Avatar {
     src: SharedString,
     shape: Shape,

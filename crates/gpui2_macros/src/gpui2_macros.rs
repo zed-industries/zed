@@ -7,11 +7,6 @@ mod test;
 
 use proc_macro::TokenStream;
 
-#[proc_macro]
-pub fn style_helpers(args: TokenStream) -> TokenStream {
-    style_helpers::style_helpers(args)
-}
-
 #[proc_macro_derive(Action)]
 pub fn action(input: TokenStream) -> TokenStream {
     action::action(input)
@@ -27,10 +22,15 @@ pub fn derive_component(input: TokenStream) -> TokenStream {
     derive_component::derive_component(input)
 }
 
-// #[proc_macro_derive(Element)]
-// pub fn derive_element(input: TokenStream) -> TokenStream {
-//     derive_element::derive_element(input)
-// }
+#[proc_macro_derive(Element, attributes(element))]
+pub fn derive_element(input: TokenStream) -> TokenStream {
+    derive_element::derive_element(input)
+}
+
+#[proc_macro]
+pub fn style_helpers(input: TokenStream) -> TokenStream {
+    style_helpers::style_helpers(input)
+}
 
 #[proc_macro_attribute]
 pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {

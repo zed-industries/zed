@@ -364,7 +364,7 @@ impl<V: 'static> Element<V> for AnyElement<V> {
 
     fn paint(
         self,
-        bounds: Bounds<Pixels>,
+        _bounds: Bounds<Pixels>,
         view_state: &mut V,
         _: &mut Self::State,
         cx: &mut ViewContext<V>,
