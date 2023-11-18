@@ -111,7 +111,10 @@ impl<V: 'static> IconButton<V> {
             .p_1()
             .bg(bg_color)
             .cursor_pointer()
-            .hover(|style| style.bg(bg_hover_color))
+            // Nate: Trying to figure out the right places we want to show a
+            // hover state here. I think it is a bit heavy to have it on every
+            // place we use an icon button.
+            // .hover(|style| style.bg(bg_hover_color))
             .active(|style| style.bg(bg_active_color))
             .child(IconElement::new(self.icon).color(icon_color));
 
