@@ -5,7 +5,7 @@ use derive_more::{Deref, DerefMut};
 pub(crate) use smallvec::SmallVec;
 use std::{any::Any, fmt::Debug, mem};
 
-pub trait Element<V: 'static> {
+pub trait Element<V: 'static>: 'static + Sized {
     type ElementState: 'static;
 
     fn element_id(&self) -> Option<ElementId>;
@@ -25,6 +25,10 @@ pub trait Element<V: 'static> {
         cx: &mut ViewContext<V>,
     );
 
+    fn into_any(self) -> AnyElement<V> {
+        AnyElement::new(self)
+    }
+
     fn draw<T, R>(
         self,
         origin: Point<Pixels>,
@@ -34,7 +38,6 @@ pub trait Element<V: 'static> {
         f: impl FnOnce(&Self::ElementState, &mut ViewContext<V>) -> R,
     ) -> R
     where
-        Self: Sized,
         T: Clone + Default + Debug + Into<AvailableSpace>,
     {
         let mut element = RenderedElement {
