@@ -1,7 +1,7 @@
 use collections::HashSet;
 use editor::{Editor, GoToDiagnostic};
 use gpui::{
-    div, rems, Div, EventEmitter, InteractiveComponent, ParentComponent, Render, Stateful,
+    rems, Div, EventEmitter, InteractiveComponent, ParentComponent, Render, Stateful,
     StatefulInteractiveComponent, Styled, Subscription, View, ViewContext, WeakView,
 };
 use language::Diagnostic;

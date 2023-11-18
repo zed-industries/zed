@@ -63,7 +63,7 @@ use std::{
     sync::{atomic::AtomicUsize, Arc},
     time::Duration,
 };
-use theme2::{default_color_scales, ActiveTheme, ThemeSettings};
+use theme2::{ActiveTheme, ThemeSettings};
 pub use toolbar::{ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 pub use ui;
 use util::ResultExt;

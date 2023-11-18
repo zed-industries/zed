@@ -24,7 +24,7 @@ use std::{
         Arc,
     },
 };
-use theme2::default_color_scales;
+
 use ui::v_stack;
 use ui::{prelude::*, Icon, IconButton, IconElement, TextColor, Tooltip};
 use util::truncate_and_remove_front;
