@@ -23,7 +23,7 @@ use std::{borrow::Cow, ops::Deref, sync::Arc};
 use terminal_view::terminal_panel::TerminalPanel;
 use util::{
     asset_str,
-    channel::ReleaseChannel,
+    channel::{AppCommitSha, ReleaseChannel},
     paths::{self, LOCAL_SETTINGS_RELATIVE_PATH},
     ResultExt,
 };
@@ -162,7 +162,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             // status_bar.add_right_item(cursor_position, cx);
         });
 
-        //     auto_update::notify_of_any_new_update(cx.weak_handle(), cx);
+        auto_update::notify_of_any_new_update(cx);
 
         //     vim::observe_keystrokes(cx);
 
@@ -432,9 +432,16 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
 }
 
 fn about(_: &mut Workspace, _: &About, cx: &mut gpui::ViewContext<Workspace>) {
+    use std::fmt::Write as _;
+
     let app_name = cx.global::<ReleaseChannel>().display_name();
     let version = env!("CARGO_PKG_VERSION");
-    let prompt = cx.prompt(PromptLevel::Info, &format!("{app_name} {version}"), &["OK"]);
+    let mut message = format!("{app_name} {version}");
+    if let Some(sha) = cx.try_global::<AppCommitSha>() {
+        write!(&mut message, "\n\n{}", sha.0).unwrap();
+    }
+
+    let prompt = cx.prompt(PromptLevel::Info, &message, &["OK"]);
     cx.foreground_executor()
         .spawn(async {
             prompt.await.ok();

@@ -6,6 +6,7 @@ members = [
     "crates/audio",
     "crates/audio2",
     "crates/auto_update",
+    "crates/auto_update2",
     "crates/breadcrumbs",
     "crates/call",
     "crates/call2",

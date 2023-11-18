@@ -43,8 +43,8 @@ if [[ $patch != 0 ]]; then
   echo "patch version on main should be zero"
   exit 1
 fi
-if [[ $(cat crates/zed/RELEASE_CHANNEL) != dev ]]; then
-  echo "release channel on main should be dev"
+if [[ $(cat crates/zed/RELEASE_CHANNEL) != dev && $(cat crates/zed/RELEASE_CHANNEL) != nightly ]]; then
+  echo "release channel on main should be dev or nightly"
   exit 1
 fi
 if git show-ref --quiet refs/tags/${preview_tag_name}; then
@@ -59,6 +59,7 @@ if ! git show-ref --quiet refs/heads/${prev_minor_branch_name}; then
   echo "previous branch ${minor_branch_name} doesn't exist"
   exit 1
 fi
+# TODO kb anything else for RELEASE_CHANNEL == nightly needs to be done below?
 if [[ $(git show ${prev_minor_branch_name}:crates/zed/RELEASE_CHANNEL) != preview ]]; then
   echo "release channel on branch ${prev_minor_branch_name} should be preview"
   exit 1

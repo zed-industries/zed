@@ -23,19 +23,14 @@ jobs:
       - self-hosted
       - test
     steps:
-      - name: Install Rust
-        run: |
-          rustup set profile minimal
-          rustup update stable
-
       - name: Checkout repo
         uses: actions/checkout@v3
         with:
           clean: false
           submodules: "recursive"
 
-      - name: cargo fmt
-        run: cargo fmt --all -- --check
+      - name: Run rustfmt
+        uses: ./.github/actions/check_formatting
 
   tests:
     name: Run tests
@@ -43,35 +38,15 @@ jobs:
       - self-hosted
       - test
     needs: rustfmt
-    env:
-      RUSTFLAGS: -D warnings
     steps:
-      - name: Install Rust
-        run: |
-          rustup set profile minimal
-          rustup update stable
-          rustup target add wasm32-wasi
-          cargo install cargo-nextest
-
-      - name: Install Node
-        uses: actions/setup-node@v3
-        with:
-          node-version: "18"
-
       - name: Checkout repo
         uses: actions/checkout@v3
         with:
           clean: false
           submodules: "recursive"
 
-      - name: Limit target directory size
-        run: script/clear-target-dir-if-larger-than 70
-
-      - name: Run check
-        run: cargo check --workspace
-
       - name: Run tests
-        run: cargo nextest run --workspace --no-fail-fast
+        uses: ./.github/actions/run_tests
 
       - name: Build collab
         run: cargo build -p collab
@@ -130,6 +105,8 @@ jobs:
               expected_tag_name="v${version}";;
             preview)
               expected_tag_name="v${version}-pre";;
+            nightly)
+              expected_tag_name="v${version}-nightly";;
             *)
               echo "can't publish a release on channel ${channel}"
               exit 1;;
@@ -154,7 +131,9 @@ jobs:
 
       - uses: softprops/action-gh-release@v1
         name: Upload app bundle to release
-        if: ${{ env.RELEASE_CHANNEL }}
+        # TODO kb seems that zed.dev relies on GitHub releases for release version tracking.
+        # Find alternatives for `nightly` or just go on with more releases?
+        if: ${{ env.RELEASE_CHANNEL == 'preview' || env.RELEASE_CHANNEL == 'stable' }}
         with:
           draft: true
           prerelease: ${{ env.RELEASE_CHANNEL == 'preview' }}

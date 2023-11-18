@@ -9,8 +9,11 @@ case $channel in
   preview)
     tag_suffix="-pre"
     ;;
+  nightly)
+    tag_suffix="-nightly"
+    ;;
   *)
-    echo "this must be run on a stable or preview release branch" >&2
+    echo "this must be run on either of stable|preview|nightly release branches" >&2
     exit 1
     ;;
 esac
