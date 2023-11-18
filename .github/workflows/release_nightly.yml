@@ -92,7 +92,7 @@ jobs:
         run: script/generate-licenses
 
       - name: Create app bundle
-        run: script/bundle
+        run: script/bundle -2
 
       - name: Upload Zed Nightly
         run: script/upload-nightly
