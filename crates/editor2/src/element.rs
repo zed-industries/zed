@@ -20,9 +20,9 @@ use collections::{BTreeMap, HashMap};
 use gpui::{
     div, point, px, relative, size, transparent_black, Action, AnyElement, AvailableSpace,
     BorrowWindow, Bounds, Component, ContentMask, Corners, DispatchPhase, Edges, Element,
-    ElementId, ElementInputHandler, Entity, EntityId, Hsla, InteractiveComponent, LineLayout,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentComponent, Pixels,
-    ScrollWheelEvent, ShapedLine, SharedString, Size, StatefulInteractiveComponent, Style, Styled,
+    ElementId, ElementInputHandler, Entity, EntityId, Hsla, InteractiveElement, LineLayout,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels,
+    ScrollWheelEvent, ShapedLine, SharedString, Size, StatefulInteractiveElement, Style, Styled,
     TextRun, TextStyle, View, ViewContext, WindowContext, WrappedLine,
 };
 use itertools::Itertools;

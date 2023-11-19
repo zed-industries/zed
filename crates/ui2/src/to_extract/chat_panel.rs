@@ -1,27 +1,17 @@
 use crate::{prelude::*, Icon, IconButton, Input, Label};
 use chrono::NaiveDateTime;
-use gpui::prelude::*;
+use gpui::{prelude::*, Div, Stateful};
 
-#[derive(Component)]
+#[derive(RenderOnce)]
 pub struct ChatPanel {
     element_id: ElementId,
     messages: Vec<ChatMessage>,
 }
 
-impl ChatPanel {
-    pub fn new(element_id: impl Into<ElementId>) -> Self {
-        Self {
-            element_id: element_id.into(),
-            messages: Vec::new(),
-        }
-    }
+impl<V: 'static> Component<V> for ChatPanel {
+    type Rendered = Stateful<V, Div<V>>;
 
-    pub fn messages(mut self, messages: Vec<ChatMessage>) -> Self {
-        self.messages = messages;
-        self
-    }
-
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
+    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
         div()
             .id(self.element_id.clone())
             .flex()
@@ -67,23 +57,31 @@ impl ChatPanel {
     }
 }
 
-#[derive(Component)]
+impl ChatPanel {
+    pub fn new(element_id: impl Into<ElementId>) -> Self {
+        Self {
+            element_id: element_id.into(),
+            messages: Vec::new(),
+        }
+    }
+
+    pub fn messages(mut self, messages: Vec<ChatMessage>) -> Self {
+        self.messages = messages;
+        self
+    }
+}
+
+#[derive(RenderOnce)]
 pub struct ChatMessage {
     author: String,
     text: String,
     sent_at: NaiveDateTime,
 }
 
-impl ChatMessage {
-    pub fn new(author: String, text: String, sent_at: NaiveDateTime) -> Self {
-        Self {
-            author,
-            text,
-            sent_at,
-        }
-    }
+impl<V: 'static> Component<V> for ChatMessage {
+    type Rendered = Div<V>;
 
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
+    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
         div()
             .flex()
             .flex_col()
@@ -101,6 +99,16 @@ impl ChatMessage {
     }
 }
 
+impl ChatMessage {
+    pub fn new(author: String, text: String, sent_at: NaiveDateTime) -> Self {
+        Self {
+            author,
+            text,
+            sent_at,
+        }
+    }
+}
+
 #[cfg(feature = "stories")]
 pub use stories::*;
 
@@ -115,7 +123,7 @@ mod stories {
 
     pub struct ChatPanelStory;
 
-    impl Render for ChatPanelStory {
+    impl Render<Self> for ChatPanelStory {
         type Element = Div<Self>;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {

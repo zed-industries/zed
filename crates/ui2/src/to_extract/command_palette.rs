@@ -1,17 +1,15 @@
 use crate::prelude::*;
 use crate::{example_editor_actions, OrderMethod, Palette};
 
-#[derive(Component)]
+#[derive(RenderOnce)]
 pub struct CommandPalette {
     id: ElementId,
 }
 
-impl CommandPalette {
-    pub fn new(id: impl Into<ElementId>) -> Self {
-        Self { id: id.into() }
-    }
+impl<V: 'static> Component<V> for CommandPalette {
+    type Rendered = Stateful<V, Div<V>>;
 
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
+    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
         div().id(self.id.clone()).child(
             Palette::new("palette")
                 .items(example_editor_actions())
@@ -22,6 +20,13 @@ impl CommandPalette {
     }
 }
 
+impl CommandPalette {
+    pub fn new(id: impl Into<ElementId>) -> Self {
+        Self { id: id.into() }
+    }
+}
+
+use gpui::{Div, RenderOnce, Stateful};
 #[cfg(feature = "stories")]
 pub use stories::*;
 
@@ -35,7 +40,7 @@ mod stories {
 
     pub struct CommandPaletteStory;
 
-    impl Render for CommandPaletteStory {
+    impl Render<Self> for CommandPaletteStory {
         type Element = Div<Self>;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {

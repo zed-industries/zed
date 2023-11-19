@@ -1,4 +1,4 @@
-use gpui::{Hsla, WindowContext};
+use gpui::{Div, Hsla, RenderOnce, WindowContext};
 
 use crate::prelude::*;
 use crate::{h_stack, v_stack, Icon, IconElement};
@@ -11,7 +11,7 @@ pub struct PlayerCursor {
 
 #[derive(Default, PartialEq, Clone)]
 pub struct HighlightedText {
-    pub text: String,
+    pub text: SharedString,
     pub color: Hsla,
 }
 
@@ -107,7 +107,7 @@ impl BufferRow {
     }
 }
 
-#[derive(Component, Clone)]
+#[derive(RenderOnce, Clone)]
 pub struct Buffer {
     id: ElementId,
     rows: Option<BufferRows>,
@@ -115,6 +115,21 @@ pub struct Buffer {
     language: Option<String>,
     title: Option<String>,
     path: Option<String>,
+}
+
+impl<V: 'static> Component<V> for Buffer {
+    type Rendered = Div<V>;
+
+    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
+        let rows = self.render_rows(cx);
+
+        v_stack()
+            .flex_1()
+            .w_full()
+            .h_full()
+            .bg(cx.theme().colors().editor_background)
+            .children(rows)
+    }
 }
 
 impl Buffer {
@@ -186,7 +201,7 @@ impl Buffer {
                     h_stack().justify_end().px_0p5().w_3().child(
                         div()
                             .text_color(line_number_color)
-                            .child(row.line_number.to_string()),
+                            .child(SharedString::from(row.line_number.to_string())),
                     ),
                 )
             })
@@ -239,7 +254,7 @@ mod stories {
 
     pub struct BufferStory;
 
-    impl Render for BufferStory {
+    impl Render<Self> for BufferStory {
         type Element = Div<Self>;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {

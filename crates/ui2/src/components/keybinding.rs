@@ -1,9 +1,8 @@
-use gpui::Action;
+use crate::prelude::*;
+use gpui::{Action, Div, RenderOnce};
 use strum::EnumIter;
 
-use crate::prelude::*;
-
-#[derive(Component, Clone)]
+#[derive(RenderOnce, Clone)]
 pub struct KeyBinding {
     /// A keybinding consists of a key and a set of modifier keys.
     /// More then one keybinding produces a chord.
@@ -12,19 +11,10 @@ pub struct KeyBinding {
     key_binding: gpui::KeyBinding,
 }
 
-impl KeyBinding {
-    pub fn for_action(action: &dyn Action, cx: &mut WindowContext) -> Option<Self> {
-        // todo! this last is arbitrary, we want to prefer users key bindings over defaults,
-        // and vim over normal (in vim mode), etc.
-        let key_binding = cx.bindings_for_action(action).last().cloned()?;
-        Some(Self::new(key_binding))
-    }
+impl<V: 'static> Component<V> for KeyBinding {
+    type Rendered = Div<V>;
 
-    pub fn new(key_binding: gpui::KeyBinding) -> Self {
-        Self { key_binding }
-    }
-
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
+    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
         div()
             .flex()
             .gap_2()
@@ -42,17 +32,29 @@ impl KeyBinding {
     }
 }
 
-#[derive(Component)]
+impl KeyBinding {
+    pub fn for_action(action: &dyn Action, cx: &mut WindowContext) -> Option<Self> {
+        // todo! this last is arbitrary, we want to prefer users key bindings over defaults,
+        // and vim over normal (in vim mode), etc.
+        let key_binding = cx.bindings_for_action(action).last().cloned()?;
+        Some(Self::new(key_binding))
+    }
+
+    pub fn new(key_binding: gpui::KeyBinding) -> Self {
+        Self { key_binding }
+    }
+}
+
+#[derive(RenderOnce)]
 pub struct Key {
     key: SharedString,
 }
 
-impl Key {
-    pub fn new(key: impl Into<SharedString>) -> Self {
-        Self { key: key.into() }
-    }
+impl<V: 'static> Component<V> for Key {
+    type Rendered = Div<V>;
 
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
+    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
+        let _view: &mut V = view;
         div()
             .px_2()
             .py_0()
@@ -61,6 +63,12 @@ impl Key {
             .text_color(cx.theme().colors().text)
             .bg(cx.theme().colors().element_background)
             .child(self.key.clone())
+    }
+}
+
+impl Key {
+    pub fn new(key: impl Into<SharedString>) -> Self {
+        Self { key: key.into() }
     }
 }
 
@@ -92,7 +100,7 @@ mod stories {
         gpui::KeyBinding::new(key, NoAction {}, None)
     }
 
-    impl Render for KeybindingStory {
+    impl Render<Self> for KeybindingStory {
         type Element = Div<Self>;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use chrono::DateTime;
-use gpui::{px, relative, Div, Render, Size, View, VisualContext};
+use gpui::{px, relative, Div, Render, RenderOnce, Size, View, VisualContext};
 use settings2::Settings;
 use theme2::ThemeSettings;
 
@@ -191,7 +191,7 @@ impl Workspace {
     }
 }
 
-impl Render for Workspace {
+impl Render<Self> for Workspace {
     type Element = Div<Self>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Div<Self> {
@@ -388,7 +388,7 @@ mod stories {
         }
     }
 
-    impl Render for WorkspaceStory {
+    impl Render<Self> for WorkspaceStory {
         type Element = Div<Self>;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {

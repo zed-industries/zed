@@ -1,7 +1,6 @@
 use crate::{
-    AnyElement, BorrowWindow, Bounds, Component, Element, InteractiveComponent,
-    InteractiveElementState, Interactivity, LayoutId, Pixels, SharedString, StyleRefinement,
-    Styled, ViewContext,
+    BorrowWindow, Bounds, Element, InteractiveElement, InteractiveElementState, Interactivity,
+    LayoutId, Pixels, RenderOnce, SharedString, StyleRefinement, Styled, ViewContext,
 };
 use futures::FutureExt;
 use util::ResultExt;
@@ -32,12 +31,6 @@ where
     pub fn grayscale(mut self, grayscale: bool) -> Self {
         self.grayscale = grayscale;
         self
-    }
-}
-
-impl<V> Component<V> for Img<V> {
-    fn render(self) -> AnyElement<V> {
-        AnyElement::new(self)
     }
 }
 
@@ -102,13 +95,21 @@ impl<V> Element<V> for Img<V> {
     }
 }
 
+impl<V: 'static> RenderOnce<V> for Img<V> {
+    type Element = Self;
+
+    fn render_once(self) -> Self::Element {
+        self
+    }
+}
+
 impl<V> Styled for Img<V> {
     fn style(&mut self) -> &mut StyleRefinement {
         &mut self.interactivity.base_style
     }
 }
 
-impl<V> InteractiveComponent<V> for Img<V> {
+impl<V> InteractiveElement<V> for Img<V> {
     fn interactivity(&mut self) -> &mut Interactivity<V> {
         &mut self.interactivity
     }

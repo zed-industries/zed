@@ -1,9 +1,9 @@
-use gpui::AnyElement;
+use gpui::{AnyElement, Div, RenderOnce, Stateful};
 use smallvec::SmallVec;
 
 use crate::{h_stack, prelude::*, v_stack, Button, Icon, IconButton, Label};
 
-#[derive(Component)]
+#[derive(RenderOnce)]
 pub struct Modal<V: 'static> {
     id: ElementId,
     title: Option<SharedString>,
@@ -12,33 +12,11 @@ pub struct Modal<V: 'static> {
     children: SmallVec<[AnyElement<V>; 2]>,
 }
 
-impl<V: 'static> Modal<V> {
-    pub fn new(id: impl Into<ElementId>) -> Self {
-        Self {
-            id: id.into(),
-            title: None,
-            primary_action: None,
-            secondary_action: None,
-            children: SmallVec::new(),
-        }
-    }
+impl<V: 'static> Component<V> for Modal<V> {
+    type Rendered = Stateful<V, Div<V>>;
 
-    pub fn title(mut self, title: impl Into<SharedString>) -> Self {
-        self.title = Some(title.into());
-        self
-    }
-
-    pub fn primary_action(mut self, action: Button<V>) -> Self {
-        self.primary_action = Some(action);
-        self
-    }
-
-    pub fn secondary_action(mut self, action: Button<V>) -> Self {
-        self.secondary_action = Some(action);
-        self
-    }
-
-    fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
+    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
+        let _view: &mut V = view;
         v_stack()
             .id(self.id.clone())
             .w_96()
@@ -74,7 +52,34 @@ impl<V: 'static> Modal<V> {
     }
 }
 
-impl<V: 'static> ParentComponent<V> for Modal<V> {
+impl<V: 'static> Modal<V> {
+    pub fn new(id: impl Into<ElementId>) -> Self {
+        Self {
+            id: id.into(),
+            title: None,
+            primary_action: None,
+            secondary_action: None,
+            children: SmallVec::new(),
+        }
+    }
+
+    pub fn title(mut self, title: impl Into<SharedString>) -> Self {
+        self.title = Some(title.into());
+        self
+    }
+
+    pub fn primary_action(mut self, action: Button<V>) -> Self {
+        self.primary_action = Some(action);
+        self
+    }
+
+    pub fn secondary_action(mut self, action: Button<V>) -> Self {
+        self.secondary_action = Some(action);
+        self
+    }
+}
+
+impl<V: 'static> ParentElement<V> for Modal<V> {
     fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<V>; 2]> {
         &mut self.children
     }

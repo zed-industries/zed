@@ -31,9 +31,9 @@ use std::sync::Arc;
 use call::ActiveCall;
 use client::{Client, UserStore};
 use gpui::{
-    div, px, rems, AppContext, Component, Div, InteractiveComponent, Model, ParentComponent,
-    Render, Stateful, StatefulInteractiveComponent, Styled, Subscription, ViewContext,
-    VisualContext, WeakView, WindowBounds,
+    div, px, rems, AppContext, Component, Div, InteractiveElement, Model, ParentElement, Render,
+    Stateful, StatefulInteractiveElement, Styled, Subscription, ViewContext, VisualContext,
+    WeakView, WindowBounds,
 };
 use project::Project;
 use theme::ActiveTheme;

@@ -1,6 +1,6 @@
 mod action;
 mod derive_component;
-mod derive_element;
+mod derive_render_once;
 mod register_action;
 mod style_helpers;
 mod test;
@@ -22,9 +22,9 @@ pub fn derive_component(input: TokenStream) -> TokenStream {
     derive_component::derive_component(input)
 }
 
-#[proc_macro_derive(Element, attributes(element))]
-pub fn derive_element(input: TokenStream) -> TokenStream {
-    derive_element::derive_element(input)
+#[proc_macro_derive(RenderOnce, attributes(view))]
+pub fn derive_render_once(input: TokenStream) -> TokenStream {
+    derive_render_once::derive_render_once(input)
 }
 
 #[proc_macro]

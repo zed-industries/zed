@@ -424,7 +424,7 @@ impl AppContext {
     /// Opens a new window with the given option and the root view returned by the given function.
     /// The function is invoked with a `WindowContext`, which can be used to interact with window-specific
     /// functionality.
-    pub fn open_window<V: Render>(
+    pub fn open_window<V: 'static + Render<V>>(
         &mut self,
         options: crate::WindowOptions,
         build_root_view: impl FnOnce(&mut WindowContext) -> View<V>,

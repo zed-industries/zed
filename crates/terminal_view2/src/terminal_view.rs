@@ -10,10 +10,9 @@ pub mod terminal_panel;
 use editor::{scroll::autoscroll::Autoscroll, Editor};
 use gpui::{
     actions, div, img, red, Action, AnyElement, AppContext, Component, DispatchPhase, Div,
-    EventEmitter, FocusEvent, FocusHandle, Focusable, FocusableComponent, FocusableView,
-    InputHandler, InteractiveComponent, KeyDownEvent, Keystroke, Model, MouseButton,
-    ParentComponent, Pixels, Render, SharedString, Styled, Task, View, ViewContext, VisualContext,
-    WeakView,
+    EventEmitter, FocusEvent, FocusHandle, Focusable, FocusableElement, FocusableView,
+    InputHandler, InteractiveElement, KeyDownEvent, Keystroke, Model, MouseButton, ParentElement,
+    Pixels, Render, SharedString, Styled, Task, View, ViewContext, VisualContext, WeakView,
 };
 use language::Bias;
 use persistence::TERMINAL_DB;

@@ -1,7 +1,9 @@
 use crate::{prelude::*, Icon, IconButton, Tab};
 use gpui::prelude::*;
+use gpui::Div;
+use gpui::Stateful;
 
-#[derive(Component)]
+#[derive(RenderOnce)]
 pub struct TabBar {
     id: ElementId,
     /// Backwards, Forwards
@@ -9,21 +11,10 @@ pub struct TabBar {
     tabs: Vec<Tab>,
 }
 
-impl TabBar {
-    pub fn new(id: impl Into<ElementId>, tabs: Vec<Tab>) -> Self {
-        Self {
-            id: id.into(),
-            can_navigate: (false, false),
-            tabs,
-        }
-    }
+impl<V: 'static> Component<V> for TabBar {
+    type Rendered = Stateful<V, Div<V>>;
 
-    pub fn can_navigate(mut self, can_navigate: (bool, bool)) -> Self {
-        self.can_navigate = can_navigate;
-        self
-    }
-
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
+    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
         let (can_navigate_back, can_navigate_forward) = self.can_navigate;
 
         div()
@@ -92,6 +83,21 @@ impl TabBar {
     }
 }
 
+impl TabBar {
+    pub fn new(id: impl Into<ElementId>, tabs: Vec<Tab>) -> Self {
+        Self {
+            id: id.into(),
+            can_navigate: (false, false),
+            tabs,
+        }
+    }
+
+    pub fn can_navigate(mut self, can_navigate: (bool, bool)) -> Self {
+        self.can_navigate = can_navigate;
+        self
+    }
+}
+
 use gpui::ElementId;
 #[cfg(feature = "stories")]
 pub use stories::*;
@@ -104,7 +110,7 @@ mod stories {
 
     pub struct TabBarStory;
 
-    impl Render for TabBarStory {
+    impl Render<Self> for TabBarStory {
         type Element = Div<Self>;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {

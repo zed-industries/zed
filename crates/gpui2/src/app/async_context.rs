@@ -115,7 +115,7 @@ impl AsyncAppContext {
         build_root_view: impl FnOnce(&mut WindowContext) -> View<V>,
     ) -> Result<WindowHandle<V>>
     where
-        V: Render,
+        V: 'static + Render<V>,
     {
         let app = self
             .app
@@ -286,7 +286,7 @@ impl VisualContext for AsyncWindowContext {
         build_view_state: impl FnOnce(&mut ViewContext<'_, V>) -> V,
     ) -> Self::Result<View<V>>
     where
-        V: 'static + Render,
+        V: 'static + Render<V>,
     {
         self.window
             .update(self, |_, cx| cx.build_view(build_view_state))
@@ -306,7 +306,7 @@ impl VisualContext for AsyncWindowContext {
         build_view: impl FnOnce(&mut ViewContext<'_, V>) -> V,
     ) -> Self::Result<View<V>>
     where
-        V: Render,
+        V: 'static + Render<V>,
     {
         self.window
             .update(self, |_, cx| cx.replace_root_view(build_view))

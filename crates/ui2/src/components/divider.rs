@@ -1,3 +1,5 @@
+use gpui::RenderOnce;
+
 use crate::prelude::*;
 
 enum DividerDirection {
@@ -5,7 +7,7 @@ enum DividerDirection {
     Vertical,
 }
 
-#[derive(Component)]
+// #[derive(RenderOnce)]
 pub struct Divider {
     direction: DividerDirection,
     inset: bool,

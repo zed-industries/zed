@@ -1,7 +1,6 @@
 use crate::{
-    AnyElement, Bounds, Component, Element, ElementId, InteractiveComponent,
-    InteractiveElementState, Interactivity, LayoutId, Pixels, SharedString, StyleRefinement,
-    Styled, ViewContext,
+    Bounds, Element, ElementId, InteractiveElement, InteractiveElementState, Interactivity,
+    LayoutId, Pixels, RenderOnce, SharedString, StyleRefinement, Styled, ViewContext,
 };
 use util::ResultExt;
 
@@ -21,12 +20,6 @@ impl<V> Svg<V> {
     pub fn path(mut self, path: impl Into<SharedString>) -> Self {
         self.path = Some(path.into());
         self
-    }
-}
-
-impl<V> Component<V> for Svg<V> {
-    fn render(self) -> AnyElement<V> {
-        AnyElement::new(self)
     }
 }
 
@@ -66,13 +59,21 @@ impl<V> Element<V> for Svg<V> {
     }
 }
 
+impl<V: 'static> RenderOnce<V> for Svg<V> {
+    type Element = Self;
+
+    fn render_once(self) -> Self::Element {
+        self
+    }
+}
+
 impl<V> Styled for Svg<V> {
     fn style(&mut self) -> &mut StyleRefinement {
         &mut self.interactivity.base_style
     }
 }
 
-impl<V> InteractiveComponent<V> for Svg<V> {
+impl<V> InteractiveElement<V> for Svg<V> {
     fn interactivity(&mut self) -> &mut Interactivity<V> {
         &mut self.interactivity
     }

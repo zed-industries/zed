@@ -121,7 +121,7 @@ pub trait VisualContext: Context {
         build_view: impl FnOnce(&mut ViewContext<'_, V>) -> V,
     ) -> Self::Result<View<V>>
     where
-        V: 'static + Render;
+        V: 'static + Render<V>;
 
     fn update_view<V: 'static, R>(
         &mut self,
@@ -134,7 +134,7 @@ pub trait VisualContext: Context {
         build_view: impl FnOnce(&mut ViewContext<'_, V>) -> V,
     ) -> Self::Result<View<V>>
     where
-        V: Render;
+        V: 'static + Render<V>;
 
     fn focus_view<V>(&mut self, view: &View<V>) -> Self::Result<()>
     where

@@ -1,17 +1,16 @@
 use crate::prelude::*;
 use crate::{OrderMethod, Palette, PaletteItem};
 
-#[derive(Component)]
+#[derive(RenderOnce)]
 pub struct ThemeSelector {
     id: ElementId,
 }
 
-impl ThemeSelector {
-    pub fn new(id: impl Into<ElementId>) -> Self {
-        Self { id: id.into() }
-    }
+impl<V: 'static> Component<V> for ThemeSelector {
+    type Rendered = Div<V>;
 
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
+    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
+        let cx: &mut ViewContext<V> = cx;
         div().child(
             Palette::new(self.id.clone())
                 .items(vec![
@@ -34,6 +33,13 @@ impl ThemeSelector {
     }
 }
 
+impl ThemeSelector {
+    pub fn new(id: impl Into<ElementId>) -> Self {
+        Self { id: id.into() }
+    }
+}
+
+use gpui::{Div, RenderOnce};
 #[cfg(feature = "stories")]
 pub use stories::*;
 
@@ -47,7 +53,7 @@ mod stories {
 
     pub struct ThemeSelectorStory;
 
-    impl Render for ThemeSelectorStory {
+    impl Render<Self> for ThemeSelectorStory {
         type Element = Div<Self>;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {

@@ -1,4 +1,4 @@
-use gpui::{overlay, Action, AnyView, Overlay, Render, VisualContext};
+use gpui::{overlay, Action, AnyView, Overlay, Render, RenderOnce, VisualContext};
 use settings2::Settings;
 use theme2::{ActiveTheme, ThemeSettings};
 
@@ -67,7 +67,7 @@ impl Tooltip {
     }
 }
 
-impl Render for Tooltip {
+impl Render<Self> for Tooltip {
     type Element = Overlay<Self>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {

@@ -1,7 +1,8 @@
 use crate::{
     private::Sealed, AnyElement, AnyModel, AnyWeakModel, AppContext, AvailableSpace, BorrowWindow,
-    Bounds, Component, Element, ElementId, Entity, EntityId, Flatten, FocusHandle, FocusableView,
-    LayoutId, Model, Pixels, Point, Size, ViewContext, VisualContext, WeakModel, WindowContext,
+    Bounds, Element, ElementId, Entity, EntityId, Flatten, FocusHandle, FocusableView, LayoutId,
+    Model, Pixels, Point, Render, RenderOnce, Size, ViewContext, VisualContext, WeakModel,
+    WindowContext,
 };
 use anyhow::{Context, Result};
 use std::{
@@ -9,14 +10,8 @@ use std::{
     hash::{Hash, Hasher},
 };
 
-pub trait Render: 'static + Sized {
-    type Element: Element<Self> + 'static;
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element;
-}
-
 pub struct View<V> {
-    pub(crate) model: Model<V>,
+    pub model: Model<V>,
 }
 
 impl<V> Sealed for View<V> {}
@@ -64,13 +59,13 @@ impl<V: 'static> View<V> {
         self.model.read(cx)
     }
 
-    pub fn render_with<C>(&self, component: C) -> RenderViewWith<C, V>
+    pub fn render_with<E>(&self, component: E) -> RenderViewWith<E, V>
     where
-        C: 'static + Component<V>,
+        E: 'static + Element<V>,
     {
         RenderViewWith {
             view: self.clone(),
-            component: Some(component),
+            element: Some(component),
         }
     }
 
@@ -103,12 +98,6 @@ impl<V> PartialEq for View<V> {
 }
 
 impl<V> Eq for View<V> {}
-
-impl<V: Render, ParentViewState: 'static> Component<ParentViewState> for View<V> {
-    fn render(self) -> AnyElement<ParentViewState> {
-        AnyElement::new(AnyView::from(self))
-    }
-}
 
 pub struct WeakView<V> {
     pub(crate) model: WeakModel<V>,
@@ -206,13 +195,7 @@ impl AnyView {
     }
 }
 
-impl<V: 'static> Component<V> for AnyView {
-    fn render(self) -> AnyElement<V> {
-        AnyElement::new(self)
-    }
-}
-
-impl<V: Render> From<View<V>> for AnyView {
+impl<V: 'static + Render<V>> From<View<V>> for AnyView {
     fn from(value: View<V>) -> Self {
         AnyView {
             model: value.model.into_any(),
@@ -222,7 +205,48 @@ impl<V: Render> From<View<V>> for AnyView {
     }
 }
 
-impl<ParentViewState: 'static> Element<ParentViewState> for AnyView {
+impl<V: 'static + Render<V>, ParentV: 'static> Element<ParentV> for View<V> {
+    type State = Option<AnyElement<V>>;
+
+    fn element_id(&self) -> Option<ElementId> {
+        Some(self.model.entity_id.into())
+    }
+
+    fn layout(
+        &mut self,
+        _parent_view: &mut ParentV,
+        _state: Option<Self::State>,
+        cx: &mut ViewContext<ParentV>,
+    ) -> (LayoutId, Self::State) {
+        self.update(cx, |view, cx| {
+            let mut element = view.render(cx).into_any();
+            let layout_id = element.layout(view, cx);
+            (layout_id, Some(element))
+        })
+    }
+
+    fn paint(
+        self,
+        _: Bounds<Pixels>,
+        _parent: &mut ParentV,
+        element: &mut Self::State,
+        cx: &mut ViewContext<ParentV>,
+    ) {
+        self.update(cx, |view, cx| {
+            element.take().unwrap().paint(view, cx);
+        });
+    }
+}
+
+impl<V: 'static + Render<V>, ParentV: 'static> RenderOnce<ParentV> for View<V> {
+    type Element = View<V>;
+
+    fn render_once(self) -> Self::Element {
+        self
+    }
+}
+
+impl<V: 'static> Element<V> for AnyView {
     type State = Option<Box<dyn Any>>;
 
     fn element_id(&self) -> Option<ElementId> {
@@ -231,9 +255,9 @@ impl<ParentViewState: 'static> Element<ParentViewState> for AnyView {
 
     fn layout(
         &mut self,
-        _view_state: &mut ParentViewState,
+        _view_state: &mut V,
         _element_state: Option<Self::State>,
-        cx: &mut ViewContext<ParentViewState>,
+        cx: &mut ViewContext<V>,
     ) -> (LayoutId, Self::State) {
         let (layout_id, rendered_element) = (self.layout)(self, cx);
         (layout_id, Some(rendered_element))
@@ -242,11 +266,19 @@ impl<ParentViewState: 'static> Element<ParentViewState> for AnyView {
     fn paint(
         mut self,
         _bounds: Bounds<Pixels>,
-        _view_state: &mut ParentViewState,
+        _view_state: &mut V,
         rendered_element: &mut Self::State,
-        cx: &mut ViewContext<ParentViewState>,
+        cx: &mut ViewContext<V>,
     ) {
         (self.paint)(&mut self, rendered_element.take().unwrap(), cx)
+    }
+}
+
+impl<ParentV: 'static> RenderOnce<ParentV> for AnyView {
+    type Element = Self;
+
+    fn render_once(self) -> Self::Element {
+        self
     }
 }
 
@@ -267,7 +299,7 @@ impl AnyWeakView {
     }
 }
 
-impl<V: Render> From<WeakView<V>> for AnyWeakView {
+impl<V: 'static + Render<V>> From<WeakView<V>> for AnyWeakView {
     fn from(view: WeakView<V>) -> Self {
         Self {
             model: view.model.into(),
@@ -277,10 +309,10 @@ impl<V: Render> From<WeakView<V>> for AnyWeakView {
     }
 }
 
-impl<T, E> Render for T
+impl<F, E> Render<F> for F
 where
-    T: 'static + FnMut(&mut WindowContext) -> E,
-    E: 'static + Send + Element<T>,
+    F: 'static + FnMut(&mut WindowContext) -> E,
+    E: 'static + Send + Element<F>,
 {
     type Element = E;
 
@@ -289,29 +321,18 @@ where
     }
 }
 
-pub struct RenderViewWith<C, V> {
+pub struct RenderViewWith<E, V> {
     view: View<V>,
-    component: Option<C>,
+    element: Option<E>,
 }
 
-impl<C, ParentViewState, ViewState> Component<ParentViewState> for RenderViewWith<C, ViewState>
+impl<E, ParentV, V> Element<ParentV> for RenderViewWith<E, V>
 where
-    C: 'static + Component<ViewState>,
-    ParentViewState: 'static,
-    ViewState: 'static,
+    E: 'static + Element<V>,
+    ParentV: 'static,
+    V: 'static,
 {
-    fn render(self) -> AnyElement<ParentViewState> {
-        AnyElement::new(self)
-    }
-}
-
-impl<C, ParentViewState, ViewState> Element<ParentViewState> for RenderViewWith<C, ViewState>
-where
-    C: 'static + Component<ViewState>,
-    ParentViewState: 'static,
-    ViewState: 'static,
-{
-    type State = Option<AnyElement<ViewState>>;
+    type State = Option<AnyElement<V>>;
 
     fn element_id(&self) -> Option<ElementId> {
         Some(self.view.entity_id().into())
@@ -319,12 +340,12 @@ where
 
     fn layout(
         &mut self,
-        _: &mut ParentViewState,
+        _: &mut ParentV,
         _: Option<Self::State>,
-        cx: &mut ViewContext<ParentViewState>,
+        cx: &mut ViewContext<ParentV>,
     ) -> (LayoutId, Self::State) {
         self.view.update(cx, |view, cx| {
-            let mut element = self.component.take().unwrap().render();
+            let mut element = self.element.take().unwrap().into_any();
             let layout_id = element.layout(view, cx);
             (layout_id, Some(element))
         })
@@ -333,12 +354,25 @@ where
     fn paint(
         self,
         _: Bounds<Pixels>,
-        _: &mut ParentViewState,
+        _: &mut ParentV,
         element: &mut Self::State,
-        cx: &mut ViewContext<ParentViewState>,
+        cx: &mut ViewContext<ParentV>,
     ) {
         self.view
             .update(cx, |view, cx| element.take().unwrap().paint(view, cx))
+    }
+}
+
+impl<E, V, ParentV> RenderOnce<ParentV> for RenderViewWith<E, V>
+where
+    E: 'static + Element<V>,
+    V: 'static,
+    ParentV: 'static,
+{
+    type Element = Self;
+
+    fn render_once(self) -> Self::Element {
+        self
     }
 }
 
@@ -346,7 +380,7 @@ mod any_view {
     use crate::{AnyElement, AnyView, BorrowWindow, LayoutId, Render, WindowContext};
     use std::any::Any;
 
-    pub(crate) fn layout<V: Render>(
+    pub(crate) fn layout<V: 'static + Render<V>>(
         view: &AnyView,
         cx: &mut WindowContext,
     ) -> (LayoutId, Box<dyn Any>) {
@@ -360,7 +394,11 @@ mod any_view {
         })
     }
 
-    pub(crate) fn paint<V: Render>(view: &AnyView, element: Box<dyn Any>, cx: &mut WindowContext) {
+    pub(crate) fn paint<V: 'static + Render<V>>(
+        view: &AnyView,
+        element: Box<dyn Any>,
+        cx: &mut WindowContext,
+    ) {
         cx.with_element_id(Some(view.model.entity_id), |cx| {
             let view = view.clone().downcast::<V>().unwrap();
             let element = element.downcast::<AnyElement<V>>().unwrap();

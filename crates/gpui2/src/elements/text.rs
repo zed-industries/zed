@@ -1,6 +1,6 @@
 use crate::{
-    AnyElement, BorrowWindow, Bounds, Component, Element, ElementId, LayoutId, Pixels,
-    SharedString, Size, TextRun, ViewContext, WindowContext, WrappedLine,
+    BorrowWindow, Bounds, Element, ElementId, LayoutId, Pixels, RenderOnce, SharedString, Size,
+    TextRun, ViewContext, WindowContext, WrappedLine,
 };
 use anyhow::anyhow;
 use parking_lot::{Mutex, MutexGuard};
@@ -37,6 +37,14 @@ impl<V: 'static> Element<V> for &'static str {
     }
 }
 
+impl<V: 'static> RenderOnce<V> for &'static str {
+    type Element = Self;
+
+    fn render_once(self) -> Self::Element {
+        self
+    }
+}
+
 impl<V: 'static> Element<V> for SharedString {
     type State = TextState;
 
@@ -67,32 +75,34 @@ impl<V: 'static> Element<V> for SharedString {
     }
 }
 
-pub struct Text {
+impl<V: 'static> RenderOnce<V> for SharedString {
+    type Element = Self;
+
+    fn render_once(self) -> Self::Element {
+        self
+    }
+}
+
+pub struct StyledText {
     text: SharedString,
     runs: Option<Vec<TextRun>>,
 }
 
-impl Text {
+impl StyledText {
     /// Renders text with runs of different styles.
     ///
     /// Callers are responsible for setting the correct style for each run.
     /// For text with a uniform style, you can usually avoid calling this constructor
     /// and just pass text directly.
-    pub fn styled(text: SharedString, runs: Vec<TextRun>) -> Self {
-        Text {
+    pub fn new(text: SharedString, runs: Vec<TextRun>) -> Self {
+        StyledText {
             text,
             runs: Some(runs),
         }
     }
 }
 
-impl<V: 'static> Component<V> for Text {
-    fn render(self) -> AnyElement<V> {
-        AnyElement::new(self)
-    }
-}
-
-impl<V: 'static> Element<V> for Text {
+impl<V: 'static> Element<V> for StyledText {
     type State = TextState;
 
     fn element_id(&self) -> Option<crate::ElementId> {
@@ -181,8 +191,21 @@ impl<V: 'static> Element<V> for Text {
     }
 }
 
+impl<V: 'static> RenderOnce<V> for StyledText {
+    type Element = Self;
+
+    fn render_once(self) -> Self::Element {
+        self
+    }
+}
+
 #[derive(Default, Clone)]
 pub struct TextState(Arc<Mutex<Option<TextStateInner>>>);
+
+struct TextStateInner {
+    lines: SmallVec<[WrappedLine; 1]>,
+    line_height: Pixels,
+}
 
 impl TextState {
     fn lock(&self) -> MutexGuard<Option<TextStateInner>> {
@@ -264,14 +287,9 @@ impl TextState {
     }
 }
 
-struct TextStateInner {
-    lines: SmallVec<[WrappedLine; 1]>,
-    line_height: Pixels,
-}
-
 struct InteractiveText {
     id: ElementId,
-    text: Text,
+    text: StyledText,
 }
 
 struct InteractiveTextState {
@@ -325,34 +343,10 @@ impl<V: 'static> Element<V> for InteractiveText {
     }
 }
 
-impl<V: 'static> Component<V> for SharedString {
-    fn render(self) -> AnyElement<V> {
-        Text {
-            text: self,
-            runs: None,
-        }
-        .render()
-    }
-}
+impl<V: 'static> RenderOnce<V> for InteractiveText {
+    type Element = Self;
 
-impl<V: 'static> Component<V> for &'static str {
-    fn render(self) -> AnyElement<V> {
-        Text {
-            text: self.into(),
-            runs: None,
-        }
-        .render()
-    }
-}
-
-// TODO: Figure out how to pass `String` to `child` without this.
-// This impl doesn't exist in the `gpui2` crate.
-impl<V: 'static> Component<V> for String {
-    fn render(self) -> AnyElement<V> {
-        Text {
-            text: self.into(),
-            runs: None,
-        }
-        .render()
+    fn render_once(self) -> Self::Element {
+        self
     }
 }

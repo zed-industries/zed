@@ -1,4 +1,4 @@
-use gpui::{div, Component, Div, Element, ParentComponent, SharedString, Styled, ViewContext};
+use gpui::{div, Div, Element, ParentElement, SharedString, Styled, ViewContext};
 
 use crate::ActiveTheme;
 

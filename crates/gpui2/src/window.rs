@@ -6,8 +6,8 @@ use crate::{
     InputEvent, IsZero, KeyBinding, KeyContext, KeyDownEvent, LayoutId, Model, ModelContext,
     Modifiers, MonochromeSprite, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Path,
     Pixels, PlatformAtlas, PlatformDisplay, PlatformInputHandler, PlatformWindow, Point,
-    PolychromeSprite, PromptLevel, Quad, Render, RenderGlyphParams, RenderImageParams,
-    RenderSvgParams, ScaledPixels, SceneBuilder, Shadow, SharedString, Size, Style, SubscriberSet,
+    PolychromeSprite, PromptLevel, Quad, RenderGlyphParams, RenderImageParams, RenderSvgParams,
+    Render, ScaledPixels, SceneBuilder, Shadow, SharedString, Size, Style, SubscriberSet,
     Subscription, TaffyLayoutEngine, Task, Underline, UnderlineStyle, View, VisualContext,
     WeakView, WindowBounds, WindowOptions, SUBPIXEL_VARIANTS,
 };
@@ -187,13 +187,13 @@ impl Drop for FocusHandle {
 
 /// FocusableView allows users of your view to easily
 /// focus it (using cx.focus_view(view))
-pub trait FocusableView: Render {
+pub trait FocusableView: 'static + Render<Self> {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle;
 }
 
 /// ManagedView is a view (like a Modal, Popover, Menu, etc.)
 /// where the lifecycle of the view is handled by another view.
-pub trait ManagedView: Render {
+pub trait ManagedView: 'static + Render<Self> {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle;
 }
 
@@ -1525,7 +1525,7 @@ impl VisualContext for WindowContext<'_> {
         build_view_state: impl FnOnce(&mut ViewContext<'_, V>) -> V,
     ) -> Self::Result<View<V>>
     where
-        V: 'static + Render,
+        V: 'static + Render<V>,
     {
         let slot = self.app.entities.reserve();
         let view = View {
@@ -1564,7 +1564,7 @@ impl VisualContext for WindowContext<'_> {
         build_view: impl FnOnce(&mut ViewContext<'_, V>) -> V,
     ) -> Self::Result<View<V>>
     where
-        V: Render,
+        V: 'static + Render<V>,
     {
         let slot = self.app.entities.reserve();
         let view = View {
@@ -2326,7 +2326,7 @@ impl<V> Context for ViewContext<'_, V> {
 }
 
 impl<V: 'static> VisualContext for ViewContext<'_, V> {
-    fn build_view<W: Render + 'static>(
+    fn build_view<W: Render<W> + 'static>(
         &mut self,
         build_view_state: impl FnOnce(&mut ViewContext<'_, W>) -> W,
     ) -> Self::Result<View<W>> {
@@ -2346,7 +2346,7 @@ impl<V: 'static> VisualContext for ViewContext<'_, V> {
         build_view: impl FnOnce(&mut ViewContext<'_, W>) -> W,
     ) -> Self::Result<View<W>>
     where
-        W: Render,
+        W: 'static + Render<W>,
     {
         self.window_cx.replace_root_view(build_view)
     }
@@ -2387,7 +2387,7 @@ pub struct WindowHandle<V> {
     state_type: PhantomData<V>,
 }
 
-impl<V: 'static + Render> WindowHandle<V> {
+impl<V: 'static + Render<V>> WindowHandle<V> {
     pub fn new(id: WindowId) -> Self {
         WindowHandle {
             any_handle: AnyWindowHandle {

@@ -1,6 +1,6 @@
 use crate::prelude::*;
-use gpui::Element;
-use gpui::{prelude::*, AnyElement};
+use gpui::{prelude::*, AnyElement, RenderOnce};
+use gpui::{Div, Element};
 use smallvec::SmallVec;
 
 #[derive(Default, Debug, PartialEq, Eq, Clone, Copy)]
@@ -22,41 +22,37 @@ pub enum ToastOrigin {
 /// they are actively showing the a process in progress.
 ///
 /// Only one toast may be visible at a time.
-#[derive(Element)]
+#[derive(RenderOnce)]
 pub struct Toast<V: 'static> {
     origin: ToastOrigin,
     children: SmallVec<[AnyElement<V>; 2]>,
 }
 
-// impl<V: 'static> Element<V> for Toast<V> {
-//     type State = Option<AnyElement<V>>;
+impl<V: 'static> Component<V> for Toast<V> {
+    type Rendered = Div<V>;
 
-//     fn element_id(&self) -> Option<ElementId> {
-//         None
-//     }
+    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
+        let mut div = div();
 
-//     fn layout(
-//         &mut self,
-//         view_state: &mut V,
-//         _element_state: Option<Self::State>,
-//         cx: &mut ViewContext<V>,
-//     ) -> (gpui::LayoutId, Self::State) {
-//         let mut element = self.render(view_state, cx).into_any();
-//         let layout_id = element.layout(view_state, cx);
-//         (layout_id, Some(element))
-//     }
+        if self.origin == ToastOrigin::Bottom {
+            div = div.right_1_2();
+        } else {
+            div = div.right_2();
+        }
 
-//     fn paint(
-//         self,
-//         bounds: gpui::Bounds<gpui::Pixels>,
-//         view_state: &mut V,
-//         element: &mut Self::State,
-//         cx: &mut ViewContext<V>,
-//     ) {
-//         let element = element.take().unwrap();
-//         element.paint(view_state, cx);
-//     }
-// }
+        div.z_index(5)
+            .absolute()
+            .bottom_9()
+            .flex()
+            .py_1()
+            .px_1p5()
+            .rounded_lg()
+            .shadow_md()
+            .overflow_hidden()
+            .bg(cx.theme().colors().elevated_surface_background)
+            .children(self.children)
+    }
+}
 
 impl<V: 'static> Toast<V> {
     pub fn new(origin: ToastOrigin) -> Self {
@@ -89,7 +85,7 @@ impl<V: 'static> Toast<V> {
     }
 }
 
-impl<V: 'static> ParentComponent<V> for Toast<V> {
+impl<V: 'static> ParentElement<V> for Toast<V> {
     fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<V>; 2]> {
         &mut self.children
     }
@@ -108,7 +104,7 @@ mod stories {
 
     pub struct ToastStory;
 
-    impl Render for ToastStory {
+    impl Render<Self> for ToastStory {
         type Element = Div<Self>;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {

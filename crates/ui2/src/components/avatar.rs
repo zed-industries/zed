@@ -1,26 +1,16 @@
 use crate::prelude::*;
-use gpui::img;
+use gpui::{img, Img, RenderOnce};
 
-#[derive(Element)]
+#[derive(RenderOnce)]
 pub struct Avatar {
     src: SharedString,
     shape: Shape,
 }
 
-impl Avatar {
-    pub fn new(src: impl Into<SharedString>) -> Self {
-        Self {
-            src: src.into(),
-            shape: Shape::Circle,
-        }
-    }
+impl<V: 'static> Component<V> for Avatar {
+    type Rendered = Img<V>;
 
-    pub fn shape(mut self, shape: Shape) -> Self {
-        self.shape = shape;
-        self
-    }
-
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
+    fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
         let mut img = img();
 
         if self.shape == Shape::Circle {
@@ -36,6 +26,20 @@ impl Avatar {
     }
 }
 
+impl Avatar {
+    pub fn new(src: impl Into<SharedString>) -> Self {
+        Self {
+            src: src.into(),
+            shape: Shape::Circle,
+        }
+    }
+
+    pub fn shape(mut self, shape: Shape) -> Self {
+        self.shape = shape;
+        self
+    }
+}
+
 #[cfg(feature = "stories")]
 pub use stories::*;
 
@@ -47,7 +51,7 @@ mod stories {
 
     pub struct AvatarStory;
 
-    impl Render for AvatarStory {
+    impl Render<Self> for AvatarStory {
         type Element = Div<Self>;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {

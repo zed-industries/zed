@@ -3,9 +3,53 @@ use crate::{
 };
 use derive_more::{Deref, DerefMut};
 pub(crate) use smallvec::SmallVec;
-use std::{any::Any, fmt::Debug};
+use std::{any::Any, fmt::Debug, marker::PhantomData};
 
-pub trait Element<V: 'static>: 'static + Sized {
+pub trait Render<V: 'static>: 'static + Sized {
+    type Element: Element<V> + 'static;
+
+    fn render(&mut self, cx: &mut ViewContext<V>) -> Self::Element;
+}
+
+pub trait RenderOnce<V: 'static>: Sized {
+    type Element: Element<V> + 'static;
+
+    fn render_once(self) -> Self::Element;
+
+    fn render_into_any(self) -> AnyElement<V> {
+        self.render_once().into_any()
+    }
+
+    fn map<U>(self, f: impl FnOnce(Self) -> U) -> U
+    where
+        Self: Sized,
+        U: RenderOnce<V>,
+    {
+        f(self)
+    }
+
+    fn when(self, condition: bool, then: impl FnOnce(Self) -> Self) -> Self
+    where
+        Self: Sized,
+    {
+        self.map(|this| if condition { then(this) } else { this })
+    }
+
+    fn when_some<T>(self, option: Option<T>, then: impl FnOnce(Self, T) -> Self) -> Self
+    where
+        Self: Sized,
+    {
+        self.map(|this| {
+            if let Some(value) = option {
+                then(this, value)
+            } else {
+                this
+            }
+        })
+    }
+}
+
+pub trait Element<V: 'static>: 'static + RenderOnce<V> {
     type State: 'static;
 
     fn element_id(&self) -> Option<ElementId>;
@@ -59,26 +103,105 @@ pub trait Element<V: 'static>: 'static + Sized {
     }
 }
 
+pub trait Component<V: 'static>: 'static {
+    type Rendered: RenderOnce<V>;
+
+    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered;
+}
+
+pub struct CompositeElement<V, C> {
+    component: Option<C>,
+    view_type: PhantomData<V>,
+}
+
+pub struct CompositeElementState<V: 'static, C: Component<V>> {
+    rendered_element: Option<<C::Rendered as RenderOnce<V>>::Element>,
+    rendered_element_state: <<C::Rendered as RenderOnce<V>>::Element as Element<V>>::State,
+}
+
+impl<V, C> CompositeElement<V, C> {
+    pub fn new(component: C) -> Self {
+        CompositeElement {
+            component: Some(component),
+            view_type: PhantomData,
+        }
+    }
+}
+
+impl<V: 'static, C: Component<V>> Element<V> for CompositeElement<V, C> {
+    type State = CompositeElementState<V, C>;
+
+    fn element_id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn layout(
+        &mut self,
+        view: &mut V,
+        state: Option<Self::State>,
+        cx: &mut ViewContext<V>,
+    ) -> (LayoutId, Self::State) {
+        let mut element = self
+            .component
+            .take()
+            .unwrap()
+            .render(view, cx)
+            .render_once();
+        let (layout_id, state) = element.layout(view, state.map(|s| s.rendered_element_state), cx);
+        let state = CompositeElementState {
+            rendered_element: Some(element),
+            rendered_element_state: state,
+        };
+        (layout_id, state)
+    }
+
+    fn paint(
+        self,
+        bounds: Bounds<Pixels>,
+        view: &mut V,
+        state: &mut Self::State,
+        cx: &mut ViewContext<V>,
+    ) {
+        state.rendered_element.take().unwrap().paint(
+            bounds,
+            view,
+            &mut state.rendered_element_state,
+            cx,
+        );
+    }
+}
+
+impl<V: 'static, C: Component<V>> RenderOnce<V> for CompositeElement<V, C> {
+    type Element = Self;
+
+    fn render_once(self) -> Self::Element {
+        self
+    }
+}
+
 #[derive(Deref, DerefMut, Default, Clone, Debug, Eq, PartialEq, Hash)]
 pub struct GlobalElementId(SmallVec<[ElementId; 32]>);
 
-pub trait ParentComponent<V: 'static> {
+pub trait ParentElement<V: 'static> {
     fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<V>; 2]>;
 
-    fn child(mut self, child: impl Element<V>) -> Self
+    fn child(mut self, child: impl RenderOnce<V>) -> Self
     where
         Self: Sized,
     {
-        self.children_mut().push(child.into_any());
+        self.children_mut().push(child.render_once().into_any());
         self
     }
 
-    fn children(mut self, children: impl IntoIterator<Item = impl Element<V>>) -> Self
+    fn children(mut self, children: impl IntoIterator<Item = impl RenderOnce<V>>) -> Self
     where
         Self: Sized,
     {
-        self.children_mut()
-            .extend(children.into_iter().map(Element::into_any));
+        self.children_mut().extend(
+            children
+                .into_iter()
+                .map(|child| child.render_once().into_any()),
+        );
         self
     }
 }
@@ -301,7 +424,7 @@ where
 
 pub struct AnyElement<V>(Box<dyn ElementObject<V>>);
 
-impl<V> AnyElement<V> {
+impl<V: 'static> AnyElement<V> {
     pub fn new<E>(element: E) -> Self
     where
         V: 'static,
@@ -343,6 +466,11 @@ impl<V> AnyElement<V> {
     ) {
         self.0.draw(origin, available_space, view_state, cx)
     }
+
+    /// Converts this `AnyElement` into a trait object that can be stored and manipulated.
+    pub fn into_any(self) -> AnyElement<V> {
+        AnyElement::new(self)
+    }
 }
 
 impl<V: 'static> Element<V> for AnyElement<V> {
@@ -373,105 +501,18 @@ impl<V: 'static> Element<V> for AnyElement<V> {
     }
 }
 
-pub trait Component<V> {
-    fn render(self) -> AnyElement<V>;
+impl<V: 'static> RenderOnce<V> for AnyElement<V> {
+    type Element = Self;
 
-    fn map<U>(self, f: impl FnOnce(Self) -> U) -> U
-    where
-        Self: Sized,
-        U: Component<V>,
-    {
-        f(self)
-    }
-
-    fn when(self, condition: bool, then: impl FnOnce(Self) -> Self) -> Self
-    where
-        Self: Sized,
-    {
-        self.map(|this| if condition { then(this) } else { this })
-    }
-
-    fn when_some<T>(self, option: Option<T>, then: impl FnOnce(Self, T) -> Self) -> Self
-    where
-        Self: Sized,
-    {
-        self.map(|this| {
-            if let Some(value) = option {
-                then(this, value)
-            } else {
-                this
-            }
-        })
-    }
-}
-
-impl<V> Component<V> for AnyElement<V> {
-    fn render(self) -> AnyElement<V> {
+    fn render_once(self) -> Self::Element {
         self
     }
 }
 
-impl<V, E, F> Element<V> for Option<F>
-where
-    V: 'static,
-    E: 'static + Component<V>,
-    F: FnOnce(&mut V, &mut ViewContext<'_, V>) -> E + 'static,
-{
-    type State = Option<AnyElement<V>>;
-
-    fn element_id(&self) -> Option<ElementId> {
-        None
-    }
-
-    fn layout(
-        &mut self,
-        view_state: &mut V,
-        _: Option<Self::State>,
-        cx: &mut ViewContext<V>,
-    ) -> (LayoutId, Self::State) {
-        let render = self.take().unwrap();
-        let mut rendered_element = (render)(view_state, cx).render();
-        let layout_id = rendered_element.layout(view_state, cx);
-        (layout_id, Some(rendered_element))
-    }
-
-    fn paint(
-        self,
-        _bounds: Bounds<Pixels>,
-        view_state: &mut V,
-        rendered_element: &mut Self::State,
-        cx: &mut ViewContext<V>,
-    ) {
-        rendered_element.take().unwrap().paint(view_state, cx);
-    }
-}
-
-impl<V, E, F> Component<V> for Option<F>
-where
-    V: 'static,
-    E: 'static + Component<V>,
-    F: FnOnce(&mut V, &mut ViewContext<'_, V>) -> E + 'static,
-{
-    fn render(self) -> AnyElement<V> {
-        AnyElement::new(self)
-    }
-}
-
-impl<V, E, F> Component<V> for F
-where
-    V: 'static,
-    E: 'static + Component<V>,
-    F: FnOnce(&mut V, &mut ViewContext<'_, V>) -> E + 'static,
-{
-    fn render(self) -> AnyElement<V> {
-        AnyElement::new(Some(self))
-    }
-}
-
-// impl<V, E, F> Element<V> for F
+// impl<V, E, F> Element<V> for Option<F>
 // where
 //     V: 'static,
-//     E: 'static + Component<V>,
+//     E: Element<V>,
 //     F: FnOnce(&mut V, &mut ViewContext<'_, V>) -> E + 'static,
 // {
 //     type State = Option<AnyElement<V>>;
@@ -483,21 +524,35 @@ where
 //     fn layout(
 //         &mut self,
 //         view_state: &mut V,
-//         element_state: Option<Self::State>,
+//         _: Option<Self::State>,
 //         cx: &mut ViewContext<V>,
 //     ) -> (LayoutId, Self::State) {
-
-//         self(view_state)
-
+//         let render = self.take().unwrap();
+//         let mut element = (render)(view_state, cx).into_any();
+//         let layout_id = element.layout(view_state, cx);
+//         (layout_id, Some(element))
 //     }
 
 //     fn paint(
 //         self,
-//         bounds: Bounds<Pixels>,
+//         _bounds: Bounds<Pixels>,
 //         view_state: &mut V,
-//         element_state: &mut Self::State,
+//         rendered_element: &mut Self::State,
 //         cx: &mut ViewContext<V>,
 //     ) {
-//         todo!()
+//         rendered_element.take().unwrap().paint(view_state, cx);
+//     }
+// }
+
+// impl<V, E, F> RenderOnce<V> for Option<F>
+// where
+//     V: 'static,
+//     E: Element<V>,
+//     F: FnOnce(&mut V, &mut ViewContext<V>) -> E + 'static,
+// {
+//     type Element = Self;
+
+//     fn render(self) -> Self::Element {
+//         self
 //     }
 // }

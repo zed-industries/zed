@@ -42,7 +42,7 @@ use gpui::{
     actions, div, point, prelude::*, px, relative, rems, size, uniform_list, Action, AnyElement,
     AppContext, AsyncWindowContext, BackgroundExecutor, Bounds, ClipboardItem, Component, Context,
     EventEmitter, FocusHandle, FocusableView, FontFeatures, FontStyle, FontWeight, HighlightStyle,
-    Hsla, InputHandler, KeyContext, Model, MouseButton, ParentComponent, Pixels, Render, Styled,
+    Hsla, InputHandler, KeyContext, Model, MouseButton, ParentElement, Pixels, Render, Styled,
     Subscription, Task, TextStyle, UniformListScrollHandle, View, ViewContext, VisualContext,
     WeakView, WindowContext,
 };
@@ -1595,7 +1595,7 @@ impl CodeActionsMenu {
                 .max_by_key(|(_, action)| action.lsp_action.title.chars().count())
                 .map(|(ix, _)| ix),
         )
-        .render();
+        .render_once();
 
         if self.deployed_from_indicator {
             *cursor_position.column_mut() = 0;
@@ -4365,7 +4365,7 @@ impl Editor {
                             cx,
                         );
                     })
-                    .render(),
+                    .into_any(),
             )
         } else {
             None
@@ -4401,7 +4401,7 @@ impl Editor {
                                         editor.fold_at(&FoldAt { buffer_row }, cx);
                                     }
                                 })
-                                .render()
+                                .into_any()
                         })
                     })
                     .flatten()
@@ -7792,7 +7792,7 @@ impl Editor {
                                                     cx.editor_style.diagnostic_style.clone(),
                                             },
                                         )))
-                                        .render()
+                                        .render_once()
                                 }
                             }),
                             disposition: BlockDisposition::Below,
@@ -9994,7 +9994,7 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, is_valid: bool) -> Rend
                 cx.write_to_clipboard(ClipboardItem::new(message.clone()));
             })
             .tooltip(|_, cx| Tooltip::text("Copy diagnostic message", cx))
-            .render()
+            .render_once()
     })
 }
 

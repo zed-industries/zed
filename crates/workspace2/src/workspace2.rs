@@ -31,10 +31,10 @@ use futures::{
 use gpui::{
     actions, div, point, size, Action, AnyModel, AnyView, AnyWeakView, AppContext, AsyncAppContext,
     AsyncWindowContext, Bounds, Context, Div, Entity, EntityId, EventEmitter, FocusHandle,
-    FocusableView, GlobalPixels, InteractiveComponent, KeyContext, ManagedView, Model,
-    ModelContext, ParentComponent, PathPromptOptions, Point, PromptLevel, Render, Size, Styled,
-    Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowBounds, WindowContext,
-    WindowHandle, WindowOptions,
+    FocusableView, GlobalPixels, InteractiveElement, KeyContext, ManagedView, Model, ModelContext,
+    ParentElement, PathPromptOptions, Point, PromptLevel, Render, Size, Styled, Subscription, Task,
+    View, ViewContext, VisualContext, WeakView, WindowBounds, WindowContext, WindowHandle,
+    WindowOptions,
 };
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, ProjectItem};
 use itertools::Itertools;

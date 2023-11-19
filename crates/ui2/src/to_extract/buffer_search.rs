@@ -1,7 +1,6 @@
-use gpui::{Div, Render, View, VisualContext};
-
 use crate::prelude::*;
 use crate::{h_stack, Icon, IconButton, Input, TextColor};
+use gpui::{Div, Render, RenderOnce, View, VisualContext};
 
 #[derive(Clone)]
 pub struct BufferSearch {
@@ -26,7 +25,7 @@ impl BufferSearch {
     }
 }
 
-impl Render for BufferSearch {
+impl Render<Self> for BufferSearch {
     type Element = Div<Self>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Div<Self> {

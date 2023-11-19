@@ -1,9 +1,9 @@
 use crate::{
     point, px, Action, AnyDrag, AnyElement, AnyTooltip, AnyView, AppContext, BorrowAppContext,
-    BorrowWindow, Bounds, ClickEvent, Component, DispatchPhase, Element, ElementId, FocusEvent,
-    FocusHandle, KeyContext, KeyDownEvent, KeyUpEvent, LayoutId, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, ParentComponent, Pixels, Point, Render, ScrollWheelEvent,
-    SharedString, Size, Style, StyleRefinement, Styled, Task, View, ViewContext, Visibility,
+    BorrowWindow, Bounds, ClickEvent, DispatchPhase, Element, ElementId, FocusEvent, FocusHandle,
+    KeyContext, KeyDownEvent, KeyUpEvent, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, ParentElement, Pixels, Point, Render, RenderOnce, ScrollWheelEvent, SharedString,
+    Size, Style, StyleRefinement, Styled, Task, View, ViewContext, Visibility,
 };
 use collections::HashMap;
 use refineable::Refineable;
@@ -28,7 +28,7 @@ pub struct GroupStyle {
     pub style: StyleRefinement,
 }
 
-pub trait InteractiveComponent<V: 'static>: Sized + Element<V> {
+pub trait InteractiveElement<V: 'static>: Sized + Element<V> {
     fn interactivity(&mut self) -> &mut Interactivity<V>;
 
     fn group(mut self, group: impl Into<SharedString>) -> Self {
@@ -314,7 +314,7 @@ pub trait InteractiveComponent<V: 'static>: Sized + Element<V> {
     }
 }
 
-pub trait StatefulInteractiveComponent<V: 'static, E: Element<V>>: InteractiveComponent<V> {
+pub trait StatefulInteractiveElement<V: 'static, E: Element<V>>: InteractiveElement<V> {
     fn focusable(mut self) -> Focusable<V, Self> {
         self.interactivity().focusable = true;
         Focusable {
@@ -381,7 +381,7 @@ pub trait StatefulInteractiveComponent<V: 'static, E: Element<V>>: InteractiveCo
     ) -> Self
     where
         Self: Sized,
-        W: 'static + Render,
+        W: 'static + Render<W>,
     {
         debug_assert!(
             self.interactivity().drag_listener.is_none(),
@@ -425,7 +425,7 @@ pub trait StatefulInteractiveComponent<V: 'static, E: Element<V>>: InteractiveCo
     }
 }
 
-pub trait FocusableComponent<V: 'static>: InteractiveComponent<V> {
+pub trait FocusableElement<V: 'static>: InteractiveElement<V> {
     fn focus(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self
     where
         Self: Sized,
@@ -587,13 +587,13 @@ impl<V> Styled for Div<V> {
     }
 }
 
-impl<V: 'static> InteractiveComponent<V> for Div<V> {
+impl<V: 'static> InteractiveElement<V> for Div<V> {
     fn interactivity(&mut self) -> &mut Interactivity<V> {
         &mut self.interactivity
     }
 }
 
-impl<V: 'static> ParentComponent<V> for Div<V> {
+impl<V: 'static> ParentElement<V> for Div<V> {
     fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<V>; 2]> {
         &mut self.children
     }
@@ -691,9 +691,11 @@ impl<V: 'static> Element<V> for Div<V> {
     }
 }
 
-impl<V: 'static> Component<V> for Div<V> {
-    fn render(self) -> AnyElement<V> {
-        AnyElement::new(self)
+impl<V: 'static> RenderOnce<V> for Div<V> {
+    type Element = Self;
+
+    fn render_once(self) -> Self::Element {
+        self
     }
 }
 
@@ -1257,19 +1259,19 @@ pub struct Focusable<V, E> {
     view_type: PhantomData<V>,
 }
 
-impl<V: 'static, E: InteractiveComponent<V>> FocusableComponent<V> for Focusable<V, E> {}
+impl<V: 'static + Render<V>, E: InteractiveElement<V>> FocusableElement<V> for Focusable<V, E> {}
 
-impl<V, E> InteractiveComponent<V> for Focusable<V, E>
+impl<V, E> InteractiveElement<V> for Focusable<V, E>
 where
-    V: 'static,
-    E: InteractiveComponent<V>,
+    V: 'static + Render<V>,
+    E: InteractiveElement<V>,
 {
     fn interactivity(&mut self) -> &mut Interactivity<V> {
         self.element.interactivity()
     }
 }
 
-impl<V: 'static, E: StatefulInteractiveComponent<V, E>> StatefulInteractiveComponent<V, E>
+impl<V: 'static + Render<V>, E: StatefulInteractiveElement<V, E>> StatefulInteractiveElement<V, E>
     for Focusable<V, E>
 {
 }
@@ -1286,7 +1288,7 @@ where
 
 impl<V, E> Element<V> for Focusable<V, E>
 where
-    V: 'static,
+    V: 'static + Render<V>,
     E: Element<V>,
 {
     type State = E::State;
@@ -1315,20 +1317,22 @@ where
     }
 }
 
-impl<V, E> Component<V> for Focusable<V, E>
+impl<V, E> RenderOnce<V> for Focusable<V, E>
 where
-    V: 'static,
-    E: 'static + Element<V>,
+    V: 'static + Render<V>,
+    E: Element<V>,
 {
-    fn render(self) -> AnyElement<V> {
-        AnyElement::new(self)
+    type Element = Self;
+
+    fn render_once(self) -> Self::Element {
+        self
     }
 }
 
-impl<V, E> ParentComponent<V> for Focusable<V, E>
+impl<V, E> ParentElement<V> for Focusable<V, E>
 where
     V: 'static,
-    E: ParentComponent<V>,
+    E: ParentElement<V>,
 {
     fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<V>; 2]> {
         self.element.children_mut()
@@ -1350,25 +1354,25 @@ where
     }
 }
 
-impl<V, E> StatefulInteractiveComponent<V, E> for Stateful<V, E>
+impl<V, E> StatefulInteractiveElement<V, E> for Stateful<V, E>
 where
     V: 'static,
     E: Element<V>,
-    Self: InteractiveComponent<V>,
+    Self: InteractiveElement<V>,
 {
 }
 
-impl<V, E> InteractiveComponent<V> for Stateful<V, E>
+impl<V, E> InteractiveElement<V> for Stateful<V, E>
 where
     V: 'static,
-    E: InteractiveComponent<V>,
+    E: InteractiveElement<V>,
 {
     fn interactivity(&mut self) -> &mut Interactivity<V> {
         self.element.interactivity()
     }
 }
 
-impl<V: 'static, E: FocusableComponent<V>> FocusableComponent<V> for Stateful<V, E> {}
+impl<V: 'static, E: FocusableElement<V>> FocusableElement<V> for Stateful<V, E> {}
 
 impl<V, E> Element<V> for Stateful<V, E>
 where
@@ -1401,20 +1405,22 @@ where
     }
 }
 
-impl<V, E> Component<V> for Stateful<V, E>
+impl<V, E> RenderOnce<V> for Stateful<V, E>
 where
     V: 'static,
-    E: 'static + Element<V>,
+    E: Element<V>,
 {
-    fn render(self) -> AnyElement<V> {
-        AnyElement::new(self)
+    type Element = Self;
+
+    fn render_once(self) -> Self::Element {
+        self
     }
 }
 
-impl<V, E> ParentComponent<V> for Stateful<V, E>
+impl<V, E> ParentElement<V> for Stateful<V, E>
 where
     V: 'static,
-    E: ParentComponent<V>,
+    E: ParentElement<V>,
 {
     fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<V>; 2]> {
         self.element.children_mut()

@@ -1,17 +1,15 @@
 use crate::prelude::*;
 use crate::{v_stack, Buffer, Icon, IconButton, Label};
 
-#[derive(Component)]
+#[derive(RenderOnce)]
 pub struct MultiBuffer {
     buffers: Vec<Buffer>,
 }
 
-impl MultiBuffer {
-    pub fn new(buffers: Vec<Buffer>) -> Self {
-        Self { buffers }
-    }
+impl<V: 'static> Component<V> for MultiBuffer {
+    type Rendered = Div<V>;
 
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
+    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
         v_stack()
             .w_full()
             .h_full()
@@ -33,6 +31,13 @@ impl MultiBuffer {
     }
 }
 
+impl MultiBuffer {
+    pub fn new(buffers: Vec<Buffer>) -> Self {
+        Self { buffers }
+    }
+}
+
+use gpui::{Div, RenderOnce};
 #[cfg(feature = "stories")]
 pub use stories::*;
 
@@ -44,7 +49,7 @@ mod stories {
 
     pub struct MultiBufferStory;
 
-    impl Render for MultiBufferStory {
+    impl Render<Self> for MultiBufferStory {
         type Element = Div<Self>;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {

@@ -1,13 +1,79 @@
 use crate::{h_stack, prelude::*, v_stack, KeyBinding, Label};
 use gpui::prelude::*;
+use gpui::Div;
+use gpui::Stateful;
 
-#[derive(Component)]
+#[derive(RenderOnce)]
 pub struct Palette {
     id: ElementId,
     input_placeholder: SharedString,
     empty_string: SharedString,
     items: Vec<PaletteItem>,
     default_order: OrderMethod,
+}
+
+impl<V: 'static> Component<V> for Palette {
+    type Rendered = Stateful<V, Div<V>>;
+
+    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
+        v_stack()
+            .id(self.id)
+            .w_96()
+            .rounded_lg()
+            .bg(cx.theme().colors().elevated_surface_background)
+            .border()
+            .border_color(cx.theme().colors().border)
+            .child(
+                v_stack()
+                    .gap_px()
+                    .child(v_stack().py_0p5().px_1().child(
+                        div().px_2().py_0p5().child(
+                            Label::new(self.input_placeholder).color(TextColor::Placeholder),
+                        ),
+                    ))
+                    .child(
+                        div()
+                            .h_px()
+                            .w_full()
+                            .bg(cx.theme().colors().element_background),
+                    )
+                    .child(
+                        v_stack()
+                            .id("items")
+                            .py_0p5()
+                            .px_1()
+                            .grow()
+                            .max_h_96()
+                            .overflow_y_scroll()
+                            .children(
+                                vec![if self.items.is_empty() {
+                                    Some(h_stack().justify_between().px_2().py_1().child(
+                                        Label::new(self.empty_string).color(TextColor::Muted),
+                                    ))
+                                } else {
+                                    None
+                                }]
+                                .into_iter()
+                                .flatten(),
+                            )
+                            .children(self.items.into_iter().enumerate().map(|(index, item)| {
+                                h_stack()
+                                    .id(index)
+                                    .justify_between()
+                                    .px_2()
+                                    .py_0p5()
+                                    .rounded_lg()
+                                    .hover(|style| {
+                                        style.bg(cx.theme().colors().ghost_element_hover)
+                                    })
+                                    .active(|style| {
+                                        style.bg(cx.theme().colors().ghost_element_active)
+                                    })
+                                    .child(item)
+                            })),
+                    ),
+            )
+    }
 }
 
 impl Palette {
@@ -41,74 +107,31 @@ impl Palette {
         self.default_order = default_order;
         self
     }
-
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
-        v_stack()
-            .id(self.id.clone())
-            .w_96()
-            .rounded_lg()
-            .bg(cx.theme().colors().elevated_surface_background)
-            .border()
-            .border_color(cx.theme().colors().border)
-            .child(
-                v_stack()
-                    .gap_px()
-                    .child(v_stack().py_0p5().px_1().child(div().px_2().py_0p5().child(
-                        Label::new(self.input_placeholder.clone()).color(TextColor::Placeholder),
-                    )))
-                    .child(
-                        div()
-                            .h_px()
-                            .w_full()
-                            .bg(cx.theme().colors().element_background),
-                    )
-                    .child(
-                        v_stack()
-                            .id("items")
-                            .py_0p5()
-                            .px_1()
-                            .grow()
-                            .max_h_96()
-                            .overflow_y_scroll()
-                            .children(
-                                vec![if self.items.is_empty() {
-                                    Some(
-                                        h_stack().justify_between().px_2().py_1().child(
-                                            Label::new(self.empty_string.clone())
-                                                .color(TextColor::Muted),
-                                        ),
-                                    )
-                                } else {
-                                    None
-                                }]
-                                .into_iter()
-                                .flatten(),
-                            )
-                            .children(self.items.into_iter().enumerate().map(|(index, item)| {
-                                h_stack()
-                                    .id(index)
-                                    .justify_between()
-                                    .px_2()
-                                    .py_0p5()
-                                    .rounded_lg()
-                                    .hover(|style| {
-                                        style.bg(cx.theme().colors().ghost_element_hover)
-                                    })
-                                    .active(|style| {
-                                        style.bg(cx.theme().colors().ghost_element_active)
-                                    })
-                                    .child(item)
-                            })),
-                    ),
-            )
-    }
 }
 
-#[derive(Component)]
+#[derive(RenderOnce)]
 pub struct PaletteItem {
     pub label: SharedString,
     pub sublabel: Option<SharedString>,
     pub key_binding: Option<KeyBinding>,
+}
+
+impl<V: 'static> Component<V> for PaletteItem {
+    type Rendered = Div<V>;
+
+    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
+        div()
+            .flex()
+            .flex_row()
+            .grow()
+            .justify_between()
+            .child(
+                v_stack()
+                    .child(Label::new(self.label))
+                    .children(self.sublabel.map(|sublabel| Label::new(sublabel))),
+            )
+            .children(self.key_binding)
+    }
 }
 
 impl PaletteItem {
@@ -134,20 +157,6 @@ impl PaletteItem {
         self.key_binding = key_binding.into();
         self
     }
-
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
-        div()
-            .flex()
-            .flex_row()
-            .grow()
-            .justify_between()
-            .child(
-                v_stack()
-                    .child(Label::new(self.label.clone()))
-                    .children(self.sublabel.clone().map(|sublabel| Label::new(sublabel))),
-            )
-            .children(self.key_binding)
-    }
 }
 
 use gpui::ElementId;
@@ -164,7 +173,7 @@ mod stories {
 
     pub struct PaletteStory;
 
-    impl Render for PaletteStory {
+    impl Render<Self> for PaletteStory {
         type Element = Div<Self>;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {

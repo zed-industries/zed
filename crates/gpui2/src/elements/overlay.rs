@@ -2,8 +2,8 @@ use smallvec::SmallVec;
 use taffy::style::{Display, Position};
 
 use crate::{
-    point, AnyElement, BorrowWindow, Bounds, Component, Element, LayoutId, ParentComponent, Pixels,
-    Point, Size, Style,
+    point, AnyElement, BorrowWindow, Bounds, Element, LayoutId, ParentElement, Pixels, Point,
+    RenderOnce, Size, Style,
 };
 
 pub struct OverlayState {
@@ -51,15 +51,9 @@ impl<V> Overlay<V> {
     }
 }
 
-impl<V: 'static> ParentComponent<V> for Overlay<V> {
+impl<V: 'static> ParentElement<V> for Overlay<V> {
     fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<V>; 2]> {
         &mut self.children
-    }
-}
-
-impl<V: 'static> Component<V> for Overlay<V> {
-    fn render(self) -> AnyElement<V> {
-        AnyElement::new(self)
     }
 }
 
@@ -160,6 +154,14 @@ impl<V: 'static> Element<V> for Overlay<V> {
                 child.paint(view_state, cx);
             }
         })
+    }
+}
+
+impl<V: 'static> RenderOnce<V> for Overlay<V> {
+    type Element = Self;
+
+    fn render_once(self) -> Self::Element {
+        self
     }
 }
 

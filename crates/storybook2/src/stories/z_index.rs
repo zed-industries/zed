@@ -79,7 +79,7 @@ trait Styles: Styled + Sized {
 
 impl<V: 'static> Styles for Div<V> {}
 
-#[derive(Component)]
+// #[derive(RenderOnce)]
 struct ZIndexExample {
     z_index: u32,
 }

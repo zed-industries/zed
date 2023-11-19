@@ -2,7 +2,7 @@ use collections::{CommandPaletteFilter, HashMap};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     actions, div, prelude::*, Action, AppContext, Component, Dismiss, Div, FocusHandle, Keystroke,
-    ManagedView, ParentComponent, Render, Styled, View, ViewContext, VisualContext, WeakView,
+    ManagedView, ParentElement, Render, Styled, View, ViewContext, VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};
 use std::{

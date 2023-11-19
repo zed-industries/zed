@@ -1,6 +1,6 @@
 use editor::{display_map::ToDisplayPoint, scroll::autoscroll::Autoscroll, Editor};
 use gpui::{
-    actions, div, prelude::*, AppContext, Dismiss, Div, FocusHandle, ManagedView, ParentComponent,
+    actions, div, prelude::*, AppContext, Dismiss, Div, FocusHandle, ManagedView, ParentElement,
     Render, SharedString, Styled, Subscription, View, ViewContext, VisualContext, WindowContext,
 };
 use text::{Bias, Point};

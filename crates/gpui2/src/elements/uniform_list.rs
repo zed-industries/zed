@@ -1,7 +1,7 @@
 use crate::{
-    point, px, size, AnyElement, AvailableSpace, BorrowWindow, Bounds, Component, Element,
-    ElementId, InteractiveComponent, InteractiveElementState, Interactivity, LayoutId, Pixels,
-    Point, Size, StyleRefinement, Styled, ViewContext,
+    point, px, size, AnyElement, AvailableSpace, BorrowWindow, Bounds, Element, ElementId,
+    InteractiveElement, InteractiveElementState, Interactivity, LayoutId, Pixels, Point,
+    RenderOnce, Size, StyleRefinement, Styled, ViewContext,
 };
 use smallvec::SmallVec;
 use std::{cell::RefCell, cmp, ops::Range, rc::Rc};
@@ -10,15 +10,15 @@ use taffy::style::Overflow;
 /// uniform_list provides lazy rendering for a set of items that are of uniform height.
 /// When rendered into a container with overflow-y: hidden and a fixed (or max) height,
 /// uniform_list will only render the visibile subset of items.
-pub fn uniform_list<I, V, C>(
+pub fn uniform_list<I, V, E>(
     id: I,
     item_count: usize,
-    f: impl 'static + Fn(&mut V, Range<usize>, &mut ViewContext<V>) -> Vec<C>,
+    f: impl 'static + Fn(&mut V, Range<usize>, &mut ViewContext<V>) -> Vec<E>,
 ) -> UniformList<V>
 where
     I: Into<ElementId>,
     V: 'static,
-    C: Component<V>,
+    E: Element<V>,
 {
     let id = id.into();
     let mut style = StyleRefinement::default();
@@ -32,7 +32,7 @@ where
         render_items: Box::new(move |view, visible_range, cx| {
             f(view, visible_range, cx)
                 .into_iter()
-                .map(|component| component.render())
+                .map(|component| component.into_any())
                 .collect()
         }),
         interactivity: Interactivity {
@@ -252,6 +252,14 @@ impl<V: 'static> Element<V> for UniformList<V> {
     }
 }
 
+impl<V> RenderOnce<V> for UniformList<V> {
+    type Element = Self;
+
+    fn render_once(self) -> Self::Element {
+        self
+    }
+}
+
 impl<V> UniformList<V> {
     pub fn with_width_from_item(mut self, item_index: Option<usize>) -> Self {
         self.item_to_measure_index = item_index.unwrap_or(0);
@@ -286,14 +294,8 @@ impl<V> UniformList<V> {
     }
 }
 
-impl<V> InteractiveComponent<V> for UniformList<V> {
+impl<V> InteractiveElement<V> for UniformList<V> {
     fn interactivity(&mut self) -> &mut crate::Interactivity<V> {
         &mut self.interactivity
-    }
-}
-
-impl<V: 'static> Component<V> for UniformList<V> {
-    fn render(self) -> AnyElement<V> {
-        AnyElement::new(self)
     }
 }

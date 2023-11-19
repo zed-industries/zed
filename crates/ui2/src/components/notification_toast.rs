@@ -3,7 +3,7 @@ use gpui::rems;
 use crate::prelude::*;
 use crate::{h_stack, Icon};
 
-#[derive(Component)]
+// #[derive(RenderOnce)]
 pub struct NotificationToast {
     label: SharedString,
     icon: Option<Icon>,

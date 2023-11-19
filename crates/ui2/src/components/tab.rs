@@ -1,8 +1,8 @@
 use crate::prelude::*;
 use crate::{Icon, IconElement, Label, TextColor};
-use gpui::{prelude::*, red, Div, ElementId, Render, View};
+use gpui::{prelude::*, red, Div, ElementId, Render, RenderOnce, Stateful, View};
 
-#[derive(Component, Clone)]
+#[derive(RenderOnce, Clone)]
 pub struct Tab {
     id: ElementId,
     title: String,
@@ -20,7 +20,7 @@ struct TabDragState {
     title: String,
 }
 
-impl Render for TabDragState {
+impl Render<Self> for TabDragState {
     type Element = Div<Self>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
@@ -28,65 +28,10 @@ impl Render for TabDragState {
     }
 }
 
-impl Tab {
-    pub fn new(id: impl Into<ElementId>) -> Self {
-        Self {
-            id: id.into(),
-            title: "untitled".to_string(),
-            icon: None,
-            current: false,
-            dirty: false,
-            fs_status: FileSystemStatus::None,
-            git_status: GitStatus::None,
-            diagnostic_status: DiagnosticStatus::None,
-            close_side: IconSide::Right,
-        }
-    }
+impl<V: 'static> Component<V> for Tab {
+    type Rendered = Stateful<V, Div<V>>;
 
-    pub fn current(mut self, current: bool) -> Self {
-        self.current = current;
-        self
-    }
-
-    pub fn title(mut self, title: String) -> Self {
-        self.title = title;
-        self
-    }
-
-    pub fn icon<I>(mut self, icon: I) -> Self
-    where
-        I: Into<Option<Icon>>,
-    {
-        self.icon = icon.into();
-        self
-    }
-
-    pub fn dirty(mut self, dirty: bool) -> Self {
-        self.dirty = dirty;
-        self
-    }
-
-    pub fn fs_status(mut self, fs_status: FileSystemStatus) -> Self {
-        self.fs_status = fs_status;
-        self
-    }
-
-    pub fn git_status(mut self, git_status: GitStatus) -> Self {
-        self.git_status = git_status;
-        self
-    }
-
-    pub fn diagnostic_status(mut self, diagnostic_status: DiagnosticStatus) -> Self {
-        self.diagnostic_status = diagnostic_status;
-        self
-    }
-
-    pub fn close_side(mut self, close_side: IconSide) -> Self {
-        self.close_side = close_side;
-        self
-    }
-
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
+    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
         let has_fs_conflict = self.fs_status == FileSystemStatus::Conflict;
         let is_deleted = self.fs_status == FileSystemStatus::Deleted;
 
@@ -164,6 +109,65 @@ impl Tab {
     }
 }
 
+impl Tab {
+    pub fn new(id: impl Into<ElementId>) -> Self {
+        Self {
+            id: id.into(),
+            title: "untitled".to_string(),
+            icon: None,
+            current: false,
+            dirty: false,
+            fs_status: FileSystemStatus::None,
+            git_status: GitStatus::None,
+            diagnostic_status: DiagnosticStatus::None,
+            close_side: IconSide::Right,
+        }
+    }
+
+    pub fn current(mut self, current: bool) -> Self {
+        self.current = current;
+        self
+    }
+
+    pub fn title(mut self, title: String) -> Self {
+        self.title = title;
+        self
+    }
+
+    pub fn icon<I>(mut self, icon: I) -> Self
+    where
+        I: Into<Option<Icon>>,
+    {
+        self.icon = icon.into();
+        self
+    }
+
+    pub fn dirty(mut self, dirty: bool) -> Self {
+        self.dirty = dirty;
+        self
+    }
+
+    pub fn fs_status(mut self, fs_status: FileSystemStatus) -> Self {
+        self.fs_status = fs_status;
+        self
+    }
+
+    pub fn git_status(mut self, git_status: GitStatus) -> Self {
+        self.git_status = git_status;
+        self
+    }
+
+    pub fn diagnostic_status(mut self, diagnostic_status: DiagnosticStatus) -> Self {
+        self.diagnostic_status = diagnostic_status;
+        self
+    }
+
+    pub fn close_side(mut self, close_side: IconSide) -> Self {
+        self.close_side = close_side;
+        self
+    }
+}
+
 #[cfg(feature = "stories")]
 pub use stories::*;
 
@@ -175,7 +179,7 @@ mod stories {
 
     pub struct TabStory;
 
-    impl Render for TabStory {
+    impl Render<Self> for TabStory {
         type Element = Div<Self>;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {

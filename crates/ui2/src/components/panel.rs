@@ -1,4 +1,4 @@
-use gpui::{prelude::*, AbsoluteLength, AnyElement};
+use gpui::{prelude::*, AbsoluteLength, AnyElement, Div, RenderOnce, Stateful};
 use smallvec::SmallVec;
 
 use crate::prelude::*;
@@ -38,7 +38,7 @@ pub enum PanelSide {
 
 use std::collections::HashSet;
 
-#[derive(Component)]
+#[derive(RenderOnce)]
 pub struct Panel<V: 'static> {
     id: ElementId,
     current_side: PanelSide,
@@ -47,6 +47,30 @@ pub struct Panel<V: 'static> {
     initial_width: AbsoluteLength,
     width: Option<AbsoluteLength>,
     children: SmallVec<[AnyElement<V>; 2]>,
+}
+
+impl<V: 'static> Component<V> for Panel<V> {
+    type Rendered = Stateful<V, Div<V>>;
+
+    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
+        let current_size = self.width.unwrap_or(self.initial_width);
+
+        v_stack()
+            .id(self.id.clone())
+            .flex_initial()
+            .map(|this| match self.current_side {
+                PanelSide::Left | PanelSide::Right => this.h_full().w(current_size),
+                PanelSide::Bottom => this,
+            })
+            .map(|this| match self.current_side {
+                PanelSide::Left => this.border_r(),
+                PanelSide::Right => this.border_l(),
+                PanelSide::Bottom => this.border_b().w_full().h(current_size),
+            })
+            .bg(cx.theme().colors().surface_background)
+            .border_color(cx.theme().colors().border)
+            .children(self.children)
+    }
 }
 
 impl<V: 'static> Panel<V> {
@@ -91,29 +115,9 @@ impl<V: 'static> Panel<V> {
         }
         self
     }
-
-    fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
-        let current_size = self.width.unwrap_or(self.initial_width);
-
-        v_stack()
-            .id(self.id.clone())
-            .flex_initial()
-            .map(|this| match self.current_side {
-                PanelSide::Left | PanelSide::Right => this.h_full().w(current_size),
-                PanelSide::Bottom => this,
-            })
-            .map(|this| match self.current_side {
-                PanelSide::Left => this.border_r(),
-                PanelSide::Right => this.border_l(),
-                PanelSide::Bottom => this.border_b().w_full().h(current_size),
-            })
-            .bg(cx.theme().colors().surface_background)
-            .border_color(cx.theme().colors().border)
-            .children(self.children)
-    }
 }
 
-impl<V: 'static> ParentComponent<V> for Panel<V> {
+impl<V: 'static> ParentElement<V> for Panel<V> {
     fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<V>; 2]> {
         &mut self.children
     }
@@ -126,11 +130,11 @@ pub use stories::*;
 mod stories {
     use super::*;
     use crate::{Label, Story};
-    use gpui::{Div, InteractiveComponent, Render};
+    use gpui::{Div, InteractiveElement, Render};
 
     pub struct PanelStory;
 
-    impl Render for PanelStory {
+    impl Render<Self> for PanelStory {
         type Element = Div<Self>;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {

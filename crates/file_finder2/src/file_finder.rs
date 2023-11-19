@@ -2,8 +2,8 @@ use collections::HashMap;
 use editor::{scroll::autoscroll::Autoscroll, Bias, Editor};
 use fuzzy::{CharBag, PathMatch, PathMatchCandidate};
 use gpui::{
-    actions, div, AppContext, Component, Dismiss, Div, FocusHandle, InteractiveComponent,
-    ManagedView, Model, ParentComponent, Render, Styled, Task, View, ViewContext, VisualContext,
+    actions, div, AppContext, Component, Dismiss, Div, FocusHandle, InteractiveElement,
+    ManagedView, Model, ParentElement, Render, Styled, Task, View, ViewContext, VisualContext,
     WeakView,
 };
 use picker::{Picker, PickerDelegate};

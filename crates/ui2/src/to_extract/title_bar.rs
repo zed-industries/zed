@@ -1,7 +1,7 @@
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-use gpui::{Div, Render, View, VisualContext};
+use gpui::{Div, Render, RenderOnce, View, VisualContext};
 
 use crate::prelude::*;
 use crate::settings::user_settings;
@@ -85,7 +85,7 @@ impl TitleBar {
     }
 }
 
-impl Render for TitleBar {
+impl Render<Self> for TitleBar {
     type Element = Div<Self>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Div<Self> {
@@ -205,7 +205,7 @@ mod stories {
         }
     }
 
-    impl Render for TitleBarStory {
+    impl Render<Self> for TitleBarStory {
         type Element = Div<Self>;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Div<Self> {

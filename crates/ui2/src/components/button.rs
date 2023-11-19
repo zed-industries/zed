@@ -1,6 +1,9 @@
 use std::sync::Arc;
 
-use gpui::{div, DefiniteLength, Hsla, MouseButton, StatefulInteractiveComponent, WindowContext};
+use gpui::{
+    div, DefiniteLength, Div, Hsla, MouseButton, RenderOnce, Stateful, StatefulInteractiveElement,
+    WindowContext,
+};
 
 use crate::prelude::*;
 use crate::{h_stack, Icon, IconButton, IconElement, Label, LineHeightStyle, TextColor};
@@ -76,7 +79,7 @@ impl<V: 'static> Default for ButtonHandlers<V> {
     }
 }
 
-#[derive(Component)]
+#[derive(RenderOnce)]
 pub struct Button<V: 'static> {
     disabled: bool,
     handlers: ButtonHandlers<V>,
@@ -86,6 +89,58 @@ pub struct Button<V: 'static> {
     variant: ButtonVariant,
     width: Option<DefiniteLength>,
     color: Option<TextColor>,
+}
+
+impl<V: 'static> Component<V> for Button<V> {
+    type Rendered = Stateful<V, Div<V>>;
+
+    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
+        let _view: &mut V = view;
+        let (icon_color, label_color) = match (self.disabled, self.color) {
+            (true, _) => (TextColor::Disabled, TextColor::Disabled),
+            (_, None) => (TextColor::Default, TextColor::Default),
+            (_, Some(color)) => (TextColor::from(color), color),
+        };
+
+        let mut button = h_stack()
+            .id(SharedString::from(format!("{}", self.label)))
+            .relative()
+            .p_1()
+            .text_ui()
+            .rounded_md()
+            .bg(self.variant.bg_color(cx))
+            .cursor_pointer()
+            .hover(|style| style.bg(self.variant.bg_color_hover(cx)))
+            .active(|style| style.bg(self.variant.bg_color_active(cx)));
+
+        match (self.icon, self.icon_position) {
+            (Some(_), Some(IconPosition::Left)) => {
+                button = button
+                    .gap_1()
+                    .child(self.render_label(label_color))
+                    .children(self.render_icon(icon_color))
+            }
+            (Some(_), Some(IconPosition::Right)) => {
+                button = button
+                    .gap_1()
+                    .children(self.render_icon(icon_color))
+                    .child(self.render_label(label_color))
+            }
+            (_, _) => button = button.child(self.render_label(label_color)),
+        }
+
+        if let Some(width) = self.width {
+            button = button.w(width).justify_center();
+        }
+
+        if let Some(click_handler) = self.handlers.click.clone() {
+            button = button.on_mouse_down(MouseButton::Left, move |state, event, cx| {
+                click_handler(state, cx);
+            });
+        }
+
+        button
+    }
 }
 
 impl<V: 'static> Button<V> {
@@ -212,24 +267,28 @@ impl<V: 'static> Button<V> {
     }
 }
 
-#[derive(Component)]
+#[derive(RenderOnce)]
 pub struct ButtonGroup<V: 'static> {
     buttons: Vec<Button<V>>,
+}
+
+impl<V: 'static> Component<V> for ButtonGroup<V> {
+    type Rendered = Div<V>;
+
+    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
+        let mut group = h_stack();
+
+        for button in self.buttons.into_iter() {
+            group = group.child(button.render(view, cx));
+        }
+
+        group
+    }
 }
 
 impl<V: 'static> ButtonGroup<V> {
     pub fn new(buttons: Vec<Button<V>>) -> Self {
         Self { buttons }
-    }
-
-    fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
-        let mut el = h_stack().text_ui();
-
-        for button in self.buttons {
-            el = el.child(button.render(_view, cx));
-        }
-
-        el
     }
 }
 
@@ -245,7 +304,7 @@ mod stories {
 
     pub struct ButtonStory;
 
-    impl Render for ButtonStory {
+    impl Render<Self> for ButtonStory {
         type Element = Div<Self>;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {

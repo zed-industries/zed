@@ -3,19 +3,17 @@ use crate::{
     v_stack, Avatar, ButtonOrIconButton, ClickHandler, Icon, IconElement, Label, LineHeightStyle,
     ListHeader, ListHeaderMeta, ListSeparator, PublicPlayer, TextColor, UnreadIndicator,
 };
-use gpui::prelude::*;
+use gpui::{prelude::*, Div, Stateful};
 
-#[derive(Component)]
+#[derive(RenderOnce)]
 pub struct NotificationsPanel {
     id: ElementId,
 }
 
-impl NotificationsPanel {
-    pub fn new(id: impl Into<ElementId>) -> Self {
-        Self { id: id.into() }
-    }
+impl<V: 'static> Component<V> for NotificationsPanel {
+    type Rendered = Stateful<V, Div<V>>;
 
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
+    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
         div()
             .id(self.id.clone())
             .flex()
@@ -53,6 +51,12 @@ impl NotificationsPanel {
                     )
                     .child(v_stack().px_1().children(static_new_notification_items_2())),
             )
+    }
+}
+
+impl NotificationsPanel {
+    pub fn new(id: impl Into<ElementId>) -> Self {
+        Self { id: id.into() }
     }
 }
 
@@ -102,7 +106,7 @@ impl<V: 'static> Default for NotificationHandlers<V> {
     }
 }
 
-#[derive(Component)]
+#[derive(RenderOnce)]
 pub struct Notification<V: 'static> {
     id: ElementId,
     slot: ActorOrIcon,
@@ -114,6 +118,85 @@ pub struct Notification<V: 'static> {
     new: bool,
     action_taken: Option<NotificationAction<V>>,
     handlers: NotificationHandlers<V>,
+}
+
+impl<V: 'static> Component<V> for Notification<V> {
+    type Rendered = Stateful<V, Div<V>>;
+
+    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
+        div()
+            .relative()
+            .id(self.id.clone())
+            .p_1()
+            .flex()
+            .flex_col()
+            .w_full()
+            .children(
+                Some(
+                    div()
+                        .absolute()
+                        .left(px(3.0))
+                        .top_3()
+                        .z_index(2)
+                        .child(UnreadIndicator::new()),
+                )
+                .filter(|_| self.unread),
+            )
+            .child(
+                v_stack()
+                    .z_index(1)
+                    .gap_1()
+                    .w_full()
+                    .child(
+                        h_stack()
+                            .w_full()
+                            .gap_2()
+                            .child(self.render_slot(cx))
+                            .child(div().flex_1().child(Label::new(self.message.clone()))),
+                    )
+                    .child(
+                        h_stack()
+                            .justify_between()
+                            .child(
+                                h_stack()
+                                    .gap_1()
+                                    .child(
+                                        Label::new(naive_format_distance_from_now(
+                                            self.date_received,
+                                            true,
+                                            true,
+                                        ))
+                                        .color(TextColor::Muted),
+                                    )
+                                    .child(self.render_meta_items(cx)),
+                            )
+                            .child(match (self.actions, self.action_taken) {
+                                // Show nothing
+                                (None, _) => div(),
+                                // Show the taken_message
+                                (Some(_), Some(action_taken)) => h_stack()
+                                    .children(action_taken.taken_message.0.map(|icon| {
+                                        IconElement::new(icon).color(crate::TextColor::Muted)
+                                    }))
+                                    .child(
+                                        Label::new(action_taken.taken_message.1.clone())
+                                            .color(TextColor::Muted),
+                                    ),
+                                // Show the actions
+                                (Some(actions), None) => {
+                                    h_stack().children(actions.map(|action| match action.button {
+                                        ButtonOrIconButton::Button(button) => {
+                                            button.render_into_any()
+                                        }
+                                        ButtonOrIconButton::IconButton(icon_button) => {
+                                            icon_button.render_into_any()
+                                        }
+                                    }))
+                                }
+                            }),
+                    ),
+            )
+    }
 }
 
 impl<V> Notification<V> {
@@ -262,84 +345,9 @@ impl<V> Notification<V> {
 
     fn render_slot(&self, cx: &mut ViewContext<V>) -> impl Element<V> {
         match &self.slot {
-            ActorOrIcon::Actor(actor) => Avatar::new(actor.avatar.clone()).render(),
-            ActorOrIcon::Icon(icon) => IconElement::new(icon.clone()).render(),
+            ActorOrIcon::Actor(actor) => Avatar::new(actor.avatar.clone()).render_into_any(),
+            ActorOrIcon::Icon(icon) => IconElement::new(icon.clone()).render_into_any(),
         }
-    }
-
-    fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
-        div()
-            .relative()
-            .id(self.id.clone())
-            .p_1()
-            .flex()
-            .flex_col()
-            .w_full()
-            .children(
-                Some(
-                    div()
-                        .absolute()
-                        .left(px(3.0))
-                        .top_3()
-                        .z_index(2)
-                        .child(UnreadIndicator::new()),
-                )
-                .filter(|_| self.unread),
-            )
-            .child(
-                v_stack()
-                    .z_index(1)
-                    .gap_1()
-                    .w_full()
-                    .child(
-                        h_stack()
-                            .w_full()
-                            .gap_2()
-                            .child(self.render_slot(cx))
-                            .child(div().flex_1().child(Label::new(self.message.clone()))),
-                    )
-                    .child(
-                        h_stack()
-                            .justify_between()
-                            .child(
-                                h_stack()
-                                    .gap_1()
-                                    .child(
-                                        Label::new(naive_format_distance_from_now(
-                                            self.date_received,
-                                            true,
-                                            true,
-                                        ))
-                                        .color(TextColor::Muted),
-                                    )
-                                    .child(self.render_meta_items(cx)),
-                            )
-                            .child(match (self.actions, self.action_taken) {
-                                // Show nothing
-                                (None, _) => div(),
-                                // Show the taken_message
-                                (Some(_), Some(action_taken)) => h_stack()
-                                    .children(action_taken.taken_message.0.map(|icon| {
-                                        IconElement::new(icon).color(crate::TextColor::Muted)
-                                    }))
-                                    .child(
-                                        Label::new(action_taken.taken_message.1.clone())
-                                            .color(TextColor::Muted),
-                                    ),
-                                // Show the actions
-                                (Some(actions), None) => {
-                                    h_stack().children(actions.map(|action| match action.button {
-                                        ButtonOrIconButton::Button(button) => {
-                                            Component::render(button)
-                                        }
-                                        ButtonOrIconButton::IconButton(icon_button) => {
-                                            Component::render(icon_button)
-                                        }
-                                    }))
-                                }
-                            }),
-                    ),
-            )
     }
 }
 
@@ -356,7 +364,7 @@ mod stories {
 
     pub struct NotificationsPanelStory;
 
-    impl Render for NotificationsPanelStory {
+    impl Render<Self> for NotificationsPanelStory {
         type Element = Div<Self>;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
