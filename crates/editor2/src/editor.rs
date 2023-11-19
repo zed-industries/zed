@@ -9376,7 +9376,7 @@ impl FocusableView for Editor {
     }
 }
 
-impl Render for Editor {
+impl Render<Self> for Editor {
     type Element = EditorElement;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {

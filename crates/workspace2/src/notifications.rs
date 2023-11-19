@@ -13,7 +13,7 @@ pub enum NotificationEvent {
     Dismiss,
 }
 
-pub trait Notification: EventEmitter<NotificationEvent> + Render {}
+pub trait Notification: EventEmitter<NotificationEvent> + Render<Self> {}
 
 pub trait NotificationHandle: Send {
     fn id(&self) -> EntityId;
@@ -251,7 +251,7 @@ pub mod simple_message_notification {
         // }
     }
 
-    impl Render for MessageNotification {
+    impl Render<Self> for MessageNotification {
         type Element = Div<Self>;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {

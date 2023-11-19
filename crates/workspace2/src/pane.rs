@@ -593,7 +593,7 @@ impl Pane {
         self.items.iter()
     }
 
-    pub fn items_of_type<T: Render>(&self) -> impl '_ + Iterator<Item = View<T>> {
+    pub fn items_of_type<T: Render<T>>(&self) -> impl '_ + Iterator<Item = View<T>> {
         self.items
             .iter()
             .filter_map(|item| item.to_any().downcast().ok())
@@ -1343,7 +1343,7 @@ impl Pane {
         item: &Box<dyn ItemHandle>,
         detail: usize,
         cx: &mut ViewContext<'_, Pane>,
-    ) -> impl Component<Self> {
+    ) -> impl RenderOnce<Self> {
         let label = item.tab_content(Some(detail), cx);
         let close_icon = || {
             let id = item.item_id();
@@ -1436,7 +1436,7 @@ impl Pane {
             )
     }
 
-    fn render_tab_bar(&mut self, cx: &mut ViewContext<'_, Pane>) -> impl Component<Self> {
+    fn render_tab_bar(&mut self, cx: &mut ViewContext<'_, Pane>) -> impl RenderOnce<Self> {
         div()
             .group("tab_bar")
             .id("tab_bar")
@@ -1895,7 +1895,7 @@ impl FocusableView for Pane {
     }
 }
 
-impl Render for Pane {
+impl Render<Self> for Pane {
     type Element = Focusable<Self, Div<Self>>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
@@ -2949,7 +2949,7 @@ struct DraggedTab {
     title: String,
 }
 
-impl Render for DraggedTab {
+impl Render<Self> for DraggedTab {
     type Element = Div<Self>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {

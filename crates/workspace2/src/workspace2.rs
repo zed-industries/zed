@@ -3592,7 +3592,7 @@ impl FocusableView for Workspace {
     }
 }
 
-impl Render for Workspace {
+impl Render<Self> for Workspace {
     type Element = Div<Self>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {

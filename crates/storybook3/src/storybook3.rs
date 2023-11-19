@@ -59,7 +59,7 @@ struct TestView {
     story: AnyView,
 }
 
-impl Render for TestView {
+impl Render<Self> for TestView {
     type Element = Div<Self>;
 
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {

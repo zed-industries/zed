@@ -21,7 +21,7 @@ use gpui::{
     div, point, px, relative, size, transparent_black, Action, AnyElement, AvailableSpace,
     BorrowWindow, Bounds, Component, ContentMask, Corners, DispatchPhase, Edges, Element,
     ElementId, ElementInputHandler, Entity, EntityId, Hsla, InteractiveElement, LineLayout,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, RenderOnce,
     ScrollWheelEvent, ShapedLine, SharedString, Size, StatefulInteractiveElement, Style, Styled,
     TextRun, TextStyle, View, ViewContext, WindowContext, WrappedLine,
 };
@@ -2466,9 +2466,11 @@ impl Element<Editor> for EditorElement {
     }
 }
 
-impl Component<Editor> for EditorElement {
-    fn render(self) -> AnyElement<Editor> {
-        AnyElement::new(self)
+impl RenderOnce<Editor> for EditorElement {
+    type Element = Self;
+
+    fn render_once(self) -> Self::Element {
+        self
     }
 }
 
