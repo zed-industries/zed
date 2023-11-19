@@ -8,7 +8,7 @@ use settings::{default_settings, Settings, SettingsStore};
 use std::borrow::Cow;
 use std::sync::Arc;
 use theme::ThemeSettings;
-use ui::{h_stack, prelude::*, ContextMenuStory};
+use ui::{prelude::*, ContextMenuStory};
 
 struct Assets;
 
@@ -56,6 +56,7 @@ fn main() {
 }
 
 struct TestView {
+    #[allow(unused)]
     story: AnyView,
 }
 
