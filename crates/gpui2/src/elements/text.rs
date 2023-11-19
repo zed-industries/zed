@@ -11,10 +11,6 @@ use util::ResultExt;
 impl<V: 'static> Element<V> for &'static str {
     type State = TextState;
 
-    fn element_id(&self) -> Option<ElementId> {
-        None
-    }
-
     fn layout(
         &mut self,
         _: &mut V,
@@ -40,6 +36,10 @@ impl<V: 'static> Element<V> for &'static str {
 impl<V: 'static> RenderOnce<V> for &'static str {
     type Element = Self;
 
+    fn element_id(&self) -> Option<ElementId> {
+        None
+    }
+
     fn render_once(self) -> Self::Element {
         self
     }
@@ -47,10 +47,6 @@ impl<V: 'static> RenderOnce<V> for &'static str {
 
 impl<V: 'static> Element<V> for SharedString {
     type State = TextState;
-
-    fn element_id(&self) -> Option<ElementId> {
-        Some(self.clone().into())
-    }
 
     fn layout(
         &mut self,
@@ -78,6 +74,10 @@ impl<V: 'static> Element<V> for SharedString {
 impl<V: 'static> RenderOnce<V> for SharedString {
     type Element = Self;
 
+    fn element_id(&self) -> Option<ElementId> {
+        Some(self.clone().into())
+    }
+
     fn render_once(self) -> Self::Element {
         self
     }
@@ -104,10 +104,6 @@ impl StyledText {
 
 impl<V: 'static> Element<V> for StyledText {
     type State = TextState;
-
-    fn element_id(&self) -> Option<crate::ElementId> {
-        None
-    }
 
     fn layout(
         &mut self,
@@ -193,6 +189,10 @@ impl<V: 'static> Element<V> for StyledText {
 
 impl<V: 'static> RenderOnce<V> for StyledText {
     type Element = Self;
+
+    fn element_id(&self) -> Option<crate::ElementId> {
+        None
+    }
 
     fn render_once(self) -> Self::Element {
         self
@@ -300,10 +300,6 @@ struct InteractiveTextState {
 impl<V: 'static> Element<V> for InteractiveText {
     type State = InteractiveTextState;
 
-    fn element_id(&self) -> Option<ElementId> {
-        Some(self.id.clone())
-    }
-
     fn layout(
         &mut self,
         view_state: &mut V,
@@ -345,6 +341,10 @@ impl<V: 'static> Element<V> for InteractiveText {
 
 impl<V: 'static> RenderOnce<V> for InteractiveText {
     type Element = Self;
+
+    fn element_id(&self) -> Option<ElementId> {
+        Some(self.id.clone())
+    }
 
     fn render_once(self) -> Self::Element {
         self

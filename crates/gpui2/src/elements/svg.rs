@@ -26,10 +26,6 @@ impl<V> Svg<V> {
 impl<V> Element<V> for Svg<V> {
     type State = InteractiveElementState;
 
-    fn element_id(&self) -> Option<ElementId> {
-        self.interactivity.element_id.clone()
-    }
-
     fn layout(
         &mut self,
         _view_state: &mut V,
@@ -61,6 +57,10 @@ impl<V> Element<V> for Svg<V> {
 
 impl<V: 'static> RenderOnce<V> for Svg<V> {
     type Element = Self;
+
+    fn element_id(&self) -> Option<ElementId> {
+        self.interactivity.element_id.clone()
+    }
 
     fn render_once(self) -> Self::Element {
         self

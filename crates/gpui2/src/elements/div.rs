@@ -602,10 +602,6 @@ impl<V: 'static> ParentElement<V> for Div<V> {
 impl<V: 'static> Element<V> for Div<V> {
     type State = DivState;
 
-    fn element_id(&self) -> Option<ElementId> {
-        self.interactivity.element_id.clone()
-    }
-
     fn layout(
         &mut self,
         view_state: &mut V,
@@ -693,6 +689,10 @@ impl<V: 'static> Element<V> for Div<V> {
 
 impl<V: 'static> RenderOnce<V> for Div<V> {
     type Element = Self;
+
+    fn element_id(&self) -> Option<ElementId> {
+        self.interactivity.element_id.clone()
+    }
 
     fn render_once(self) -> Self::Element {
         self
@@ -1293,10 +1293,6 @@ where
 {
     type State = E::State;
 
-    fn element_id(&self) -> Option<ElementId> {
-        self.element.element_id()
-    }
-
     fn layout(
         &mut self,
         view_state: &mut V,
@@ -1323,6 +1319,10 @@ where
     E: Element<V>,
 {
     type Element = Self;
+
+    fn element_id(&self) -> Option<ElementId> {
+        self.element.element_id()
+    }
 
     fn render_once(self) -> Self::Element {
         self
@@ -1381,10 +1381,6 @@ where
 {
     type State = E::State;
 
-    fn element_id(&self) -> Option<ElementId> {
-        self.element.element_id()
-    }
-
     fn layout(
         &mut self,
         view_state: &mut V,
@@ -1411,6 +1407,10 @@ where
     E: Element<V>,
 {
     type Element = Self;
+
+    fn element_id(&self) -> Option<ElementId> {
+        self.element.element_id()
+    }
 
     fn render_once(self) -> Self::Element {
         self

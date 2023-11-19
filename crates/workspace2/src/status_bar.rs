@@ -2,8 +2,8 @@ use std::any::TypeId;
 
 use crate::{ItemHandle, Pane};
 use gpui::{
-    div, AnyView, Component, Div, ParentElement, Render, RenderOnce, Styled, Subscription, View,
-    ViewContext, WindowContext,
+    div, AnyView, Div, ParentElement, Render, RenderOnce, Styled, Subscription, View, ViewContext,
+    WindowContext,
 };
 use theme2::ActiveTheme;
 use ui::h_stack;

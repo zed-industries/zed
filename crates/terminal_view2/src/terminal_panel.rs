@@ -335,7 +335,7 @@ impl TerminalPanel {
 
 impl EventEmitter<PanelEvent> for TerminalPanel {}
 
-impl Render for TerminalPanel {
+impl Render<Self> for TerminalPanel {
     type Element = Div<Self>;
 
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {

@@ -14,10 +14,48 @@ pub trait Render<V: 'static>: 'static + Sized {
 pub trait RenderOnce<V: 'static>: Sized {
     type Element: Element<V> + 'static;
 
+    fn element_id(&self) -> Option<ElementId>;
+
     fn render_once(self) -> Self::Element;
 
     fn render_into_any(self) -> AnyElement<V> {
         self.render_once().into_any()
+    }
+
+    fn draw<T, R>(
+        self,
+        origin: Point<Pixels>,
+        available_space: Size<T>,
+        view_state: &mut V,
+        cx: &mut ViewContext<V>,
+        f: impl FnOnce(&mut <Self::Element as Element<V>>::State, &mut ViewContext<V>) -> R,
+    ) -> R
+    where
+        T: Clone + Default + Debug + Into<AvailableSpace>,
+    {
+        let element = self.render_once();
+        let element_id = element.element_id();
+        let element = DrawableElement {
+            element: Some(element),
+            phase: ElementDrawPhase::Start,
+        };
+        let frame_state = DrawableElement::draw(
+            element,
+            origin,
+            available_space.map(Into::into),
+            view_state,
+            cx,
+        );
+
+        if let Some(mut frame_state) = frame_state {
+            f(&mut frame_state, cx)
+        } else {
+            cx.with_element_state(element_id.unwrap(), |element_state, cx| {
+                let mut element_state = element_state.unwrap();
+                let result = f(&mut element_state, cx);
+                (result, element_state)
+            })
+        }
     }
 
     fn map<U>(self, f: impl FnOnce(Self) -> U) -> U
@@ -52,8 +90,6 @@ pub trait RenderOnce<V: 'static>: Sized {
 pub trait Element<V: 'static>: 'static + RenderOnce<V> {
     type State: 'static;
 
-    fn element_id(&self) -> Option<ElementId>;
-
     fn layout(
         &mut self,
         view_state: &mut V,
@@ -71,35 +107,6 @@ pub trait Element<V: 'static>: 'static + RenderOnce<V> {
 
     fn into_any(self) -> AnyElement<V> {
         AnyElement::new(self)
-    }
-
-    fn draw<T, R>(
-        self,
-        origin: Point<Pixels>,
-        available_space: Size<T>,
-        view_state: &mut V,
-        cx: &mut ViewContext<V>,
-        f: impl FnOnce(&mut Self::State, &mut ViewContext<V>) -> R,
-    ) -> R
-    where
-        T: Clone + Default + Debug + Into<AvailableSpace>,
-    {
-        let element_id = self.element_id();
-        let element = DrawableElement {
-            element: Some(self),
-            phase: ElementDrawPhase::Start,
-        };
-        let frame_state = element.draw(origin, available_space.map(Into::into), view_state, cx);
-
-        if let Some(mut frame_state) = frame_state {
-            f(&mut frame_state, cx)
-        } else {
-            cx.with_element_state(element_id.unwrap(), |element_state, cx| {
-                let mut element_state = element_state.unwrap();
-                let result = f(&mut element_state, cx);
-                (result, element_state)
-            })
-        }
     }
 }
 
@@ -130,10 +137,6 @@ impl<V, C> CompositeElement<V, C> {
 
 impl<V: 'static, C: Component<V>> Element<V> for CompositeElement<V, C> {
     type State = CompositeElementState<V, C>;
-
-    fn element_id(&self) -> Option<ElementId> {
-        None
-    }
 
     fn layout(
         &mut self,
@@ -173,6 +176,10 @@ impl<V: 'static, C: Component<V>> Element<V> for CompositeElement<V, C> {
 
 impl<V: 'static, C: Component<V>> RenderOnce<V> for CompositeElement<V, C> {
     type Element = Self;
+
+    fn element_id(&self) -> Option<ElementId> {
+        None
+    }
 
     fn render_once(self) -> Self::Element {
         self
@@ -231,23 +238,21 @@ pub struct DrawableElement<V: 'static, E: Element<V>> {
 }
 
 #[derive(Default)]
-enum ElementDrawPhase<V> {
+enum ElementDrawPhase<S> {
     #[default]
     Start,
     LayoutRequested {
         layout_id: LayoutId,
-        frame_state: Option<V>,
+        frame_state: Option<S>,
     },
     LayoutComputed {
         layout_id: LayoutId,
         available_space: Size<AvailableSpace>,
-        frame_state: Option<V>,
+        frame_state: Option<S>,
     },
 }
 
-/// Internal struct that wraps an element to store Layout and ElementState after the element is rendered.
-/// It's allocated as a trait object to erase the element type and wrapped in AnyElement<E::State> for
-/// improved usability.
+/// A wrapper around an implementer of [Element] that allows it to be drawn in a window.
 impl<V, E: Element<V>> DrawableElement<V, E> {
     fn new(element: E) -> Self {
         DrawableElement {
@@ -379,6 +384,41 @@ impl<V, E: Element<V>> DrawableElement<V, E> {
     }
 }
 
+// impl<V: 'static, E: Element<V>> Element<V> for DrawableElement<V, E> {
+//     type State = <E::Element as Element<V>>::State;
+
+//     fn layout(
+//         &mut self,
+//         view_state: &mut V,
+//         element_state: Option<Self::State>,
+//         cx: &mut ViewContext<V>,
+//     ) -> (LayoutId, Self::State) {
+
+//     }
+
+//     fn paint(
+//         self,
+//         bounds: Bounds<Pixels>,
+//         view_state: &mut V,
+//         element_state: &mut Self::State,
+//         cx: &mut ViewContext<V>,
+//     ) {
+//         todo!()
+//     }
+// }
+
+// impl<V: 'static, E: 'static + Element<V>> RenderOnce<V> for DrawableElement<V, E> {
+//     type Element = Self;
+
+//     fn element_id(&self) -> Option<ElementId> {
+//         self.element.as_ref()?.element_id()
+//     }
+
+//     fn render_once(self) -> Self::Element {
+//         self
+//     }
+// }
+
 impl<V, E> ElementObject<V> for Option<DrawableElement<V, E>>
 where
     E: Element<V>,
@@ -476,10 +516,6 @@ impl<V: 'static> AnyElement<V> {
 impl<V: 'static> Element<V> for AnyElement<V> {
     type State = ();
 
-    fn element_id(&self) -> Option<ElementId> {
-        AnyElement::element_id(self)
-    }
-
     fn layout(
         &mut self,
         view_state: &mut V,
@@ -503,6 +539,10 @@ impl<V: 'static> Element<V> for AnyElement<V> {
 
 impl<V: 'static> RenderOnce<V> for AnyElement<V> {
     type Element = Self;
+
+    fn element_id(&self) -> Option<ElementId> {
+        AnyElement::element_id(self)
+    }
 
     fn render_once(self) -> Self::Element {
         self

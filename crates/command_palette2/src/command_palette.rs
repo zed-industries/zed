@@ -1,7 +1,7 @@
 use collections::{CommandPaletteFilter, HashMap};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, div, prelude::*, Action, AppContext, Component, Dismiss, Div, FocusHandle, Keystroke,
+    actions, div, prelude::*, Action, AppContext, Dismiss, Div, FocusHandle, Keystroke,
     ManagedView, ParentElement, Render, Styled, View, ViewContext, VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};
@@ -74,7 +74,7 @@ impl ManagedView for CommandPalette {
     }
 }
 
-impl Render for CommandPalette {
+impl Render<Self> for CommandPalette {
     type Element = Div<Self>;
 
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {

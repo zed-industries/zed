@@ -1,7 +1,7 @@
 use editor::Editor;
 use gpui::{
-    div, prelude::*, uniform_list, AppContext, Component, Div, FocusHandle, FocusableView,
-    MouseButton, Render, Task, UniformListScrollHandle, View, ViewContext, WindowContext,
+    div, prelude::*, uniform_list, AppContext, Div, FocusHandle, FocusableView, MouseButton,
+    Render, Task, UniformListScrollHandle, View, ViewContext, WindowContext,
 };
 use std::{cmp, sync::Arc};
 use ui::{prelude::*, v_stack, Divider, Label, TextColor};
@@ -15,7 +15,7 @@ pub struct Picker<D: PickerDelegate> {
 }
 
 pub trait PickerDelegate: Sized + 'static {
-    type ListItem: Component<Picker<Self>>;
+    type ListItem: RenderOnce<Picker<Self>>;
 
     fn match_count(&self) -> usize;
     fn selected_index(&self) -> usize;
@@ -180,7 +180,7 @@ impl<D: PickerDelegate> Picker<D> {
     }
 }
 
-impl<D: PickerDelegate> Render for Picker<D> {
+impl<D: PickerDelegate> Render<Self> for Picker<D> {
     type Element = Div<Self>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {

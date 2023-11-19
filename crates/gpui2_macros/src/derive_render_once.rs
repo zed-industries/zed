@@ -33,6 +33,10 @@ pub fn derive_render_once(input: TokenStream) -> TokenStream {
         {
             type Element = gpui::CompositeElement<#view_type, Self>;
 
+            fn element_id(&self) -> Option<ElementId> {
+                None
+            }
+
             fn render_once(self) -> Self::Element {
                 gpui::CompositeElement::new(self)
             }

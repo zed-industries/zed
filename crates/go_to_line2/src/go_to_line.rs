@@ -143,7 +143,7 @@ impl GoToLine {
     }
 }
 
-impl Render for GoToLine {
+impl Render<Self> for GoToLine {
     type Element = Div<Self>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {

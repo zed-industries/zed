@@ -78,7 +78,7 @@ impl Render<Self> for ContextMenu {
 }
 
 pub struct MenuHandle<V: 'static, M: ManagedView> {
-    id: Option<ElementId>,
+    id: ElementId,
     child_builder: Option<Box<dyn FnOnce(bool) -> AnyElement<V> + 'static>>,
     menu_builder: Option<Rc<dyn Fn(&mut V, &mut ViewContext<V>) -> View<M> + 'static>>,
 
@@ -87,11 +87,6 @@ pub struct MenuHandle<V: 'static, M: ManagedView> {
 }
 
 impl<V: 'static, M: ManagedView> MenuHandle<V, M> {
-    pub fn id(mut self, id: impl Into<ElementId>) -> Self {
-        self.id = Some(id.into());
-        self
-    }
-
     pub fn menu(mut self, f: impl Fn(&mut V, &mut ViewContext<V>) -> View<M> + 'static) -> Self {
         self.menu_builder = Some(Rc::new(f));
         self
@@ -116,9 +111,9 @@ impl<V: 'static, M: ManagedView> MenuHandle<V, M> {
     }
 }
 
-pub fn menu_handle<V: 'static, M: ManagedView>() -> MenuHandle<V, M> {
+pub fn menu_handle<V: 'static, M: ManagedView>(id: impl Into<ElementId>) -> MenuHandle<V, M> {
     MenuHandle {
-        id: None,
+        id: id.into(),
         child_builder: None,
         menu_builder: None,
         anchor: None,
@@ -135,10 +130,6 @@ pub struct MenuHandleState<V, M> {
 }
 impl<V: 'static, M: ManagedView> Element<V> for MenuHandle<V, M> {
     type State = MenuHandleState<V, M>;
-
-    fn element_id(&self) -> Option<gpui::ElementId> {
-        Some(self.id.clone().expect("menu_handle must have an id()"))
-    }
 
     fn layout(
         &mut self,
@@ -251,6 +242,10 @@ impl<V: 'static, M: ManagedView> Element<V> for MenuHandle<V, M> {
 impl<V: 'static, M: ManagedView> RenderOnce<V> for MenuHandle<V, M> {
     type Element = Self;
 
+    fn element_id(&self) -> Option<gpui::ElementId> {
+        Some(self.id.clone())
+    }
+
     fn render_once(self) -> Self::Element {
         self
     }
@@ -297,8 +292,7 @@ mod stories {
                         .flex_col()
                         .justify_between()
                         .child(
-                            menu_handle()
-                                .id("test2")
+                            menu_handle("test2")
                                 .child(|is_open| {
                                     Label::new(if is_open {
                                         "TOP LEFT"
@@ -309,8 +303,7 @@ mod stories {
                                 .menu(move |_, cx| build_menu(cx, "top left")),
                         )
                         .child(
-                            menu_handle()
-                                .id("test1")
+                            menu_handle("test1")
                                 .child(|is_open| {
                                     Label::new(if is_open {
                                         "BOTTOM LEFT"
@@ -329,8 +322,7 @@ mod stories {
                         .flex_col()
                         .justify_between()
                         .child(
-                            menu_handle()
-                                .id("test3")
+                            menu_handle("test3")
                                 .child(|is_open| {
                                     Label::new(if is_open {
                                         "TOP RIGHT"
@@ -342,8 +334,7 @@ mod stories {
                                 .menu(move |_, cx| build_menu(cx, "top right")),
                         )
                         .child(
-                            menu_handle()
-                                .id("test4")
+                            menu_handle("test4")
                                 .child(|is_open| {
                                     Label::new(if is_open {
                                         "BOTTOM RIGHT"

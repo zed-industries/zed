@@ -2,9 +2,8 @@ use collections::HashMap;
 use editor::{scroll::autoscroll::Autoscroll, Bias, Editor};
 use fuzzy::{CharBag, PathMatch, PathMatchCandidate};
 use gpui::{
-    actions, div, AppContext, Component, Dismiss, Div, FocusHandle, InteractiveElement,
-    ManagedView, Model, ParentElement, Render, Styled, Task, View, ViewContext, VisualContext,
-    WeakView,
+    actions, div, AppContext, Dismiss, Div, FocusHandle, InteractiveElement, ManagedView, Model,
+    ParentElement, Render, RenderOnce, Styled, Task, View, ViewContext, VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};
 use project::{PathMatchCandidateSet, Project, ProjectPath, WorktreeId};
@@ -116,7 +115,7 @@ impl ManagedView for FileFinder {
         self.picker.focus_handle(cx)
     }
 }
-impl Render for FileFinder {
+impl Render<Self> for FileFinder {
     type Element = Div<Self>;
 
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {

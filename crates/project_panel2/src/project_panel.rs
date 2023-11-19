@@ -9,9 +9,9 @@ use file_associations::FileAssociations;
 use anyhow::{anyhow, Result};
 use gpui::{
     actions, div, px, uniform_list, Action, AppContext, AssetSource, AsyncWindowContext,
-    ClipboardItem, Component, Div, EventEmitter, FocusHandle, Focusable, FocusableView,
-    InteractiveElement, Model, MouseButton, ParentElement, Pixels, Point, PromptLevel, Render,
-    Stateful, StatefulInteractiveElement, Styled, Task, UniformListScrollHandle, View, ViewContext,
+    ClipboardItem, Div, EventEmitter, FocusHandle, Focusable, FocusableView, InteractiveElement,
+    Model, MouseButton, ParentElement, Pixels, Point, PromptLevel, Render, RenderOnce, Stateful,
+    StatefulInteractiveElement, Styled, Task, UniformListScrollHandle, View, ViewContext,
     VisualContext as _, WeakView, WindowContext,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
@@ -1423,7 +1423,7 @@ impl ProjectPanel {
     }
 }
 
-impl Render for ProjectPanel {
+impl Render<Self> for ProjectPanel {
     type Element = Focusable<Self, Stateful<Self, Div<Self>>>;
 
     fn render(&mut self, _cx: &mut gpui::ViewContext<Self>) -> Self::Element {

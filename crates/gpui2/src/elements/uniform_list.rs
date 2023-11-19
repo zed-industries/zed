@@ -104,10 +104,6 @@ pub struct UniformListState {
 impl<V: 'static> Element<V> for UniformList<V> {
     type State = UniformListState;
 
-    fn element_id(&self) -> Option<crate::ElementId> {
-        Some(self.id.clone())
-    }
-
     fn layout(
         &mut self,
         view_state: &mut V,
@@ -254,6 +250,10 @@ impl<V: 'static> Element<V> for UniformList<V> {
 
 impl<V> RenderOnce<V> for UniformList<V> {
     type Element = Self;
+
+    fn element_id(&self) -> Option<crate::ElementId> {
+        Some(self.id.clone())
+    }
 
     fn render_once(self) -> Self::Element {
         self

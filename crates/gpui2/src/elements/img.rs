@@ -37,10 +37,6 @@ where
 impl<V> Element<V> for Img<V> {
     type State = InteractiveElementState;
 
-    fn element_id(&self) -> Option<crate::ElementId> {
-        self.interactivity.element_id.clone()
-    }
-
     fn layout(
         &mut self,
         _view_state: &mut V,
@@ -97,6 +93,10 @@ impl<V> Element<V> for Img<V> {
 
 impl<V: 'static> RenderOnce<V> for Img<V> {
     type Element = Self;
+
+    fn element_id(&self) -> Option<crate::ElementId> {
+        self.interactivity.element_id.clone()
+    }
 
     fn render_once(self) -> Self::Element {
         self

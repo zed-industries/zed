@@ -31,7 +31,7 @@ use std::sync::Arc;
 use call::ActiveCall;
 use client::{Client, UserStore};
 use gpui::{
-    div, px, rems, AppContext, Component, Div, InteractiveElement, Model, ParentElement, Render,
+    div, px, rems, AppContext, Div, InteractiveElement, Model, ParentElement, Render, RenderOnce,
     Stateful, StatefulInteractiveElement, Styled, Subscription, ViewContext, VisualContext,
     WeakView, WindowBounds,
 };
@@ -81,7 +81,7 @@ pub struct CollabTitlebarItem {
     _subscriptions: Vec<Subscription>,
 }
 
-impl Render for CollabTitlebarItem {
+impl Render<Self> for CollabTitlebarItem {
     type Element = Stateful<Self, Div<Self>>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {

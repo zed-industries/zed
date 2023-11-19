@@ -1,8 +1,8 @@
 use crate::{status_bar::StatusItemView, Axis, Workspace};
 use gpui::{
-    div, px, Action, AnchorCorner, AnyView, AppContext, Component, Div, Entity, EntityId,
-    EventEmitter, FocusHandle, FocusableView, ParentElement, Render, RenderOnce, SharedString,
-    Styled, Subscription, View, ViewContext, VisualContext, WeakView, WindowContext,
+    div, px, Action, AnchorCorner, AnyView, AppContext, Div, Entity, EntityId, EventEmitter,
+    FocusHandle, FocusableView, ParentElement, Render, RenderOnce, SharedString, Styled,
+    Subscription, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -653,8 +653,7 @@ impl Render<Self> for PanelButtons {
                 };
 
                 Some(
-                    menu_handle()
-                        .id(name)
+                    menu_handle(name)
                         .menu(move |_, cx| {
                             cx.build_view(|cx| ContextMenu::new(cx).header("SECTION"))
                         })

@@ -208,10 +208,6 @@ impl<V: 'static + Render<V>> From<View<V>> for AnyView {
 impl<V: 'static + Render<V>, ParentV: 'static> Element<ParentV> for View<V> {
     type State = Option<AnyElement<V>>;
 
-    fn element_id(&self) -> Option<ElementId> {
-        Some(self.model.entity_id.into())
-    }
-
     fn layout(
         &mut self,
         _parent_view: &mut ParentV,
@@ -241,6 +237,10 @@ impl<V: 'static + Render<V>, ParentV: 'static> Element<ParentV> for View<V> {
 impl<V: 'static + Render<V>, ParentV: 'static> RenderOnce<ParentV> for View<V> {
     type Element = View<V>;
 
+    fn element_id(&self) -> Option<ElementId> {
+        Some(self.model.entity_id.into())
+    }
+
     fn render_once(self) -> Self::Element {
         self
     }
@@ -248,10 +248,6 @@ impl<V: 'static + Render<V>, ParentV: 'static> RenderOnce<ParentV> for View<V> {
 
 impl<V: 'static> Element<V> for AnyView {
     type State = Option<Box<dyn Any>>;
-
-    fn element_id(&self) -> Option<ElementId> {
-        Some(self.model.entity_id.into())
-    }
 
     fn layout(
         &mut self,
@@ -276,6 +272,10 @@ impl<V: 'static> Element<V> for AnyView {
 
 impl<ParentV: 'static> RenderOnce<ParentV> for AnyView {
     type Element = Self;
+
+    fn element_id(&self) -> Option<ElementId> {
+        Some(self.model.entity_id.into())
+    }
 
     fn render_once(self) -> Self::Element {
         self
@@ -334,10 +334,6 @@ where
 {
     type State = Option<AnyElement<V>>;
 
-    fn element_id(&self) -> Option<ElementId> {
-        Some(self.view.entity_id().into())
-    }
-
     fn layout(
         &mut self,
         _: &mut ParentV,
@@ -370,6 +366,10 @@ where
     ParentV: 'static,
 {
     type Element = Self;
+
+    fn element_id(&self) -> Option<ElementId> {
+        self.element.as_ref().unwrap().element_id()
+    }
 
     fn render_once(self) -> Self::Element {
         self

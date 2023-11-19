@@ -1,6 +1,4 @@
-use gpui::{
-    div, white, Div, ParentElement, Render, Styled, View, VisualContext, WindowContext,
-};
+use gpui::{div, white, Div, ParentElement, Render, Styled, View, VisualContext, WindowContext};
 
 pub struct TextStory;
 
@@ -10,7 +8,7 @@ impl TextStory {
     }
 }
 
-impl Render for TextStory {
+impl Render<Self> for TextStory {
     type Element = Div<Self>;
 
     fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> Self::Element {

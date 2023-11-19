@@ -60,10 +60,6 @@ impl<V: 'static> ParentElement<V> for Overlay<V> {
 impl<V: 'static> Element<V> for Overlay<V> {
     type State = OverlayState;
 
-    fn element_id(&self) -> Option<crate::ElementId> {
-        None
-    }
-
     fn layout(
         &mut self,
         view_state: &mut V,
@@ -159,6 +155,10 @@ impl<V: 'static> Element<V> for Overlay<V> {
 
 impl<V: 'static> RenderOnce<V> for Overlay<V> {
     type Element = Self;
+
+    fn element_id(&self) -> Option<crate::ElementId> {
+        None
+    }
 
     fn render_once(self) -> Self::Element {
         self
