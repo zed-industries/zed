@@ -1,4 +1,4 @@
-use gpui::Action;
+use gpui::{actions, Action};
 use strum::EnumIter;
 
 use crate::prelude::*;
@@ -72,6 +72,12 @@ pub enum ModifierKey {
     Alt,
     Command,
     Shift,
+}
+
+actions!(NoAction);
+
+pub fn binding(key: &str) -> gpui::KeyBinding {
+    gpui::KeyBinding::new(key, NoAction {}, None)
 }
 
 #[cfg(feature = "stories")]
