@@ -5,12 +5,14 @@ use std::fmt::Debug;
 use taffy::{
     geometry::{Point as TaffyPoint, Rect as TaffyRect, Size as TaffySize},
     style::AvailableSpace as TaffyAvailableSpace,
-    tree::{Measurable, MeasureFunc, NodeId},
+    tree::NodeId,
     Taffy,
 };
 
+type Measureable = dyn Fn(Size<Option<Pixels>>, Size<AvailableSpace>) -> Size<Pixels> + Send + Sync;
+
 pub struct TaffyLayoutEngine {
-    taffy: Taffy,
+    taffy: Taffy<Box<Measureable>>,
     children_to_parents: HashMap<LayoutId, LayoutId>,
     absolute_layout_bounds: HashMap<LayoutId, Bounds<Pixels>>,
     computed_layouts: HashSet<LayoutId>,
@@ -70,9 +72,9 @@ impl TaffyLayoutEngine {
     ) -> LayoutId {
         let style = style.to_taffy(rem_size);
 
-        let measurable = Box::new(Measureable(measure)) as Box<dyn Measurable>;
+        let measurable = Box::new(measure);
         self.taffy
-            .new_leaf_with_measure(style, MeasureFunc::Boxed(measurable))
+            .new_leaf_with_context(style, measurable)
             .expect(EXPECT_MESSAGE)
             .into()
     }
@@ -154,7 +156,22 @@ impl TaffyLayoutEngine {
 
         // let started_at = std::time::Instant::now();
         self.taffy
-            .compute_layout(id.into(), available_space.into())
+            .compute_layout_with_measure(
+                id.into(),
+                available_space.into(),
+                |known_dimensions, available_space, node_id, context| {
+                    let Some(measure) = context else {
+                        return taffy::geometry::Size::default();
+                    };
+
+                    let known_dimensions = Size {
+                        width: known_dimensions.width.map(Pixels),
+                        height: known_dimensions.height.map(Pixels),
+                    };
+
+                    measure(known_dimensions, available_space.into()).into()
+                },
+            )
             .expect(EXPECT_MESSAGE);
         // println!("compute_layout took {:?}", started_at.elapsed());
     }
@@ -199,25 +216,6 @@ impl From<NodeId> for LayoutId {
 impl From<LayoutId> for NodeId {
     fn from(layout_id: LayoutId) -> NodeId {
         layout_id.0
-    }
-}
-
-struct Measureable<F>(F);
-
-impl<F> taffy::tree::Measurable for Measureable<F>
-where
-    F: Fn(Size<Option<Pixels>>, Size<AvailableSpace>) -> Size<Pixels> + Send + Sync,
-{
-    fn measure(
-        &self,
-        known_dimensions: TaffySize<Option<f32>>,
-        available_space: TaffySize<TaffyAvailableSpace>,
-    ) -> TaffySize<f32> {
-        let known_dimensions: Size<Option<f32>> = known_dimensions.into();
-        let known_dimensions: Size<Option<Pixels>> = known_dimensions.map(|d| d.map(Into::into));
-        let available_space = available_space.into();
-        let size = (self.0)(known_dimensions, available_space);
-        size.into()
     }
 }
 

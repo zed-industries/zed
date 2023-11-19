@@ -3759,7 +3759,7 @@ dependencies = [
  "smol",
  "sqlez",
  "sum_tree",
- "taffy",
+ "taffy 0.3.11 (git+https://github.com/DioxusLabs/taffy?rev=4fb530bdd71609bb1d3f76c6a8bde1ba82805d5e)",
  "thiserror",
  "time",
  "tiny-skia",
@@ -3824,7 +3824,7 @@ dependencies = [
  "smol",
  "sqlez",
  "sum_tree",
- "taffy",
+ "taffy 0.3.11 (git+https://github.com/DioxusLabs/taffy?rev=1876f72bee5e376023eaa518aa7b8a34c769bd1b)",
  "thiserror",
  "time",
  "tiny-skia",
@@ -3858,6 +3858,12 @@ name = "grid"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eec1c01eb1de97451ee0d60de7d81cf1e72aabefb021616027f3d1c3ec1c723c"
+
+[[package]]
+name = "grid"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1df00eed8d1f0db937f6be10e46e8072b0671accb504cf0f959c5c52c679f5b9"
 
 [[package]]
 name = "h2"
@@ -9056,10 +9062,21 @@ dependencies = [
 [[package]]
 name = "taffy"
 version = "0.3.11"
+source = "git+https://github.com/DioxusLabs/taffy?rev=1876f72bee5e376023eaa518aa7b8a34c769bd1b#1876f72bee5e376023eaa518aa7b8a34c769bd1b"
+dependencies = [
+ "arrayvec 0.7.4",
+ "grid 0.11.0",
+ "num-traits",
+ "slotmap",
+]
+
+[[package]]
+name = "taffy"
+version = "0.3.11"
 source = "git+https://github.com/DioxusLabs/taffy?rev=4fb530bdd71609bb1d3f76c6a8bde1ba82805d5e#4fb530bdd71609bb1d3f76c6a8bde1ba82805d5e"
 dependencies = [
  "arrayvec 0.7.4",
- "grid",
+ "grid 0.10.0",
  "num-traits",
  "slotmap",
 ]
