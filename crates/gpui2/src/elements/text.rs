@@ -1,5 +1,5 @@
 use crate::{
-    px, AnyElement, BorrowWindow, Bounds, Component, Element, ElementId, LayoutId, Pixels,
+    AnyElement, BorrowWindow, Bounds, Component, Element, ElementId, LayoutId, Pixels,
     SharedString, Size, TextRun, ViewContext, WrappedLine,
 };
 use parking_lot::{Mutex, MutexGuard};

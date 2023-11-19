@@ -159,7 +159,7 @@ impl TaffyLayoutEngine {
             .compute_layout_with_measure(
                 id.into(),
                 available_space.into(),
-                |known_dimensions, available_space, node_id, context| {
+                |known_dimensions, available_space, _node_id, context| {
                     let Some(measure) = context else {
                         return taffy::geometry::Size::default();
                     };
