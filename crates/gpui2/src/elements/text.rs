@@ -1,5 +1,5 @@
 use crate::{
-    AnyElement, BorrowWindow, Bounds, Component, Element, ElementId, LayoutId, Pixels,
+    px, AnyElement, BorrowWindow, Bounds, Component, Element, ElementId, LayoutId, Pixels,
     SharedString, Size, TextRun, ViewContext, WrappedLine,
 };
 use parking_lot::{Mutex, MutexGuard};
@@ -70,6 +70,14 @@ impl<V: 'static> Element<V> for Text {
                     _ => None,
                 });
 
+                if let Some(text_state) = element_state.0.lock().as_ref() {
+                    if text_state.size.is_some()
+                        && (wrap_width.is_none() || wrap_width == text_state.wrap_width)
+                    {
+                        return text_state.size.unwrap();
+                    }
+                }
+
                 let Some(lines) = text_system
                     .shape_text(
                         &text,
@@ -82,6 +90,8 @@ impl<V: 'static> Element<V> for Text {
                     element_state.lock().replace(TextStateInner {
                         lines: Default::default(),
                         line_height,
+                        wrap_width,
+                        size: Some(Size::default()),
                     });
                     return Size::default();
                 };
@@ -93,9 +103,12 @@ impl<V: 'static> Element<V> for Text {
                     size.width = size.width.max(line_size.width);
                 }
 
-                element_state
-                    .lock()
-                    .replace(TextStateInner { lines, line_height });
+                element_state.lock().replace(TextStateInner {
+                    lines,
+                    line_height,
+                    wrap_width,
+                    size: Some(size),
+                });
 
                 size
             }
@@ -138,6 +151,8 @@ impl TextState {
 struct TextStateInner {
     lines: SmallVec<[WrappedLine; 1]>,
     line_height: Pixels,
+    wrap_width: Option<Pixels>,
+    size: Option<Size<Pixels>>,
 }
 
 struct InteractiveText {
