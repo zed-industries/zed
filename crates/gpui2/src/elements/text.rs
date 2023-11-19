@@ -64,13 +64,18 @@ impl<V: 'static> Element<V> for Text {
 
         let layout_id = cx.request_measured_layout(Default::default(), rem_size, {
             let element_state = element_state.clone();
-            move |known_dimensions, _| {
+            move |known_dimensions, available_space| {
+                let wrap_width = known_dimensions.width.or(match available_space.width {
+                    crate::AvailableSpace::Definite(x) => Some(x),
+                    _ => None,
+                });
+
                 let Some(lines) = text_system
                     .shape_text(
                         &text,
                         font_size,
                         &runs[..],
-                        known_dimensions.width, // Wrap if we know the width.
+                        wrap_width, // Wrap if we know the width.
                     )
                     .log_err()
                 else {
