@@ -1,4 +1,4 @@
-use gpui::Action;
+use gpui::{actions, Action};
 use strum::EnumIter;
 
 use crate::prelude::*;
@@ -74,23 +74,23 @@ pub enum ModifierKey {
     Shift,
 }
 
+actions!(NoAction);
+
+pub fn binding(key: &str) -> gpui::KeyBinding {
+    gpui::KeyBinding::new(key, NoAction {}, None)
+}
+
 #[cfg(feature = "stories")]
 pub use stories::*;
 
 #[cfg(feature = "stories")]
 mod stories {
     use super::*;
-    use crate::Story;
-    use gpui::{actions, Div, Render};
+    pub use crate::KeyBinding;
+    use crate::{binding, Story};
+    use gpui::{Div, Render};
     use itertools::Itertools;
-
     pub struct KeybindingStory;
-
-    actions!(NoAction);
-
-    pub fn binding(key: &str) -> gpui::KeyBinding {
-        gpui::KeyBinding::new(key, NoAction {}, None)
-    }
 
     impl Render for KeybindingStory {
         type Element = Div<Self>;

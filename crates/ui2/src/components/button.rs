@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use gpui::{div, DefiniteLength, Hsla, MouseButton, StatefulInteractiveComponent, WindowContext};
+use gpui::{DefiniteLength, Hsla, MouseButton, StatefulInteractiveComponent, WindowContext};
 
 use crate::prelude::*;
 use crate::{h_stack, Icon, IconButton, IconElement, Label, LineHeightStyle, TextColor};
