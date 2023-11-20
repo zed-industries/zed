@@ -9,10 +9,10 @@ use file_associations::FileAssociations;
 use anyhow::{anyhow, Result};
 use gpui::{
     actions, div, px, uniform_list, Action, AppContext, AssetSource, AsyncWindowContext,
-    ClipboardItem, Component, Div, EventEmitter, FocusHandle, Focusable, FocusableView,
-    InteractiveComponent, Model, MouseButton, ParentComponent, Pixels, Point, PromptLevel, Render,
-    Stateful, StatefulInteractiveComponent, Styled, Task, UniformListScrollHandle, View,
-    ViewContext, VisualContext as _, WeakView, WindowContext,
+    ClipboardItem, Div, EventEmitter, FocusHandle, Focusable, FocusableView, InteractiveElement,
+    Model, MouseButton, ParentElement, Pixels, Point, PromptLevel, Render, RenderOnce, Stateful,
+    StatefulInteractiveElement, Styled, Task, UniformListScrollHandle, View, ViewContext,
+    VisualContext as _, WeakView, WindowContext,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
 use project::{
@@ -247,7 +247,6 @@ impl ProjectPanel {
             let mut old_dock_position = this.position(cx);
             ProjectPanelSettings::register(cx);
             cx.observe_global::<SettingsStore>(move |this, cx| {
-                dbg!("OLA!");
                 let new_dock_position = this.position(cx);
                 if new_dock_position != old_dock_position {
                     old_dock_position = new_dock_position;
@@ -1424,7 +1423,7 @@ impl ProjectPanel {
     }
 }
 
-impl Render for ProjectPanel {
+impl Render<Self> for ProjectPanel {
     type Element = Focusable<Self, Stateful<Self, Div<Self>>>;
 
     fn render(&mut self, _cx: &mut gpui::ViewContext<Self>) -> Self::Element {

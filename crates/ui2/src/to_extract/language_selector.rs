@@ -1,17 +1,15 @@
 use crate::prelude::*;
 use crate::{OrderMethod, Palette, PaletteItem};
 
-#[derive(Component)]
+#[derive(RenderOnce)]
 pub struct LanguageSelector {
     id: ElementId,
 }
 
-impl LanguageSelector {
-    pub fn new(id: impl Into<ElementId>) -> Self {
-        Self { id: id.into() }
-    }
+impl<V: 'static> Component<V> for LanguageSelector {
+    type Rendered = Stateful<V, Div<V>>;
 
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
         div().id(self.id.clone()).child(
             Palette::new("palette")
                 .items(vec![
@@ -33,6 +31,34 @@ impl LanguageSelector {
     }
 }
 
+impl LanguageSelector {
+    pub fn new(id: impl Into<ElementId>) -> Self {
+        Self { id: id.into() }
+    }
+
+    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
+        div().id(self.id.clone()).child(
+            Palette::new("palette")
+                .items(vec![
+                    PaletteItem::new("C"),
+                    PaletteItem::new("C++"),
+                    PaletteItem::new("CSS"),
+                    PaletteItem::new("Elixir"),
+                    PaletteItem::new("Elm"),
+                    PaletteItem::new("ERB"),
+                    PaletteItem::new("Rust (current)"),
+                    PaletteItem::new("Scheme"),
+                    PaletteItem::new("TOML"),
+                    PaletteItem::new("TypeScript"),
+                ])
+                .placeholder("Select a language...")
+                .empty_string("No matches")
+                .default_order(OrderMethod::Ascending),
+        )
+    }
+}
+
+use gpui::{Div, RenderOnce, Stateful};
 #[cfg(feature = "stories")]
 pub use stories::*;
 
@@ -44,7 +70,7 @@ mod stories {
 
     pub struct LanguageSelectorStory;
 
-    impl Render for LanguageSelectorStory {
+    impl Render<Self> for LanguageSelectorStory {
         type Element = Div<Self>;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {

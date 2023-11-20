@@ -1,19 +1,17 @@
+use gpui::{Div, RenderOnce};
+
 use crate::prelude::*;
 use crate::{Avatar, Facepile, PlayerWithCallStatus};
 
-#[derive(Component)]
+#[derive(RenderOnce)]
 pub struct PlayerStack {
     player_with_call_status: PlayerWithCallStatus,
 }
 
-impl PlayerStack {
-    pub fn new(player_with_call_status: PlayerWithCallStatus) -> Self {
-        Self {
-            player_with_call_status,
-        }
-    }
+impl<V: 'static> Component<V> for PlayerStack {
+    type Rendered = Div<V>;
 
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
         let player = self.player_with_call_status.get_player();
 
         let followers = self
@@ -57,5 +55,13 @@ impl PlayerStack {
                         div().neg_ml_2().child(Facepile::new(followers.into_iter()))
                     })),
             )
+    }
+}
+
+impl PlayerStack {
+    pub fn new(player_with_call_status: PlayerWithCallStatus) -> Self {
+        Self {
+            player_with_call_status,
+        }
     }
 }

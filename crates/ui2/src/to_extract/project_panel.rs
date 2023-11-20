@@ -3,10 +3,48 @@ use crate::{
     ListHeader,
 };
 use gpui::prelude::*;
+use gpui::Div;
+use gpui::Stateful;
 
-#[derive(Component)]
+#[derive(RenderOnce)]
 pub struct ProjectPanel {
     id: ElementId,
+}
+
+impl<V: 'static> Component<V> for ProjectPanel {
+    type Rendered = Stateful<V, Div<V>>;
+
+    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
+        div()
+            .id(self.id.clone())
+            .flex()
+            .flex_col()
+            .size_full()
+            .bg(cx.theme().colors().surface_background)
+            .child(
+                div()
+                    .id("project-panel-contents")
+                    .w_full()
+                    .flex()
+                    .flex_col()
+                    .overflow_y_scroll()
+                    .child(
+                        List::new(static_project_panel_single_items())
+                            .header(ListHeader::new("FILES"))
+                            .empty_message("No files in directory"),
+                    )
+                    .child(
+                        List::new(static_project_panel_project_items())
+                            .header(ListHeader::new("PROJECT"))
+                            .empty_message("No folders in directory"),
+                    ),
+            )
+            .child(
+                Input::new("Find something...")
+                    .value("buffe".to_string())
+                    .state(InteractionState::Focused),
+            )
+    }
 }
 
 impl ProjectPanel {
@@ -14,7 +52,7 @@ impl ProjectPanel {
         Self { id: id.into() }
     }
 
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
         div()
             .id(self.id.clone())
             .flex()
@@ -59,7 +97,7 @@ mod stories {
 
     pub struct ProjectPanelStory;
 
-    impl Render for ProjectPanelStory {
+    impl Render<Self> for ProjectPanelStory {
         type Element = Div<Self>;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {

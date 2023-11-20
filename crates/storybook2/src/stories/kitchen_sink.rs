@@ -11,7 +11,7 @@ impl KitchenSinkStory {
     }
 }
 
-impl Render for KitchenSinkStory {
+impl Render<Self> for KitchenSinkStory {
     type Element = Stateful<Self, Div<Self>>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {

@@ -1,17 +1,15 @@
 use crate::prelude::*;
 use crate::{OrderMethod, Palette, PaletteItem};
 
-#[derive(Component)]
+#[derive(RenderOnce)]
 pub struct RecentProjects {
     id: ElementId,
 }
 
-impl RecentProjects {
-    pub fn new(id: impl Into<ElementId>) -> Self {
-        Self { id: id.into() }
-    }
+impl<V: 'static> Component<V> for RecentProjects {
+    type Rendered = Stateful<V, Div<V>>;
 
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
         div().id(self.id.clone()).child(
             Palette::new("palette")
                 .items(vec![
@@ -29,6 +27,13 @@ impl RecentProjects {
     }
 }
 
+impl RecentProjects {
+    pub fn new(id: impl Into<ElementId>) -> Self {
+        Self { id: id.into() }
+    }
+}
+
+use gpui::{Div, RenderOnce, Stateful};
 #[cfg(feature = "stories")]
 pub use stories::*;
 
@@ -40,7 +45,7 @@ mod stories {
 
     pub struct RecentProjectsStory;
 
-    impl Render for RecentProjectsStory {
+    impl Render<Self> for RecentProjectsStory {
         type Element = Div<Self>;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {

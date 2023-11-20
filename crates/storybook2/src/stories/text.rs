@@ -1,5 +1,5 @@
 use gpui::{
-    blue, div, red, white, Div, ParentComponent, Render, Styled, View, VisualContext, WindowContext,
+    blue, div, red, white, Div, ParentElement, Render, Styled, View, VisualContext, WindowContext,
 };
 use ui::v_stack;
 
@@ -11,7 +11,7 @@ impl TextStory {
     }
 }
 
-impl Render for TextStory {
+impl Render<Self> for TextStory {
     type Element = Div<Self>;
 
     fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> Self::Element {

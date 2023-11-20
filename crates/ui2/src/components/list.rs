@@ -1,6 +1,5 @@
+use gpui::{div, Div, RenderOnce, Stateful, StatefulInteractiveElement};
 use std::rc::Rc;
-
-use gpui::{div, Div, Stateful, StatefulInteractiveComponent};
 
 use crate::settings::user_settings;
 use crate::{
@@ -24,7 +23,7 @@ pub enum ListHeaderMeta {
     Text(Label),
 }
 
-#[derive(Component)]
+#[derive(RenderOnce)]
 pub struct ListHeader {
     label: SharedString,
     left_icon: Option<Icon>,
@@ -33,33 +32,10 @@ pub struct ListHeader {
     toggle: Toggle,
 }
 
-impl ListHeader {
-    pub fn new(label: impl Into<SharedString>) -> Self {
-        Self {
-            label: label.into(),
-            left_icon: None,
-            meta: None,
-            variant: ListItemVariant::default(),
-            toggle: Toggle::NotToggleable,
-        }
-    }
+impl<V: 'static> Component<V> for ListHeader {
+    type Rendered = Div<V>;
 
-    pub fn toggle(mut self, toggle: Toggle) -> Self {
-        self.toggle = toggle;
-        self
-    }
-
-    pub fn left_icon(mut self, left_icon: Option<Icon>) -> Self {
-        self.left_icon = left_icon;
-        self
-    }
-
-    pub fn meta(mut self, meta: Option<ListHeaderMeta>) -> Self {
-        self.meta = meta;
-        self
-    }
-
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
         let disclosure_control = disclosure_control(self.toggle);
 
         let meta = match self.meta {
@@ -81,11 +57,6 @@ impl ListHeader {
         h_stack()
             .w_full()
             .bg(cx.theme().colors().surface_background)
-            // TODO: Add focus state
-            // .when(self.state == InteractionState::Focused, |this| {
-            //     this.border()
-            //         .border_color(cx.theme().colors().border_focused)
-            // })
             .relative()
             .child(
                 div()
@@ -119,7 +90,94 @@ impl ListHeader {
     }
 }
 
-#[derive(Component, Clone)]
+impl ListHeader {
+    pub fn new(label: impl Into<SharedString>) -> Self {
+        Self {
+            label: label.into(),
+            left_icon: None,
+            meta: None,
+            variant: ListItemVariant::default(),
+            toggle: Toggle::NotToggleable,
+        }
+    }
+
+    pub fn toggle(mut self, toggle: Toggle) -> Self {
+        self.toggle = toggle;
+        self
+    }
+
+    pub fn left_icon(mut self, left_icon: Option<Icon>) -> Self {
+        self.left_icon = left_icon;
+        self
+    }
+
+    pub fn meta(mut self, meta: Option<ListHeaderMeta>) -> Self {
+        self.meta = meta;
+        self
+    }
+
+    // before_ship!("delete")
+    // fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
+    //     let disclosure_control = disclosure_control(self.toggle);
+
+    //     let meta = match self.meta {
+    //         Some(ListHeaderMeta::Tools(icons)) => div().child(
+    //             h_stack()
+    //                 .gap_2()
+    //                 .items_center()
+    //                 .children(icons.into_iter().map(|i| {
+    //                     IconElement::new(i)
+    //                         .color(TextColor::Muted)
+    //                         .size(IconSize::Small)
+    //                 })),
+    //         ),
+    //         Some(ListHeaderMeta::Button(label)) => div().child(label),
+    //         Some(ListHeaderMeta::Text(label)) => div().child(label),
+    //         None => div(),
+    //     };
+
+    //     h_stack()
+    //         .w_full()
+    //         .bg(cx.theme().colors().surface_background)
+    //         // TODO: Add focus state
+    //         // .when(self.state == InteractionState::Focused, |this| {
+    //         //     this.border()
+    //         //         .border_color(cx.theme().colors().border_focused)
+    //         // })
+    //         .relative()
+    //         .child(
+    //             div()
+    //                 .h_5()
+    //                 .when(self.variant == ListItemVariant::Inset, |this| this.px_2())
+    //                 .flex()
+    //                 .flex_1()
+    //                 .items_center()
+    //                 .justify_between()
+    //                 .w_full()
+    //                 .gap_1()
+    //                 .child(
+    //                     h_stack()
+    //                         .gap_1()
+    //                         .child(
+    //                             div()
+    //                                 .flex()
+    //                                 .gap_1()
+    //                                 .items_center()
+    //                                 .children(self.left_icon.map(|i| {
+    //                                     IconElement::new(i)
+    //                                         .color(TextColor::Muted)
+    //                                         .size(IconSize::Small)
+    //                                 }))
+    //                                 .child(Label::new(self.label.clone()).color(TextColor::Muted)),
+    //                         )
+    //                         .child(disclosure_control),
+    //                 )
+    //                 .child(meta),
+    //         )
+    // }
+}
+
+#[derive(Clone)]
 pub struct ListSubHeader {
     label: SharedString,
     left_icon: Option<Icon>,
@@ -140,7 +198,7 @@ impl ListSubHeader {
         self
     }
 
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
         h_stack().flex_1().w_full().relative().py_1().child(
             div()
                 .h_6()
@@ -200,14 +258,6 @@ impl<V: 'static> From<ListSubHeader> for ListItem<V> {
 }
 
 impl<V: 'static> ListItem<V> {
-    fn render(self, view: &mut V, ix: usize, cx: &mut ViewContext<V>) -> impl Component<V> {
-        match self {
-            ListItem::Entry(entry) => div().child(entry.render(ix, cx)),
-            ListItem::Separator(separator) => div().child(separator.render(view, cx)),
-            ListItem::Header(header) => div().child(header.render(view, cx)),
-        }
-    }
-
     pub fn new(label: Label) -> Self {
         Self::Entry(ListEntry::new(label))
     }
@@ -219,8 +269,17 @@ impl<V: 'static> ListItem<V> {
             None
         }
     }
+
+    fn render(self, view: &mut V, ix: usize, cx: &mut ViewContext<V>) -> Div<V> {
+        match self {
+            ListItem::Entry(entry) => div().child(entry.render(ix, cx)),
+            ListItem::Separator(separator) => div().child(separator.render(view, cx)),
+            ListItem::Header(header) => div().child(header.render(view, cx)),
+        }
+    }
 }
 
+// #[derive(RenderOnce)]
 pub struct ListEntry<V> {
     disabled: bool,
     // TODO: Reintroduce this
@@ -376,20 +435,24 @@ impl<V: 'static> ListEntry<V> {
     }
 }
 
-#[derive(Clone, Component)]
+#[derive(RenderOnce, Clone)]
 pub struct ListSeparator;
 
 impl ListSeparator {
     pub fn new() -> Self {
         Self
     }
+}
 
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+impl<V: 'static> Component<V> for ListSeparator {
+    type Rendered = Div<V>;
+
+    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
         div().h_px().w_full().bg(cx.theme().colors().border_variant)
     }
 }
 
-#[derive(Component)]
+#[derive(RenderOnce)]
 pub struct List<V: 'static> {
     items: Vec<ListItem<V>>,
     /// Message to display when the list is empty
@@ -397,6 +460,31 @@ pub struct List<V: 'static> {
     empty_message: SharedString,
     header: Option<ListHeader>,
     toggle: Toggle,
+}
+
+impl<V: 'static> Component<V> for List<V> {
+    type Rendered = Div<V>;
+
+    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
+        let list_content = match (self.items.is_empty(), self.toggle) {
+            (false, _) => div().children(
+                self.items
+                    .into_iter()
+                    .enumerate()
+                    .map(|(ix, item)| item.render(view, ix, cx)),
+            ),
+            (true, Toggle::Toggled(false)) => div(),
+            (true, _) => {
+                div().child(Label::new(self.empty_message.clone()).color(TextColor::Muted))
+            }
+        };
+
+        v_stack()
+            .w_full()
+            .py_1()
+            .children(self.header.map(|header| header))
+            .child(list_content)
+    }
 }
 
 impl<V: 'static> List<V> {
@@ -424,7 +512,7 @@ impl<V: 'static> List<V> {
         self
     }
 
-    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
         let list_content = match (self.items.is_empty(), self.toggle) {
             (false, _) => div().children(
                 self.items

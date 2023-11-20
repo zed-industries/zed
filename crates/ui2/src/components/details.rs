@@ -1,11 +1,27 @@
 use crate::prelude::*;
 use crate::{v_stack, ButtonGroup};
 
-#[derive(Component)]
+#[derive(RenderOnce)]
 pub struct Details<V: 'static> {
     text: &'static str,
     meta: Option<&'static str>,
     actions: Option<ButtonGroup<V>>,
+}
+
+impl<V: 'static> Component<V> for Details<V> {
+    type Rendered = Div<V>;
+
+    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
+        v_stack()
+            .p_1()
+            .gap_0p5()
+            .text_ui_sm()
+            .text_color(cx.theme().colors().text)
+            .size_full()
+            .child(self.text)
+            .children(self.meta.map(|m| m))
+            .children(self.actions.map(|a| a))
+    }
 }
 
 impl<V: 'static> Details<V> {
@@ -26,20 +42,9 @@ impl<V: 'static> Details<V> {
         self.actions = Some(actions);
         self
     }
-
-    fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
-        v_stack()
-            .p_1()
-            .gap_0p5()
-            .text_ui_sm()
-            .text_color(cx.theme().colors().text)
-            .size_full()
-            .child(self.text)
-            .children(self.meta.map(|m| m))
-            .children(self.actions.map(|a| a))
-    }
 }
 
+use gpui::{Div, RenderOnce};
 #[cfg(feature = "stories")]
 pub use stories::*;
 
@@ -51,7 +56,7 @@ mod stories {
 
     pub struct DetailsStory;
 
-    impl Render for DetailsStory {
+    impl Render<Self> for DetailsStory {
         type Element = Div<Self>;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {

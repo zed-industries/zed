@@ -1,12 +1,12 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::prelude::*;
-use crate::{v_stack, Label, List, ListEntry, ListItem, ListSeparator, ListSubHeader};
+use crate::{prelude::*, v_stack, List, ListItem};
+use crate::{ListEntry, ListSeparator, ListSubHeader};
 use gpui::{
     overlay, px, Action, AnchorCorner, AnyElement, AppContext, Bounds, DispatchPhase, Div,
     EventEmitter, FocusHandle, FocusableView, LayoutId, ManagedView, Manager, MouseButton,
-    MouseDownEvent, Pixels, Point, Render, View, VisualContext, WeakView,
+    MouseDownEvent, Pixels, Point, Render, RenderOnce, View, VisualContext, WeakView,
 };
 
 pub enum ContextMenuItem<V> {
@@ -24,15 +24,15 @@ pub struct ContextMenu<V> {
     handle: WeakView<V>,
 }
 
-impl<V: Render> FocusableView for ContextMenu<V> {
+impl<V: 'static> FocusableView for ContextMenu<V> {
     fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
         self.focus_handle.clone()
     }
 }
 
-impl<V: Render> EventEmitter<Manager> for ContextMenu<V> {}
+impl<V: 'static> EventEmitter<Manager> for ContextMenu<V> {}
 
-impl<V: Render> ContextMenu<V> {
+impl<V: 'static> ContextMenu<V> {
     pub fn build(
         cx: &mut ViewContext<V>,
         f: impl FnOnce(Self, &mut ViewContext<Self>) -> Self,
@@ -86,7 +86,7 @@ impl<V: Render> ContextMenu<V> {
     }
 }
 
-impl<V: Render> Render for ContextMenu<V> {
+impl<V: 'static> Render<Self> for ContextMenu<V> {
     type Element = Div<Self>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
@@ -129,7 +129,7 @@ impl<V: Render> Render for ContextMenu<V> {
 }
 
 pub struct MenuHandle<V: 'static, M: ManagedView> {
-    id: Option<ElementId>,
+    id: ElementId,
     child_builder: Option<Box<dyn FnOnce(bool) -> AnyElement<V> + 'static>>,
     menu_builder: Option<Rc<dyn Fn(&mut V, &mut ViewContext<V>) -> View<M> + 'static>>,
 
@@ -138,18 +138,13 @@ pub struct MenuHandle<V: 'static, M: ManagedView> {
 }
 
 impl<V: 'static, M: ManagedView> MenuHandle<V, M> {
-    pub fn id(mut self, id: impl Into<ElementId>) -> Self {
-        self.id = Some(id.into());
-        self
-    }
-
     pub fn menu(mut self, f: impl Fn(&mut V, &mut ViewContext<V>) -> View<M> + 'static) -> Self {
         self.menu_builder = Some(Rc::new(f));
         self
     }
 
-    pub fn child<R: Component<V>>(mut self, f: impl FnOnce(bool) -> R + 'static) -> Self {
-        self.child_builder = Some(Box::new(|b| f(b).render()));
+    pub fn child<R: RenderOnce<V>>(mut self, f: impl FnOnce(bool) -> R + 'static) -> Self {
+        self.child_builder = Some(Box::new(|b| f(b).render_once().into_any()));
         self
     }
 
@@ -167,9 +162,9 @@ impl<V: 'static, M: ManagedView> MenuHandle<V, M> {
     }
 }
 
-pub fn menu_handle<V: 'static, M: ManagedView>() -> MenuHandle<V, M> {
+pub fn menu_handle<V: 'static, M: ManagedView>(id: impl Into<ElementId>) -> MenuHandle<V, M> {
     MenuHandle {
-        id: None,
+        id: id.into(),
         child_builder: None,
         menu_builder: None,
         anchor: None,
@@ -185,18 +180,14 @@ pub struct MenuHandleState<V, M> {
     menu_element: Option<AnyElement<V>>,
 }
 impl<V: 'static, M: ManagedView> Element<V> for MenuHandle<V, M> {
-    type ElementState = MenuHandleState<V, M>;
-
-    fn element_id(&self) -> Option<gpui::ElementId> {
-        Some(self.id.clone().expect("menu_handle must have an id()"))
-    }
+    type State = MenuHandleState<V, M>;
 
     fn layout(
         &mut self,
         view_state: &mut V,
-        element_state: Option<Self::ElementState>,
+        element_state: Option<Self::State>,
         cx: &mut crate::ViewContext<V>,
-    ) -> (gpui::LayoutId, Self::ElementState) {
+    ) -> (gpui::LayoutId, Self::State) {
         let (menu, position) = if let Some(element_state) = element_state {
             (element_state.menu, element_state.position)
         } else {
@@ -212,9 +203,9 @@ impl<V: 'static, M: ManagedView> Element<V> for MenuHandle<V, M> {
             }
             overlay = overlay.position(*position.borrow());
 
-            let mut view = overlay.child(menu.clone()).render();
-            menu_layout_id = Some(view.layout(view_state, cx));
-            view
+            let mut element = overlay.child(menu.clone()).into_any();
+            menu_layout_id = Some(element.layout(view_state, cx));
+            element
         });
 
         let mut child_element = self
@@ -244,22 +235,22 @@ impl<V: 'static, M: ManagedView> Element<V> for MenuHandle<V, M> {
     }
 
     fn paint(
-        &mut self,
+        self,
         bounds: Bounds<gpui::Pixels>,
         view_state: &mut V,
-        element_state: &mut Self::ElementState,
+        element_state: &mut Self::State,
         cx: &mut crate::ViewContext<V>,
     ) {
-        if let Some(child) = element_state.child_element.as_mut() {
+        if let Some(child) = element_state.child_element.take() {
             child.paint(view_state, cx);
         }
 
-        if let Some(menu) = element_state.menu_element.as_mut() {
+        if let Some(menu) = element_state.menu_element.take() {
             menu.paint(view_state, cx);
             return;
         }
 
-        let Some(builder) = self.menu_builder.clone() else {
+        let Some(builder) = self.menu_builder else {
             return;
         };
         let menu = element_state.menu.clone();
@@ -300,9 +291,15 @@ impl<V: 'static, M: ManagedView> Element<V> for MenuHandle<V, M> {
     }
 }
 
-impl<V: 'static, M: ManagedView> Component<V> for MenuHandle<V, M> {
-    fn render(self) -> AnyElement<V> {
-        AnyElement::new(self)
+impl<V: 'static, M: ManagedView> RenderOnce<V> for MenuHandle<V, M> {
+    type Element = Self;
+
+    fn element_id(&self) -> Option<gpui::ElementId> {
+        Some(self.id.clone())
+    }
+
+    fn render_once(self) -> Self::Element {
+        self
     }
 }
 
@@ -312,12 +309,12 @@ pub use stories::*;
 #[cfg(feature = "stories")]
 mod stories {
     use super::*;
-    use crate::story::Story;
+    use crate::{story::Story, Label};
     use gpui::{actions, Div, Render};
 
     actions!(PrintCurrentDate, PrintBestFood);
 
-    fn build_menu<V: Render>(
+    fn build_menu<V: Render<V>>(
         cx: &mut ViewContext<V>,
         header: impl Into<SharedString>,
     ) -> View<ContextMenu<V>> {
@@ -337,7 +334,7 @@ mod stories {
 
     pub struct ContextMenuStory;
 
-    impl Render for ContextMenuStory {
+    impl Render<Self> for ContextMenuStory {
         type Element = Div<Self>;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
@@ -360,28 +357,24 @@ mod stories {
                         .flex_col()
                         .justify_between()
                         .child(
-                            menu_handle()
-                                .id("test2")
+                            menu_handle("test2")
                                 .child(|is_open| {
                                     Label::new(if is_open {
                                         "TOP LEFT"
                                     } else {
                                         "RIGHT CLICK ME"
                                     })
-                                    .render()
                                 })
                                 .menu(move |_, cx| build_menu(cx, "top left")),
                         )
                         .child(
-                            menu_handle()
-                                .id("test1")
+                            menu_handle("test1")
                                 .child(|is_open| {
                                     Label::new(if is_open {
                                         "BOTTOM LEFT"
                                     } else {
                                         "RIGHT CLICK ME"
                                     })
-                                    .render()
                                 })
                                 .anchor(AnchorCorner::BottomLeft)
                                 .attach(AnchorCorner::TopLeft)
@@ -394,29 +387,25 @@ mod stories {
                         .flex_col()
                         .justify_between()
                         .child(
-                            menu_handle()
-                                .id("test3")
+                            menu_handle("test3")
                                 .child(|is_open| {
                                     Label::new(if is_open {
                                         "TOP RIGHT"
                                     } else {
                                         "RIGHT CLICK ME"
                                     })
-                                    .render()
                                 })
                                 .anchor(AnchorCorner::TopRight)
                                 .menu(move |_, cx| build_menu(cx, "top right")),
                         )
                         .child(
-                            menu_handle()
-                                .id("test4")
+                            menu_handle("test4")
                                 .child(|is_open| {
                                     Label::new(if is_open {
                                         "BOTTOM RIGHT"
                                     } else {
                                         "RIGHT CLICK ME"
                                     })
-                                    .render()
                                 })
                                 .anchor(AnchorCorner::BottomRight)
                                 .attach(AnchorCorner::TopRight)

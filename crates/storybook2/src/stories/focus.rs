@@ -26,7 +26,7 @@ impl FocusStory {
     }
 }
 
-impl Render for FocusStory {
+impl Render<Self> for FocusStory {
     type Element = Focusable<Self, Stateful<Self, Div<Self>>>;
 
     fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> Self::Element {

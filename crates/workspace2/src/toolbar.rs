@@ -7,7 +7,7 @@ pub enum ToolbarItemEvent {
     ChangeLocation(ToolbarItemLocation),
 }
 
-pub trait ToolbarItemView: Render + EventEmitter<ToolbarItemEvent> {
+pub trait ToolbarItemView: Render<Self> + EventEmitter<ToolbarItemEvent> {
     fn set_active_pane_item(
         &mut self,
         active_pane_item: Option<&dyn crate::ItemHandle>,
@@ -51,7 +51,7 @@ pub struct Toolbar {
     items: Vec<(Box<dyn ToolbarItemViewHandle>, ToolbarItemLocation)>,
 }
 
-impl Render for Toolbar {
+impl Render<Self> for Toolbar {
     type Element = Div<Self>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
