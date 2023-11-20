@@ -309,7 +309,7 @@ pub use stories::*;
 #[cfg(feature = "stories")]
 mod stories {
     use super::*;
-    use crate::story::Story;
+    use crate::{story::Story, Label};
     use gpui::{actions, Div, Render};
 
     actions!(PrintCurrentDate, PrintBestFood);
