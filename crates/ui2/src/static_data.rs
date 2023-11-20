@@ -9,8 +9,8 @@ use theme2::ActiveTheme;
 
 use crate::{
     binding, Buffer, BufferRow, BufferRows, Button, EditorPane, FileSystemStatus, GitStatus,
-    HighlightedLine, HighlightedText, Icon, KeyBinding, Label, ListEntry, ListEntrySize,
-    Livestream, MicStatus, Notification, NotificationAction, PaletteItem, Player, PlayerCallStatus,
+    HighlightedLine, HighlightedText, Icon, KeyBinding, Label, ListEntrySize, ListItem, Livestream,
+    MicStatus, Notification, NotificationAction, PaletteItem, Player, PlayerCallStatus,
     PlayerWithCallStatus, PublicPlayer, ScreenShareStatus, Symbol, Tab, TextColor, Toggle,
     VideoStatus,
 };
@@ -477,234 +477,234 @@ pub fn static_new_notification_items_2<V: 'static>() -> Vec<Notification<V>> {
     ]
 }
 
-pub fn static_project_panel_project_items<V>() -> Vec<ListEntry<V>> {
+pub fn static_project_panel_project_items<V>() -> Vec<ListItem<V>> {
     vec![
-        ListEntry::new("zed", Label::new("zed"))
+        ListItem::new("zed", Label::new("zed"))
             .left_icon(Icon::FolderOpen.into())
             .indent_level(0)
             .toggle(Toggle::Toggled(true)),
-        ListEntry::new(".cargo", Label::new(".cargo"))
+        ListItem::new(".cargo", Label::new(".cargo"))
             .left_icon(Icon::Folder.into())
             .indent_level(1),
-        ListEntry::new(".config", Label::new(".config"))
+        ListItem::new(".config", Label::new(".config"))
             .left_icon(Icon::Folder.into())
             .indent_level(1),
-        ListEntry::new(".git", Label::new(".git").color(TextColor::Hidden))
+        ListItem::new(".git", Label::new(".git").color(TextColor::Hidden))
             .left_icon(Icon::Folder.into())
             .indent_level(1),
-        ListEntry::new(".cargo", Label::new(".cargo"))
+        ListItem::new(".cargo", Label::new(".cargo"))
             .left_icon(Icon::Folder.into())
             .indent_level(1),
-        ListEntry::new(".idea", Label::new(".idea").color(TextColor::Hidden))
+        ListItem::new(".idea", Label::new(".idea").color(TextColor::Hidden))
             .left_icon(Icon::Folder.into())
             .indent_level(1),
-        ListEntry::new("assets", Label::new("assets"))
+        ListItem::new("assets", Label::new("assets"))
             .left_icon(Icon::Folder.into())
             .indent_level(1)
             .toggle(Toggle::Toggled(true)),
-        ListEntry::new(
+        ListItem::new(
             "cargo-target",
             Label::new("cargo-target").color(TextColor::Hidden),
         )
         .left_icon(Icon::Folder.into())
         .indent_level(1),
-        ListEntry::new("crates", Label::new("crates"))
+        ListItem::new("crates", Label::new("crates"))
             .left_icon(Icon::FolderOpen.into())
             .indent_level(1)
             .toggle(Toggle::Toggled(true)),
-        ListEntry::new("activity_indicator", Label::new("activity_indicator"))
+        ListItem::new("activity_indicator", Label::new("activity_indicator"))
             .left_icon(Icon::Folder.into())
             .indent_level(2),
-        ListEntry::new("ai", Label::new("ai"))
+        ListItem::new("ai", Label::new("ai"))
             .left_icon(Icon::Folder.into())
             .indent_level(2),
-        ListEntry::new("audio", Label::new("audio"))
+        ListItem::new("audio", Label::new("audio"))
             .left_icon(Icon::Folder.into())
             .indent_level(2),
-        ListEntry::new("auto_update", Label::new("auto_update"))
+        ListItem::new("auto_update", Label::new("auto_update"))
             .left_icon(Icon::Folder.into())
             .indent_level(2),
-        ListEntry::new("breadcrumbs", Label::new("breadcrumbs"))
+        ListItem::new("breadcrumbs", Label::new("breadcrumbs"))
             .left_icon(Icon::Folder.into())
             .indent_level(2),
-        ListEntry::new("call", Label::new("call"))
+        ListItem::new("call", Label::new("call"))
             .left_icon(Icon::Folder.into())
             .indent_level(2),
-        ListEntry::new("sqlez", Label::new("sqlez").color(TextColor::Modified))
+        ListItem::new("sqlez", Label::new("sqlez").color(TextColor::Modified))
             .left_icon(Icon::Folder.into())
             .indent_level(2)
             .toggle(Toggle::Toggled(false)),
-        ListEntry::new("gpui2", Label::new("gpui2"))
+        ListItem::new("gpui2", Label::new("gpui2"))
             .left_icon(Icon::FolderOpen.into())
             .indent_level(2)
             .toggle(Toggle::Toggled(true)),
-        ListEntry::new("src", Label::new("src"))
+        ListItem::new("src", Label::new("src"))
             .left_icon(Icon::FolderOpen.into())
             .indent_level(3)
             .toggle(Toggle::Toggled(true)),
-        ListEntry::new("derive_element.rs", Label::new("derive_element.rs"))
+        ListItem::new("derive_element.rs", Label::new("derive_element.rs"))
             .left_icon(Icon::FileRust.into())
             .indent_level(4),
-        ListEntry::new(
+        ListItem::new(
             "storybook",
             Label::new("storybook").color(TextColor::Modified),
         )
         .left_icon(Icon::FolderOpen.into())
         .indent_level(1)
         .toggle(Toggle::Toggled(true)),
-        ListEntry::new("docs", Label::new("docs").color(TextColor::Default))
+        ListItem::new("docs", Label::new("docs").color(TextColor::Default))
             .left_icon(Icon::Folder.into())
             .indent_level(2)
             .toggle(Toggle::Toggled(true)),
-        ListEntry::new("src", Label::new("src").color(TextColor::Modified))
+        ListItem::new("src", Label::new("src").color(TextColor::Modified))
             .left_icon(Icon::FolderOpen.into())
             .indent_level(3)
             .toggle(Toggle::Toggled(true)),
-        ListEntry::new("ui", Label::new("ui").color(TextColor::Modified))
+        ListItem::new("ui", Label::new("ui").color(TextColor::Modified))
             .left_icon(Icon::FolderOpen.into())
             .indent_level(4)
             .toggle(Toggle::Toggled(true)),
-        ListEntry::new(
+        ListItem::new(
             "component",
             Label::new("component").color(TextColor::Created),
         )
         .left_icon(Icon::FolderOpen.into())
         .indent_level(5)
         .toggle(Toggle::Toggled(true)),
-        ListEntry::new(
+        ListItem::new(
             "facepile.rs",
             Label::new("facepile.rs").color(TextColor::Default),
         )
         .left_icon(Icon::FileRust.into())
         .indent_level(6),
-        ListEntry::new(
+        ListItem::new(
             "follow_group.rs",
             Label::new("follow_group.rs").color(TextColor::Default),
         )
         .left_icon(Icon::FileRust.into())
         .indent_level(6),
-        ListEntry::new(
+        ListItem::new(
             "list_item.rs",
             Label::new("list_item.rs").color(TextColor::Created),
         )
         .left_icon(Icon::FileRust.into())
         .indent_level(6),
-        ListEntry::new("tab.rs", Label::new("tab.rs").color(TextColor::Default))
+        ListItem::new("tab.rs", Label::new("tab.rs").color(TextColor::Default))
             .left_icon(Icon::FileRust.into())
             .indent_level(6),
-        ListEntry::new("target", Label::new("target").color(TextColor::Hidden))
+        ListItem::new("target", Label::new("target").color(TextColor::Hidden))
             .left_icon(Icon::Folder.into())
             .indent_level(1),
-        ListEntry::new(".dockerignore", Label::new(".dockerignore"))
+        ListItem::new(".dockerignore", Label::new(".dockerignore"))
             .left_icon(Icon::FileGeneric.into())
             .indent_level(1),
-        ListEntry::new(
+        ListItem::new(
             ".DS_Store",
             Label::new(".DS_Store").color(TextColor::Hidden),
         )
         .left_icon(Icon::FileGeneric.into())
         .indent_level(1),
-        ListEntry::new("Cargo.lock", Label::new("Cargo.lock"))
+        ListItem::new("Cargo.lock", Label::new("Cargo.lock"))
             .left_icon(Icon::FileLock.into())
             .indent_level(1),
-        ListEntry::new("Cargo.toml", Label::new("Cargo.toml"))
+        ListItem::new("Cargo.toml", Label::new("Cargo.toml"))
             .left_icon(Icon::FileToml.into())
             .indent_level(1),
-        ListEntry::new("Dockerfile", Label::new("Dockerfile"))
+        ListItem::new("Dockerfile", Label::new("Dockerfile"))
             .left_icon(Icon::FileGeneric.into())
             .indent_level(1),
-        ListEntry::new("Procfile", Label::new("Procfile"))
+        ListItem::new("Procfile", Label::new("Procfile"))
             .left_icon(Icon::FileGeneric.into())
             .indent_level(1),
-        ListEntry::new("README.md", Label::new("README.md"))
+        ListItem::new("README.md", Label::new("README.md"))
             .left_icon(Icon::FileDoc.into())
             .indent_level(1),
     ]
 }
 
-pub fn static_project_panel_single_items<V>() -> Vec<ListEntry<V>> {
+pub fn static_project_panel_single_items<V>() -> Vec<ListItem<V>> {
     vec![
-        ListEntry::new("todo.md", Label::new("todo.md"))
+        ListItem::new("todo.md", Label::new("todo.md"))
             .left_icon(Icon::FileDoc.into())
             .indent_level(0),
-        ListEntry::new("README.md", Label::new("README.md"))
+        ListItem::new("README.md", Label::new("README.md"))
             .left_icon(Icon::FileDoc.into())
             .indent_level(0),
-        ListEntry::new("config.json", Label::new("config.json"))
+        ListItem::new("config.json", Label::new("config.json"))
             .left_icon(Icon::FileGeneric.into())
             .indent_level(0),
     ]
 }
 
-pub fn static_collab_panel_current_call<V>() -> Vec<ListEntry<V>> {
+pub fn static_collab_panel_current_call<V>() -> Vec<ListItem<V>> {
     vec![
-        ListEntry::new("as-cii", Label::new("as-cii"))
+        ListItem::new("as-cii", Label::new("as-cii"))
             .left_avatar("http://github.com/as-cii.png?s=50"),
-        ListEntry::new("nathansobo", Label::new("nathansobo"))
+        ListItem::new("nathansobo", Label::new("nathansobo"))
             .left_avatar("http://github.com/nathansobo.png?s=50"),
-        ListEntry::new("maxbrunsfeld", Label::new("maxbrunsfeld"))
+        ListItem::new("maxbrunsfeld", Label::new("maxbrunsfeld"))
             .left_avatar("http://github.com/maxbrunsfeld.png?s=50"),
     ]
 }
 
-pub fn static_collab_panel_channels<V>() -> Vec<ListEntry<V>> {
+pub fn static_collab_panel_channels<V>() -> Vec<ListItem<V>> {
     vec![
-        ListEntry::new("zed", Label::new("zed"))
+        ListItem::new("zed", Label::new("zed"))
             .left_icon(Icon::Hash.into())
             .size(ListEntrySize::Medium)
             .indent_level(0),
-        ListEntry::new("community", Label::new("community"))
+        ListItem::new("community", Label::new("community"))
             .left_icon(Icon::Hash.into())
             .size(ListEntrySize::Medium)
             .indent_level(1),
-        ListEntry::new("dashboards", Label::new("dashboards"))
+        ListItem::new("dashboards", Label::new("dashboards"))
             .left_icon(Icon::Hash.into())
             .size(ListEntrySize::Medium)
             .indent_level(2),
-        ListEntry::new("feedback", Label::new("feedback"))
+        ListItem::new("feedback", Label::new("feedback"))
             .left_icon(Icon::Hash.into())
             .size(ListEntrySize::Medium)
             .indent_level(2),
-        ListEntry::new(
+        ListItem::new(
             "teams-in-channels-alpha",
             Label::new("teams-in-channels-alpha"),
         )
         .left_icon(Icon::Hash.into())
         .size(ListEntrySize::Medium)
         .indent_level(2),
-        ListEntry::new("current-projects", Label::new("current-projects"))
+        ListItem::new("current-projects", Label::new("current-projects"))
             .left_icon(Icon::Hash.into())
             .size(ListEntrySize::Medium)
             .indent_level(1),
-        ListEntry::new("codegen", Label::new("codegen"))
+        ListItem::new("codegen", Label::new("codegen"))
             .left_icon(Icon::Hash.into())
             .size(ListEntrySize::Medium)
             .indent_level(2),
-        ListEntry::new("gpui2", Label::new("gpui2"))
+        ListItem::new("gpui2", Label::new("gpui2"))
             .left_icon(Icon::Hash.into())
             .size(ListEntrySize::Medium)
             .indent_level(2),
-        ListEntry::new("livestreaming", Label::new("livestreaming"))
+        ListItem::new("livestreaming", Label::new("livestreaming"))
             .left_icon(Icon::Hash.into())
             .size(ListEntrySize::Medium)
             .indent_level(2),
-        ListEntry::new("open-source", Label::new("open-source"))
+        ListItem::new("open-source", Label::new("open-source"))
             .left_icon(Icon::Hash.into())
             .size(ListEntrySize::Medium)
             .indent_level(2),
-        ListEntry::new("replace", Label::new("replace"))
+        ListItem::new("replace", Label::new("replace"))
             .left_icon(Icon::Hash.into())
             .size(ListEntrySize::Medium)
             .indent_level(2),
-        ListEntry::new("semantic-index", Label::new("semantic-index"))
+        ListItem::new("semantic-index", Label::new("semantic-index"))
             .left_icon(Icon::Hash.into())
             .size(ListEntrySize::Medium)
             .indent_level(2),
-        ListEntry::new("vim", Label::new("vim"))
+        ListItem::new("vim", Label::new("vim"))
             .left_icon(Icon::Hash.into())
             .size(ListEntrySize::Medium)
             .indent_level(2),
-        ListEntry::new("web-tech", Label::new("web-tech"))
+        ListItem::new("web-tech", Label::new("web-tech"))
             .left_icon(Icon::Hash.into())
             .size(ListEntrySize::Medium)
             .indent_level(2),
