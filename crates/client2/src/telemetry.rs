@@ -109,16 +109,16 @@ pub enum ClickhouseEvent {
     },
 }
 
-// #[cfg(debug_assertions)]
-// const MAX_QUEUE_LEN: usize = 1;
+#[cfg(debug_assertions)]
+const MAX_QUEUE_LEN: usize = 1;
 
-// #[cfg(not(debug_assertions))]
+#[cfg(not(debug_assertions))]
 const MAX_QUEUE_LEN: usize = 10;
 
-// #[cfg(debug_assertions)]
-// const DEBOUNCE_INTERVAL: Duration = Duration::from_secs(1);
+#[cfg(debug_assertions)]
+const DEBOUNCE_INTERVAL: Duration = Duration::from_secs(1);
 
-// #[cfg(not(debug_assertions))]
+#[cfg(not(debug_assertions))]
 const DEBOUNCE_INTERVAL: Duration = Duration::from_secs(30);
 
 impl Telemetry {

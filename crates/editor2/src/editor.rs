@@ -8985,7 +8985,7 @@ impl Editor {
     ) {
     }
 
-    // #[cfg(not(any(test, feature = "test-support")))]
+    #[cfg(not(any(test, feature = "test-support")))]
     fn report_editor_event(
         &self,
         operation: &'static str,
