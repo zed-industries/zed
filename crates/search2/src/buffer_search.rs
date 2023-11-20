@@ -909,7 +909,7 @@ mod tests {
                 .unindent(),
             )
         });
-        let (window, cx) = cx.add_window_view(|_| EmptyView {});
+        let (_, cx) = cx.add_window_view(|_| EmptyView {});
         let editor = cx.build_view(|cx| Editor::for_buffer(buffer.clone(), None, cx));
 
         let search_bar = cx.build_view(|cx| {
@@ -1324,56 +1324,60 @@ mod tests {
                 initial_selections
             }).unwrap();
 
-        window.update(cx, |_, cx| {
-            assert!(
-                editor.read(cx).is_focused(cx),
-                "Should still have editor focused after SelectNextMatch"
-            );
-            search_bar.update(cx, |search_bar, cx| {
-                let all_selections =
-                    editor.update(cx, |editor, cx| editor.selections.display_ranges(cx));
-                assert_eq!(
-                    all_selections.len(),
-                    1,
-                    "On next match, should deselect items and select the next match"
+        window
+            .update(cx, |_, cx| {
+                assert!(
+                    editor.read(cx).is_focused(cx),
+                    "Should still have editor focused after SelectNextMatch"
                 );
-                assert_ne!(
-                    all_selections, initial_selections,
-                    "Next match should be different from the first selection"
+                search_bar.update(cx, |search_bar, cx| {
+                    let all_selections =
+                        editor.update(cx, |editor, cx| editor.selections.display_ranges(cx));
+                    assert_eq!(
+                        all_selections.len(),
+                        1,
+                        "On next match, should deselect items and select the next match"
+                    );
+                    assert_ne!(
+                        all_selections, initial_selections,
+                        "Next match should be different from the first selection"
+                    );
+                    assert_eq!(
+                        search_bar.active_match_index,
+                        Some(1),
+                        "Match index should be updated to the next one"
+                    );
+                    let handle = search_bar.query_editor.focus_handle(cx);
+                    cx.focus(&handle);
+                    search_bar.select_all_matches(&SelectAllMatches, cx);
+                });
+            })
+            .unwrap();
+        window
+            .update(cx, |_, cx| {
+                assert!(
+                    editor.read(cx).is_focused(cx),
+                    "Should focus editor after successful SelectAllMatches"
                 );
-                assert_eq!(
-                    search_bar.active_match_index,
-                    Some(1),
-                    "Match index should be updated to the next one"
-                );
-                let handle = search_bar.query_editor.focus_handle(cx);
-                cx.focus(&handle);
-                search_bar.select_all_matches(&SelectAllMatches, cx);
-            });
-        });
-        window.update(cx, |_, cx| {
-            assert!(
-                editor.read(cx).is_focused(cx),
-                "Should focus editor after successful SelectAllMatches"
-            );
-            search_bar.update(cx, |search_bar, cx| {
-                let all_selections =
-                    editor.update(cx, |editor, cx| editor.selections.display_ranges(cx));
-                assert_eq!(
+                search_bar.update(cx, |search_bar, cx| {
+                    let all_selections =
+                        editor.update(cx, |editor, cx| editor.selections.display_ranges(cx));
+                    assert_eq!(
                     all_selections.len(),
                     expected_query_matches_count,
                     "Should select all `a` characters in the buffer, but got: {all_selections:?}"
                 );
-                assert_eq!(
-                    search_bar.active_match_index,
-                    Some(1),
-                    "Match index should not change after selecting all matches"
-                );
-            });
-            search_bar.update(cx, |search_bar, cx| {
-                search_bar.select_prev_match(&SelectPrevMatch, cx);
-            });
-        });
+                    assert_eq!(
+                        search_bar.active_match_index,
+                        Some(1),
+                        "Match index should not change after selecting all matches"
+                    );
+                });
+                search_bar.update(cx, |search_bar, cx| {
+                    search_bar.select_prev_match(&SelectPrevMatch, cx);
+                });
+            })
+            .unwrap();
         let last_match_selections = window
             .update(cx, |_, cx| {
                 assert!(
@@ -1414,27 +1418,29 @@ mod tests {
             .unwrap()
             .await
             .unwrap();
-        window.update(cx, |_, cx| {
-            search_bar.update(cx, |search_bar, cx| {
-                search_bar.select_all_matches(&SelectAllMatches, cx);
-            });
-            assert!(
+        window
+            .update(cx, |_, cx| {
+                search_bar.update(cx, |search_bar, cx| {
+                    search_bar.select_all_matches(&SelectAllMatches, cx);
+                });
+                assert!(
                 editor.update(cx, |this, cx| !this.is_focused(cx.window_context())),
                 "Should not switch focus to editor if SelectAllMatches does not find any matches"
             );
-            search_bar.update(cx, |search_bar, cx| {
-                let all_selections =
-                    editor.update(cx, |editor, cx| editor.selections.display_ranges(cx));
-                assert_eq!(
-                    all_selections, last_match_selections,
-                    "Should not select anything new if there are no matches"
-                );
-                assert!(
-                    search_bar.active_match_index.is_none(),
-                    "For no matches, there should be no active match index"
-                );
-            });
-        });
+                search_bar.update(cx, |search_bar, cx| {
+                    let all_selections =
+                        editor.update(cx, |editor, cx| editor.selections.display_ranges(cx));
+                    assert_eq!(
+                        all_selections, last_match_selections,
+                        "Should not select anything new if there are no matches"
+                    );
+                    assert!(
+                        search_bar.active_match_index.is_none(),
+                        "For no matches, there should be no active match index"
+                    );
+                });
+            })
+            .unwrap();
     }
 
     #[gpui::test]
@@ -1449,7 +1455,7 @@ mod tests {
         "#
         .unindent();
         let buffer = cx.build_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), buffer_text));
-        let (window, cx) = cx.add_window_view(|_| EmptyView {});
+        let (_, cx) = cx.add_window_view(|_| EmptyView {});
 
         let editor = cx.build_view(|cx| Editor::for_buffer(buffer.clone(), None, cx));
 
