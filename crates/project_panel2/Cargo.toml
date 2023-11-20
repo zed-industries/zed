@@ -9,7 +9,6 @@ path = "src/project_panel.rs"
 doctest = false
 
 [dependencies]
-context_menu = { path = "../context_menu" }
 collections = { path = "../collections" }
 db = { path = "../db2", package = "db2" }
 editor = { path = "../editor2", package = "editor2" }

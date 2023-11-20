@@ -39,7 +39,6 @@ file_finder = { package="file_finder2", path = "../file_finder2" }
 # search = { path = "../search" }
 fs = { package = "fs2", path = "../fs2" }
 fsevent = { path = "../fsevent" }
-fuzzy = { path = "../fuzzy" }
 go_to_line = { package = "go_to_line2", path = "../go_to_line2" }
 gpui = { package = "gpui2", path = "../gpui2" }
 install_cli = { package = "install_cli2", path = "../install_cli2" }
