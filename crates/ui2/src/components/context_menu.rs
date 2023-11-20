@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::{prelude::*, v_stack, List};
-use crate::{ListEntry, ListSeparator, ListSubHeader};
+use crate::{ListItem, ListSeparator, ListSubHeader};
 use gpui::{
     overlay, px, Action, AnchorCorner, AnyElement, AppContext, Bounds, DispatchPhase, Div,
     EventEmitter, FocusHandle, FocusableView, LayoutId, ManagedView, Manager, MouseButton,
@@ -13,7 +13,7 @@ pub enum ContextMenuItem<V: 'static> {
     Separator(ListSeparator),
     Header(ListSubHeader),
     Entry(
-        ListEntry<ContextMenu<V>>,
+        ListItem<ContextMenu<V>>,
         Rc<dyn Fn(&mut V, &mut ViewContext<V>)>,
     ),
 }
@@ -63,7 +63,7 @@ impl<V: 'static> ContextMenu<V> {
 
     pub fn entry(
         mut self,
-        view: ListEntry<Self>,
+        view: ListItem<Self>,
         on_click: impl Fn(&mut V, &mut ViewContext<V>) + 'static,
     ) -> Self {
         self.items
@@ -71,7 +71,7 @@ impl<V: 'static> ContextMenu<V> {
         self
     }
 
-    pub fn action(self, view: ListEntry<Self>, action: Box<dyn Action>) -> Self {
+    pub fn action(self, view: ListItem<Self>, action: Box<dyn Action>) -> Self {
         // todo: add the keybindings to the list entry
         self.entry(view, move |_, cx| cx.dispatch_action(action.boxed_clone()))
     }
@@ -323,14 +323,14 @@ mod stories {
             menu.header(header)
                 .separator()
                 .entry(
-                    ListEntry::new("Print current time", Label::new("Print current time")),
+                    ListItem::new("Print current time", Label::new("Print current time")),
                     |v, cx| {
                         println!("dispatching PrintCurrentTime action");
                         cx.dispatch_action(PrintCurrentDate.boxed_clone())
                     },
                 )
                 .entry(
-                    ListEntry::new("Print best food", Label::new("Print best food")),
+                    ListItem::new("Print best food", Label::new("Print best food")),
                     |v, cx| cx.dispatch_action(PrintBestFood.boxed_clone()),
                 )
         })

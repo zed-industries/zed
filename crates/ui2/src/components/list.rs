@@ -238,7 +238,7 @@ pub enum ListEntrySize {
 }
 
 #[derive(RenderOnce)]
-pub struct ListEntry<V: 'static> {
+pub struct ListItem<V: 'static> {
     id: ElementId,
     disabled: bool,
     // TODO: Reintroduce this
@@ -253,7 +253,7 @@ pub struct ListEntry<V: 'static> {
     on_click: Option<Rc<dyn Fn(&mut V, &mut ViewContext<V>) + 'static>>,
 }
 
-impl<V> Clone for ListEntry<V> {
+impl<V> Clone for ListItem<V> {
     fn clone(&self) -> Self {
         Self {
             id: self.id.clone(),
@@ -270,7 +270,7 @@ impl<V> Clone for ListEntry<V> {
     }
 }
 
-impl<V: 'static> ListEntry<V> {
+impl<V: 'static> ListItem<V> {
     pub fn new(id: impl Into<ElementId>, label: Label) -> Self {
         Self {
             id: id.into(),
@@ -327,7 +327,7 @@ impl<V: 'static> ListEntry<V> {
     }
 }
 
-impl<V: 'static> Component<V> for ListEntry<V> {
+impl<V: 'static> Component<V> for ListItem<V> {
     type Rendered = Stateful<V, Div<V>>;
 
     fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {

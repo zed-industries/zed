@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use theme2::ActiveTheme;
 use ui::{
-    h_stack, menu_handle, ContextMenu, IconButton, InteractionState, Label, ListEntry, Tooltip,
+    h_stack, menu_handle, ContextMenu, IconButton, InteractionState, Label, ListItem, Tooltip,
 };
 
 pub enum PanelEvent {
@@ -719,7 +719,7 @@ impl Render<Self> for PanelButtons {
                                     {
                                         let panel = panel.clone();
                                         menu = menu.entry(
-                                            ListEntry::new(
+                                            ListItem::new(
                                                 SharedString::from(format!("dock-{position:?}")),
                                                 Label::new(format!("Dock {}", position.to_label())),
                                             ),
