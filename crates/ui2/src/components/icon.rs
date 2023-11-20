@@ -127,13 +127,6 @@ impl Icon {
             Icon::SplitMessage => "icons/split_message.svg",
             Icon::Terminal => "icons/terminal.svg",
             Icon::XCircle => "icons/error.svg",
-            Icon::Copilot => "icons/copilot.svg",
-            Icon::Envelope => "icons/feedback.svg",
-            Icon::Bell => "icons/bell.svg",
-            Icon::BellOff => "icons/bell-off.svg",
-            Icon::BellRing => "icons/bell-ring.svg",
-            Icon::MailOpen => "icons/mail-open.svg",
-            Icon::AtSign => "icons/at-sign.svg",
             Icon::WholeWord => "icons/word_search.svg",
             Icon::CaseSensitive => "icons/case_insensitive.svg",
         }

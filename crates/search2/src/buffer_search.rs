@@ -629,10 +629,10 @@ impl BufferSearchBar {
     fn on_query_editor_event(
         &mut self,
         _: View<Editor>,
-        event: &editor::Event,
+        event: &editor::EditorEvent,
         cx: &mut ViewContext<Self>,
     ) {
-        if let editor::Event::Edited { .. } = event {
+        if let editor::EditorEvent::Edited { .. } = event {
             self.query_contains_error = false;
             self.clear_matches(cx);
             let search = self.update_matches(cx);
@@ -694,6 +694,7 @@ impl BufferSearchBar {
                         query,
                         self.search_options.contains(SearchOptions::WHOLE_WORD),
                         self.search_options.contains(SearchOptions::CASE_SENSITIVE),
+                        false,
                         Vec::new(),
                         Vec::new(),
                     ) {
@@ -709,6 +710,7 @@ impl BufferSearchBar {
                         query,
                         self.search_options.contains(SearchOptions::WHOLE_WORD),
                         self.search_options.contains(SearchOptions::CASE_SENSITIVE),
+                        false,
                         Vec::new(),
                         Vec::new(),
                     ) {
