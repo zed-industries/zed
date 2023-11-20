@@ -257,15 +257,12 @@ impl ToolbarItemView for BufferSearchBar {
         if let Some(searchable_item_handle) =
             item.and_then(|item| item.to_searchable_item_handle(cx))
         {
-            dbg!("Setting");
-            dbg!(searchable_item_handle.item_id());
             let this = cx.view().downgrade();
 
             searchable_item_handle
                 .subscribe_to_search_events(
                     cx,
                     Box::new(move |search_event, cx| {
-                        dbg!(&search_event);
                         if let Some(this) = this.upgrade() {
                             this.update(cx, |this, cx| {
                                 this.on_active_searchable_item_event(search_event, cx)
@@ -575,7 +572,6 @@ impl BufferSearchBar {
     }
 
     fn select_next_match(&mut self, _: &SelectNextMatch, cx: &mut ViewContext<Self>) {
-        dbg!("Hey?");
         self.select_match(Direction::Next, 1, cx);
     }
 
@@ -599,17 +595,14 @@ impl BufferSearchBar {
 
     pub fn select_match(&mut self, direction: Direction, count: usize, cx: &mut ViewContext<Self>) {
         if let Some(index) = self.active_match_index {
-            dbg!("Has index");
             if let Some(searchable_item) = self.active_searchable_item.as_ref() {
-                dbg!("Has searchable item");
                 if let Some(matches) = self
                     .searchable_items_with_matches
                     .get(&searchable_item.downgrade())
                 {
-                    dbg!("Has matches");
                     let new_match_index = searchable_item
                         .match_index_for_direction(matches, index, direction, count, cx);
-                    dbg!(new_match_index);
+
                     searchable_item.update_matches(matches, cx);
                     searchable_item.activate_match(new_match_index, matches, cx);
                 }
@@ -652,7 +645,6 @@ impl BufferSearchBar {
     }
 
     fn on_active_searchable_item_event(&mut self, event: &SearchEvent, cx: &mut ViewContext<Self>) {
-        dbg!(&event);
         match event {
             SearchEvent::MatchesInvalidated => {
                 let _ = self.update_matches(cx);
@@ -1266,7 +1258,6 @@ mod tests {
             search_bar
         });
 
-        dbg!("!");
         window
             .update(cx, |_, cx| {
                 search_bar.update(cx, |search_bar, cx| search_bar.search("a", None, cx))
@@ -1274,7 +1265,6 @@ mod tests {
             .unwrap()
             .await
             .unwrap();
-        dbg!("?");
         let initial_selections = window
             .update(cx, |_, cx| {
                 search_bar.update(cx, |search_bar, cx| {
@@ -1322,7 +1312,7 @@ mod tests {
                 search_bar.update(cx, |this, cx| this.select_next_match(&SelectNextMatch, cx));
                 initial_selections
             }).unwrap();
-        dbg!("Hey");
+
         window.update(cx, |_, cx| {
             assert!(
                 editor.read(cx).is_focused(cx),
@@ -1350,7 +1340,6 @@ mod tests {
                 search_bar.select_all_matches(&SelectAllMatches, cx);
             });
         });
-        dbg!("Ey");
         window.update(cx, |_, cx| {
             assert!(
                 editor.read(cx).is_focused(cx),
