@@ -6,6 +6,7 @@
 
 use anyhow::{anyhow, Context as _, Result};
 use backtrace::Backtrace;
+use chrono::{DateTime, Utc};
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
 use client::UserStore;
 use db::kvp::KEY_VALUE_STORE;
@@ -72,6 +73,7 @@ fn main() {
     let app = App::production(Arc::new(Assets));
 
     let installation_id = app.background_executor().block(installation_id()).ok();
+    dbg!("HERE", &installation_id);
     let session_id = Uuid::new_v4().to_string();
     init_panic_hook(&app, installation_id.clone(), session_id.clone());
 
@@ -172,7 +174,7 @@ fn main() {
         // })
         // .detach();
 
-        // client.telemetry().start(installation_id, session_id, cx);
+        client.telemetry().start(installation_id, session_id, cx);
 
         let app_state = Arc::new(AppState {
             languages,
@@ -514,10 +516,7 @@ fn init_panic_hook(app: &App, installation_id: Option<String>, session_id: Strin
                 .as_ref()
                 .map(SemanticVersion::to_string),
             architecture: env::consts::ARCH.into(),
-            panicked_on: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_millis(),
+            panicked_on: Utc::now().timestamp_millis(),
             backtrace,
             installation_id: installation_id.clone(),
             session_id: session_id.clone(),

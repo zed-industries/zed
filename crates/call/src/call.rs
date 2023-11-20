@@ -5,10 +5,7 @@ pub mod room;
 use anyhow::{anyhow, Result};
 use audio::Audio;
 use call_settings::CallSettings;
-use client::{
-    proto, ClickhouseEvent, Client, TelemetrySettings, TypedEnvelope, User, UserStore,
-    ZED_ALWAYS_ACTIVE,
-};
+use client::{proto, Client, TelemetrySettings, TypedEnvelope, User, UserStore, ZED_ALWAYS_ACTIVE};
 use collections::HashSet;
 use futures::{channel::oneshot, future::Shared, Future, FutureExt};
 use gpui::{
@@ -485,12 +482,8 @@ pub fn report_call_event_for_room(
 ) {
     let telemetry = client.telemetry();
     let telemetry_settings = *settings::get::<TelemetrySettings>(cx);
-    let event = ClickhouseEvent::Call {
-        operation,
-        room_id: Some(room_id),
-        channel_id,
-    };
-    telemetry.report_clickhouse_event(event, telemetry_settings);
+
+    telemetry.report_call_event(telemetry_settings, operation, Some(room_id), channel_id)
 }
 
 pub fn report_call_event_for_channel(
@@ -504,12 +497,12 @@ pub fn report_call_event_for_channel(
     let telemetry = client.telemetry();
     let telemetry_settings = *settings::get::<TelemetrySettings>(cx);
 
-    let event = ClickhouseEvent::Call {
+    telemetry.report_call_event(
+        telemetry_settings,
         operation,
-        room_id: room.map(|r| r.read(cx).id()),
-        channel_id: Some(channel_id),
-    };
-    telemetry.report_clickhouse_event(event, telemetry_settings);
+        room.map(|r| r.read(cx).id()),
+        Some(channel_id),
+    )
 }
 
 #[cfg(test)]

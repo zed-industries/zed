@@ -3,6 +3,7 @@
 
 use anyhow::{anyhow, Context, Result};
 use backtrace::Backtrace;
+use chrono::{DateTime, Utc};
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
 use client::{
     self, Client, TelemetrySettings, UserStore, ZED_APP_VERSION, ZED_SECRET_CLIENT_TOKEN,
@@ -490,10 +491,7 @@ fn init_panic_hook(app: &App, installation_id: Option<String>, session_id: Strin
                 .ok()
                 .map(|os_version| os_version.to_string()),
             architecture: env::consts::ARCH.into(),
-            panicked_on: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_millis(),
+            panicked_on: Utc::now().timestamp_millis(),
             backtrace,
             installation_id: installation_id.clone(),
             session_id: session_id.clone(),
