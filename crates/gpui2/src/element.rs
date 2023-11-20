@@ -1,37 +1,34 @@
 use crate::{
-    AvailableSpace, BorrowWindow, Bounds, ElementId, LayoutId, Pixels, Point, Size, ViewContext,
+    AvailableSpace, BorrowWindow, Bounds, ElementId, LayoutId, Pixels, Point, Size, WindowContext,
 };
 use derive_more::{Deref, DerefMut};
 pub(crate) use smallvec::SmallVec;
 use std::{any::Any, fmt::Debug, mem};
 
-pub trait Element<V: 'static> {
+pub trait Element {
     type ElementState: 'static;
 
     fn element_id(&self) -> Option<ElementId>;
 
     fn layout(
         &mut self,
-        view_state: &mut V,
         element_state: Option<Self::ElementState>,
-        cx: &mut ViewContext<V>,
+        cx: &mut WindowContext,
     ) -> (LayoutId, Self::ElementState);
 
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
-        view_state: &mut V,
         element_state: &mut Self::ElementState,
-        cx: &mut ViewContext<V>,
+        cx: &mut WindowContext,
     );
 
     fn draw<T, R>(
         self,
         origin: Point<Pixels>,
         available_space: Size<T>,
-        view_state: &mut V,
-        cx: &mut ViewContext<V>,
-        f: impl FnOnce(&Self::ElementState, &mut ViewContext<V>) -> R,
+        cx: &mut WindowContext,
+        f: impl FnOnce(&Self::ElementState, &mut WindowContext) -> R,
     ) -> R
     where
         Self: Sized,
@@ -41,7 +38,7 @@ pub trait Element<V: 'static> {
             element: self,
             phase: ElementRenderPhase::Start,
         };
-        element.draw(origin, available_space.map(Into::into), view_state, cx);
+        element.draw(origin, available_space.map(Into::into), cx);
         if let ElementRenderPhase::Painted { frame_state } = &element.phase {
             if let Some(frame_state) = frame_state.as_ref() {
                 f(&frame_state, cx)
@@ -65,10 +62,10 @@ pub trait Element<V: 'static> {
 #[derive(Deref, DerefMut, Default, Clone, Debug, Eq, PartialEq, Hash)]
 pub struct GlobalElementId(SmallVec<[ElementId; 32]>);
 
-pub trait ParentComponent<V: 'static> {
-    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<V>; 2]>;
+pub trait ParentComponent {
+    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement; 2]>;
 
-    fn child(mut self, child: impl Component<V>) -> Self
+    fn child(mut self, child: impl Component) -> Self
     where
         Self: Sized,
     {
@@ -76,7 +73,7 @@ pub trait ParentComponent<V: 'static> {
         self
     }
 
-    fn children(mut self, iter: impl IntoIterator<Item = impl Component<V>>) -> Self
+    fn children(mut self, iter: impl IntoIterator<Item = impl Component>) -> Self
     where
         Self: Sized,
     {
@@ -86,26 +83,24 @@ pub trait ParentComponent<V: 'static> {
     }
 }
 
-trait ElementObject<V> {
+trait ElementObject {
     fn element_id(&self) -> Option<ElementId>;
-    fn layout(&mut self, view_state: &mut V, cx: &mut ViewContext<V>) -> LayoutId;
-    fn paint(&mut self, view_state: &mut V, cx: &mut ViewContext<V>);
+    fn layout(&mut self, cx: &mut WindowContext) -> LayoutId;
+    fn paint(&mut self, cx: &mut WindowContext);
     fn measure(
         &mut self,
         available_space: Size<AvailableSpace>,
-        view_state: &mut V,
-        cx: &mut ViewContext<V>,
+        cx: &mut WindowContext,
     ) -> Size<Pixels>;
     fn draw(
         &mut self,
         origin: Point<Pixels>,
         available_space: Size<AvailableSpace>,
-        view_state: &mut V,
-        cx: &mut ViewContext<V>,
+        cx: &mut WindowContext,
     );
 }
 
-struct RenderedElement<V: 'static, E: Element<V>> {
+struct RenderedElement<E: Element> {
     element: E,
     phase: ElementRenderPhase<E::ElementState>,
 }
@@ -131,7 +126,7 @@ enum ElementRenderPhase<V> {
 /// Internal struct that wraps an element to store Layout and ElementState after the element is rendered.
 /// It's allocated as a trait object to erase the element type and wrapped in AnyElement<E::State> for
 /// improved usability.
-impl<V, E: Element<V>> RenderedElement<V, E> {
+impl<E: Element> RenderedElement<E> {
     fn new(element: E) -> Self {
         RenderedElement {
             element,
@@ -140,25 +135,25 @@ impl<V, E: Element<V>> RenderedElement<V, E> {
     }
 }
 
-impl<V, E> ElementObject<V> for RenderedElement<V, E>
+impl<E> ElementObject for RenderedElement<E>
 where
-    E: Element<V>,
+    E: Element,
     E::ElementState: 'static,
 {
     fn element_id(&self) -> Option<ElementId> {
         self.element.element_id()
     }
 
-    fn layout(&mut self, state: &mut V, cx: &mut ViewContext<V>) -> LayoutId {
+    fn layout(&mut self, cx: &mut WindowContext) -> LayoutId {
         let (layout_id, frame_state) = match mem::take(&mut self.phase) {
             ElementRenderPhase::Start => {
                 if let Some(id) = self.element.element_id() {
                     let layout_id = cx.with_element_state(id, |element_state, cx| {
-                        self.element.layout(state, element_state, cx)
+                        self.element.layout(element_state, cx)
                     });
                     (layout_id, None)
                 } else {
-                    let (layout_id, frame_state) = self.element.layout(state, None, cx);
+                    let (layout_id, frame_state) = self.element.layout(None, cx);
                     (layout_id, Some(frame_state))
                 }
             }
@@ -176,7 +171,7 @@ where
         layout_id
     }
 
-    fn paint(&mut self, view_state: &mut V, cx: &mut ViewContext<V>) {
+    fn paint(&mut self, cx: &mut WindowContext) {
         self.phase = match mem::take(&mut self.phase) {
             ElementRenderPhase::LayoutRequested {
                 layout_id,
@@ -191,13 +186,12 @@ where
                 if let Some(id) = self.element.element_id() {
                     cx.with_element_state(id, |element_state, cx| {
                         let mut element_state = element_state.unwrap();
-                        self.element
-                            .paint(bounds, view_state, &mut element_state, cx);
+                        self.element.paint(bounds, &mut element_state, cx);
                         ((), element_state)
                     });
                 } else {
                     self.element
-                        .paint(bounds, view_state, frame_state.as_mut().unwrap(), cx);
+                        .paint(bounds, frame_state.as_mut().unwrap(), cx);
                 }
                 ElementRenderPhase::Painted { frame_state }
             }
@@ -209,11 +203,10 @@ where
     fn measure(
         &mut self,
         available_space: Size<AvailableSpace>,
-        view_state: &mut V,
-        cx: &mut ViewContext<V>,
+        cx: &mut WindowContext,
     ) -> Size<Pixels> {
         if matches!(&self.phase, ElementRenderPhase::Start) {
-            self.layout(view_state, cx);
+            self.layout(cx);
         }
 
         let layout_id = match &mut self.phase {
@@ -251,21 +244,19 @@ where
         &mut self,
         origin: Point<Pixels>,
         available_space: Size<AvailableSpace>,
-        view_state: &mut V,
-        cx: &mut ViewContext<V>,
+        cx: &mut WindowContext,
     ) {
-        self.measure(available_space, view_state, cx);
-        cx.with_absolute_element_offset(origin, |cx| self.paint(view_state, cx))
+        self.measure(available_space, cx);
+        cx.with_absolute_element_offset(origin, |cx| self.paint(cx))
     }
 }
 
-pub struct AnyElement<V>(Box<dyn ElementObject<V>>);
+pub struct AnyElement(Box<dyn ElementObject>);
 
-impl<V> AnyElement<V> {
+impl AnyElement {
     pub fn new<E>(element: E) -> Self
     where
-        V: 'static,
-        E: 'static + Element<V>,
+        E: 'static + Element,
         E::ElementState: Any,
     {
         AnyElement(Box::new(RenderedElement::new(element)))
@@ -275,22 +266,21 @@ impl<V> AnyElement<V> {
         self.0.element_id()
     }
 
-    pub fn layout(&mut self, view_state: &mut V, cx: &mut ViewContext<V>) -> LayoutId {
-        self.0.layout(view_state, cx)
+    pub fn layout(&mut self, cx: &mut WindowContext) -> LayoutId {
+        self.0.layout(cx)
     }
 
-    pub fn paint(&mut self, view_state: &mut V, cx: &mut ViewContext<V>) {
-        self.0.paint(view_state, cx)
+    pub fn paint(&mut self, cx: &mut WindowContext) {
+        self.0.paint(cx)
     }
 
     /// Initializes this element and performs layout within the given available space to determine its size.
     pub fn measure(
         &mut self,
         available_space: Size<AvailableSpace>,
-        view_state: &mut V,
-        cx: &mut ViewContext<V>,
+        cx: &mut WindowContext,
     ) -> Size<Pixels> {
-        self.0.measure(available_space, view_state, cx)
+        self.0.measure(available_space, cx)
     }
 
     /// Initializes this element and performs layout in the available space, then paints it at the given origin.
@@ -298,20 +288,19 @@ impl<V> AnyElement<V> {
         &mut self,
         origin: Point<Pixels>,
         available_space: Size<AvailableSpace>,
-        view_state: &mut V,
-        cx: &mut ViewContext<V>,
+        cx: &mut WindowContext,
     ) {
-        self.0.draw(origin, available_space, view_state, cx)
+        self.0.draw(origin, available_space, cx)
     }
 }
 
-pub trait Component<V> {
-    fn render(self) -> AnyElement<V>;
+pub trait Component {
+    fn render(self) -> AnyElement;
 
     fn map<U>(self, f: impl FnOnce(Self) -> U) -> U
     where
         Self: Sized,
-        U: Component<V>,
+        U: Component,
     {
         f(self)
     }
@@ -337,19 +326,18 @@ pub trait Component<V> {
     }
 }
 
-impl<V> Component<V> for AnyElement<V> {
-    fn render(self) -> AnyElement<V> {
+impl Component for AnyElement {
+    fn render(self) -> AnyElement {
         self
     }
 }
 
-impl<V, E, F> Element<V> for Option<F>
+impl<E, F> Element for Option<F>
 where
-    V: 'static,
-    E: 'static + Component<V>,
-    F: FnOnce(&mut V, &mut ViewContext<'_, V>) -> E + 'static,
+    E: 'static + Component,
+    F: FnOnce(&mut WindowContext) -> E + 'static,
 {
-    type ElementState = AnyElement<V>;
+    type ElementState = AnyElement;
 
     fn element_id(&self) -> Option<ElementId> {
         None
@@ -357,45 +345,41 @@ where
 
     fn layout(
         &mut self,
-        view_state: &mut V,
         _: Option<Self::ElementState>,
-        cx: &mut ViewContext<V>,
+        cx: &mut WindowContext,
     ) -> (LayoutId, Self::ElementState) {
         let render = self.take().unwrap();
-        let mut rendered_element = (render)(view_state, cx).render();
-        let layout_id = rendered_element.layout(view_state, cx);
+        let mut rendered_element = (render)(cx).render();
+        let layout_id = rendered_element.layout(cx);
         (layout_id, rendered_element)
     }
 
     fn paint(
         &mut self,
         _bounds: Bounds<Pixels>,
-        view_state: &mut V,
         rendered_element: &mut Self::ElementState,
-        cx: &mut ViewContext<V>,
+        cx: &mut WindowContext,
     ) {
-        rendered_element.paint(view_state, cx)
+        rendered_element.paint(cx)
     }
 }
 
-impl<V, E, F> Component<V> for Option<F>
+impl<E, F> Component for Option<F>
 where
-    V: 'static,
-    E: 'static + Component<V>,
-    F: FnOnce(&mut V, &mut ViewContext<'_, V>) -> E + 'static,
+    E: 'static + Component,
+    F: FnOnce(&mut WindowContext) -> E + 'static,
 {
-    fn render(self) -> AnyElement<V> {
+    fn render(self) -> AnyElement {
         AnyElement::new(self)
     }
 }
 
-impl<V, E, F> Component<V> for F
+impl<E, F> Component for F
 where
-    V: 'static,
-    E: 'static + Component<V>,
-    F: FnOnce(&mut V, &mut ViewContext<'_, V>) -> E + 'static,
+    E: 'static + Component,
+    F: FnOnce(&mut WindowContext) -> E + 'static,
 {
-    fn render(self) -> AnyElement<V> {
+    fn render(self) -> AnyElement {
         AnyElement::new(Some(self))
     }
 }

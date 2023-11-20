@@ -1,36 +1,36 @@
 use crate::{
     AnyElement, Bounds, Component, Element, ElementId, InteractiveComponent,
     InteractiveElementState, Interactivity, LayoutId, Pixels, SharedString, StyleRefinement,
-    Styled, ViewContext,
+    Styled, WindowContext,
 };
 use util::ResultExt;
 
-pub struct Svg<V: 'static> {
-    interactivity: Interactivity<V>,
+pub struct Svg {
+    interactivity: Interactivity,
     path: Option<SharedString>,
 }
 
-pub fn svg<V: 'static>() -> Svg<V> {
+pub fn svg() -> Svg {
     Svg {
         interactivity: Interactivity::default(),
         path: None,
     }
 }
 
-impl<V> Svg<V> {
+impl Svg {
     pub fn path(mut self, path: impl Into<SharedString>) -> Self {
         self.path = Some(path.into());
         self
     }
 }
 
-impl<V> Component<V> for Svg<V> {
-    fn render(self) -> AnyElement<V> {
+impl Component for Svg {
+    fn render(self) -> AnyElement {
         AnyElement::new(self)
     }
 }
 
-impl<V> Element<V> for Svg<V> {
+impl Element for Svg {
     type ElementState = InteractiveElementState;
 
     fn element_id(&self) -> Option<ElementId> {
@@ -39,9 +39,8 @@ impl<V> Element<V> for Svg<V> {
 
     fn layout(
         &mut self,
-        _view_state: &mut V,
         element_state: Option<Self::ElementState>,
-        cx: &mut ViewContext<V>,
+        cx: &mut WindowContext,
     ) -> (LayoutId, Self::ElementState) {
         self.interactivity.layout(element_state, cx, |style, cx| {
             cx.request_layout(&style, None)
@@ -51,9 +50,8 @@ impl<V> Element<V> for Svg<V> {
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
-        _view_state: &mut V,
         element_state: &mut Self::ElementState,
-        cx: &mut ViewContext<V>,
+        cx: &mut WindowContext,
     ) where
         Self: Sized,
     {
@@ -66,14 +64,14 @@ impl<V> Element<V> for Svg<V> {
     }
 }
 
-impl<V> Styled for Svg<V> {
+impl Styled for Svg {
     fn style(&mut self) -> &mut StyleRefinement {
         &mut self.interactivity.base_style
     }
 }
 
-impl<V> InteractiveComponent<V> for Svg<V> {
-    fn interactivity(&mut self) -> &mut Interactivity<V> {
+impl InteractiveComponent for Svg {
+    fn interactivity(&mut self) -> &mut Interactivity {
         &mut self.interactivity
     }
 }

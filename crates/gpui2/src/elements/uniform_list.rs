@@ -1,7 +1,7 @@
 use crate::{
-    point, px, size, AnyElement, AvailableSpace, BorrowWindow, Bounds, Component, Element,
-    ElementId, InteractiveComponent, InteractiveElementState, Interactivity, LayoutId, Pixels,
-    Point, Size, StyleRefinement, Styled, ViewContext,
+    point, px, size, AnyElement, AvailableSpace, Bounds, Component, Element, ElementId,
+    InteractiveComponent, InteractiveElementState, Interactivity, LayoutId, Pixels, Point, Size,
+    StyleRefinement, Styled, WindowContext,
 };
 use smallvec::SmallVec;
 use std::{cell::RefCell, cmp, mem, ops::Range, rc::Rc};
@@ -10,15 +10,14 @@ use taffy::style::Overflow;
 /// uniform_list provides lazy rendering for a set of items that are of uniform height.
 /// When rendered into a container with overflow-y: hidden and a fixed (or max) height,
 /// uniform_list will only render the visibile subset of items.
-pub fn uniform_list<I, V, C>(
+pub fn uniform_list<I, C>(
     id: I,
     item_count: usize,
-    f: impl 'static + Fn(&mut V, Range<usize>, &mut ViewContext<V>) -> Vec<C>,
-) -> UniformList<V>
+    f: impl 'static + Fn(Range<usize>, &mut WindowContext) -> Vec<C>,
+) -> UniformList
 where
     I: Into<ElementId>,
-    V: 'static,
-    C: Component<V>,
+    C: Component,
 {
     let id = id.into();
     let mut style = StyleRefinement::default();
@@ -29,8 +28,8 @@ where
         style,
         item_count,
         item_to_measure_index: 0,
-        render_items: Box::new(move |view, visible_range, cx| {
-            f(view, visible_range, cx)
+        render_items: Box::new(move |visible_range, cx| {
+            f(visible_range, cx)
                 .into_iter()
                 .map(|component| component.render())
                 .collect()
@@ -43,19 +42,14 @@ where
     }
 }
 
-pub struct UniformList<V: 'static> {
+pub struct UniformList {
     id: ElementId,
     style: StyleRefinement,
     item_count: usize,
     item_to_measure_index: usize,
-    render_items: Box<
-        dyn for<'a> Fn(
-            &'a mut V,
-            Range<usize>,
-            &'a mut ViewContext<V>,
-        ) -> SmallVec<[AnyElement<V>; 64]>,
-    >,
-    interactivity: Interactivity<V>,
+    render_items:
+        Box<dyn for<'a> Fn(Range<usize>, &'a mut WindowContext) -> SmallVec<[AnyElement; 64]>>,
+    interactivity: Interactivity,
     scroll_handle: Option<UniformListScrollHandle>,
 }
 
@@ -89,7 +83,7 @@ impl UniformListScrollHandle {
     }
 }
 
-impl<V: 'static> Styled for UniformList<V> {
+impl Styled for UniformList {
     fn style(&mut self) -> &mut StyleRefinement {
         &mut self.style
     }
@@ -101,7 +95,7 @@ pub struct UniformListState {
     item_size: Size<Pixels>,
 }
 
-impl<V: 'static> Element<V> for UniformList<V> {
+impl Element for UniformList {
     type ElementState = UniformListState;
 
     fn element_id(&self) -> Option<crate::ElementId> {
@@ -110,16 +104,15 @@ impl<V: 'static> Element<V> for UniformList<V> {
 
     fn layout(
         &mut self,
-        view_state: &mut V,
         element_state: Option<Self::ElementState>,
-        cx: &mut ViewContext<V>,
+        cx: &mut WindowContext,
     ) -> (LayoutId, Self::ElementState) {
         let max_items = self.item_count;
         let rem_size = cx.rem_size();
         let item_size = element_state
             .as_ref()
             .map(|s| s.item_size)
-            .unwrap_or_else(|| self.measure_item(view_state, None, cx));
+            .unwrap_or_else(|| self.measure_item(None, cx));
 
         let (layout_id, interactive) =
             self.interactivity
@@ -161,9 +154,8 @@ impl<V: 'static> Element<V> for UniformList<V> {
     fn paint(
         &mut self,
         bounds: Bounds<crate::Pixels>,
-        view_state: &mut V,
         element_state: &mut Self::ElementState,
-        cx: &mut ViewContext<V>,
+        cx: &mut WindowContext,
     ) {
         let style =
             self.interactivity
@@ -209,9 +201,8 @@ impl<V: 'static> Element<V> for UniformList<V> {
                     style.paint(bounds, cx);
 
                     if self.item_count > 0 {
-                        let item_height = self
-                            .measure_item(view_state, Some(padded_bounds.size.width), cx)
-                            .height;
+                        let item_height =
+                            self.measure_item(Some(padded_bounds.size.width), cx).height;
                         if let Some(scroll_handle) = self.scroll_handle.clone() {
                             scroll_handle.0.borrow_mut().replace(ScrollHandleState {
                                 item_height,
@@ -233,7 +224,7 @@ impl<V: 'static> Element<V> for UniformList<V> {
                                 self.item_count,
                             );
 
-                        let mut items = (self.render_items)(view_state, visible_range.clone(), cx);
+                        let mut items = (self.render_items)(visible_range.clone(), cx);
                         cx.with_z_index(1, |cx| {
                             for (item, ix) in items.iter_mut().zip(visible_range) {
                                 let item_origin = padded_bounds.origin
@@ -242,7 +233,7 @@ impl<V: 'static> Element<V> for UniformList<V> {
                                     AvailableSpace::Definite(padded_bounds.size.width),
                                     AvailableSpace::Definite(item_height),
                                 );
-                                item.draw(item_origin, available_space, view_state, cx);
+                                item.draw(item_origin, available_space, cx);
                             }
                         });
                     }
@@ -253,24 +244,19 @@ impl<V: 'static> Element<V> for UniformList<V> {
     }
 }
 
-impl<V> UniformList<V> {
+impl UniformList {
     pub fn with_width_from_item(mut self, item_index: Option<usize>) -> Self {
         self.item_to_measure_index = item_index.unwrap_or(0);
         self
     }
 
-    fn measure_item(
-        &self,
-        view_state: &mut V,
-        list_width: Option<Pixels>,
-        cx: &mut ViewContext<V>,
-    ) -> Size<Pixels> {
+    fn measure_item(&self, list_width: Option<Pixels>, cx: &mut WindowContext) -> Size<Pixels> {
         if self.item_count == 0 {
             return Size::default();
         }
 
         let item_ix = cmp::min(self.item_to_measure_index, self.item_count - 1);
-        let mut items = (self.render_items)(view_state, item_ix..item_ix + 1, cx);
+        let mut items = (self.render_items)(item_ix..item_ix + 1, cx);
         let mut item_to_measure = items.pop().unwrap();
         let available_space = size(
             list_width.map_or(AvailableSpace::MinContent, |width| {
@@ -278,7 +264,7 @@ impl<V> UniformList<V> {
             }),
             AvailableSpace::MinContent,
         );
-        item_to_measure.measure(available_space, view_state, cx)
+        item_to_measure.measure(available_space, cx)
     }
 
     pub fn track_scroll(mut self, handle: UniformListScrollHandle) -> Self {
@@ -287,14 +273,14 @@ impl<V> UniformList<V> {
     }
 }
 
-impl<V> InteractiveComponent<V> for UniformList<V> {
-    fn interactivity(&mut self) -> &mut crate::Interactivity<V> {
+impl InteractiveComponent for UniformList {
+    fn interactivity(&mut self) -> &mut crate::Interactivity {
         &mut self.interactivity
     }
 }
 
-impl<V: 'static> Component<V> for UniformList<V> {
-    fn render(self) -> AnyElement<V> {
+impl Component for UniformList {
+    fn render(self) -> AnyElement {
         AnyElement::new(self)
     }
 }

@@ -1,9 +1,8 @@
 use crate::{
-    div, point, Component, Div, FocusHandle, Keystroke, Modifiers, Pixels, Point, Render,
-    ViewContext,
+    div, point, Div, FocusHandle, Keystroke, Modifiers, Pixels, Point, Render, ViewContext,
 };
 use smallvec::SmallVec;
-use std::{any::Any, fmt::Debug, marker::PhantomData, ops::Deref, path::PathBuf};
+use std::{any::Any, fmt::Debug, ops::Deref, path::PathBuf};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct KeyDownEvent {
@@ -58,32 +57,6 @@ pub struct MouseUpEvent {
 pub struct ClickEvent {
     pub down: MouseDownEvent,
     pub up: MouseUpEvent,
-}
-
-pub struct Drag<S, R, V, E>
-where
-    R: Fn(&mut V, &mut ViewContext<V>) -> E,
-    V: 'static,
-    E: Component<()>,
-{
-    pub state: S,
-    pub render_drag_handle: R,
-    view_type: PhantomData<V>,
-}
-
-impl<S, R, V, E> Drag<S, R, V, E>
-where
-    R: Fn(&mut V, &mut ViewContext<V>) -> E,
-    V: 'static,
-    E: Component<()>,
-{
-    pub fn new(state: S, render_drag_handle: R) -> Self {
-        Drag {
-            state,
-            render_drag_handle,
-            view_type: PhantomData,
-        }
-    }
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug)]
@@ -194,7 +167,7 @@ impl Deref for MouseExitEvent {
 pub struct ExternalPaths(pub(crate) SmallVec<[PathBuf; 2]>);
 
 impl Render for ExternalPaths {
-    type Element = Div<Self>;
+    type Element = Div;
 
     fn render(&mut self, _: &mut ViewContext<Self>) -> Self::Element {
         div() // Intentionally left empty because the platform will render icons for the dragged files
@@ -287,7 +260,7 @@ pub struct FocusEvent {
 mod test {
     use crate::{
         self as gpui, div, Component, Div, FocusHandle, InteractiveComponent, KeyBinding,
-        Keystroke, ParentComponent, Render, Stateful, TestAppContext, ViewContext, VisualContext,
+        Keystroke, ParentComponent, Render, Stateful, TestAppContext, VisualContext,
     };
 
     struct TestView {
@@ -299,20 +272,24 @@ mod test {
     actions!(TestAction);
 
     impl Render for TestView {
-        type Element = Stateful<Self, Div<Self>>;
+        type Element = Stateful<Div>;
 
-        fn render(&mut self, _: &mut gpui::ViewContext<Self>) -> Self::Element {
+        fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> Self::Element {
             div().id("testview").child(
                 div()
                     .key_context("parent")
-                    .on_key_down(|this: &mut TestView, _, _, _| this.saw_key_down = true)
-                    .on_action(|this: &mut TestView, _: &TestAction, _| this.saw_action = true)
-                    .child(|this: &mut Self, _cx: &mut ViewContext<Self>| {
+                    .on_key_down(cx.callback(|this, _, _| this.saw_key_down = true))
+                    .on_action(
+                        cx.callback(|this: &mut TestView, _: &TestAction, _| {
+                            this.saw_action = true
+                        }),
+                    )
+                    .child(
                         div()
                             .key_context("nested")
-                            .track_focus(&this.focus_handle)
-                            .render()
-                    }),
+                            .track_focus(&self.focus_handle)
+                            .render(),
+                    ),
             )
         }
     }

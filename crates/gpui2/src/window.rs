@@ -1,15 +1,15 @@
 use crate::{
     key_dispatch::DispatchActionListener, px, size, Action, AnyBox, AnyDrag, AnyView, AppContext,
-    AsyncWindowContext, AvailableSpace, Bounds, BoxShadow, Context, Corners, CursorStyle,
-    DevicePixels, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity, EntityId,
-    EventEmitter, FileDropEvent, Flatten, FocusEvent, FontId, GlobalElementId, GlyphId, Hsla,
-    ImageData, InputEvent, IsZero, KeyBinding, KeyContext, KeyDownEvent, LayoutId, Model,
-    ModelContext, Modifiers, MonochromeSprite, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInputHandler,
-    PlatformWindow, Point, PolychromeSprite, PromptLevel, Quad, Render, RenderGlyphParams,
-    RenderImageParams, RenderSvgParams, ScaledPixels, SceneBuilder, Shadow, SharedString, Size,
-    Style, SubscriberSet, Subscription, TaffyLayoutEngine, Task, Underline, UnderlineStyle, View,
-    VisualContext, WeakView, WindowBounds, WindowOptions, SUBPIXEL_VARIANTS,
+    AsyncWindowContext, AvailableSpace, Bounds, BoxShadow, CallbackHandle, ConstructorHandle,
+    Context, Corners, CursorStyle, DevicePixels, DispatchNodeId, DispatchTree, DisplayId, Edges,
+    Effect, Entity, EntityId, EventEmitter, FileDropEvent, Flatten, FocusEvent, FontId,
+    GlobalElementId, GlyphId, Hsla, ImageData, InputEvent, IsZero, KeyBinding, KeyContext,
+    KeyDownEvent, LayoutId, Model, ModelContext, Modifiers, MonochromeSprite, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay,
+    PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, PromptLevel, Quad, Render,
+    RenderGlyphParams, RenderImageParams, RenderSvgParams, ScaledPixels, SceneBuilder, Shadow,
+    SharedString, Size, Style, SubscriberSet, Subscription, TaffyLayoutEngine, Task, Underline,
+    UnderlineStyle, View, VisualContext, WeakView, WindowBounds, WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::HashMap;
@@ -1436,6 +1436,47 @@ impl<'a> WindowContext<'a> {
             .dispatch_tree
             .bindings_for_action(action)
     }
+
+    ///========== ELEMENT RELATED FUNCTIONS ===========
+    pub fn with_key_dispatch<R>(
+        &mut self,
+        context: KeyContext,
+        focus_handle: Option<FocusHandle>,
+        f: impl FnOnce(Option<FocusHandle>, &mut Self) -> R,
+    ) -> R {
+        let window = &mut self.window;
+        window
+            .current_frame
+            .dispatch_tree
+            .push_node(context.clone());
+        if let Some(focus_handle) = focus_handle.as_ref() {
+            window
+                .current_frame
+                .dispatch_tree
+                .make_focusable(focus_handle.id);
+        }
+        let result = f(focus_handle, self);
+
+        self.window.current_frame.dispatch_tree.pop_node();
+
+        result
+    }
+
+    /// Register a focus listener for the current frame only. It will be cleared
+    /// on the next frame render. You should use this method only from within elements,
+    /// and we may want to enforce that better via a different context type.
+    // todo!() Move this to `FrameContext` to emphasize its individuality?
+    pub fn on_focus_changed(
+        &mut self,
+        listener: impl Fn(&FocusEvent, &mut WindowContext) + 'static,
+    ) {
+        self.window
+            .current_frame
+            .focus_listeners
+            .push(Box::new(move |event, cx| {
+                listener(event, cx);
+            }));
+    }
 }
 
 impl Context for WindowContext<'_> {
@@ -2124,49 +2165,6 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         )
     }
 
-    /// Register a focus listener for the current frame only. It will be cleared
-    /// on the next frame render. You should use this method only from within elements,
-    /// and we may want to enforce that better via a different context type.
-    // todo!() Move this to `FrameContext` to emphasize its individuality?
-    pub fn on_focus_changed(
-        &mut self,
-        listener: impl Fn(&mut V, &FocusEvent, &mut ViewContext<V>) + 'static,
-    ) {
-        let handle = self.view().downgrade();
-        self.window
-            .current_frame
-            .focus_listeners
-            .push(Box::new(move |event, cx| {
-                handle
-                    .update(cx, |view, cx| listener(view, event, cx))
-                    .log_err();
-            }));
-    }
-
-    pub fn with_key_dispatch<R>(
-        &mut self,
-        context: KeyContext,
-        focus_handle: Option<FocusHandle>,
-        f: impl FnOnce(Option<FocusHandle>, &mut Self) -> R,
-    ) -> R {
-        let window = &mut self.window;
-        window
-            .current_frame
-            .dispatch_tree
-            .push_node(context.clone());
-        if let Some(focus_handle) = focus_handle.as_ref() {
-            window
-                .current_frame
-                .dispatch_tree
-                .make_focusable(focus_handle.id);
-        }
-        let result = f(focus_handle, self);
-
-        self.window.current_frame.dispatch_tree.pop_node();
-
-        result
-    }
-
     pub fn spawn<Fut, R>(
         &mut self,
         f: impl FnOnce(WeakView<V>, AsyncWindowContext) -> Fut,
@@ -2283,6 +2281,25 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         V: ManagedView,
     {
         self.defer(|_, cx| cx.emit(Manager::Dismiss))
+    }
+
+    pub fn callback<E>(
+        &self,
+        f: impl Fn(&mut V, &E, &mut ViewContext<V>) + 'static,
+    ) -> CallbackHandle<E> {
+        let view = self.view().clone();
+        (move |e: &E, cx: &mut WindowContext| {
+            view.update(cx, |view, cx| f(view, e, cx));
+        })
+        .into()
+    }
+
+    pub fn constructor<R>(
+        &self,
+        f: impl Fn(&mut V, &mut ViewContext<V>) -> R + 'static,
+    ) -> ConstructorHandle<R> {
+        let view = self.view().clone();
+        (move |cx: &mut WindowContext| view.update(cx, |view, cx| f(view, cx))).into()
     }
 }
 

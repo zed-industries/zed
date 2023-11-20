@@ -3,15 +3,15 @@ use taffy::style::{Display, Position};
 
 use crate::{
     point, AnyElement, BorrowWindow, Bounds, Component, Element, LayoutId, ParentComponent, Pixels,
-    Point, Size, Style,
+    Point, Size, Style, WindowContext,
 };
 
 pub struct OverlayState {
     child_layout_ids: SmallVec<[LayoutId; 4]>,
 }
 
-pub struct Overlay<V> {
-    children: SmallVec<[AnyElement<V>; 2]>,
+pub struct Overlay {
+    children: SmallVec<[AnyElement; 2]>,
     anchor_corner: AnchorCorner,
     fit_mode: OverlayFitMode,
     // todo!();
@@ -21,7 +21,7 @@ pub struct Overlay<V> {
 
 /// overlay gives you a floating element that will avoid overflowing the window bounds.
 /// Its children should have no margin to avoid measurement issues.
-pub fn overlay<V: 'static>() -> Overlay<V> {
+pub fn overlay() -> Overlay {
     Overlay {
         children: SmallVec::new(),
         anchor_corner: AnchorCorner::TopLeft,
@@ -30,7 +30,7 @@ pub fn overlay<V: 'static>() -> Overlay<V> {
     }
 }
 
-impl<V> Overlay<V> {
+impl Overlay {
     /// Sets which corner of the overlay should be anchored to the current position.
     pub fn anchor(mut self, anchor: AnchorCorner) -> Self {
         self.anchor_corner = anchor;
@@ -51,19 +51,19 @@ impl<V> Overlay<V> {
     }
 }
 
-impl<V: 'static> ParentComponent<V> for Overlay<V> {
-    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<V>; 2]> {
+impl ParentComponent for Overlay {
+    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement; 2]> {
         &mut self.children
     }
 }
 
-impl<V: 'static> Component<V> for Overlay<V> {
-    fn render(self) -> AnyElement<V> {
+impl Component for Overlay {
+    fn render(self) -> AnyElement {
         AnyElement::new(self)
     }
 }
 
-impl<V: 'static> Element<V> for Overlay<V> {
+impl Element for Overlay {
     type ElementState = OverlayState;
 
     fn element_id(&self) -> Option<crate::ElementId> {
@@ -72,14 +72,13 @@ impl<V: 'static> Element<V> for Overlay<V> {
 
     fn layout(
         &mut self,
-        view_state: &mut V,
         _: Option<Self::ElementState>,
-        cx: &mut crate::ViewContext<V>,
+        cx: &mut WindowContext,
     ) -> (crate::LayoutId, Self::ElementState) {
         let child_layout_ids = self
             .children
             .iter_mut()
-            .map(|child| child.layout(view_state, cx))
+            .map(|child| child.layout(cx))
             .collect::<SmallVec<_>>();
 
         let mut overlay_style = Style::default();
@@ -94,9 +93,8 @@ impl<V: 'static> Element<V> for Overlay<V> {
     fn paint(
         &mut self,
         bounds: crate::Bounds<crate::Pixels>,
-        view_state: &mut V,
         element_state: &mut Self::ElementState,
-        cx: &mut crate::ViewContext<V>,
+        cx: &mut WindowContext,
     ) {
         if element_state.child_layout_ids.is_empty() {
             return;
@@ -157,7 +155,7 @@ impl<V: 'static> Element<V> for Overlay<V> {
 
         cx.with_element_offset(desired.origin - bounds.origin, |cx| {
             for child in &mut self.children {
-                child.paint(view_state, cx);
+                child.paint(cx);
             }
         })
     }

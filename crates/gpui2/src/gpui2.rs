@@ -196,6 +196,30 @@ where
     }
 }
 
+pub struct CallbackHandle<E> {
+    callback: Box<dyn Fn(&E, &mut WindowContext) + 'static>,
+}
+
+impl<E, F: Fn(&E, &mut WindowContext) + 'static> From<F> for CallbackHandle<E> {
+    fn from(value: F) -> Self {
+        CallbackHandle {
+            callback: Box::new(value),
+        }
+    }
+}
+
+pub struct ConstructorHandle<R> {
+    callback: Box<dyn Fn(&mut WindowContext) -> R + 'static>,
+}
+
+impl<R, F: Fn(&mut WindowContext) -> R + 'static> From<F> for ConstructorHandle<R> {
+    fn from(value: F) -> Self {
+        ConstructorHandle {
+            callback: Box::new(value),
+        }
+    }
+}
+
 pub trait Flatten<T> {
     fn flatten(self) -> Result<T>;
 }

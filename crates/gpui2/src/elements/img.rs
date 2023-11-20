@@ -1,18 +1,17 @@
 use crate::{
-    AnyElement, BorrowWindow, Bounds, Component, Element, InteractiveComponent,
-    InteractiveElementState, Interactivity, LayoutId, Pixels, SharedString, StyleRefinement,
-    Styled, ViewContext,
+    AnyElement, Bounds, Component, Element, InteractiveComponent, InteractiveElementState,
+    Interactivity, LayoutId, Pixels, SharedString, StyleRefinement, Styled, WindowContext,
 };
 use futures::FutureExt;
 use util::ResultExt;
 
-pub struct Img<V: 'static> {
-    interactivity: Interactivity<V>,
+pub struct Img {
+    interactivity: Interactivity,
     uri: Option<SharedString>,
     grayscale: bool,
 }
 
-pub fn img<V: 'static>() -> Img<V> {
+pub fn img() -> Img {
     Img {
         interactivity: Interactivity::default(),
         uri: None,
@@ -20,10 +19,7 @@ pub fn img<V: 'static>() -> Img<V> {
     }
 }
 
-impl<V> Img<V>
-where
-    V: 'static,
-{
+impl Img {
     pub fn uri(mut self, uri: impl Into<SharedString>) -> Self {
         self.uri = Some(uri.into());
         self
@@ -35,13 +31,13 @@ where
     }
 }
 
-impl<V> Component<V> for Img<V> {
-    fn render(self) -> AnyElement<V> {
+impl Component for Img {
+    fn render(self) -> AnyElement {
         AnyElement::new(self)
     }
 }
 
-impl<V> Element<V> for Img<V> {
+impl Element for Img {
     type ElementState = InteractiveElementState;
 
     fn element_id(&self) -> Option<crate::ElementId> {
@@ -50,9 +46,8 @@ impl<V> Element<V> for Img<V> {
 
     fn layout(
         &mut self,
-        _view_state: &mut V,
         element_state: Option<Self::ElementState>,
-        cx: &mut ViewContext<V>,
+        cx: &mut WindowContext,
     ) -> (LayoutId, Self::ElementState) {
         self.interactivity.layout(element_state, cx, |style, cx| {
             cx.request_layout(&style, None)
@@ -62,9 +57,8 @@ impl<V> Element<V> for Img<V> {
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
-        _view_state: &mut V,
         element_state: &mut Self::ElementState,
-        cx: &mut ViewContext<V>,
+        cx: &mut WindowContext,
     ) {
         self.interactivity.paint(
             bounds,
@@ -89,7 +83,7 @@ impl<V> Element<V> for Img<V> {
                                 .log_err()
                         });
                     } else {
-                        cx.spawn(|_, mut cx| async move {
+                        cx.spawn(|mut cx| async move {
                             if image_future.await.ok().is_some() {
                                 cx.on_next_frame(|cx| cx.notify());
                             }
@@ -102,14 +96,14 @@ impl<V> Element<V> for Img<V> {
     }
 }
 
-impl<V> Styled for Img<V> {
+impl Styled for Img {
     fn style(&mut self) -> &mut StyleRefinement {
         &mut self.interactivity.base_style
     }
 }
 
-impl<V> InteractiveComponent<V> for Img<V> {
-    fn interactivity(&mut self) -> &mut Interactivity<V> {
+impl InteractiveComponent for Img {
+    fn interactivity(&mut self) -> &mut Interactivity {
         &mut self.interactivity
     }
 }

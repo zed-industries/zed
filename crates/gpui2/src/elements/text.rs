@@ -1,6 +1,6 @@
 use crate::{
-    AnyElement, BorrowWindow, Bounds, Component, Element, ElementId, LayoutId, Pixels,
-    SharedString, Size, TextRun, ViewContext, WrappedLine,
+    AnyElement, Bounds, Component, Element, ElementId, LayoutId, Pixels, SharedString, Size,
+    TextRun, WindowContext, WrappedLine,
 };
 use parking_lot::{Mutex, MutexGuard};
 use smallvec::SmallVec;
@@ -26,13 +26,13 @@ impl Text {
     }
 }
 
-impl<V: 'static> Component<V> for Text {
-    fn render(self) -> AnyElement<V> {
+impl Component for Text {
+    fn render(self) -> AnyElement {
         AnyElement::new(self)
     }
 }
 
-impl<V: 'static> Element<V> for Text {
+impl Element for Text {
     type ElementState = TextState;
 
     fn element_id(&self) -> Option<crate::ElementId> {
@@ -41,9 +41,8 @@ impl<V: 'static> Element<V> for Text {
 
     fn layout(
         &mut self,
-        _view: &mut V,
         element_state: Option<Self::ElementState>,
-        cx: &mut ViewContext<V>,
+        cx: &mut WindowContext,
     ) -> (LayoutId, Self::ElementState) {
         let element_state = element_state.unwrap_or_default();
         let text_system = cx.text_system().clone();
@@ -120,9 +119,8 @@ impl<V: 'static> Element<V> for Text {
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
-        _: &mut V,
         element_state: &mut Self::ElementState,
-        cx: &mut ViewContext<V>,
+        cx: &mut WindowContext,
     ) {
         let element_state = element_state.lock();
         let element_state = element_state
@@ -165,7 +163,7 @@ struct InteractiveTextState {
     clicked_range_ixs: Rc<Cell<SmallVec<[usize; 1]>>>,
 }
 
-impl<V: 'static> Element<V> for InteractiveText {
+impl Element for InteractiveText {
     type ElementState = InteractiveTextState;
 
     fn element_id(&self) -> Option<ElementId> {
@@ -174,23 +172,22 @@ impl<V: 'static> Element<V> for InteractiveText {
 
     fn layout(
         &mut self,
-        view_state: &mut V,
         element_state: Option<Self::ElementState>,
-        cx: &mut ViewContext<V>,
+        cx: &mut WindowContext,
     ) -> (LayoutId, Self::ElementState) {
         if let Some(InteractiveTextState {
             text_state,
             clicked_range_ixs,
         }) = element_state
         {
-            let (layout_id, text_state) = self.text.layout(view_state, Some(text_state), cx);
+            let (layout_id, text_state) = self.text.layout(Some(text_state), cx);
             let element_state = InteractiveTextState {
                 text_state,
                 clicked_range_ixs,
             };
             (layout_id, element_state)
         } else {
-            let (layout_id, text_state) = self.text.layout(view_state, None, cx);
+            let (layout_id, text_state) = self.text.layout(None, cx);
             let element_state = InteractiveTextState {
                 text_state,
                 clicked_range_ixs: Rc::default(),
@@ -202,17 +199,15 @@ impl<V: 'static> Element<V> for InteractiveText {
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
-        view_state: &mut V,
         element_state: &mut Self::ElementState,
-        cx: &mut ViewContext<V>,
+        cx: &mut WindowContext,
     ) {
-        self.text
-            .paint(bounds, view_state, &mut element_state.text_state, cx)
+        self.text.paint(bounds, &mut element_state.text_state, cx)
     }
 }
 
-impl<V: 'static> Component<V> for SharedString {
-    fn render(self) -> AnyElement<V> {
+impl Component for SharedString {
+    fn render(self) -> AnyElement {
         Text {
             text: self,
             runs: None,
@@ -221,8 +216,8 @@ impl<V: 'static> Component<V> for SharedString {
     }
 }
 
-impl<V: 'static> Component<V> for &'static str {
-    fn render(self) -> AnyElement<V> {
+impl Component for &'static str {
+    fn render(self) -> AnyElement {
         Text {
             text: self.into(),
             runs: None,
@@ -233,8 +228,8 @@ impl<V: 'static> Component<V> for &'static str {
 
 // TODO: Figure out how to pass `String` to `child` without this.
 // This impl doesn't exist in the `gpui2` crate.
-impl<V: 'static> Component<V> for String {
-    fn render(self) -> AnyElement<V> {
+impl Component for String {
+    fn render(self) -> AnyElement {
         Text {
             text: self.into(),
             runs: None,
