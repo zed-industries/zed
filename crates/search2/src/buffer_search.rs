@@ -257,18 +257,23 @@ impl ToolbarItemView for BufferSearchBar {
         if let Some(searchable_item_handle) =
             item.and_then(|item| item.to_searchable_item_handle(cx))
         {
+            dbg!("Setting");
+            dbg!(searchable_item_handle.item_id());
             let this = cx.view().downgrade();
-            self.active_searchable_item_subscription =
-                Some(searchable_item_handle.subscribe_to_search_events(
+
+            searchable_item_handle
+                .subscribe_to_search_events(
                     cx,
                     Box::new(move |search_event, cx| {
+                        dbg!(&search_event);
                         if let Some(this) = this.upgrade() {
                             this.update(cx, |this, cx| {
                                 this.on_active_searchable_item_event(search_event, cx)
                             });
                         }
                     }),
-                ));
+                )
+                .detach();
 
             self.active_searchable_item = Some(searchable_item_handle);
             let _ = self.update_matches(cx);
@@ -570,6 +575,7 @@ impl BufferSearchBar {
     }
 
     fn select_next_match(&mut self, _: &SelectNextMatch, cx: &mut ViewContext<Self>) {
+        dbg!("Hey?");
         self.select_match(Direction::Next, 1, cx);
     }
 
@@ -593,13 +599,17 @@ impl BufferSearchBar {
 
     pub fn select_match(&mut self, direction: Direction, count: usize, cx: &mut ViewContext<Self>) {
         if let Some(index) = self.active_match_index {
+            dbg!("Has index");
             if let Some(searchable_item) = self.active_searchable_item.as_ref() {
+                dbg!("Has searchable item");
                 if let Some(matches) = self
                     .searchable_items_with_matches
                     .get(&searchable_item.downgrade())
                 {
+                    dbg!("Has matches");
                     let new_match_index = searchable_item
                         .match_index_for_direction(matches, index, direction, count, cx);
+                    dbg!(new_match_index);
                     searchable_item.update_matches(matches, cx);
                     searchable_item.activate_match(new_match_index, matches, cx);
                 }
@@ -642,6 +652,7 @@ impl BufferSearchBar {
     }
 
     fn on_active_searchable_item_event(&mut self, event: &SearchEvent, cx: &mut ViewContext<Self>) {
+        dbg!(&event);
         match event {
             SearchEvent::MatchesInvalidated => {
                 let _ = self.update_matches(cx);
@@ -1255,6 +1266,7 @@ mod tests {
             search_bar
         });
 
+        dbg!("!");
         window
             .update(cx, |_, cx| {
                 search_bar.update(cx, |search_bar, cx| search_bar.search("a", None, cx))
@@ -1262,8 +1274,8 @@ mod tests {
             .unwrap()
             .await
             .unwrap();
-
-        let last_match_selections = window
+        dbg!("?");
+        let initial_selections = window
             .update(cx, |_, cx| {
                 search_bar.update(cx, |search_bar, cx| {
                     let handle = search_bar.query_editor.focus_handle(cx);
@@ -1306,57 +1318,69 @@ mod tests {
                         "Match index should not change after selecting all matches"
                     );
                 });
+
                 search_bar.update(cx, |this, cx| this.select_next_match(&SelectNextMatch, cx));
-                assert!(
-                    editor.read(cx).is_focused(cx),
-                    "Should still have editor focused after SelectNextMatch"
+                initial_selections
+            }).unwrap();
+        dbg!("Hey");
+        window.update(cx, |_, cx| {
+            assert!(
+                editor.read(cx).is_focused(cx),
+                "Should still have editor focused after SelectNextMatch"
+            );
+            search_bar.update(cx, |search_bar, cx| {
+                let all_selections =
+                    editor.update(cx, |editor, cx| editor.selections.display_ranges(cx));
+                assert_eq!(
+                    all_selections.len(),
+                    1,
+                    "On next match, should deselect items and select the next match"
                 );
-                search_bar.update(cx, |search_bar, cx| {
-                    let all_selections =
-                        editor.update(cx, |editor, cx| editor.selections.display_ranges(cx));
-                    assert_eq!(
-                        all_selections.len(),
-                        1,
-                        "On next match, should deselect items and select the next match"
-                    );
-                    assert_ne!(
-                        all_selections, initial_selections,
-                        "Next match should be different from the first selection"
-                    );
-                    assert_eq!(
-                        search_bar.active_match_index,
-                        Some(1),
-                        "Match index should be updated to the next one"
-                    );
-                    let handle = search_bar.query_editor.focus_handle(cx);
-                    cx.focus(&handle);
-                    search_bar.select_all_matches(&SelectAllMatches, cx);
-                });
-                assert!(
-                    editor.read(cx).is_focused(cx),
-                    "Should focus editor after successful SelectAllMatches"
+                assert_ne!(
+                    all_selections, initial_selections,
+                    "Next match should be different from the first selection"
                 );
-                search_bar.update(cx, |search_bar, cx| {
-                    let all_selections =
-                        editor.update(cx, |editor, cx| editor.selections.display_ranges(cx));
-                    assert_eq!(
-                        all_selections.len(),
-                        expected_query_matches_count,
-                        "Should select all `a` characters in the buffer, but got: {all_selections:?}"
-                    );
-                    assert_eq!(
-                        search_bar.active_match_index,
-                        Some(1),
-                        "Match index should not change after selecting all matches"
-                    );
-                });
-                search_bar.update(cx, |search_bar, cx| {
-                    search_bar.select_prev_match(&SelectPrevMatch, cx);
-                });
+                assert_eq!(
+                    search_bar.active_match_index,
+                    Some(1),
+                    "Match index should be updated to the next one"
+                );
+                let handle = search_bar.query_editor.focus_handle(cx);
+                cx.focus(&handle);
+                search_bar.select_all_matches(&SelectAllMatches, cx);
+            });
+        });
+        dbg!("Ey");
+        window.update(cx, |_, cx| {
+            assert!(
+                editor.read(cx).is_focused(cx),
+                "Should focus editor after successful SelectAllMatches"
+            );
+            search_bar.update(cx, |search_bar, cx| {
+                let all_selections =
+                    editor.update(cx, |editor, cx| editor.selections.display_ranges(cx));
+                assert_eq!(
+                    all_selections.len(),
+                    expected_query_matches_count,
+                    "Should select all `a` characters in the buffer, but got: {all_selections:?}"
+                );
+                assert_eq!(
+                    search_bar.active_match_index,
+                    Some(1),
+                    "Match index should not change after selecting all matches"
+                );
+            });
+            search_bar.update(cx, |search_bar, cx| {
+                search_bar.select_prev_match(&SelectPrevMatch, cx);
+            });
+        });
+        let last_match_selections = window
+            .update(cx, |_, cx| {
                 assert!(
                     editor.read(cx).is_focused(&cx),
                     "Should still have editor focused after SelectPrevMatch"
                 );
+
                 search_bar.update(cx, |search_bar, cx| {
                     let all_selections =
                         editor.update(cx, |editor, cx| editor.selections.display_ranges(cx));

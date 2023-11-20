@@ -1,7 +1,7 @@
 use std::{any::Any, sync::Arc};
 
 use gpui::{
-    AnyView, AppContext, EventEmitter, Subscription, Task, View, ViewContext, WeakView,
+    AnyView, AppContext, Entity, EventEmitter, Subscription, Task, View, ViewContext, WeakView,
     WindowContext,
 };
 use project2::search::SearchQuery;
