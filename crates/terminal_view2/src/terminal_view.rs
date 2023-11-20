@@ -755,7 +755,7 @@ impl Item for TerminalView {
 
         div()
             .child(IconElement::new(Icon::Terminal))
-            .child(title)
+            .child(Label::new(title))
             .into_any()
     }
 

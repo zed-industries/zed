@@ -1,4 +1,4 @@
-use gpui::{div, Div, EventEmitter, ParentComponent, Render, SemanticVersion, ViewContext};
+use gpui::{div, Div, EventEmitter, ParentElement, Render, SemanticVersion, ViewContext};
 use menu::Cancel;
 use workspace::notifications::NotificationEvent;
 
@@ -8,7 +8,7 @@ pub struct UpdateNotification {
 
 impl EventEmitter<NotificationEvent> for UpdateNotification {}
 
-impl Render for UpdateNotification {
+impl Render<Self> for UpdateNotification {
     type Element = Div<Self>;
 
     fn render(&mut self, _cx: &mut gpui::ViewContext<Self>) -> Self::Element {

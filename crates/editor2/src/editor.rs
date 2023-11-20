@@ -4403,7 +4403,6 @@ impl Editor {
                                     }
                                 })
                                 .color(ui::TextColor::Muted)
-                                .render()
                         })
                     })
                     .flatten()

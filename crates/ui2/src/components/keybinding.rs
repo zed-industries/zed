@@ -1,6 +1,5 @@
 use crate::prelude::*;
 use gpui::{Action, Div, RenderOnce};
-use strum::EnumIter;
 
 #[derive(RenderOnce, Clone)]
 pub struct KeyBinding {
@@ -72,22 +71,6 @@ impl Key {
     }
 }
 
-// NOTE: The order the modifier keys appear in this enum impacts the order in
-// which they are rendered in the UI.
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, EnumIter)]
-pub enum ModifierKey {
-    Control,
-    Alt,
-    Command,
-    Shift,
-}
-
-actions!(NoAction);
-
-pub fn binding(key: &str) -> gpui::KeyBinding {
-    gpui::KeyBinding::new(key, NoAction {}, None)
-}
-
 #[cfg(feature = "stories")]
 pub use stories::*;
 
@@ -95,7 +78,7 @@ pub use stories::*;
 mod stories {
     use super::*;
     pub use crate::KeyBinding;
-    use crate::{binding, Story};
+    use crate::Story;
     use gpui::{actions, Div, Render};
     use itertools::Itertools;
     pub struct KeybindingStory;
@@ -106,7 +89,7 @@ mod stories {
         gpui::KeyBinding::new(key, NoAction {}, None)
     }
 
-    impl Render for KeybindingStory {
+    impl Render<Self> for KeybindingStory {
         type Element = Div<Self>;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {

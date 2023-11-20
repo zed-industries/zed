@@ -1,4 +1,4 @@
-use gpui::{div, Action, Div, RenderOnce};
+use gpui::{div, Div, RenderOnce, Stateful, StatefulInteractiveElement};
 use std::rc::Rc;
 
 use crate::settings::user_settings;
@@ -232,7 +232,7 @@ pub enum ListEntrySize {
     Medium,
 }
 
-#[derive(RenderOnce, Clone)]
+#[derive(Clone)]
 pub enum ListItem<V: 'static> {
     Entry(ListEntry<V>),
     Separator(ListSeparator),
@@ -257,19 +257,7 @@ impl<V: 'static> From<ListSubHeader> for ListItem<V> {
     }
 }
 
-impl<V: 'static> Component<V> for ListItem<V> {
-    type Rendered = Div<V>;
-
-    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
-        match self {
-            ListItem::Entry(entry) => div().child(entry.render(ix, cx)),
-            ListItem::Separator(separator) => div().child(separator.render(view, cx)),
-            ListItem::Header(header) => div().child(header.render(view, cx)),
-        }
-    }
-}
-
-impl ListItem {
+impl<V: 'static> ListItem<V> {
     pub fn new(label: Label) -> Self {
         Self::Entry(ListEntry::new(label))
     }
@@ -279,6 +267,14 @@ impl ListItem {
             Some(entry)
         } else {
             None
+        }
+    }
+
+    fn render(self, view: &mut V, ix: usize, cx: &mut ViewContext<V>) -> Div<V> {
+        match self {
+            ListItem::Entry(entry) => div().child(entry.render(ix, cx)),
+            ListItem::Separator(separator) => div().child(separator.render(view, cx)),
+            ListItem::Header(header) => div().child(header.render(view, cx)),
         }
     }
 }
@@ -458,7 +454,7 @@ impl<V: 'static> Component<V> for ListSeparator {
 
 #[derive(RenderOnce)]
 pub struct List<V: 'static> {
-    items: Vec<ListItem>,
+    items: Vec<ListItem<V>>,
     /// Message to display when the list is empty
     /// Defaults to "No items"
     empty_message: SharedString,
@@ -471,7 +467,12 @@ impl<V: 'static> Component<V> for List<V> {
 
     fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
         let list_content = match (self.items.is_empty(), self.toggle) {
-            (false, _) => div().children(self.items),
+            (false, _) => div().children(
+                self.items
+                    .into_iter()
+                    .enumerate()
+                    .map(|(ix, item)| item.render(view, ix, cx)),
+            ),
             (true, Toggle::Toggled(false)) => div(),
             (true, _) => {
                 div().child(Label::new(self.empty_message.clone()).color(TextColor::Muted))
@@ -487,7 +488,7 @@ impl<V: 'static> Component<V> for List<V> {
 }
 
 impl<V: 'static> List<V> {
-    pub fn new(items: Vec<ListItem>) -> Self {
+    pub fn new(items: Vec<ListItem<V>>) -> Self {
         Self {
             items,
             empty_message: "No items".into(),
@@ -511,7 +512,7 @@ impl<V: 'static> List<V> {
         self
     }
 
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
+    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
         let list_content = match (self.items.is_empty(), self.toggle) {
             (false, _) => div().children(
                 self.items

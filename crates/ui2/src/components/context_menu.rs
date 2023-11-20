@@ -1,18 +1,12 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::prelude::*;
-use crate::{v_stack, Label, List, ListEntry, ListItem, ListSeparator, ListSubHeader};
+use crate::{prelude::*, v_stack, List, ListItem};
+use crate::{ListEntry, ListSeparator, ListSubHeader};
 use gpui::{
-<<<<<<< HEAD
-    overlay, px, Action, AnchorCorner, AnyElement, Bounds, Dismiss, DispatchPhase, Div,
-    FocusHandle, LayoutId, ManagedView, MouseButton, MouseDownEvent, Pixels, Point, Render,
-    RenderOnce, View,
-=======
     overlay, px, Action, AnchorCorner, AnyElement, AppContext, Bounds, DispatchPhase, Div,
     EventEmitter, FocusHandle, FocusableView, LayoutId, ManagedView, Manager, MouseButton,
-    MouseDownEvent, Pixels, Point, Render, View, VisualContext, WeakView,
->>>>>>> main
+    MouseDownEvent, Pixels, Point, Render, RenderOnce, View, VisualContext, WeakView,
 };
 
 pub enum ContextMenuItem<V> {
@@ -30,15 +24,15 @@ pub struct ContextMenu<V> {
     handle: WeakView<V>,
 }
 
-impl<V: Render> FocusableView for ContextMenu<V> {
+impl<V: 'static> FocusableView for ContextMenu<V> {
     fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
         self.focus_handle.clone()
     }
 }
 
-impl<V: Render> EventEmitter<Manager> for ContextMenu<V> {}
+impl<V: 'static> EventEmitter<Manager> for ContextMenu<V> {}
 
-impl<V: Render> ContextMenu<V> {
+impl<V: 'static> ContextMenu<V> {
     pub fn build(
         cx: &mut ViewContext<V>,
         f: impl FnOnce(Self, &mut ViewContext<Self>) -> Self,
@@ -92,11 +86,7 @@ impl<V: Render> ContextMenu<V> {
     }
 }
 
-<<<<<<< HEAD
-impl Render<Self> for ContextMenu {
-=======
-impl<V: Render> Render for ContextMenu<V> {
->>>>>>> main
+impl<V: 'static> Render<Self> for ContextMenu<V> {
     type Element = Div<Self>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
@@ -324,7 +314,7 @@ mod stories {
 
     actions!(PrintCurrentDate, PrintBestFood);
 
-    fn build_menu<V: Render>(
+    fn build_menu<V: Render<V>>(
         cx: &mut ViewContext<V>,
         header: impl Into<SharedString>,
     ) -> View<ContextMenu<V>> {

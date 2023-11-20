@@ -2,10 +2,9 @@ use collections::HashMap;
 use editor::{scroll::autoscroll::Autoscroll, Bias, Editor};
 use fuzzy::{CharBag, PathMatch, PathMatchCandidate};
 use gpui::{
-    actions, div, AppContext, Component, Dismiss, Div, EventEmitter, FocusHandle, FocusableView,
-    InteractiveComponent, InteractiveElement, ManagedView, Manager, Model, ParentComponent,
-    ParentElement, Render, RenderOnce, Styled, Styled, Task, View, ViewContext, VisualContext,
-    WeakView,
+    actions, div, AppContext, Div, EventEmitter, FocusHandle, FocusableView, InteractiveElement,
+    Manager, Model, ParentElement, Render, RenderOnce, Styled, Task, View, ViewContext,
+    VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};
 use project::{PathMatchCandidateSet, Project, ProjectPath, WorktreeId};

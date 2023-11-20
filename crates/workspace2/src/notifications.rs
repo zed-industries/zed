@@ -15,7 +15,7 @@ pub enum NotificationEvent {
 
 pub trait Notification: EventEmitter<NotificationEvent> + Render<Self> {}
 
-impl<V: EventEmitter<NotificationEvent> + Render> Notification for V {}
+impl<V: EventEmitter<NotificationEvent> + Render<Self>> Notification for V {}
 
 pub trait NotificationHandle: Send {
     fn id(&self) -> EntityId;

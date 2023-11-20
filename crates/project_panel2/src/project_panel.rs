@@ -247,7 +247,6 @@ impl ProjectPanel {
             let mut old_dock_position = this.position(cx);
             ProjectPanelSettings::register(cx);
             cx.observe_global::<SettingsStore>(move |this, cx| {
-                dbg!("OLA!");
                 let new_dock_position = this.position(cx);
                 if new_dock_position != old_dock_position {
                     old_dock_position = new_dock_position;

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use gpui::{
-    div, DefiniteLength, Div, Hsla, MouseButton, RenderOnce, Stateful, StatefulInteractiveElement,
+    DefiniteLength, Div, Hsla, MouseButton, RenderOnce, Stateful, StatefulInteractiveElement,
     WindowContext,
 };
 

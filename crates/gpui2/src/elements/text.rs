@@ -256,19 +256,35 @@ impl TextState {
 
         let layout_id = cx.request_measured_layout(Default::default(), rem_size, {
             let element_state = self.clone();
-            move |known_dimensions, _| {
+
+            move |known_dimensions, available_space| {
+                let wrap_width = known_dimensions.width.or(match available_space.width {
+                    crate::AvailableSpace::Definite(x) => Some(x),
+                    _ => None,
+                });
+
+                if let Some(text_state) = element_state.0.lock().as_ref() {
+                    if text_state.size.is_some()
+                        && (wrap_width.is_none() || wrap_width == text_state.wrap_width)
+                    {
+                        return text_state.size.unwrap();
+                    }
+                }
+
                 let Some(lines) = text_system
                     .shape_text(
                         &text,
                         font_size,
                         &runs[..],
-                        known_dimensions.width, // Wrap if we know the width.
+                        wrap_width, // Wrap if we know the width.
                     )
                     .log_err()
                 else {
                     element_state.lock().replace(TextStateInner {
                         lines: Default::default(),
                         line_height,
+                        wrap_width,
+                        size: Some(Size::default()),
                     });
                     return Size::default();
                 };
@@ -280,9 +296,12 @@ impl TextState {
                     size.width = size.width.max(line_size.width);
                 }
 
-                element_state
-                    .lock()
-                    .replace(TextStateInner { lines, line_height });
+                element_state.lock().replace(TextStateInner {
+                    lines,
+                    line_height,
+                    wrap_width,
+                    size: Some(size),
+                });
 
                 size
             }
