@@ -369,8 +369,6 @@ impl Telemetry {
             .clickhouse_events_queue
             .push(ClickhouseEventWrapper { signed_in, event });
 
-        dbg!(state.clickhouse_events_queue.len(), chrono::Utc::now());
-
         if state.installation_id.is_some() {
             if state.clickhouse_events_queue.len() >= MAX_QUEUE_LEN {
                 drop(state);
@@ -436,7 +434,6 @@ impl Telemetry {
                             release_channel: state.release_channel,
                             events,
                         };
-                        dbg!(&request_body);
                         json_bytes.clear();
                         serde_json::to_writer(&mut json_bytes, &request_body)?;
                     }

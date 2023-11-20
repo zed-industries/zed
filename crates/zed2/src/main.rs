@@ -73,7 +73,6 @@ fn main() {
     let app = App::production(Arc::new(Assets));
 
     let installation_id = app.background_executor().block(installation_id()).ok();
-    dbg!("HERE", &installation_id);
     let session_id = Uuid::new_v4().to_string();
     init_panic_hook(&app, installation_id.clone(), session_id.clone());
 

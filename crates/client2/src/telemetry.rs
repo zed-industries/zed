@@ -370,9 +370,6 @@ impl Telemetry {
             .clickhouse_events_queue
             .push(ClickhouseEventWrapper { signed_in, event });
 
-        dbg!(state.clickhouse_events_queue.len(), chrono::Utc::now());
-        dbg!(state.installation_id.is_some());
-
         if state.installation_id.is_some() {
             if state.clickhouse_events_queue.len() >= MAX_QUEUE_LEN {
                 drop(state);
@@ -406,8 +403,6 @@ impl Telemetry {
         let mut events = mem::take(&mut state.clickhouse_events_queue);
         state.flush_clickhouse_events_task.take();
         drop(state);
-
-        dbg!("In flush");
 
         let this = self.clone();
         self.executor
@@ -446,7 +441,6 @@ impl Telemetry {
                             release_channel: state.release_channel,
                             events,
                         };
-                        dbg!(&request_body);
                         json_bytes.clear();
                         serde_json::to_writer(&mut json_bytes, &request_body)?;
                     }
