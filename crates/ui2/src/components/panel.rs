@@ -1,8 +1,8 @@
+use gpui::px;
 use gpui::{prelude::*, AbsoluteLength, AnyElement, Div, RenderOnce};
 use smallvec::SmallVec;
 
 use crate::prelude::*;
-use crate::settings::user_settings;
 use crate::v_stack;
 
 #[derive(Default, Debug, PartialEq, Eq, Hash, Clone, Copy)]
@@ -75,13 +75,11 @@ impl Component for Panel {
 
 impl Panel {
     pub fn new(id: impl Into<ElementId>, cx: &mut WindowContext) -> Self {
-        let settings = user_settings(cx);
-
         Self {
             id: id.into(),
             current_side: PanelSide::default(),
             allowed_sides: PanelAllowedSides::default(),
-            initial_width: *settings.default_panel_size,
+            initial_width: px(320.).into(),
             width: None,
             children: SmallVec::new(),
         }

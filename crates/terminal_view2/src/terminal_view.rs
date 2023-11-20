@@ -63,7 +63,6 @@ pub struct SendKeystroke(String);
 actions!(Clear, Copy, Paste, ShowCharacterPalette, SearchTest);
 
 pub fn init(cx: &mut AppContext) {
-    workspace::ui::init(cx);
     terminal_panel::init(cx);
     terminal::init(cx);
 

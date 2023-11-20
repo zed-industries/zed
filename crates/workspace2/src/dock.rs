@@ -8,7 +8,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use theme2::ActiveTheme;
-use ui::{h_stack, menu_handle, ContextMenu, IconButton, InteractionState, Tooltip};
+use ui::{
+    h_stack, menu_handle, ContextMenu, IconButton, InteractionState, Label, ListItem, Tooltip,
+};
 
 pub enum PanelEvent {
     ChangePosition,
@@ -711,25 +713,21 @@ impl Render for PanelButtons {
                                 DockPosition::Bottom,
                             ];
 
-                            //CX: Pane
                             ContextMenu::build(cx, |mut menu, cx| {
-                                // CX: Menu
                                 for position in POSITIONS {
                                     if position != dock_position
                                         && panel.position_is_valid(position, cx)
                                     {
-                                        // let panel = panel.clone();
-                                        todo!()
-                                        // menu = menu.entry(
-                                        //     ListEntry::new(Label::new(format!(
-                                        //         "Dock {}",
-                                        //         position.to_label()
-                                        //     ))),
-                                        // cx.listener(move |_, cx| {
-                                        //     //What should CX be? CX: Pane
-                                        //     panel.set_position(position, cx);
-                                        // }),
-                                        //)
+                                        let panel = panel.clone();
+                                        menu = menu.entry(
+                                            ListItem::new(
+                                                panel.entity_id(),
+                                                Label::new(format!("Dock {}", position.to_label())),
+                                            ),
+                                            move |_, cx| {
+                                                panel.set_position(position, cx);
+                                            },
+                                        )
                                     }
                                 }
                                 menu

@@ -1,8 +1,9 @@
-use gpui::{div, AnyElement, ClickEvent, Div, RenderOnce, Stateful, StatefulInteractiveElement};
+use gpui::{
+    div, px, AnyElement, ClickEvent, Div, RenderOnce, Stateful, StatefulInteractiveElement,
+};
 use smallvec::SmallVec;
 use std::rc::Rc;
 
-use crate::settings::user_settings;
 use crate::{
     disclosure_control, h_stack, v_stack, Avatar, Icon, IconElement, IconSize, Label, Toggle,
 };
@@ -331,8 +332,6 @@ impl Component for ListItem {
     type Rendered = Stateful<Div>;
 
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {
-        let settings = user_settings(cx);
-
         let left_content = match self.left_slot.clone() {
             Some(GraphicSlot::Icon(i)) => Some(
                 h_stack().child(
@@ -377,7 +376,7 @@ impl Component for ListItem {
                     // .ml(rems(0.75 * self.indent_level as f32))
                     .children((0..self.indent_level).map(|_| {
                         div()
-                            .w(*settings.list_indent_depth)
+                            .w(px(4.))
                             .h_full()
                             .flex()
                             .justify_center()
