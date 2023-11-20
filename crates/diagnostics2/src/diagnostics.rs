@@ -13,8 +13,8 @@ use editor::{
 };
 use futures::future::try_join_all;
 use gpui::{
-    actions, div, AnyElement, AnyView, AppContext, Component, Context, Div, EventEmitter,
-    FocusEvent, FocusHandle, Focusable, FocusableElement, FocusableView, InteractiveElement, Model,
+    actions, div, AnyElement, AnyView, AppContext, Context, Div, EventEmitter, FocusEvent,
+    FocusHandle, Focusable, FocusableElement, FocusableView, InteractiveElement, Model,
     ParentElement, Render, RenderOnce, SharedString, Styled, Subscription, Task, View, ViewContext,
     VisualContext, WeakView,
 };

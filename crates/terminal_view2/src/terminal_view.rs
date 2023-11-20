@@ -9,10 +9,10 @@ pub mod terminal_panel;
 // use crate::terminal_element::TerminalElement;
 use editor::{scroll::autoscroll::Autoscroll, Editor};
 use gpui::{
-    actions, div, img, red, Action, AnyElement, AppContext, DispatchPhase, Div, Element,
-    EventEmitter, FocusEvent, FocusHandle, Focusable, FocusableElement, FocusableView,
-    InputHandler, InteractiveElement, KeyDownEvent, Keystroke, Model, MouseButton, ParentElement,
-    Pixels, Render, SharedString, Styled, Task, View, ViewContext, VisualContext, WeakView,
+    actions, div, Action, AnyElement, AppContext, DispatchPhase, Div, Element, EventEmitter,
+    FocusEvent, FocusHandle, Focusable, FocusableElement, FocusableView, InputHandler,
+    InteractiveElement, KeyDownEvent, Keystroke, Model, MouseButton, ParentElement, Pixels, Render,
+    SharedString, Styled, Task, View, ViewContext, VisualContext, WeakView,
 };
 use language::Bias;
 use persistence::TERMINAL_DB;
