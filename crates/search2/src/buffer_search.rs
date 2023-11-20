@@ -63,8 +63,8 @@ pub struct BufferSearchBar {
 
 impl EventEmitter<Event> for BufferSearchBar {}
 impl EventEmitter<workspace::ToolbarItemEvent> for BufferSearchBar {}
-impl Render<Self> for BufferSearchBar {
-    type Element = Div<Self>;
+impl Render for BufferSearchBar {
+    type Element = Div;
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         // let query_container_style = if self.query_contains_error {
         //     theme.search.invalid_editor
@@ -131,9 +131,13 @@ impl Render<Self> for BufferSearchBar {
         let search_button_for_mode = |mode| {
             let is_active = self.current_mode == mode;
 
-            render_search_mode_button(mode, is_active, move |this: &mut Self, cx| {
-                this.activate_search_mode(mode, cx);
-            })
+            render_search_mode_button(
+                mode,
+                is_active,
+                cx.listener(move |this, _, cx| {
+                    this.activate_search_mode(mode, cx);
+                }),
+            )
         };
         let search_option_button = |option| {
             let is_active = self.search_options.contains(option);
@@ -161,28 +165,28 @@ impl Render<Self> for BufferSearchBar {
             render_nav_button(
                 icon,
                 self.active_match_index.is_some(),
-                move |this: &mut Self, cx| match direction {
+                cx.listener(move |this, _, cx| match direction {
                     Direction::Prev => this.select_prev_match(&Default::default(), cx),
                     Direction::Next => this.select_next_match(&Default::default(), cx),
-                },
+                }),
             )
         };
         let should_show_replace_input = self.replace_enabled && supported_options.replacement;
         let replace_all = should_show_replace_input
-            .then(|| super::render_replace_button::<Self>(ReplaceAll, ui::Icon::ReplaceAll));
+            .then(|| super::render_replace_button(ReplaceAll, ui::Icon::ReplaceAll));
         let replace_next = should_show_replace_input
-            .then(|| super::render_replace_button::<Self>(ReplaceNext, ui::Icon::Replace));
+            .then(|| super::render_replace_button(ReplaceNext, ui::Icon::Replace));
         let in_replace = self.replacement_editor.focus_handle(cx).is_focused(cx);
 
         h_stack()
             .key_context("BufferSearchBar")
             .when(in_replace, |this| {
                 this.key_context("in_replace")
-                    .on_action(Self::replace_next)
-                    .on_action(Self::replace_all)
+                    .on_action(cx.listener(Self::replace_next))
+                    .on_action(cx.listener(Self::replace_all))
             })
-            .on_action(Self::previous_history_query)
-            .on_action(Self::next_history_query)
+            .on_action(cx.listener(Self::previous_history_query))
+            .on_action(cx.listener(Self::next_history_query))
             .w_full()
             .p_1()
             .child(
@@ -534,13 +538,13 @@ impl BufferSearchBar {
         self.update_matches(cx)
     }
 
-    fn render_action_button(&self) -> impl RenderOnce<Self> {
+    fn render_action_button(&self) -> impl RenderOnce {
         // let tooltip_style = theme.tooltip.clone();
 
         // let style = theme.search.action_button.clone();
 
         IconButton::new(0, ui::Icon::SelectAll)
-            .on_click(|_: &mut Self, cx| cx.dispatch_action(Box::new(SelectAllMatches)))
+            .on_click(|_, cx| cx.dispatch_action(Box::new(SelectAllMatches)))
     }
 
     pub fn activate_search_mode(&mut self, mode: SearchMode, cx: &mut ViewContext<Self>) {
@@ -883,7 +887,7 @@ mod tests {
             let store = settings::SettingsStore::test(cx);
             cx.set_global(store);
             editor::init(cx);
-            ui::init(cx);
+
             language::init(cx);
             theme::init(theme::LoadThemes::JustBase, cx);
         });

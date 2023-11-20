@@ -82,11 +82,11 @@ impl SearchOptions {
         options
     }
 
-    pub fn as_button<V: 'static>(&self, active: bool) -> impl RenderOnce<V> {
+    pub fn as_button(&self, active: bool) -> impl RenderOnce {
         ui::IconButton::new(0, self.icon())
             .on_click({
                 let action = self.to_toggle_action();
-                move |_: &mut V, cx| {
+                move |_, cx| {
                     cx.dispatch_action(action.boxed_clone());
                 }
             })
@@ -95,10 +95,10 @@ impl SearchOptions {
     }
 }
 
-fn toggle_replace_button<V: 'static>(active: bool) -> impl RenderOnce<V> {
+fn toggle_replace_button(active: bool) -> impl RenderOnce {
     // todo: add toggle_replace button
     ui::IconButton::new(0, ui::Icon::Replace)
-        .on_click(|_: &mut V, cx| {
+        .on_click(|_, cx| {
             cx.dispatch_action(Box::new(ToggleReplace));
             cx.notify();
         })
@@ -106,12 +106,12 @@ fn toggle_replace_button<V: 'static>(active: bool) -> impl RenderOnce<V> {
         .when(active, |button| button.variant(ButtonVariant::Filled))
 }
 
-fn render_replace_button<V: 'static>(
+fn render_replace_button(
     action: impl Action + 'static + Send + Sync,
     icon: ui::Icon,
-) -> impl RenderOnce<V> {
+) -> impl RenderOnce {
     // todo: add tooltip
-    ui::IconButton::new(0, icon).on_click(move |_: &mut V, cx| {
+    ui::IconButton::new(0, icon).on_click(move |_, cx| {
         cx.dispatch_action(action.boxed_clone());
     })
 }
