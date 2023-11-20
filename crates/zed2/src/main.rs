@@ -179,8 +179,8 @@ fn main() {
         client.telemetry().start(installation_id, session_id, cx);
         let telemetry_settings = *client::TelemetrySettings::get_global(cx);
         let event_operation = match existing_installation_id_found {
-            Some(true) => "open",
-            _ => "first open",
+            Some(false) => "first open",
+            _ => "open",
         };
         client
             .telemetry()

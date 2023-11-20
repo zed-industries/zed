@@ -175,8 +175,8 @@ fn main() {
         // Copy logic to zed2
         let telemetry_settings = *settings::get::<TelemetrySettings>(cx);
         let event_operation = match existing_installation_id_found {
-            Some(true) => "open",
-            _ => "first open",
+            Some(false) => "first open",
+            _ => "open",
         };
         client
             .telemetry()
