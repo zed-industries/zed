@@ -31,7 +31,7 @@ use workspace::{
     notifications::NotifyResultExt,
     register_deserializable_item,
     searchable::{SearchEvent, SearchOptions, SearchableItem},
-    ui::{ContextMenu, Icon, IconElement, Label, ListEntry},
+    ui::{ContextMenu, Icon, IconElement, Label, ListItem},
     CloseActiveItem, NewCenterTerminal, Pane, ToolbarItemLocation, Workspace, WorkspaceId,
 };
 
@@ -300,9 +300,9 @@ impl TerminalView {
         cx: &mut ViewContext<Self>,
     ) {
         self.context_menu = Some(ContextMenu::build(cx, |menu, _| {
-            menu.action(ListEntry::new(Label::new("Clear")), Box::new(Clear))
+            menu.action(ListItem::new("clear", Label::new("Clear")), Box::new(Clear))
                 .action(
-                    ListEntry::new(Label::new("Close")),
+                    ListItem::new("close", Label::new("Close")),
                     Box::new(CloseActiveItem { save_intent: None }),
                 )
         }));

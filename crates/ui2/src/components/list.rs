@@ -1,4 +1,5 @@
-use gpui::{div, ClickEvent, Div, RenderOnce, Stateful, StatefulInteractiveElement};
+use gpui::{div, AnyElement, ClickEvent, Div, RenderOnce, Stateful, StatefulInteractiveElement};
+use smallvec::SmallVec;
 use std::rc::Rc;
 
 use crate::settings::user_settings;
@@ -117,7 +118,7 @@ impl ListHeader {
     }
 
     // before_ship!("delete")
-    // fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
+    // fn render<V: 'static>(self,  cx: &mut WindowContext) -> impl Element<V> {
     //     let disclosure_control = disclosure_control(self.toggle);
 
     //     let meta = match self.meta {
@@ -177,7 +178,7 @@ impl ListHeader {
     // }
 }
 
-#[derive(Clone)]
+#[derive(RenderOnce, Clone)]
 pub struct ListSubHeader {
     label: SharedString,
     left_icon: Option<Icon>,
@@ -197,8 +198,12 @@ impl ListSubHeader {
         self.left_icon = left_icon;
         self
     }
+}
 
-    fn render(self, cx: &mut WindowContext) -> impl Element {
+impl Component for ListSubHeader {
+    type Rendered = Div;
+
+    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         h_stack().flex_1().w_full().relative().py_1().child(
             div()
                 .h_6()
@@ -232,55 +237,9 @@ pub enum ListEntrySize {
     Medium,
 }
 
-#[derive(Clone)]
-pub enum ListItem {
-    Entry(ListEntry),
-    Separator(ListSeparator),
-    Header(ListSubHeader),
-}
-
-impl From<ListEntry> for ListItem {
-    fn from(entry: ListEntry) -> Self {
-        Self::Entry(entry)
-    }
-}
-
-impl From<ListSeparator> for ListItem {
-    fn from(entry: ListSeparator) -> Self {
-        Self::Separator(entry)
-    }
-}
-
-impl From<ListSubHeader> for ListItem {
-    fn from(entry: ListSubHeader) -> Self {
-        Self::Header(entry)
-    }
-}
-
-impl ListItem {
-    pub fn new(label: Label) -> Self {
-        Self::Entry(ListEntry::new(label))
-    }
-
-    pub fn as_entry(&mut self) -> Option<&mut ListEntry> {
-        if let Self::Entry(entry) = self {
-            Some(entry)
-        } else {
-            None
-        }
-    }
-
-    fn render(self, ix: usize, cx: &mut WindowContext) -> Div {
-        match self {
-            ListItem::Entry(entry) => div().child(entry.render(ix, cx)),
-            ListItem::Separator(separator) => div().child(separator.render(cx)),
-            ListItem::Header(header) => div().child(header.render(cx)),
-        }
-    }
-}
-
-// #[derive(RenderOnce)]
-pub struct ListEntry {
+#[derive(RenderOnce)]
+pub struct ListItem {
+    id: ElementId,
     disabled: bool,
     // TODO: Reintroduce this
     // disclosure_control_style: DisclosureControlVisibility,
@@ -294,9 +253,10 @@ pub struct ListEntry {
     on_click: Option<Rc<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
 }
 
-impl Clone for ListEntry {
+impl Clone for ListItem {
     fn clone(&self) -> Self {
         Self {
+            id: self.id.clone(),
             disabled: self.disabled,
             indent_level: self.indent_level,
             label: self.label.clone(),
@@ -310,9 +270,10 @@ impl Clone for ListEntry {
     }
 }
 
-impl ListEntry {
-    pub fn new(label: Label) -> Self {
+impl ListItem {
+    pub fn new(id: impl Into<ElementId>, label: Label) -> Self {
         Self {
+            id: id.into(),
             disabled: false,
             indent_level: 0,
             label,
@@ -364,8 +325,12 @@ impl ListEntry {
         self.size = size;
         self
     }
+}
 
-    fn render(self, ix: usize, cx: &mut WindowContext) -> Stateful<Div> {
+impl Component for ListItem {
+    type Rendered = Stateful<Div>;
+
+    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         let settings = user_settings(cx);
 
         let left_content = match self.left_slot.clone() {
@@ -386,17 +351,18 @@ impl ListEntry {
             ListEntrySize::Medium => div().h_7(),
         };
         div()
-            .id(ix)
+            .id(self.id)
             .relative()
             .hover(|mut style| {
                 style.background = Some(cx.theme().colors().editor_background.into());
                 style
             })
-            .map(|div| {
-                if let Some(on_click) = self.on_click.clone() {
-                    div.on_click(move |e, cx| on_click(e, cx))
-                } else {
-                    div
+            .on_click({
+                let on_click = self.on_click.clone();
+                move |event, cx| {
+                    if let Some(on_click) = &on_click {
+                        (on_click)(event, cx)
+                    }
                 }
             })
             .bg(cx.theme().colors().surface_background)
@@ -452,25 +418,20 @@ impl Component for ListSeparator {
 
 #[derive(RenderOnce)]
 pub struct List {
-    items: Vec<ListItem>,
     /// Message to display when the list is empty
     /// Defaults to "No items"
     empty_message: SharedString,
     header: Option<ListHeader>,
     toggle: Toggle,
+    children: SmallVec<[AnyElement; 2]>,
 }
 
 impl Component for List {
     type Rendered = Div;
 
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {
-        let list_content = match (self.items.is_empty(), self.toggle) {
-            (false, _) => div().children(
-                self.items
-                    .into_iter()
-                    .enumerate()
-                    .map(|(ix, item)| item.render(ix, cx)),
-            ),
+        let list_content = match (self.children.is_empty(), self.toggle) {
+            (false, _) => div().children(self.children),
             (true, Toggle::Toggled(false)) => div(),
             (true, _) => {
                 div().child(Label::new(self.empty_message.clone()).color(TextColor::Muted))
@@ -486,12 +447,12 @@ impl Component for List {
 }
 
 impl List {
-    pub fn new(items: Vec<ListItem>) -> Self {
+    pub fn new() -> Self {
         Self {
-            items,
             empty_message: "No items".into(),
             header: None,
             toggle: Toggle::NotToggleable,
+            children: SmallVec::new(),
         }
     }
 
@@ -509,25 +470,10 @@ impl List {
         self.toggle = toggle;
         self
     }
+}
 
-    fn render(self, cx: &mut WindowContext) -> impl Element {
-        let list_content = match (self.items.is_empty(), self.toggle) {
-            (false, _) => div().children(
-                self.items
-                    .into_iter()
-                    .enumerate()
-                    .map(|(ix, item)| item.render(ix, cx)),
-            ),
-            (true, Toggle::Toggled(false)) => div(),
-            (true, _) => {
-                div().child(Label::new(self.empty_message.clone()).color(TextColor::Muted))
-            }
-        };
-
-        v_stack()
-            .w_full()
-            .py_1()
-            .children(self.header.map(|header| header))
-            .child(list_content)
+impl ParentElement for List {
+    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement; 2]> {
+        &mut self.children
     }
 }

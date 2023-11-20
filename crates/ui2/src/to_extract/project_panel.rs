@@ -29,14 +29,16 @@ impl Component for ProjectPanel {
                     .flex_col()
                     .overflow_y_scroll()
                     .child(
-                        List::new(static_project_panel_single_items())
+                        List::new()
                             .header(ListHeader::new("FILES"))
-                            .empty_message("No files in directory"),
+                            .empty_message("No files in directory")
+                            .children(static_project_panel_single_items()),
                     )
                     .child(
-                        List::new(static_project_panel_project_items())
+                        List::new()
                             .header(ListHeader::new("PROJECT"))
-                            .empty_message("No folders in directory"),
+                            .empty_message("No folders in directory")
+                            .children(static_project_panel_project_items()),
                     ),
             )
             .child(
@@ -67,14 +69,16 @@ impl ProjectPanel {
                     .flex_col()
                     .overflow_y_scroll()
                     .child(
-                        List::new(static_project_panel_single_items())
+                        List::new()
                             .header(ListHeader::new("FILES"))
-                            .empty_message("No files in directory"),
+                            .empty_message("No files in directory")
+                            .children(static_project_panel_single_items()),
                     )
                     .child(
-                        List::new(static_project_panel_project_items())
+                        List::new()
                             .header(ListHeader::new("PROJECT"))
-                            .empty_message("No folders in directory"),
+                            .empty_message("No folders in directory")
+                            .children(static_project_panel_project_items()),
                     ),
             )
             .child(

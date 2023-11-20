@@ -1,8 +1,8 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::{prelude::*, v_stack, List, ListItem};
-use crate::{ListEntry, ListSeparator, ListSubHeader};
+use crate::{prelude::*, v_stack, List};
+use crate::{ListItem, ListSeparator, ListSubHeader};
 use gpui::{
     overlay, px, Action, AnchorCorner, AnyElement, AppContext, Bounds, ClickEvent, DispatchPhase,
     Div, EventEmitter, FocusHandle, FocusableView, LayoutId, ManagedView, Manager, MouseButton,
@@ -12,7 +12,7 @@ use gpui::{
 pub enum ContextMenuItem {
     Separator(ListSeparator),
     Header(ListSubHeader),
-    Entry(ListEntry, Rc<dyn Fn(&ClickEvent, &mut WindowContext)>),
+    Entry(ListItem, Rc<dyn Fn(&ClickEvent, &mut WindowContext)>),
 }
 
 pub struct ContextMenu {
@@ -58,7 +58,7 @@ impl ContextMenu {
 
     pub fn entry(
         mut self,
-        view: ListEntry,
+        view: ListItem,
         on_click: impl Fn(&ClickEvent, &mut WindowContext) + 'static,
     ) -> Self {
         self.items
@@ -66,7 +66,7 @@ impl ContextMenu {
         self
     }
 
-    pub fn action(self, view: ListEntry, action: Box<dyn Action>) -> Self {
+    pub fn action(self, view: ListItem, action: Box<dyn Action>) -> Self {
         // todo: add the keybindings to the list entry
         self.entry(view, move |_, cx| cx.dispatch_action(action.boxed_clone()))
     }
@@ -102,26 +102,26 @@ impl Render for ContextMenu {
                 // .bg(cx.theme().colors().elevated_surface_background)
                 // .border()
                 // .border_color(cx.theme().colors().border)
-                .child(List::new(
-                    self.items
-                        .iter()
-                        .map(|item| match item {
-                            ContextMenuItem::Separator(separator) => {
-                                ListItem::Separator(separator.clone())
-                            }
-                            ContextMenuItem::Header(header) => ListItem::Header(header.clone()),
-                            ContextMenuItem::Entry(entry, callback) => {
-                                let callback = callback.clone();
-                                let dismiss = cx.listener(|_, _, cx| cx.emit(Manager::Dismiss));
+                .child(
+                    List::new().children(self.items.iter().map(|item| match item {
+                        ContextMenuItem::Separator(separator) => {
+                            separator.clone().render_into_any()
+                        }
+                        ContextMenuItem::Header(header) => header.clone().render_into_any(),
+                        ContextMenuItem::Entry(entry, callback) => {
+                            let callback = callback.clone();
+                            let dismiss = cx.listener(|_, _, cx| cx.emit(Manager::Dismiss));
 
-                                ListItem::Entry(entry.clone().on_click(move |event, cx| {
+                            entry
+                                .clone()
+                                .on_click(move |event, cx| {
                                     callback(event, cx);
                                     dismiss(event, cx)
-                                }))
-                            }
-                        })
-                        .collect(),
-                )),
+                                })
+                                .render_into_any()
+                        }
+                    })),
+                ),
         )
     }
 }
@@ -316,13 +316,17 @@ mod stories {
         ContextMenu::build(cx, |menu, _| {
             menu.header(header)
                 .separator()
-                .entry(ListEntry::new(Label::new("Print current time")), |v, cx| {
-                    println!("dispatching PrintCurrentTime action");
-                    cx.dispatch_action(PrintCurrentDate.boxed_clone())
-                })
-                .entry(ListEntry::new(Label::new("Print best food")), |v, cx| {
-                    cx.dispatch_action(PrintBestFood.boxed_clone())
-                })
+                .entry(
+                    ListItem::new("Print current time", Label::new("Print current time")),
+                    |v, cx| {
+                        println!("dispatching PrintCurrentTime action");
+                        cx.dispatch_action(PrintCurrentDate.boxed_clone())
+                    },
+                )
+                .entry(
+                    ListItem::new("Print best food", Label::new("Print best food")),
+                    |v, cx| cx.dispatch_action(PrintBestFood.boxed_clone()),
+                )
         })
     }
 
