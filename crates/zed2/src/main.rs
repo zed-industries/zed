@@ -429,7 +429,7 @@ struct Panic {
     os_name: String,
     os_version: Option<String>,
     architecture: String,
-    panicked_on: u128,
+    panicked_on: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     installation_id: Option<String>,
     session_id: String,
