@@ -1,4 +1,5 @@
-use gpui::{div, Div, RenderOnce, Stateful, StatefulInteractiveElement};
+use gpui::{div, AnyElement, Div, RenderOnce, Stateful, StatefulInteractiveElement};
+use smallvec::SmallVec;
 use std::rc::Rc;
 
 use crate::settings::user_settings;
@@ -177,7 +178,7 @@ impl ListHeader {
     // }
 }
 
-#[derive(Clone)]
+#[derive(RenderOnce, Clone)]
 pub struct ListSubHeader {
     label: SharedString,
     left_icon: Option<Icon>,
@@ -197,8 +198,12 @@ impl ListSubHeader {
         self.left_icon = left_icon;
         self
     }
+}
 
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
+impl<V: 'static> Component<V> for ListSubHeader {
+    type Rendered = Div<V>;
+
+    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
         h_stack().flex_1().w_full().relative().py_1().child(
             div()
                 .h_6()
@@ -232,55 +237,9 @@ pub enum ListEntrySize {
     Medium,
 }
 
-#[derive(Clone)]
-pub enum ListItem<V: 'static> {
-    Entry(ListEntry<V>),
-    Separator(ListSeparator),
-    Header(ListSubHeader),
-}
-
-impl<V: 'static> From<ListEntry<V>> for ListItem<V> {
-    fn from(entry: ListEntry<V>) -> Self {
-        Self::Entry(entry)
-    }
-}
-
-impl<V: 'static> From<ListSeparator> for ListItem<V> {
-    fn from(entry: ListSeparator) -> Self {
-        Self::Separator(entry)
-    }
-}
-
-impl<V: 'static> From<ListSubHeader> for ListItem<V> {
-    fn from(entry: ListSubHeader) -> Self {
-        Self::Header(entry)
-    }
-}
-
-impl<V: 'static> ListItem<V> {
-    pub fn new(label: Label) -> Self {
-        Self::Entry(ListEntry::new(label))
-    }
-
-    pub fn as_entry(&mut self) -> Option<&mut ListEntry<V>> {
-        if let Self::Entry(entry) = self {
-            Some(entry)
-        } else {
-            None
-        }
-    }
-
-    fn render(self, view: &mut V, ix: usize, cx: &mut ViewContext<V>) -> Div<V> {
-        match self {
-            ListItem::Entry(entry) => div().child(entry.render(ix, cx)),
-            ListItem::Separator(separator) => div().child(separator.render(view, cx)),
-            ListItem::Header(header) => div().child(header.render(view, cx)),
-        }
-    }
-}
-
-// #[derive(RenderOnce)]
-pub struct ListEntry<V> {
+#[derive(RenderOnce)]
+pub struct ListEntry<V: 'static> {
+    id: ElementId,
     disabled: bool,
     // TODO: Reintroduce this
     // disclosure_control_style: DisclosureControlVisibility,
@@ -297,6 +256,7 @@ pub struct ListEntry<V> {
 impl<V> Clone for ListEntry<V> {
     fn clone(&self) -> Self {
         Self {
+            id: self.id.clone(),
             disabled: self.disabled,
             indent_level: self.indent_level,
             label: self.label.clone(),
@@ -311,8 +271,9 @@ impl<V> Clone for ListEntry<V> {
 }
 
 impl<V: 'static> ListEntry<V> {
-    pub fn new(label: Label) -> Self {
+    pub fn new(id: impl Into<ElementId>, label: Label) -> Self {
         Self {
+            id: id.into(),
             disabled: false,
             indent_level: 0,
             label,
@@ -364,8 +325,12 @@ impl<V: 'static> ListEntry<V> {
         self.size = size;
         self
     }
+}
 
-    fn render(self, ix: usize, cx: &mut ViewContext<V>) -> Stateful<V, Div<V>> {
+impl<V: 'static> Component<V> for ListEntry<V> {
+    type Rendered = Stateful<V, Div<V>>;
+
+    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
         let settings = user_settings(cx);
 
         let left_content = match self.left_slot.clone() {
@@ -386,7 +351,7 @@ impl<V: 'static> ListEntry<V> {
             ListEntrySize::Medium => div().h_7(),
         };
         div()
-            .id(ix)
+            .id(self.id)
             .relative()
             .hover(|mut style| {
                 style.background = Some(cx.theme().colors().editor_background.into());
@@ -454,25 +419,20 @@ impl<V: 'static> Component<V> for ListSeparator {
 
 #[derive(RenderOnce)]
 pub struct List<V: 'static> {
-    items: Vec<ListItem<V>>,
     /// Message to display when the list is empty
     /// Defaults to "No items"
     empty_message: SharedString,
     header: Option<ListHeader>,
     toggle: Toggle,
+    children: SmallVec<[AnyElement<V>; 2]>,
 }
 
 impl<V: 'static> Component<V> for List<V> {
     type Rendered = Div<V>;
 
     fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
-        let list_content = match (self.items.is_empty(), self.toggle) {
-            (false, _) => div().children(
-                self.items
-                    .into_iter()
-                    .enumerate()
-                    .map(|(ix, item)| item.render(view, ix, cx)),
-            ),
+        let list_content = match (self.children.is_empty(), self.toggle) {
+            (false, _) => div().children(self.children),
             (true, Toggle::Toggled(false)) => div(),
             (true, _) => {
                 div().child(Label::new(self.empty_message.clone()).color(TextColor::Muted))
@@ -488,12 +448,12 @@ impl<V: 'static> Component<V> for List<V> {
 }
 
 impl<V: 'static> List<V> {
-    pub fn new(items: Vec<ListItem<V>>) -> Self {
+    pub fn new() -> Self {
         Self {
-            items,
             empty_message: "No items".into(),
             header: None,
             toggle: Toggle::NotToggleable,
+            children: SmallVec::new(),
         }
     }
 
@@ -511,25 +471,10 @@ impl<V: 'static> List<V> {
         self.toggle = toggle;
         self
     }
+}
 
-    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
-        let list_content = match (self.items.is_empty(), self.toggle) {
-            (false, _) => div().children(
-                self.items
-                    .into_iter()
-                    .enumerate()
-                    .map(|(ix, item)| item.render(view, ix, cx)),
-            ),
-            (true, Toggle::Toggled(false)) => div(),
-            (true, _) => {
-                div().child(Label::new(self.empty_message.clone()).color(TextColor::Muted))
-            }
-        };
-
-        v_stack()
-            .w_full()
-            .py_1()
-            .children(self.header.map(|header| header))
-            .child(list_content)
+impl<V: 'static> ParentElement<V> for List<V> {
+    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<V>; 2]> {
+        &mut self.children
     }
 }

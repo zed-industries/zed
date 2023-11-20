@@ -28,41 +28,45 @@ impl<V: 'static> Component<V> for CollabPanel {
                             .border_color(cx.theme().colors().border)
                             .border_b()
                             .child(
-                                List::new(static_collab_panel_current_call())
+                                List::new()
                                     .header(
                                         ListHeader::new("CRDB")
                                             .left_icon(Icon::Hash.into())
                                             .toggle(Toggle::Toggled(true)),
                                     )
-                                    .toggle(Toggle::Toggled(true)),
+                                    .toggle(Toggle::Toggled(true))
+                                    .children(static_collab_panel_current_call()),
                             ),
                     )
                     .child(
                         v_stack().id("channels").py_1().child(
-                            List::new(static_collab_panel_channels())
+                            List::new()
                                 .header(ListHeader::new("CHANNELS").toggle(Toggle::Toggled(true)))
                                 .empty_message("No channels yet. Add a channel to get started.")
-                                .toggle(Toggle::Toggled(true)),
+                                .toggle(Toggle::Toggled(true))
+                                .children(static_collab_panel_channels()),
                         ),
                     )
                     .child(
                         v_stack().id("contacts-online").py_1().child(
-                            List::new(static_collab_panel_current_call())
+                            List::new()
                                 .header(
                                     ListHeader::new("CONTACTS – ONLINE")
                                         .toggle(Toggle::Toggled(true)),
                                 )
-                                .toggle(Toggle::Toggled(true)),
+                                .toggle(Toggle::Toggled(true))
+                                .children(static_collab_panel_current_call()),
                         ),
                     )
                     .child(
                         v_stack().id("contacts-offline").py_1().child(
-                            List::new(static_collab_panel_current_call())
+                            List::new()
                                 .header(
                                     ListHeader::new("CONTACTS – OFFLINE")
                                         .toggle(Toggle::Toggled(false)),
                                 )
-                                .toggle(Toggle::Toggled(false)),
+                                .toggle(Toggle::Toggled(false))
+                                .children(static_collab_panel_current_call()),
                         ),
                     ),
             )
