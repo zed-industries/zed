@@ -13,9 +13,9 @@ pub enum NotificationEvent {
     Dismiss,
 }
 
-pub trait Notification: EventEmitter<NotificationEvent> + Render<Self> {}
+pub trait Notification: EventEmitter<NotificationEvent> + Render {}
 
-impl<V: EventEmitter<NotificationEvent> + Render<Self>> Notification for V {}
+impl<V: EventEmitter<NotificationEvent> + Render> Notification for V {}
 
 pub trait NotificationHandle: Send {
     fn id(&self) -> EntityId;
@@ -198,7 +198,7 @@ pub mod simple_message_notification {
 
     enum NotificationMessage {
         Text(Cow<'static, str>),
-        Element(fn(TextStyle, &AppContext) -> AnyElement<MessageNotification>),
+        Element(fn(TextStyle, &AppContext) -> AnyElement),
     }
 
     pub struct MessageNotification {
@@ -222,7 +222,7 @@ pub mod simple_message_notification {
         }
 
         pub fn new_element(
-            message: fn(TextStyle, &AppContext) -> AnyElement<MessageNotification>,
+            message: fn(TextStyle, &AppContext) -> AnyElement,
         ) -> MessageNotification {
             Self {
                 message: NotificationMessage::Element(message),
@@ -253,8 +253,8 @@ pub mod simple_message_notification {
         // }
     }
 
-    impl Render<Self> for MessageNotification {
-        type Element = Div<Self>;
+    impl Render for MessageNotification {
+        type Element = Div;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             todo!()

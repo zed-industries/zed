@@ -11,10 +11,10 @@ pub struct ProjectPanel {
     id: ElementId,
 }
 
-impl<V: 'static> Component<V> for ProjectPanel {
-    type Rendered = Stateful<V, Div<V>>;
+impl Component for ProjectPanel {
+    type Rendered = gpui::Stateful<Div>;
 
-    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
+    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         div()
             .id(self.id.clone())
             .flex()
@@ -52,7 +52,7 @@ impl ProjectPanel {
         Self { id: id.into() }
     }
 
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
+    fn render(self, cx: &mut WindowContext) -> impl Element {
         div()
             .id(self.id.clone())
             .flex()
@@ -97,8 +97,8 @@ mod stories {
 
     pub struct ProjectPanelStory;
 
-    impl Render<Self> for ProjectPanelStory {
-        type Element = Div<Self>;
+    impl Render for ProjectPanelStory {
+        type Element = Div;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             Story::container(cx)

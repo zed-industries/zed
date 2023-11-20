@@ -5,7 +5,7 @@ use crate::{prelude::*, v_stack};
 /// Create an elevated surface.
 ///
 /// Must be used inside of a relative parent element
-pub fn elevated_surface<V: 'static>(level: ElevationIndex, cx: &mut ViewContext<V>) -> Div<V> {
+pub fn elevated_surface(level: ElevationIndex, cx: &mut WindowContext) -> Div {
     let colors = cx.theme().colors();
 
     // let shadow = BoxShadow {
@@ -23,6 +23,6 @@ pub fn elevated_surface<V: 'static>(level: ElevationIndex, cx: &mut ViewContext<
         .shadow(level.shadow())
 }
 
-pub fn modal<V: 'static>(cx: &mut ViewContext<V>) -> Div<V> {
+pub fn modal(cx: &mut WindowContext) -> Div {
     elevated_surface(ElevationIndex::ModalSurface, cx)
 }

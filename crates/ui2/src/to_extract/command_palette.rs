@@ -6,10 +6,10 @@ pub struct CommandPalette {
     id: ElementId,
 }
 
-impl<V: 'static> Component<V> for CommandPalette {
-    type Rendered = Stateful<V, Div<V>>;
+impl Component for CommandPalette {
+    type Rendered = gpui::Stateful<Div>;
 
-    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
+    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         div().id(self.id.clone()).child(
             Palette::new("palette")
                 .items(example_editor_actions())
@@ -40,8 +40,8 @@ mod stories {
 
     pub struct CommandPaletteStory;
 
-    impl Render<Self> for CommandPaletteStory {
-        type Element = Div<Self>;
+    impl Render for CommandPaletteStory {
+        type Element = Div;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             Story::container(cx)

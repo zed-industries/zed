@@ -23,7 +23,7 @@ use gpui::{
     ElementId, ElementInputHandler, Entity, EntityId, Hsla, InteractiveElement, LineLayout,
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, RenderOnce,
     ScrollWheelEvent, ShapedLine, SharedString, Size, StatefulInteractiveElement, Style, Styled,
-    TextRun, TextStyle, View, ViewContext, WindowContext, WrappedLine,
+    TextRun, TextStyle, View, ViewContext, WeakView, WindowContext, WrappedLine,
 };
 use itertools::Itertools;
 use language::language_settings::ShowWhitespaceSetting;
@@ -112,14 +112,14 @@ impl SelectionLayout {
 }
 
 pub struct EditorElement {
-    editor_id: EntityId,
+    editor: View<Editor>,
     style: EditorStyle,
 }
 
 impl EditorElement {
     pub fn new(editor: &View<Editor>, style: EditorStyle) -> Self {
         Self {
-            editor_id: editor.entity_id(),
+            editor: editor.clone(),
             style,
         }
     }
@@ -349,7 +349,7 @@ impl EditorElement {
         gutter_bounds: Bounds<Pixels>,
         text_bounds: Bounds<Pixels>,
         layout: &LayoutState,
-        cx: &mut ViewContext<Editor>,
+        cx: &mut WindowContext,
     ) {
         let bounds = gutter_bounds.union(&text_bounds);
         let scroll_top =
@@ -460,7 +460,7 @@ impl EditorElement {
         bounds: Bounds<Pixels>,
         layout: &mut LayoutState,
         editor: &mut Editor,
-        cx: &mut ViewContext<Editor>,
+        cx: &mut WindowContext,
     ) {
         let line_height = layout.position_map.line_height;
 
@@ -495,7 +495,7 @@ impl EditorElement {
                     AvailableSpace::MinContent,
                     AvailableSpace::Definite(line_height * 0.55),
                 );
-                let fold_indicator_size = fold_indicator.measure(available_space, editor, cx);
+                let fold_indicator_size = fold_indicator.measure(available_space, cx);
 
                 let position = point(
                     bounds.size.width - layout.gutter_padding,
@@ -506,7 +506,7 @@ impl EditorElement {
                     (line_height - fold_indicator_size.height) / 2.,
                 );
                 let origin = bounds.origin + position + centering_offset;
-                fold_indicator.draw(origin, available_space, editor, cx);
+                fold_indicator.draw(origin, available_space, cx);
             }
         }
 
@@ -516,7 +516,7 @@ impl EditorElement {
                 AvailableSpace::MinContent,
                 AvailableSpace::Definite(line_height),
             );
-            let indicator_size = button.measure(available_space, editor, cx);
+            let indicator_size = button.measure(available_space, cx);
 
             let mut x = Pixels::ZERO;
             let mut y = indicator.row as f32 * line_height - scroll_top;
@@ -524,15 +524,11 @@ impl EditorElement {
             x += ((layout.gutter_padding + layout.gutter_margin) - indicator_size.width) / 2.;
             y += (line_height - indicator_size.height) / 2.;
 
-            button.draw(bounds.origin + point(x, y), available_space, editor, cx);
+            button.draw(bounds.origin + point(x, y), available_space, cx);
         }
     }
 
-    fn paint_diff_hunks(
-        bounds: Bounds<Pixels>,
-        layout: &LayoutState,
-        cx: &mut ViewContext<Editor>,
-    ) {
+    fn paint_diff_hunks(bounds: Bounds<Pixels>, layout: &LayoutState, cx: &mut WindowContext) {
         // todo!()
         // let diff_style = &theme::current(cx).editor.diff.clone();
         // let line_height = layout.position_map.line_height;
@@ -621,7 +617,7 @@ impl EditorElement {
         text_bounds: Bounds<Pixels>,
         layout: &mut LayoutState,
         editor: &mut Editor,
-        cx: &mut ViewContext<Editor>,
+        cx: &mut WindowContext,
     ) {
         let scroll_position = layout.position_map.snapshot.scroll_position();
         let start_row = layout.visible_display_row_range.start;
@@ -676,20 +672,22 @@ impl EditorElement {
                             div()
                                 .id(fold.id)
                                 .size_full()
-                                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                                .on_click(move |editor: &mut Editor, _, cx| {
-                                    editor.unfold_ranges(
-                                        [fold_range.start..fold_range.end],
-                                        true,
-                                        false,
-                                        cx,
-                                    );
-                                    cx.stop_propagation();
-                                })
+                                .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
+                                .on_click(cx.listener_for(
+                                    &self.editor,
+                                    move |editor: &mut Editor, _, cx| {
+                                        editor.unfold_ranges(
+                                            [fold_range.start..fold_range.end],
+                                            true,
+                                            false,
+                                            cx,
+                                        );
+                                        cx.stop_propagation();
+                                    },
+                                ))
                                 .draw(
                                     fold_bounds.origin,
                                     fold_bounds.size,
-                                    editor,
                                     cx,
                                     |fold_element_state, cx| {
                                         if fold_element_state.is_active() {
@@ -852,7 +850,7 @@ impl EditorElement {
                                     .min((text_bounds.size.height - line_height) / 2.),
                             ),
                         );
-                        let context_menu_size = context_menu.measure(available_space, editor, cx);
+                        let context_menu_size = context_menu.measure(available_space, cx);
 
                         let cursor_row_layout = &layout.position_map.line_layouts
                             [(position.row() - start_row) as usize]
@@ -876,7 +874,7 @@ impl EditorElement {
                             list_origin.y -= layout.position_map.line_height - list_height;
                         }
 
-                        context_menu.draw(list_origin, available_space, editor, cx);
+                        context_menu.draw(list_origin, available_space, cx);
                     })
                 }
 
@@ -1167,7 +1165,7 @@ impl EditorElement {
         layout: &LayoutState,
         content_origin: gpui::Point<Pixels>,
         bounds: Bounds<Pixels>,
-        cx: &mut ViewContext<Editor>,
+        cx: &mut WindowContext,
     ) {
         let start_row = layout.visible_display_row_range.start;
         let end_row = layout.visible_display_row_range.end;
@@ -1220,7 +1218,7 @@ impl EditorElement {
         bounds: Bounds<Pixels>,
         layout: &mut LayoutState,
         editor: &mut Editor,
-        cx: &mut ViewContext<Editor>,
+        cx: &mut WindowContext,
     ) {
         let scroll_position = layout.position_map.snapshot.scroll_position();
         let scroll_left = scroll_position.x * layout.position_map.em_width;
@@ -1235,9 +1233,7 @@ impl EditorElement {
             if !matches!(block.style, BlockStyle::Sticky) {
                 origin += point(-scroll_left, Pixels::ZERO);
             }
-            block
-                .element
-                .draw(origin, block.available_space, editor, cx);
+            block.element.draw(origin, block.available_space, cx);
         }
     }
 
@@ -2030,12 +2026,10 @@ impl EditorElement {
                         let jump_position = language::ToPoint::to_point(&jump_anchor, buffer);
 
                         IconButton::new(block_id, ui::Icon::ArrowUpRight)
-                            .on_click(move |editor: &mut Editor, cx| {
+                            .on_click(cx.listener_for(&self.editor, move |editor, e, cx| {
                                 editor.jump(jump_path.clone(), jump_position, jump_anchor, cx);
-                            })
-                            .tooltip(move |_, cx| {
-                                Tooltip::for_action("Jump to Buffer", &OpenExcerpts, cx)
-                            })
+                            }))
+                            .tooltip(|cx| Tooltip::for_action("Jump to Buffer", &OpenExcerpts, cx))
                     });
 
                     let element = if *starts_new_buffer {
@@ -2074,7 +2068,7 @@ impl EditorElement {
                 }
             };
 
-            let size = element.measure(available_space, editor, cx);
+            let size = element.measure(available_space, cx);
             (element, size)
         };
 
@@ -2133,47 +2127,61 @@ impl EditorElement {
         gutter_bounds: Bounds<Pixels>,
         text_bounds: Bounds<Pixels>,
         layout: &LayoutState,
-        cx: &mut ViewContext<Editor>,
+        cx: &mut WindowContext,
     ) {
         let content_origin = text_bounds.origin + point(layout.gutter_margin, Pixels::ZERO);
 
         cx.on_mouse_event({
             let position_map = layout.position_map.clone();
-            move |editor, event: &ScrollWheelEvent, phase, cx| {
+            let editor = self.editor.clone();
+
+            move |event: &ScrollWheelEvent, phase, cx| {
                 if phase != DispatchPhase::Bubble {
                     return;
                 }
 
-                if Self::scroll(editor, event, &position_map, bounds, cx) {
+                let should_cancel = editor.update(cx, |editor, cx| {
+                    Self::scroll(editor, event, &position_map, bounds, cx)
+                });
+                if should_cancel {
                     cx.stop_propagation();
                 }
             }
         });
+
         cx.on_mouse_event({
             let position_map = layout.position_map.clone();
-            move |editor, event: &MouseDownEvent, phase, cx| {
+            let editor = self.editor.clone();
+
+            move |event: &MouseDownEvent, phase, cx| {
                 if phase != DispatchPhase::Bubble {
                     return;
                 }
 
-                if Self::mouse_down(editor, event, &position_map, text_bounds, gutter_bounds, cx) {
+                let should_cancel = editor.update(cx, |editor, cx| {
+                    Self::mouse_down(editor, event, &position_map, text_bounds, gutter_bounds, cx)
+                });
+
+                if should_cancel {
                     cx.stop_propagation()
                 }
             }
         });
+
         cx.on_mouse_event({
             let position_map = layout.position_map.clone();
-            move |editor, event: &MouseUpEvent, phase, cx| {
-                if phase != DispatchPhase::Bubble {
-                    return;
-                }
+            let editor = self.editor.clone();
+            move |event: &MouseUpEvent, phase, cx| {
+                let should_cancel = editor.update(cx, |editor, cx| {
+                    Self::mouse_up(editor, event, &position_map, text_bounds, cx)
+                });
 
-                if Self::mouse_up(editor, event, &position_map, text_bounds, cx) {
+                if should_cancel {
                     cx.stop_propagation()
                 }
             }
         });
-        // todo!()
+        //todo!()
         // on_down(MouseButton::Right, {
         //     let position_map = layout.position_map.clone();
         //     move |event, editor, cx| {
@@ -2190,12 +2198,17 @@ impl EditorElement {
         // });
         cx.on_mouse_event({
             let position_map = layout.position_map.clone();
-            move |editor, event: &MouseMoveEvent, phase, cx| {
+            let editor = self.editor.clone();
+            move |event: &MouseMoveEvent, phase, cx| {
                 if phase != DispatchPhase::Bubble {
                     return;
                 }
 
-                if Self::mouse_moved(editor, event, &position_map, text_bounds, gutter_bounds, cx) {
+                let stop_propogating = editor.update(cx, |editor, cx| {
+                    Self::mouse_moved(editor, event, &position_map, text_bounds, gutter_bounds, cx)
+                });
+
+                if stop_propogating {
                     cx.stop_propagation()
                 }
             }
@@ -2324,7 +2337,7 @@ impl LineWithInvisibles {
         content_origin: gpui::Point<Pixels>,
         whitespace_setting: ShowWhitespaceSetting,
         selection_ranges: &[Range<DisplayPoint>],
-        cx: &mut ViewContext<Editor>,
+        cx: &mut WindowContext,
     ) {
         let line_height = layout.position_map.line_height;
         let line_y = line_height * row as f32 - layout.position_map.scroll_position.y;
@@ -2356,7 +2369,7 @@ impl LineWithInvisibles {
         row: u32,
         line_height: Pixels,
         whitespace_setting: ShowWhitespaceSetting,
-        cx: &mut ViewContext<Editor>,
+        cx: &mut WindowContext,
     ) {
         let allowed_invisibles_regions = match whitespace_setting {
             ShowWhitespaceSetting::None => return,
@@ -2399,85 +2412,98 @@ enum Invisible {
     Whitespace { line_offset: usize },
 }
 
-impl Element<Editor> for EditorElement {
+impl Element for EditorElement {
     type State = ();
 
     fn layout(
         &mut self,
-        editor: &mut Editor,
         element_state: Option<Self::State>,
-        cx: &mut gpui::ViewContext<Editor>,
+        cx: &mut gpui::WindowContext,
     ) -> (gpui::LayoutId, Self::State) {
-        editor.style = Some(self.style.clone()); // Long-term, we'd like to eliminate this.
+        self.editor.update(cx, |editor, cx| {
+            editor.style = Some(self.style.clone()); // Long-term, we'd like to eliminate this.
 
-        let rem_size = cx.rem_size();
-        let mut style = Style::default();
-        style.size.width = relative(1.).into();
-        style.size.height = match editor.mode {
-            EditorMode::SingleLine => self.style.text.line_height_in_pixels(cx.rem_size()).into(),
-            EditorMode::AutoHeight { .. } => todo!(),
-            EditorMode::Full => relative(1.).into(),
-        };
-        let layout_id = cx.request_layout(&style, None);
-        (layout_id, ())
+            let rem_size = cx.rem_size();
+            let mut style = Style::default();
+            style.size.width = relative(1.).into();
+            style.size.height = match editor.mode {
+                EditorMode::SingleLine => {
+                    self.style.text.line_height_in_pixels(cx.rem_size()).into()
+                }
+                EditorMode::AutoHeight { .. } => todo!(),
+                EditorMode::Full => relative(1.).into(),
+            };
+            let layout_id = cx.request_layout(&style, None);
+
+            (layout_id, ())
+        })
     }
 
     fn paint(
         mut self,
         bounds: Bounds<gpui::Pixels>,
-        editor: &mut Editor,
         element_state: &mut Self::State,
-        cx: &mut gpui::ViewContext<Editor>,
+        cx: &mut gpui::WindowContext,
     ) {
-        let mut layout = self.compute_layout(editor, cx, bounds);
-        let gutter_bounds = Bounds {
-            origin: bounds.origin,
-            size: layout.gutter_size,
-        };
-        let text_bounds = Bounds {
-            origin: gutter_bounds.upper_right(),
-            size: layout.text_size,
-        };
+        let editor = self.editor.clone();
+        editor.update(cx, |editor, cx| {
+            let mut layout = self.compute_layout(editor, cx, bounds);
+            let gutter_bounds = Bounds {
+                origin: bounds.origin,
+                size: layout.gutter_size,
+            };
+            let text_bounds = Bounds {
+                origin: gutter_bounds.upper_right(),
+                size: layout.text_size,
+            };
 
-        let dispatch_context = editor.dispatch_context(cx);
-        cx.with_key_dispatch(
-            dispatch_context,
-            Some(editor.focus_handle.clone()),
-            |_, cx| {
-                register_actions(cx);
+            let dispatch_context = editor.dispatch_context(cx);
+            let editor_handle = cx.view().clone();
+            cx.with_key_dispatch(
+                dispatch_context,
+                Some(editor.focus_handle.clone()),
+                |_, cx| {
+                    register_actions(&editor_handle, cx);
 
-                // We call with_z_index to establish a new stacking context.
-                cx.with_z_index(0, |cx| {
-                    cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
-                        // Paint mouse listeners first, so any elements we paint on top of the editor
-                        // take precedence.
-                        self.paint_mouse_listeners(bounds, gutter_bounds, text_bounds, &layout, cx);
-                        let input_handler = ElementInputHandler::new(bounds, cx);
-                        cx.handle_input(&editor.focus_handle, input_handler);
+                    // We call with_z_index to establish a new stacking context.
+                    cx.with_z_index(0, |cx| {
+                        cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
+                            // Paint mouse listeners first, so any elements we paint on top of the editor
+                            // take precedence.
+                            self.paint_mouse_listeners(
+                                bounds,
+                                gutter_bounds,
+                                text_bounds,
+                                &layout,
+                                cx,
+                            );
+                            let input_handler = ElementInputHandler::new(bounds, editor_handle, cx);
+                            cx.handle_input(&editor.focus_handle, input_handler);
 
-                        self.paint_background(gutter_bounds, text_bounds, &layout, cx);
-                        if layout.gutter_size.width > Pixels::ZERO {
-                            self.paint_gutter(gutter_bounds, &mut layout, editor, cx);
-                        }
-                        self.paint_text(text_bounds, &mut layout, editor, cx);
+                            self.paint_background(gutter_bounds, text_bounds, &layout, cx);
+                            if layout.gutter_size.width > Pixels::ZERO {
+                                self.paint_gutter(gutter_bounds, &mut layout, editor, cx);
+                            }
+                            self.paint_text(text_bounds, &mut layout, editor, cx);
 
-                        if !layout.blocks.is_empty() {
-                            cx.with_element_id(Some("editor_blocks"), |cx| {
-                                self.paint_blocks(bounds, &mut layout, editor, cx);
-                            })
-                        }
+                            if !layout.blocks.is_empty() {
+                                cx.with_element_id(Some("editor_blocks"), |cx| {
+                                    self.paint_blocks(bounds, &mut layout, editor, cx);
+                                })
+                            }
+                        });
                     });
-                });
-            },
-        )
+                },
+            )
+        })
     }
 }
 
-impl RenderOnce<Editor> for EditorElement {
+impl RenderOnce for EditorElement {
     type Element = Self;
 
     fn element_id(&self) -> Option<gpui::ElementId> {
-        Some(self.editor_id.into())
+        self.editor.element_id()
     }
 
     fn render_once(self) -> Self::Element {
@@ -3106,17 +3132,17 @@ pub struct LayoutState {
     show_scrollbars: bool,
     is_singleton: bool,
     max_row: u32,
-    context_menu: Option<(DisplayPoint, AnyElement<Editor>)>,
+    context_menu: Option<(DisplayPoint, AnyElement)>,
     code_actions_indicator: Option<CodeActionsIndicator>,
-    // hover_popovers: Option<(DisplayPoint, Vec<AnyElement<Editor>>)>,
-    fold_indicators: Vec<Option<IconButton<Editor>>>,
+    // hover_popovers: Option<(DisplayPoint, Vec<AnyElement>)>,
+    fold_indicators: Vec<Option<IconButton>>,
     tab_invisible: ShapedLine,
     space_invisible: ShapedLine,
 }
 
 struct CodeActionsIndicator {
     row: u32,
-    button: IconButton<Editor>,
+    button: IconButton,
 }
 
 struct PositionMap {
@@ -3201,7 +3227,7 @@ impl PositionMap {
 
 struct BlockLayout {
     row: u32,
-    element: AnyElement<Editor>,
+    element: AnyElement,
     available_space: Size<AvailableSpace>,
     style: BlockStyle,
 }
@@ -3906,187 +3932,191 @@ fn scale_horizontal_mouse_autoscroll_delta(delta: Pixels) -> f32 {
 //     }
 // }
 
-fn register_actions(cx: &mut ViewContext<Editor>) {
-    register_action(cx, Editor::move_left);
-    register_action(cx, Editor::move_right);
-    register_action(cx, Editor::move_down);
-    register_action(cx, Editor::move_up);
+fn register_actions(view: &View<Editor>, cx: &mut WindowContext) {
+    register_action(view, cx, Editor::move_left);
+    register_action(view, cx, Editor::move_right);
+    register_action(view, cx, Editor::move_down);
+    register_action(view, cx, Editor::move_up);
     // on_action(cx, Editor::new_file); todo!()
     // on_action(cx, Editor::new_file_in_direction); todo!()
-    register_action(cx, Editor::cancel);
-    register_action(cx, Editor::newline);
-    register_action(cx, Editor::newline_above);
-    register_action(cx, Editor::newline_below);
-    register_action(cx, Editor::backspace);
-    register_action(cx, Editor::delete);
-    register_action(cx, Editor::tab);
-    register_action(cx, Editor::tab_prev);
-    register_action(cx, Editor::indent);
-    register_action(cx, Editor::outdent);
-    register_action(cx, Editor::delete_line);
-    register_action(cx, Editor::join_lines);
-    register_action(cx, Editor::sort_lines_case_sensitive);
-    register_action(cx, Editor::sort_lines_case_insensitive);
-    register_action(cx, Editor::reverse_lines);
-    register_action(cx, Editor::shuffle_lines);
-    register_action(cx, Editor::convert_to_upper_case);
-    register_action(cx, Editor::convert_to_lower_case);
-    register_action(cx, Editor::convert_to_title_case);
-    register_action(cx, Editor::convert_to_snake_case);
-    register_action(cx, Editor::convert_to_kebab_case);
-    register_action(cx, Editor::convert_to_upper_camel_case);
-    register_action(cx, Editor::convert_to_lower_camel_case);
-    register_action(cx, Editor::delete_to_previous_word_start);
-    register_action(cx, Editor::delete_to_previous_subword_start);
-    register_action(cx, Editor::delete_to_next_word_end);
-    register_action(cx, Editor::delete_to_next_subword_end);
-    register_action(cx, Editor::delete_to_beginning_of_line);
-    register_action(cx, Editor::delete_to_end_of_line);
-    register_action(cx, Editor::cut_to_end_of_line);
-    register_action(cx, Editor::duplicate_line);
-    register_action(cx, Editor::move_line_up);
-    register_action(cx, Editor::move_line_down);
-    register_action(cx, Editor::transpose);
-    register_action(cx, Editor::cut);
-    register_action(cx, Editor::copy);
-    register_action(cx, Editor::paste);
-    register_action(cx, Editor::undo);
-    register_action(cx, Editor::redo);
-    register_action(cx, Editor::move_page_up);
-    register_action(cx, Editor::move_page_down);
-    register_action(cx, Editor::next_screen);
-    register_action(cx, Editor::scroll_cursor_top);
-    register_action(cx, Editor::scroll_cursor_center);
-    register_action(cx, Editor::scroll_cursor_bottom);
-    register_action(cx, |editor, _: &LineDown, cx| {
+    register_action(view, cx, Editor::cancel);
+    register_action(view, cx, Editor::newline);
+    register_action(view, cx, Editor::newline_above);
+    register_action(view, cx, Editor::newline_below);
+    register_action(view, cx, Editor::backspace);
+    register_action(view, cx, Editor::delete);
+    register_action(view, cx, Editor::tab);
+    register_action(view, cx, Editor::tab_prev);
+    register_action(view, cx, Editor::indent);
+    register_action(view, cx, Editor::outdent);
+    register_action(view, cx, Editor::delete_line);
+    register_action(view, cx, Editor::join_lines);
+    register_action(view, cx, Editor::sort_lines_case_sensitive);
+    register_action(view, cx, Editor::sort_lines_case_insensitive);
+    register_action(view, cx, Editor::reverse_lines);
+    register_action(view, cx, Editor::shuffle_lines);
+    register_action(view, cx, Editor::convert_to_upper_case);
+    register_action(view, cx, Editor::convert_to_lower_case);
+    register_action(view, cx, Editor::convert_to_title_case);
+    register_action(view, cx, Editor::convert_to_snake_case);
+    register_action(view, cx, Editor::convert_to_kebab_case);
+    register_action(view, cx, Editor::convert_to_upper_camel_case);
+    register_action(view, cx, Editor::convert_to_lower_camel_case);
+    register_action(view, cx, Editor::delete_to_previous_word_start);
+    register_action(view, cx, Editor::delete_to_previous_subword_start);
+    register_action(view, cx, Editor::delete_to_next_word_end);
+    register_action(view, cx, Editor::delete_to_next_subword_end);
+    register_action(view, cx, Editor::delete_to_beginning_of_line);
+    register_action(view, cx, Editor::delete_to_end_of_line);
+    register_action(view, cx, Editor::cut_to_end_of_line);
+    register_action(view, cx, Editor::duplicate_line);
+    register_action(view, cx, Editor::move_line_up);
+    register_action(view, cx, Editor::move_line_down);
+    register_action(view, cx, Editor::transpose);
+    register_action(view, cx, Editor::cut);
+    register_action(view, cx, Editor::copy);
+    register_action(view, cx, Editor::paste);
+    register_action(view, cx, Editor::undo);
+    register_action(view, cx, Editor::redo);
+    register_action(view, cx, Editor::move_page_up);
+    register_action(view, cx, Editor::move_page_down);
+    register_action(view, cx, Editor::next_screen);
+    register_action(view, cx, Editor::scroll_cursor_top);
+    register_action(view, cx, Editor::scroll_cursor_center);
+    register_action(view, cx, Editor::scroll_cursor_bottom);
+    register_action(view, cx, |editor, _: &LineDown, cx| {
         editor.scroll_screen(&ScrollAmount::Line(1.), cx)
     });
-    register_action(cx, |editor, _: &LineUp, cx| {
+    register_action(view, cx, |editor, _: &LineUp, cx| {
         editor.scroll_screen(&ScrollAmount::Line(-1.), cx)
     });
-    register_action(cx, |editor, _: &HalfPageDown, cx| {
+    register_action(view, cx, |editor, _: &HalfPageDown, cx| {
         editor.scroll_screen(&ScrollAmount::Page(0.5), cx)
     });
-    register_action(cx, |editor, _: &HalfPageUp, cx| {
+    register_action(view, cx, |editor, _: &HalfPageUp, cx| {
         editor.scroll_screen(&ScrollAmount::Page(-0.5), cx)
     });
-    register_action(cx, |editor, _: &PageDown, cx| {
+    register_action(view, cx, |editor, _: &PageDown, cx| {
         editor.scroll_screen(&ScrollAmount::Page(1.), cx)
     });
-    register_action(cx, |editor, _: &PageUp, cx| {
+    register_action(view, cx, |editor, _: &PageUp, cx| {
         editor.scroll_screen(&ScrollAmount::Page(-1.), cx)
     });
-    register_action(cx, Editor::move_to_previous_word_start);
-    register_action(cx, Editor::move_to_previous_subword_start);
-    register_action(cx, Editor::move_to_next_word_end);
-    register_action(cx, Editor::move_to_next_subword_end);
-    register_action(cx, Editor::move_to_beginning_of_line);
-    register_action(cx, Editor::move_to_end_of_line);
-    register_action(cx, Editor::move_to_start_of_paragraph);
-    register_action(cx, Editor::move_to_end_of_paragraph);
-    register_action(cx, Editor::move_to_beginning);
-    register_action(cx, Editor::move_to_end);
-    register_action(cx, Editor::select_up);
-    register_action(cx, Editor::select_down);
-    register_action(cx, Editor::select_left);
-    register_action(cx, Editor::select_right);
-    register_action(cx, Editor::select_to_previous_word_start);
-    register_action(cx, Editor::select_to_previous_subword_start);
-    register_action(cx, Editor::select_to_next_word_end);
-    register_action(cx, Editor::select_to_next_subword_end);
-    register_action(cx, Editor::select_to_beginning_of_line);
-    register_action(cx, Editor::select_to_end_of_line);
-    register_action(cx, Editor::select_to_start_of_paragraph);
-    register_action(cx, Editor::select_to_end_of_paragraph);
-    register_action(cx, Editor::select_to_beginning);
-    register_action(cx, Editor::select_to_end);
-    register_action(cx, Editor::select_all);
-    register_action(cx, |editor, action, cx| {
+    register_action(view, cx, Editor::move_to_previous_word_start);
+    register_action(view, cx, Editor::move_to_previous_subword_start);
+    register_action(view, cx, Editor::move_to_next_word_end);
+    register_action(view, cx, Editor::move_to_next_subword_end);
+    register_action(view, cx, Editor::move_to_beginning_of_line);
+    register_action(view, cx, Editor::move_to_end_of_line);
+    register_action(view, cx, Editor::move_to_start_of_paragraph);
+    register_action(view, cx, Editor::move_to_end_of_paragraph);
+    register_action(view, cx, Editor::move_to_beginning);
+    register_action(view, cx, Editor::move_to_end);
+    register_action(view, cx, Editor::select_up);
+    register_action(view, cx, Editor::select_down);
+    register_action(view, cx, Editor::select_left);
+    register_action(view, cx, Editor::select_right);
+    register_action(view, cx, Editor::select_to_previous_word_start);
+    register_action(view, cx, Editor::select_to_previous_subword_start);
+    register_action(view, cx, Editor::select_to_next_word_end);
+    register_action(view, cx, Editor::select_to_next_subword_end);
+    register_action(view, cx, Editor::select_to_beginning_of_line);
+    register_action(view, cx, Editor::select_to_end_of_line);
+    register_action(view, cx, Editor::select_to_start_of_paragraph);
+    register_action(view, cx, Editor::select_to_end_of_paragraph);
+    register_action(view, cx, Editor::select_to_beginning);
+    register_action(view, cx, Editor::select_to_end);
+    register_action(view, cx, Editor::select_all);
+    register_action(view, cx, |editor, action, cx| {
         editor.select_all_matches(action, cx).log_err();
     });
-    register_action(cx, Editor::select_line);
-    register_action(cx, Editor::split_selection_into_lines);
-    register_action(cx, Editor::add_selection_above);
-    register_action(cx, Editor::add_selection_below);
-    register_action(cx, |editor, action, cx| {
+    register_action(view, cx, Editor::select_line);
+    register_action(view, cx, Editor::split_selection_into_lines);
+    register_action(view, cx, Editor::add_selection_above);
+    register_action(view, cx, Editor::add_selection_below);
+    register_action(view, cx, |editor, action, cx| {
         editor.select_next(action, cx).log_err();
     });
-    register_action(cx, |editor, action, cx| {
+    register_action(view, cx, |editor, action, cx| {
         editor.select_previous(action, cx).log_err();
     });
-    register_action(cx, Editor::toggle_comments);
-    register_action(cx, Editor::select_larger_syntax_node);
-    register_action(cx, Editor::select_smaller_syntax_node);
-    register_action(cx, Editor::move_to_enclosing_bracket);
-    register_action(cx, Editor::undo_selection);
-    register_action(cx, Editor::redo_selection);
-    register_action(cx, Editor::go_to_diagnostic);
-    register_action(cx, Editor::go_to_prev_diagnostic);
-    register_action(cx, Editor::go_to_hunk);
-    register_action(cx, Editor::go_to_prev_hunk);
-    register_action(cx, Editor::go_to_definition);
-    register_action(cx, Editor::go_to_definition_split);
-    register_action(cx, Editor::go_to_type_definition);
-    register_action(cx, Editor::go_to_type_definition_split);
-    register_action(cx, Editor::fold);
-    register_action(cx, Editor::fold_at);
-    register_action(cx, Editor::unfold_lines);
-    register_action(cx, Editor::unfold_at);
-    register_action(cx, Editor::fold_selected_ranges);
-    register_action(cx, Editor::show_completions);
-    register_action(cx, Editor::toggle_code_actions);
+    register_action(view, cx, Editor::toggle_comments);
+    register_action(view, cx, Editor::select_larger_syntax_node);
+    register_action(view, cx, Editor::select_smaller_syntax_node);
+    register_action(view, cx, Editor::move_to_enclosing_bracket);
+    register_action(view, cx, Editor::undo_selection);
+    register_action(view, cx, Editor::redo_selection);
+    register_action(view, cx, Editor::go_to_diagnostic);
+    register_action(view, cx, Editor::go_to_prev_diagnostic);
+    register_action(view, cx, Editor::go_to_hunk);
+    register_action(view, cx, Editor::go_to_prev_hunk);
+    register_action(view, cx, Editor::go_to_definition);
+    register_action(view, cx, Editor::go_to_definition_split);
+    register_action(view, cx, Editor::go_to_type_definition);
+    register_action(view, cx, Editor::go_to_type_definition_split);
+    register_action(view, cx, Editor::fold);
+    register_action(view, cx, Editor::fold_at);
+    register_action(view, cx, Editor::unfold_lines);
+    register_action(view, cx, Editor::unfold_at);
+    register_action(view, cx, Editor::fold_selected_ranges);
+    register_action(view, cx, Editor::show_completions);
+    register_action(view, cx, Editor::toggle_code_actions);
     // on_action(cx, Editor::open_excerpts); todo!()
-    register_action(cx, Editor::toggle_soft_wrap);
-    register_action(cx, Editor::toggle_inlay_hints);
-    register_action(cx, Editor::reveal_in_finder);
-    register_action(cx, Editor::copy_path);
-    register_action(cx, Editor::copy_relative_path);
-    register_action(cx, Editor::copy_highlight_json);
-    register_action(cx, |editor, action, cx| {
+    register_action(view, cx, Editor::toggle_soft_wrap);
+    register_action(view, cx, Editor::toggle_inlay_hints);
+    register_action(view, cx, Editor::reveal_in_finder);
+    register_action(view, cx, Editor::copy_path);
+    register_action(view, cx, Editor::copy_relative_path);
+    register_action(view, cx, Editor::copy_highlight_json);
+    register_action(view, cx, |editor, action, cx| {
         editor
             .format(action, cx)
             .map(|task| task.detach_and_log_err(cx));
     });
-    register_action(cx, Editor::restart_language_server);
-    register_action(cx, Editor::show_character_palette);
+    register_action(view, cx, Editor::restart_language_server);
+    register_action(view, cx, Editor::show_character_palette);
     // on_action(cx, Editor::confirm_completion); todo!()
-    register_action(cx, |editor, action, cx| {
+    register_action(view, cx, |editor, action, cx| {
         editor
             .confirm_code_action(action, cx)
             .map(|task| task.detach_and_log_err(cx));
     });
-    register_action(cx, |editor, action, cx| {
+    register_action(view, cx, |editor, action, cx| {
         editor
             .rename(action, cx)
             .map(|task| task.detach_and_log_err(cx));
     });
-    register_action(cx, |editor, action, cx| {
+    register_action(view, cx, |editor, action, cx| {
         editor
             .confirm_rename(action, cx)
             .map(|task| task.detach_and_log_err(cx));
     });
-    register_action(cx, |editor, action, cx| {
+    register_action(view, cx, |editor, action, cx| {
         editor
             .find_all_references(action, cx)
             .map(|task| task.detach_and_log_err(cx));
     });
-    register_action(cx, Editor::next_copilot_suggestion);
-    register_action(cx, Editor::previous_copilot_suggestion);
-    register_action(cx, Editor::copilot_suggest);
-    register_action(cx, Editor::context_menu_first);
-    register_action(cx, Editor::context_menu_prev);
-    register_action(cx, Editor::context_menu_next);
-    register_action(cx, Editor::context_menu_last);
+    register_action(view, cx, Editor::next_copilot_suggestion);
+    register_action(view, cx, Editor::previous_copilot_suggestion);
+    register_action(view, cx, Editor::copilot_suggest);
+    register_action(view, cx, Editor::context_menu_first);
+    register_action(view, cx, Editor::context_menu_prev);
+    register_action(view, cx, Editor::context_menu_next);
+    register_action(view, cx, Editor::context_menu_last);
 }
 
 fn register_action<T: Action>(
-    cx: &mut ViewContext<Editor>,
+    view: &View<Editor>,
+    cx: &mut WindowContext,
     listener: impl Fn(&mut Editor, &T, &mut ViewContext<Editor>) + 'static,
 ) {
-    cx.on_action(TypeId::of::<T>(), move |editor, action, phase, cx| {
+    let view = view.clone();
+    cx.on_action(TypeId::of::<T>(), move |action, phase, cx| {
         let action = action.downcast_ref().unwrap();
         if phase == DispatchPhase::Bubble {
-            listener(editor, action, cx);
+            view.update(cx, |editor, cx| {
+                listener(editor, action, cx);
+            })
         }
     })
 }

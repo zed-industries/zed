@@ -1,4 +1,4 @@
-use gpui::{Hsla, ViewContext};
+use gpui::Hsla;
 
 use crate::prelude::*;
 
@@ -156,11 +156,11 @@ impl Player {
         self
     }
 
-    pub fn cursor_color<V: 'static>(&self, cx: &mut ViewContext<V>) -> Hsla {
+    pub fn cursor_color(&self, cx: &mut WindowContext) -> Hsla {
         cx.theme().styles.player.0[self.index % cx.theme().styles.player.0.len()].cursor
     }
 
-    pub fn selection_color<V: 'static>(&self, cx: &mut ViewContext<V>) -> Hsla {
+    pub fn selection_color(&self, cx: &mut WindowContext) -> Hsla {
         cx.theme().styles.player.0[self.index % cx.theme().styles.player.0.len()].selection
     }
 

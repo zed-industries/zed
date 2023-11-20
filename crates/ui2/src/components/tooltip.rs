@@ -67,8 +67,8 @@ impl Tooltip {
     }
 }
 
-impl Render<Self> for Tooltip {
-    type Element = Overlay<Self>;
+impl Render for Tooltip {
+    type Element = Overlay;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         let ui_font = ThemeSettings::get_global(cx).ui_font.family.clone();

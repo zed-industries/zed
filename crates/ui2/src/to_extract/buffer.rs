@@ -117,10 +117,10 @@ pub struct Buffer {
     path: Option<String>,
 }
 
-impl<V: 'static> Component<V> for Buffer {
-    type Rendered = Div<V>;
+impl Component for Buffer {
+    type Rendered = Div;
 
-    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
+    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         let rows = self.render_rows(cx);
 
         v_stack()
@@ -169,7 +169,7 @@ impl Buffer {
         self
     }
 
-    fn render_row<V: 'static>(row: BufferRow, cx: &WindowContext) -> impl Element<V> {
+    fn render_row(row: BufferRow, cx: &WindowContext) -> impl Element {
         let line_background = if row.current {
             cx.theme().colors().editor_active_line_background
         } else {
@@ -217,7 +217,7 @@ impl Buffer {
             }))
     }
 
-    fn render_rows<V: 'static>(&self, cx: &WindowContext) -> Vec<impl Element<V>> {
+    fn render_rows(&self, cx: &WindowContext) -> Vec<impl Element> {
         match &self.rows {
             Some(rows) => rows
                 .rows
@@ -228,7 +228,7 @@ impl Buffer {
         }
     }
 
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
+    fn render(self, cx: &mut WindowContext) -> impl Element {
         let rows = self.render_rows(cx);
 
         v_stack()
@@ -254,8 +254,8 @@ mod stories {
 
     pub struct BufferStory;
 
-    impl Render<Self> for BufferStory {
-        type Element = Div<Self>;
+    impl Render for BufferStory {
+        type Element = Div;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             Story::container(cx)

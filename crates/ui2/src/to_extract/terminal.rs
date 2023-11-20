@@ -5,10 +5,10 @@ use gpui::{relative, rems, Div, RenderOnce, Size};
 #[derive(RenderOnce)]
 pub struct Terminal;
 
-impl<V: 'static> Component<V> for Terminal {
-    type Rendered = Div<V>;
+impl Component for Terminal {
+    type Rendered = Div;
 
-    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
+    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         let can_navigate_back = true;
         let can_navigate_forward = false;
 
@@ -78,7 +78,7 @@ impl Terminal {
         Self
     }
 
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
+    fn render(self, cx: &mut WindowContext) -> impl Element {
         let can_navigate_back = true;
         let can_navigate_forward = false;
 
@@ -153,8 +153,8 @@ mod stories {
     use gpui::{Div, Render};
     pub struct TerminalStory;
 
-    impl Render<Self> for TerminalStory {
-        type Element = Div<Self>;
+    impl Render for TerminalStory {
+        type Element = Div;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             Story::container(cx)

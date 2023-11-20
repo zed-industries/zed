@@ -81,8 +81,8 @@ pub struct CollabTitlebarItem {
     _subscriptions: Vec<Subscription>,
 }
 
-impl Render<Self> for CollabTitlebarItem {
-    type Element = Stateful<Self, Div<Self>>;
+impl Render for CollabTitlebarItem {
+    type Element = Stateful<Div>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         h_stack()
@@ -100,7 +100,7 @@ impl Render<Self> for CollabTitlebarItem {
                 |s| s.pl(px(68.)),
             )
             .bg(cx.theme().colors().title_bar_background)
-            .on_click(|_, event, cx| {
+            .on_click(|event, cx| {
                 if event.up.click_count == 2 {
                     cx.zoom_window();
                 }
@@ -117,14 +117,14 @@ impl Render<Self> for CollabTitlebarItem {
                                     .variant(ButtonVariant::Ghost)
                                     .color(Some(TextColor::Player(0))),
                             )
-                            .tooltip(move |_, cx| Tooltip::text("Toggle following", cx)),
+                            .tooltip(move |cx| Tooltip::text("Toggle following", cx)),
                     )
                     // TODO - Add project menu
                     .child(
                         div()
                             .id("titlebar_project_menu_button")
                             .child(Button::new("project_name").variant(ButtonVariant::Ghost))
-                            .tooltip(move |_, cx| Tooltip::text("Recent Projects", cx)),
+                            .tooltip(move |cx| Tooltip::text("Recent Projects", cx)),
                     )
                     // TODO - Add git menu
                     .child(
@@ -135,7 +135,7 @@ impl Render<Self> for CollabTitlebarItem {
                                     .variant(ButtonVariant::Ghost)
                                     .color(Some(TextColor::Muted)),
                             )
-                            .tooltip(move |_, cx| {
+                            .tooltip(move |cx| {
                                 cx.build_view(|_| {
                                     Tooltip::new("Recent Branches")
                                         .key_binding(KeyBinding::new(gpui::KeyBinding::new(

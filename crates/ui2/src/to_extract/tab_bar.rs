@@ -11,10 +11,10 @@ pub struct TabBar {
     tabs: Vec<Tab>,
 }
 
-impl<V: 'static> Component<V> for TabBar {
-    type Rendered = Stateful<V, Div<V>>;
+impl Component for TabBar {
+    type Rendered = gpui::Stateful<Div>;
 
-    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
+    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         let (can_navigate_back, can_navigate_forward) = self.can_navigate;
 
         div()
@@ -110,8 +110,8 @@ mod stories {
 
     pub struct TabBarStory;
 
-    impl Render<Self> for TabBarStory {
-        type Element = Div<Self>;
+    impl Render for TabBarStory {
+        type Element = Div;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             Story::container(cx)

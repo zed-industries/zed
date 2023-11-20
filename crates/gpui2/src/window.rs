@@ -1437,7 +1437,27 @@ impl<'a> WindowContext<'a> {
             .bindings_for_action(action)
     }
 
-    ///========== ELEMENT RELATED FUNCTIONS ===========
+    pub fn listener_for<V: Render, E>(
+        &self,
+        view: &View<V>,
+        f: impl Fn(&mut V, &E, &mut ViewContext<V>) + 'static,
+    ) -> impl Fn(&E, &mut WindowContext) + 'static {
+        let view = view.downgrade();
+        move |e: &E, cx: &mut WindowContext| {
+            view.update(cx, |view, cx| f(view, e, cx)).ok();
+        }
+    }
+
+    pub fn constructor_for<V: Render, R>(
+        &self,
+        view: &View<V>,
+        f: impl Fn(&mut V, &mut ViewContext<V>) -> R + 'static,
+    ) -> impl Fn(&mut WindowContext) -> R + 'static {
+        let view = view.clone();
+        move |cx: &mut WindowContext| view.update(cx, |view, cx| f(view, cx))
+    }
+
+    //========== ELEMENT RELATED FUNCTIONS ===========
     pub fn with_key_dispatch<R>(
         &mut self,
         context: KeyContext,
@@ -1476,6 +1496,21 @@ impl<'a> WindowContext<'a> {
             .push(Box::new(move |event, cx| {
                 listener(event, cx);
             }));
+    }
+
+    /// Set an input handler, such as [ElementInputHandler], which interfaces with the
+    /// platform to receive textual input with proper integration with concerns such
+    /// as IME interactions.
+    pub fn handle_input(
+        &mut self,
+        focus_handle: &FocusHandle,
+        input_handler: impl PlatformInputHandler,
+    ) {
+        if focus_handle.is_focused(self) {
+            self.window
+                .platform_window
+                .set_input_handler(Box::new(input_handler));
+        }
     }
 }
 
@@ -1656,6 +1691,10 @@ impl<'a> BorrowMut<AppContext> for WindowContext<'a> {
 pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
     fn app_mut(&mut self) -> &mut AppContext {
         self.borrow_mut()
+    }
+
+    fn app(&self) -> &AppContext {
+        self.borrow()
     }
 
     fn window(&self) -> &Window {
@@ -2241,21 +2280,6 @@ impl<'a, V: 'static> ViewContext<'a, V> {
             });
     }
 
-    /// Set an input handler, such as [ElementInputHandler], which interfaces with the
-    /// platform to receive textual input with proper integration with concerns such
-    /// as IME interactions.
-    pub fn handle_input(
-        &mut self,
-        focus_handle: &FocusHandle,
-        input_handler: impl PlatformInputHandler,
-    ) {
-        if focus_handle.is_focused(self) {
-            self.window
-                .platform_window
-                .set_input_handler(Box::new(input_handler));
-        }
-    }
-
     pub fn emit<Evt>(&mut self, event: Evt)
     where
         Evt: 'static,
@@ -2287,18 +2311,10 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         &self,
         f: impl Fn(&mut V, &E, &mut ViewContext<V>) + 'static,
     ) -> impl Fn(&E, &mut WindowContext) + 'static {
-        let view = self.view().clone();
+        let view = self.view().downgrade();
         move |e: &E, cx: &mut WindowContext| {
-            view.update(cx, |view, cx| f(view, e, cx));
+            view.update(cx, |view, cx| f(view, e, cx)).ok();
         }
-    }
-
-    pub fn constructor<R>(
-        &self,
-        f: impl Fn(&mut V, &mut ViewContext<V>) -> R + 'static,
-    ) -> impl Fn(&mut WindowContext) -> R {
-        let view = self.view().clone();
-        move |cx: &mut WindowContext| view.update(cx, |view, cx| f(view, cx))
     }
 }
 

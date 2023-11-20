@@ -5,10 +5,10 @@ pub struct CopilotModal {
     id: ElementId,
 }
 
-impl<V: 'static> Component<V> for CopilotModal {
-    type Rendered = Stateful<V, Div<V>>;
+impl Component for CopilotModal {
+    type Rendered = gpui::Stateful<Div>;
 
-    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
+    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         div().id(self.id.clone()).child(
                 Modal::new("some-id")
                     .title("Connect Copilot to Zed")
@@ -36,8 +36,8 @@ mod stories {
 
     pub struct CopilotModalStory;
 
-    impl Render<Self> for CopilotModalStory {
-        type Element = Div<Self>;
+    impl Render for CopilotModalStory {
+        type Element = Div;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             Story::container(cx)

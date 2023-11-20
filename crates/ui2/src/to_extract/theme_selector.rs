@@ -6,11 +6,10 @@ pub struct ThemeSelector {
     id: ElementId,
 }
 
-impl<V: 'static> Component<V> for ThemeSelector {
-    type Rendered = Div<V>;
+impl Component for ThemeSelector {
+    type Rendered = Div;
 
-    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
-        let cx: &mut ViewContext<V> = cx;
+    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         div().child(
             Palette::new(self.id.clone())
                 .items(vec![
@@ -53,8 +52,8 @@ mod stories {
 
     pub struct ThemeSelectorStory;
 
-    impl Render<Self> for ThemeSelectorStory {
-        type Element = Div<Self>;
+    impl Render for ThemeSelectorStory {
+        type Element = Div;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             Story::container(cx)

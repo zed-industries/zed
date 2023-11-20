@@ -18,10 +18,10 @@ pub struct Input {
     is_active: bool,
 }
 
-impl<V: 'static> Component<V> for Input {
-    type Rendered = Stateful<V, Div<V>>;
+impl Component for Input {
+    type Rendered = Stateful<Div>;
 
-    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
+    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         let (input_bg, input_hover_bg, input_active_bg) = match self.variant {
             InputVariant::Ghost => (
                 cx.theme().colors().ghost_element_background,
@@ -118,8 +118,8 @@ mod stories {
 
     pub struct InputStory;
 
-    impl Render<Self> for InputStory {
-        type Element = Div<Self>;
+    impl Render for InputStory {
+        type Element = Div;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             Story::container(cx)

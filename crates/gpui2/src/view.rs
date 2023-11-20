@@ -309,50 +309,6 @@ where
     }
 }
 
-// pub struct RenderViewWith<E, V> {
-//     view: View<V>,
-//     element: Option<E>,
-// }
-
-// impl<E> Element for RenderViewWith<E>
-// where
-//     E: 'static + Element,
-// {
-//     type State = Option<AnyElement>;
-
-//     fn layout(
-//         &mut self,
-//         _: Option<Self::State>,
-//         cx: &mut WindowContext,
-//     ) -> (LayoutId, Self::State) {
-//         self.view.update(cx, |view, cx| {
-//             let mut element = self.element.take().unwrap().into_any();
-//             let layout_id = element.layout(view, cx);
-//             (layout_id, Some(element))
-//         })
-//     }
-
-//     fn paint(self, _: Bounds<Pixels>, element: &mut Self::ElementState, cx: &mut WindowContext) {
-//         element.paint(cx)
-//     }
-// }
-
-// impl<E> RenderOnce for RenderViewWith<E>
-// where
-//     E: 'static + Element<V>,
-//     ParentV: 'static,
-// {
-//     type Element = Self;
-
-//     fn element_id(&self) -> Option<ElementId> {
-//         self.element.as_ref().unwrap().element_id()
-//     }
-
-//     fn render_once(self) -> Self::Element {
-//         self
-//     }
-// }
-
 mod any_view {
     use crate::{AnyElement, AnyView, BorrowWindow, Element, LayoutId, Render, WindowContext};
 

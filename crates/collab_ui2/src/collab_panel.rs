@@ -3294,8 +3294,8 @@ impl CollabPanel {
 //     .with_width(size.x())
 // }
 
-impl Render<Self> for CollabPanel {
-    type Element = Focusable<Self, Div<Self>>;
+impl Render for CollabPanel {
+    type Element = Focusable<Div>;
 
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
         div()

@@ -7,15 +7,15 @@ use crate::prelude::*;
 pub struct ToolbarItem {}
 
 #[derive(RenderOnce)]
-pub struct Toolbar<V: 'static> {
-    left_items: SmallVec<[AnyElement<V>; 2]>,
-    right_items: SmallVec<[AnyElement<V>; 2]>,
+pub struct Toolbar {
+    left_items: SmallVec<[AnyElement; 2]>,
+    right_items: SmallVec<[AnyElement; 2]>,
 }
 
-impl<V: 'static> Component<V> for Toolbar<V> {
-    type Rendered = Div<V>;
+impl Component for Toolbar {
+    type Rendered = Div;
 
-    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
+    fn render(self, cx: &WindowContext) -> Self::Rendered {
         div()
             .bg(cx.theme().colors().toolbar_background)
             .p_2()
@@ -26,7 +26,7 @@ impl<V: 'static> Component<V> for Toolbar<V> {
     }
 }
 
-impl<V: 'static> Toolbar<V> {
+impl Toolbar {
     pub fn new() -> Self {
         Self {
             left_items: SmallVec::new(),
@@ -34,7 +34,7 @@ impl<V: 'static> Toolbar<V> {
         }
     }
 
-    pub fn left_item(mut self, child: impl RenderOnce<V>) -> Self
+    pub fn left_item(mut self, child: impl RenderOnce) -> Self
     where
         Self: Sized,
     {
@@ -42,7 +42,7 @@ impl<V: 'static> Toolbar<V> {
         self
     }
 
-    pub fn left_items(mut self, iter: impl IntoIterator<Item = impl RenderOnce<V>>) -> Self
+    pub fn left_items(mut self, iter: impl IntoIterator<Item = impl RenderOnce>) -> Self
     where
         Self: Sized,
     {
@@ -51,7 +51,7 @@ impl<V: 'static> Toolbar<V> {
         self
     }
 
-    pub fn right_item(mut self, child: impl RenderOnce<V>) -> Self
+    pub fn right_item(mut self, child: impl RenderOnce) -> Self
     where
         Self: Sized,
     {
@@ -59,7 +59,7 @@ impl<V: 'static> Toolbar<V> {
         self
     }
 
-    pub fn right_items(mut self, iter: impl IntoIterator<Item = impl RenderOnce<V>>) -> Self
+    pub fn right_items(mut self, iter: impl IntoIterator<Item = impl RenderOnce>) -> Self
     where
         Self: Sized,
     {
@@ -85,10 +85,10 @@ mod stories {
 
     pub struct ToolbarStory;
 
-    impl Render<Self> for ToolbarStory {
-        type Element = Div<Self>;
+    impl Render for ToolbarStory {
+        type Element = Div;
 
-        fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+        fn render(&mut self, cx: &mut WindowContext) -> Self::Element {
             Story::container(cx)
                 .child(Story::title_for::<_, Toolbar<Self>>(cx))
                 .child(Story::label(cx, "Default"))

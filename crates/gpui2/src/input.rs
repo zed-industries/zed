@@ -1,4 +1,6 @@
-use crate::{AsyncWindowContext, Bounds, Pixels, PlatformInputHandler, View, ViewContext};
+use crate::{
+    AsyncWindowContext, Bounds, Pixels, PlatformInputHandler, View, ViewContext, WindowContext,
+};
 use std::ops::Range;
 
 /// Implement this trait to allow views to handle textual input when implementing an editor, field, etc.
@@ -43,9 +45,9 @@ pub struct ElementInputHandler<V> {
 impl<V: 'static> ElementInputHandler<V> {
     /// Used in [Element::paint] with the element's bounds and a view context for its
     /// containing view.
-    pub fn new(element_bounds: Bounds<Pixels>, cx: &mut ViewContext<V>) -> Self {
+    pub fn new(element_bounds: Bounds<Pixels>, view: View<V>, cx: &mut WindowContext) -> Self {
         ElementInputHandler {
-            view: cx.view().clone(),
+            view,
             element_bounds,
             cx: cx.to_async(),
         }

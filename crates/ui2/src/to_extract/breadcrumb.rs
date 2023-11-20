@@ -11,10 +11,10 @@ pub struct Breadcrumb {
     symbols: Vec<Symbol>,
 }
 
-impl<V: 'static> Component<V> for Breadcrumb {
-    type Rendered = Stateful<V, Div<V>>;
+impl Component for Breadcrumb {
+    type Rendered = gpui::Stateful<Div>;
 
-    fn render(self, view_state: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
+    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         let symbols_len = self.symbols.len();
         h_stack()
             .id("breadcrumb")
@@ -62,7 +62,7 @@ impl Breadcrumb {
         Self { path, symbols }
     }
 
-    fn render_separator<V: 'static>(&self, cx: &WindowContext) -> Div<V> {
+    fn render_separator(&self, cx: &WindowContext) -> Div {
         div()
             .child(" › ")
             .text_color(cx.theme().colors().text_muted)
@@ -81,8 +81,8 @@ mod stories {
 
     pub struct BreadcrumbStory;
 
-    impl Render<Self> for BreadcrumbStory {
-        type Element = Div<Self>;
+    impl Render for BreadcrumbStory {
+        type Element = Div;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             Story::container(cx)

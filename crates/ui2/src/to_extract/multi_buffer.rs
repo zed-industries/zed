@@ -6,10 +6,10 @@ pub struct MultiBuffer {
     buffers: Vec<Buffer>,
 }
 
-impl<V: 'static> Component<V> for MultiBuffer {
-    type Rendered = Div<V>;
+impl Component for MultiBuffer {
+    type Rendered = Div;
 
-    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
+    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         v_stack()
             .w_full()
             .h_full()
@@ -49,8 +49,8 @@ mod stories {
 
     pub struct MultiBufferStory;
 
-    impl Render<Self> for MultiBufferStory {
-        type Element = Div<Self>;
+    impl Render for MultiBufferStory {
+        type Element = Div;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             Story::container(cx)

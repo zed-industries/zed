@@ -1,8 +1,8 @@
-use std::sync::Arc;
+use std::rc::Rc;
 
 use gpui::{
-    DefiniteLength, DefiniteLength, Div, Hsla, MouseButton, RenderOnce, Stateful,
-    StatefulInteractiveElement, WindowContext,
+    DefiniteLength, Div, Hsla, MouseButton, MouseDownEvent, RenderOnce, StatefulInteractiveElement,
+    WindowContext,
 };
 
 use crate::prelude::*;
@@ -64,9 +64,10 @@ impl ButtonVariant {
     }
 }
 
+#[derive(RenderOnce)]
 pub struct Button {
     disabled: bool,
-    click_handler: Option<CallbackHandle<()>>,
+    click_handler: Option<Rc<dyn Fn(&MouseDownEvent, &mut WindowContext)>>,
     icon: Option<Icon>,
     icon_position: Option<IconPosition>,
     label: SharedString,
@@ -75,10 +76,10 @@ pub struct Button {
     color: Option<TextColor>,
 }
 
-impl RenderOnce for Button {
-    type Element = Stateful<Div>;
+impl Component for Button {
+    type Rendered = gpui::Stateful<Div>;
 
-    fn render(self) -> Self::Rendered {
+    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         let (icon_color, label_color) = match (self.disabled, self.color) {
             (true, _) => (TextColor::Disabled, TextColor::Disabled),
             (_, None) => (TextColor::Default, TextColor::Default),
@@ -116,9 +117,9 @@ impl RenderOnce for Button {
             button = button.w(width).justify_center();
         }
 
-        if let Some(click_handler) = self.handlers.click.clone() {
-            button = button.on_mouse_down(MouseButton::Left, move |state, event, cx| {
-                click_handler(state, cx);
+        if let Some(click_handler) = self.click_handler.clone() {
+            button = button.on_mouse_down(MouseButton::Left, move |event, cx| {
+                click_handler(event, cx);
             });
         }
 
@@ -167,8 +168,11 @@ impl Button {
         self
     }
 
-    pub fn on_click(mut self, handler: CallbackHandle<()>) -> Self {
-        self.handlers.click = Some(handler);
+    pub fn on_click(
+        mut self,
+        handler: impl Fn(&MouseDownEvent, &mut WindowContext) + 'static,
+    ) -> Self {
+        self.click_handler = Some(Rc::new(handler));
         self
     }
 
@@ -215,15 +219,15 @@ impl Component for ButtonGroup {
         let mut group = h_stack();
 
         for button in self.buttons.into_iter() {
-            group = group.child(button.render(view, cx));
+            group = group.child(button.render(cx));
         }
 
         group
     }
 }
 
-impl<V: 'static> ButtonGroup<V> {
-    pub fn new(buttons: Vec<Button<V>>) -> Self {
+impl ButtonGroup {
+    pub fn new(buttons: Vec<Button>) -> Self {
         Self { buttons }
     }
 }

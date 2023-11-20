@@ -328,7 +328,7 @@ pub fn static_players_with_call_status() -> Vec<PlayerWithCallStatus> {
     ]
 }
 
-pub fn static_new_notification_items_2<V: 'static>() -> Vec<Notification<V>> {
+pub fn static_new_notification_items_2() -> Vec<Notification> {
     vec![
         Notification::new_icon_message(
             "notif-1",
@@ -478,7 +478,7 @@ pub fn static_new_notification_items_2<V: 'static>() -> Vec<Notification<V>> {
     ]
 }
 
-pub fn static_project_panel_project_items<V>() -> Vec<ListItem<V>> {
+pub fn static_project_panel_project_items() -> Vec<ListItem> {
     vec![
         ListEntry::new(Label::new("zed"))
             .left_icon(Icon::FolderOpen.into())
@@ -605,7 +605,7 @@ pub fn static_project_panel_project_items<V>() -> Vec<ListItem<V>> {
     .collect()
 }
 
-pub fn static_project_panel_single_items<V>() -> Vec<ListItem<V>> {
+pub fn static_project_panel_single_items() -> Vec<ListItem> {
     vec![
         ListEntry::new(Label::new("todo.md"))
             .left_icon(Icon::FileDoc.into())
@@ -622,7 +622,7 @@ pub fn static_project_panel_single_items<V>() -> Vec<ListItem<V>> {
     .collect()
 }
 
-pub fn static_collab_panel_current_call<V>() -> Vec<ListItem<V>> {
+pub fn static_collab_panel_current_call() -> Vec<ListItem> {
     vec![
         ListEntry::new(Label::new("as-cii")).left_avatar("http://github.com/as-cii.png?s=50"),
         ListEntry::new(Label::new("nathansobo"))
@@ -635,7 +635,7 @@ pub fn static_collab_panel_current_call<V>() -> Vec<ListItem<V>> {
     .collect()
 }
 
-pub fn static_collab_panel_channels<V>() -> Vec<ListItem<V>> {
+pub fn static_collab_panel_channels<V>() -> Vec<ListItem> {
     vec![
         ListEntry::new(Label::new("zed"))
             .left_icon(Icon::Hash.into())

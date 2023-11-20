@@ -6,10 +6,10 @@ pub struct Facepile {
     players: Vec<Player>,
 }
 
-impl<V: 'static> Component<V> for Facepile {
-    type Rendered = Div<V>;
+impl Component for Facepile {
+    type Rendered = Div;
 
-    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
+    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         let player_count = self.players.len();
         let player_list = self.players.iter().enumerate().map(|(ix, player)| {
             let isnt_last = ix < player_count - 1;
@@ -42,8 +42,8 @@ mod stories {
 
     pub struct FacepileStory;
 
-    impl Render<Self> for FacepileStory {
-        type Element = Div<Self>;
+    impl Render for FacepileStory {
+        type Element = Div;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             let players = static_players();

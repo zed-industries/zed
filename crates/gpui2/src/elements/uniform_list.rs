@@ -1,7 +1,7 @@
 use crate::{
     point, px, size, AnyElement, AvailableSpace, Bounds, Element, ElementId, InteractiveElement,
-    InteractiveElementState, Interactivity, LayoutId, Pixels, Point, RenderOnce, Size,
-    StyleRefinement, Styled, WindowContext,
+    InteractiveElementState, Interactivity, LayoutId, Pixels, Point, Render, RenderOnce, Size,
+    StyleRefinement, Styled, View, ViewContext, WindowContext,
 };
 use smallvec::SmallVec;
 use std::{cell::RefCell, cmp, ops::Range, rc::Rc};
@@ -10,30 +10,36 @@ use taffy::style::Overflow;
 /// uniform_list provides lazy rendering for a set of items that are of uniform height.
 /// When rendered into a container with overflow-y: hidden and a fixed (or max) height,
 /// uniform_list will only render the visibile subset of items.
-pub fn uniform_list<I, R>(
+pub fn uniform_list<I, R, V>(
+    view: View<V>,
     id: I,
     item_count: usize,
-    f: impl 'static + Fn(Range<usize>, &mut WindowContext) -> Vec<R>,
+    f: impl 'static + Fn(&mut V, Range<usize>, &mut ViewContext<V>) -> Vec<R>,
 ) -> UniformList
 where
     I: Into<ElementId>,
     R: RenderOnce,
+    V: Render,
 {
     let id = id.into();
     let mut style = StyleRefinement::default();
     style.overflow.y = Some(Overflow::Hidden);
+
+    let render_range = move |range, cx: &mut WindowContext| {
+        view.update(cx, |this, cx| {
+            f(this, range, cx)
+                .into_iter()
+                .map(|component| component.render_into_any())
+                .collect()
+        })
+    };
 
     UniformList {
         id: id.clone(),
         style,
         item_count,
         item_to_measure_index: 0,
-        render_items: Box::new(move |visible_range, cx| {
-            f(visible_range, cx)
-                .into_iter()
-                .map(|component| component.render_into_any())
-                .collect()
-        }),
+        render_items: Box::new(render_range),
         interactivity: Interactivity {
             element_id: Some(id.into()),
             ..Default::default()

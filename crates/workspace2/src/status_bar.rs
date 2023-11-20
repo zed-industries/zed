@@ -9,7 +9,7 @@ use theme2::ActiveTheme;
 use ui::h_stack;
 use util::ResultExt;
 
-pub trait StatusItemView: Render<Self> {
+pub trait StatusItemView: Render {
     fn set_active_pane_item(
         &mut self,
         active_pane_item: Option<&dyn crate::ItemHandle>,
@@ -34,8 +34,8 @@ pub struct StatusBar {
     _observe_active_pane: Subscription,
 }
 
-impl Render<Self> for StatusBar {
-    type Element = Div<Self>;
+impl Render for StatusBar {
+    type Element = Div;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         div()
@@ -53,14 +53,14 @@ impl Render<Self> for StatusBar {
 }
 
 impl StatusBar {
-    fn render_left_tools(&self, cx: &mut ViewContext<Self>) -> impl RenderOnce<Self> {
+    fn render_left_tools(&self, cx: &mut ViewContext<Self>) -> impl RenderOnce {
         h_stack()
             .items_center()
             .gap_2()
             .children(self.left_items.iter().map(|item| item.to_any()))
     }
 
-    fn render_right_tools(&self, cx: &mut ViewContext<Self>) -> impl RenderOnce<Self> {
+    fn render_right_tools(&self, cx: &mut ViewContext<Self>) -> impl RenderOnce {
         h_stack()
             .items_center()
             .gap_2()

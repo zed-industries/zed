@@ -8,10 +8,10 @@ pub struct AssistantPanel {
     current_side: PanelSide,
 }
 
-impl<V: 'static> Component<V> for AssistantPanel {
-    type Rendered = Panel<V>;
+impl Component for AssistantPanel {
+    type Rendered = Panel;
 
-    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
+    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         Panel::new(self.id.clone(), cx)
             .children(vec![div()
                 .flex()
@@ -84,8 +84,8 @@ mod stories {
     use gpui::{Div, Render};
     pub struct AssistantPanelStory;
 
-    impl Render<Self> for AssistantPanelStory {
-        type Element = Div<Self>;
+    impl Render for AssistantPanelStory {
+        type Element = Div;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             Story::container(cx)

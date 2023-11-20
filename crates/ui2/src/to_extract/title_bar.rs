@@ -85,10 +85,10 @@ impl TitleBar {
     }
 }
 
-impl Render<Self> for TitleBar {
-    type Element = Div<Self>;
+impl Render for TitleBar {
+    type Element = Div;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Div<Self> {
+    fn render(&mut self, cx: &mut WindowContext) -> Div {
         let settings = user_settings(cx);
 
         // let has_focus = cx.window_is_active();
@@ -205,10 +205,10 @@ mod stories {
         }
     }
 
-    impl Render<Self> for TitleBarStory {
-        type Element = Div<Self>;
+    impl Render for TitleBarStory {
+        type Element = Div;
 
-        fn render(&mut self, cx: &mut ViewContext<Self>) -> Div<Self> {
+        fn render(&mut self, cx: &mut WindowContext) -> Div {
             Story::container(cx)
                 .child(Story::title_for::<_, TitleBar>(cx))
                 .child(Story::label(cx, "Default"))

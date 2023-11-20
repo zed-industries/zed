@@ -6,10 +6,10 @@ pub struct LanguageSelector {
     id: ElementId,
 }
 
-impl<V: 'static> Component<V> for LanguageSelector {
-    type Rendered = Stateful<V, Div<V>>;
+impl Component for LanguageSelector {
+    type Rendered = gpui::Stateful<Div>;
 
-    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
+    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         div().id(self.id.clone()).child(
             Palette::new("palette")
                 .items(vec![
@@ -36,7 +36,7 @@ impl LanguageSelector {
         Self { id: id.into() }
     }
 
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
+    fn render(self, cx: &mut WindowContext) -> impl Element {
         div().id(self.id.clone()).child(
             Palette::new("palette")
                 .items(vec![
@@ -58,7 +58,7 @@ impl LanguageSelector {
     }
 }
 
-use gpui::{Div, RenderOnce, Stateful};
+use gpui::{Div, RenderOnce};
 #[cfg(feature = "stories")]
 pub use stories::*;
 
@@ -70,8 +70,8 @@ mod stories {
 
     pub struct LanguageSelectorStory;
 
-    impl Render<Self> for LanguageSelectorStory {
-        type Element = Div<Self>;
+    impl Render for LanguageSelectorStory {
+        type Element = Div;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             Story::container(cx)

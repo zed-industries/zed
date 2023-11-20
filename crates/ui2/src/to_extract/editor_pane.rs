@@ -47,10 +47,10 @@ impl EditorPane {
     }
 }
 
-impl Render<Self> for EditorPane {
-    type Element = Div<Self>;
+impl Render for EditorPane {
+    type Element = Div;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Div<Self> {
+    fn render(&mut self, cx: &mut WindowContext) -> Div {
         v_stack()
             .w_full()
             .h_full()

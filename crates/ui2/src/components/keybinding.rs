@@ -10,10 +10,10 @@ pub struct KeyBinding {
     key_binding: gpui::KeyBinding,
 }
 
-impl<V: 'static> Component<V> for KeyBinding {
-    type Rendered = Div<V>;
+impl Component for KeyBinding {
+    type Rendered = Div;
 
-    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
+    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         div()
             .flex()
             .gap_2()
@@ -49,11 +49,10 @@ pub struct Key {
     key: SharedString,
 }
 
-impl<V: 'static> Component<V> for Key {
-    type Rendered = Div<V>;
+impl Component for Key {
+    type Rendered = Div;
 
-    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
-        let _view: &mut V = view;
+    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         div()
             .px_2()
             .py_0()
@@ -89,8 +88,8 @@ mod stories {
         gpui::KeyBinding::new(key, NoAction {}, None)
     }
 
-    impl Render<Self> for KeybindingStory {
-        type Element = Div<Self>;
+    impl Render for KeybindingStory {
+        type Element = Div;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             let all_modifier_permutations =

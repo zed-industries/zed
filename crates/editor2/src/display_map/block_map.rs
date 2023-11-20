@@ -50,7 +50,7 @@ struct BlockRow(u32);
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
 struct WrapRow(u32);
 
-pub type RenderBlock = Arc<dyn Fn(&mut BlockContext) -> AnyElement<Editor>>;
+pub type RenderBlock = Arc<dyn Fn(&mut BlockContext) -> AnyElement>;
 
 pub struct Block {
     id: BlockId,
@@ -69,7 +69,7 @@ where
     pub position: P,
     pub height: u8,
     pub style: BlockStyle,
-    pub render: Arc<dyn Fn(&mut BlockContext) -> AnyElement<Editor>>,
+    pub render: Arc<dyn Fn(&mut BlockContext) -> AnyElement>,
     pub disposition: BlockDisposition,
 }
 
@@ -947,7 +947,7 @@ impl DerefMut for BlockContext<'_, '_> {
 }
 
 impl Block {
-    pub fn render(&self, cx: &mut BlockContext) -> AnyElement<Editor> {
+    pub fn render(&self, cx: &mut BlockContext) -> AnyElement {
         self.render.lock()(cx)
     }
 

@@ -5,8 +5,8 @@ use ui::prelude::*;
 
 pub struct ColorsStory;
 
-impl Render<Self> for ColorsStory {
-    type Element = Div<Self>;
+impl Render for ColorsStory {
+    type Element = Div;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         let color_scales = default_color_scales();

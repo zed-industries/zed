@@ -6,10 +6,10 @@ pub struct RecentProjects {
     id: ElementId,
 }
 
-impl<V: 'static> Component<V> for RecentProjects {
-    type Rendered = Stateful<V, Div<V>>;
+impl Component for RecentProjects {
+    type Rendered = Stateful<Div>;
 
-    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
+    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         div().id(self.id.clone()).child(
             Palette::new("palette")
                 .items(vec![
@@ -45,10 +45,10 @@ mod stories {
 
     pub struct RecentProjectsStory;
 
-    impl Render<Self> for RecentProjectsStory {
-        type Element = Div<Self>;
+    impl Render for RecentProjectsStory {
+        type Element = Div;
 
-        fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+        fn render(&mut self, cx: &mut WindowContext) -> Self::Element {
             Story::container(cx)
                 .child(Story::title_for::<_, RecentProjects>(cx))
                 .child(Story::label(cx, "Default"))

@@ -1,4 +1,4 @@
-use gpui::{div, Div, RenderOnce, Stateful, StatefulInteractiveElement};
+use gpui::{div, ClickEvent, Div, RenderOnce, Stateful, StatefulInteractiveElement};
 use std::rc::Rc;
 
 use crate::settings::user_settings;
@@ -32,10 +32,10 @@ pub struct ListHeader {
     toggle: Toggle,
 }
 
-impl<V: 'static> Component<V> for ListHeader {
-    type Rendered = Div<V>;
+impl Component for ListHeader {
+    type Rendered = Div;
 
-    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
+    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         let disclosure_control = disclosure_control(self.toggle);
 
         let meta = match self.meta {
@@ -198,7 +198,7 @@ impl ListSubHeader {
         self
     }
 
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
+    fn render(self, cx: &mut WindowContext) -> impl Element {
         h_stack().flex_1().w_full().relative().py_1().child(
             div()
                 .h_6()
@@ -233,36 +233,36 @@ pub enum ListEntrySize {
 }
 
 #[derive(Clone)]
-pub enum ListItem<V: 'static> {
-    Entry(ListEntry<V>),
+pub enum ListItem {
+    Entry(ListEntry),
     Separator(ListSeparator),
     Header(ListSubHeader),
 }
 
-impl<V: 'static> From<ListEntry<V>> for ListItem<V> {
-    fn from(entry: ListEntry<V>) -> Self {
+impl From<ListEntry> for ListItem {
+    fn from(entry: ListEntry) -> Self {
         Self::Entry(entry)
     }
 }
 
-impl<V: 'static> From<ListSeparator> for ListItem<V> {
+impl From<ListSeparator> for ListItem {
     fn from(entry: ListSeparator) -> Self {
         Self::Separator(entry)
     }
 }
 
-impl<V: 'static> From<ListSubHeader> for ListItem<V> {
+impl From<ListSubHeader> for ListItem {
     fn from(entry: ListSubHeader) -> Self {
         Self::Header(entry)
     }
 }
 
-impl<V: 'static> ListItem<V> {
+impl ListItem {
     pub fn new(label: Label) -> Self {
         Self::Entry(ListEntry::new(label))
     }
 
-    pub fn as_entry(&mut self) -> Option<&mut ListEntry<V>> {
+    pub fn as_entry(&mut self) -> Option<&mut ListEntry> {
         if let Self::Entry(entry) = self {
             Some(entry)
         } else {
@@ -270,17 +270,17 @@ impl<V: 'static> ListItem<V> {
         }
     }
 
-    fn render(self, view: &mut V, ix: usize, cx: &mut ViewContext<V>) -> Div<V> {
+    fn render(self, ix: usize, cx: &mut WindowContext) -> Div {
         match self {
             ListItem::Entry(entry) => div().child(entry.render(ix, cx)),
-            ListItem::Separator(separator) => div().child(separator.render(view, cx)),
-            ListItem::Header(header) => div().child(header.render(view, cx)),
+            ListItem::Separator(separator) => div().child(separator.render(cx)),
+            ListItem::Header(header) => div().child(header.render(cx)),
         }
     }
 }
 
 // #[derive(RenderOnce)]
-pub struct ListEntry<V> {
+pub struct ListEntry {
     disabled: bool,
     // TODO: Reintroduce this
     // disclosure_control_style: DisclosureControlVisibility,
@@ -291,10 +291,10 @@ pub struct ListEntry<V> {
     size: ListEntrySize,
     toggle: Toggle,
     variant: ListItemVariant,
-    on_click: Option<Rc<dyn Fn(&mut V, &mut ViewContext<V>) + 'static>>,
+    on_click: Option<Rc<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
 }
 
-impl<V> Clone for ListEntry<V> {
+impl Clone for ListEntry {
     fn clone(&self) -> Self {
         Self {
             disabled: self.disabled,
@@ -310,7 +310,7 @@ impl<V> Clone for ListEntry<V> {
     }
 }
 
-impl<V: 'static> ListEntry<V> {
+impl ListEntry {
     pub fn new(label: Label) -> Self {
         Self {
             disabled: false,
@@ -325,7 +325,7 @@ impl<V: 'static> ListEntry<V> {
         }
     }
 
-    pub fn on_click(mut self, handler: impl Fn(&mut V, &mut ViewContext<V>) + 'static) -> Self {
+    pub fn on_click(mut self, handler: impl Fn(&ClickEvent, &mut WindowContext) + 'static) -> Self {
         self.on_click = Some(Rc::new(handler));
         self
     }
@@ -365,7 +365,7 @@ impl<V: 'static> ListEntry<V> {
         self
     }
 
-    fn render(self, ix: usize, cx: &mut ViewContext<V>) -> Stateful<V, Div<V>> {
+    fn render(self, ix: usize, cx: &mut WindowContext) -> Stateful<Div> {
         let settings = user_settings(cx);
 
         let left_content = match self.left_slot.clone() {
@@ -392,13 +392,11 @@ impl<V: 'static> ListEntry<V> {
                 style.background = Some(cx.theme().colors().editor_background.into());
                 style
             })
-            .on_click({
-                let on_click = self.on_click.clone();
-
-                move |view: &mut V, event, cx| {
-                    if let Some(on_click) = &on_click {
-                        (on_click)(view, cx)
-                    }
+            .map(|div| {
+                if let Some(on_click) = self.on_click.clone() {
+                    div.on_click(move |e, cx| on_click(e, cx))
+                } else {
+                    div
                 }
             })
             .bg(cx.theme().colors().surface_background)
@@ -444,17 +442,17 @@ impl ListSeparator {
     }
 }
 
-impl<V: 'static> Component<V> for ListSeparator {
-    type Rendered = Div<V>;
+impl Component for ListSeparator {
+    type Rendered = Div;
 
-    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
+    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         div().h_px().w_full().bg(cx.theme().colors().border_variant)
     }
 }
 
 #[derive(RenderOnce)]
-pub struct List<V: 'static> {
-    items: Vec<ListItem<V>>,
+pub struct List {
+    items: Vec<ListItem>,
     /// Message to display when the list is empty
     /// Defaults to "No items"
     empty_message: SharedString,
@@ -462,16 +460,16 @@ pub struct List<V: 'static> {
     toggle: Toggle,
 }
 
-impl<V: 'static> Component<V> for List<V> {
-    type Rendered = Div<V>;
+impl Component for List {
+    type Rendered = Div;
 
-    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
+    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         let list_content = match (self.items.is_empty(), self.toggle) {
             (false, _) => div().children(
                 self.items
                     .into_iter()
                     .enumerate()
-                    .map(|(ix, item)| item.render(view, ix, cx)),
+                    .map(|(ix, item)| item.render(ix, cx)),
             ),
             (true, Toggle::Toggled(false)) => div(),
             (true, _) => {
@@ -487,8 +485,8 @@ impl<V: 'static> Component<V> for List<V> {
     }
 }
 
-impl<V: 'static> List<V> {
-    pub fn new(items: Vec<ListItem<V>>) -> Self {
+impl List {
+    pub fn new(items: Vec<ListItem>) -> Self {
         Self {
             items,
             empty_message: "No items".into(),
@@ -512,13 +510,13 @@ impl<V: 'static> List<V> {
         self
     }
 
-    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
+    fn render(self, cx: &mut WindowContext) -> impl Element {
         let list_content = match (self.items.is_empty(), self.toggle) {
             (false, _) => div().children(
                 self.items
                     .into_iter()
                     .enumerate()
-                    .map(|(ix, item)| item.render(view, ix, cx)),
+                    .map(|(ix, item)| item.render(ix, cx)),
             ),
             (true, Toggle::Toggled(false)) => div(),
             (true, _) => {

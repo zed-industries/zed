@@ -14,17 +14,17 @@ pub enum SplitDirection {
 }
 
 #[derive(RenderOnce)]
-pub struct Pane<V: 'static> {
+pub struct Pane {
     id: ElementId,
     size: Size<Length>,
     fill: Hsla,
-    children: SmallVec<[AnyElement<V>; 2]>,
+    children: SmallVec<[AnyElement; 2]>,
 }
 
-impl<V: 'static> Component<V> for Pane<V> {
-    type Rendered = Stateful<V, Div<V>>;
+impl Component for Pane {
+    type Rendered = gpui::Stateful<Div>;
 
-    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
+    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         div()
             .id(self.id.clone())
             .flex()
@@ -48,7 +48,7 @@ impl<V: 'static> Component<V> for Pane<V> {
     }
 }
 
-impl<V: 'static> Pane<V> {
+impl Pane {
     pub fn new(id: impl Into<ElementId>, size: Size<Length>) -> Self {
         // Fill is only here for debugging purposes, remove before release
 
@@ -66,23 +66,23 @@ impl<V: 'static> Pane<V> {
     }
 }
 
-impl<V: 'static> ParentElement<V> for Pane<V> {
-    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<V>; 2]> {
+impl ParentElement for Pane {
+    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement; 2]> {
         &mut self.children
     }
 }
 
 #[derive(RenderOnce)]
-pub struct PaneGroup<V: 'static> {
-    groups: Vec<PaneGroup<V>>,
-    panes: Vec<Pane<V>>,
+pub struct PaneGroup {
+    groups: Vec<PaneGroup>,
+    panes: Vec<Pane>,
     split_direction: SplitDirection,
 }
 
-impl<V: 'static> Component<V> for PaneGroup<V> {
-    type Rendered = Div<V>;
+impl Component for PaneGroup {
+    type Rendered = Div;
 
-    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
+    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         if !self.panes.is_empty() {
             let el = div()
                 .flex()
@@ -90,7 +90,7 @@ impl<V: 'static> Component<V> for PaneGroup<V> {
                 .gap_px()
                 .w_full()
                 .h_full()
-                .children(self.panes.into_iter().map(|pane| pane.render(view, cx)));
+                .children(self.panes.into_iter().map(|pane| pane.render(cx)));
 
             if self.split_direction == SplitDirection::Horizontal {
                 return el;
@@ -107,7 +107,7 @@ impl<V: 'static> Component<V> for PaneGroup<V> {
                 .w_full()
                 .h_full()
                 .bg(cx.theme().colors().editor_background)
-                .children(self.groups.into_iter().map(|group| group.render(view, cx)));
+                .children(self.groups.into_iter().map(|group| group.render(cx)));
 
             if self.split_direction == SplitDirection::Horizontal {
                 return el;
@@ -120,8 +120,8 @@ impl<V: 'static> Component<V> for PaneGroup<V> {
     }
 }
 
-impl<V: 'static> PaneGroup<V> {
-    pub fn new_groups(groups: Vec<PaneGroup<V>>, split_direction: SplitDirection) -> Self {
+impl PaneGroup {
+    pub fn new_groups(groups: Vec<PaneGroup>, split_direction: SplitDirection) -> Self {
         Self {
             groups,
             panes: Vec::new(),
@@ -129,7 +129,7 @@ impl<V: 'static> PaneGroup<V> {
         }
     }
 
-    pub fn new_panes(panes: Vec<Pane<V>>, split_direction: SplitDirection) -> Self {
+    pub fn new_panes(panes: Vec<Pane>, split_direction: SplitDirection) -> Self {
         Self {
             groups: Vec::new(),
             panes,

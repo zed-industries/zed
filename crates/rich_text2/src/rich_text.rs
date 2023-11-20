@@ -56,12 +56,12 @@ pub struct Mention {
 }
 
 impl RichText {
-    pub fn element<V: 'static>(
+    pub fn element(
         &self,
         // syntax: Arc<SyntaxTheme>,
         //  style: RichTextStyle,
         // cx: &mut ViewContext<V>,
-    ) -> AnyElement<V> {
+    ) -> AnyElement {
         todo!();
 
         // let mut region_id = 0;

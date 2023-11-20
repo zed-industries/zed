@@ -25,10 +25,10 @@ impl BufferSearch {
     }
 }
 
-impl Render<Self> for BufferSearch {
-    type Element = Div<Self>;
+impl Render for BufferSearch {
+    type Element = Div;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Div<Self> {
+    fn render(&mut self, cx: &mut WindowContext) -> Div {
         h_stack()
             .bg(cx.theme().colors().toolbar_background)
             .p_2()

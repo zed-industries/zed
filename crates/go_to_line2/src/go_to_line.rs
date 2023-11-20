@@ -144,15 +144,15 @@ impl GoToLine {
     }
 }
 
-impl Render<Self> for GoToLine {
-    type Element = Div<Self>;
+impl Render for GoToLine {
+    type Element = Div;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         div()
             .elevation_2(cx)
             .key_context("GoToLine")
-            .on_action(Self::cancel)
-            .on_action(Self::confirm)
+            .on_action(cx.listener(Self::cancel))
+            .on_action(cx.listener(Self::confirm))
             .w_96()
             .child(
                 v_stack()

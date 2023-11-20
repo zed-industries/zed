@@ -1,19 +1,19 @@
 use crate::{
     h_stack, prelude::*, static_new_notification_items_2, utils::naive_format_distance_from_now,
-    v_stack, Avatar, ButtonOrIconButton, ClickHandler, Icon, IconElement, Label, LineHeightStyle,
-    ListHeader, ListHeaderMeta, ListSeparator, PublicPlayer, TextColor, UnreadIndicator,
+    v_stack, Avatar, ButtonOrIconButton, Icon, IconElement, Label, LineHeightStyle, ListHeader,
+    ListHeaderMeta, ListSeparator, PublicPlayer, TextColor, UnreadIndicator,
 };
-use gpui::{prelude::*, Div, Stateful};
+use gpui::{prelude::*, ClickEvent, Div};
 
 #[derive(RenderOnce)]
 pub struct NotificationsPanel {
     id: ElementId,
 }
 
-impl<V: 'static> Component<V> for NotificationsPanel {
-    type Rendered = Stateful<V, Div<V>>;
+impl Component for NotificationsPanel {
+    type Rendered = gpui::Stateful<Div>;
 
-    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
+    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         div()
             .id(self.id.clone())
             .flex()
@@ -60,8 +60,8 @@ impl NotificationsPanel {
     }
 }
 
-pub struct NotificationAction<V: 'static> {
-    button: ButtonOrIconButton<V>,
+pub struct NotificationAction {
+    button: ButtonOrIconButton,
     tooltip: SharedString,
     /// Shows after action is chosen
     ///
@@ -73,9 +73,9 @@ pub struct NotificationAction<V: 'static> {
     taken_message: (Option<Icon>, SharedString),
 }
 
-impl<V: 'static> NotificationAction<V> {
+impl NotificationAction {
     pub fn new(
-        button: impl Into<ButtonOrIconButton<V>>,
+        button: impl Into<ButtonOrIconButton>,
         tooltip: impl Into<SharedString>,
         (icon, taken_message): (Option<Icon>, impl Into<SharedString>),
     ) -> Self {
@@ -92,38 +92,40 @@ pub enum ActorOrIcon {
     Icon(Icon),
 }
 
-pub struct NotificationMeta<V: 'static> {
-    items: Vec<(Option<Icon>, SharedString, Option<ClickHandler<V>>)>,
+pub type ClickHandler = Box<dyn Fn(&ClickEvent, &mut WindowContext)>;
+
+pub struct NotificationMeta {
+    items: Vec<(Option<Icon>, SharedString, Option<ClickHandler>)>,
 }
 
-struct NotificationHandlers<V: 'static> {
-    click: Option<ClickHandler<V>>,
+struct NotificationHandlers {
+    click: Option<ClickHandler>,
 }
 
-impl<V: 'static> Default for NotificationHandlers<V> {
+impl Default for NotificationHandlers {
     fn default() -> Self {
         Self { click: None }
     }
 }
 
 #[derive(RenderOnce)]
-pub struct Notification<V: 'static> {
+pub struct Notification {
     id: ElementId,
     slot: ActorOrIcon,
     message: SharedString,
     date_received: NaiveDateTime,
-    meta: Option<NotificationMeta<V>>,
-    actions: Option<[NotificationAction<V>; 2]>,
+    meta: Option<NotificationMeta>,
+    actions: Option<[NotificationAction; 2]>,
     unread: bool,
     new: bool,
-    action_taken: Option<NotificationAction<V>>,
-    handlers: NotificationHandlers<V>,
+    action_taken: Option<NotificationAction>,
+    handlers: NotificationHandlers,
 }
 
-impl<V: 'static> Component<V> for Notification<V> {
-    type Rendered = Stateful<V, Div<V>>;
+impl Component for Notification {
+    type Rendered = gpui::Stateful<Div>;
 
-    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
+    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         div()
             .relative()
             .id(self.id.clone())
@@ -199,13 +201,13 @@ impl<V: 'static> Component<V> for Notification<V> {
     }
 }
 
-impl<V> Notification<V> {
+impl Notification {
     fn new(
         id: ElementId,
         message: SharedString,
         date_received: NaiveDateTime,
         slot: ActorOrIcon,
-        click_action: Option<ClickHandler<V>>,
+        click_action: Option<ClickHandler>,
     ) -> Self {
         let handlers = if click_action.is_some() {
             NotificationHandlers {
@@ -237,7 +239,7 @@ impl<V> Notification<V> {
         message: impl Into<SharedString>,
         date_received: NaiveDateTime,
         actor: PublicPlayer,
-        click_action: ClickHandler<V>,
+        click_action: ClickHandler,
     ) -> Self {
         Self::new(
             id.into(),
@@ -256,7 +258,7 @@ impl<V> Notification<V> {
         message: impl Into<SharedString>,
         date_received: NaiveDateTime,
         icon: Icon,
-        click_action: ClickHandler<V>,
+        click_action: ClickHandler,
     ) -> Self {
         Self::new(
             id.into(),
@@ -276,7 +278,7 @@ impl<V> Notification<V> {
         message: impl Into<SharedString>,
         date_received: NaiveDateTime,
         actor: PublicPlayer,
-        actions: [NotificationAction<V>; 2],
+        actions: [NotificationAction; 2],
     ) -> Self {
         Self::new(
             id.into(),
@@ -297,7 +299,7 @@ impl<V> Notification<V> {
         message: impl Into<SharedString>,
         date_received: NaiveDateTime,
         icon: Icon,
-        actions: [NotificationAction<V>; 2],
+        actions: [NotificationAction; 2],
     ) -> Self {
         Self::new(
             id.into(),
@@ -309,22 +311,22 @@ impl<V> Notification<V> {
         .actions(actions)
     }
 
-    fn on_click(mut self, handler: ClickHandler<V>) -> Self {
+    fn on_click(mut self, handler: ClickHandler) -> Self {
         self.handlers.click = Some(handler);
         self
     }
 
-    pub fn actions(mut self, actions: [NotificationAction<V>; 2]) -> Self {
+    pub fn actions(mut self, actions: [NotificationAction; 2]) -> Self {
         self.actions = Some(actions);
         self
     }
 
-    pub fn meta(mut self, meta: NotificationMeta<V>) -> Self {
+    pub fn meta(mut self, meta: NotificationMeta) -> Self {
         self.meta = Some(meta);
         self
     }
 
-    fn render_meta_items(&self, cx: &mut ViewContext<V>) -> impl Element<V> {
+    fn render_meta_items(&self, cx: &mut WindowContext) -> impl Element {
         if let Some(meta) = &self.meta {
             h_stack().children(
                 meta.items
@@ -343,7 +345,7 @@ impl<V> Notification<V> {
         }
     }
 
-    fn render_slot(&self, cx: &mut ViewContext<V>) -> impl Element<V> {
+    fn render_slot(&self, cx: &mut WindowContext) -> impl Element {
         match &self.slot {
             ActorOrIcon::Actor(actor) => Avatar::new(actor.avatar.clone()).render_into_any(),
             ActorOrIcon::Icon(icon) => IconElement::new(icon.clone()).render_into_any(),
@@ -364,12 +366,12 @@ mod stories {
 
     pub struct NotificationsPanelStory;
 
-    impl Render<Self> for NotificationsPanelStory {
-        type Element = Div<Self>;
+    impl Render for NotificationsPanelStory {
+        type Element = Div;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             Story::container(cx)
-                .child(Story::title_for::<_, NotificationsPanel>(cx))
+                .child(Story::title_for::<NotificationsPanel>(cx))
                 .child(Story::label(cx, "Default"))
                 .child(
                     Panel::new("panel", cx).child(NotificationsPanel::new("notifications_panel")),

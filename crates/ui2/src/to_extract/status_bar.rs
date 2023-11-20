@@ -38,8 +38,8 @@ pub struct StatusBar {
     bottom_tools: Option<ToolGroup>,
 }
 
-impl Component<Workspace> for StatusBar {
-    type Rendered = Div<Workspace>;
+impl Component for StatusBar {
+    type Rendered = Div;
 
     fn render(self, view: &mut Workspace, cx: &mut ViewContext<Workspace>) -> Self::Rendered {
         div()
@@ -100,7 +100,7 @@ impl StatusBar {
         self
     }
 
-    fn left_tools(&self, workspace: &mut Workspace, cx: &WindowContext) -> impl Element<Workspace> {
+    fn left_tools(&self, workspace: &mut Workspace, cx: &WindowContext) -> impl Element {
         div()
             .flex()
             .items_center()
@@ -127,11 +127,7 @@ impl StatusBar {
             .child(IconButton::new("diagnostics", Icon::XCircle))
     }
 
-    fn right_tools(
-        &self,
-        workspace: &mut Workspace,
-        cx: &WindowContext,
-    ) -> impl Element<Workspace> {
+    fn right_tools(&self, workspace: &mut Workspace, cx: &WindowContext) -> impl Element {
         div()
             .flex()
             .items_center()

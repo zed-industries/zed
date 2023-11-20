@@ -1,7 +1,7 @@
 use editor::Editor;
 use gpui::{
     div, prelude::*, uniform_list, AppContext, Div, FocusHandle, FocusableView, MouseButton,
-    Render, Task, UniformListScrollHandle, View, ViewContext, WindowContext,
+    MouseDownEvent, Render, Task, UniformListScrollHandle, View, ViewContext, WindowContext,
 };
 use std::{cmp, sync::Arc};
 use ui::{prelude::*, v_stack, Divider, Label, TextColor};
@@ -15,7 +15,7 @@ pub struct Picker<D: PickerDelegate> {
 }
 
 pub trait PickerDelegate: Sized + 'static {
-    type ListItem: RenderOnce<Picker<Self>>;
+    type ListItem: RenderOnce;
 
     fn match_count(&self) -> usize;
     fn selected_index(&self) -> usize;
@@ -180,21 +180,21 @@ impl<D: PickerDelegate> Picker<D> {
     }
 }
 
-impl<D: PickerDelegate> Render<Self> for Picker<D> {
-    type Element = Div<Self>;
+impl<D: PickerDelegate> Render for Picker<D> {
+    type Element = Div;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         div()
             .key_context("picker")
             .size_full()
             .elevation_2(cx)
-            .on_action(Self::select_next)
-            .on_action(Self::select_prev)
-            .on_action(Self::select_first)
-            .on_action(Self::select_last)
-            .on_action(Self::cancel)
-            .on_action(Self::confirm)
-            .on_action(Self::secondary_confirm)
+            .on_action(cx.listener(Self::select_next))
+            .on_action(cx.listener(Self::select_prev))
+            .on_action(cx.listener(Self::select_first))
+            .on_action(cx.listener(Self::select_last))
+            .on_action(cx.listener(Self::cancel))
+            .on_action(cx.listener(Self::confirm))
+            .on_action(cx.listener(Self::secondary_confirm))
             .child(
                 v_stack()
                     .py_0p5()
@@ -208,31 +208,37 @@ impl<D: PickerDelegate> Render<Self> for Picker<D> {
                         .p_1()
                         .grow()
                         .child(
-                            uniform_list("candidates", self.delegate.match_count(), {
-                                move |this: &mut Self, visible_range, cx| {
-                                    let selected_ix = this.delegate.selected_index();
-                                    visible_range
-                                        .map(|ix| {
-                                            div()
-                                                .on_mouse_down(
-                                                    MouseButton::Left,
-                                                    move |this: &mut Self, event, cx| {
-                                                        this.handle_click(
-                                                            ix,
-                                                            event.modifiers.command,
-                                                            cx,
-                                                        )
-                                                    },
-                                                )
-                                                .child(this.delegate.render_match(
-                                                    ix,
-                                                    ix == selected_ix,
-                                                    cx,
-                                                ))
-                                        })
-                                        .collect()
-                                }
-                            })
+                            uniform_list(
+                                cx.view().clone(),
+                                "candidates",
+                                self.delegate.match_count(),
+                                {
+                                    let selected_index = self.delegate.selected_index();
+
+                                    move |picker, visible_range, cx| {
+                                        visible_range
+                                            .map(|ix| {
+                                                div()
+                                                    .on_mouse_down(
+                                                        MouseButton::Left,
+                                                        cx.listener(move |this, event: &MouseDownEvent, cx| {
+                                                            this.handle_click(
+                                                                ix,
+                                                                event.modifiers.command,
+                                                                cx,
+                                                            )
+                                                        }),
+                                                    )
+                                                    .child(picker.delegate.render_match(
+                                                        ix,
+                                                        ix == selected_index,
+                                                        cx,
+                                                    ))
+                                            })
+                                            .collect()
+                                    }
+                                },
+                            )
                             .track_scroll(self.scroll_handle.clone()),
                         )
                         .max_h_72()

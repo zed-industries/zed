@@ -9,10 +9,10 @@ pub struct CollabPanel {
     id: ElementId,
 }
 
-impl<V: 'static> Component<V> for CollabPanel {
-    type Rendered = Stateful<V, Div<V>>;
+impl Component for CollabPanel {
+    type Rendered = gpui::Stateful<Div>;
 
-    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
+    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         v_stack()
             .id(self.id.clone())
             .h_full()
@@ -101,8 +101,8 @@ mod stories {
 
     pub struct CollabPanelStory;
 
-    impl Render<Self> for CollabPanelStory {
-        type Element = Div<Self>;
+    impl Render for CollabPanelStory {
+        type Element = Div;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             Story::container(cx)

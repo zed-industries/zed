@@ -8,10 +8,10 @@ pub struct ChatPanel {
     messages: Vec<ChatMessage>,
 }
 
-impl<V: 'static> Component<V> for ChatPanel {
-    type Rendered = Stateful<V, Div<V>>;
+impl Component for ChatPanel {
+    type Rendered = gpui::Stateful<Div>;
 
-    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
+    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         div()
             .id(self.element_id.clone())
             .flex()
@@ -78,10 +78,10 @@ pub struct ChatMessage {
     sent_at: NaiveDateTime,
 }
 
-impl<V: 'static> Component<V> for ChatMessage {
-    type Rendered = Div<V>;
+impl Component for ChatMessage {
+    type Rendered = Div;
 
-    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
+    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         div()
             .flex()
             .flex_col()
@@ -123,8 +123,8 @@ mod stories {
 
     pub struct ChatPanelStory;
 
-    impl Render<Self> for ChatPanelStory {
-        type Element = Div<Self>;
+    impl Render for ChatPanelStory {
+        type Element = Div;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             Story::container(cx)
