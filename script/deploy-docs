@@ -1,0 +1,195 @@
+#!/bin/bash
+
+# Set the environment variables
+TARGET_DIR="../zed-docs"
+PUSH_CHANGES=false
+CLEAN_FOLDERS=false
+
+# Parse command line arguments
+while getopts "pc" opt; do
+  case ${opt} in
+    p )
+      PUSH_CHANGES=true
+      ;;
+    c )
+      CLEAN_FOLDERS=true
+      ;;
+    \? )
+      echo "Invalid option: $OPTARG" 1>&2
+      exit 1
+      ;;
+  esac
+done
+
+if "$CLEAN_FOLDERS"; then
+  echo "Cleaning ./doc and ./debug folders..."
+  rm -rf "$TARGET_DIR/doc"
+  rm -rf "$TARGET_DIR/debug"
+fi
+
+# Check if the target documentation directory exists
+if [ ! -d "$TARGET_DIR" ]; then
+    # Prompt the user for input
+    read -p "The zed-docs directory does not exist. Make sure you are running this from the zed repo root." -n 1 -r
+    read -p "Do you want to clone the repository (y/n)? " -n 1 -r
+    echo  # Move to a new line
+
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        # Clone the repo if the user agrees
+        git clone https://github.com/zed-industries/zed-docs.git "$TARGET_DIR"
+    else
+        # Exit if the user does not agree to clone the repo
+        echo "Exiting without cloning the repository."
+        exit 1
+    fi
+else
+    # If the directory exists, pull the latest changes
+    pushd "$TARGET_DIR" > /dev/null
+    git pull
+    popd > /dev/null
+fi
+
+# Build the documentation
+CARGO_TARGET_DIR="$TARGET_DIR" cargo doc --workspace --no-deps --open \
+--exclude activity_indicator \
+--exclude ai \
+--exclude ai2 \
+--exclude assistant \
+--exclude audio \
+--exclude audio2 \
+--exclude auto_update \
+--exclude auto_update2 \
+--exclude breadcrumbs \
+--exclude call \
+--exclude call2 \
+--exclude channel \
+--exclude channel2 \
+--exclude cli \
+--exclude client \
+--exclude client2 \
+--exclude clock \
+--exclude collab \
+--exclude collab2 \
+--exclude collab_ui \
+--exclude collab_ui2 \
+--exclude collections \
+--exclude command_palette \
+--exclude command_palette2 \
+--exclude component_test \
+--exclude context_menu \
+--exclude copilot \
+--exclude copilot2 \
+--exclude copilot_button \
+--exclude db \
+--exclude db2 \
+--exclude diagnostics \
+--exclude diagnostics2 \
+--exclude drag_and_drop \
+--exclude editor \
+--exclude feature_flags \
+--exclude feature_flags2 \
+--exclude feedback \
+--exclude file_finder \
+--exclude file_finder2 \
+--exclude fs \
+--exclude fs2 \
+--exclude fsevent \
+--exclude fuzzy \
+--exclude fuzzy2 \
+--exclude git \
+--exclude git3 \
+--exclude go_to_line \
+--exclude go_to_line2 \
+--exclude gpui \
+--exclude gpui_macros \
+--exclude install_cli \
+--exclude install_cli2 \
+--exclude journal \
+--exclude journal2 \
+--exclude language \
+--exclude language2 \
+--exclude language_selector \
+--exclude language_tools \
+--exclude live_kit_client \
+--exclude live_kit_client2 \
+--exclude live_kit_server \
+--exclude lsp \
+--exclude lsp2 \
+--exclude media \
+--exclude menu \
+--exclude menu2 \
+--exclude multi_buffer \
+--exclude multi_buffer2 \
+--exclude node_runtime \
+--exclude notifications \
+--exclude notifications2 \
+--exclude outline \
+--exclude picker \
+--exclude picker2 \
+--exclude plugin \
+--exclude plugin_macros \
+--exclude plugin_runtime \
+--exclude prettier \
+--exclude prettier2 \
+--exclude project \
+--exclude project2 \
+--exclude project_panel \
+--exclude project_panel2 \
+--exclude project_symbols \
+--exclude quick_action_bar \
+--exclude recent_projects \
+--exclude refineable \
+--exclude rich_text \
+--exclude rich_text2 \
+--exclude rope \
+--exclude rope2 \
+--exclude rpc \
+--exclude rpc2 \
+--exclude search \
+--exclude semantic_index \
+--exclude settings \
+--exclude settings2 \
+--exclude snippet \
+--exclude sqlez \
+--exclude sqlez_macros \
+--exclude storybook2 \
+--exclude storybook3 \
+--exclude sum_tree \
+--exclude terminal \
+--exclude terminal2 \
+--exclude terminal_view \
+--exclude terminal_view2 \
+--exclude text \
+--exclude text2 \
+--exclude theme \
+--exclude theme_importer \
+--exclude theme_selector \
+--exclude util \
+--exclude vcs_menu \
+--exclude vim \
+--exclude welcome \
+--exclude workspace2 \
+--exclude xtask \
+--exclude zed \
+--exclude zed-actions \
+--exclude zed_actions2
+
+if "$PUSH_CHANGES"; then
+    # Commit the changes and push
+    pushd "$TARGET_DIR" > /dev/null
+    # Check if there are any changes to commit
+    if git diff --quiet && git diff --staged --quiet; then
+        echo "No changes to the documentation."
+    else
+        # Staging the changes
+        git add .
+
+        # Creating a commit with the current datetime
+        DATETIME=$(date +"%Y-%m-%d %H:%M:%S")
+        git commit -m "Update docs – $DATETIME"
+
+        # Pushing the changes
+        git push
+    fi
+    popd > /dev/null
+fi
