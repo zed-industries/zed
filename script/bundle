@@ -10,6 +10,7 @@ local_only=false
 overwrite_local_app=false
 bundle_name=""
 zed_crate="zed"
+binary_name="Zed"
 
 # This must match the team in the provsiioning profile.
 APPLE_NOTORIZATION_TEAM="MQ55VZLNZQ"
@@ -50,7 +51,10 @@ do
             target_dir="debug"
             ;;
         f) overwrite_local_app=true;;
-        2) zed_crate="zed2";;
+        2)
+            zed_crate="zed2"
+            binary_name="Zed2"
+            ;;
         h)
            help_info
            exit 0
@@ -116,7 +120,7 @@ if [ "$local_arch" = false ]; then
     echo "Creating fat binaries"
     lipo \
         -create \
-        target/{x86_64-apple-darwin,aarch64-apple-darwin}/${target_dir}/Zed \
+        target/{x86_64-apple-darwin,aarch64-apple-darwin}/${target_dir}/${binary_name} \
         -output \
         "${app_path}/Contents/MacOS/${zed_crate}"
     lipo \
