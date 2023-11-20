@@ -76,8 +76,8 @@ impl FocusableView for CommandPalette {
     }
 }
 
-impl Render<Self> for CommandPalette {
-    type Element = Div<Self>;
+impl Render for CommandPalette {
+    type Element = Div;
 
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
         v_stack().w_96().child(self.picker.clone())
@@ -140,7 +140,7 @@ impl CommandPaletteDelegate {
 }
 
 impl PickerDelegate for CommandPaletteDelegate {
-    type ListItem = Div<Picker<Self>>;
+    type ListItem = Div;
 
     fn placeholder_text(&self) -> Arc<str> {
         "Execute a command...".into()

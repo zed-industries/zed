@@ -127,7 +127,7 @@ impl TestAppContext {
     pub fn add_window<F, V>(&mut self, build_window: F) -> WindowHandle<V>
     where
         F: FnOnce(&mut ViewContext<V>) -> V,
-        V: 'static + Render<V>,
+        V: 'static + Render,
     {
         let mut cx = self.app.borrow_mut();
         cx.open_window(WindowOptions::default(), |cx| cx.build_view(build_window))
@@ -144,7 +144,7 @@ impl TestAppContext {
     pub fn add_window_view<F, V>(&mut self, build_window: F) -> (View<V>, &mut VisualTestContext)
     where
         F: FnOnce(&mut ViewContext<V>) -> V,
-        V: 'static + Render<V>,
+        V: 'static + Render,
     {
         let mut cx = self.app.borrow_mut();
         let window = cx.open_window(WindowOptions::default(), |cx| cx.build_view(build_window));
@@ -568,7 +568,7 @@ impl<'a> VisualContext for VisualTestContext<'a> {
         build_view: impl FnOnce(&mut ViewContext<'_, V>) -> V,
     ) -> Self::Result<View<V>>
     where
-        V: 'static + Render<V>,
+        V: 'static + Render,
     {
         self.window
             .update(self.cx, |_, cx| cx.build_view(build_view))
@@ -590,7 +590,7 @@ impl<'a> VisualContext for VisualTestContext<'a> {
         build_view: impl FnOnce(&mut ViewContext<'_, V>) -> V,
     ) -> Self::Result<View<V>>
     where
-        V: 'static + Render<V>,
+        V: 'static + Render,
     {
         self.window
             .update(self.cx, |_, cx| cx.replace_root_view(build_view))
@@ -618,7 +618,7 @@ impl<'a> VisualContext for VisualTestContext<'a> {
 }
 
 impl AnyWindowHandle {
-    pub fn build_view<V: Render<V> + 'static>(
+    pub fn build_view<V: Render + 'static>(
         &self,
         cx: &mut TestAppContext,
         build_view: impl FnOnce(&mut ViewContext<'_, V>) -> V,
@@ -629,8 +629,8 @@ impl AnyWindowHandle {
 
 pub struct EmptyView {}
 
-impl Render<Self> for EmptyView {
-    type Element = Div<Self>;
+impl Render for EmptyView {
+    type Element = Div;
 
     fn render(&mut self, _cx: &mut crate::ViewContext<Self>) -> Self::Element {
         div()

@@ -8,10 +8,10 @@ pub struct PlayerStack {
     player_with_call_status: PlayerWithCallStatus,
 }
 
-impl<V: 'static> Component<V> for PlayerStack {
-    type Rendered = Div<V>;
+impl Component for PlayerStack {
+    type Rendered = Div;
 
-    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
+    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         let player = self.player_with_call_status.get_player();
 
         let followers = self

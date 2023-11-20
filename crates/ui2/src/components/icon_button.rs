@@ -1,33 +1,22 @@
-use crate::{h_stack, prelude::*, ClickHandler, Icon, IconElement};
-use gpui::{prelude::*, Action, AnyView, Div, MouseButton, Stateful};
-use std::sync::Arc;
-
-struct IconButtonHandlers<V: 'static> {
-    click: Option<ClickHandler<V>>,
-}
-
-impl<V: 'static> Default for IconButtonHandlers<V> {
-    fn default() -> Self {
-        Self { click: None }
-    }
-}
+use crate::{h_stack, prelude::*, Icon, IconElement};
+use gpui::{prelude::*, Action, AnyView, Div, MouseButton, MouseDownEvent, Stateful};
 
 #[derive(RenderOnce)]
-pub struct IconButton<V: 'static> {
+pub struct IconButton {
     id: ElementId,
     icon: Icon,
     color: TextColor,
     variant: ButtonVariant,
     state: InteractionState,
     selected: bool,
-    tooltip: Option<Box<dyn Fn(&mut V, &mut ViewContext<V>) -> AnyView + 'static>>,
-    handlers: IconButtonHandlers<V>,
+    tooltip: Option<Box<dyn Fn(&mut WindowContext) -> AnyView + 'static>>,
+    on_mouse_down: Option<Box<dyn Fn(&MouseDownEvent, &mut WindowContext) + 'static>>,
 }
 
-impl<V: 'static> Component<V> for IconButton<V> {
-    type Rendered = Stateful<V, Div<V>>;
+impl Component for IconButton {
+    type Rendered = Stateful<Div>;
 
-    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
+    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         let icon_color = match (self.state, self.color) {
             (InteractionState::Disabled, _) => TextColor::Disabled,
             (InteractionState::Active, _) => TextColor::Selected,
@@ -65,16 +54,16 @@ impl<V: 'static> Component<V> for IconButton<V> {
             .active(|style| style.bg(bg_active_color))
             .child(IconElement::new(self.icon).color(icon_color));
 
-        if let Some(click_handler) = self.handlers.click.clone() {
-            button = button.on_mouse_down(MouseButton::Left, move |state, event, cx| {
+        if let Some(click_handler) = self.on_mouse_down {
+            button = button.on_mouse_down(MouseButton::Left, move |event, cx| {
                 cx.stop_propagation();
-                click_handler(state, cx);
+                click_handler(event, cx);
             })
         }
 
         if let Some(tooltip) = self.tooltip {
             if !self.selected {
-                button = button.tooltip(move |view: &mut V, cx| (tooltip)(view, cx))
+                button = button.tooltip(move |cx| tooltip(cx))
             }
         }
 
@@ -82,7 +71,7 @@ impl<V: 'static> Component<V> for IconButton<V> {
     }
 }
 
-impl<V: 'static> IconButton<V> {
+impl IconButton {
     pub fn new(id: impl Into<ElementId>, icon: Icon) -> Self {
         Self {
             id: id.into(),
@@ -92,7 +81,7 @@ impl<V: 'static> IconButton<V> {
             state: InteractionState::default(),
             selected: false,
             tooltip: None,
-            handlers: IconButtonHandlers::default(),
+            on_mouse_down: None,
         }
     }
 
@@ -121,16 +110,16 @@ impl<V: 'static> IconButton<V> {
         self
     }
 
-    pub fn tooltip(
-        mut self,
-        tooltip: impl Fn(&mut V, &mut ViewContext<V>) -> AnyView + 'static,
-    ) -> Self {
+    pub fn tooltip(mut self, tooltip: impl Fn(&mut WindowContext) -> AnyView + 'static) -> Self {
         self.tooltip = Some(Box::new(tooltip));
         self
     }
 
-    pub fn on_click(mut self, handler: impl 'static + Fn(&mut V, &mut ViewContext<V>)) -> Self {
-        self.handlers.click = Some(Arc::new(handler));
+    pub fn on_click(
+        mut self,
+        handler: impl 'static + Fn(&MouseDownEvent, &mut WindowContext),
+    ) -> Self {
+        self.on_mouse_down = Some(Box::new(handler));
         self
     }
 

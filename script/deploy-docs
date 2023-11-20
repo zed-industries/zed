@@ -1,0 +1,160 @@
+#!/bin/bash
+
+# Check if the script is run from the root of the repository
+if [ ! -f "Cargo.toml" ] || [ ! -d "crates/zed" ]; then
+    echo "Please run the script from the root of the repository."
+    exit 1
+fi
+
+# Set the environment variables
+TARGET_DIR="../zed-docs"
+PUSH_CHANGES=false
+CLEAN_FOLDERS=false
+
+# Parse command line arguments
+while getopts "pc" opt; do
+  case ${opt} in
+    p )
+      PUSH_CHANGES=true
+      ;;
+    c )
+      CLEAN_FOLDERS=true
+      ;;
+    \? )
+      echo "Invalid option: $OPTARG" 1>&2
+      exit 1
+      ;;
+  esac
+done
+
+# Check if the target documentation directory exists
+if [ ! -d "$TARGET_DIR" ]; then
+    # Prompt the user for input
+    read -p "Can't find ../zed-docs. Do you want to clone the repository (y/n)?" -n 1 -r
+    echo  # Move to a new line
+
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        # Clone the repo if the user agrees
+        git clone https://github.com/zed-industries/zed-docs.git "$TARGET_DIR"
+    else
+        # Exit if the user does not agree to clone the repo
+        echo "Exiting without cloning the repository."
+        exit 1
+    fi
+else
+    # If the directory exists, pull the latest changes
+    pushd "$TARGET_DIR" > /dev/null
+    git pull
+    popd > /dev/null
+fi
+
+if "$CLEAN_FOLDERS"; then
+  echo "Cleaning ./doc and ./debug folders..."
+  rm -rf "$TARGET_DIR/doc"
+  rm -rf "$TARGET_DIR/debug"
+fi
+
+# Build the documentation
+CARGO_TARGET_DIR="$TARGET_DIR" cargo doc --workspace --no-deps --open \
+--exclude activity_indicator \
+--exclude ai \
+--exclude assistant \
+--exclude audio \
+--exclude auto_update \
+--exclude breadcrumbs \
+--exclude call \
+--exclude channel \
+--exclude cli \
+--exclude client \
+--exclude clock \
+--exclude collab \
+--exclude collab_ui \
+--exclude collections \
+--exclude command_palette \
+--exclude component_test \
+--exclude context_menu \
+--exclude copilot \
+--exclude copilot_button \
+--exclude db \
+--exclude diagnostics \
+--exclude drag_and_drop \
+--exclude editor \
+--exclude feature_flags \
+--exclude feedback \
+--exclude file_finder \
+--exclude fs \
+--exclude fsevent \
+--exclude fuzzy \
+--exclude git \
+--exclude go_to_line \
+--exclude gpui \
+--exclude gpui_macros \
+--exclude install_cli \
+--exclude journal \
+--exclude language \
+--exclude language_selector \
+--exclude language_tools \
+--exclude live_kit_client \
+--exclude live_kit_server \
+--exclude lsp \
+--exclude media \
+--exclude menu \
+--exclude multi_buffer \
+--exclude node_runtime \
+--exclude notifications \
+--exclude outline \
+--exclude picker \
+--exclude plugin \
+--exclude plugin_macros \
+--exclude plugin_runtime \
+--exclude prettier \
+--exclude project \
+--exclude project_panel \
+--exclude project_symbols \
+--exclude quick_action_bar \
+--exclude recent_projects \
+--exclude refineable \
+--exclude rich_text \
+--exclude rope \
+--exclude rpc \
+--exclude search \
+--exclude semantic_index \
+--exclude settings \
+--exclude snippet \
+--exclude sqlez \
+--exclude sqlez_macros \
+--exclude storybook3 \
+--exclude sum_tree \
+--exclude terminal \
+--exclude terminal_view \
+--exclude text \
+--exclude theme \
+--exclude theme_importer \
+--exclude theme_selector \
+--exclude util \
+--exclude vcs_menu \
+--exclude vim \
+--exclude welcome \
+--exclude xtask \
+--exclude zed \
+--exclude zed-actions
+
+if "$PUSH_CHANGES"; then
+    # Commit the changes and push
+    pushd "$TARGET_DIR" > /dev/null
+    # Check if there are any changes to commit
+    if git diff --quiet && git diff --staged --quiet; then
+        echo "No changes to the documentation."
+    else
+        # Staging the changes
+        git add .
+
+        # Creating a commit with the current datetime
+        DATETIME=$(date +"%Y-%m-%d %H:%M:%S")
+        git commit -m "Update docs – $DATETIME"
+
+        # Pushing the changes
+        git push
+    fi
+    popd > /dev/null
+fi

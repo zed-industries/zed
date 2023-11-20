@@ -907,7 +907,7 @@ impl ContextMenu {
         style: &EditorStyle,
         workspace: Option<WeakView<Workspace>>,
         cx: &mut ViewContext<Editor>,
-    ) -> (DisplayPoint, AnyElement<Editor>) {
+    ) -> (DisplayPoint, AnyElement) {
         match self {
             ContextMenu::Completions(menu) => (cursor_position, menu.render(style, workspace, cx)),
             ContextMenu::CodeActions(menu) => menu.render(cursor_position, style, cx),
@@ -1223,7 +1223,7 @@ impl CompletionsMenu {
         style: &EditorStyle,
         workspace: Option<WeakView<Workspace>>,
         cx: &mut ViewContext<Editor>,
-    ) -> AnyElement<Editor> {
+    ) -> AnyElement {
         todo!("old implementation below")
     }
 
@@ -1541,13 +1541,15 @@ impl CodeActionsMenu {
         mut cursor_position: DisplayPoint,
         style: &EditorStyle,
         cx: &mut ViewContext<Editor>,
-    ) -> (DisplayPoint, AnyElement<Editor>) {
+    ) -> (DisplayPoint, AnyElement) {
         let actions = self.actions.clone();
         let selected_item = self.selected_item;
+
         let element = uniform_list(
+            cx.view().clone(),
             "code_actions_menu",
             self.actions.len(),
-            move |editor, range, cx| {
+            move |this, range, cx| {
                 actions[range.clone()]
                     .iter()
                     .enumerate()
@@ -1569,17 +1571,20 @@ impl CodeActionsMenu {
                                     .bg(colors.element_hover)
                                     .text_color(colors.text_accent)
                             })
-                            .on_mouse_down(MouseButton::Left, move |editor: &mut Editor, _, cx| {
-                                cx.stop_propagation();
-                                editor
-                                    .confirm_code_action(
-                                        &ConfirmCodeAction {
-                                            item_ix: Some(item_ix),
-                                        },
-                                        cx,
-                                    )
-                                    .map(|task| task.detach_and_log_err(cx));
-                            })
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |editor, _, cx| {
+                                    cx.stop_propagation();
+                                    editor
+                                        .confirm_code_action(
+                                            &ConfirmCodeAction {
+                                                item_ix: Some(item_ix),
+                                            },
+                                            cx,
+                                        )
+                                        .map(|task| task.detach_and_log_err(cx));
+                                }),
+                            )
                             // TASK: It would be good to make lsp_action.title a SharedString to avoid allocating here.
                             .child(SharedString::from(action.lsp_action.title.clone()))
                     })
@@ -4355,11 +4360,11 @@ impl Editor {
         style: &EditorStyle,
         is_active: bool,
         cx: &mut ViewContext<Self>,
-    ) -> Option<IconButton<Self>> {
+    ) -> Option<IconButton> {
         if self.available_code_actions.is_some() {
             Some(
-                IconButton::new("code_actions_indicator", ui::Icon::Bolt).on_click(
-                    |editor: &mut Editor, cx| {
+                IconButton::new("code_actions_indicator", ui::Icon::Bolt).on_click(cx.listener(
+                    |editor, e, cx| {
                         editor.toggle_code_actions(
                             &ToggleCodeActions {
                                 deployed_from_indicator: true,
@@ -4367,7 +4372,7 @@ impl Editor {
                             cx,
                         );
                     },
-                ),
+                )),
             )
         } else {
             None
@@ -4382,7 +4387,7 @@ impl Editor {
         line_height: Pixels,
         gutter_margin: Pixels,
         cx: &mut ViewContext<Self>,
-    ) -> Vec<Option<IconButton<Self>>> {
+    ) -> Vec<Option<IconButton>> {
         fold_data
             .iter()
             .enumerate()
@@ -4395,14 +4400,14 @@ impl Editor {
                                 FoldStatus::Foldable => ui::Icon::ChevronDown,
                             };
                             IconButton::new(ix as usize, icon)
-                                .on_click(move |editor: &mut Editor, cx| match fold_status {
+                                .on_click(cx.listener(move |editor, e, cx| match fold_status {
                                     FoldStatus::Folded => {
                                         editor.unfold_at(&UnfoldAt { buffer_row }, cx);
                                     }
                                     FoldStatus::Foldable => {
                                         editor.fold_at(&FoldAt { buffer_row }, cx);
                                     }
-                                })
+                                }))
                                 .color(ui::TextColor::Muted)
                         })
                     })
@@ -4423,7 +4428,7 @@ impl Editor {
         cursor_position: DisplayPoint,
         style: &EditorStyle,
         cx: &mut ViewContext<Editor>,
-    ) -> Option<(DisplayPoint, AnyElement<Editor>)> {
+    ) -> Option<(DisplayPoint, AnyElement)> {
         self.context_menu.read().as_ref().map(|menu| {
             menu.render(
                 cursor_position,
@@ -7782,7 +7787,7 @@ impl Editor {
                                     }
                                     div()
                                         .pl(cx.anchor_x)
-                                        .child(rename_editor.render_with(EditorElement::new(
+                                        .child(EditorElement::new(
                                             &rename_editor,
                                             EditorStyle {
                                                 background: cx.theme().system().transparent,
@@ -7790,10 +7795,12 @@ impl Editor {
                                                 text: text_style,
                                                 scrollbar_width: cx.editor_style.scrollbar_width,
                                                 syntax: cx.editor_style.syntax.clone(),
-                                                diagnostic_style:
-                                                    cx.editor_style.diagnostic_style.clone(),
+                                                diagnostic_style: cx
+                                                    .editor_style
+                                                    .diagnostic_style
+                                                    .clone(),
                                             },
-                                        )))
+                                        ))
                                         .render_into_any()
                                 }
                             }),
@@ -9383,7 +9390,7 @@ impl FocusableView for Editor {
     }
 }
 
-impl Render<Self> for Editor {
+impl Render for Editor {
     type Element = EditorElement;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
@@ -9997,10 +10004,10 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, is_valid: bool) -> Rend
                     .ml(cx.anchor_x)
             }))
             .cursor_pointer()
-            .on_click(move |_, _, cx| {
+            .on_click(cx.listener(move |_, _, cx| {
                 cx.write_to_clipboard(ClipboardItem::new(message.clone()));
-            })
-            .tooltip(|_, cx| Tooltip::text("Copy diagnostic message", cx))
+            }))
+            .tooltip(|cx| Tooltip::text("Copy diagnostic message", cx))
             .render_into_any()
     })
 }

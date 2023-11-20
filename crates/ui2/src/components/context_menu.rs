@@ -1,47 +1,42 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::{prelude::*, v_stack, List, ListItem};
-use crate::{ListEntry, ListSeparator, ListSubHeader};
+use crate::{prelude::*, v_stack, List};
+use crate::{ListItem, ListSeparator, ListSubHeader};
 use gpui::{
-    overlay, px, Action, AnchorCorner, AnyElement, AppContext, Bounds, DispatchPhase, Div,
-    EventEmitter, FocusHandle, FocusableView, LayoutId, ManagedView, Manager, MouseButton,
-    MouseDownEvent, Pixels, Point, Render, RenderOnce, View, VisualContext, WeakView,
+    overlay, px, Action, AnchorCorner, AnyElement, AppContext, Bounds, ClickEvent, DispatchPhase,
+    Div, EventEmitter, FocusHandle, FocusableView, LayoutId, ManagedView, Manager, MouseButton,
+    MouseDownEvent, Pixels, Point, Render, RenderOnce, View, VisualContext,
 };
 
-pub enum ContextMenuItem<V> {
+pub enum ContextMenuItem {
     Separator(ListSeparator),
     Header(ListSubHeader),
-    Entry(
-        ListEntry<ContextMenu<V>>,
-        Rc<dyn Fn(&mut V, &mut ViewContext<V>)>,
-    ),
+    Entry(ListItem, Rc<dyn Fn(&ClickEvent, &mut WindowContext)>),
 }
 
-pub struct ContextMenu<V> {
-    items: Vec<ContextMenuItem<V>>,
+pub struct ContextMenu {
+    items: Vec<ContextMenuItem>,
     focus_handle: FocusHandle,
-    handle: WeakView<V>,
 }
 
-impl<V: 'static> FocusableView for ContextMenu<V> {
+impl FocusableView for ContextMenu {
     fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
         self.focus_handle.clone()
     }
 }
 
-impl<V: 'static> EventEmitter<Manager> for ContextMenu<V> {}
+impl EventEmitter<Manager> for ContextMenu {}
 
-impl<V: 'static> ContextMenu<V> {
+impl ContextMenu {
     pub fn build(
-        cx: &mut ViewContext<V>,
-        f: impl FnOnce(Self, &mut ViewContext<Self>) -> Self,
+        cx: &mut WindowContext,
+        f: impl FnOnce(Self, &mut WindowContext) -> Self,
     ) -> View<Self> {
-        let handle = cx.view().downgrade();
+        // let handle = cx.view().downgrade();
         cx.build_view(|cx| {
             f(
                 Self {
-                    handle,
                     items: Default::default(),
                     focus_handle: cx.focus_handle(),
                 },
@@ -63,15 +58,15 @@ impl<V: 'static> ContextMenu<V> {
 
     pub fn entry(
         mut self,
-        view: ListEntry<Self>,
-        on_click: impl Fn(&mut V, &mut ViewContext<V>) + 'static,
+        view: ListItem,
+        on_click: impl Fn(&ClickEvent, &mut WindowContext) + 'static,
     ) -> Self {
         self.items
             .push(ContextMenuItem::Entry(view, Rc::new(on_click)));
         self
     }
 
-    pub fn action(self, view: ListEntry<Self>, action: Box<dyn Action>) -> Self {
+    pub fn action(self, view: ListItem, action: Box<dyn Action>) -> Self {
         // todo: add the keybindings to the list entry
         self.entry(view, move |_, cx| cx.dispatch_action(action.boxed_clone()))
     }
@@ -86,64 +81,66 @@ impl<V: 'static> ContextMenu<V> {
     }
 }
 
-impl<V: 'static> Render<Self> for ContextMenu<V> {
-    type Element = Div<Self>;
+impl Render for ContextMenu {
+    type Element = Div;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         div().elevation_2(cx).flex().flex_row().child(
             v_stack()
                 .min_w(px(200.))
                 .track_focus(&self.focus_handle)
-                .on_mouse_down_out(|this: &mut Self, _, cx| this.cancel(&Default::default(), cx))
+                .on_mouse_down_out(
+                    cx.listener(|this: &mut Self, _, cx| this.cancel(&Default::default(), cx)),
+                )
                 // .on_action(ContextMenu::select_first)
                 // .on_action(ContextMenu::select_last)
                 // .on_action(ContextMenu::select_next)
                 // .on_action(ContextMenu::select_prev)
-                .on_action(ContextMenu::confirm)
-                .on_action(ContextMenu::cancel)
+                .on_action(cx.listener(ContextMenu::confirm))
+                .on_action(cx.listener(ContextMenu::cancel))
                 .flex_none()
                 // .bg(cx.theme().colors().elevated_surface_background)
                 // .border()
                 // .border_color(cx.theme().colors().border)
-                .child(List::new(
-                    self.items
-                        .iter()
-                        .map(|item| match item {
-                            ContextMenuItem::Separator(separator) => {
-                                ListItem::Separator(separator.clone())
-                            }
-                            ContextMenuItem::Header(header) => ListItem::Header(header.clone()),
-                            ContextMenuItem::Entry(entry, callback) => {
-                                let callback = callback.clone();
-                                let handle = self.handle.clone();
-                                ListItem::Entry(entry.clone().on_click(move |this, cx| {
-                                    handle.update(cx, |view, cx| callback(view, cx)).ok();
-                                    cx.emit(Manager::Dismiss);
-                                }))
-                            }
-                        })
-                        .collect(),
-                )),
+                .child(
+                    List::new().children(self.items.iter().map(|item| match item {
+                        ContextMenuItem::Separator(separator) => {
+                            separator.clone().render_into_any()
+                        }
+                        ContextMenuItem::Header(header) => header.clone().render_into_any(),
+                        ContextMenuItem::Entry(entry, callback) => {
+                            let callback = callback.clone();
+                            let dismiss = cx.listener(|_, _, cx| cx.emit(Manager::Dismiss));
+
+                            entry
+                                .clone()
+                                .on_click(move |event, cx| {
+                                    callback(event, cx);
+                                    dismiss(event, cx)
+                                })
+                                .render_into_any()
+                        }
+                    })),
+                ),
         )
     }
 }
 
-pub struct MenuHandle<V: 'static, M: ManagedView> {
+pub struct MenuHandle<M: ManagedView> {
     id: ElementId,
-    child_builder: Option<Box<dyn FnOnce(bool) -> AnyElement<V> + 'static>>,
-    menu_builder: Option<Rc<dyn Fn(&mut V, &mut ViewContext<V>) -> View<M> + 'static>>,
-
+    child_builder: Option<Box<dyn FnOnce(bool) -> AnyElement + 'static>>,
+    menu_builder: Option<Rc<dyn Fn(&mut WindowContext) -> View<M> + 'static>>,
     anchor: Option<AnchorCorner>,
     attach: Option<AnchorCorner>,
 }
 
-impl<V: 'static, M: ManagedView> MenuHandle<V, M> {
-    pub fn menu(mut self, f: impl Fn(&mut V, &mut ViewContext<V>) -> View<M> + 'static) -> Self {
+impl<M: ManagedView> MenuHandle<M> {
+    pub fn menu(mut self, f: impl Fn(&mut WindowContext) -> View<M> + 'static) -> Self {
         self.menu_builder = Some(Rc::new(f));
         self
     }
 
-    pub fn child<R: RenderOnce<V>>(mut self, f: impl FnOnce(bool) -> R + 'static) -> Self {
+    pub fn child<R: RenderOnce>(mut self, f: impl FnOnce(bool) -> R + 'static) -> Self {
         self.child_builder = Some(Box::new(|b| f(b).render_once().into_any()));
         self
     }
@@ -162,7 +159,7 @@ impl<V: 'static, M: ManagedView> MenuHandle<V, M> {
     }
 }
 
-pub fn menu_handle<V: 'static, M: ManagedView>(id: impl Into<ElementId>) -> MenuHandle<V, M> {
+pub fn menu_handle<M: ManagedView>(id: impl Into<ElementId>) -> MenuHandle<M> {
     MenuHandle {
         id: id.into(),
         child_builder: None,
@@ -172,21 +169,20 @@ pub fn menu_handle<V: 'static, M: ManagedView>(id: impl Into<ElementId>) -> Menu
     }
 }
 
-pub struct MenuHandleState<V, M> {
+pub struct MenuHandleState<M> {
     menu: Rc<RefCell<Option<View<M>>>>,
     position: Rc<RefCell<Point<Pixels>>>,
     child_layout_id: Option<LayoutId>,
-    child_element: Option<AnyElement<V>>,
-    menu_element: Option<AnyElement<V>>,
+    child_element: Option<AnyElement>,
+    menu_element: Option<AnyElement>,
 }
-impl<V: 'static, M: ManagedView> Element<V> for MenuHandle<V, M> {
-    type State = MenuHandleState<V, M>;
+impl<M: ManagedView> Element for MenuHandle<M> {
+    type State = MenuHandleState<M>;
 
     fn layout(
         &mut self,
-        view_state: &mut V,
         element_state: Option<Self::State>,
-        cx: &mut crate::ViewContext<V>,
+        cx: &mut WindowContext,
     ) -> (gpui::LayoutId, Self::State) {
         let (menu, position) = if let Some(element_state) = element_state {
             (element_state.menu, element_state.position)
@@ -197,14 +193,14 @@ impl<V: 'static, M: ManagedView> Element<V> for MenuHandle<V, M> {
         let mut menu_layout_id = None;
 
         let menu_element = menu.borrow_mut().as_mut().map(|menu| {
-            let mut overlay = overlay::<V>().snap_to_window();
+            let mut overlay = overlay().snap_to_window();
             if let Some(anchor) = self.anchor {
                 overlay = overlay.anchor(anchor);
             }
             overlay = overlay.position(*position.borrow());
 
             let mut element = overlay.child(menu.clone()).into_any();
-            menu_layout_id = Some(element.layout(view_state, cx));
+            menu_layout_id = Some(element.layout(cx));
             element
         });
 
@@ -215,7 +211,7 @@ impl<V: 'static, M: ManagedView> Element<V> for MenuHandle<V, M> {
 
         let child_layout_id = child_element
             .as_mut()
-            .map(|child_element| child_element.layout(view_state, cx));
+            .map(|child_element| child_element.layout(cx));
 
         let layout_id = cx.request_layout(
             &gpui::Style::default(),
@@ -237,16 +233,15 @@ impl<V: 'static, M: ManagedView> Element<V> for MenuHandle<V, M> {
     fn paint(
         self,
         bounds: Bounds<gpui::Pixels>,
-        view_state: &mut V,
         element_state: &mut Self::State,
-        cx: &mut crate::ViewContext<V>,
+        cx: &mut WindowContext,
     ) {
         if let Some(child) = element_state.child_element.take() {
-            child.paint(view_state, cx);
+            child.paint(cx);
         }
 
         if let Some(menu) = element_state.menu_element.take() {
-            menu.paint(view_state, cx);
+            menu.paint(cx);
             return;
         }
 
@@ -258,7 +253,7 @@ impl<V: 'static, M: ManagedView> Element<V> for MenuHandle<V, M> {
         let attach = self.attach.clone();
         let child_layout_id = element_state.child_layout_id.clone();
 
-        cx.on_mouse_event(move |view_state, event: &MouseDownEvent, phase, cx| {
+        cx.on_mouse_event(move |event: &MouseDownEvent, phase, cx| {
             if phase == DispatchPhase::Bubble
                 && event.button == MouseButton::Right
                 && bounds.contains_point(&event.position)
@@ -266,9 +261,9 @@ impl<V: 'static, M: ManagedView> Element<V> for MenuHandle<V, M> {
                 cx.stop_propagation();
                 cx.prevent_default();
 
-                let new_menu = (builder)(view_state, cx);
+                let new_menu = (builder)(cx);
                 let menu2 = menu.clone();
-                cx.subscribe(&new_menu, move |this, modal, e, cx| match e {
+                cx.subscribe(&new_menu, move |modal, e, cx| match e {
                     &Manager::Dismiss => {
                         *menu2.borrow_mut() = None;
                         cx.notify();
@@ -291,7 +286,7 @@ impl<V: 'static, M: ManagedView> Element<V> for MenuHandle<V, M> {
     }
 }
 
-impl<V: 'static, M: ManagedView> RenderOnce<V> for MenuHandle<V, M> {
+impl<M: ManagedView> RenderOnce for MenuHandle<M> {
     type Element = Self;
 
     fn element_id(&self) -> Option<gpui::ElementId> {
@@ -314,28 +309,31 @@ mod stories {
 
     actions!(PrintCurrentDate, PrintBestFood);
 
-    fn build_menu<V: Render<V>>(
-        cx: &mut ViewContext<V>,
+    fn build_menu<V: Render>(
+        cx: &mut WindowContext,
         header: impl Into<SharedString>,
-    ) -> View<ContextMenu<V>> {
-        let handle = cx.view().clone();
+    ) -> View<ContextMenu> {
         ContextMenu::build(cx, |menu, _| {
             menu.header(header)
                 .separator()
-                .entry(ListEntry::new(Label::new("Print current time")), |v, cx| {
-                    println!("dispatching PrintCurrentTime action");
-                    cx.dispatch_action(PrintCurrentDate.boxed_clone())
-                })
-                .entry(ListEntry::new(Label::new("Print best food")), |v, cx| {
-                    cx.dispatch_action(PrintBestFood.boxed_clone())
-                })
+                .entry(
+                    ListItem::new("Print current time", Label::new("Print current time")),
+                    |v, cx| {
+                        println!("dispatching PrintCurrentTime action");
+                        cx.dispatch_action(PrintCurrentDate.boxed_clone())
+                    },
+                )
+                .entry(
+                    ListItem::new("Print best food", Label::new("Print best food")),
+                    |v, cx| cx.dispatch_action(PrintBestFood.boxed_clone()),
+                )
         })
     }
 
     pub struct ContextMenuStory;
 
-    impl Render<Self> for ContextMenuStory {
-        type Element = Div<Self>;
+    impl Render for ContextMenuStory {
+        type Element = Div;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             Story::container(cx)

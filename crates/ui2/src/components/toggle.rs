@@ -44,7 +44,7 @@ impl From<bool> for Toggle {
     }
 }
 
-pub fn disclosure_control<V: 'static>(toggle: Toggle) -> impl Element<V> {
+pub fn disclosure_control(toggle: Toggle) -> impl Element {
     match (toggle.is_toggleable(), toggle.is_toggled()) {
         (false, _) => div(),
         (_, true) => div().child(

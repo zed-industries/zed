@@ -10,7 +10,7 @@ use futures::future::try_join_all;
 use gpui::{
     div, point, AnyElement, AppContext, AsyncAppContext, Entity, EntityId, EventEmitter,
     FocusHandle, Model, ParentElement, Pixels, SharedString, Styled, Subscription, Task, View,
-    ViewContext, VisualContext, WeakView,
+    ViewContext, VisualContext, WeakView, WindowContext,
 };
 use language::{
     proto::serialize_anchor as serialize_text_anchor, Bias, Buffer, CharKind, OffsetRangeExt,
@@ -584,7 +584,7 @@ impl Item for Editor {
         Some(path.to_string_lossy().to_string().into())
     }
 
-    fn tab_content<T: 'static>(&self, detail: Option<usize>, cx: &AppContext) -> AnyElement<T> {
+    fn tab_content(&self, detail: Option<usize>, cx: &WindowContext) -> AnyElement {
         let theme = cx.theme();
 
         AnyElement::new(

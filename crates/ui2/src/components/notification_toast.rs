@@ -22,7 +22,7 @@ impl NotificationToast {
         self
     }
 
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
+    fn render(self, cx: &mut WindowContext) -> impl Element {
         h_stack()
             .z_index(5)
             .absolute()

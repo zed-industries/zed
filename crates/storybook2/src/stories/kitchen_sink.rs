@@ -11,8 +11,8 @@ impl KitchenSinkStory {
     }
 }
 
-impl Render<Self> for KitchenSinkStory {
-    type Element = Stateful<Self, Div<Self>>;
+impl Render for KitchenSinkStory {
+    type Element = Stateful<Div>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         let component_stories = ComponentStory::iter()

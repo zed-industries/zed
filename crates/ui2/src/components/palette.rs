@@ -1,7 +1,6 @@
 use crate::{h_stack, prelude::*, v_stack, KeyBinding, Label};
 use gpui::prelude::*;
 use gpui::Div;
-use gpui::Stateful;
 
 #[derive(RenderOnce)]
 pub struct Palette {
@@ -12,10 +11,10 @@ pub struct Palette {
     default_order: OrderMethod,
 }
 
-impl<V: 'static> Component<V> for Palette {
-    type Rendered = Stateful<V, Div<V>>;
+impl Component for Palette {
+    type Rendered = gpui::Stateful<Div>;
 
-    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
+    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         v_stack()
             .id(self.id)
             .w_96()
@@ -116,10 +115,10 @@ pub struct PaletteItem {
     pub key_binding: Option<KeyBinding>,
 }
 
-impl<V: 'static> Component<V> for PaletteItem {
-    type Rendered = Div<V>;
+impl Component for PaletteItem {
+    type Rendered = Div;
 
-    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
+    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         div()
             .flex()
             .flex_row()
@@ -173,8 +172,8 @@ mod stories {
 
     pub struct PaletteStory;
 
-    impl Render<Self> for PaletteStory {
-        type Element = Div<Self>;
+    impl Render for PaletteStory {
+        type Element = Div;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             {

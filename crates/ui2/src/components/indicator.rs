@@ -4,10 +4,10 @@ use gpui::{px, Div, RenderOnce};
 #[derive(RenderOnce)]
 pub struct UnreadIndicator;
 
-impl<V: 'static> Component<V> for UnreadIndicator {
-    type Rendered = Div<V>;
+impl Component for UnreadIndicator {
+    type Rendered = Div;
 
-    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
+    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         div()
             .rounded_full()
             .border_2()
@@ -24,7 +24,7 @@ impl UnreadIndicator {
         Self
     }
 
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
+    fn render(self, cx: &mut WindowContext) -> impl Element {
         div()
             .rounded_full()
             .border_2()

@@ -4,10 +4,10 @@ use gpui::{Div, RenderOnce};
 #[derive(RenderOnce)]
 pub struct ToolDivider;
 
-impl<V: 'static> Component<V> for ToolDivider {
-    type Rendered = Div<V>;
+impl Component for ToolDivider {
+    type Rendered = Div;
 
-    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
+    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         div().w_px().h_3().bg(cx.theme().colors().border)
     }
 }
@@ -17,7 +17,7 @@ impl ToolDivider {
         Self
     }
 
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
+    fn render(self, cx: &mut WindowContext) -> impl Element {
         div().w_px().h_3().bg(cx.theme().colors().border)
     }
 }

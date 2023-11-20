@@ -10,9 +10,9 @@ use anyhow::{anyhow, Result};
 use gpui::{
     actions, div, px, uniform_list, Action, AppContext, AssetSource, AsyncWindowContext,
     ClipboardItem, Div, EventEmitter, FocusHandle, Focusable, FocusableView, InteractiveElement,
-    Model, MouseButton, ParentElement, Pixels, Point, PromptLevel, Render, RenderOnce, Stateful,
-    StatefulInteractiveElement, Styled, Task, UniformListScrollHandle, View, ViewContext,
-    VisualContext as _, WeakView, WindowContext,
+    Model, MouseButton, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render,
+    RenderOnce, Stateful, StatefulInteractiveElement, Styled, Task, UniformListScrollHandle, View,
+    ViewContext, VisualContext as _, WeakView, WindowContext,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
 use project::{
@@ -1339,7 +1339,7 @@ impl ProjectPanel {
         editor: Option<&View<Editor>>,
         padding: Pixels,
         cx: &mut ViewContext<Self>,
-    ) -> Div<Self> {
+    ) -> Div {
         let show_editor = details.is_editing && !details.is_processing;
 
         let theme = cx.theme();
@@ -1378,7 +1378,7 @@ impl ProjectPanel {
         details: EntryDetails,
         // dragged_entry_destination: &mut Option<Arc<Path>>,
         cx: &mut ViewContext<Self>,
-    ) -> Stateful<Self, Div<Self>> {
+    ) -> Stateful<Div> {
         let kind = details.kind;
         let settings = ProjectPanelSettings::get_global(cx);
         const INDENT_SIZE: Pixels = px(16.0);
@@ -1396,7 +1396,7 @@ impl ProjectPanel {
                 this.bg(cx.theme().colors().element_selected)
             })
             .hover(|style| style.bg(cx.theme().colors().element_hover))
-            .on_click(move |this, event, cx| {
+            .on_click(cx.listener(move |this, event: &gpui::ClickEvent, cx| {
                 if !show_editor {
                     if kind.is_dir() {
                         this.toggle_expanded(entry_id, cx);
@@ -1408,10 +1408,13 @@ impl ProjectPanel {
                         }
                     }
                 }
-            })
-            .on_mouse_down(MouseButton::Right, move |this, event, cx| {
-                this.deploy_context_menu(event.position, entry_id, cx);
-            })
+            }))
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |this, event: &MouseDownEvent, cx| {
+                    this.deploy_context_menu(event.position, entry_id, cx);
+                }),
+            )
         // .on_drop::<ProjectEntryId>(|this, event, cx| {
         //     this.move_entry(
         //         *dragged_entry,
@@ -1423,10 +1426,10 @@ impl ProjectPanel {
     }
 }
 
-impl Render<Self> for ProjectPanel {
-    type Element = Focusable<Self, Stateful<Self, Div<Self>>>;
+impl Render for ProjectPanel {
+    type Element = Focusable<Stateful<Div>>;
 
-    fn render(&mut self, _cx: &mut gpui::ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> Self::Element {
         let has_worktree = self.visible_entries.len() != 0;
 
         if has_worktree {
@@ -1434,40 +1437,43 @@ impl Render<Self> for ProjectPanel {
                 .id("project-panel")
                 .size_full()
                 .key_context("ProjectPanel")
-                .on_action(Self::select_next)
-                .on_action(Self::select_prev)
-                .on_action(Self::expand_selected_entry)
-                .on_action(Self::collapse_selected_entry)
-                .on_action(Self::collapse_all_entries)
-                .on_action(Self::new_file)
-                .on_action(Self::new_directory)
-                .on_action(Self::rename)
-                .on_action(Self::delete)
-                .on_action(Self::confirm)
-                .on_action(Self::open_file)
-                .on_action(Self::cancel)
-                .on_action(Self::cut)
-                .on_action(Self::copy)
-                .on_action(Self::copy_path)
-                .on_action(Self::copy_relative_path)
-                .on_action(Self::paste)
-                .on_action(Self::reveal_in_finder)
-                .on_action(Self::open_in_terminal)
-                .on_action(Self::new_search_in_directory)
+                .on_action(cx.listener(Self::select_next))
+                .on_action(cx.listener(Self::select_prev))
+                .on_action(cx.listener(Self::expand_selected_entry))
+                .on_action(cx.listener(Self::collapse_selected_entry))
+                .on_action(cx.listener(Self::collapse_all_entries))
+                .on_action(cx.listener(Self::new_file))
+                .on_action(cx.listener(Self::new_directory))
+                .on_action(cx.listener(Self::rename))
+                .on_action(cx.listener(Self::delete))
+                .on_action(cx.listener(Self::confirm))
+                .on_action(cx.listener(Self::open_file))
+                .on_action(cx.listener(Self::cancel))
+                .on_action(cx.listener(Self::cut))
+                .on_action(cx.listener(Self::copy))
+                .on_action(cx.listener(Self::copy_path))
+                .on_action(cx.listener(Self::copy_relative_path))
+                .on_action(cx.listener(Self::paste))
+                .on_action(cx.listener(Self::reveal_in_finder))
+                .on_action(cx.listener(Self::open_in_terminal))
+                .on_action(cx.listener(Self::new_search_in_directory))
                 .track_focus(&self.focus_handle)
                 .child(
                     uniform_list(
+                        cx.view().clone(),
                         "entries",
                         self.visible_entries
                             .iter()
                             .map(|(_, worktree_entries)| worktree_entries.len())
                             .sum(),
-                        |this: &mut Self, range, cx| {
-                            let mut items = Vec::new();
-                            this.for_each_visible_entry(range, cx, |id, details, cx| {
-                                items.push(this.render_entry(id, details, cx));
-                            });
-                            items
+                        {
+                            |this, range, cx| {
+                                let mut items = Vec::new();
+                                this.for_each_visible_entry(range, cx, |id, details, cx| {
+                                    items.push(this.render_entry(id, details, cx));
+                                });
+                                items
+                            }
                         },
                     )
                     .size_full()

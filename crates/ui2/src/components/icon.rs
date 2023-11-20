@@ -140,10 +140,10 @@ pub struct IconElement {
     size: IconSize,
 }
 
-impl<V: 'static> Component<V> for IconElement {
-    type Rendered = Svg<V>;
+impl Component for IconElement {
+    type Rendered = Svg;
 
-    fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
+    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         let svg_size = match self.size {
             IconSize::Small => rems(0.75),
             IconSize::Medium => rems(0.9375),
@@ -184,7 +184,7 @@ impl IconElement {
         self
     }
 
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
+    fn render(self, cx: &mut WindowContext) -> impl Element {
         let svg_size = match self.size {
             IconSize::Small => rems(0.75),
             IconSize::Medium => rems(0.9375),
@@ -212,8 +212,8 @@ mod stories {
 
     pub struct IconStory;
 
-    impl Render<Self> for IconStory {
-        type Element = Div<Self>;
+    impl Render for IconStory {
+        type Element = Div;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             let icons = Icon::iter();

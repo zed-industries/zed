@@ -13,10 +13,10 @@ pub struct Divider {
     inset: bool,
 }
 
-impl<V: 'static> Component<V> for Divider {
-    type Rendered = Div<V>;
+impl Component for Divider {
+    type Rendered = Div;
 
-    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
+    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         div()
             .map(|this| match self.direction {
                 DividerDirection::Horizontal => {
@@ -50,7 +50,7 @@ impl Divider {
         self
     }
 
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
+    fn render(self, cx: &mut WindowContext) -> impl Element {
         div()
             .map(|this| match self.direction {
                 DividerDirection::Horizontal => {
