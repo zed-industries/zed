@@ -56,7 +56,7 @@ impl StatusBar {
     fn render_left_tools(&self, cx: &mut ViewContext<Self>) -> impl RenderOnce<Self> {
         h_stack()
             .items_center()
-            .gap_1()
+            .gap_2()
             .children(self.left_items.iter().map(|item| item.to_any()))
     }
 

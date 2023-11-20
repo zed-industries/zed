@@ -179,6 +179,10 @@ impl AnyView {
         self.model.entity_type
     }
 
+    pub fn entity_id(&self) -> EntityId {
+        self.model.entity_id()
+    }
+
     pub(crate) fn draw(
         &self,
         origin: Point<Pixels>,
@@ -306,18 +310,6 @@ impl<V: 'static + Render<V>> From<WeakView<V>> for AnyWeakView {
             layout: any_view::layout::<V>,
             paint: any_view::paint::<V>,
         }
-    }
-}
-
-impl<F, E> Render<F> for F
-where
-    F: 'static + FnMut(&mut WindowContext) -> E,
-    E: 'static + Send + Element<F>,
-{
-    type Element = E;
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-        (self)(cx)
     }
 }
 

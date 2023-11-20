@@ -24,7 +24,7 @@ use ::git::diff::DiffHunk;
 use aho_corasick::AhoCorasick;
 use anyhow::{anyhow, Context as _, Result};
 use blink_manager::BlinkManager;
-use client::{ClickhouseEvent, Client, Collaborator, ParticipantIndex, TelemetrySettings};
+use client::{Client, Collaborator, ParticipantIndex, TelemetrySettings};
 use clock::ReplicaId;
 use collections::{BTreeMap, Bound, HashMap, HashSet, VecDeque};
 use convert_case::{Case, Casing};
@@ -585,7 +585,7 @@ pub enum SoftWrap {
     Column(u32),
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct EditorStyle {
     pub background: Hsla,
     pub local_player: PlayerColor,
@@ -2319,7 +2319,7 @@ impl Editor {
         }
 
         self.blink_manager.update(cx, BlinkManager::pause_blinking);
-        cx.emit(Event::SelectionsChanged { local });
+        cx.emit(EditorEvent::SelectionsChanged { local });
 
         if self.selections.disjoint_anchors().len() == 1 {
             cx.emit(SearchEvent::ActiveMatchChanged)
@@ -4243,7 +4243,7 @@ impl Editor {
 
                 self.report_copilot_event(Some(completion.uuid.clone()), true, cx)
             }
-            cx.emit(Event::InputHandled {
+            cx.emit(EditorEvent::InputHandled {
                 utf16_range_to_replace: None,
                 text: suggestion.text.to_string().into(),
             });
@@ -4393,16 +4393,17 @@ impl Editor {
                                 FoldStatus::Folded => ui::Icon::ChevronRight,
                                 FoldStatus::Foldable => ui::Icon::ChevronDown,
                             };
-                            IconButton::new(ix as usize, icon).on_click(
-                                move |editor: &mut Editor, cx| match fold_status {
+                            IconButton::new(ix as usize, icon)
+                                .on_click(move |editor: &mut Editor, cx| match fold_status {
                                     FoldStatus::Folded => {
                                         editor.unfold_at(&UnfoldAt { buffer_row }, cx);
                                     }
                                     FoldStatus::Foldable => {
                                         editor.fold_at(&FoldAt { buffer_row }, cx);
                                     }
-                                },
-                            )
+                                })
+                                .color(ui::TextColor::Muted)
+                                .render()
                         })
                     })
                     .flatten()
@@ -5640,7 +5641,7 @@ impl Editor {
             self.request_autoscroll(Autoscroll::fit(), cx);
             self.unmark_text(cx);
             self.refresh_copilot_suggestions(true, cx);
-            cx.emit(Event::Edited);
+            cx.emit(EditorEvent::Edited);
         }
     }
 
@@ -5655,7 +5656,7 @@ impl Editor {
             self.request_autoscroll(Autoscroll::fit(), cx);
             self.unmark_text(cx);
             self.refresh_copilot_suggestions(true, cx);
-            cx.emit(Event::Edited);
+            cx.emit(EditorEvent::Edited);
         }
     }
 
@@ -8124,7 +8125,7 @@ impl Editor {
                 log::error!("unexpectedly ended a transaction that wasn't started by this editor");
             }
 
-            cx.emit(Event::Edited);
+            cx.emit(EditorEvent::Edited);
             Some(tx_id)
         } else {
             None
@@ -8712,7 +8713,7 @@ impl Editor {
                 if self.has_active_copilot_suggestion(cx) {
                     self.update_visible_copilot_suggestion(cx);
                 }
-                cx.emit(Event::BufferEdited);
+                cx.emit(EditorEvent::BufferEdited);
                 cx.emit(ItemEvent::Edit);
                 cx.emit(ItemEvent::UpdateBreadcrumbs);
                 cx.emit(SearchEvent::MatchesInvalidated);
@@ -8751,7 +8752,7 @@ impl Editor {
                 predecessor,
                 excerpts,
             } => {
-                cx.emit(Event::ExcerptsAdded {
+                cx.emit(EditorEvent::ExcerptsAdded {
                     buffer: buffer.clone(),
                     predecessor: *predecessor,
                     excerpts: excerpts.clone(),
@@ -8760,7 +8761,7 @@ impl Editor {
             }
             multi_buffer::Event::ExcerptsRemoved { ids } => {
                 self.refresh_inlay_hints(InlayHintRefreshReason::ExcerptsRemoved(ids.clone()), cx);
-                cx.emit(Event::ExcerptsRemoved { ids: ids.clone() })
+                cx.emit(EditorEvent::ExcerptsRemoved { ids: ids.clone() })
             }
             multi_buffer::Event::Reparsed => {
                 cx.emit(ItemEvent::UpdateBreadcrumbs);
@@ -8774,7 +8775,7 @@ impl Editor {
                 cx.emit(ItemEvent::UpdateTab);
                 cx.emit(ItemEvent::UpdateBreadcrumbs);
             }
-            multi_buffer::Event::DiffBaseChanged => cx.emit(Event::DiffBaseChanged),
+            multi_buffer::Event::DiffBaseChanged => cx.emit(EditorEvent::DiffBaseChanged),
             multi_buffer::Event::Closed => cx.emit(ItemEvent::CloseItem),
             multi_buffer::Event::DiagnosticsUpdated => {
                 self.refresh_active_diagnostics(cx);
@@ -8968,12 +8969,12 @@ impl Editor {
         let telemetry = project.read(cx).client().telemetry().clone();
         let telemetry_settings = *TelemetrySettings::get_global(cx);
 
-        let event = ClickhouseEvent::Copilot {
+        telemetry.report_copilot_event(
+            telemetry_settings,
             suggestion_id,
             suggestion_accepted,
             file_extension,
-        };
-        telemetry.report_clickhouse_event(event, telemetry_settings);
+        )
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -9020,14 +9021,14 @@ impl Editor {
             .show_copilot_suggestions;
 
         let telemetry = project.read(cx).client().telemetry().clone();
-        let event = ClickhouseEvent::Editor {
+        telemetry.report_editor_event(
+            telemetry_settings,
             file_extension,
             vim_mode,
             operation,
             copilot_enabled,
             copilot_enabled_for_language,
-        };
-        telemetry.report_clickhouse_event(event, telemetry_settings)
+        )
     }
 
     /// Copy the highlighted chunks to the clipboard as JSON. The format is an array of lines,
@@ -9114,7 +9115,7 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         if !self.input_enabled {
-            cx.emit(Event::InputIgnored { text: text.into() });
+            cx.emit(EditorEvent::InputIgnored { text: text.into() });
             return;
         }
         if let Some(relative_utf16_range) = relative_utf16_range {
@@ -9174,7 +9175,7 @@ impl Editor {
     }
 
     fn handle_focus(&mut self, cx: &mut ViewContext<Self>) {
-        cx.emit(Event::Focused);
+        cx.emit(EditorEvent::Focused);
 
         if let Some(rename) = self.pending_rename.as_ref() {
             let rename_editor_focus_handle = rename.editor.read(cx).focus_handle.clone();
@@ -9204,7 +9205,7 @@ impl Editor {
             .update(cx, |buffer, cx| buffer.remove_active_selections(cx));
         self.hide_context_menu(cx);
         hide_hover(self, cx);
-        cx.emit(Event::Blurred);
+        cx.emit(EditorEvent::Blurred);
         cx.notify();
     }
 }
@@ -9327,7 +9328,7 @@ impl Deref for EditorSnapshot {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Event {
+pub enum EditorEvent {
     InputIgnored {
         text: Arc<str>,
     },
@@ -9345,8 +9346,12 @@ pub enum Event {
     },
     BufferEdited,
     Edited,
+    Reparsed,
     Focused,
     Blurred,
+    DirtyChanged,
+    Saved,
+    TitleChanged,
     DiffBaseChanged,
     SelectionsChanged {
         local: bool,
@@ -9355,6 +9360,7 @@ pub enum Event {
         local: bool,
         autoscroll: bool,
     },
+    Closed,
 }
 
 pub struct EditorFocused(pub View<Editor>);
@@ -9369,7 +9375,7 @@ pub struct EditorReleased(pub WeakView<Editor>);
 //     }
 // }
 //
-impl EventEmitter<Event> for Editor {}
+impl EventEmitter<EditorEvent> for Editor {}
 
 impl FocusableView for Editor {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
@@ -9572,7 +9578,7 @@ impl InputHandler for Editor {
         cx: &mut ViewContext<Self>,
     ) {
         if !self.input_enabled {
-            cx.emit(Event::InputIgnored { text: text.into() });
+            cx.emit(EditorEvent::InputIgnored { text: text.into() });
             return;
         }
 
@@ -9602,7 +9608,7 @@ impl InputHandler for Editor {
                     })
             });
 
-            cx.emit(Event::InputHandled {
+            cx.emit(EditorEvent::InputHandled {
                 utf16_range_to_replace: range_to_replace,
                 text: text.into(),
             });
@@ -9633,7 +9639,7 @@ impl InputHandler for Editor {
         cx: &mut ViewContext<Self>,
     ) {
         if !self.input_enabled {
-            cx.emit(Event::InputIgnored { text: text.into() });
+            cx.emit(EditorEvent::InputIgnored { text: text.into() });
             return;
         }
 
@@ -9676,7 +9682,7 @@ impl InputHandler for Editor {
                     })
             });
 
-            cx.emit(Event::InputHandled {
+            cx.emit(EditorEvent::InputHandled {
                 utf16_range_to_replace: range_to_replace,
                 text: text.into(),
             });

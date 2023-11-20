@@ -71,11 +71,12 @@ impl EntityMap {
     #[track_caller]
     pub fn lease<'a, T>(&mut self, model: &'a Model<T>) -> Lease<'a, T> {
         self.assert_valid_context(model);
-        let entity = Some(
-            self.entities
-                .remove(model.entity_id)
-                .expect("Circular entity lease. Is the entity already being updated?"),
-        );
+        let entity = Some(self.entities.remove(model.entity_id).unwrap_or_else(|| {
+            panic!(
+                "Circular entity lease of {}. Is it already being updated?",
+                std::any::type_name::<T>()
+            )
+        }));
         Lease {
             model,
             entity,

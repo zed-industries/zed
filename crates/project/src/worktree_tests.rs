@@ -1,6 +1,7 @@
 use crate::{
+    project_settings::ProjectSettings,
     worktree::{Event, Snapshot, WorktreeModelHandle},
-    Entry, EntryKind, PathChange, Worktree,
+    Entry, EntryKind, PathChange, Project, Worktree,
 };
 use anyhow::Result;
 use client::Client;
@@ -12,6 +13,7 @@ use postage::stream::Stream;
 use pretty_assertions::assert_eq;
 use rand::prelude::*;
 use serde_json::json;
+use settings::SettingsStore;
 use std::{
     env,
     fmt::Write,
@@ -23,6 +25,7 @@ use util::{http::FakeHttpClient, test::temp_tree, ResultExt};
 
 #[gpui::test]
 async fn test_traversal(cx: &mut TestAppContext) {
+    init_test(cx);
     let fs = FakeFs::new(cx.background());
     fs.insert_tree(
         "/root",
@@ -78,6 +81,7 @@ async fn test_traversal(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_descendent_entries(cx: &mut TestAppContext) {
+    init_test(cx);
     let fs = FakeFs::new(cx.background());
     fs.insert_tree(
         "/root",
@@ -185,6 +189,7 @@ async fn test_descendent_entries(cx: &mut TestAppContext) {
 
 #[gpui::test(iterations = 10)]
 async fn test_circular_symlinks(executor: Arc<Deterministic>, cx: &mut TestAppContext) {
+    init_test(cx);
     let fs = FakeFs::new(cx.background());
     fs.insert_tree(
         "/root",
@@ -264,6 +269,7 @@ async fn test_circular_symlinks(executor: Arc<Deterministic>, cx: &mut TestAppCo
 
 #[gpui::test]
 async fn test_symlinks_pointing_outside(cx: &mut TestAppContext) {
+    init_test(cx);
     let fs = FakeFs::new(cx.background());
     fs.insert_tree(
         "/root",
@@ -439,6 +445,7 @@ async fn test_symlinks_pointing_outside(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_open_gitignored_files(cx: &mut TestAppContext) {
+    init_test(cx);
     let fs = FakeFs::new(cx.background());
     fs.insert_tree(
         "/root",
@@ -599,6 +606,7 @@ async fn test_open_gitignored_files(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_dirs_no_longer_ignored(cx: &mut TestAppContext) {
+    init_test(cx);
     let fs = FakeFs::new(cx.background());
     fs.insert_tree(
         "/root",
@@ -722,6 +730,14 @@ async fn test_dirs_no_longer_ignored(cx: &mut TestAppContext) {
 
 #[gpui::test(iterations = 10)]
 async fn test_rescan_with_gitignore(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _, _>(|store, cx| {
+            store.update_user_settings::<ProjectSettings>(cx, |project_settings| {
+                project_settings.file_scan_exclusions = Some(Vec::new());
+            });
+        });
+    });
     let fs = FakeFs::new(cx.background());
     fs.insert_tree(
         "/root",
@@ -827,6 +843,7 @@ async fn test_rescan_with_gitignore(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_write_file(cx: &mut TestAppContext) {
+    init_test(cx);
     let dir = temp_tree(json!({
         ".git": {},
         ".gitignore": "ignored-dir\n",
@@ -877,8 +894,105 @@ async fn test_write_file(cx: &mut TestAppContext) {
     });
 }
 
+#[gpui::test]
+async fn test_file_scan_exclusions(cx: &mut TestAppContext) {
+    init_test(cx);
+    let dir = temp_tree(json!({
+        ".gitignore": "**/target\n/node_modules\n",
+        "target": {
+            "index": "blah2"
+        },
+        "node_modules": {
+            ".DS_Store": "",
+            "prettier": {
+                "package.json": "{}",
+            },
+        },
+        "src": {
+            ".DS_Store": "",
+            "foo": {
+                "foo.rs": "mod another;\n",
+                "another.rs": "// another",
+            },
+            "bar": {
+                "bar.rs": "// bar",
+            },
+            "lib.rs": "mod foo;\nmod bar;\n",
+        },
+        ".DS_Store": "",
+    }));
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _, _>(|store, cx| {
+            store.update_user_settings::<ProjectSettings>(cx, |project_settings| {
+                project_settings.file_scan_exclusions =
+                    Some(vec!["**/foo/**".to_string(), "**/.DS_Store".to_string()]);
+            });
+        });
+    });
+
+    let tree = Worktree::local(
+        build_client(cx),
+        dir.path(),
+        true,
+        Arc::new(RealFs),
+        Default::default(),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+    tree.flush_fs_events(cx).await;
+    tree.read_with(cx, |tree, _| {
+        check_worktree_entries(
+            tree,
+            &[
+                "src/foo/foo.rs",
+                "src/foo/another.rs",
+                "node_modules/.DS_Store",
+                "src/.DS_Store",
+                ".DS_Store",
+            ],
+            &["target", "node_modules"],
+            &["src/lib.rs", "src/bar/bar.rs", ".gitignore"],
+        )
+    });
+
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _, _>(|store, cx| {
+            store.update_user_settings::<ProjectSettings>(cx, |project_settings| {
+                project_settings.file_scan_exclusions =
+                    Some(vec!["**/node_modules/**".to_string()]);
+            });
+        });
+    });
+    tree.flush_fs_events(cx).await;
+    cx.foreground().run_until_parked();
+    tree.read_with(cx, |tree, _| {
+        check_worktree_entries(
+            tree,
+            &[
+                "node_modules/prettier/package.json",
+                "node_modules/.DS_Store",
+                "node_modules",
+            ],
+            &["target"],
+            &[
+                ".gitignore",
+                "src/lib.rs",
+                "src/bar/bar.rs",
+                "src/foo/foo.rs",
+                "src/foo/another.rs",
+                "src/.DS_Store",
+                ".DS_Store",
+            ],
+        )
+    });
+}
+
 #[gpui::test(iterations = 30)]
 async fn test_create_directory_during_initial_scan(cx: &mut TestAppContext) {
+    init_test(cx);
     let fs = FakeFs::new(cx.background());
     fs.insert_tree(
         "/root",
@@ -938,6 +1052,7 @@ async fn test_create_directory_during_initial_scan(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
+    init_test(cx);
     let client_fake = cx.read(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
 
     let fs_fake = FakeFs::new(cx.background());
@@ -1054,6 +1169,7 @@ async fn test_random_worktree_operations_during_initial_scan(
     cx: &mut TestAppContext,
     mut rng: StdRng,
 ) {
+    init_test(cx);
     let operations = env::var("OPERATIONS")
         .map(|o| o.parse().unwrap())
         .unwrap_or(5);
@@ -1143,6 +1259,7 @@ async fn test_random_worktree_operations_during_initial_scan(
 
 #[gpui::test(iterations = 100)]
 async fn test_random_worktree_changes(cx: &mut TestAppContext, mut rng: StdRng) {
+    init_test(cx);
     let operations = env::var("OPERATIONS")
         .map(|o| o.parse().unwrap())
         .unwrap_or(40);
@@ -1557,6 +1674,7 @@ fn random_filename(rng: &mut impl Rng) -> String {
 
 #[gpui::test]
 async fn test_rename_work_directory(cx: &mut TestAppContext) {
+    init_test(cx);
     let root = temp_tree(json!({
         "projects": {
             "project1": {
@@ -1627,6 +1745,7 @@ async fn test_rename_work_directory(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_git_repository_for_path(cx: &mut TestAppContext) {
+    init_test(cx);
     let root = temp_tree(json!({
         "c.txt": "",
         "dir1": {
@@ -1747,6 +1866,15 @@ async fn test_git_repository_for_path(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_git_status(deterministic: Arc<Deterministic>, cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _, _>(|store, cx| {
+            store.update_user_settings::<ProjectSettings>(cx, |project_settings| {
+                project_settings.file_scan_exclusions =
+                    Some(vec!["**/.git".to_string(), "**/.gitignore".to_string()]);
+            });
+        });
+    });
     const IGNORE_RULE: &'static str = "**/target";
 
     let root = temp_tree(json!({
@@ -1935,6 +2063,7 @@ async fn test_git_status(deterministic: Arc<Deterministic>, cx: &mut TestAppCont
 
 #[gpui::test]
 async fn test_propagate_git_statuses(cx: &mut TestAppContext) {
+    init_test(cx);
     let fs = FakeFs::new(cx.background());
     fs.insert_tree(
         "/root",
@@ -2138,4 +2267,45 @@ fn git_status(repo: &git2::Repository) -> collections::HashMap<String, git2::Sta
         .iter()
         .map(|status| (status.path().unwrap().to_string(), status.status()))
         .collect()
+}
+
+#[track_caller]
+fn check_worktree_entries(
+    tree: &Worktree,
+    expected_excluded_paths: &[&str],
+    expected_ignored_paths: &[&str],
+    expected_tracked_paths: &[&str],
+) {
+    for path in expected_excluded_paths {
+        let entry = tree.entry_for_path(path);
+        assert!(
+            entry.is_none(),
+            "expected path '{path}' to be excluded, but got entry: {entry:?}",
+        );
+    }
+    for path in expected_ignored_paths {
+        let entry = tree
+            .entry_for_path(path)
+            .unwrap_or_else(|| panic!("Missing entry for expected ignored path '{path}'"));
+        assert!(
+            entry.is_ignored,
+            "expected path '{path}' to be ignored, but got entry: {entry:?}",
+        );
+    }
+    for path in expected_tracked_paths {
+        let entry = tree
+            .entry_for_path(path)
+            .unwrap_or_else(|| panic!("Missing entry for expected tracked path '{path}'"));
+        assert!(
+            !entry.is_ignored,
+            "expected path '{path}' to be tracked, but got entry: {entry:?}",
+        );
+    }
+}
+
+fn init_test(cx: &mut gpui::TestAppContext) {
+    cx.update(|cx| {
+        cx.set_global(SettingsStore::test(cx));
+        Project::init_settings(cx);
+    });
 }

@@ -70,7 +70,7 @@ impl<V> Element<V> for Img<V> {
                     if let Some(data) = image_future
                         .clone()
                         .now_or_never()
-                        .and_then(ResultExt::log_err)
+                        .and_then(|result| result.ok())
                     {
                         let corner_radii = corner_radii.to_pixels(bounds.size, cx.rem_size());
                         cx.with_z_index(1, |cx| {
@@ -79,7 +79,7 @@ impl<V> Element<V> for Img<V> {
                         });
                     } else {
                         cx.spawn(|_, mut cx| async move {
-                            if image_future.await.log_err().is_some() {
+                            if image_future.await.ok().is_some() {
                                 cx.on_next_frame(|cx| cx.notify());
                             }
                         })

@@ -6,8 +6,8 @@ use crate::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
     hover_popover::hide_hover,
     persistence::DB,
-    Anchor, DisplayPoint, Editor, EditorMode, Event, InlayHintRefreshReason, MultiBufferSnapshot,
-    ToPoint,
+    Anchor, DisplayPoint, Editor, EditorEvent, EditorMode, InlayHintRefreshReason,
+    MultiBufferSnapshot, ToPoint,
 };
 use gpui::{point, px, AppContext, Entity, Pixels, Styled, Task, ViewContext};
 use language::{Bias, Point};
@@ -224,7 +224,7 @@ impl ScrollManager {
         cx: &mut ViewContext<Editor>,
     ) {
         self.anchor = anchor;
-        cx.emit(Event::ScrollPositionChanged { local, autoscroll });
+        cx.emit(EditorEvent::ScrollPositionChanged { local, autoscroll });
         self.show_scrollbar(cx);
         self.autoscroll_request.take();
         if let Some(workspace_id) = workspace_id {

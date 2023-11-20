@@ -1,9 +1,9 @@
 use anyhow::Result;
-use gpui::AssetSource;
 use gpui::{
     div, px, size, AnyView, Bounds, Div, Render, ViewContext, VisualContext, WindowBounds,
     WindowOptions,
 };
+use gpui::{white, AssetSource};
 use settings::{default_settings, Settings, SettingsStore};
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -56,6 +56,7 @@ fn main() {
 }
 
 struct TestView {
+    #[allow(unused)]
     story: AnyView,
 }
 
@@ -65,9 +66,22 @@ impl Render<Self> for TestView {
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
         div()
             .flex()
+            .bg(gpui::blue())
             .flex_col()
             .size_full()
             .font("Helvetica")
-            .child(self.story.clone())
+            .child(div().h_5())
+            .child(
+                div()
+                    .flex()
+                    .w_96()
+                    .bg(white())
+                    .relative()
+                    .child(div().child(concat!(
+            "The quick brown fox jumps over the lazy dog. ",
+            "Meanwhile, the lazy dog decided it was time for a change. ",
+            "He started daily workout routines, ate healthier and became the fastest dog in town.",
+        ))),
+            )
     }
 }

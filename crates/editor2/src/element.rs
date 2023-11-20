@@ -1972,6 +1972,7 @@ impl EditorElement {
                 TransformBlock::ExcerptHeader { .. } => false,
                 TransformBlock::Custom(block) => block.style() == BlockStyle::Fixed,
             });
+
         let mut render_block = |block: &TransformBlock,
                                 available_space: Size<AvailableSpace>,
                                 block_id: usize,
@@ -2005,6 +2006,7 @@ impl EditorElement {
                         editor_style: &self.style,
                     })
                 }
+
                 TransformBlock::ExcerptHeader {
                     buffer,
                     range,
@@ -2049,6 +2051,7 @@ impl EditorElement {
                         }
 
                         h_stack()
+                            .id("path header block")
                             .size_full()
                             .bg(gpui::red())
                             .child(
@@ -2061,6 +2064,7 @@ impl EditorElement {
                     } else {
                         let text_style = style.text.clone();
                         h_stack()
+                            .id("collapsed context")
                             .size_full()
                             .bg(gpui::red())
                             .child("⋯")

@@ -1,6 +1,6 @@
 use gpui::Hsla;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct PlayerColor {
     pub cursor: Hsla,
     pub background: Hsla,

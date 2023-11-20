@@ -130,7 +130,7 @@ impl Theme {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct DiagnosticStyle {
     pub error: Hsla,
     pub warning: Hsla,

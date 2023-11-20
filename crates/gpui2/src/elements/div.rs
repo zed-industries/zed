@@ -1124,9 +1124,14 @@ where
                     }
                 }
             }
+            // if self.hover_style.is_some() {
             if bounds.contains_point(&mouse_position) {
+                // eprintln!("div hovered {bounds:?} {mouse_position:?}");
                 style.refine(&self.hover_style);
+            } else {
+                // eprintln!("div NOT hovered {bounds:?} {mouse_position:?}");
             }
+            // }
 
             if let Some(drag) = cx.active_drag.take() {
                 for (state_type, group_drag_style) in &self.group_drag_over_styles {

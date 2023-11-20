@@ -4,11 +4,16 @@ set -eu
 source script/lib/deploy-helpers.sh
 
 if [[ $# < 2 ]]; then
-  echo "Usage: $0 <production|staging|preview> <tag-name>"
+  echo "Usage: $0 <production|staging|preview> <tag-name> (nightly is not yet supported)"
   exit 1
 fi
 environment=$1
 version=$2
+
+if [[ ${environment} == "nightly" ]]; then
+  echo "nightly is not yet supported"
+  exit 1
+fi
 
 export_vars_for_environment ${environment}
 image_id=$(image_id_for_version ${version})

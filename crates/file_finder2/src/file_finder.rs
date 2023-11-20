@@ -2,8 +2,10 @@ use collections::HashMap;
 use editor::{scroll::autoscroll::Autoscroll, Bias, Editor};
 use fuzzy::{CharBag, PathMatch, PathMatchCandidate};
 use gpui::{
-    actions, div, AppContext, Dismiss, Div, FocusHandle, InteractiveElement, ManagedView, Model,
-    ParentElement, Render, RenderOnce, Styled, Task, View, ViewContext, VisualContext, WeakView,
+    actions, div, AppContext, Component, Dismiss, Div, EventEmitter, FocusHandle, FocusableView,
+    InteractiveComponent, InteractiveElement, ManagedView, Manager, Model, ParentComponent,
+    ParentElement, Render, RenderOnce, Styled, Styled, Task, View, ViewContext, VisualContext,
+    WeakView,
 };
 use picker::{Picker, PickerDelegate};
 use project::{PathMatchCandidateSet, Project, ProjectPath, WorktreeId};
@@ -110,7 +112,8 @@ impl FileFinder {
     }
 }
 
-impl ManagedView for FileFinder {
+impl EventEmitter<Manager> for FileFinder {}
+impl FocusableView for FileFinder {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
         self.picker.focus_handle(cx)
     }
@@ -687,7 +690,9 @@ impl PickerDelegate for FileFinderDelegate {
                                 .log_err();
                         }
                     }
-                    finder.update(&mut cx, |_, cx| cx.emit(Dismiss)).ok()?;
+                    finder
+                        .update(&mut cx, |_, cx| cx.emit(Manager::Dismiss))
+                        .ok()?;
 
                     Some(())
                 })
@@ -698,7 +703,7 @@ impl PickerDelegate for FileFinderDelegate {
 
     fn dismissed(&mut self, cx: &mut ViewContext<Picker<FileFinderDelegate>>) {
         self.file_finder
-            .update(cx, |_, cx| cx.emit(Dismiss))
+            .update(cx, |_, cx| cx.emit(Manager::Dismiss))
             .log_err();
     }
 

@@ -1,6 +1,6 @@
 pub mod file_associations;
 mod project_panel_settings;
-use settings::Settings;
+use settings::{Settings, SettingsStore};
 
 use db::kvp::KEY_VALUE_STORE;
 use editor::{scroll::autoscroll::Autoscroll, Cancel, Editor};
@@ -34,7 +34,7 @@ use ui::{h_stack, v_stack, IconElement, Label};
 use unicase::UniCase;
 use util::{maybe, ResultExt, TryFutureExt};
 use workspace::{
-    dock::{DockPosition, PanelEvent},
+    dock::{DockPosition, Panel, PanelEvent},
     Workspace,
 };
 
@@ -148,7 +148,6 @@ pub enum Event {
     SplitEntry {
         entry_id: ProjectEntryId,
     },
-    DockPositionChanged,
     Focus,
     NewSearchInDirectory {
         dir_entry: Entry,
@@ -200,10 +199,11 @@ impl ProjectPanel {
             let filename_editor = cx.build_view(|cx| Editor::single_line(cx));
 
             cx.subscribe(&filename_editor, |this, _, event, cx| match event {
-                editor::Event::BufferEdited | editor::Event::SelectionsChanged { .. } => {
+                editor::EditorEvent::BufferEdited
+                | editor::EditorEvent::SelectionsChanged { .. } => {
                     this.autoscroll(cx);
                 }
-                editor::Event::Blurred => {
+                editor::EditorEvent::Blurred => {
                     if this
                         .edit_state
                         .as_ref()
@@ -244,16 +244,17 @@ impl ProjectPanel {
             this.update_visible_entries(None, cx);
 
             // Update the dock position when the setting changes.
-            // todo!()
-            // let mut old_dock_position = this.position(cx);
-            // cx.observe_global::<SettingsStore, _>(move |this, cx| {
-            //     let new_dock_position = this.position(cx);
-            //     if new_dock_position != old_dock_position {
-            //         old_dock_position = new_dock_position;
-            //         cx.emit(Event::DockPositionChanged);
-            //     }
-            // })
-            // .detach();
+            let mut old_dock_position = this.position(cx);
+            ProjectPanelSettings::register(cx);
+            cx.observe_global::<SettingsStore>(move |this, cx| {
+                dbg!("OLA!");
+                let new_dock_position = this.position(cx);
+                if new_dock_position != old_dock_position {
+                    old_dock_position = new_dock_position;
+                    cx.emit(PanelEvent::ChangePosition);
+                }
+            })
+            .detach();
 
             this
         });
@@ -1485,7 +1486,7 @@ impl EventEmitter<Event> for ProjectPanel {}
 
 impl EventEmitter<PanelEvent> for ProjectPanel {}
 
-impl workspace::dock::Panel for ProjectPanel {
+impl Panel for ProjectPanel {
     fn position(&self, cx: &WindowContext) -> DockPosition {
         match ProjectPanelSettings::get_global(cx).dock {
             ProjectPanelDockPosition::Left => DockPosition::Left,
@@ -1571,7 +1572,7 @@ mod tests {
     use super::*;
     use gpui::{TestAppContext, View, VisualTestContext, WindowHandle};
     use pretty_assertions::assert_eq;
-    use project::FakeFs;
+    use project::{project_settings::ProjectSettings, FakeFs};
     use serde_json::json;
     use settings::SettingsStore;
     use std::{
@@ -1668,6 +1669,124 @@ mod tests {
                 "    > C",
                 "      .dockerignore",
                 "v root2",
+            ]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_exclusions_in_visible_list(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings::<ProjectSettings>(cx, |project_settings| {
+                    project_settings.file_scan_exclusions =
+                        Some(vec!["**/.git".to_string(), "**/4/**".to_string()]);
+                });
+            });
+        });
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/root1",
+            json!({
+                ".dockerignore": "",
+                ".git": {
+                    "HEAD": "",
+                },
+                "a": {
+                    "0": { "q": "", "r": "", "s": "" },
+                    "1": { "t": "", "u": "" },
+                    "2": { "v": "", "w": "", "x": "", "y": "" },
+                },
+                "b": {
+                    "3": { "Q": "" },
+                    "4": { "R": "", "S": "", "T": "", "U": "" },
+                },
+                "C": {
+                    "5": {},
+                    "6": { "V": "", "W": "" },
+                    "7": { "X": "" },
+                    "8": { "Y": {}, "Z": "" }
+                }
+            }),
+        )
+        .await;
+        fs.insert_tree(
+            "/root2",
+            json!({
+                "d": {
+                    "4": ""
+                },
+                "e": {}
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
+        let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let panel = workspace
+            .update(cx, |workspace, cx| ProjectPanel::new(workspace, cx))
+            .unwrap();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..50, cx),
+            &[
+                "v root1",
+                "    > a",
+                "    > b",
+                "    > C",
+                "      .dockerignore",
+                "v root2",
+                "    > d",
+                "    > e",
+            ]
+        );
+
+        toggle_expand_dir(&panel, "root1/b", cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..50, cx),
+            &[
+                "v root1",
+                "    > a",
+                "    v b  <== selected",
+                "        > 3",
+                "    > C",
+                "      .dockerignore",
+                "v root2",
+                "    > d",
+                "    > e",
+            ]
+        );
+
+        toggle_expand_dir(&panel, "root2/d", cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..50, cx),
+            &[
+                "v root1",
+                "    > a",
+                "    v b",
+                "        > 3",
+                "    > C",
+                "      .dockerignore",
+                "v root2",
+                "    v d  <== selected",
+                "    > e",
+            ]
+        );
+
+        toggle_expand_dir(&panel, "root2/e", cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..50, cx),
+            &[
+                "v root1",
+                "    > a",
+                "    v b",
+                "        > 3",
+                "    > C",
+                "      .dockerignore",
+                "v root2",
+                "    v d",
+                "    v e  <== selected",
             ]
         );
     }
@@ -2792,6 +2911,12 @@ mod tests {
             workspace::init_settings(cx);
             client::init_settings(cx);
             Project::init_settings(cx);
+
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings::<ProjectSettings>(cx, |project_settings| {
+                    project_settings.file_scan_exclusions = Some(Vec::new());
+                });
+            });
         });
     }
 

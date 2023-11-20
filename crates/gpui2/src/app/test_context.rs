@@ -386,6 +386,32 @@ impl<T: Send> Model<T> {
     }
 }
 
+impl<V: 'static> View<V> {
+    pub fn next_notification(&self, cx: &TestAppContext) -> impl Future<Output = ()> {
+        use postage::prelude::{Sink as _, Stream as _};
+
+        let (mut tx, mut rx) = postage::mpsc::channel(1);
+        let mut cx = cx.app.app.borrow_mut();
+        let subscription = cx.observe(self, move |_, _| {
+            tx.try_send(()).ok();
+        });
+
+        let duration = if std::env::var("CI").is_ok() {
+            Duration::from_secs(5)
+        } else {
+            Duration::from_secs(1)
+        };
+
+        async move {
+            let notification = crate::util::timeout(duration, rx.recv())
+                .await
+                .expect("next notification timed out");
+            drop(subscription);
+            notification.expect("model dropped while test was waiting for its next notification")
+        }
+    }
+}
+
 impl<V> View<V> {
     pub fn condition<Evt>(
         &self,
@@ -576,6 +602,17 @@ impl<'a> VisualContext for VisualTestContext<'a> {
         self.window
             .update(self.cx, |_, cx| {
                 view.read(cx).focus_handle(cx).clone().focus(cx)
+            })
+            .unwrap()
+    }
+
+    fn dismiss_view<V>(&mut self, view: &View<V>) -> Self::Result<()>
+    where
+        V: crate::ManagedView,
+    {
+        self.window
+            .update(self.cx, |_, cx| {
+                view.update(cx, |_, cx| cx.emit(crate::Manager::Dismiss))
             })
             .unwrap()
     }
