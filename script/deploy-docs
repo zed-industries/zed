@@ -1,5 +1,11 @@
 #!/bin/bash
 
+# Check if the script is run from the root of the repository
+if [ ! -f "Cargo.toml" ] || [ ! -d "crates/zed" ]; then
+    echo "Please run the script from the root of the repository."
+    exit 1
+fi
+
 # Set the environment variables
 TARGET_DIR="../zed-docs"
 PUSH_CHANGES=false
@@ -21,17 +27,10 @@ while getopts "pc" opt; do
   esac
 done
 
-if "$CLEAN_FOLDERS"; then
-  echo "Cleaning ./doc and ./debug folders..."
-  rm -rf "$TARGET_DIR/doc"
-  rm -rf "$TARGET_DIR/debug"
-fi
-
 # Check if the target documentation directory exists
 if [ ! -d "$TARGET_DIR" ]; then
     # Prompt the user for input
-    read -p "The zed-docs directory does not exist. Make sure you are running this from the zed repo root." -n 1 -r
-    read -p "Do you want to clone the repository (y/n)? " -n 1 -r
+    read -p "Can't find ../zed-docs. Do you want to clone the repository (y/n)?" -n 1 -r
     echo  # Move to a new line
 
     if [[ $REPLY =~ ^[Yy]$ ]]; then
@@ -47,6 +46,12 @@ else
     pushd "$TARGET_DIR" > /dev/null
     git pull
     popd > /dev/null
+fi
+
+if "$CLEAN_FOLDERS"; then
+  echo "Cleaning ./doc and ./debug folders..."
+  rm -rf "$TARGET_DIR/doc"
+  rm -rf "$TARGET_DIR/debug"
 fi
 
 # Build the documentation
