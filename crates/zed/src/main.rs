@@ -3,7 +3,7 @@
 
 use anyhow::{anyhow, Context, Result};
 use backtrace::Backtrace;
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
 use client::{
     self, Client, TelemetrySettings, UserStore, ZED_APP_VERSION, ZED_SECRET_CLIENT_TOKEN,
@@ -35,7 +35,6 @@ use std::{
         Arc, Weak,
     },
     thread,
-    time::{SystemTime, UNIX_EPOCH},
 };
 use util::{
     channel::{parse_zed_link, ReleaseChannel},

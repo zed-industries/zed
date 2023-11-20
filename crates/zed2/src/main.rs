@@ -6,7 +6,7 @@
 
 use anyhow::{anyhow, Context as _, Result};
 use backtrace::Backtrace;
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
 use client::UserStore;
 use db::kvp::KEY_VALUE_STORE;
@@ -39,7 +39,6 @@ use std::{
         Arc,
     },
     thread,
-    time::{SystemTime, UNIX_EPOCH},
 };
 use theme::ActiveTheme;
 use util::{
