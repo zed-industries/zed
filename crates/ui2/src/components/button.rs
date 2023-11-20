@@ -1,25 +1,27 @@
 use std::sync::Arc;
 
-use gpui::{DefiniteLength, Hsla, MouseButton, StatefulInteractiveComponent, WindowContext};
+use gpui::{
+    CallbackHandle, DefiniteLength, Hsla, MouseButton, StatefulInteractiveComponent, WindowContext,
+};
 
 use crate::prelude::*;
 use crate::{h_stack, Icon, IconButton, IconElement, Label, LineHeightStyle, TextColor};
 
 /// Provides the flexibility to use either a standard
 /// button or an icon button in a given context.
-pub enum ButtonOrIconButton<V: 'static> {
-    Button(Button<V>),
-    IconButton(IconButton<V>),
+pub enum ButtonOrIconButton {
+    Button(Button),
+    IconButton(IconButton),
 }
 
-impl<V: 'static> From<Button<V>> for ButtonOrIconButton<V> {
-    fn from(value: Button<V>) -> Self {
+impl From<Button> for ButtonOrIconButton {
+    fn from(value: Button) -> Self {
         Self::Button(value)
     }
 }
 
-impl<V: 'static> From<IconButton<V>> for ButtonOrIconButton<V> {
-    fn from(value: IconButton<V>) -> Self {
+impl From<IconButton> for ButtonOrIconButton {
+    fn from(value: IconButton) -> Self {
         Self::IconButton(value)
     }
 }
@@ -61,25 +63,10 @@ impl ButtonVariant {
     }
 }
 
-pub type ClickHandler<V> = Arc<dyn Fn(&mut V, &mut ViewContext<V>)>;
-
-struct ButtonHandlers<V: 'static> {
-    click: Option<ClickHandler<V>>,
-}
-
-unsafe impl<S> Send for ButtonHandlers<S> {}
-unsafe impl<S> Sync for ButtonHandlers<S> {}
-
-impl<V: 'static> Default for ButtonHandlers<V> {
-    fn default() -> Self {
-        Self { click: None }
-    }
-}
-
-#[derive(Component)]
-pub struct Button<V: 'static> {
+// #[derive(Component)] <- todo
+pub struct Button {
     disabled: bool,
-    handlers: ButtonHandlers<V>,
+    click_handler: Option<CallbackHandle<()>>,
     icon: Option<Icon>,
     icon_position: Option<IconPosition>,
     label: SharedString,
@@ -88,11 +75,11 @@ pub struct Button<V: 'static> {
     color: Option<TextColor>,
 }
 
-impl<V: 'static> Button<V> {
+impl Button {
     pub fn new(label: impl Into<SharedString>) -> Self {
         Self {
             disabled: false,
-            handlers: ButtonHandlers::default(),
+            click_handler: None,
             icon: None,
             icon_position: None,
             label: label.into(),
@@ -129,7 +116,7 @@ impl<V: 'static> Button<V> {
         self
     }
 
-    pub fn on_click(mut self, handler: ClickHandler<V>) -> Self {
+    pub fn on_click(mut self, handler: CallbackHandle<()>) -> Self {
         self.handlers.click = Some(handler);
         self
     }
@@ -164,7 +151,7 @@ impl<V: 'static> Button<V> {
         self.icon.map(|i| IconElement::new(i).color(icon_color))
     }
 
-    pub fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    pub fn render(self, cx: &mut WindowContext) -> impl Component {
         let (icon_color, label_color) = match (self.disabled, self.color) {
             (true, _) => (TextColor::Disabled, TextColor::Disabled),
             (_, None) => (TextColor::Default, TextColor::Default),
@@ -212,21 +199,20 @@ impl<V: 'static> Button<V> {
     }
 }
 
-#[derive(Component)]
-pub struct ButtonGroup<V: 'static> {
-    buttons: Vec<Button<V>>,
+pub struct ButtonGroup {
+    buttons: Vec<Button>,
 }
 
-impl<V: 'static> ButtonGroup<V> {
-    pub fn new(buttons: Vec<Button<V>>) -> Self {
+impl ButtonGroup {
+    pub fn new(buttons: Vec<Button>) -> Self {
         Self { buttons }
     }
 
-    fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render(self, cx: &mut WindowContext) -> impl Component {
         let mut el = h_stack().text_ui();
 
         for button in self.buttons {
-            el = el.child(button.render(_view, cx));
+            el = el.child(button.render(cx));
         }
 
         el
@@ -246,13 +232,13 @@ mod stories {
     pub struct ButtonStory;
 
     impl Render for ButtonStory {
-        type Element = Div<Self>;
+        type Element = Div;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             let states = InteractionState::iter();
 
             Story::container(cx)
-                .child(Story::title_for::<_, Button<Self>>(cx))
+                .child(Story::title_for::<_, Button>(cx))
                 .child(
                     div()
                         .flex()
@@ -395,7 +381,7 @@ mod stories {
                 .child(
                     Button::new("Label")
                         .variant(ButtonVariant::Ghost)
-                        .on_click(Arc::new(|_view, _cx| println!("Button clicked."))),
+                        .on_click(cx.callback(|_view, _, cx| println!("Button clicked."))),
                 )
         }
     }
