@@ -39,7 +39,6 @@ do
             export CARGO_INCREMENTAL=true
             export CARGO_BUNDLE_SKIP_BUILD=true
             build_flag="";
-            local_arch=true
             target_dir="debug"
             ;;
         l)
