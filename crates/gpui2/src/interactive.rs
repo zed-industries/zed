@@ -305,7 +305,7 @@ mod test {
             div().id("testview").child(
                 div()
                     .key_context("parent")
-                    .on_key_down(cx.callback(|this, _, _| this.saw_key_down = true))
+                    .on_key_down(cx.listener(|this, _, _| this.saw_key_down = true))
                     .on_action(
                         cx.callback(|this: &mut TestView, _: &TestAction, _| {
                             this.saw_action = true

@@ -1,10 +1,9 @@
 use crate::{
     point, px, Action, AnyDrag, AnyElement, AnyTooltip, AnyView, AppContext, BorrowAppContext,
-    BorrowWindow, Bounds, CallbackHandle, ClickEvent, ConstructorHandle, DispatchPhase, Element,
-    ElementId, FocusEvent, FocusHandle, KeyContext, KeyDownEvent, KeyUpEvent, LayoutId,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point,
-    Render, RenderOnce, ScrollWheelEvent, SharedString, Size, Style, StyleRefinement, Styled, Task,
-    View, Visibility, WindowContext,
+    BorrowWindow, Bounds, ClickEvent, DispatchPhase, Element, ElementId, FocusEvent, FocusHandle,
+    KeyContext, KeyDownEvent, KeyUpEvent, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, ParentElement, Pixels, Point, Render, RenderOnce, ScrollWheelEvent, SharedString,
+    Size, Style, StyleRefinement, Styled, Task, View, Visibility, WindowContext,
 };
 use collections::HashMap;
 use refineable::Refineable;
@@ -79,28 +78,29 @@ pub trait InteractiveElement: Sized + Element {
     fn on_mouse_down(
         mut self,
         button: MouseButton,
-        handler: impl Into<CallbackHandle<MouseDownEvent>>,
+        listener: impl Fn(&MouseDownEvent, &mut WindowContext) + 'static,
     ) -> Self {
-        let handler = handler.into();
         self.interactivity().mouse_down_listeners.push(Box::new(
             move |event, bounds, phase, cx| {
                 if phase == DispatchPhase::Bubble
                     && event.button == button
                     && bounds.contains_point(&event.position)
                 {
-                    (handler.callback)(event, cx)
+                    (listener)(event, cx)
                 }
             },
         ));
         self
     }
 
-    fn on_any_mouse_down(mut self, handler: impl Into<CallbackHandle<MouseDownEvent>>) -> Self {
-        let handler = handler.into();
+    fn on_any_mouse_down(
+        mut self,
+        listener: impl Fn(&MouseDownEvent, &mut WindowContext) + 'static,
+    ) -> Self {
         self.interactivity().mouse_down_listeners.push(Box::new(
             move |event, bounds, phase, cx| {
                 if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position) {
-                    (handler.callback)(event, cx)
+                    (listener)(event, cx)
                 }
             },
         ));
@@ -110,9 +110,8 @@ pub trait InteractiveElement: Sized + Element {
     fn on_mouse_up(
         mut self,
         button: MouseButton,
-        handler: impl Into<CallbackHandle<MouseUpEvent>>,
+        listener: impl Fn(&MouseUpEvent, &mut WindowContext) + 'static,
     ) -> Self {
-        let handler = handler.into();
         self.interactivity()
             .mouse_up_listeners
             .push(Box::new(move |event, bounds, phase, cx| {
@@ -120,30 +119,34 @@ pub trait InteractiveElement: Sized + Element {
                     && event.button == button
                     && bounds.contains_point(&event.position)
                 {
-                    (handler.callback)(event, cx)
+                    (listener)(event, cx)
                 }
             }));
         self
     }
 
-    fn on_any_mouse_up(mut self, handler: impl Into<CallbackHandle<MouseUpEvent>>) -> Self {
-        let handler = handler.into();
+    fn on_any_mouse_up(
+        mut self,
+        listener: impl Fn(&MouseUpEvent, &mut WindowContext) + 'static,
+    ) -> Self {
         self.interactivity()
             .mouse_up_listeners
             .push(Box::new(move |event, bounds, phase, cx| {
                 if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position) {
-                    (handler.callback)(event, cx)
+                    (listener)(event, cx)
                 }
             }));
         self
     }
 
-    fn on_mouse_down_out(mut self, handler: impl Into<CallbackHandle<MouseDownEvent>>) -> Self {
-        let handler = handler.into();
+    fn on_mouse_down_out(
+        mut self,
+        listener: impl Fn(&MouseDownEvent, &mut WindowContext) + 'static,
+    ) -> Self {
         self.interactivity().mouse_down_listeners.push(Box::new(
             move |event, bounds, phase, cx| {
                 if phase == DispatchPhase::Capture && !bounds.contains_point(&event.position) {
-                    (handler.callback)(event, cx)
+                    (listener)(event, cx)
                 }
             },
         ));
@@ -153,9 +156,8 @@ pub trait InteractiveElement: Sized + Element {
     fn on_mouse_up_out(
         mut self,
         button: MouseButton,
-        handler: impl Into<CallbackHandle<MouseUpEvent>>,
+        listener: impl Fn(&MouseUpEvent, &mut WindowContext) + 'static,
     ) -> Self {
-        let handler = handler.into();
         self.interactivity()
             .mouse_up_listeners
             .push(Box::new(move |event, bounds, phase, cx| {
@@ -163,30 +165,34 @@ pub trait InteractiveElement: Sized + Element {
                     && event.button == button
                     && !bounds.contains_point(&event.position)
                 {
-                    (handler.callback)(event, cx);
+                    (listener)(event, cx);
                 }
             }));
         self
     }
 
-    fn on_mouse_move(mut self, handler: impl Into<CallbackHandle<MouseMoveEvent>>) -> Self {
-        let handler = handler.into();
+    fn on_mouse_move(
+        mut self,
+        listener: impl Fn(&MouseMoveEvent, &mut WindowContext) + 'static,
+    ) -> Self {
         self.interactivity().mouse_move_listeners.push(Box::new(
             move |event, bounds, phase, cx| {
                 if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position) {
-                    (handler.callback)(event, cx);
+                    (listener)(event, cx);
                 }
             },
         ));
         self
     }
 
-    fn on_scroll_wheel(mut self, handler: impl Into<CallbackHandle<ScrollWheelEvent>>) -> Self {
-        let handler = handler.into();
+    fn on_scroll_wheel(
+        mut self,
+        listener: impl Fn(&ScrollWheelEvent, &mut WindowContext) + 'static,
+    ) -> Self {
         self.interactivity().scroll_wheel_listeners.push(Box::new(
             move |event, bounds, phase, cx| {
                 if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position) {
-                    (handler.callback)(event, cx);
+                    (listener)(event, cx);
                 }
             },
         ));
@@ -194,14 +200,16 @@ pub trait InteractiveElement: Sized + Element {
     }
 
     /// Capture the given action, before normal action dispatch can fire
-    fn capture_action<A: Action>(mut self, listener: impl Into<CallbackHandle<A>>) -> Self {
-        let listener = listener.into();
+    fn capture_action<A: Action>(
+        mut self,
+        listener: impl Fn(&A, &mut WindowContext) + 'static,
+    ) -> Self {
         self.interactivity().action_listeners.push((
             TypeId::of::<A>(),
             Box::new(move |action, phase, cx| {
                 let action = action.downcast_ref().unwrap();
                 if phase == DispatchPhase::Capture {
-                    (listener.callback)(action, cx)
+                    (listener)(action, cx)
                 }
             }),
         ));
@@ -209,8 +217,7 @@ pub trait InteractiveElement: Sized + Element {
     }
 
     /// Add a listener for the given action, fires during the bubble event phase
-    fn on_action<A: Action>(mut self, listener: impl Into<CallbackHandle<A>> + 'static) -> Self {
-        let handle = listener.into();
+    fn on_action<A: Action>(mut self, listener: impl Fn(&A, &mut WindowContext) + 'static) -> Self {
         // NOTE: this debug assert has the side-effect of working around
         // a bug where a crate consisting only of action definitions does
         // not register the actions in debug builds:
@@ -230,27 +237,31 @@ pub trait InteractiveElement: Sized + Element {
             Box::new(move |action, phase, cx| {
                 let action = action.downcast_ref().unwrap();
                 if phase == DispatchPhase::Bubble {
-                    (handle.callback)(action, cx)
+                    (listener)(action, cx)
                 }
             }),
         ));
         self
     }
 
-    fn on_key_down(mut self, listener: impl Into<CallbackHandle<KeyDownEvent>>) -> Self {
-        let listener = listener.into();
+    fn on_key_down(
+        mut self,
+        listener: impl Fn(&KeyDownEvent, &mut WindowContext) + 'static,
+    ) -> Self {
         self.interactivity()
             .key_down_listeners
             .push(Box::new(move |event, phase, cx| {
                 if phase == DispatchPhase::Bubble {
-                    (listener.callback)(event, cx)
+                    (listener)(event, cx)
                 }
             }));
         self
     }
 
-    fn capture_key_down(mut self, listener: impl Into<CallbackHandle<KeyDownEvent>>) -> Self {
-        let listener = listener.into();
+    fn capture_key_down(
+        mut self,
+        listener: impl Fn(&KeyDownEvent, &mut WindowContext) + 'static,
+    ) -> Self {
         self.interactivity()
             .key_down_listeners
             .push(Box::new(move |event, phase, cx| {
@@ -261,8 +272,7 @@ pub trait InteractiveElement: Sized + Element {
         self
     }
 
-    fn on_key_up(mut self, listener: impl Into<CallbackHandle<KeyUpEvent>>) -> Self {
-        let listener = listener.into();
+    fn on_key_up(mut self, listener: impl Fn(&KeyUpEvent, &mut WindowContext) + 'static) -> Self {
         self.interactivity()
             .key_up_listeners
             .push(Box::new(move |event, phase, cx| {
@@ -273,8 +283,10 @@ pub trait InteractiveElement: Sized + Element {
         self
     }
 
-    fn capture_key_up(mut self, listener: impl Into<CallbackHandle<KeyUpEvent>>) -> Self {
-        let listener = listener.into();
+    fn capture_key_up(
+        mut self,
+        listener: impl Fn(&KeyUpEvent, &mut WindowContext) + 'static,
+    ) -> Self {
         self.interactivity()
             .key_up_listeners
             .push(Box::new(move |event, phase, cx| {
@@ -307,8 +319,10 @@ pub trait InteractiveElement: Sized + Element {
         self
     }
 
-    fn on_drop<W: 'static>(mut self, listener: impl Into<CallbackHandle<View<W>>>) -> Self {
-        let listener = listener.into();
+    fn on_drop<W: 'static>(
+        mut self,
+        listener: impl Fn(&View<W>, &mut WindowContext) + 'static,
+    ) -> Self {
         self.interactivity().drop_listeners.push((
             TypeId::of::<W>(),
             Box::new(move |dragged_view, cx| {
@@ -364,23 +378,21 @@ pub trait StatefulInteractiveElement: InteractiveElement {
         self
     }
 
-    fn on_click(mut self, listener: impl Into<CallbackHandle<ClickEvent>>) -> Self
+    fn on_click(mut self, listener: impl Fn(&ClickEvent, &mut WindowContext) + 'static) -> Self
     where
         Self: Sized,
     {
-        let listener = listener.into();
         self.interactivity()
             .click_listeners
             .push(Box::new(move |event, cx| (listener.callback)(event, cx)));
         self
     }
 
-    fn on_drag<W>(mut self, listener: impl Into<ConstructorHandle<View<W>>>) -> Self
+    fn on_drag<W>(mut self, listener: impl Fn(&mut WindowContext) -> View<W> + 'static) -> Self
     where
         Self: Sized,
         W: 'static + Render,
     {
-        let listener = listener.into();
         debug_assert!(
             self.interactivity().drag_listener.is_none(),
             "calling on_drag more than once on the same element is not supported"
@@ -392,24 +404,22 @@ pub trait StatefulInteractiveElement: InteractiveElement {
         self
     }
 
-    fn on_hover(mut self, listener: impl Into<CallbackHandle<bool>>) -> Self
+    fn on_hover(mut self, listener: impl Fn(&bool, &mut WindowContext) + 'static) -> Self
     where
         Self: Sized,
     {
-        let listener = listener.into();
         debug_assert!(
             self.interactivity().hover_listener.is_none(),
             "calling on_hover more than once on the same element is not supported"
         );
-        self.interactivity().hover_listener = Some(listener);
+        self.interactivity().hover_listener = Some(Box::new(listener));
         self
     }
 
-    fn tooltip(mut self, build_tooltip: impl Into<ConstructorHandle<AnyView>>) -> Self
+    fn tooltip(mut self, build_tooltip: impl Fn(&mut WindowContext) -> AnyView + 'static) -> Self
     where
         Self: Sized,
     {
-        let build_tooltip = build_tooltip.into();
         debug_assert!(
             self.interactivity().tooltip_builder.is_none(),
             "calling tooltip more than once on the same element is not supported"
@@ -438,11 +448,10 @@ pub trait FocusableElement: InteractiveElement {
         self
     }
 
-    fn on_focus(mut self, listener: impl Into<CallbackHandle<FocusEvent>>) -> Self
+    fn on_focus(mut self, listener: impl Fn(&FocusEvent, &mut WindowContext) + 'static) -> Self
     where
         Self: Sized,
     {
-        let listener = listener.into();
         self.interactivity()
             .focus_listeners
             .push(Box::new(move |focus_handle, event, cx| {
@@ -453,11 +462,10 @@ pub trait FocusableElement: InteractiveElement {
         self
     }
 
-    fn on_blur(mut self, listener: impl Into<CallbackHandle<FocusEvent>>) -> Self
+    fn on_blur(mut self, listener: impl Fn(&FocusEvent, &mut WindowContext) + 'static) -> Self
     where
         Self: Sized,
     {
-        let listener = listener.into();
         self.interactivity()
             .focus_listeners
             .push(Box::new(move |focus_handle, event, cx| {
@@ -468,11 +476,10 @@ pub trait FocusableElement: InteractiveElement {
         self
     }
 
-    fn on_focus_in(mut self, listener: impl Into<CallbackHandle<FocusEvent>>) -> Self
+    fn on_focus_in(mut self, listener: impl Fn(&FocusEvent, &mut WindowContext) + 'static) -> Self
     where
         Self: Sized,
     {
-        let listener = listener.into();
         self.interactivity()
             .focus_listeners
             .push(Box::new(move |focus_handle, event, cx| {
@@ -492,11 +499,10 @@ pub trait FocusableElement: InteractiveElement {
         self
     }
 
-    fn on_focus_out(mut self, listener: impl Into<CallbackHandle<FocusEvent>>) -> Self
+    fn on_focus_out(mut self, listener: impl Fn(&FocusEvent, &mut WindowContext) + 'static) -> Self
     where
         Self: Sized,
     {
-        let listener = listener.into();
         self.interactivity()
             .focus_listeners
             .push(Box::new(move |focus_handle, event, cx| {
@@ -710,7 +716,7 @@ pub struct Interactivity {
     pub drop_listeners: SmallVec<[(TypeId, Box<DropListener>); 2]>,
     pub click_listeners: SmallVec<[ClickListener; 2]>,
     pub drag_listener: Option<DragListener>,
-    pub hover_listener: Option<CallbackHandle<bool>>,
+    pub hover_listener: Option<Box<dyn Fn(&bool, &mut WindowContext)>>,
     pub tooltip_builder: Option<TooltipBuilder>,
 }
 
