@@ -43,10 +43,6 @@ pub fn derive_render_once(input: TokenStream) -> TokenStream {
         }
     };
 
-    if type_name == "Avatar" {
-        println!("{gen}");
-    }
-
     gen.into()
 }
 
