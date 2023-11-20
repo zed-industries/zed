@@ -266,7 +266,7 @@ pub trait InteractiveElement: Sized + Element {
             .key_down_listeners
             .push(Box::new(move |event, phase, cx| {
                 if phase == DispatchPhase::Capture {
-                    (listener.callback)(event, cx)
+                    listener(event, cx)
                 }
             }));
         self
@@ -277,7 +277,7 @@ pub trait InteractiveElement: Sized + Element {
             .key_up_listeners
             .push(Box::new(move |event, phase, cx| {
                 if phase == DispatchPhase::Bubble {
-                    (listener.callback)(event, cx)
+                    listener(event, cx)
                 }
             }));
         self
@@ -291,7 +291,7 @@ pub trait InteractiveElement: Sized + Element {
             .key_up_listeners
             .push(Box::new(move |event, phase, cx| {
                 if phase == DispatchPhase::Capture {
-                    (listener.callback)(event, cx)
+                    listener(event, cx)
                 }
             }));
         self
@@ -326,7 +326,7 @@ pub trait InteractiveElement: Sized + Element {
         self.interactivity().drop_listeners.push((
             TypeId::of::<W>(),
             Box::new(move |dragged_view, cx| {
-                (listener.callback)(&dragged_view.downcast().unwrap(), cx);
+                listener(&dragged_view.downcast().unwrap(), cx);
             }),
         ));
         self
@@ -384,7 +384,7 @@ pub trait StatefulInteractiveElement: InteractiveElement {
     {
         self.interactivity()
             .click_listeners
-            .push(Box::new(move |event, cx| (listener.callback)(event, cx)));
+            .push(Box::new(move |event, cx| listener(event, cx)));
         self
     }
 
@@ -398,7 +398,7 @@ pub trait StatefulInteractiveElement: InteractiveElement {
             "calling on_drag more than once on the same element is not supported"
         );
         self.interactivity().drag_listener = Some(Box::new(move |cursor_offset, cx| AnyDrag {
-            view: (listener.callback)(cx).into(),
+            view: listener(cx).into(),
             cursor_offset,
         }));
         self
@@ -424,8 +424,7 @@ pub trait StatefulInteractiveElement: InteractiveElement {
             self.interactivity().tooltip_builder.is_none(),
             "calling tooltip more than once on the same element is not supported"
         );
-        self.interactivity().tooltip_builder =
-            Some(Rc::new(move |cx| (build_tooltip.callback)(cx)));
+        self.interactivity().tooltip_builder = Some(Rc::new(build_tooltip));
 
         self
     }
@@ -456,7 +455,7 @@ pub trait FocusableElement: InteractiveElement {
             .focus_listeners
             .push(Box::new(move |focus_handle, event, cx| {
                 if event.focused.as_ref() == Some(focus_handle) {
-                    (listener.callback)(event, cx)
+                    listener(event, cx)
                 }
             }));
         self
@@ -470,7 +469,7 @@ pub trait FocusableElement: InteractiveElement {
             .focus_listeners
             .push(Box::new(move |focus_handle, event, cx| {
                 if event.blurred.as_ref() == Some(focus_handle) {
-                    (listener.callback)(event, cx)
+                    listener(event, cx)
                 }
             }));
         self
@@ -493,7 +492,7 @@ pub trait FocusableElement: InteractiveElement {
                     .map_or(false, |focused| focus_handle.contains(focused, cx));
 
                 if !descendant_blurred && descendant_focused {
-                    (listener.callback)(event, cx)
+                    listener(event, cx)
                 }
             }));
         self
@@ -515,7 +514,7 @@ pub trait FocusableElement: InteractiveElement {
                     .as_ref()
                     .map_or(false, |focused| focus_handle.contains(focused, cx));
                 if descendant_blurred && !descendant_focused {
-                    (listener.callback)(event, cx)
+                    listener(event, cx)
                 }
             }));
         self
@@ -907,7 +906,7 @@ impl Interactivity {
                     *was_hovered = is_hovered;
                     drop(was_hovered);
 
-                    (hover_listener.callback)(&is_hovered, cx);
+                    hover_listener(&is_hovered, cx);
                 }
             });
         }

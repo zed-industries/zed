@@ -307,7 +307,7 @@ mod test {
                     .key_context("parent")
                     .on_key_down(cx.listener(|this, _, _| this.saw_key_down = true))
                     .on_action(
-                        cx.callback(|this: &mut TestView, _: &TestAction, _| {
+                        cx.listener(|this: &mut TestView, _: &TestAction, _| {
                             this.saw_action = true
                         }),
                     )
