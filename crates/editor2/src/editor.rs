@@ -2320,7 +2320,6 @@ impl Editor {
         self.blink_manager.update(cx, BlinkManager::pause_blinking);
         cx.emit(Event::SelectionsChanged { local });
         cx.emit(SearchEvent::MatchesInvalidated);
-        dbg!(cx.entity_id());
 
         if self.selections.disjoint_anchors().len() == 1 {
             cx.emit(SearchEvent::ActiveMatchChanged)
