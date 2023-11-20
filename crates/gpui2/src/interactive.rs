@@ -1,6 +1,5 @@
 use crate::{
-    div, point, Div, Element, FocusHandle, Keystroke, Modifiers, Pixels, Point, Render,
-    ViewContext,
+    div, point, Div, Element, FocusHandle, Keystroke, Modifiers, Pixels, Point, Render, ViewContext,
 };
 use smallvec::SmallVec;
 use std::{any::Any, fmt::Debug, marker::PhantomData, ops::Deref, path::PathBuf};
@@ -287,7 +286,7 @@ pub struct FocusEvent {
 mod test {
     use crate::{
         self as gpui, div, Div, FocusHandle, InteractiveElement, KeyBinding, Keystroke,
-        ParentElement, Stateful, TestAppContext, Render, VisualContext,
+        ParentElement, Render, Stateful, TestAppContext, VisualContext,
     };
 
     struct TestView {
