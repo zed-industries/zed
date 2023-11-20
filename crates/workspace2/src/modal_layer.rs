@@ -71,7 +71,7 @@ impl ModalLayer {
     }
 }
 
-impl Render for ModalLayer {
+impl Render<Self> for ModalLayer {
     type Element = Div<Self>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {

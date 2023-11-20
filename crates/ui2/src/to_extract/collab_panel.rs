@@ -2,19 +2,17 @@ use crate::{
     prelude::*, static_collab_panel_channels, static_collab_panel_current_call, v_stack, Icon,
     List, ListHeader, Toggle,
 };
-use gpui::prelude::*;
+use gpui::{prelude::*, Div, Stateful};
 
-#[derive(Component)]
+#[derive(RenderOnce)]
 pub struct CollabPanel {
     id: ElementId,
 }
 
-impl CollabPanel {
-    pub fn new(id: impl Into<ElementId>) -> Self {
-        Self { id: id.into() }
-    }
+impl<V: 'static> Component<V> for CollabPanel {
+    type Rendered = Stateful<V, Div<V>>;
 
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
         v_stack()
             .id(self.id.clone())
             .h_full()
@@ -86,6 +84,12 @@ impl CollabPanel {
     }
 }
 
+impl CollabPanel {
+    pub fn new(id: impl Into<ElementId>) -> Self {
+        Self { id: id.into() }
+    }
+}
+
 #[cfg(feature = "stories")]
 pub use stories::*;
 
@@ -97,7 +101,7 @@ mod stories {
 
     pub struct CollabPanelStory;
 
-    impl Render for CollabPanelStory {
+    impl Render<Self> for CollabPanelStory {
         type Element = Div<Self>;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {

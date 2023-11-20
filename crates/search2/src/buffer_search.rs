@@ -10,8 +10,8 @@ use collections::HashMap;
 use editor::Editor;
 use futures::channel::oneshot;
 use gpui::{
-    actions, div, red, Action, AppContext, Component, Div, EventEmitter, InteractiveComponent,
-    ParentComponent as _, Render, Styled, Subscription, Task, View, ViewContext,
+    actions, div, red, Action, AppContext, Div, EventEmitter, InteractiveElement as _,
+    ParentElement as _, Render, RenderOnce, Styled, Subscription, Task, View, ViewContext,
     VisualContext as _, WindowContext,
 };
 use project::search::SearchQuery;
@@ -63,7 +63,7 @@ pub struct BufferSearchBar {
 
 impl EventEmitter<Event> for BufferSearchBar {}
 impl EventEmitter<workspace::ToolbarItemEvent> for BufferSearchBar {}
-impl Render for BufferSearchBar {
+impl Render<Self> for BufferSearchBar {
     type Element = Div<Self>;
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         // let query_container_style = if self.query_contains_error {
@@ -534,7 +534,7 @@ impl BufferSearchBar {
         self.update_matches(cx)
     }
 
-    fn render_action_button(&self) -> impl Component<Self> {
+    fn render_action_button(&self) -> impl RenderOnce<Self> {
         // let tooltip_style = theme.tooltip.clone();
 
         // let style = theme.search.action_button.clone();

@@ -4,7 +4,7 @@ use crate::TerminalView;
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
     actions, div, serde_json, AppContext, AsyncWindowContext, Div, Entity, EventEmitter,
-    FocusHandle, FocusableView, ParentComponent, Render, Subscription, Task, View, ViewContext,
+    FocusHandle, FocusableView, ParentElement, Render, Subscription, Task, View, ViewContext,
     VisualContext, WeakView, WindowContext,
 };
 use project::Fs;
@@ -335,7 +335,7 @@ impl TerminalPanel {
 
 impl EventEmitter<PanelEvent> for TerminalPanel {}
 
-impl Render for TerminalPanel {
+impl Render<Self> for TerminalPanel {
     type Element = Div<Self>;
 
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {

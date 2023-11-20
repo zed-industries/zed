@@ -9,10 +9,10 @@ pub mod terminal_panel;
 // use crate::terminal_element::TerminalElement;
 use editor::{scroll::autoscroll::Autoscroll, Editor};
 use gpui::{
-    actions, div, Action, AnyElement, AppContext, Component, DispatchPhase, Div, EventEmitter,
-    FocusEvent, FocusHandle, Focusable, FocusableComponent, FocusableView, InputHandler,
-    InteractiveComponent, KeyDownEvent, Keystroke, Model, MouseButton, ParentComponent, Pixels,
-    Render, SharedString, Styled, Task, View, ViewContext, VisualContext, WeakView,
+    actions, div, Action, AnyElement, AppContext, DispatchPhase, Div, Element, EventEmitter,
+    FocusEvent, FocusHandle, Focusable, FocusableElement, FocusableView, InputHandler,
+    InteractiveElement, KeyDownEvent, Keystroke, Model, MouseButton, ParentElement, Pixels, Render,
+    SharedString, Styled, Task, View, ViewContext, VisualContext, WeakView,
 };
 use language::Bias;
 use persistence::TERMINAL_DB;
@@ -537,7 +537,7 @@ impl TerminalView {
     }
 }
 
-impl Render for TerminalView {
+impl Render<Self> for TerminalView {
     type Element = Focusable<Self, Div<Self>>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
@@ -577,7 +577,7 @@ impl Render for TerminalView {
             .children(
                 self.context_menu
                     .clone()
-                    .map(|context_menu| div().z_index(1).absolute().child(context_menu.render())),
+                    .map(|context_menu| div().z_index(1).absolute().child(context_menu)),
             )
             .track_focus(&self.focus_handle)
             .on_focus_in(Self::focus_in)
@@ -755,8 +755,8 @@ impl Item for TerminalView {
 
         div()
             .child(IconElement::new(Icon::Terminal))
-            .child(title)
-            .render()
+            .child(Label::new(title))
+            .into_any()
     }
 
     fn clone_on_split(

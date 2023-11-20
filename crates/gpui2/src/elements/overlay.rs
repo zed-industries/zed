@@ -2,8 +2,8 @@ use smallvec::SmallVec;
 use taffy::style::{Display, Position};
 
 use crate::{
-    point, AnyElement, BorrowWindow, Bounds, Component, Element, LayoutId, ParentComponent, Pixels,
-    Point, Size, Style,
+    point, AnyElement, BorrowWindow, Bounds, Element, LayoutId, ParentElement, Pixels, Point,
+    RenderOnce, Size, Style,
 };
 
 pub struct OverlayState {
@@ -51,31 +51,21 @@ impl<V> Overlay<V> {
     }
 }
 
-impl<V: 'static> ParentComponent<V> for Overlay<V> {
+impl<V: 'static> ParentElement<V> for Overlay<V> {
     fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<V>; 2]> {
         &mut self.children
     }
 }
 
-impl<V: 'static> Component<V> for Overlay<V> {
-    fn render(self) -> AnyElement<V> {
-        AnyElement::new(self)
-    }
-}
-
 impl<V: 'static> Element<V> for Overlay<V> {
-    type ElementState = OverlayState;
-
-    fn element_id(&self) -> Option<crate::ElementId> {
-        None
-    }
+    type State = OverlayState;
 
     fn layout(
         &mut self,
         view_state: &mut V,
-        _: Option<Self::ElementState>,
+        _: Option<Self::State>,
         cx: &mut crate::ViewContext<V>,
-    ) -> (crate::LayoutId, Self::ElementState) {
+    ) -> (crate::LayoutId, Self::State) {
         let child_layout_ids = self
             .children
             .iter_mut()
@@ -92,10 +82,10 @@ impl<V: 'static> Element<V> for Overlay<V> {
     }
 
     fn paint(
-        &mut self,
+        self,
         bounds: crate::Bounds<crate::Pixels>,
         view_state: &mut V,
-        element_state: &mut Self::ElementState,
+        element_state: &mut Self::State,
         cx: &mut crate::ViewContext<V>,
     ) {
         if element_state.child_layout_ids.is_empty() {
@@ -156,10 +146,22 @@ impl<V: 'static> Element<V> for Overlay<V> {
         }
 
         cx.with_element_offset(desired.origin - bounds.origin, |cx| {
-            for child in &mut self.children {
+            for child in self.children {
                 child.paint(view_state, cx);
             }
         })
+    }
+}
+
+impl<V: 'static> RenderOnce<V> for Overlay<V> {
+    type Element = Self;
+
+    fn element_id(&self) -> Option<crate::ElementId> {
+        None
+    }
+
+    fn render_once(self) -> Self::Element {
+        self
     }
 }
 

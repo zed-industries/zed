@@ -1,5 +1,5 @@
 use crate::ProjectDiagnosticsEditor;
-use gpui::{div, Div, EventEmitter, ParentComponent, Render, ViewContext, WeakView};
+use gpui::{div, Div, EventEmitter, ParentElement, Render, ViewContext, WeakView};
 use ui::{Icon, IconButton, Tooltip};
 use workspace::{item::ItemHandle, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 
@@ -7,7 +7,7 @@ pub struct ToolbarControls {
     editor: Option<WeakView<ProjectDiagnosticsEditor>>,
 }
 
-impl Render for ToolbarControls {
+impl Render<Self> for ToolbarControls {
     type Element = Div<Self>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {

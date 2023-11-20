@@ -20,9 +20,9 @@ use collections::{BTreeMap, HashMap};
 use gpui::{
     div, point, px, relative, size, transparent_black, Action, AnyElement, AvailableSpace,
     BorrowWindow, Bounds, Component, ContentMask, Corners, DispatchPhase, Edges, Element,
-    ElementId, ElementInputHandler, Entity, EntityId, Hsla, InteractiveComponent, LineLayout,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentComponent, Pixels,
-    ScrollWheelEvent, ShapedLine, SharedString, Size, StatefulInteractiveComponent, Style, Styled,
+    ElementId, ElementInputHandler, Entity, EntityId, Hsla, InteractiveElement, LineLayout,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, RenderOnce,
+    ScrollWheelEvent, ShapedLine, SharedString, Size, StatefulInteractiveElement, Style, Styled,
     TextRun, TextStyle, View, ViewContext, WindowContext, WrappedLine,
 };
 use itertools::Itertools;
@@ -488,8 +488,9 @@ impl EditorElement {
             }
         }
 
-        for (ix, fold_indicator) in layout.fold_indicators.iter_mut().enumerate() {
-            if let Some(fold_indicator) = fold_indicator.as_mut() {
+        for (ix, fold_indicator) in layout.fold_indicators.drain(..).enumerate() {
+            if let Some(mut fold_indicator) = fold_indicator {
+                let mut fold_indicator = fold_indicator.render_into_any();
                 let available_space = size(
                     AvailableSpace::MinContent,
                     AvailableSpace::Definite(line_height * 0.55),
@@ -509,20 +510,21 @@ impl EditorElement {
             }
         }
 
-        if let Some(indicator) = layout.code_actions_indicator.as_mut() {
+        if let Some(indicator) = layout.code_actions_indicator.take() {
+            let mut button = indicator.button.render_into_any();
             let available_space = size(
                 AvailableSpace::MinContent,
                 AvailableSpace::Definite(line_height),
             );
-            let indicator_size = indicator.element.measure(available_space, editor, cx);
+            let indicator_size = button.measure(available_space, editor, cx);
+
             let mut x = Pixels::ZERO;
             let mut y = indicator.row as f32 * line_height - scroll_top;
             // Center indicator.
             x += ((layout.gutter_padding + layout.gutter_margin) - indicator_size.width) / 2.;
             y += (line_height - indicator_size.height) / 2.;
-            indicator
-                .element
-                .draw(bounds.origin + point(x, y), available_space, editor, cx);
+
+            button.draw(bounds.origin + point(x, y), available_space, editor, cx);
         }
     }
 
@@ -840,7 +842,7 @@ impl EditorElement {
                     }
                 });
 
-                if let Some((position, context_menu)) = layout.context_menu.as_mut() {
+                if let Some((position, mut context_menu)) = layout.context_menu.take() {
                     cx.with_z_index(1, |cx| {
                         let line_height = self.style.text.line_height_in_pixels(cx.rem_size());
                         let available_space = size(
@@ -1224,7 +1226,7 @@ impl EditorElement {
         let scroll_left = scroll_position.x * layout.position_map.em_width;
         let scroll_top = scroll_position.y * layout.position_map.line_height;
 
-        for block in &mut layout.blocks {
+        for block in layout.blocks.drain(..) {
             let mut origin = bounds.origin
                 + point(
                     Pixels::ZERO,
@@ -1810,7 +1812,7 @@ impl EditorElement {
                     .render_code_actions_indicator(&style, active, cx)
                     .map(|element| CodeActionsIndicator {
                         row: newest_selection_head.row(),
-                        element,
+                        button: element,
                     });
             }
         }
@@ -2043,15 +2045,20 @@ impl EditorElement {
                         // Can't use .and_then() because `.file_name()` and `.parent()` return references :(
                         if let Some(path) = path {
                             filename = path.file_name().map(|f| f.to_string_lossy().to_string());
-                            parent_path =
-                                path.parent().map(|p| p.to_string_lossy().to_string() + "/");
+                            parent_path = path
+                                .parent()
+                                .map(|p| SharedString::from(p.to_string_lossy().to_string() + "/"));
                         }
 
                         h_stack()
                             .id("path header block")
                             .size_full()
                             .bg(gpui::red())
-                            .child(filename.unwrap_or_else(|| "untitled".to_string()))
+                            .child(
+                                filename
+                                    .map(SharedString::from)
+                                    .unwrap_or_else(|| "untitled".into()),
+                            )
                             .children(parent_path)
                             .children(jump_icon) // .p_x(gutter_padding)
                     } else {
@@ -2063,7 +2070,7 @@ impl EditorElement {
                             .child("⋯")
                             .children(jump_icon) // .p_x(gutter_padding)
                     };
-                    element.render()
+                    element.into_any()
                 }
             };
 
@@ -2393,18 +2400,14 @@ enum Invisible {
 }
 
 impl Element<Editor> for EditorElement {
-    type ElementState = ();
-
-    fn element_id(&self) -> Option<gpui::ElementId> {
-        Some(self.editor_id.into())
-    }
+    type State = ();
 
     fn layout(
         &mut self,
         editor: &mut Editor,
-        element_state: Option<Self::ElementState>,
+        element_state: Option<Self::State>,
         cx: &mut gpui::ViewContext<Editor>,
-    ) -> (gpui::LayoutId, Self::ElementState) {
+    ) -> (gpui::LayoutId, Self::State) {
         editor.style = Some(self.style.clone()); // Long-term, we'd like to eliminate this.
 
         let rem_size = cx.rem_size();
@@ -2420,10 +2423,10 @@ impl Element<Editor> for EditorElement {
     }
 
     fn paint(
-        &mut self,
+        mut self,
         bounds: Bounds<gpui::Pixels>,
         editor: &mut Editor,
-        element_state: &mut Self::ElementState,
+        element_state: &mut Self::State,
         cx: &mut gpui::ViewContext<Editor>,
     ) {
         let mut layout = self.compute_layout(editor, cx, bounds);
@@ -2470,9 +2473,15 @@ impl Element<Editor> for EditorElement {
     }
 }
 
-impl Component<Editor> for EditorElement {
-    fn render(self) -> AnyElement<Editor> {
-        AnyElement::new(self)
+impl RenderOnce<Editor> for EditorElement {
+    type Element = Self;
+
+    fn element_id(&self) -> Option<gpui::ElementId> {
+        Some(self.editor_id.into())
+    }
+
+    fn render_once(self) -> Self::Element {
+        self
     }
 }
 
@@ -3100,14 +3109,14 @@ pub struct LayoutState {
     context_menu: Option<(DisplayPoint, AnyElement<Editor>)>,
     code_actions_indicator: Option<CodeActionsIndicator>,
     // hover_popovers: Option<(DisplayPoint, Vec<AnyElement<Editor>>)>,
-    fold_indicators: Vec<Option<AnyElement<Editor>>>,
+    fold_indicators: Vec<Option<IconButton<Editor>>>,
     tab_invisible: ShapedLine,
     space_invisible: ShapedLine,
 }
 
 struct CodeActionsIndicator {
     row: u32,
-    element: AnyElement<Editor>,
+    button: IconButton<Editor>,
 }
 
 struct PositionMap {

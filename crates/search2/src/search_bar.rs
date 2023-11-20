@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use gpui::{Component, ViewContext};
+use gpui::{RenderOnce, ViewContext};
 use ui::{Button, ButtonVariant, IconButton};
 
 use crate::mode::SearchMode;
@@ -9,7 +9,7 @@ pub(super) fn render_nav_button<V: 'static>(
     icon: ui::Icon,
     _active: bool,
     on_click: impl Fn(&mut V, &mut ViewContext<V>) + 'static + Send + Sync,
-) -> impl Component<V> {
+) -> impl RenderOnce<V> {
     // let tooltip_style = cx.theme().tooltip.clone();
     // let cursor_style = if active {
     //     CursorStyle::PointingHand

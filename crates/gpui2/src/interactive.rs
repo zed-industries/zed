@@ -1,6 +1,5 @@
 use crate::{
-    div, point, Component, Div, FocusHandle, Keystroke, Modifiers, Pixels, Point, Render,
-    ViewContext,
+    div, point, Div, Element, FocusHandle, Keystroke, Modifiers, Pixels, Point, Render, ViewContext,
 };
 use smallvec::SmallVec;
 use std::{any::Any, fmt::Debug, marker::PhantomData, ops::Deref, path::PathBuf};
@@ -64,7 +63,7 @@ pub struct Drag<S, R, V, E>
 where
     R: Fn(&mut V, &mut ViewContext<V>) -> E,
     V: 'static,
-    E: Component<()>,
+    E: Element<()>,
 {
     pub state: S,
     pub render_drag_handle: R,
@@ -75,7 +74,7 @@ impl<S, R, V, E> Drag<S, R, V, E>
 where
     R: Fn(&mut V, &mut ViewContext<V>) -> E,
     V: 'static,
-    E: Component<()>,
+    E: Element<()>,
 {
     pub fn new(state: S, render_drag_handle: R) -> Self {
         Drag {
@@ -193,7 +192,7 @@ impl Deref for MouseExitEvent {
 #[derive(Debug, Clone, Default)]
 pub struct ExternalPaths(pub(crate) SmallVec<[PathBuf; 2]>);
 
-impl Render for ExternalPaths {
+impl Render<Self> for ExternalPaths {
     type Element = Div<Self>;
 
     fn render(&mut self, _: &mut ViewContext<Self>) -> Self::Element {
@@ -286,8 +285,8 @@ pub struct FocusEvent {
 #[cfg(test)]
 mod test {
     use crate::{
-        self as gpui, div, Component, Div, FocusHandle, InteractiveComponent, KeyBinding,
-        Keystroke, ParentComponent, Render, Stateful, TestAppContext, ViewContext, VisualContext,
+        self as gpui, div, Div, FocusHandle, InteractiveElement, KeyBinding, Keystroke,
+        ParentElement, Render, Stateful, TestAppContext, VisualContext,
     };
 
     struct TestView {
@@ -298,7 +297,7 @@ mod test {
 
     actions!(TestAction);
 
-    impl Render for TestView {
+    impl Render<Self> for TestView {
         type Element = Stateful<Self, Div<Self>>;
 
         fn render(&mut self, _: &mut gpui::ViewContext<Self>) -> Self::Element {
@@ -307,12 +306,7 @@ mod test {
                     .key_context("parent")
                     .on_key_down(|this: &mut TestView, _, _, _| this.saw_key_down = true)
                     .on_action(|this: &mut TestView, _: &TestAction, _| this.saw_action = true)
-                    .child(|this: &mut Self, _cx: &mut ViewContext<Self>| {
-                        div()
-                            .key_context("nested")
-                            .track_focus(&this.focus_handle)
-                            .render()
-                    }),
+                    .child(div().key_context("nested").track_focus(&self.focus_handle)),
             )
         }
     }

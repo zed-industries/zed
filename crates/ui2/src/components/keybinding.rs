@@ -1,9 +1,7 @@
-use gpui::{actions, Action};
-use strum::EnumIter;
-
 use crate::prelude::*;
+use gpui::{Action, Div, RenderOnce};
 
-#[derive(Component, Clone)]
+#[derive(RenderOnce, Clone)]
 pub struct KeyBinding {
     /// A keybinding consists of a key and a set of modifier keys.
     /// More then one keybinding produces a chord.
@@ -12,19 +10,10 @@ pub struct KeyBinding {
     key_binding: gpui::KeyBinding,
 }
 
-impl KeyBinding {
-    pub fn for_action(action: &dyn Action, cx: &mut WindowContext) -> Option<Self> {
-        // todo! this last is arbitrary, we want to prefer users key bindings over defaults,
-        // and vim over normal (in vim mode), etc.
-        let key_binding = cx.bindings_for_action(action).last().cloned()?;
-        Some(Self::new(key_binding))
-    }
+impl<V: 'static> Component<V> for KeyBinding {
+    type Rendered = Div<V>;
 
-    pub fn new(key_binding: gpui::KeyBinding) -> Self {
-        Self { key_binding }
-    }
-
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
         div()
             .flex()
             .gap_2()
@@ -42,17 +31,29 @@ impl KeyBinding {
     }
 }
 
-#[derive(Component)]
+impl KeyBinding {
+    pub fn for_action(action: &dyn Action, cx: &mut WindowContext) -> Option<Self> {
+        // todo! this last is arbitrary, we want to prefer users key bindings over defaults,
+        // and vim over normal (in vim mode), etc.
+        let key_binding = cx.bindings_for_action(action).last().cloned()?;
+        Some(Self::new(key_binding))
+    }
+
+    pub fn new(key_binding: gpui::KeyBinding) -> Self {
+        Self { key_binding }
+    }
+}
+
+#[derive(RenderOnce)]
 pub struct Key {
     key: SharedString,
 }
 
-impl Key {
-    pub fn new(key: impl Into<SharedString>) -> Self {
-        Self { key: key.into() }
-    }
+impl<V: 'static> Component<V> for Key {
+    type Rendered = Div<V>;
 
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
+        let _view: &mut V = view;
         div()
             .px_2()
             .py_0()
@@ -64,20 +65,10 @@ impl Key {
     }
 }
 
-// NOTE: The order the modifier keys appear in this enum impacts the order in
-// which they are rendered in the UI.
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, EnumIter)]
-pub enum ModifierKey {
-    Control,
-    Alt,
-    Command,
-    Shift,
-}
-
-actions!(NoAction);
-
-pub fn binding(key: &str) -> gpui::KeyBinding {
-    gpui::KeyBinding::new(key, NoAction {}, None)
+impl Key {
+    pub fn new(key: impl Into<SharedString>) -> Self {
+        Self { key: key.into() }
+    }
 }
 
 #[cfg(feature = "stories")]
@@ -87,12 +78,18 @@ pub use stories::*;
 mod stories {
     use super::*;
     pub use crate::KeyBinding;
-    use crate::{binding, Story};
-    use gpui::{Div, Render};
+    use crate::Story;
+    use gpui::{actions, Div, Render};
     use itertools::Itertools;
     pub struct KeybindingStory;
 
-    impl Render for KeybindingStory {
+    actions!(NoAction);
+
+    pub fn binding(key: &str) -> gpui::KeyBinding {
+        gpui::KeyBinding::new(key, NoAction {}, None)
+    }
+
+    impl Render<Self> for KeybindingStory {
         type Element = Div<Self>;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {

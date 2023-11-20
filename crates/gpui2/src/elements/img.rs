@@ -1,7 +1,6 @@
 use crate::{
-    AnyElement, BorrowWindow, Bounds, Component, Element, InteractiveComponent,
-    InteractiveElementState, Interactivity, LayoutId, Pixels, SharedString, StyleRefinement,
-    Styled, ViewContext,
+    BorrowWindow, Bounds, Element, InteractiveElement, InteractiveElementState, Interactivity,
+    LayoutId, Pixels, RenderOnce, SharedString, StyleRefinement, Styled, ViewContext,
 };
 use futures::FutureExt;
 use util::ResultExt;
@@ -35,35 +34,25 @@ where
     }
 }
 
-impl<V> Component<V> for Img<V> {
-    fn render(self) -> AnyElement<V> {
-        AnyElement::new(self)
-    }
-}
-
 impl<V> Element<V> for Img<V> {
-    type ElementState = InteractiveElementState;
-
-    fn element_id(&self) -> Option<crate::ElementId> {
-        self.interactivity.element_id.clone()
-    }
+    type State = InteractiveElementState;
 
     fn layout(
         &mut self,
         _view_state: &mut V,
-        element_state: Option<Self::ElementState>,
+        element_state: Option<Self::State>,
         cx: &mut ViewContext<V>,
-    ) -> (LayoutId, Self::ElementState) {
+    ) -> (LayoutId, Self::State) {
         self.interactivity.layout(element_state, cx, |style, cx| {
             cx.request_layout(&style, None)
         })
     }
 
     fn paint(
-        &mut self,
+        self,
         bounds: Bounds<Pixels>,
         _view_state: &mut V,
-        element_state: &mut Self::ElementState,
+        element_state: &mut Self::State,
         cx: &mut ViewContext<V>,
     ) {
         self.interactivity.paint(
@@ -102,13 +91,25 @@ impl<V> Element<V> for Img<V> {
     }
 }
 
+impl<V: 'static> RenderOnce<V> for Img<V> {
+    type Element = Self;
+
+    fn element_id(&self) -> Option<crate::ElementId> {
+        self.interactivity.element_id.clone()
+    }
+
+    fn render_once(self) -> Self::Element {
+        self
+    }
+}
+
 impl<V> Styled for Img<V> {
     fn style(&mut self) -> &mut StyleRefinement {
         &mut self.interactivity.base_style
     }
 }
 
-impl<V> InteractiveComponent<V> for Img<V> {
+impl<V> InteractiveElement<V> for Img<V> {
     fn interactivity(&mut self) -> &mut Interactivity<V> {
         &mut self.interactivity
     }

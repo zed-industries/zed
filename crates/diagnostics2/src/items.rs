@@ -1,8 +1,8 @@
 use collections::HashSet;
 use editor::{Editor, GoToDiagnostic};
 use gpui::{
-    rems, Div, EventEmitter, InteractiveComponent, ParentComponent, Render, Stateful,
-    StatefulInteractiveComponent, Styled, Subscription, View, ViewContext, WeakView,
+    rems, Div, EventEmitter, InteractiveElement, ParentElement, Render, Stateful,
+    StatefulInteractiveElement, Styled, Subscription, View, ViewContext, WeakView,
 };
 use language::Diagnostic;
 use lsp::LanguageServerId;
@@ -21,7 +21,7 @@ pub struct DiagnosticIndicator {
     _observe_active_editor: Option<Subscription>,
 }
 
-impl Render for DiagnosticIndicator {
+impl Render<Self> for DiagnosticIndicator {
     type Element = Stateful<Self, Div<Self>>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {

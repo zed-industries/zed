@@ -1,6 +1,6 @@
 use crate::ItemHandle;
 use gpui::{
-    AnyView, Div, Entity, EntityId, EventEmitter, ParentComponent, Render, Styled, View,
+    AnyView, Div, Entity, EntityId, EventEmitter, ParentElement as _, Render, Styled, View,
     ViewContext, WindowContext,
 };
 use theme2::ActiveTheme;
@@ -10,7 +10,7 @@ pub enum ToolbarItemEvent {
     ChangeLocation(ToolbarItemLocation),
 }
 
-pub trait ToolbarItemView: Render + EventEmitter<ToolbarItemEvent> {
+pub trait ToolbarItemView: Render<Self> + EventEmitter<ToolbarItemEvent> {
     fn set_active_pane_item(
         &mut self,
         active_pane_item: Option<&dyn crate::ItemHandle>,
@@ -76,7 +76,7 @@ impl Toolbar {
     }
 }
 
-impl Render for Toolbar {
+impl Render<Self> for Toolbar {
     type Element = Div<Self>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {

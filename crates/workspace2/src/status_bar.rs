@@ -2,14 +2,14 @@ use std::any::TypeId;
 
 use crate::{ItemHandle, Pane};
 use gpui::{
-    div, AnyView, Component, Div, ParentComponent, Render, Styled, Subscription, View, ViewContext,
+    div, AnyView, Div, ParentElement, Render, RenderOnce, Styled, Subscription, View, ViewContext,
     WindowContext,
 };
 use theme2::ActiveTheme;
 use ui::h_stack;
 use util::ResultExt;
 
-pub trait StatusItemView: Render {
+pub trait StatusItemView: Render<Self> {
     fn set_active_pane_item(
         &mut self,
         active_pane_item: Option<&dyn crate::ItemHandle>,
@@ -34,7 +34,7 @@ pub struct StatusBar {
     _observe_active_pane: Subscription,
 }
 
-impl Render for StatusBar {
+impl Render<Self> for StatusBar {
     type Element = Div<Self>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
@@ -53,14 +53,14 @@ impl Render for StatusBar {
 }
 
 impl StatusBar {
-    fn render_left_tools(&self, cx: &mut ViewContext<Self>) -> impl Component<Self> {
+    fn render_left_tools(&self, cx: &mut ViewContext<Self>) -> impl RenderOnce<Self> {
         h_stack()
             .items_center()
             .gap_2()
             .children(self.left_items.iter().map(|item| item.to_any()))
     }
 
-    fn render_right_tools(&self, cx: &mut ViewContext<Self>) -> impl Component<Self> {
+    fn render_right_tools(&self, cx: &mut ViewContext<Self>) -> impl RenderOnce<Self> {
         h_stack()
             .items_center()
             .gap_2()

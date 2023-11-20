@@ -1,19 +1,15 @@
 use crate::prelude::*;
 use crate::{Avatar, Player};
 
-#[derive(Component)]
+#[derive(RenderOnce)]
 pub struct Facepile {
     players: Vec<Player>,
 }
 
-impl Facepile {
-    pub fn new<P: Iterator<Item = Player>>(players: P) -> Self {
-        Self {
-            players: players.collect(),
-        }
-    }
+impl<V: 'static> Component<V> for Facepile {
+    type Rendered = Div<V>;
 
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
         let player_count = self.players.len();
         let player_list = self.players.iter().enumerate().map(|(ix, player)| {
             let isnt_last = ix < player_count - 1;
@@ -26,6 +22,15 @@ impl Facepile {
     }
 }
 
+impl Facepile {
+    pub fn new<P: Iterator<Item = Player>>(players: P) -> Self {
+        Self {
+            players: players.collect(),
+        }
+    }
+}
+
+use gpui::{Div, RenderOnce};
 #[cfg(feature = "stories")]
 pub use stories::*;
 
@@ -37,7 +42,7 @@ mod stories {
 
     pub struct FacepileStory;
 
-    impl Render for FacepileStory {
+    impl Render<Self> for FacepileStory {
         type Element = Div<Self>;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {

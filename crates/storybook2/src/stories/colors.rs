@@ -5,7 +5,7 @@ use ui::prelude::*;
 
 pub struct ColorsStory;
 
-impl Render for ColorsStory {
+impl Render<Self> for ColorsStory {
     type Element = Div<Self>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
@@ -28,7 +28,7 @@ impl Render for ColorsStory {
                                 div()
                                     .w(px(75.))
                                     .line_height(px(24.))
-                                    .child(scale.name().to_string()),
+                                    .child(scale.name().clone()),
                             )
                             .child(
                                 div()

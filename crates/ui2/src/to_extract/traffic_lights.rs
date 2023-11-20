@@ -7,21 +7,16 @@ enum TrafficLightColor {
     Green,
 }
 
-#[derive(Component)]
+#[derive(RenderOnce)]
 struct TrafficLight {
     color: TrafficLightColor,
     window_has_focus: bool,
 }
 
-impl TrafficLight {
-    fn new(color: TrafficLightColor, window_has_focus: bool) -> Self {
-        Self {
-            color,
-            window_has_focus,
-        }
-    }
+impl<V: 'static> Component<V> for TrafficLight {
+    type Rendered = Div<V>;
 
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
         let system_colors = &cx.theme().styles.system;
 
         let fill = match (self.window_has_focus, self.color) {
@@ -35,24 +30,24 @@ impl TrafficLight {
     }
 }
 
-#[derive(Component)]
+impl TrafficLight {
+    fn new(color: TrafficLightColor, window_has_focus: bool) -> Self {
+        Self {
+            color,
+            window_has_focus,
+        }
+    }
+}
+
+#[derive(RenderOnce)]
 pub struct TrafficLights {
     window_has_focus: bool,
 }
 
-impl TrafficLights {
-    pub fn new() -> Self {
-        Self {
-            window_has_focus: true,
-        }
-    }
+impl<V: 'static> Component<V> for TrafficLights {
+    type Rendered = Div<V>;
 
-    pub fn window_has_focus(mut self, window_has_focus: bool) -> Self {
-        self.window_has_focus = window_has_focus;
-        self
-    }
-
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
         div()
             .flex()
             .items_center()
@@ -72,6 +67,20 @@ impl TrafficLights {
     }
 }
 
+impl TrafficLights {
+    pub fn new() -> Self {
+        Self {
+            window_has_focus: true,
+        }
+    }
+
+    pub fn window_has_focus(mut self, window_has_focus: bool) -> Self {
+        self.window_has_focus = window_has_focus;
+        self
+    }
+}
+
+use gpui::{Div, RenderOnce};
 #[cfg(feature = "stories")]
 pub use stories::*;
 
@@ -85,7 +94,7 @@ mod stories {
 
     pub struct TrafficLightsStory;
 
-    impl Render for TrafficLightsStory {
+    impl Render<Self> for TrafficLightsStory {
         type Element = Div<Self>;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {

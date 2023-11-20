@@ -1,4 +1,4 @@
-use gpui::{rems, svg};
+use gpui::{rems, svg, RenderOnce, Svg};
 use strum::EnumIter;
 
 use crate::prelude::*;
@@ -133,11 +133,28 @@ impl Icon {
     }
 }
 
-#[derive(Component)]
+#[derive(RenderOnce)]
 pub struct IconElement {
     path: SharedString,
     color: TextColor,
     size: IconSize,
+}
+
+impl<V: 'static> Component<V> for IconElement {
+    type Rendered = Svg<V>;
+
+    fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
+        let svg_size = match self.size {
+            IconSize::Small => rems(0.75),
+            IconSize::Medium => rems(0.9375),
+        };
+
+        svg()
+            .size(svg_size)
+            .flex_none()
+            .path(self.path)
+            .text_color(self.color.color(cx))
+    }
 }
 
 impl IconElement {
@@ -167,7 +184,7 @@ impl IconElement {
         self
     }
 
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
         let svg_size = match self.size {
             IconSize::Small => rems(0.75),
             IconSize::Medium => rems(0.9375),
@@ -195,7 +212,7 @@ mod stories {
 
     pub struct IconStory;
 
-    impl Render for IconStory {
+    impl Render<Self> for IconStory {
         type Element = Div<Self>;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {

@@ -1,6 +1,6 @@
 use bitflags::bitflags;
 pub use buffer_search::BufferSearchBar;
-use gpui::{actions, Action, AppContext, Component};
+use gpui::{actions, Action, AppContext, RenderOnce};
 pub use mode::SearchMode;
 use project::search::SearchQuery;
 use ui::ButtonVariant;
@@ -82,7 +82,7 @@ impl SearchOptions {
         options
     }
 
-    pub fn as_button<V: 'static>(&self, active: bool) -> impl Component<V> {
+    pub fn as_button<V: 'static>(&self, active: bool) -> impl RenderOnce<V> {
         ui::IconButton::new(0, self.icon())
             .on_click({
                 let action = self.to_toggle_action();
@@ -95,7 +95,7 @@ impl SearchOptions {
     }
 }
 
-fn toggle_replace_button<V: 'static>(active: bool) -> impl Component<V> {
+fn toggle_replace_button<V: 'static>(active: bool) -> impl RenderOnce<V> {
     // todo: add toggle_replace button
     ui::IconButton::new(0, ui::Icon::Replace)
         .on_click(|_: &mut V, cx| {
@@ -109,7 +109,7 @@ fn toggle_replace_button<V: 'static>(active: bool) -> impl Component<V> {
 fn render_replace_button<V: 'static>(
     action: impl Action + 'static + Send + Sync,
     icon: ui::Icon,
-) -> impl Component<V> {
+) -> impl RenderOnce<V> {
     // todo: add tooltip
     ui::IconButton::new(0, icon).on_click(move |_: &mut V, cx| {
         cx.dispatch_action(action.boxed_clone());
