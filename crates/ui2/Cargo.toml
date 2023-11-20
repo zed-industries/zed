@@ -18,5 +18,5 @@ theme2 = { path = "../theme2" }
 rand = "0.8"
 
 [features]
-default = ["stories"]
+default = []
 stories = ["dep:itertools"]

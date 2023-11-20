@@ -24,6 +24,7 @@ mod to_extract;
 pub mod utils;
 
 pub use components::*;
+use gpui::actions;
 pub use prelude::*;
 pub use static_data::*;
 pub use styled_ext::*;
@@ -42,3 +43,8 @@ pub use crate::settings::*;
 mod story;
 #[cfg(feature = "stories")]
 pub use story::*;
+actions!(NoAction);
+
+pub fn binding(key: &str) -> gpui::KeyBinding {
+    gpui::KeyBinding::new(key, NoAction {}, None)
+}

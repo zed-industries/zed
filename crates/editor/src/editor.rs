@@ -24,7 +24,7 @@ use ::git::diff::DiffHunk;
 use aho_corasick::AhoCorasick;
 use anyhow::{anyhow, Context, Result};
 use blink_manager::BlinkManager;
-use client::{ClickhouseEvent, Client, Collaborator, ParticipantIndex, TelemetrySettings};
+use client::{Client, Collaborator, ParticipantIndex, TelemetrySettings};
 use clock::{Global, ReplicaId};
 use collections::{BTreeMap, Bound, HashMap, HashSet, VecDeque};
 use convert_case::{Case, Casing};
@@ -8946,12 +8946,12 @@ impl Editor {
         let telemetry = project.read(cx).client().telemetry().clone();
         let telemetry_settings = *settings::get::<TelemetrySettings>(cx);
 
-        let event = ClickhouseEvent::Copilot {
+        telemetry.report_copilot_event(
+            telemetry_settings,
             suggestion_id,
             suggestion_accepted,
             file_extension,
-        };
-        telemetry.report_clickhouse_event(event, telemetry_settings);
+        )
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -8998,14 +8998,14 @@ impl Editor {
             .show_copilot_suggestions;
 
         let telemetry = project.read(cx).client().telemetry().clone();
-        let event = ClickhouseEvent::Editor {
+        telemetry.report_editor_event(
+            telemetry_settings,
             file_extension,
             vim_mode,
             operation,
             copilot_enabled,
             copilot_enabled_for_language,
-        };
-        telemetry.report_clickhouse_event(event, telemetry_settings)
+        )
     }
 
     /// Copy the highlighted chunks to the clipboard as JSON. The format is an array of lines,

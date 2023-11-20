@@ -492,6 +492,10 @@ impl AppContext {
         self.platform.open_url(url);
     }
 
+    pub fn app_path(&self) -> Result<PathBuf> {
+        self.platform.app_path()
+    }
+
     pub fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf> {
         self.platform.path_for_auxiliary_executable(name)
     }

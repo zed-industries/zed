@@ -12,6 +12,7 @@ doctest = false
 test-support = ["collections/test-support", "gpui/test-support", "rpc/test-support"]
 
 [dependencies]
+chrono = { version = "0.4", features = ["serde"] }
 collections = { path = "../collections" }
 db = { path = "../db" }
 gpui = { path = "../gpui" }

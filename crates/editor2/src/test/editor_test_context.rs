@@ -71,7 +71,8 @@ impl<'a> EditorTestContext<'a> {
         &self,
         predicate: impl FnMut(&Editor, &AppContext) -> bool,
     ) -> impl Future<Output = ()> {
-        self.editor.condition::<crate::Event>(&self.cx, predicate)
+        self.editor
+            .condition::<crate::EditorEvent>(&self.cx, predicate)
     }
 
     #[track_caller]

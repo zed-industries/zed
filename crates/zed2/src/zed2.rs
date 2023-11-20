@@ -10,8 +10,8 @@ pub use assets::*;
 use collections::VecDeque;
 use editor::{Editor, MultiBuffer};
 use gpui::{
-    actions, point, px, AppContext, Context, PromptLevel, TitlebarOptions, ViewContext,
-    VisualContext, WindowBounds, WindowKind, WindowOptions,
+    actions, point, px, AppContext, Context, FocusableView, PromptLevel, TitlebarOptions,
+    ViewContext, VisualContext, WindowBounds, WindowKind, WindowOptions,
 };
 pub use only_instance::*;
 pub use open_listener::*;
@@ -23,7 +23,7 @@ use std::{borrow::Cow, ops::Deref, sync::Arc};
 use terminal_view::terminal_panel::TerminalPanel;
 use util::{
     asset_str,
-    channel::ReleaseChannel,
+    channel::{AppCommitSha, ReleaseChannel},
     paths::{self, LOCAL_SETTINGS_RELATIVE_PATH},
     ResultExt,
 };
@@ -104,8 +104,8 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                             //         QuickActionBar::new(buffer_search_bar, workspace)
                             //     });
                             //     toolbar.add_item(quick_action_bar, cx);
-                            //     let diagnostic_editor_controls =
-                            //         cx.add_view(|_| diagnostics2::ToolbarControls::new());
+                            let diagnostic_editor_controls =
+                                cx.build_view(|_| diagnostics::ToolbarControls::new());
                             //     toolbar.add_item(diagnostic_editor_controls, cx);
                             //     let project_search_bar = cx.add_view(|_| ProjectSearchBar::new());
                             //     toolbar.add_item(project_search_bar, cx);
@@ -137,8 +137,8 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
 
         //     let copilot =
         //         cx.add_view(|cx| copilot_button::CopilotButton::new(app_state.fs.clone(), cx));
-        //     let diagnostic_summary =
-        //         cx.add_view(|cx| diagnostics::items::DiagnosticIndicator::new(workspace, cx));
+        let diagnostic_summary =
+            cx.build_view(|cx| diagnostics::items::DiagnosticIndicator::new(workspace, cx));
         //     let activity_indicator = activity_indicator::ActivityIndicator::new(
         //         workspace,
         //         app_state.languages.clone(),
@@ -152,7 +152,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
         //     });
         //     let cursor_position = cx.add_view(|_| editor::items::CursorPosition::new());
         workspace.status_bar().update(cx, |status_bar, cx| {
-            // status_bar.add_left_item(diagnostic_summary, cx);
+            status_bar.add_left_item(diagnostic_summary, cx);
             // status_bar.add_left_item(activity_indicator, cx);
 
             // status_bar.add_right_item(feedback_button, cx);
@@ -162,7 +162,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             // status_bar.add_right_item(cursor_position, cx);
         });
 
-        //     auto_update::notify_of_any_new_update(cx.weak_handle(), cx);
+        auto_update::notify_of_any_new_update(cx);
 
         //     vim::observe_keystrokes(cx);
 
@@ -425,6 +425,8 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                     }
                 }
             });
+
+        workspace.focus_handle(cx).focus(cx);
         //todo!()
         // load_default_keymap(cx);
     })
@@ -432,9 +434,16 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
 }
 
 fn about(_: &mut Workspace, _: &About, cx: &mut gpui::ViewContext<Workspace>) {
+    use std::fmt::Write as _;
+
     let app_name = cx.global::<ReleaseChannel>().display_name();
     let version = env!("CARGO_PKG_VERSION");
-    let prompt = cx.prompt(PromptLevel::Info, &format!("{app_name} {version}"), &["OK"]);
+    let mut message = format!("{app_name} {version}");
+    if let Some(sha) = cx.try_global::<AppCommitSha>() {
+        write!(&mut message, "\n\n{}", sha.0).unwrap();
+    }
+
+    let prompt = cx.prompt(PromptLevel::Info, &message, &["OK"]);
     cx.foreground_executor()
         .spawn(async {
             prompt.await.ok();

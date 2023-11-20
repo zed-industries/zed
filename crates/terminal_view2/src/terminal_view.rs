@@ -9,11 +9,10 @@ pub mod terminal_panel;
 // use crate::terminal_element::TerminalElement;
 use editor::{scroll::autoscroll::Autoscroll, Editor};
 use gpui::{
-    actions, div, img, red, Action, AnyElement, AppContext, Component, DispatchPhase, Div,
-    EventEmitter, FocusEvent, FocusHandle, Focusable, FocusableComponent, FocusableView,
-    InputHandler, InteractiveComponent, KeyDownEvent, Keystroke, Model, MouseButton,
-    ParentComponent, Pixels, Render, SharedString, Styled, Task, View, ViewContext, VisualContext,
-    WeakView,
+    actions, div, Action, AnyElement, AppContext, Component, DispatchPhase, Div, EventEmitter,
+    FocusEvent, FocusHandle, Focusable, FocusableComponent, FocusableView, InputHandler,
+    InteractiveComponent, KeyDownEvent, Keystroke, Model, MouseButton, ParentComponent, Pixels,
+    Render, SharedString, Styled, Task, View, ViewContext, VisualContext, WeakView,
 };
 use language::Bias;
 use persistence::TERMINAL_DB;
@@ -32,7 +31,7 @@ use workspace::{
     notifications::NotifyResultExt,
     register_deserializable_item,
     searchable::{SearchEvent, SearchOptions, SearchableItem},
-    ui::{ContextMenu, Label},
+    ui::{ContextMenu, Icon, IconElement, Label, ListEntry},
     CloseActiveItem, NewCenterTerminal, Pane, ToolbarItemLocation, Workspace, WorkspaceId,
 };
 
@@ -85,7 +84,7 @@ pub struct TerminalView {
     has_new_content: bool,
     //Currently using iTerm bell, show bell emoji in tab until input is received
     has_bell: bool,
-    context_menu: Option<View<ContextMenu>>,
+    context_menu: Option<View<ContextMenu<Self>>>,
     blink_state: bool,
     blinking_on: bool,
     blinking_paused: bool,
@@ -300,11 +299,10 @@ impl TerminalView {
         position: gpui::Point<Pixels>,
         cx: &mut ViewContext<Self>,
     ) {
-        self.context_menu = Some(cx.build_view(|cx| {
-            ContextMenu::new(cx)
-                .entry(Label::new("Clear"), Box::new(Clear))
-                .entry(
-                    Label::new("Close"),
+        self.context_menu = Some(ContextMenu::build(cx, |menu, _| {
+            menu.action(ListEntry::new(Label::new("Clear")), Box::new(Clear))
+                .action(
+                    ListEntry::new(Label::new("Close")),
                     Box::new(CloseActiveItem { save_intent: None }),
                 )
         }));
@@ -756,7 +754,7 @@ impl Item for TerminalView {
         let title = self.terminal().read(cx).title();
 
         div()
-            .child(img().uri("icons/terminal.svg").bg(red()))
+            .child(IconElement::new(Icon::Terminal))
             .child(title)
             .render()
     }

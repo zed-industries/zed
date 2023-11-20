@@ -268,6 +268,19 @@
     // Whether to show warnings or not by default.
     "include_warnings": true
   },
+  // Add files or globs of files that will be excluded by Zed entirely:
+  // they will be skipped during FS scan(s), file tree and file search
+  // will lack the corresponding file entries.
+  "file_scan_exclusions": [
+    "**/.git",
+    "**/.svn",
+    "**/.hg",
+    "**/CVS",
+    "**/.DS_Store",
+    "**/Thumbs.db",
+    "**/.classpath",
+    "**/.settings"
+  ],
   // Git gutter behavior configuration.
   "git": {
     // Control whether the git gutter is shown. May take 2 values:

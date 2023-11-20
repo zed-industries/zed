@@ -24,6 +24,7 @@ use std::{
         Arc,
     },
 };
+
 use ui::v_stack;
 use ui::{prelude::*, Icon, IconButton, IconElement, TextColor, Tooltip};
 use util::truncate_and_remove_front;
@@ -1480,15 +1481,10 @@ impl Pane {
             // Right Side
             .child(
                 div()
-                    // We only use absolute here since we don't
-                    // have opacity or `hidden()` yet
-                    .absolute()
-                    .neg_top_7()
                     .px_1()
                     .flex()
                     .flex_none()
                     .gap_2()
-                    .group_hover("tab_bar", |this| this.top_0())
                     // Nav Buttons
                     .child(
                         div()
@@ -1933,7 +1929,7 @@ impl Render for Pane {
             .child(self.render_tab_bar(cx))
             .child(self.toolbar.clone())
             .child(if let Some(item) = self.active_item() {
-                div().flex_1().child(item.to_any())
+                div().flex().flex_1().child(item.to_any())
             } else {
                 // todo!()
                 div().child("Empty Pane")

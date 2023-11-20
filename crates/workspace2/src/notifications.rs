@@ -15,6 +15,8 @@ pub enum NotificationEvent {
 
 pub trait Notification: EventEmitter<NotificationEvent> + Render {}
 
+impl<V: EventEmitter<NotificationEvent> + Render> Notification for V {}
+
 pub trait NotificationHandle: Send {
     fn id(&self) -> EntityId;
     fn to_any(&self) -> AnyView;
@@ -164,7 +166,7 @@ impl Workspace {
 }
 
 pub mod simple_message_notification {
-    use super::{Notification, NotificationEvent};
+    use super::NotificationEvent;
     use gpui::{AnyElement, AppContext, Div, EventEmitter, Render, TextStyle, ViewContext};
     use serde::Deserialize;
     use std::{borrow::Cow, sync::Arc};
@@ -359,7 +361,6 @@ pub mod simple_message_notification {
     //     }
 
     impl EventEmitter<NotificationEvent> for MessageNotification {}
-    impl Notification for MessageNotification {}
 }
 
 pub trait NotifyResultExt {

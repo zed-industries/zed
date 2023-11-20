@@ -1,0 +1,34 @@
+name: "Run tests"
+description: "Runs the tests"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install Rust
+      shell: bash -euxo pipefail {0}
+      run: |
+        rustup set profile minimal
+        rustup update stable
+        rustup target add wasm32-wasi
+        cargo install cargo-nextest
+
+    - name: Install Node
+      uses: actions/setup-node@v3
+      with:
+        node-version: "18"
+
+    - name: Limit target directory size
+      shell: bash -euxo pipefail {0}
+      run: script/clear-target-dir-if-larger-than 70
+
+    - name: Run check
+      env:
+        RUSTFLAGS: -D warnings
+      shell: bash -euxo pipefail {0}
+      run: cargo check --tests --workspace
+
+    - name: Run tests
+      env:
+        RUSTFLAGS: -D warnings
+      shell: bash -euxo pipefail {0}
+      run: cargo nextest run --workspace --no-fail-fast

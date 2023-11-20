@@ -2,14 +2,14 @@ use crate::{
     key_dispatch::DispatchActionListener, px, size, Action, AnyBox, AnyDrag, AnyView, AppContext,
     AsyncWindowContext, AvailableSpace, Bounds, BoxShadow, Context, Corners, CursorStyle,
     DevicePixels, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity, EntityId,
-    EventEmitter, FileDropEvent, FocusEvent, FontId, GlobalElementId, GlyphId, Hsla, ImageData,
-    InputEvent, IsZero, KeyBinding, KeyContext, KeyDownEvent, LayoutId, Model, ModelContext,
-    Modifiers, MonochromeSprite, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Path,
-    Pixels, PlatformAtlas, PlatformDisplay, PlatformInputHandler, PlatformWindow, Point,
-    PolychromeSprite, PromptLevel, Quad, Render, RenderGlyphParams, RenderImageParams,
-    RenderSvgParams, ScaledPixels, SceneBuilder, Shadow, SharedString, Size, Style, SubscriberSet,
-    Subscription, TaffyLayoutEngine, Task, Underline, UnderlineStyle, View, VisualContext,
-    WeakView, WindowBounds, WindowOptions, SUBPIXEL_VARIANTS,
+    EventEmitter, FileDropEvent, Flatten, FocusEvent, FontId, GlobalElementId, GlyphId, Hsla,
+    ImageData, InputEvent, IsZero, KeyBinding, KeyContext, KeyDownEvent, LayoutId, Model,
+    ModelContext, Modifiers, MonochromeSprite, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInputHandler,
+    PlatformWindow, Point, PolychromeSprite, PromptLevel, Quad, Render, RenderGlyphParams,
+    RenderImageParams, RenderSvgParams, ScaledPixels, SceneBuilder, Shadow, SharedString, Size,
+    Style, SubscriberSet, Subscription, TaffyLayoutEngine, Task, Underline, UnderlineStyle, View,
+    VisualContext, WeakView, WindowBounds, WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::HashMap;
@@ -193,17 +193,12 @@ pub trait FocusableView: Render {
 
 /// ManagedView is a view (like a Modal, Popover, Menu, etc.)
 /// where the lifecycle of the view is handled by another view.
-pub trait ManagedView: Render {
-    fn focus_handle(&self, cx: &AppContext) -> FocusHandle;
-}
+pub trait ManagedView: FocusableView + EventEmitter<Manager> {}
 
-pub struct Dismiss;
-impl<T: ManagedView> EventEmitter<Dismiss> for T {}
+impl<M: FocusableView + EventEmitter<Manager>> ManagedView for M {}
 
-impl<T: ManagedView> FocusableView for T {
-    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
-        self.focus_handle(cx)
-    }
+pub enum Manager {
+    Dismiss,
 }
 
 // Holds the state for a specific window.
@@ -1582,6 +1577,13 @@ impl VisualContext for WindowContext<'_> {
             view.focus_handle(cx).clone().focus(cx);
         })
     }
+
+    fn dismiss_view<V>(&mut self, view: &View<V>) -> Self::Result<()>
+    where
+        V: ManagedView,
+    {
+        self.update_view(view, |_, cx| cx.emit(Manager::Dismiss))
+    }
 }
 
 impl<'a> std::ops::Deref for WindowContext<'a> {
@@ -2275,6 +2277,13 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     {
         self.defer(|view, cx| view.focus_handle(cx).focus(cx))
     }
+
+    pub fn dismiss_self(&mut self)
+    where
+        V: ManagedView,
+    {
+        self.defer(|_, cx| cx.emit(Manager::Dismiss))
+    }
 }
 
 impl<V> Context for ViewContext<'_, V> {
@@ -2354,6 +2363,10 @@ impl<V: 'static> VisualContext for ViewContext<'_, V> {
     fn focus_view<W: FocusableView>(&mut self, view: &View<W>) -> Self::Result<()> {
         self.window_cx.focus_view(view)
     }
+
+    fn dismiss_view<W: ManagedView>(&mut self, view: &View<W>) -> Self::Result<()> {
+        self.window_cx.dismiss_view(view)
+    }
 }
 
 impl<'a, V> std::ops::Deref for ViewContext<'a, V> {
@@ -2396,6 +2409,17 @@ impl<V: 'static + Render> WindowHandle<V> {
             },
             state_type: PhantomData,
         }
+    }
+
+    pub fn root<C>(&self, cx: &mut C) -> Result<View<V>>
+    where
+        C: Context,
+    {
+        Flatten::flatten(cx.update_window(self.any_handle, |root_view, _| {
+            root_view
+                .downcast::<V>()
+                .map_err(|_| anyhow!("the type of the window's root view has changed"))
+        }))
     }
 
     pub fn update<C, R>(
@@ -2541,6 +2565,18 @@ pub enum ElementId {
     Integer(usize),
     Name(SharedString),
     FocusHandle(FocusId),
+}
+
+impl TryInto<SharedString> for ElementId {
+    type Error = anyhow::Error;
+
+    fn try_into(self) -> anyhow::Result<SharedString> {
+        if let ElementId::Name(name) = self {
+            Ok(name)
+        } else {
+            Err(anyhow!("element id is not string"))
+        }
+    }
 }
 
 impl From<EntityId> for ElementId {

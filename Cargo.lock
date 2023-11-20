@@ -725,6 +725,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "auto_update2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "client2",
+ "db2",
+ "gpui2",
+ "isahc",
+ "lazy_static",
+ "log",
+ "menu2",
+ "project2",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "settings2",
+ "smol",
+ "tempdir",
+ "theme2",
+ "util",
+ "workspace2",
+]
+
+[[package]]
 name = "autocfg"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1526,6 +1550,7 @@ dependencies = [
  "anyhow",
  "async-recursion 0.3.2",
  "async-tungstenite",
+ "chrono",
  "collections",
  "db",
  "feature_flags",
@@ -1562,6 +1587,7 @@ dependencies = [
  "anyhow",
  "async-recursion 0.3.2",
  "async-tungstenite",
+ "chrono",
  "collections",
  "db2",
  "feature_flags2",
@@ -2612,6 +2638,34 @@ dependencies = [
  "unindent",
  "util",
  "workspace",
+]
+
+[[package]]
+name = "diagnostics2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "client2",
+ "collections",
+ "editor2",
+ "futures 0.3.28",
+ "gpui2",
+ "language2",
+ "log",
+ "lsp2",
+ "postage",
+ "project2",
+ "schemars",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "settings2",
+ "smallvec",
+ "theme2",
+ "ui2",
+ "unindent",
+ "util",
+ "workspace2",
 ]
 
 [[package]]
@@ -3759,7 +3813,7 @@ dependencies = [
  "smol",
  "sqlez",
  "sum_tree",
- "taffy",
+ "taffy 0.3.11 (git+https://github.com/DioxusLabs/taffy?rev=4fb530bdd71609bb1d3f76c6a8bde1ba82805d5e)",
  "thiserror",
  "time",
  "tiny-skia",
@@ -3824,7 +3878,7 @@ dependencies = [
  "smol",
  "sqlez",
  "sum_tree",
- "taffy",
+ "taffy 0.3.11 (git+https://github.com/DioxusLabs/taffy?rev=1876f72bee5e376023eaa518aa7b8a34c769bd1b)",
  "thiserror",
  "time",
  "tiny-skia",
@@ -3858,6 +3912,12 @@ name = "grid"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eec1c01eb1de97451ee0d60de7d81cf1e72aabefb021616027f3d1c3ec1c723c"
+
+[[package]]
+name = "grid"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1df00eed8d1f0db937f6be10e46e8072b0671accb504cf0f959c5c52c679f5b9"
 
 [[package]]
 name = "h2"
@@ -4486,7 +4546,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "dirs 4.0.0",
- "editor",
+ "editor2",
  "gpui2",
  "log",
  "schemars",
@@ -9085,10 +9145,21 @@ dependencies = [
 [[package]]
 name = "taffy"
 version = "0.3.11"
+source = "git+https://github.com/DioxusLabs/taffy?rev=1876f72bee5e376023eaa518aa7b8a34c769bd1b#1876f72bee5e376023eaa518aa7b8a34c769bd1b"
+dependencies = [
+ "arrayvec 0.7.4",
+ "grid 0.11.0",
+ "num-traits",
+ "slotmap",
+]
+
+[[package]]
+name = "taffy"
+version = "0.3.11"
 source = "git+https://github.com/DioxusLabs/taffy?rev=4fb530bdd71609bb1d3f76c6a8bde1ba82805d5e#4fb530bdd71609bb1d3f76c6a8bde1ba82805d5e"
 dependencies = [
  "arrayvec 0.7.4",
- "grid",
+ "grid 0.10.0",
  "num-traits",
  "slotmap",
 ]
@@ -11572,6 +11643,7 @@ dependencies = [
  "async-recursion 0.3.2",
  "async-tar",
  "async-trait",
+ "auto_update2",
  "backtrace",
  "call2",
  "chrono",
@@ -11583,6 +11655,7 @@ dependencies = [
  "copilot2",
  "ctor",
  "db2",
+ "diagnostics2",
  "editor2",
  "env_logger 0.9.3",
  "feature_flags2",
@@ -11600,7 +11673,6 @@ dependencies = [
  "isahc",
  "journal2",
  "language2",
- "language_tools",
  "lazy_static",
  "libc",
  "log",

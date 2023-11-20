@@ -5618,7 +5618,16 @@ impl Project {
             .collect::<Vec<_>>();
 
         let background = cx.background_executor().clone();
-        let path_count: usize = snapshots.iter().map(|s| s.visible_file_count()).sum();
+        let path_count: usize = snapshots
+            .iter()
+            .map(|s| {
+                if query.include_ignored() {
+                    s.file_count()
+                } else {
+                    s.visible_file_count()
+                }
+            })
+            .sum();
         if path_count == 0 {
             let (_, rx) = smol::channel::bounded(1024);
             return rx;
@@ -5631,8 +5640,16 @@ impl Project {
             .iter()
             .filter_map(|(_, b)| {
                 let buffer = b.upgrade()?;
-                let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
-                if let Some(path) = snapshot.file().map(|file| file.path()) {
+                let (is_ignored, snapshot) = buffer.update(cx, |buffer, cx| {
+                    let is_ignored = buffer
+                        .project_path(cx)
+                        .and_then(|path| self.entry_for_path(&path, cx))
+                        .map_or(false, |entry| entry.is_ignored);
+                    (is_ignored, buffer.snapshot())
+                });
+                if is_ignored && !query.include_ignored() {
+                    return None;
+                } else if let Some(path) = snapshot.file().map(|file| file.path()) {
                     Some((path.clone(), (buffer, snapshot)))
                 } else {
                     unnamed_files.push(buffer);
@@ -5806,7 +5823,12 @@ impl Project {
                         let mut snapshot_start_ix = 0;
                         let mut abs_path = PathBuf::new();
                         for snapshot in snapshots {
-                            let snapshot_end_ix = snapshot_start_ix + snapshot.visible_file_count();
+                            let snapshot_end_ix = snapshot_start_ix
+                                + if query.include_ignored() {
+                                    snapshot.file_count()
+                                } else {
+                                    snapshot.visible_file_count()
+                                };
                             if worker_end_ix <= snapshot_start_ix {
                                 break;
                             } else if worker_start_ix > snapshot_end_ix {
@@ -5819,7 +5841,7 @@ impl Project {
                                     cmp::min(worker_end_ix, snapshot_end_ix) - snapshot_start_ix;
 
                                 for entry in snapshot
-                                    .files(false, start_in_snapshot)
+                                    .files(query.include_ignored(), start_in_snapshot)
                                     .take(end_in_snapshot - start_in_snapshot)
                                 {
                                     if matching_paths_tx.is_closed() {

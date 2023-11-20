@@ -4,57 +4,91 @@ use std::rc::Rc;
 use crate::prelude::*;
 use crate::{v_stack, Label, List, ListEntry, ListItem, ListSeparator, ListSubHeader};
 use gpui::{
-    overlay, px, Action, AnchorCorner, AnyElement, Bounds, Dismiss, DispatchPhase, Div,
-    FocusHandle, LayoutId, ManagedView, MouseButton, MouseDownEvent, Pixels, Point, Render, View,
+    overlay, px, Action, AnchorCorner, AnyElement, AppContext, Bounds, DispatchPhase, Div,
+    EventEmitter, FocusHandle, FocusableView, LayoutId, ManagedView, Manager, MouseButton,
+    MouseDownEvent, Pixels, Point, Render, View, VisualContext, WeakView,
 };
 
-pub struct ContextMenu {
-    items: Vec<ListItem>,
-    focus_handle: FocusHandle,
+pub enum ContextMenuItem<V> {
+    Separator(ListSeparator),
+    Header(ListSubHeader),
+    Entry(
+        ListEntry<ContextMenu<V>>,
+        Rc<dyn Fn(&mut V, &mut ViewContext<V>)>,
+    ),
 }
 
-impl ManagedView for ContextMenu {
-    fn focus_handle(&self, cx: &gpui::AppContext) -> FocusHandle {
+pub struct ContextMenu<V> {
+    items: Vec<ContextMenuItem<V>>,
+    focus_handle: FocusHandle,
+    handle: WeakView<V>,
+}
+
+impl<V: Render> FocusableView for ContextMenu<V> {
+    fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
         self.focus_handle.clone()
     }
 }
 
-impl ContextMenu {
-    pub fn new(cx: &mut WindowContext) -> Self {
-        Self {
-            items: Default::default(),
-            focus_handle: cx.focus_handle(),
-        }
+impl<V: Render> EventEmitter<Manager> for ContextMenu<V> {}
+
+impl<V: Render> ContextMenu<V> {
+    pub fn build(
+        cx: &mut ViewContext<V>,
+        f: impl FnOnce(Self, &mut ViewContext<Self>) -> Self,
+    ) -> View<Self> {
+        let handle = cx.view().downgrade();
+        cx.build_view(|cx| {
+            f(
+                Self {
+                    handle,
+                    items: Default::default(),
+                    focus_handle: cx.focus_handle(),
+                },
+                cx,
+            )
+        })
     }
 
     pub fn header(mut self, title: impl Into<SharedString>) -> Self {
-        self.items.push(ListItem::Header(ListSubHeader::new(title)));
+        self.items
+            .push(ContextMenuItem::Header(ListSubHeader::new(title)));
         self
     }
 
     pub fn separator(mut self) -> Self {
-        self.items.push(ListItem::Separator(ListSeparator));
+        self.items.push(ContextMenuItem::Separator(ListSeparator));
         self
     }
 
-    pub fn entry(mut self, label: Label, action: Box<dyn Action>) -> Self {
-        self.items.push(ListEntry::new(label).action(action).into());
+    pub fn entry(
+        mut self,
+        view: ListEntry<Self>,
+        on_click: impl Fn(&mut V, &mut ViewContext<V>) + 'static,
+    ) -> Self {
+        self.items
+            .push(ContextMenuItem::Entry(view, Rc::new(on_click)));
         self
+    }
+
+    pub fn action(self, view: ListEntry<Self>, action: Box<dyn Action>) -> Self {
+        // todo: add the keybindings to the list entry
+        self.entry(view, move |_, cx| cx.dispatch_action(action.boxed_clone()))
     }
 
     pub fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
         // todo!()
-        cx.emit(Dismiss);
+        cx.emit(Manager::Dismiss);
     }
 
     pub fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
-        cx.emit(Dismiss);
+        cx.emit(Manager::Dismiss);
     }
 }
 
-impl Render for ContextMenu {
+impl<V: Render> Render for ContextMenu<V> {
     type Element = Div<Self>;
-    // todo!()
+
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         div().elevation_2(cx).flex().flex_row().child(
             v_stack()
@@ -71,7 +105,25 @@ impl Render for ContextMenu {
                 // .bg(cx.theme().colors().elevated_surface_background)
                 // .border()
                 // .border_color(cx.theme().colors().border)
-                .child(List::new(self.items.clone())),
+                .child(List::new(
+                    self.items
+                        .iter()
+                        .map(|item| match item {
+                            ContextMenuItem::Separator(separator) => {
+                                ListItem::Separator(separator.clone())
+                            }
+                            ContextMenuItem::Header(header) => ListItem::Header(header.clone()),
+                            ContextMenuItem::Entry(entry, callback) => {
+                                let callback = callback.clone();
+                                let handle = self.handle.clone();
+                                ListItem::Entry(entry.clone().on_click(move |this, cx| {
+                                    handle.update(cx, |view, cx| callback(view, cx)).ok();
+                                    cx.emit(Manager::Dismiss);
+                                }))
+                            }
+                        })
+                        .collect(),
+                )),
         )
     }
 }
@@ -226,12 +278,13 @@ impl<V: 'static, M: ManagedView> Element<V> for MenuHandle<V, M> {
                 let new_menu = (builder)(view_state, cx);
                 let menu2 = menu.clone();
                 cx.subscribe(&new_menu, move |this, modal, e, cx| match e {
-                    &Dismiss => {
+                    &Manager::Dismiss => {
                         *menu2.borrow_mut() = None;
                         cx.notify();
                     }
                 })
                 .detach();
+                cx.focus_view(&new_menu);
                 *menu.borrow_mut() = Some(new_menu);
 
                 *position.borrow_mut() = if attach.is_some() && child_layout_id.is_some() {
@@ -260,16 +313,25 @@ pub use stories::*;
 mod stories {
     use super::*;
     use crate::story::Story;
-    use gpui::{actions, Div, Render, VisualContext};
+    use gpui::{actions, Div, Render};
 
-    actions!(PrintCurrentDate);
+    actions!(PrintCurrentDate, PrintBestFood);
 
-    fn build_menu(cx: &mut WindowContext, header: impl Into<SharedString>) -> View<ContextMenu> {
-        cx.build_view(|cx| {
-            ContextMenu::new(cx).header(header).separator().entry(
-                Label::new("Print current time"),
-                PrintCurrentDate.boxed_clone(),
-            )
+    fn build_menu<V: Render>(
+        cx: &mut ViewContext<V>,
+        header: impl Into<SharedString>,
+    ) -> View<ContextMenu<V>> {
+        let handle = cx.view().clone();
+        ContextMenu::build(cx, |menu, _| {
+            menu.header(header)
+                .separator()
+                .entry(ListEntry::new(Label::new("Print current time")), |v, cx| {
+                    println!("dispatching PrintCurrentTime action");
+                    cx.dispatch_action(PrintCurrentDate.boxed_clone())
+                })
+                .entry(ListEntry::new(Label::new("Print best food")), |v, cx| {
+                    cx.dispatch_action(PrintBestFood.boxed_clone())
+                })
         })
     }
 
@@ -281,9 +343,13 @@ mod stories {
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             Story::container(cx)
                 .on_action(|_, _: &PrintCurrentDate, _| {
+                    println!("printing unix time!");
                     if let Ok(unix_time) = std::time::UNIX_EPOCH.elapsed() {
                         println!("Current Unix time is {:?}", unix_time.as_secs());
                     }
+                })
+                .on_action(|_, _: &PrintBestFood, _| {
+                    println!("burrito");
                 })
                 .flex()
                 .flex_row()

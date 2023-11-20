@@ -65,7 +65,6 @@ use std::{
 };
 use theme2::{ActiveTheme, ThemeSettings};
 pub use toolbar::{ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
-
 pub use ui;
 use util::ResultExt;
 use uuid::Uuid;
@@ -814,7 +813,9 @@ impl Workspace {
             DockPosition::Right => &self.right_dock,
         };
 
-        dock.update(cx, |dock, cx| dock.add_panel(panel, cx));
+        dock.update(cx, |dock, cx| {
+            dock.add_panel(panel, self.weak_self.clone(), cx)
+        });
     }
 
     pub fn status_bar(&self) -> &View<StatusBar> {
@@ -3665,7 +3666,7 @@ impl Render for Workspace {
                                         &self.app_state,
                                         cx,
                                     ))
-                                    .child(div().flex().flex_1().child(self.bottom_dock.clone())),
+                                    .child(self.bottom_dock.clone()),
                             )
                             // Right Dock
                             .child(
@@ -3678,19 +3679,6 @@ impl Render for Workspace {
                     ),
             )
             .child(self.status_bar.clone())
-            .z_index(8)
-            // Debug
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .z_index(9)
-                    .absolute()
-                    .top_20()
-                    .left_1_4()
-                    .w_40()
-                    .gap_2(),
-            )
     }
 }
 

@@ -87,6 +87,7 @@ pub trait ParentComponent<V: 'static> {
 }
 
 trait ElementObject<V> {
+    fn element_id(&self) -> Option<ElementId>;
     fn layout(&mut self, view_state: &mut V, cx: &mut ViewContext<V>) -> LayoutId;
     fn paint(&mut self, view_state: &mut V, cx: &mut ViewContext<V>);
     fn measure(
@@ -144,6 +145,10 @@ where
     E: Element<V>,
     E::ElementState: 'static,
 {
+    fn element_id(&self) -> Option<ElementId> {
+        self.element.element_id()
+    }
+
     fn layout(&mut self, state: &mut V, cx: &mut ViewContext<V>) -> LayoutId {
         let (layout_id, frame_state) = match mem::take(&mut self.phase) {
             ElementRenderPhase::Start => {
@@ -264,6 +269,10 @@ impl<V> AnyElement<V> {
         E::ElementState: Any,
     {
         AnyElement(Box::new(RenderedElement::new(element)))
+    }
+
+    pub fn element_id(&self) -> Option<ElementId> {
+        self.0.element_id()
     }
 
     pub fn layout(&mut self, view_state: &mut V, cx: &mut ViewContext<V>) -> LayoutId {
