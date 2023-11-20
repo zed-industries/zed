@@ -143,11 +143,11 @@ use crate::{amber, blue, jade, lime, orange, pink, purple, red};
 mod stories {
     use super::*;
     use crate::{ActiveTheme, Story};
-    use gpui::{div, img, px, Div, ParentComponent, Render, Styled, ViewContext};
+    use gpui::{div, img, px, Div, ParentElement, Render, Styled, ViewContext};
 
     pub struct PlayerStory;
 
-    impl Render for PlayerStory {
+    impl Render<Self> for PlayerStory {
         type Element = Div<Self>;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {

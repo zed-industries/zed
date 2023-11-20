@@ -13,9 +13,9 @@ use editor::{
 };
 use futures::future::try_join_all;
 use gpui::{
-    actions, div, AnyElement, AnyView, AppContext, Component, Context, Div, EventEmitter,
-    FocusEvent, FocusHandle, Focusable, FocusableComponent, FocusableView, InteractiveComponent,
-    Model, ParentComponent, Render, SharedString, Styled, Subscription, Task, View, ViewContext,
+    actions, div, AnyElement, AnyView, AppContext, Context, Div, EventEmitter, FocusEvent,
+    FocusHandle, Focusable, FocusableElement, FocusableView, InteractiveElement, Model,
+    ParentElement, Render, RenderOnce, SharedString, Styled, Subscription, Task, View, ViewContext,
     VisualContext, WeakView,
 };
 use language::{
@@ -90,7 +90,7 @@ struct DiagnosticGroupState {
 
 impl EventEmitter<ItemEvent> for ProjectDiagnosticsEditor {}
 
-impl Render for ProjectDiagnosticsEditor {
+impl Render<Self> for ProjectDiagnosticsEditor {
     type Element = Focusable<Self, Div<Self>>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
@@ -792,13 +792,15 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
             .when_some(diagnostic.code.as_ref(), |stack, code| {
                 stack.child(Label::new(code.clone()))
             })
-            .render()
+            .render_into_any()
     })
 }
 
 pub(crate) fn render_summary<T: 'static>(summary: &DiagnosticSummary) -> AnyElement<T> {
     if summary.error_count == 0 && summary.warning_count == 0 {
-        Label::new("No problems").render()
+        let label = Label::new("No problems");
+        label.render_into_any()
+        //.render()
     } else {
         h_stack()
             .bg(gpui::red())
@@ -806,7 +808,7 @@ pub(crate) fn render_summary<T: 'static>(summary: &DiagnosticSummary) -> AnyElem
             .child(Label::new(summary.error_count.to_string()))
             .child(IconElement::new(Icon::ExclamationTriangle))
             .child(Label::new(summary.warning_count.to_string()))
-            .render()
+            .render_into_any()
     }
 }
 

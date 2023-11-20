@@ -1,5 +1,5 @@
 use crate::{
-    key_dispatch::DispatchActionListener, px, size, Action, AnyBox, AnyDrag, AnyView, AppContext,
+    key_dispatch::DispatchActionListener, px, size, Action, AnyDrag, AnyView, AppContext,
     AsyncWindowContext, AvailableSpace, Bounds, BoxShadow, CallbackHandle, ConstructorHandle,
     Context, Corners, CursorStyle, DevicePixels, DispatchNodeId, DispatchTree, DisplayId, Edges,
     Effect, Entity, EntityId, EventEmitter, FileDropEvent, Flatten, FocusEvent, FontId,
@@ -187,7 +187,7 @@ impl Drop for FocusHandle {
 
 /// FocusableView allows users of your view to easily
 /// focus it (using cx.focus_view(view))
-pub trait FocusableView: Render {
+pub trait FocusableView: 'static + Render {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle;
 }
 
@@ -232,7 +232,7 @@ pub struct Window {
 
 // #[derive(Default)]
 pub(crate) struct Frame {
-    pub(crate) element_states: HashMap<GlobalElementId, AnyBox>,
+    pub(crate) element_states: HashMap<GlobalElementId, Box<dyn Any>>,
     mouse_listeners: HashMap<TypeId, Vec<(StackingOrder, AnyMouseListener)>>,
     pub(crate) dispatch_tree: DispatchTree,
     pub(crate) focus_listeners: Vec<AnyFocusListener>,
@@ -1600,7 +1600,7 @@ impl VisualContext for WindowContext<'_> {
         build_view: impl FnOnce(&mut ViewContext<'_, V>) -> V,
     ) -> Self::Result<View<V>>
     where
-        V: Render,
+        V: 'static + Render,
     {
         let slot = self.app.entities.reserve();
         let view = View {
@@ -2372,7 +2372,7 @@ impl<V: 'static> VisualContext for ViewContext<'_, V> {
         build_view: impl FnOnce(&mut ViewContext<'_, W>) -> W,
     ) -> Self::Result<View<W>>
     where
-        W: Render,
+        W: 'static + Render,
     {
         self.window_cx.replace_root_view(build_view)
     }

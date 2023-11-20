@@ -1,30 +1,21 @@
 use crate::{h_stack, prelude::*, HighlightedText};
-use gpui::{prelude::*, Div};
+use gpui::{prelude::*, Div, Stateful};
 use std::path::PathBuf;
 
 #[derive(Clone)]
 pub struct Symbol(pub Vec<HighlightedText>);
 
-#[derive(Component)]
+#[derive(RenderOnce)]
 pub struct Breadcrumb {
     path: PathBuf,
     symbols: Vec<Symbol>,
 }
 
-impl Breadcrumb {
-    pub fn new(path: PathBuf, symbols: Vec<Symbol>) -> Self {
-        Self { path, symbols }
-    }
+impl<V: 'static> Component<V> for Breadcrumb {
+    type Rendered = Stateful<V, Div<V>>;
 
-    fn render_separator<V: 'static>(&self, cx: &WindowContext) -> Div<V> {
-        div()
-            .child(" › ")
-            .text_color(cx.theme().colors().text_muted)
-    }
-
-    fn render<V: 'static>(self, view_state: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render(self, view_state: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
         let symbols_len = self.symbols.len();
-
         h_stack()
             .id("breadcrumb")
             .px_1()
@@ -33,7 +24,9 @@ impl Breadcrumb {
             .rounded_md()
             .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
             .active(|style| style.bg(cx.theme().colors().ghost_element_active))
-            .child(self.path.clone().to_str().unwrap().to_string())
+            .child(SharedString::from(
+                self.path.clone().to_str().unwrap().to_string(),
+            ))
             .child(if !self.symbols.is_empty() {
                 self.render_separator(cx)
             } else {
@@ -64,6 +57,18 @@ impl Breadcrumb {
     }
 }
 
+impl Breadcrumb {
+    pub fn new(path: PathBuf, symbols: Vec<Symbol>) -> Self {
+        Self { path, symbols }
+    }
+
+    fn render_separator<V: 'static>(&self, cx: &WindowContext) -> Div<V> {
+        div()
+            .child(" › ")
+            .text_color(cx.theme().colors().text_muted)
+    }
+}
+
 #[cfg(feature = "stories")]
 pub use stories::*;
 
@@ -76,7 +81,7 @@ mod stories {
 
     pub struct BreadcrumbStory;
 
-    impl Render for BreadcrumbStory {
+    impl Render<Self> for BreadcrumbStory {
         type Element = Div<Self>;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
@@ -88,21 +93,21 @@ mod stories {
                     vec![
                         Symbol(vec![
                             HighlightedText {
-                                text: "impl ".to_string(),
+                                text: "impl ".into(),
                                 color: cx.theme().syntax_color("keyword"),
                             },
                             HighlightedText {
-                                text: "BreadcrumbStory".to_string(),
+                                text: "BreadcrumbStory".into(),
                                 color: cx.theme().syntax_color("function"),
                             },
                         ]),
                         Symbol(vec![
                             HighlightedText {
-                                text: "fn ".to_string(),
+                                text: "fn ".into(),
                                 color: cx.theme().syntax_color("keyword"),
                             },
                             HighlightedText {
-                                text: "render".to_string(),
+                                text: "render".into(),
                                 color: cx.theme().syntax_color("function"),
                             },
                         ]),

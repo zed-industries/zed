@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
 use gpui::{
-    CallbackHandle, DefiniteLength, Hsla, MouseButton, StatefulInteractiveComponent, WindowContext,
+    DefiniteLength, DefiniteLength, Div, Hsla, MouseButton, RenderOnce, Stateful,
+    StatefulInteractiveElement, WindowContext,
 };
 
 use crate::prelude::*;
@@ -63,7 +64,6 @@ impl ButtonVariant {
     }
 }
 
-// #[derive(Component)] <- todo
 pub struct Button {
     disabled: bool,
     click_handler: Option<CallbackHandle<()>>,
@@ -73,6 +73,57 @@ pub struct Button {
     variant: ButtonVariant,
     width: Option<DefiniteLength>,
     color: Option<TextColor>,
+}
+
+impl RenderOnce for Button {
+    type Element = Stateful<Div>;
+
+    fn render(self) -> Self::Rendered {
+        let (icon_color, label_color) = match (self.disabled, self.color) {
+            (true, _) => (TextColor::Disabled, TextColor::Disabled),
+            (_, None) => (TextColor::Default, TextColor::Default),
+            (_, Some(color)) => (TextColor::from(color), color),
+        };
+
+        let mut button = h_stack()
+            .id(SharedString::from(format!("{}", self.label)))
+            .relative()
+            .p_1()
+            .text_ui()
+            .rounded_md()
+            .bg(self.variant.bg_color(cx))
+            .cursor_pointer()
+            .hover(|style| style.bg(self.variant.bg_color_hover(cx)))
+            .active(|style| style.bg(self.variant.bg_color_active(cx)));
+
+        match (self.icon, self.icon_position) {
+            (Some(_), Some(IconPosition::Left)) => {
+                button = button
+                    .gap_1()
+                    .child(self.render_label(label_color))
+                    .children(self.render_icon(icon_color))
+            }
+            (Some(_), Some(IconPosition::Right)) => {
+                button = button
+                    .gap_1()
+                    .children(self.render_icon(icon_color))
+                    .child(self.render_label(label_color))
+            }
+            (_, _) => button = button.child(self.render_label(label_color)),
+        }
+
+        if let Some(width) = self.width {
+            button = button.w(width).justify_center();
+        }
+
+        if let Some(click_handler) = self.handlers.click.clone() {
+            button = button.on_mouse_down(MouseButton::Left, move |state, event, cx| {
+                click_handler(state, cx);
+            });
+        }
+
+        button
+    }
 }
 
 impl Button {
@@ -150,72 +201,30 @@ impl Button {
     fn render_icon(&self, icon_color: TextColor) -> Option<IconElement> {
         self.icon.map(|i| IconElement::new(i).color(icon_color))
     }
-
-    pub fn render(self, cx: &mut WindowContext) -> impl Component {
-        let (icon_color, label_color) = match (self.disabled, self.color) {
-            (true, _) => (TextColor::Disabled, TextColor::Disabled),
-            (_, None) => (TextColor::Default, TextColor::Default),
-            (_, Some(color)) => (TextColor::from(color), color),
-        };
-
-        let mut button = h_stack()
-            .id(SharedString::from(format!("{}", self.label)))
-            .relative()
-            .p_1()
-            .text_ui()
-            .rounded_md()
-            .bg(self.variant.bg_color(cx))
-            .cursor_pointer()
-            .hover(|style| style.bg(self.variant.bg_color_hover(cx)))
-            .active(|style| style.bg(self.variant.bg_color_active(cx)));
-
-        match (self.icon, self.icon_position) {
-            (Some(_), Some(IconPosition::Left)) => {
-                button = button
-                    .gap_1()
-                    .child(self.render_label(label_color))
-                    .children(self.render_icon(icon_color))
-            }
-            (Some(_), Some(IconPosition::Right)) => {
-                button = button
-                    .gap_1()
-                    .children(self.render_icon(icon_color))
-                    .child(self.render_label(label_color))
-            }
-            (_, _) => button = button.child(self.render_label(label_color)),
-        }
-
-        if let Some(width) = self.width {
-            button = button.w(width).justify_center();
-        }
-
-        if let Some(click_handler) = self.handlers.click.clone() {
-            button = button.on_mouse_down(MouseButton::Left, move |state, event, cx| {
-                click_handler(state, cx);
-            });
-        }
-
-        button
-    }
 }
 
+#[derive(RenderOnce)]
 pub struct ButtonGroup {
     buttons: Vec<Button>,
 }
 
-impl ButtonGroup {
-    pub fn new(buttons: Vec<Button>) -> Self {
-        Self { buttons }
-    }
+impl Component for ButtonGroup {
+    type Rendered = Div;
 
-    fn render(self, cx: &mut WindowContext) -> impl Component {
-        let mut el = h_stack().text_ui();
+    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
+        let mut group = h_stack();
 
-        for button in self.buttons {
-            el = el.child(button.render(cx));
+        for button in self.buttons.into_iter() {
+            group = group.child(button.render(view, cx));
         }
 
-        el
+        group
+    }
+}
+
+impl<V: 'static> ButtonGroup<V> {
+    pub fn new(buttons: Vec<Button<V>>) -> Self {
+        Self { buttons }
     }
 }
 

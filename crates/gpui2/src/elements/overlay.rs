@@ -2,8 +2,8 @@ use smallvec::SmallVec;
 use taffy::style::{Display, Position};
 
 use crate::{
-    point, AnyElement, BorrowWindow, Bounds, Component, Element, LayoutId, ParentComponent, Pixels,
-    Point, Size, Style, WindowContext,
+    point, AnyElement, BorrowWindow, Bounds, Element, LayoutId, ParentElement, Pixels, Point,
+    RenderOnce, Size, Style, WindowContext,
 };
 
 pub struct OverlayState {
@@ -51,30 +51,20 @@ impl Overlay {
     }
 }
 
-impl ParentComponent for Overlay {
+impl ParentElement for Overlay {
     fn children_mut(&mut self) -> &mut SmallVec<[AnyElement; 2]> {
         &mut self.children
     }
 }
 
-impl Component for Overlay {
-    fn render(self) -> AnyElement {
-        AnyElement::new(self)
-    }
-}
-
 impl Element for Overlay {
-    type ElementState = OverlayState;
-
-    fn element_id(&self) -> Option<crate::ElementId> {
-        None
-    }
+    type State = OverlayState;
 
     fn layout(
         &mut self,
-        _: Option<Self::ElementState>,
+        _: Option<Self::State>,
         cx: &mut WindowContext,
-    ) -> (crate::LayoutId, Self::ElementState) {
+    ) -> (crate::LayoutId, Self::State) {
         let child_layout_ids = self
             .children
             .iter_mut()
@@ -91,9 +81,9 @@ impl Element for Overlay {
     }
 
     fn paint(
-        &mut self,
+        self,
         bounds: crate::Bounds<crate::Pixels>,
-        element_state: &mut Self::ElementState,
+        element_state: &mut Self::State,
         cx: &mut WindowContext,
     ) {
         if element_state.child_layout_ids.is_empty() {
@@ -154,10 +144,22 @@ impl Element for Overlay {
         }
 
         cx.with_element_offset(desired.origin - bounds.origin, |cx| {
-            for child in &mut self.children {
+            for child in self.children {
                 child.paint(cx);
             }
         })
+    }
+}
+
+impl RenderOnce for Overlay {
+    type Element = Self;
+
+    fn element_id(&self) -> Option<crate::ElementId> {
+        None
+    }
+
+    fn render_once(self) -> Self::Element {
+        self
     }
 }
 

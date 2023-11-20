@@ -49,13 +49,13 @@ use gpui::hsla
 
 impl<V: 'static> TodoList<V> {
     // ...
-    fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
         div().size_4().bg(hsla(50.0/360.0, 1.0, 0.5, 1.0))
     }
 }
 ~~~
 
-Every component needs a render method, and it should return `impl Component<V>`. This basic component will render a 16x16px yellow square on the screen.
+Every component needs a render method, and it should return `impl Element<V>`. This basic component will render a 16x16px yellow square on the screen.
 
 A couple of questions might come to mind:
 
@@ -87,7 +87,7 @@ We can access the current theme's colors like this:
 ~~~rust
 impl<V: 'static> TodoList<V> {
     // ...
-    fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
         let color = cx.theme().colors()
 
         div().size_4().hsla(50.0/360.0, 1.0, 0.5, 1.0)
@@ -102,7 +102,7 @@ use gpui::hsla
 
 impl<V: 'static> TodoList<V> {
     // ...
-    fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
         let color = cx.theme().colors()
 
         div().size_4().bg(color.surface)
@@ -117,7 +117,7 @@ use gpui::hsla
 
 impl<V: 'static> TodoList<V> {
     // ...
-    fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
         let color = cx.theme().colors()
 
         div()

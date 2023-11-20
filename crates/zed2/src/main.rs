@@ -6,6 +6,7 @@
 
 use anyhow::{anyhow, Context as _, Result};
 use backtrace::Backtrace;
+use chrono::Utc;
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
 use client::UserStore;
 use db::kvp::KEY_VALUE_STORE;
@@ -38,7 +39,6 @@ use std::{
         Arc,
     },
     thread,
-    time::{SystemTime, UNIX_EPOCH},
 };
 use theme::ActiveTheme;
 use util::{
@@ -172,7 +172,7 @@ fn main() {
         // })
         // .detach();
 
-        // client.telemetry().start(installation_id, session_id, cx);
+        client.telemetry().start(installation_id, session_id, cx);
 
         let app_state = Arc::new(AppState {
             languages,
@@ -428,7 +428,7 @@ struct Panic {
     os_name: String,
     os_version: Option<String>,
     architecture: String,
-    panicked_on: u128,
+    panicked_on: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     installation_id: Option<String>,
     session_id: String,
@@ -514,10 +514,7 @@ fn init_panic_hook(app: &App, installation_id: Option<String>, session_id: Strin
                 .as_ref()
                 .map(SemanticVersion::to_string),
             architecture: env::consts::ARCH.into(),
-            panicked_on: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_millis(),
+            panicked_on: Utc::now().timestamp_millis(),
             backtrace,
             installation_id: installation_id.clone(),
             session_id: session_id.clone(),

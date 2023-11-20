@@ -1,4 +1,5 @@
 use crate::{TelemetrySettings, ZED_SECRET_CLIENT_TOKEN, ZED_SERVER_URL};
+use chrono::{DateTime, Utc};
 use gpui::{executor::Background, serde_json, AppContext, Task};
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
@@ -31,6 +32,7 @@ struct TelemetryState {
     flush_clickhouse_events_task: Option<Task<()>>,
     log_file: Option<NamedTempFile>,
     is_staff: Option<bool>,
+    first_event_datetime: Option<DateTime<Utc>>,
 }
 
 const CLICKHOUSE_EVENTS_URL_PATH: &'static str = "/api/events";
@@ -77,29 +79,35 @@ pub enum ClickhouseEvent {
         vim_mode: bool,
         copilot_enabled: bool,
         copilot_enabled_for_language: bool,
+        milliseconds_since_first_event: i64,
     },
     Copilot {
         suggestion_id: Option<String>,
         suggestion_accepted: bool,
         file_extension: Option<String>,
+        milliseconds_since_first_event: i64,
     },
     Call {
         operation: &'static str,
         room_id: Option<u64>,
         channel_id: Option<u64>,
+        milliseconds_since_first_event: i64,
     },
     Assistant {
         conversation_id: Option<String>,
         kind: AssistantKind,
         model: &'static str,
+        milliseconds_since_first_event: i64,
     },
     Cpu {
         usage_as_percentage: f32,
         core_count: u32,
+        milliseconds_since_first_event: i64,
     },
     Memory {
         memory_in_bytes: u64,
         virtual_memory_in_bytes: u64,
+        milliseconds_since_first_event: i64,
     },
 }
 
@@ -140,6 +148,7 @@ impl Telemetry {
                 flush_clickhouse_events_task: Default::default(),
                 log_file: None,
                 is_staff: None,
+                first_event_datetime: None,
             }),
         });
 
@@ -195,20 +204,18 @@ impl Telemetry {
                     return;
                 };
 
-                let memory_event = ClickhouseEvent::Memory {
-                    memory_in_bytes: process.memory(),
-                    virtual_memory_in_bytes: process.virtual_memory(),
-                };
-
-                let cpu_event = ClickhouseEvent::Cpu {
-                    usage_as_percentage: process.cpu_usage(),
-                    core_count: system.cpus().len() as u32,
-                };
-
                 let telemetry_settings = cx.update(|cx| *settings::get::<TelemetrySettings>(cx));
 
-                this.report_clickhouse_event(memory_event, telemetry_settings);
-                this.report_clickhouse_event(cpu_event, telemetry_settings);
+                this.report_memory_event(
+                    telemetry_settings,
+                    process.memory(),
+                    process.virtual_memory(),
+                );
+                this.report_cpu_event(
+                    telemetry_settings,
+                    process.cpu_usage(),
+                    system.cpus().len() as u32,
+                );
             }
         })
         .detach();
@@ -231,7 +238,123 @@ impl Telemetry {
         drop(state);
     }
 
-    pub fn report_clickhouse_event(
+    pub fn report_editor_event(
+        self: &Arc<Self>,
+        telemetry_settings: TelemetrySettings,
+        file_extension: Option<String>,
+        vim_mode: bool,
+        operation: &'static str,
+        copilot_enabled: bool,
+        copilot_enabled_for_language: bool,
+    ) {
+        let event = ClickhouseEvent::Editor {
+            file_extension,
+            vim_mode,
+            operation,
+            copilot_enabled,
+            copilot_enabled_for_language,
+            milliseconds_since_first_event: self.milliseconds_since_first_event(),
+        };
+
+        self.report_clickhouse_event(event, telemetry_settings)
+    }
+
+    pub fn report_copilot_event(
+        self: &Arc<Self>,
+        telemetry_settings: TelemetrySettings,
+        suggestion_id: Option<String>,
+        suggestion_accepted: bool,
+        file_extension: Option<String>,
+    ) {
+        let event = ClickhouseEvent::Copilot {
+            suggestion_id,
+            suggestion_accepted,
+            file_extension,
+            milliseconds_since_first_event: self.milliseconds_since_first_event(),
+        };
+
+        self.report_clickhouse_event(event, telemetry_settings)
+    }
+
+    pub fn report_assistant_event(
+        self: &Arc<Self>,
+        telemetry_settings: TelemetrySettings,
+        conversation_id: Option<String>,
+        kind: AssistantKind,
+        model: &'static str,
+    ) {
+        let event = ClickhouseEvent::Assistant {
+            conversation_id,
+            kind,
+            model,
+            milliseconds_since_first_event: self.milliseconds_since_first_event(),
+        };
+
+        self.report_clickhouse_event(event, telemetry_settings)
+    }
+
+    pub fn report_call_event(
+        self: &Arc<Self>,
+        telemetry_settings: TelemetrySettings,
+        operation: &'static str,
+        room_id: Option<u64>,
+        channel_id: Option<u64>,
+    ) {
+        let event = ClickhouseEvent::Call {
+            operation,
+            room_id,
+            channel_id,
+            milliseconds_since_first_event: self.milliseconds_since_first_event(),
+        };
+
+        self.report_clickhouse_event(event, telemetry_settings)
+    }
+
+    pub fn report_cpu_event(
+        self: &Arc<Self>,
+        telemetry_settings: TelemetrySettings,
+        usage_as_percentage: f32,
+        core_count: u32,
+    ) {
+        let event = ClickhouseEvent::Cpu {
+            usage_as_percentage,
+            core_count,
+            milliseconds_since_first_event: self.milliseconds_since_first_event(),
+        };
+
+        self.report_clickhouse_event(event, telemetry_settings)
+    }
+
+    pub fn report_memory_event(
+        self: &Arc<Self>,
+        telemetry_settings: TelemetrySettings,
+        memory_in_bytes: u64,
+        virtual_memory_in_bytes: u64,
+    ) {
+        let event = ClickhouseEvent::Memory {
+            memory_in_bytes,
+            virtual_memory_in_bytes,
+            milliseconds_since_first_event: self.milliseconds_since_first_event(),
+        };
+
+        self.report_clickhouse_event(event, telemetry_settings)
+    }
+
+    fn milliseconds_since_first_event(&self) -> i64 {
+        let mut state = self.state.lock();
+        match state.first_event_datetime {
+            Some(first_event_datetime) => {
+                let now: DateTime<Utc> = Utc::now();
+                now.timestamp_millis() - first_event_datetime.timestamp_millis()
+            }
+            None => {
+                state.first_event_datetime = Some(Utc::now());
+                0
+            }
+        }
+    }
+
+    fn report_clickhouse_event(
         self: &Arc<Self>,
         event: ClickhouseEvent,
         telemetry_settings: TelemetrySettings,
@@ -275,6 +398,7 @@ impl Telemetry {
 
     fn flush_clickhouse_events(self: &Arc<Self>) {
         let mut state = self.state.lock();
+        state.first_event_datetime = None;
         let mut events = mem::take(&mut state.clickhouse_events_queue);
         state.flush_clickhouse_events_task.take();
         drop(state);

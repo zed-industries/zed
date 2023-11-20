@@ -1,6 +1,6 @@
 use crate::{
-    AnyElement, Bounds, Component, Element, InteractiveComponent, InteractiveElementState,
-    Interactivity, LayoutId, Pixels, SharedString, StyleRefinement, Styled, WindowContext,
+    Bounds, Element, InteractiveElement, InteractiveElementState, Interactivity, LayoutId, Pixels,
+    RenderOnce, SharedString, StyleRefinement, Styled, WindowContext,
 };
 use futures::FutureExt;
 use util::ResultExt;
@@ -31,33 +31,23 @@ impl Img {
     }
 }
 
-impl Component for Img {
-    fn render(self) -> AnyElement {
-        AnyElement::new(self)
-    }
-}
-
 impl Element for Img {
-    type ElementState = InteractiveElementState;
-
-    fn element_id(&self) -> Option<crate::ElementId> {
-        self.interactivity.element_id.clone()
-    }
+    type State = InteractiveElementState;
 
     fn layout(
         &mut self,
-        element_state: Option<Self::ElementState>,
+        element_state: Option<Self::State>,
         cx: &mut WindowContext,
-    ) -> (LayoutId, Self::ElementState) {
+    ) -> (LayoutId, Self::State) {
         self.interactivity.layout(element_state, cx, |style, cx| {
             cx.request_layout(&style, None)
         })
     }
 
     fn paint(
-        &mut self,
+        self,
         bounds: Bounds<Pixels>,
-        element_state: &mut Self::ElementState,
+        element_state: &mut Self::State,
         cx: &mut WindowContext,
     ) {
         self.interactivity.paint(
@@ -96,13 +86,25 @@ impl Element for Img {
     }
 }
 
+impl RenderOnce for Img {
+    type Element = Self;
+
+    fn element_id(&self) -> Option<crate::ElementId> {
+        self.interactivity.element_id.clone()
+    }
+
+    fn render_once(self) -> Self::Element {
+        self
+    }
+}
+
 impl Styled for Img {
     fn style(&mut self) -> &mut StyleRefinement {
         &mut self.interactivity.base_style
     }
 }
 
-impl InteractiveComponent for Img {
+impl InteractiveElement for Img {
     fn interactivity(&mut self) -> &mut Interactivity {
         &mut self.interactivity
     }

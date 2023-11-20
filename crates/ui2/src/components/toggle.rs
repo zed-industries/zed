@@ -1,4 +1,4 @@
-use gpui::{div, Component, ParentComponent};
+use gpui::{div, Element, ParentElement};
 
 use crate::{Icon, IconElement, IconSize, TextColor};
 
@@ -44,7 +44,7 @@ impl From<bool> for Toggle {
     }
 }
 
-pub fn disclosure_control<V: 'static>(toggle: Toggle) -> impl Component<V> {
+pub fn disclosure_control<V: 'static>(toggle: Toggle) -> impl Element<V> {
     match (toggle.is_toggleable(), toggle.is_toggled()) {
         (false, _) => div(),
         (_, true) => div().child(

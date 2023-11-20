@@ -24,7 +24,7 @@ use ::git::diff::DiffHunk;
 use aho_corasick::AhoCorasick;
 use anyhow::{anyhow, Context as _, Result};
 use blink_manager::BlinkManager;
-use client::{ClickhouseEvent, Client, Collaborator, ParticipantIndex, TelemetrySettings};
+use client::{Client, Collaborator, ParticipantIndex, TelemetrySettings};
 use clock::ReplicaId;
 use collections::{BTreeMap, Bound, HashMap, HashSet, VecDeque};
 use convert_case::{Case, Casing};
@@ -42,9 +42,9 @@ use gpui::{
     actions, div, point, prelude::*, px, relative, rems, size, uniform_list, Action, AnyElement,
     AppContext, AsyncWindowContext, BackgroundExecutor, Bounds, ClipboardItem, Component, Context,
     EventEmitter, FocusHandle, FocusableView, FontFeatures, FontStyle, FontWeight, HighlightStyle,
-    Hsla, InputHandler, KeyContext, Model, MouseButton, ParentComponent, Pixels, Render, Styled,
-    Subscription, Task, TextStyle, UniformListScrollHandle, View, ViewContext, VisualContext,
-    WeakView, WindowContext,
+    Hsla, InputHandler, KeyContext, Model, MouseButton, ParentElement, Pixels, Render,
+    SharedString, Styled, Subscription, Task, TextStyle, UniformListScrollHandle, View,
+    ViewContext, VisualContext, WeakView, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -1580,7 +1580,8 @@ impl CodeActionsMenu {
                                     )
                                     .map(|task| task.detach_and_log_err(cx));
                             })
-                            .child(action.lsp_action.title.clone())
+                            // TASK: It would be good to make lsp_action.title a SharedString to avoid allocating here.
+                            .child(SharedString::from(action.lsp_action.title.clone()))
                     })
                     .collect()
             },
@@ -1595,7 +1596,7 @@ impl CodeActionsMenu {
                 .max_by_key(|(_, action)| action.lsp_action.title.chars().count())
                 .map(|(ix, _)| ix),
         )
-        .render();
+        .render_into_any();
 
         if self.deployed_from_indicator {
             *cursor_position.column_mut() = 0;
@@ -4353,19 +4354,19 @@ impl Editor {
         style: &EditorStyle,
         is_active: bool,
         cx: &mut ViewContext<Self>,
-    ) -> Option<AnyElement<Self>> {
+    ) -> Option<IconButton<Self>> {
         if self.available_code_actions.is_some() {
             Some(
-                IconButton::new("code_actions_indicator", ui::Icon::Bolt)
-                    .on_click(|editor: &mut Editor, cx| {
+                IconButton::new("code_actions_indicator", ui::Icon::Bolt).on_click(
+                    |editor: &mut Editor, cx| {
                         editor.toggle_code_actions(
                             &ToggleCodeActions {
                                 deployed_from_indicator: true,
                             },
                             cx,
                         );
-                    })
-                    .render(),
+                    },
+                ),
             )
         } else {
             None
@@ -4380,7 +4381,7 @@ impl Editor {
         line_height: Pixels,
         gutter_margin: Pixels,
         cx: &mut ViewContext<Self>,
-    ) -> Vec<Option<AnyElement<Self>>> {
+    ) -> Vec<Option<IconButton<Self>>> {
         fold_data
             .iter()
             .enumerate()
@@ -4402,7 +4403,6 @@ impl Editor {
                                     }
                                 })
                                 .color(ui::TextColor::Muted)
-                                .render()
                         })
                     })
                     .flatten()
@@ -7793,7 +7793,7 @@ impl Editor {
                                                     cx.editor_style.diagnostic_style.clone(),
                                             },
                                         )))
-                                        .render()
+                                        .render_into_any()
                                 }
                             }),
                             disposition: BlockDisposition::Below,
@@ -8968,12 +8968,12 @@ impl Editor {
         let telemetry = project.read(cx).client().telemetry().clone();
         let telemetry_settings = *TelemetrySettings::get_global(cx);
 
-        let event = ClickhouseEvent::Copilot {
+        telemetry.report_copilot_event(
+            telemetry_settings,
             suggestion_id,
             suggestion_accepted,
             file_extension,
-        };
-        telemetry.report_clickhouse_event(event, telemetry_settings);
+        )
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -9020,14 +9020,14 @@ impl Editor {
             .show_copilot_suggestions;
 
         let telemetry = project.read(cx).client().telemetry().clone();
-        let event = ClickhouseEvent::Editor {
+        telemetry.report_editor_event(
+            telemetry_settings,
             file_extension,
             vim_mode,
             operation,
             copilot_enabled,
             copilot_enabled_for_language,
-        };
-        telemetry.report_clickhouse_event(event, telemetry_settings)
+        )
     }
 
     /// Copy the highlighted chunks to the clipboard as JSON. The format is an array of lines,
@@ -9382,7 +9382,7 @@ impl FocusableView for Editor {
     }
 }
 
-impl Render for Editor {
+impl Render<Self> for Editor {
     type Element = EditorElement;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
@@ -10000,7 +10000,7 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, is_valid: bool) -> Rend
                 cx.write_to_clipboard(ClipboardItem::new(message.clone()));
             })
             .tooltip(|_, cx| Tooltip::text("Copy diagnostic message", cx))
-            .render()
+            .render_into_any()
     })
 }
 

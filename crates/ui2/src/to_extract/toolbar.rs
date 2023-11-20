@@ -1,4 +1,4 @@
-use gpui::AnyElement;
+use gpui::{AnyElement, Div, RenderOnce};
 use smallvec::SmallVec;
 
 use crate::prelude::*;
@@ -6,10 +6,24 @@ use crate::prelude::*;
 #[derive(Clone)]
 pub struct ToolbarItem {}
 
-#[derive(Component)]
+#[derive(RenderOnce)]
 pub struct Toolbar<V: 'static> {
     left_items: SmallVec<[AnyElement<V>; 2]>,
     right_items: SmallVec<[AnyElement<V>; 2]>,
+}
+
+impl<V: 'static> Component<V> for Toolbar<V> {
+    type Rendered = Div<V>;
+
+    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
+        div()
+            .bg(cx.theme().colors().toolbar_background)
+            .p_2()
+            .flex()
+            .justify_between()
+            .child(div().flex().children(self.left_items))
+            .child(div().flex().children(self.right_items))
+    }
 }
 
 impl<V: 'static> Toolbar<V> {
@@ -20,48 +34,38 @@ impl<V: 'static> Toolbar<V> {
         }
     }
 
-    pub fn left_item(mut self, child: impl Component<V>) -> Self
+    pub fn left_item(mut self, child: impl RenderOnce<V>) -> Self
     where
         Self: Sized,
     {
-        self.left_items.push(child.render());
+        self.left_items.push(child.render_into_any());
         self
     }
 
-    pub fn left_items(mut self, iter: impl IntoIterator<Item = impl Component<V>>) -> Self
+    pub fn left_items(mut self, iter: impl IntoIterator<Item = impl RenderOnce<V>>) -> Self
     where
         Self: Sized,
     {
         self.left_items
-            .extend(iter.into_iter().map(|item| item.render()));
+            .extend(iter.into_iter().map(|item| item.render_into_any()));
         self
     }
 
-    pub fn right_item(mut self, child: impl Component<V>) -> Self
+    pub fn right_item(mut self, child: impl RenderOnce<V>) -> Self
     where
         Self: Sized,
     {
-        self.right_items.push(child.render());
+        self.right_items.push(child.render_into_any());
         self
     }
 
-    pub fn right_items(mut self, iter: impl IntoIterator<Item = impl Component<V>>) -> Self
+    pub fn right_items(mut self, iter: impl IntoIterator<Item = impl RenderOnce<V>>) -> Self
     where
         Self: Sized,
     {
         self.right_items
-            .extend(iter.into_iter().map(|item| item.render()));
+            .extend(iter.into_iter().map(|item| item.render_into_any()));
         self
-    }
-
-    fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
-        div()
-            .bg(cx.theme().colors().toolbar_background)
-            .p_2()
-            .flex()
-            .justify_between()
-            .child(div().flex().children(self.left_items))
-            .child(div().flex().children(self.right_items))
     }
 }
 
@@ -81,7 +85,7 @@ mod stories {
 
     pub struct ToolbarStory;
 
-    impl Render for ToolbarStory {
+    impl Render<Self> for ToolbarStory {
         type Element = Div<Self>;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
@@ -95,21 +99,21 @@ mod stories {
                             vec![
                                 Symbol(vec![
                                     HighlightedText {
-                                        text: "impl ".to_string(),
+                                        text: "impl ".into(),
                                         color: cx.theme().syntax_color("keyword"),
                                     },
                                     HighlightedText {
-                                        text: "ToolbarStory".to_string(),
+                                        text: "ToolbarStory".into(),
                                         color: cx.theme().syntax_color("function"),
                                     },
                                 ]),
                                 Symbol(vec![
                                     HighlightedText {
-                                        text: "fn ".to_string(),
+                                        text: "fn ".into(),
                                         color: cx.theme().syntax_color("keyword"),
                                     },
                                     HighlightedText {
-                                        text: "render".to_string(),
+                                        text: "render".into(),
                                         color: cx.theme().syntax_color("function"),
                                     },
                                 ]),

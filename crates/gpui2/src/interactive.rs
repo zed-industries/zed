@@ -1,8 +1,9 @@
 use crate::{
-    div, point, Div, FocusHandle, Keystroke, Modifiers, Pixels, Point, Render, ViewContext,
+    div, point, Div, Element, FocusHandle, Keystroke, Modifiers, Pixels, Point, Render, RenderOnce,
+    ViewContext,
 };
 use smallvec::SmallVec;
-use std::{any::Any, fmt::Debug, ops::Deref, path::PathBuf};
+use std::{any::Any, fmt::Debug, marker::PhantomData, ops::Deref, path::PathBuf};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct KeyDownEvent {
@@ -57,6 +58,32 @@ pub struct MouseUpEvent {
 pub struct ClickEvent {
     pub down: MouseDownEvent,
     pub up: MouseUpEvent,
+}
+
+pub struct Drag<S, R, V, E>
+where
+    R: Fn(&mut V, &mut ViewContext<V>) -> E,
+    V: 'static,
+    E: RenderOnce,
+{
+    pub state: S,
+    pub render_drag_handle: R,
+    view_element_types: PhantomData<(V, E)>,
+}
+
+impl<S, R, V, E> Drag<S, R, V, E>
+where
+    R: Fn(&mut V, &mut ViewContext<V>) -> E,
+    V: 'static,
+    E: Element,
+{
+    pub fn new(state: S, render_drag_handle: R) -> Self {
+        Drag {
+            state,
+            render_drag_handle,
+            view_element_types: Default::default(),
+        }
+    }
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug)]
@@ -259,8 +286,8 @@ pub struct FocusEvent {
 #[cfg(test)]
 mod test {
     use crate::{
-        self as gpui, div, Component, Div, FocusHandle, InteractiveComponent, KeyBinding,
-        Keystroke, ParentComponent, Render, Stateful, TestAppContext, VisualContext,
+        self as gpui, div, Div, FocusHandle, InteractiveElement, KeyBinding, Keystroke,
+        ParentElement, Render, RenderOnce, Stateful, TestAppContext, VisualContext,
     };
 
     struct TestView {
@@ -288,7 +315,7 @@ mod test {
                         div()
                             .key_context("nested")
                             .track_focus(&self.focus_handle)
-                            .render(),
+                            .render_once(),
                     ),
             )
         }

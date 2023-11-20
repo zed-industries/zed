@@ -1,5 +1,7 @@
 use std::sync::Arc;
 
+use gpui::{Div, RenderOnce};
+
 use crate::prelude::*;
 use crate::{Button, Icon, IconButton, TextColor, ToolDivider, Workspace};
 
@@ -28,12 +30,29 @@ impl Default for ToolGroup {
     }
 }
 
-#[derive(Component)]
-#[component(view_type = "Workspace")]
+#[derive(RenderOnce)]
+#[view = "Workspace"]
 pub struct StatusBar {
     left_tools: Option<ToolGroup>,
     right_tools: Option<ToolGroup>,
     bottom_tools: Option<ToolGroup>,
+}
+
+impl Component<Workspace> for StatusBar {
+    type Rendered = Div<Workspace>;
+
+    fn render(self, view: &mut Workspace, cx: &mut ViewContext<Workspace>) -> Self::Rendered {
+        div()
+            .py_0p5()
+            .px_1()
+            .flex()
+            .items_center()
+            .justify_between()
+            .w_full()
+            .bg(cx.theme().colors().status_bar_background)
+            .child(self.left_tools(view, cx))
+            .child(self.right_tools(view, cx))
+    }
 }
 
 impl StatusBar {
@@ -81,28 +100,7 @@ impl StatusBar {
         self
     }
 
-    fn render(
-        self,
-        view: &mut Workspace,
-        cx: &mut ViewContext<Workspace>,
-    ) -> impl Component<Workspace> {
-        div()
-            .py_0p5()
-            .px_1()
-            .flex()
-            .items_center()
-            .justify_between()
-            .w_full()
-            .bg(cx.theme().colors().status_bar_background)
-            .child(self.left_tools(view, cx))
-            .child(self.right_tools(view, cx))
-    }
-
-    fn left_tools(
-        &self,
-        workspace: &mut Workspace,
-        cx: &WindowContext,
-    ) -> impl Component<Workspace> {
+    fn left_tools(&self, workspace: &mut Workspace, cx: &WindowContext) -> impl Element<Workspace> {
         div()
             .flex()
             .items_center()
@@ -133,7 +131,7 @@ impl StatusBar {
         &self,
         workspace: &mut Workspace,
         cx: &WindowContext,
-    ) -> impl Component<Workspace> {
+    ) -> impl Element<Workspace> {
         div()
             .flex()
             .items_center()

@@ -1,7 +1,6 @@
 use crate::{
-    AnyElement, Bounds, Component, Element, ElementId, InteractiveComponent,
-    InteractiveElementState, Interactivity, LayoutId, Pixels, SharedString, StyleRefinement,
-    Styled, WindowContext,
+    Bounds, Element, ElementId, InteractiveElement, InteractiveElementState, Interactivity,
+    LayoutId, Pixels, RenderOnce, SharedString, StyleRefinement, Styled, WindowContext,
 };
 use util::ResultExt;
 
@@ -24,35 +23,21 @@ impl Svg {
     }
 }
 
-impl Component for Svg {
-    fn render(self) -> AnyElement {
-        AnyElement::new(self)
-    }
-}
-
 impl Element for Svg {
-    type ElementState = InteractiveElementState;
-
-    fn element_id(&self) -> Option<ElementId> {
-        self.interactivity.element_id.clone()
-    }
+    type State = InteractiveElementState;
 
     fn layout(
         &mut self,
-        element_state: Option<Self::ElementState>,
+        element_state: Option<Self::State>,
         cx: &mut WindowContext,
-    ) -> (LayoutId, Self::ElementState) {
+    ) -> (LayoutId, Self::State) {
         self.interactivity.layout(element_state, cx, |style, cx| {
             cx.request_layout(&style, None)
         })
     }
 
-    fn paint(
-        &mut self,
-        bounds: Bounds<Pixels>,
-        element_state: &mut Self::ElementState,
-        cx: &mut WindowContext,
-    ) where
+    fn paint(self, bounds: Bounds<Pixels>, element_state: &mut Self::State, cx: &mut WindowContext)
+    where
         Self: Sized,
     {
         self.interactivity
@@ -64,13 +49,25 @@ impl Element for Svg {
     }
 }
 
+impl RenderOnce for Svg {
+    type Element = Self;
+
+    fn element_id(&self) -> Option<ElementId> {
+        self.interactivity.element_id.clone()
+    }
+
+    fn render_once(self) -> Self::Element {
+        self
+    }
+}
+
 impl Styled for Svg {
     fn style(&mut self) -> &mut StyleRefinement {
         &mut self.interactivity.base_style
     }
 }
 
-impl InteractiveComponent for Svg {
+impl InteractiveElement for Svg {
     fn interactivity(&mut self) -> &mut Interactivity {
         &mut self.interactivity
     }

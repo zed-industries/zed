@@ -3,7 +3,7 @@ use gpui::rems;
 use crate::prelude::*;
 use crate::{h_stack, Icon};
 
-#[derive(Component)]
+// #[derive(RenderOnce)]
 pub struct NotificationToast {
     label: SharedString,
     icon: Option<Icon>,
@@ -22,7 +22,7 @@ impl NotificationToast {
         self
     }
 
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
         h_stack()
             .z_index(5)
             .absolute()

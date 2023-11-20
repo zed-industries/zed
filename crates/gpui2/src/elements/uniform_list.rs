@@ -1,23 +1,23 @@
 use crate::{
-    point, px, size, AnyElement, AvailableSpace, Bounds, Component, Element, ElementId,
-    InteractiveComponent, InteractiveElementState, Interactivity, LayoutId, Pixels, Point, Size,
+    point, px, size, AnyElement, AvailableSpace, Bounds, Element, ElementId, InteractiveElement,
+    InteractiveElementState, Interactivity, LayoutId, Pixels, Point, RenderOnce, Size,
     StyleRefinement, Styled, WindowContext,
 };
 use smallvec::SmallVec;
-use std::{cell::RefCell, cmp, mem, ops::Range, rc::Rc};
+use std::{cell::RefCell, cmp, ops::Range, rc::Rc};
 use taffy::style::Overflow;
 
 /// uniform_list provides lazy rendering for a set of items that are of uniform height.
 /// When rendered into a container with overflow-y: hidden and a fixed (or max) height,
 /// uniform_list will only render the visibile subset of items.
-pub fn uniform_list<I, C>(
+pub fn uniform_list<I, R>(
     id: I,
     item_count: usize,
-    f: impl 'static + Fn(Range<usize>, &mut WindowContext) -> Vec<C>,
+    f: impl 'static + Fn(Range<usize>, &mut WindowContext) -> Vec<R>,
 ) -> UniformList
 where
     I: Into<ElementId>,
-    C: Component,
+    R: RenderOnce,
 {
     let id = id.into();
     let mut style = StyleRefinement::default();
@@ -31,7 +31,7 @@ where
         render_items: Box::new(move |visible_range, cx| {
             f(visible_range, cx)
                 .into_iter()
-                .map(|component| component.render())
+                .map(|component| component.render_into_any())
                 .collect()
         }),
         interactivity: Interactivity {
@@ -96,27 +96,23 @@ pub struct UniformListState {
 }
 
 impl Element for UniformList {
-    type ElementState = UniformListState;
-
-    fn element_id(&self) -> Option<crate::ElementId> {
-        Some(self.id.clone())
-    }
+    type State = UniformListState;
 
     fn layout(
         &mut self,
-        element_state: Option<Self::ElementState>,
+        state: Option<Self::State>,
         cx: &mut WindowContext,
-    ) -> (LayoutId, Self::ElementState) {
+    ) -> (LayoutId, Self::State) {
         let max_items = self.item_count;
         let rem_size = cx.rem_size();
-        let item_size = element_state
+        let item_size = state
             .as_ref()
             .map(|s| s.item_size)
             .unwrap_or_else(|| self.measure_item(None, cx));
 
         let (layout_id, interactive) =
             self.interactivity
-                .layout(element_state.map(|s| s.interactive), cx, |style, cx| {
+                .layout(state.map(|s| s.interactive), cx, |style, cx| {
                     cx.request_measured_layout(
                         style,
                         rem_size,
@@ -152,9 +148,9 @@ impl Element for UniformList {
     }
 
     fn paint(
-        &mut self,
+        self,
         bounds: Bounds<crate::Pixels>,
-        element_state: &mut Self::ElementState,
+        element_state: &mut Self::State,
         cx: &mut WindowContext,
     ) {
         let style =
@@ -175,14 +171,15 @@ impl Element for UniformList {
             height: item_size.height * self.item_count,
         };
 
-        let mut interactivity = mem::take(&mut self.interactivity);
         let shared_scroll_offset = element_state
             .interactive
             .scroll_offset
             .get_or_insert_with(Rc::default)
             .clone();
 
-        interactivity.paint(
+        let item_height = self.measure_item(Some(padded_bounds.size.width), cx).height;
+
+        self.interactivity.paint(
             bounds,
             content_size,
             &mut element_state.interactive,
@@ -201,8 +198,6 @@ impl Element for UniformList {
                     style.paint(bounds, cx);
 
                     if self.item_count > 0 {
-                        let item_height =
-                            self.measure_item(Some(padded_bounds.size.width), cx).height;
                         if let Some(scroll_handle) = self.scroll_handle.clone() {
                             scroll_handle.0.borrow_mut().replace(ScrollHandleState {
                                 item_height,
@@ -224,9 +219,9 @@ impl Element for UniformList {
                                 self.item_count,
                             );
 
-                        let mut items = (self.render_items)(visible_range.clone(), cx);
+                        let items = (self.render_items)(visible_range.clone(), cx);
                         cx.with_z_index(1, |cx| {
-                            for (item, ix) in items.iter_mut().zip(visible_range) {
+                            for (item, ix) in items.into_iter().zip(visible_range) {
                                 let item_origin = padded_bounds.origin
                                     + point(px(0.), item_height * ix + scroll_offset.y);
                                 let available_space = size(
@@ -240,7 +235,18 @@ impl Element for UniformList {
                 })
             },
         );
-        self.interactivity = interactivity;
+    }
+}
+
+impl RenderOnce for UniformList {
+    type Element = Self;
+
+    fn element_id(&self) -> Option<crate::ElementId> {
+        Some(self.id.clone())
+    }
+
+    fn render_once(self) -> Self::Element {
+        self
     }
 }
 
@@ -273,14 +279,8 @@ impl UniformList {
     }
 }
 
-impl InteractiveComponent for UniformList {
+impl InteractiveElement for UniformList {
     fn interactivity(&mut self) -> &mut crate::Interactivity {
         &mut self.interactivity
-    }
-}
-
-impl Component for UniformList {
-    fn render(self) -> AnyElement {
-        AnyElement::new(self)
     }
 }

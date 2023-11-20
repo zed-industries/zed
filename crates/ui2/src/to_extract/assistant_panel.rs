@@ -1,27 +1,17 @@
 use crate::prelude::*;
 use crate::{Icon, IconButton, Label, Panel, PanelSide};
-use gpui::{prelude::*, rems, AbsoluteLength};
+use gpui::{prelude::*, rems, AbsoluteLength, RenderOnce};
 
-#[derive(Component)]
+#[derive(RenderOnce)]
 pub struct AssistantPanel {
     id: ElementId,
     current_side: PanelSide,
 }
 
-impl AssistantPanel {
-    pub fn new(id: impl Into<ElementId>) -> Self {
-        Self {
-            id: id.into(),
-            current_side: PanelSide::default(),
-        }
-    }
+impl<V: 'static> Component<V> for AssistantPanel {
+    type Rendered = Panel<V>;
 
-    pub fn side(mut self, side: PanelSide) -> Self {
-        self.current_side = side;
-        self
-    }
-
-    fn render<V: 'static>(self, view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
         Panel::new(self.id.clone(), cx)
             .children(vec![div()
                 .flex()
@@ -64,9 +54,23 @@ impl AssistantPanel {
                         .overflow_y_scroll()
                         .child(Label::new("Is this thing on?")),
                 )
-                .render()])
+                .into_any()])
             .side(self.current_side)
             .width(AbsoluteLength::Rems(rems(32.)))
+    }
+}
+
+impl AssistantPanel {
+    pub fn new(id: impl Into<ElementId>) -> Self {
+        Self {
+            id: id.into(),
+            current_side: PanelSide::default(),
+        }
+    }
+
+    pub fn side(mut self, side: PanelSide) -> Self {
+        self.current_side = side;
+        self
     }
 }
 
@@ -80,7 +84,7 @@ mod stories {
     use gpui::{Div, Render};
     pub struct AssistantPanelStory;
 
-    impl Render for AssistantPanelStory {
+    impl Render<Self> for AssistantPanelStory {
         type Element = Div<Self>;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {

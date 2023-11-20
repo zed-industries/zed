@@ -3,6 +3,7 @@
 
 use anyhow::{anyhow, Context, Result};
 use backtrace::Backtrace;
+use chrono::Utc;
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
 use client::{
     self, Client, TelemetrySettings, UserStore, ZED_APP_VERSION, ZED_SECRET_CLIENT_TOKEN,
@@ -34,7 +35,6 @@ use std::{
         Arc, Weak,
     },
     thread,
-    time::{SystemTime, UNIX_EPOCH},
 };
 use util::{
     channel::{parse_zed_link, ReleaseChannel},
@@ -404,7 +404,7 @@ struct Panic {
     os_name: String,
     os_version: Option<String>,
     architecture: String,
-    panicked_on: u128,
+    panicked_on: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     installation_id: Option<String>,
     session_id: String,
@@ -490,10 +490,7 @@ fn init_panic_hook(app: &App, installation_id: Option<String>, session_id: Strin
                 .ok()
                 .map(|os_version| os_version.to_string()),
             architecture: env::consts::ARCH.into(),
-            panicked_on: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_millis(),
+            panicked_on: Utc::now().timestamp_millis(),
             backtrace,
             installation_id: installation_id.clone(),
             session_id: session_id.clone(),

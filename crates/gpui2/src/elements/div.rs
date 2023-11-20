@@ -1,10 +1,10 @@
 use crate::{
     point, px, Action, AnyDrag, AnyElement, AnyTooltip, AnyView, AppContext, BorrowAppContext,
-    BorrowWindow, Bounds, CallbackHandle, ClickEvent, Component, ConstructorHandle, DispatchPhase,
-    Element, ElementId, FocusEvent, FocusHandle, KeyContext, KeyDownEvent, KeyUpEvent, LayoutId,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentComponent, Pixels, Point,
-    Render, ScrollWheelEvent, SharedString, Size, Style, StyleRefinement, Styled, Task, View,
-    Visibility, WindowContext,
+    BorrowWindow, Bounds, CallbackHandle, ClickEvent, ConstructorHandle, DispatchPhase, Element,
+    ElementId, FocusEvent, FocusHandle, KeyContext, KeyDownEvent, KeyUpEvent, LayoutId,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point,
+    Render, RenderOnce, ScrollWheelEvent, SharedString, Size, Style, StyleRefinement, Styled, Task,
+    View, Visibility, WindowContext,
 };
 use collections::HashMap;
 use refineable::Refineable;
@@ -28,7 +28,7 @@ pub struct GroupStyle {
     pub style: StyleRefinement,
 }
 
-pub trait InteractiveComponent: Sized + Element {
+pub trait InteractiveElement: Sized + Element {
     fn interactivity(&mut self) -> &mut Interactivity;
 
     fn group(mut self, group: impl Into<SharedString>) -> Self {
@@ -319,7 +319,7 @@ pub trait InteractiveComponent: Sized + Element {
     }
 }
 
-pub trait StatefulInteractiveComponent: InteractiveComponent {
+pub trait StatefulInteractiveElement: InteractiveElement {
     fn focusable(mut self) -> Focusable<Self> {
         self.interactivity().focusable = true;
         Focusable { element: self }
@@ -421,7 +421,7 @@ pub trait StatefulInteractiveComponent: InteractiveComponent {
     }
 }
 
-pub trait FocusableComponent: InteractiveComponent {
+pub trait FocusableElement: InteractiveElement {
     fn focus(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self
     where
         Self: Sized,
@@ -563,30 +563,26 @@ impl Styled for Div {
     }
 }
 
-impl InteractiveComponent for Div {
+impl InteractiveElement for Div {
     fn interactivity(&mut self) -> &mut Interactivity {
         &mut self.interactivity
     }
 }
 
-impl ParentComponent for Div {
+impl ParentElement for Div {
     fn children_mut(&mut self) -> &mut SmallVec<[AnyElement; 2]> {
         &mut self.children
     }
 }
 
 impl Element for Div {
-    type ElementState = DivState;
-
-    fn element_id(&self) -> Option<ElementId> {
-        self.interactivity.element_id.clone()
-    }
+    type State = DivState;
 
     fn layout(
         &mut self,
-        element_state: Option<Self::ElementState>,
+        element_state: Option<Self::State>,
         cx: &mut WindowContext,
-    ) -> (LayoutId, Self::ElementState) {
+    ) -> (LayoutId, Self::State) {
         let mut child_layout_ids = SmallVec::new();
         let mut interactivity = mem::take(&mut self.interactivity);
         let (layout_id, interactive_state) = interactivity.layout(
@@ -614,9 +610,9 @@ impl Element for Div {
     }
 
     fn paint(
-        &mut self,
+        self,
         bounds: Bounds<Pixels>,
-        element_state: &mut Self::ElementState,
+        element_state: &mut Self::State,
         cx: &mut WindowContext,
     ) {
         let mut child_min = point(Pixels::MAX, Pixels::MAX);
@@ -632,8 +628,7 @@ impl Element for Div {
             (child_max - child_min).into()
         };
 
-        let mut interactivity = mem::take(&mut self.interactivity);
-        interactivity.paint(
+        self.interactivity.paint(
             bounds,
             content_size,
             &mut element_state.interactive_state,
@@ -653,7 +648,7 @@ impl Element for Div {
                         cx.with_text_style(style.text_style().cloned(), |cx| {
                             cx.with_content_mask(style.overflow_mask(bounds), |cx| {
                                 cx.with_element_offset(scroll_offset, |cx| {
-                                    for child in &mut self.children {
+                                    for child in self.children {
                                         child.paint(cx);
                                     }
                                 })
@@ -663,13 +658,18 @@ impl Element for Div {
                 })
             },
         );
-        self.interactivity = interactivity;
     }
 }
 
-impl Component for Div {
-    fn render(self) -> AnyElement {
-        AnyElement::new(self)
+impl RenderOnce for Div {
+    type Element = Self;
+
+    fn element_id(&self) -> Option<ElementId> {
+        self.interactivity.element_id.clone()
+    }
+
+    fn render_once(self) -> Self::Element {
+        self
     }
 }
 
@@ -741,7 +741,7 @@ impl Interactivity {
     }
 
     pub fn paint(
-        &mut self,
+        mut self,
         bounds: Bounds<Pixels>,
         content_size: Size<Pixels>,
         element_state: &mut InteractiveElementState,
@@ -1045,12 +1045,12 @@ impl Interactivity {
                     })
                 }
 
-                for (action_type, listener) in self.action_listeners.drain(..) {
+                for (action_type, listener) in self.action_listeners {
                     cx.on_action(action_type, listener)
                 }
 
                 if let Some(focus_handle) = element_state.focus_handle.as_ref() {
-                    for listener in self.focus_listeners.drain(..) {
+                    for listener in self.focus_listeners {
                         let focus_handle = focus_handle.clone();
                         cx.on_focus_changed(move |event, cx| listener(&focus_handle, event, cx));
                     }
@@ -1232,18 +1232,18 @@ pub struct Focusable<E> {
     element: E,
 }
 
-impl<E: InteractiveComponent> FocusableComponent for Focusable<E> {}
+impl<E: InteractiveElement> FocusableElement for Focusable<E> {}
 
-impl<E> InteractiveComponent for Focusable<E>
+impl<E> InteractiveElement for Focusable<E>
 where
-    E: InteractiveComponent,
+    E: InteractiveElement,
 {
     fn interactivity(&mut self) -> &mut Interactivity {
         self.element.interactivity()
     }
 }
 
-impl<E: StatefulInteractiveComponent> StatefulInteractiveComponent for Focusable<E> {}
+impl<E: StatefulInteractiveElement> StatefulInteractiveElement for Focusable<E> {}
 
 impl<E> Styled for Focusable<E>
 where
@@ -1258,42 +1258,39 @@ impl<E> Element for Focusable<E>
 where
     E: Element,
 {
-    type ElementState = E::ElementState;
+    type State = E::State;
+
+    fn layout(
+        &mut self,
+        state: Option<Self::State>,
+        cx: &mut WindowContext,
+    ) -> (LayoutId, Self::State) {
+        self.element.layout(state, cx)
+    }
+
+    fn paint(self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut WindowContext) {
+        self.element.paint(bounds, state, cx)
+    }
+}
+
+impl<E> RenderOnce for Focusable<E>
+where
+    E: Element,
+{
+    type Element = E;
 
     fn element_id(&self) -> Option<ElementId> {
         self.element.element_id()
     }
 
-    fn layout(
-        &mut self,
-        element_state: Option<Self::ElementState>,
-        cx: &mut WindowContext,
-    ) -> (LayoutId, Self::ElementState) {
-        self.element.layout(element_state, cx)
-    }
-
-    fn paint(
-        &mut self,
-        bounds: Bounds<Pixels>,
-        element_state: &mut Self::ElementState,
-        cx: &mut WindowContext,
-    ) {
-        self.element.paint(bounds, element_state, cx);
+    fn render_once(self) -> Self::Element {
+        self.element
     }
 }
 
-impl<E> Component for Focusable<E>
+impl<E> ParentElement for Focusable<E>
 where
-    E: 'static + Element,
-{
-    fn render(self) -> AnyElement {
-        AnyElement::new(self)
-    }
-}
-
-impl<E> ParentComponent for Focusable<E>
-where
-    E: ParentComponent,
+    E: ParentElement,
 {
     fn children_mut(&mut self) -> &mut SmallVec<[AnyElement; 2]> {
         self.element.children_mut()
@@ -1313,64 +1310,61 @@ where
     }
 }
 
-impl<E> StatefulInteractiveComponent for Stateful<E>
+impl<E> StatefulInteractiveElement for Stateful<E>
 where
     E: Element,
-    Self: InteractiveComponent,
+    Self: InteractiveElement,
 {
 }
 
-impl<E> InteractiveComponent for Stateful<E>
+impl<E> InteractiveElement for Stateful<E>
 where
-    E: InteractiveComponent,
+    E: InteractiveElement,
 {
     fn interactivity(&mut self) -> &mut Interactivity {
         self.element.interactivity()
     }
 }
 
-impl<E: FocusableComponent> FocusableComponent for Stateful<E> {}
+impl<E: FocusableElement> FocusableElement for Stateful<E> {}
 
 impl<E> Element for Stateful<E>
 where
     E: Element,
 {
-    type ElementState = E::ElementState;
+    type State = E::State;
+
+    fn layout(
+        &mut self,
+        state: Option<Self::State>,
+        cx: &mut WindowContext,
+    ) -> (LayoutId, Self::State) {
+        self.element.layout(state, cx)
+    }
+
+    fn paint(self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut WindowContext) {
+        self.element.paint(bounds, state, cx)
+    }
+}
+
+impl<E> RenderOnce for Stateful<E>
+where
+    E: Element,
+{
+    type Element = Self;
 
     fn element_id(&self) -> Option<ElementId> {
         self.element.element_id()
     }
 
-    fn layout(
-        &mut self,
-        element_state: Option<Self::ElementState>,
-        cx: &mut WindowContext,
-    ) -> (LayoutId, Self::ElementState) {
-        self.element.layout(element_state, cx)
-    }
-
-    fn paint(
-        &mut self,
-        bounds: Bounds<Pixels>,
-        element_state: &mut Self::ElementState,
-        cx: &mut WindowContext,
-    ) {
-        self.element.paint(bounds, element_state, cx)
+    fn render_once(self) -> Self::Element {
+        self
     }
 }
 
-impl<E> Component for Stateful<E>
+impl<E> ParentElement for Stateful<E>
 where
-    E: 'static + Element,
-{
-    fn render(self) -> AnyElement {
-        AnyElement::new(self)
-    }
-}
-
-impl<E> ParentComponent for Stateful<E>
-where
-    E: ParentComponent,
+    E: ParentElement,
 {
     fn children_mut(&mut self) -> &mut SmallVec<[AnyElement; 2]> {
         self.element.children_mut()

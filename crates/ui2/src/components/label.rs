@@ -1,7 +1,6 @@
-use gpui::{relative, Hsla, Text, TextRun, WindowContext};
-
 use crate::prelude::*;
 use crate::styled_ext::StyledExt;
+use gpui::{relative, Div, Hsla, RenderOnce, StyledText, TextRun, WindowContext};
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Default)]
 pub enum LabelSize {
@@ -60,13 +59,40 @@ pub enum LineHeightStyle {
     UILabel,
 }
 
-#[derive(Clone, Component)]
+#[derive(Clone, RenderOnce)]
 pub struct Label {
     label: SharedString,
     size: LabelSize,
     line_height_style: LineHeightStyle,
     color: TextColor,
     strikethrough: bool,
+}
+
+impl<V: 'static> Component<V> for Label {
+    type Rendered = Div<V>;
+
+    fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
+        div()
+            .when(self.strikethrough, |this| {
+                this.relative().child(
+                    div()
+                        .absolute()
+                        .top_1_2()
+                        .w_full()
+                        .h_px()
+                        .bg(TextColor::Hidden.color(cx)),
+                )
+            })
+            .map(|this| match self.size {
+                LabelSize::Default => this.text_ui(),
+                LabelSize::Small => this.text_ui_sm(),
+            })
+            .when(self.line_height_style == LineHeightStyle::UILabel, |this| {
+                this.line_height(relative(1.))
+            })
+            .text_color(self.color.color(cx))
+            .child(self.label.clone())
+    }
 }
 
 impl Label {
@@ -99,32 +125,9 @@ impl Label {
         self.strikethrough = strikethrough;
         self
     }
-
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
-        div()
-            .when(self.strikethrough, |this| {
-                this.relative().child(
-                    div()
-                        .absolute()
-                        .top_1_2()
-                        .w_full()
-                        .h_px()
-                        .bg(TextColor::Hidden.color(cx)),
-                )
-            })
-            .map(|this| match self.size {
-                LabelSize::Default => this.text_ui(),
-                LabelSize::Small => this.text_ui_sm(),
-            })
-            .when(self.line_height_style == LineHeightStyle::UILabel, |this| {
-                this.line_height(relative(1.))
-            })
-            .text_color(self.color.color(cx))
-            .child(self.label.clone())
-    }
 }
 
-#[derive(Component)]
+#[derive(RenderOnce)]
 pub struct HighlightedLabel {
     label: SharedString,
     size: LabelSize,
@@ -133,35 +136,10 @@ pub struct HighlightedLabel {
     strikethrough: bool,
 }
 
-impl HighlightedLabel {
-    /// shows a label with the given characters highlighted.
-    /// characters are identified by utf8 byte position.
-    pub fn new(label: impl Into<SharedString>, highlight_indices: Vec<usize>) -> Self {
-        Self {
-            label: label.into(),
-            size: LabelSize::Default,
-            color: TextColor::Default,
-            highlight_indices,
-            strikethrough: false,
-        }
-    }
+impl<V: 'static> Component<V> for HighlightedLabel {
+    type Rendered = Div<V>;
 
-    pub fn size(mut self, size: LabelSize) -> Self {
-        self.size = size;
-        self
-    }
-
-    pub fn color(mut self, color: TextColor) -> Self {
-        self.color = color;
-        self
-    }
-
-    pub fn set_strikethrough(mut self, strikethrough: bool) -> Self {
-        self.strikethrough = strikethrough;
-        self
-    }
-
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
         let highlight_color = cx.theme().colors().text_accent;
         let mut text_style = cx.text_style().clone();
 
@@ -214,7 +192,36 @@ impl HighlightedLabel {
                 LabelSize::Default => this.text_ui(),
                 LabelSize::Small => this.text_ui_sm(),
             })
-            .child(Text::styled(self.label, runs))
+            .child(StyledText::new(self.label, runs))
+    }
+}
+
+impl HighlightedLabel {
+    /// shows a label with the given characters highlighted.
+    /// characters are identified by utf8 byte position.
+    pub fn new(label: impl Into<SharedString>, highlight_indices: Vec<usize>) -> Self {
+        Self {
+            label: label.into(),
+            size: LabelSize::Default,
+            color: TextColor::Default,
+            highlight_indices,
+            strikethrough: false,
+        }
+    }
+
+    pub fn size(mut self, size: LabelSize) -> Self {
+        self.size = size;
+        self
+    }
+
+    pub fn color(mut self, color: TextColor) -> Self {
+        self.color = color;
+        self
+    }
+
+    pub fn set_strikethrough(mut self, strikethrough: bool) -> Self {
+        self.strikethrough = strikethrough;
+        self
     }
 }
 
@@ -235,7 +242,7 @@ mod stories {
 
     pub struct LabelStory;
 
-    impl Render for LabelStory {
+    impl Render<Self> for LabelStory {
         type Element = Div<Self>;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {

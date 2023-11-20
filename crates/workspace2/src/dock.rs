@@ -1,7 +1,7 @@
 use crate::{status_bar::StatusItemView, Axis, Workspace};
 use gpui::{
-    div, px, Action, AnchorCorner, AnyView, AppContext, Component, Div, Entity, EntityId,
-    EventEmitter, FocusHandle, FocusableView, ParentComponent, Render, SharedString, Styled,
+    div, px, Action, AnchorCorner, AnyView, AppContext, Div, Entity, EntityId, EventEmitter,
+    FocusHandle, FocusableView, ParentElement, Render, RenderOnce, SharedString, Styled,
     Subscription, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use schemars::JsonSchema;
@@ -476,7 +476,7 @@ impl Dock {
     }
 }
 
-impl Render for Dock {
+impl Render<Self> for Dock {
     type Element = Div<Self>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
@@ -662,7 +662,7 @@ impl PanelButtons {
 // }
 
 // here be kittens
-impl Render for PanelButtons {
+impl Render<Self> for PanelButtons {
     type Element = Div<Self>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
@@ -705,8 +705,7 @@ impl Render for PanelButtons {
                 };
 
                 Some(
-                    menu_handle()
-                        .id(name)
+                    menu_handle(name)
                         .menu(move |_, cx| {
                             const POSITIONS: [DockPosition; 3] = [
                                 DockPosition::Left,
@@ -781,7 +780,7 @@ pub mod test {
         }
     }
 
-    impl Render for TestPanel {
+    impl Render<Self> for TestPanel {
         type Element = Div<Self>;
 
         fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
