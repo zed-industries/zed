@@ -1,7 +1,7 @@
-use gpui::{actions, Action};
+use gpui::{actions, relative, rems, Action, Styled};
 use strum::EnumIter;
 
-use crate::prelude::*;
+use crate::{h_stack, prelude::*, Icon, IconElement, IconSize};
 
 #[derive(Component, Clone)]
 pub struct KeyBinding {
@@ -24,20 +24,46 @@ impl KeyBinding {
         Self { key_binding }
     }
 
+    fn icon_for_key(key: &str) -> Option<Icon> {
+        match key {
+            "left" => Some(Icon::ArrowLeft),
+            "right" => Some(Icon::ArrowRight),
+            "up" => Some(Icon::ArrowUp),
+            "down" => Some(Icon::ArrowDown),
+            _ => None,
+        }
+    }
+
     fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
-        div()
-            .flex()
-            .gap_2()
+        h_stack()
+            .flex_none()
+            .gap_1()
             .children(self.key_binding.keystrokes().iter().map(|keystroke| {
-                div()
-                    .flex()
-                    .gap_1()
+                let key_icon = Self::icon_for_key(&keystroke.key);
+
+                h_stack()
+                    .flex_none()
+                    .gap_0p5()
+                    .bg(cx.theme().colors().element_background)
+                    .p_0p5()
+                    .rounded_sm()
                     .when(keystroke.modifiers.function, |el| el.child(Key::new("fn")))
-                    .when(keystroke.modifiers.control, |el| el.child(Key::new("^")))
-                    .when(keystroke.modifiers.alt, |el| el.child(Key::new("⌥")))
-                    .when(keystroke.modifiers.command, |el| el.child(Key::new("⌘")))
-                    .when(keystroke.modifiers.shift, |el| el.child(Key::new("⇧")))
-                    .child(Key::new(keystroke.key.clone()))
+                    .when(keystroke.modifiers.control, |el| {
+                        el.child(KeyIcon::new(Icon::Control))
+                    })
+                    .when(keystroke.modifiers.alt, |el| {
+                        el.child(KeyIcon::new(Icon::Option))
+                    })
+                    .when(keystroke.modifiers.command, |el| {
+                        el.child(KeyIcon::new(Icon::Command))
+                    })
+                    .when(keystroke.modifiers.shift, |el| {
+                        el.child(KeyIcon::new(Icon::Shift))
+                    })
+                    .when_some(key_icon, |el, icon| el.child(KeyIcon::new(icon)))
+                    .when(key_icon.is_none(), |el| {
+                        el.child(Key::new(keystroke.key.to_uppercase().clone()))
+                    })
             }))
     }
 }
@@ -53,14 +79,40 @@ impl Key {
     }
 
     fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+        let single_char = self.key.len() == 1;
+
         div()
-            .px_2()
+            // .px_0p5()
             .py_0()
-            .rounded_md()
-            .text_ui_sm()
+            .when(single_char, |el| {
+                el.w(rems(14. / 16.)).flex().flex_none().justify_center()
+            })
+            .when(!single_char, |el| el.px_0p5())
+            .h(rems(14. / 16.))
+            // .rounded_md()
+            .text_ui()
+            .line_height(relative(1.))
             .text_color(cx.theme().colors().text)
-            .bg(cx.theme().colors().element_background)
+            // .bg(cx.theme().colors().element_background)
             .child(self.key.clone())
+    }
+}
+
+#[derive(Component)]
+pub struct KeyIcon {
+    icon: Icon,
+}
+
+impl KeyIcon {
+    pub fn new(icon: Icon) -> Self {
+        Self { icon }
+    }
+
+    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+        div()
+            .w(rems(14. / 16.))
+            // .bg(cx.theme().colors().element_background)
+            .child(IconElement::new(self.icon).size(IconSize::Small))
     }
 }
 
@@ -69,9 +121,9 @@ impl Key {
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, EnumIter)]
 pub enum ModifierKey {
     Control,
-    Alt,
-    Command,
+    Alt, // Option
     Shift,
+    Command,
 }
 
 actions!(NoAction);

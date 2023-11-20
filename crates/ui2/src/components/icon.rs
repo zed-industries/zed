@@ -14,6 +14,8 @@ pub enum IconSize {
 pub enum Icon {
     Ai,
     ArrowLeft,
+    ArrowUp,
+    ArrowDown,
     ArrowRight,
     ArrowUpRight,
     AtSign,
@@ -66,6 +68,11 @@ pub enum Icon {
     SplitMessage,
     Terminal,
     XCircle,
+    Command,
+    Control,
+    Shift,
+    Option,
+    Return,
 }
 
 impl Icon {
@@ -74,6 +81,8 @@ impl Icon {
             Icon::Ai => "icons/ai.svg",
             Icon::ArrowLeft => "icons/arrow_left.svg",
             Icon::ArrowRight => "icons/arrow_right.svg",
+            Icon::ArrowUp => "icons/arrow_up.svg",
+            Icon::ArrowDown => "icons/arrow_down.svg",
             Icon::ArrowUpRight => "icons/arrow_up_right.svg",
             Icon::AtSign => "icons/at-sign.svg",
             Icon::AudioOff => "icons/speaker-off.svg",
@@ -125,6 +134,11 @@ impl Icon {
             Icon::SplitMessage => "icons/split_message.svg",
             Icon::Terminal => "icons/terminal.svg",
             Icon::XCircle => "icons/error.svg",
+            Icon::Command => "icons/command.svg",
+            Icon::Control => "icons/control.svg",
+            Icon::Shift => "icons/shift.svg",
+            Icon::Option => "icons/option.svg",
+            Icon::Return => "icons/return.svg",
         }
     }
 }
@@ -165,8 +179,8 @@ impl IconElement {
 
     fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
         let svg_size = match self.size {
-            IconSize::Small => rems(0.75),
-            IconSize::Medium => rems(0.9375),
+            IconSize::Small => rems(14. / 16.),
+            IconSize::Medium => rems(16. / 16.),
         };
 
         svg()
