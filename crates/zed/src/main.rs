@@ -65,7 +65,8 @@ fn main() {
     log::info!("========== starting zed ==========");
     let mut app = gpui::App::new(Assets).unwrap();
 
-    let installation_id = app.background().block(installation_id()).ok();
+    let (installation_id, existing_installation_id_found) =
+        app.background().block(installation_id()).ok().unzip();
     let session_id = Uuid::new_v4().to_string();
     init_panic_hook(&app, installation_id.clone(), session_id.clone());
 
@@ -166,6 +167,20 @@ fn main() {
         .detach();
 
         client.telemetry().start(installation_id, session_id, cx);
+        // TODO:
+        // Cleanly identify open / first open
+        // What should we do if we fail when looking for installation_id?
+        // - set to true, false, or skip?
+        // Report closed
+        // Copy logic to zed2
+        let telemetry_settings = *settings::get::<TelemetrySettings>(cx);
+        let event_operation = match existing_installation_id_found {
+            Some(true) => "open",
+            _ => "first open",
+        };
+        client
+            .telemetry()
+            .report_app_event(telemetry_settings, event_operation);
 
         let app_state = Arc::new(AppState {
             languages,
@@ -317,11 +332,11 @@ async fn authenticate(client: Arc<Client>, cx: &AsyncAppContext) -> Result<()> {
     Ok::<_, anyhow::Error>(())
 }
 
-async fn installation_id() -> Result<String> {
+async fn installation_id() -> Result<(String, bool)> {
     let legacy_key_name = "device_id";
 
     if let Ok(Some(installation_id)) = KEY_VALUE_STORE.read_kvp(legacy_key_name) {
-        Ok(installation_id)
+        Ok((installation_id, true))
     } else {
         let installation_id = Uuid::new_v4().to_string();
 
@@ -329,7 +344,7 @@ async fn installation_id() -> Result<String> {
             .write_kvp(legacy_key_name.to_string(), installation_id.clone())
             .await?;
 
-        Ok(installation_id)
+        Ok((installation_id, false))
     }
 }
 
