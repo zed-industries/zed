@@ -85,11 +85,9 @@ impl<V: Render> Element for View<V> {
         _state: Option<Self::State>,
         cx: &mut WindowContext,
     ) -> (LayoutId, Self::State) {
-        self.update(cx, |view, cx| {
-            let mut element = view.render(cx).into_any();
-            let layout_id = element.layout(cx);
-            (layout_id, Some(element))
-        })
+        let mut element = self.update(cx, |view, cx| view.render(cx).into_any());
+        let layout_id = element.layout(cx);
+        (layout_id, Some(element))
     }
 
     fn paint(self, _: Bounds<Pixels>, element: &mut Self::State, cx: &mut WindowContext) {
@@ -318,11 +316,9 @@ mod any_view {
     ) -> (LayoutId, AnyElement) {
         cx.with_element_id(Some(view.model.entity_id), |cx| {
             let view = view.clone().downcast::<V>().unwrap();
-            view.update(cx, |view, cx| {
-                let mut element = view.render(cx).into_any();
-                let layout_id = element.layout(cx);
-                (layout_id, element)
-            })
+            let mut element = view.update(cx, |view, cx| view.render(cx).into_any());
+            let layout_id = element.layout(cx);
+            (layout_id, element)
         })
     }
 
