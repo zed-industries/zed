@@ -71,6 +71,9 @@ impl Render for BufferSearchBar {
         // } else {
         //     theme.search.editor.input.container
         // };
+        if self.dismissed {
+            return div();
+        }
         let supported_options = self.supported_options();
 
         let previous_query_keystrokes = cx
@@ -292,7 +295,13 @@ impl BufferSearchBar {
             workspace.active_pane().update(cx, |this, cx| {
                 this.toolbar().update(cx, |this, cx| {
                     if let Some(search_bar) = this.item_of_type::<BufferSearchBar>() {
-                        search_bar.update(cx, |this, cx| this.dismiss(&Dismiss, cx));
+                        search_bar.update(cx, |this, cx| {
+                            if this.is_dismissed() {
+                                this.show(cx);
+                            } else {
+                                this.dismiss(&Dismiss, cx);
+                            }
+                        });
                         return;
                     }
                     let view = cx.build_view(|cx| BufferSearchBar::new(cx));
