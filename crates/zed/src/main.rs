@@ -167,12 +167,6 @@ fn main() {
         .detach();
 
         client.telemetry().start(installation_id, session_id, cx);
-        // TODO:
-        // Cleanly identify open / first open
-        // What should we do if we fail when looking for installation_id?
-        // - set to true, false, or skip?
-        // Report closed
-        // Copy logic to zed2
         let telemetry_settings = *settings::get::<TelemetrySettings>(cx);
         let event_operation = match existing_installation_id_found {
             Some(false) => "first open",
