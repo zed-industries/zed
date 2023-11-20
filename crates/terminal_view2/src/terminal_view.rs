@@ -300,11 +300,14 @@ impl TerminalView {
         cx: &mut ViewContext<Self>,
     ) {
         self.context_menu = Some(ContextMenu::build(cx, |menu, _| {
-            menu.action(ListEntry::new(Label::new("Clear")), Box::new(Clear))
-                .action(
-                    ListEntry::new(Label::new("Close")),
-                    Box::new(CloseActiveItem { save_intent: None }),
-                )
+            menu.action(
+                ListEntry::new("clear", Label::new("Clear")),
+                Box::new(Clear),
+            )
+            .action(
+                ListEntry::new("close", Label::new("Close")),
+                Box::new(CloseActiveItem { save_intent: None }),
+            )
         }));
         dbg!(&position);
         // todo!()

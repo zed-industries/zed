@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::{prelude::*, v_stack, List, ListItem};
+use crate::{prelude::*, v_stack, List};
 use crate::{ListEntry, ListSeparator, ListSubHeader};
 use gpui::{
     overlay, px, Action, AnchorCorner, AnyElement, AppContext, Bounds, DispatchPhase, Div,
@@ -9,7 +9,7 @@ use gpui::{
     MouseDownEvent, Pixels, Point, Render, RenderOnce, View, VisualContext, WeakView,
 };
 
-pub enum ContextMenuItem<V> {
+pub enum ContextMenuItem<V: 'static> {
     Separator(ListSeparator),
     Header(ListSubHeader),
     Entry(
@@ -18,7 +18,7 @@ pub enum ContextMenuItem<V> {
     ),
 }
 
-pub struct ContextMenu<V> {
+pub struct ContextMenu<V: 'static> {
     items: Vec<ContextMenuItem<V>>,
     focus_handle: FocusHandle,
     handle: WeakView<V>,
@@ -105,25 +105,25 @@ impl<V: 'static> Render<Self> for ContextMenu<V> {
                 // .bg(cx.theme().colors().elevated_surface_background)
                 // .border()
                 // .border_color(cx.theme().colors().border)
-                .child(List::new(
-                    self.items
-                        .iter()
-                        .map(|item| match item {
-                            ContextMenuItem::Separator(separator) => {
-                                ListItem::Separator(separator.clone())
-                            }
-                            ContextMenuItem::Header(header) => ListItem::Header(header.clone()),
-                            ContextMenuItem::Entry(entry, callback) => {
-                                let callback = callback.clone();
-                                let handle = self.handle.clone();
-                                ListItem::Entry(entry.clone().on_click(move |this, cx| {
+                .child(
+                    List::new().children(self.items.iter().map(|item| match item {
+                        ContextMenuItem::Separator(separator) => {
+                            separator.clone().render_into_any()
+                        }
+                        ContextMenuItem::Header(header) => header.clone().render_into_any(),
+                        ContextMenuItem::Entry(entry, callback) => {
+                            let callback = callback.clone();
+                            let handle = self.handle.clone();
+                            entry
+                                .clone()
+                                .on_click(move |this, cx| {
                                     handle.update(cx, |view, cx| callback(view, cx)).ok();
                                     cx.emit(Manager::Dismiss);
-                                }))
-                            }
-                        })
-                        .collect(),
-                )),
+                                })
+                                .render_into_any()
+                        }
+                    })),
+                ),
         )
     }
 }
@@ -322,13 +322,17 @@ mod stories {
         ContextMenu::build(cx, |menu, _| {
             menu.header(header)
                 .separator()
-                .entry(ListEntry::new(Label::new("Print current time")), |v, cx| {
-                    println!("dispatching PrintCurrentTime action");
-                    cx.dispatch_action(PrintCurrentDate.boxed_clone())
-                })
-                .entry(ListEntry::new(Label::new("Print best food")), |v, cx| {
-                    cx.dispatch_action(PrintBestFood.boxed_clone())
-                })
+                .entry(
+                    ListEntry::new("Print current time", Label::new("Print current time")),
+                    |v, cx| {
+                        println!("dispatching PrintCurrentTime action");
+                        cx.dispatch_action(PrintCurrentDate.boxed_clone())
+                    },
+                )
+                .entry(
+                    ListEntry::new("Print best food", Label::new("Print best food")),
+                    |v, cx| cx.dispatch_action(PrintBestFood.boxed_clone()),
+                )
         })
     }
 

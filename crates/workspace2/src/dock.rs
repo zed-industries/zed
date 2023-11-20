@@ -719,10 +719,10 @@ impl Render<Self> for PanelButtons {
                                     {
                                         let panel = panel.clone();
                                         menu = menu.entry(
-                                            ListEntry::new(Label::new(format!(
-                                                "Dock {}",
-                                                position.to_label()
-                                            ))),
+                                            ListEntry::new(
+                                                SharedString::from(format!("dock-{position:?}")),
+                                                Label::new(format!("Dock {}", position.to_label())),
+                                            ),
                                             move |_, cx| {
                                                 panel.set_position(position, cx);
                                             },
