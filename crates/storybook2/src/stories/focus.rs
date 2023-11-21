@@ -26,7 +26,7 @@ impl FocusStory {
     }
 }
 
-impl Render<Self> for FocusStory {
+impl Render for FocusStory {
     type Element = Focusable<Stateful<Div>>;
 
     fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> Self::Element {
@@ -52,10 +52,8 @@ impl Render<Self> for FocusStory {
             .on_blur(cx.listener(|_, _, _| println!("Parent blurred")))
             .on_focus_in(cx.listener(|_, _, _| println!("Parent focus_in")))
             .on_focus_out(cx.listener(|_, _, _| println!("Parent focus_out")))
-            .on_key_down(
-                cx.listener(|_, event, phase, _| println!("Key down on parent {:?}", event)),
-            )
-            .on_key_up(cx.listener(|_, event, phase, _| println!("Key up on parent {:?}", event)))
+            .on_key_down(cx.listener(|_, event, _| println!("Key down on parent {:?}", event)))
+            .on_key_up(cx.listener(|_, event, _| println!("Key up on parent {:?}", event)))
             .size_full()
             .bg(color_1)
             .focus(|style| style.bg(color_2))
