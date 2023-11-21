@@ -12,9 +12,11 @@ mod label;
 mod list;
 mod slot;
 mod stack;
-mod stories;
 mod toggle;
 mod tooltip;
+
+#[cfg(feature = "stories")]
+mod stories;
 
 pub use avatar::*;
 pub use button::*;
@@ -30,6 +32,8 @@ pub use label::*;
 pub use list::*;
 pub use slot::*;
 pub use stack::*;
-pub use stories::*;
 pub use toggle::*;
 pub use tooltip::*;
+
+#[cfg(feature = "stories")]
+pub use stories::*;
