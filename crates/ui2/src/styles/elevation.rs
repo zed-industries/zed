@@ -1,7 +1,7 @@
 use gpui::{hsla, point, px, BoxShadow};
 use smallvec::{smallvec, SmallVec};
 
-#[doc = include_str!("elevation.md")]
+#[doc = include_str!("docs/elevation.md")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Elevation {
     ElevationIndex(ElevationIndex),

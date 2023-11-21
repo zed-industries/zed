@@ -5,7 +5,6 @@ pub use gpui::{
     ViewContext, WindowContext,
 };
 
-pub use crate::elevation::*;
 pub use crate::StyledExt;
 pub use crate::{ButtonVariant, TextColor};
 pub use theme2::ActiveTheme;
