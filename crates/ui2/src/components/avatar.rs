@@ -1,6 +1,13 @@
 use crate::prelude::*;
 use gpui::{img, Img, RenderOnce};
 
+#[derive(Debug, Default, PartialEq, Clone)]
+pub enum Shape {
+    #[default]
+    Circle,
+    RoundedRectangle,
+}
+
 #[derive(RenderOnce)]
 pub struct Avatar {
     src: SharedString,
