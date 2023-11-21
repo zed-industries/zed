@@ -1,8 +1,9 @@
 use gpui::{actions, Div, Render};
 use itertools::Itertools;
+use story::Story;
 
 use crate::prelude::*;
-use crate::{KeyBinding, Story};
+use crate::KeyBinding;
 
 pub struct KeybindingStory;
 
@@ -18,11 +19,11 @@ impl Render for KeybindingStory {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         let all_modifier_permutations = ["ctrl", "alt", "cmd", "shift"].into_iter().permutations(2);
 
-        Story::container(cx)
-            .child(Story::title_for::<KeyBinding>(cx))
-            .child(Story::label(cx, "Single Key"))
+        Story::container()
+            .child(Story::title_for::<KeyBinding>())
+            .child(Story::label("Single Key"))
             .child(KeyBinding::new(binding("Z")))
-            .child(Story::label(cx, "Single Key with Modifier"))
+            .child(Story::label("Single Key with Modifier"))
             .child(
                 div()
                     .flex()
@@ -32,7 +33,7 @@ impl Render for KeybindingStory {
                     .child(KeyBinding::new(binding("cmd-c")))
                     .child(KeyBinding::new(binding("shift-c"))),
             )
-            .child(Story::label(cx, "Single Key with Modifier (Permuted)"))
+            .child(Story::label("Single Key with Modifier (Permuted)"))
             .child(
                 div().flex().flex_col().children(
                     all_modifier_permutations
@@ -49,11 +50,11 @@ impl Render for KeybindingStory {
                         }),
                 ),
             )
-            .child(Story::label(cx, "Single Key with All Modifiers"))
+            .child(Story::label("Single Key with All Modifiers"))
             .child(KeyBinding::new(binding("ctrl-alt-cmd-shift-z")))
-            .child(Story::label(cx, "Chord"))
+            .child(Story::label("Chord"))
             .child(KeyBinding::new(binding("a z")))
-            .child(Story::label(cx, "Chord with Modifier"))
+            .child(Story::label("Chord with Modifier"))
             .child(KeyBinding::new(binding("ctrl-a shift-z")))
             .child(KeyBinding::new(binding("fn-s")))
     }

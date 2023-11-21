@@ -17,10 +17,11 @@ menu = { package = "menu2", path = "../menu2"}
 serde.workspace = true
 settings2 = { path = "../settings2" }
 smallvec.workspace = true
+story = { path = "../story", optional = true }
 strum = { version = "0.25.0", features = ["derive"] }
 theme2 = { path = "../theme2" }
 rand = "0.8"
 
 [features]
 default = []
-stories = ["dep:itertools"]
+stories = ["dep:itertools", "dep:story"]

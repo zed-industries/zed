@@ -1,8 +1,9 @@
 use gpui::{rems, Div, Render};
+use story::Story;
 use strum::IntoEnumIterator;
 
 use crate::prelude::*;
-use crate::{h_stack, v_stack, Button, Icon, IconPosition, Label, Story};
+use crate::{h_stack, v_stack, Button, Icon, IconPosition, Label};
 
 pub struct ButtonStory;
 
@@ -12,15 +13,15 @@ impl Render for ButtonStory {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         let states = InteractionState::iter();
 
-        Story::container(cx)
-            .child(Story::title_for::<Button>(cx))
+        Story::container()
+            .child(Story::title_for::<Button>())
             .child(
                 div()
                     .flex()
                     .gap_8()
                     .child(
                         div()
-                            .child(Story::label(cx, "Ghost (Default)"))
+                            .child(Story::label("Ghost (Default)"))
                             .child(h_stack().gap_2().children(states.clone().map(|state| {
                                 v_stack()
                                     .gap_1()
@@ -29,7 +30,7 @@ impl Render for ButtonStory {
                                         Button::new("Label").variant(ButtonVariant::Ghost), // .state(state),
                                     )
                             })))
-                            .child(Story::label(cx, "Ghost – Left Icon"))
+                            .child(Story::label("Ghost – Left Icon"))
                             .child(h_stack().gap_2().children(states.clone().map(|state| {
                                 v_stack()
                                     .gap_1()
@@ -41,7 +42,7 @@ impl Render for ButtonStory {
                                             .icon_position(IconPosition::Left), // .state(state),
                                     )
                             })))
-                            .child(Story::label(cx, "Ghost – Right Icon"))
+                            .child(Story::label("Ghost – Right Icon"))
                             .child(h_stack().gap_2().children(states.clone().map(|state| {
                                 v_stack()
                                     .gap_1()
@@ -56,7 +57,7 @@ impl Render for ButtonStory {
                     )
                     .child(
                         div()
-                            .child(Story::label(cx, "Filled"))
+                            .child(Story::label("Filled"))
                             .child(h_stack().gap_2().children(states.clone().map(|state| {
                                 v_stack()
                                     .gap_1()
@@ -65,7 +66,7 @@ impl Render for ButtonStory {
                                         Button::new("Label").variant(ButtonVariant::Filled), // .state(state),
                                     )
                             })))
-                            .child(Story::label(cx, "Filled – Left Button"))
+                            .child(Story::label("Filled – Left Button"))
                             .child(h_stack().gap_2().children(states.clone().map(|state| {
                                 v_stack()
                                     .gap_1()
@@ -77,7 +78,7 @@ impl Render for ButtonStory {
                                             .icon_position(IconPosition::Left), // .state(state),
                                     )
                             })))
-                            .child(Story::label(cx, "Filled – Right Button"))
+                            .child(Story::label("Filled – Right Button"))
                             .child(h_stack().gap_2().children(states.clone().map(|state| {
                                 v_stack()
                                     .gap_1()
@@ -92,7 +93,7 @@ impl Render for ButtonStory {
                     )
                     .child(
                         div()
-                            .child(Story::label(cx, "Fixed With"))
+                            .child(Story::label("Fixed With"))
                             .child(h_stack().gap_2().children(states.clone().map(|state| {
                                 v_stack()
                                     .gap_1()
@@ -104,7 +105,7 @@ impl Render for ButtonStory {
                                             .width(Some(rems(6.).into())),
                                     )
                             })))
-                            .child(Story::label(cx, "Fixed With – Left Icon"))
+                            .child(Story::label("Fixed With – Left Icon"))
                             .child(h_stack().gap_2().children(states.clone().map(|state| {
                                 v_stack()
                                     .gap_1()
@@ -118,7 +119,7 @@ impl Render for ButtonStory {
                                             .width(Some(rems(6.).into())),
                                     )
                             })))
-                            .child(Story::label(cx, "Fixed With – Right Icon"))
+                            .child(Story::label("Fixed With – Right Icon"))
                             .child(h_stack().gap_2().children(states.clone().map(|state| {
                                 v_stack()
                                     .gap_1()
@@ -134,7 +135,7 @@ impl Render for ButtonStory {
                             }))),
                     ),
             )
-            .child(Story::label(cx, "Button with `on_click`"))
+            .child(Story::label("Button with `on_click`"))
             .child(
                 Button::new("Label")
                     .variant(ButtonVariant::Ghost)
