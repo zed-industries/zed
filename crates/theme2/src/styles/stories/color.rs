@@ -1,5 +1,5 @@
 use gpui::prelude::*;
-use gpui::{div, Div, ViewContext, px};
+use gpui::{div, px, Div, ViewContext};
 use story::Story;
 
 use crate::{default_color_scales, ColorScaleStep};
