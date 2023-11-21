@@ -8860,6 +8860,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
+name = "story"
+version = "0.1.0"
+dependencies = [
+ "gpui2",
+]
+
+[[package]]
 name = "stringprep"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9362,6 +9369,7 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "settings2",
+ "story",
  "toml 0.5.11",
  "util",
  "uuid 1.4.1",
@@ -10205,6 +10213,7 @@ dependencies = [
  "serde",
  "settings2",
  "smallvec",
+ "story",
  "strum",
  "theme2",
 ]

@@ -24,8 +24,3 @@ pub use components::*;
 pub use prelude::*;
 pub use styled_ext::*;
 pub use styles::*;
-
-#[cfg(feature = "stories")]
-mod story;
-#[cfg(feature = "stories")]
-pub use story::*;

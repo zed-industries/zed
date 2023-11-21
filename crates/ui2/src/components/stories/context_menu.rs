@@ -1,7 +1,8 @@
 use gpui::{actions, Action, AnchorCorner, Div, Render, View};
+use story::Story;
 
 use crate::prelude::*;
-use crate::{menu_handle, ContextMenu, Label, ListItem, Story};
+use crate::{menu_handle, ContextMenu, Label, ListItem};
 
 actions!(PrintCurrentDate, PrintBestFood);
 
@@ -29,7 +30,7 @@ impl Render for ContextMenuStory {
     type Element = Div;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-        Story::container(cx)
+        Story::container()
             .on_action(|_: &PrintCurrentDate, _| {
                 println!("printing unix time!");
                 if let Ok(unix_time) = std::time::UNIX_EPOCH.elapsed() {
