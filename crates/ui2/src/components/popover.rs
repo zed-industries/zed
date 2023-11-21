@@ -1,5 +1,6 @@
 use gpui::{
-    AnyElement, Component, Div, ElementId, ParentElement, RenderOnce, Styled, WindowContext,
+    AnyElement, Component, Div, Element, ElementId, ParentElement, RenderOnce, Styled,
+    WindowContext,
 };
 use smallvec::SmallVec;
 
@@ -8,7 +9,7 @@ use crate::{v_stack, StyledExt};
 #[derive(RenderOnce)]
 pub struct Popover {
     children: SmallVec<[AnyElement; 2]>,
-    aside: Option<SmallVec<[AnyElement; 2]>>,
+    aside: Option<AnyElement>,
 }
 
 impl Component for Popover {
@@ -30,7 +31,7 @@ impl Component for Popover {
                         .absolute()
                         .elevation_2(cx)
                         .p_1()
-                        .children(aside),
+                        .child(aside),
                 )
             })
     }
@@ -42,6 +43,14 @@ impl Popover {
             children: SmallVec::new(),
             aside: None,
         }
+    }
+
+    pub fn aside(mut self, aside: impl RenderOnce) -> Self
+    where
+        Self: Sized,
+    {
+        self.aside = Some(aside.render_once().into_any());
+        self
     }
 }
 
