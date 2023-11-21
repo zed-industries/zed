@@ -2,7 +2,7 @@ use crate::{
     black, phi, point, rems, AbsoluteLength, BorrowAppContext, BorrowWindow, Bounds, ContentMask,
     Corners, CornersRefinement, CursorStyle, DefiniteLength, Edges, EdgesRefinement, Font,
     FontFeatures, FontStyle, FontWeight, Hsla, Length, Pixels, Point, PointRefinement, Rgba,
-    SharedString, Size, SizeRefinement, Styled, TextRun, ViewContext,
+    SharedString, Size, SizeRefinement, Styled, TextRun, WindowContext,
 };
 use refineable::{Cascade, Refineable};
 use smallvec::SmallVec;
@@ -313,7 +313,7 @@ impl Style {
     }
 
     /// Paints the background of an element styled with this style.
-    pub fn paint<V: 'static>(&self, bounds: Bounds<Pixels>, cx: &mut ViewContext<V>) {
+    pub fn paint(&self, bounds: Bounds<Pixels>, cx: &mut WindowContext) {
         let rem_size = cx.rem_size();
 
         cx.with_z_index(0, |cx| {

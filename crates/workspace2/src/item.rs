@@ -104,7 +104,7 @@ pub trait Item: FocusableView + EventEmitter<ItemEvent> {
     fn tab_description(&self, _: usize, _: &AppContext) -> Option<SharedString> {
         None
     }
-    fn tab_content<V: 'static>(&self, detail: Option<usize>, cx: &AppContext) -> AnyElement<V>;
+    fn tab_content(&self, detail: Option<usize>, cx: &WindowContext) -> AnyElement;
 
     /// (model id, Item)
     fn for_each_project_item(
@@ -214,8 +214,8 @@ pub trait ItemHandle: 'static + Send {
     ) -> gpui::Subscription;
     fn tab_tooltip_text(&self, cx: &AppContext) -> Option<SharedString>;
     fn tab_description(&self, detail: usize, cx: &AppContext) -> Option<SharedString>;
-    fn tab_content(&self, detail: Option<usize>, cx: &AppContext) -> AnyElement<Pane>;
-    fn dragged_tab_content(&self, detail: Option<usize>, cx: &AppContext) -> AnyElement<Workspace>;
+    fn tab_content(&self, detail: Option<usize>, cx: &WindowContext) -> AnyElement;
+    fn dragged_tab_content(&self, detail: Option<usize>, cx: &WindowContext) -> AnyElement;
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
     fn project_entry_ids(&self, cx: &AppContext) -> SmallVec<[ProjectEntryId; 3]>;
     fn project_item_model_ids(&self, cx: &AppContext) -> SmallVec<[EntityId; 3]>;
@@ -307,11 +307,11 @@ impl<T: Item> ItemHandle for View<T> {
         self.read(cx).tab_description(detail, cx)
     }
 
-    fn tab_content(&self, detail: Option<usize>, cx: &AppContext) -> AnyElement<Pane> {
+    fn tab_content(&self, detail: Option<usize>, cx: &WindowContext) -> AnyElement {
         self.read(cx).tab_content(detail, cx)
     }
 
-    fn dragged_tab_content(&self, detail: Option<usize>, cx: &AppContext) -> AnyElement<Workspace> {
+    fn dragged_tab_content(&self, detail: Option<usize>, cx: &WindowContext) -> AnyElement {
         self.read(cx).tab_content(detail, cx)
     }
 

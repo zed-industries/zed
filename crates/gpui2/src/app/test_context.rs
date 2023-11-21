@@ -1,8 +1,9 @@
 use crate::{
     div, Action, AnyView, AnyWindowHandle, AppCell, AppContext, AsyncAppContext,
-    BackgroundExecutor, Context, Div, EventEmitter, ForegroundExecutor, InputEvent, KeyDownEvent,
-    Keystroke, Model, ModelContext, Render, Result, Task, TestDispatcher, TestPlatform, TestWindow,
-    View, ViewContext, VisualContext, WindowContext, WindowHandle, WindowOptions,
+    BackgroundExecutor, Context, Div, Entity, EventEmitter, ForegroundExecutor, InputEvent,
+    KeyDownEvent, Keystroke, Model, ModelContext, Render, Result, Task, TestDispatcher,
+    TestPlatform, TestWindow, View, ViewContext, VisualContext, WindowContext, WindowHandle,
+    WindowOptions,
 };
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt};
@@ -126,7 +127,7 @@ impl TestAppContext {
     pub fn add_window<F, V>(&mut self, build_window: F) -> WindowHandle<V>
     where
         F: FnOnce(&mut ViewContext<V>) -> V,
-        V: Render,
+        V: 'static + Render,
     {
         let mut cx = self.app.borrow_mut();
         cx.open_window(WindowOptions::default(), |cx| cx.build_view(build_window))
@@ -143,7 +144,7 @@ impl TestAppContext {
     pub fn add_window_view<F, V>(&mut self, build_window: F) -> (View<V>, &mut VisualTestContext)
     where
         F: FnOnce(&mut ViewContext<V>) -> V,
-        V: Render,
+        V: 'static + Render,
     {
         let mut cx = self.app.borrow_mut();
         let window = cx.open_window(WindowOptions::default(), |cx| cx.build_view(build_window));
@@ -296,21 +297,19 @@ impl TestAppContext {
             .unwrap()
     }
 
-    pub fn notifications<T: 'static>(&mut self, entity: &Model<T>) -> impl Stream<Item = ()> {
+    pub fn notifications<T: 'static>(&mut self, entity: &impl Entity<T>) -> impl Stream<Item = ()> {
         let (tx, rx) = futures::channel::mpsc::unbounded();
-
-        entity.update(self, move |_, cx: &mut ModelContext<T>| {
+        self.update(|cx| {
             cx.observe(entity, {
                 let tx = tx.clone();
-                move |_, _, _| {
+                move |_, _| {
                     let _ = tx.unbounded_send(());
                 }
             })
             .detach();
-
-            cx.on_release(move |_, _| tx.close_channel()).detach();
+            cx.observe_release(entity, move |_, _| tx.close_channel())
+                .detach()
         });
-
         rx
     }
 
@@ -383,6 +382,32 @@ impl<T: Send> Model<T> {
             }
         }
         panic!("no event received")
+    }
+}
+
+impl<V: 'static> View<V> {
+    pub fn next_notification(&self, cx: &TestAppContext) -> impl Future<Output = ()> {
+        use postage::prelude::{Sink as _, Stream as _};
+
+        let (mut tx, mut rx) = postage::mpsc::channel(1);
+        let mut cx = cx.app.app.borrow_mut();
+        let subscription = cx.observe(self, move |_, _| {
+            tx.try_send(()).ok();
+        });
+
+        let duration = if std::env::var("CI").is_ok() {
+            Duration::from_secs(5)
+        } else {
+            Duration::from_secs(1)
+        };
+
+        async move {
+            let notification = crate::util::timeout(duration, rx.recv())
+                .await
+                .expect("next notification timed out");
+            drop(subscription);
+            notification.expect("model dropped while test was waiting for its next notification")
+        }
     }
 }
 
@@ -565,7 +590,7 @@ impl<'a> VisualContext for VisualTestContext<'a> {
         build_view: impl FnOnce(&mut ViewContext<'_, V>) -> V,
     ) -> Self::Result<View<V>>
     where
-        V: Render,
+        V: 'static + Render,
     {
         self.window
             .update(self.cx, |_, cx| cx.replace_root_view(build_view))
@@ -576,6 +601,17 @@ impl<'a> VisualContext for VisualTestContext<'a> {
         self.window
             .update(self.cx, |_, cx| {
                 view.read(cx).focus_handle(cx).clone().focus(cx)
+            })
+            .unwrap()
+    }
+
+    fn dismiss_view<V>(&mut self, view: &View<V>) -> Self::Result<()>
+    where
+        V: crate::ManagedView,
+    {
+        self.window
+            .update(self.cx, |_, cx| {
+                view.update(cx, |_, cx| cx.emit(crate::Manager::Dismiss))
             })
             .unwrap()
     }
@@ -594,7 +630,7 @@ impl AnyWindowHandle {
 pub struct EmptyView {}
 
 impl Render for EmptyView {
-    type Element = Div<Self>;
+    type Element = Div;
 
     fn render(&mut self, _cx: &mut crate::ViewContext<Self>) -> Self::Element {
         div()

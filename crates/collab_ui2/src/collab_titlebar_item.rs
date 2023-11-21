@@ -31,13 +31,13 @@ use std::sync::Arc;
 use call::ActiveCall;
 use client::{Client, UserStore};
 use gpui::{
-    div, px, rems, AppContext, Component, Div, InteractiveComponent, Model, ParentComponent,
-    Render, Stateful, StatefulInteractiveComponent, Styled, Subscription, ViewContext,
-    VisualContext, WeakView, WindowBounds,
+    div, px, rems, AppContext, Div, InteractiveElement, Model, ParentElement, Render, RenderOnce,
+    Stateful, StatefulInteractiveElement, Styled, Subscription, ViewContext, VisualContext,
+    WeakView, WindowBounds,
 };
 use project::Project;
 use theme::ActiveTheme;
-use ui::{h_stack, Button, ButtonVariant, KeyBinding, Label, TextColor, Tooltip};
+use ui::{h_stack, Button, ButtonVariant, Color, KeyBinding, Label, Tooltip};
 use workspace::Workspace;
 
 // const MAX_PROJECT_NAME_LENGTH: usize = 40;
@@ -82,7 +82,7 @@ pub struct CollabTitlebarItem {
 }
 
 impl Render for CollabTitlebarItem {
-    type Element = Stateful<Self, Div<Self>>;
+    type Element = Stateful<Div>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         h_stack()
@@ -100,7 +100,7 @@ impl Render for CollabTitlebarItem {
                 |s| s.pl(px(68.)),
             )
             .bg(cx.theme().colors().title_bar_background)
-            .on_click(|_, event, cx| {
+            .on_click(|event, cx| {
                 if event.up.click_count == 2 {
                     cx.zoom_window();
                 }
@@ -115,16 +115,16 @@ impl Render for CollabTitlebarItem {
                             .child(
                                 Button::new("player")
                                     .variant(ButtonVariant::Ghost)
-                                    .color(Some(TextColor::Player(0))),
+                                    .color(Some(Color::Player(0))),
                             )
-                            .tooltip(move |_, cx| Tooltip::text("Toggle following", cx)),
+                            .tooltip(move |cx| Tooltip::text("Toggle following", cx)),
                     )
                     // TODO - Add project menu
                     .child(
                         div()
                             .id("titlebar_project_menu_button")
                             .child(Button::new("project_name").variant(ButtonVariant::Ghost))
-                            .tooltip(move |_, cx| Tooltip::text("Recent Projects", cx)),
+                            .tooltip(move |cx| Tooltip::text("Recent Projects", cx)),
                     )
                     // TODO - Add git menu
                     .child(
@@ -133,9 +133,9 @@ impl Render for CollabTitlebarItem {
                             .child(
                                 Button::new("branch_name")
                                     .variant(ButtonVariant::Ghost)
-                                    .color(Some(TextColor::Muted)),
+                                    .color(Some(Color::Muted)),
                             )
-                            .tooltip(move |_, cx| {
+                            .tooltip(move |cx| {
                                 cx.build_view(|_| {
                                     Tooltip::new("Recent Branches")
                                         .key_binding(KeyBinding::new(gpui::KeyBinding::new(

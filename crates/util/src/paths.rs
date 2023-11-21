@@ -202,6 +202,14 @@ impl std::fmt::Display for PathMatcher {
     }
 }
 
+impl PartialEq for PathMatcher {
+    fn eq(&self, other: &Self) -> bool {
+        self.maybe_path.eq(&other.maybe_path)
+    }
+}
+
+impl Eq for PathMatcher {}
+
 impl PathMatcher {
     pub fn new(maybe_glob: &str) -> Result<Self, globset::Error> {
         Ok(PathMatcher {
@@ -211,7 +219,19 @@ impl PathMatcher {
     }
 
     pub fn is_match<P: AsRef<Path>>(&self, other: P) -> bool {
-        other.as_ref().starts_with(&self.maybe_path) || self.glob.is_match(other)
+        other.as_ref().starts_with(&self.maybe_path)
+            || self.glob.is_match(&other)
+            || self.check_with_end_separator(other.as_ref())
+    }
+
+    fn check_with_end_separator(&self, path: &Path) -> bool {
+        let path_str = path.to_string_lossy();
+        let separator = std::path::MAIN_SEPARATOR_STR;
+        if path_str.ends_with(separator) {
+            self.glob.is_match(path)
+        } else {
+            self.glob.is_match(path_str.to_string() + separator)
+        }
     }
 }
 
@@ -387,5 +407,15 @@ mod tests {
         // Hidden file, with extension
         let path = Path::new("/a/b/c/.eslintrc.js");
         assert_eq!(path.extension_or_hidden_file_name(), Some("js"));
+    }
+
+    #[test]
+    fn edge_of_glob() {
+        let path = Path::new("/work/node_modules");
+        let path_matcher = PathMatcher::new("**/node_modules/**").unwrap();
+        assert!(
+            path_matcher.is_match(&path),
+            "Path matcher {path_matcher} should match {path:?}"
+        );
     }
 }

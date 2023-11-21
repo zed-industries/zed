@@ -1,6 +1,6 @@
 pub mod file_associations;
 mod project_panel_settings;
-use settings::Settings;
+use settings::{Settings, SettingsStore};
 
 use db::kvp::KEY_VALUE_STORE;
 use editor::{scroll::autoscroll::Autoscroll, Cancel, Editor};
@@ -9,9 +9,9 @@ use file_associations::FileAssociations;
 use anyhow::{anyhow, Result};
 use gpui::{
     actions, div, px, uniform_list, Action, AppContext, AssetSource, AsyncWindowContext,
-    ClipboardItem, Component, Div, EventEmitter, FocusHandle, Focusable, FocusableView,
-    InteractiveComponent, Model, MouseButton, ParentComponent, Pixels, Point, PromptLevel, Render,
-    Stateful, StatefulInteractiveComponent, Styled, Task, UniformListScrollHandle, View,
+    ClipboardItem, Div, EventEmitter, FocusHandle, Focusable, FocusableView, InteractiveElement,
+    Model, MouseButton, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render,
+    RenderOnce, Stateful, StatefulInteractiveElement, Styled, Task, UniformListScrollHandle, View,
     ViewContext, VisualContext as _, WeakView, WindowContext,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
@@ -34,7 +34,7 @@ use ui::{h_stack, v_stack, IconElement, Label};
 use unicase::UniCase;
 use util::{maybe, ResultExt, TryFutureExt};
 use workspace::{
-    dock::{DockPosition, PanelEvent},
+    dock::{DockPosition, Panel, PanelEvent},
     Workspace,
 };
 
@@ -148,7 +148,6 @@ pub enum Event {
     SplitEntry {
         entry_id: ProjectEntryId,
     },
-    DockPositionChanged,
     Focus,
     NewSearchInDirectory {
         dir_entry: Entry,
@@ -200,10 +199,11 @@ impl ProjectPanel {
             let filename_editor = cx.build_view(|cx| Editor::single_line(cx));
 
             cx.subscribe(&filename_editor, |this, _, event, cx| match event {
-                editor::Event::BufferEdited | editor::Event::SelectionsChanged { .. } => {
+                editor::EditorEvent::BufferEdited
+                | editor::EditorEvent::SelectionsChanged { .. } => {
                     this.autoscroll(cx);
                 }
-                editor::Event::Blurred => {
+                editor::EditorEvent::Blurred => {
                     if this
                         .edit_state
                         .as_ref()
@@ -244,16 +244,16 @@ impl ProjectPanel {
             this.update_visible_entries(None, cx);
 
             // Update the dock position when the setting changes.
-            // todo!()
-            // let mut old_dock_position = this.position(cx);
-            // cx.observe_global::<SettingsStore, _>(move |this, cx| {
-            //     let new_dock_position = this.position(cx);
-            //     if new_dock_position != old_dock_position {
-            //         old_dock_position = new_dock_position;
-            //         cx.emit(Event::DockPositionChanged);
-            //     }
-            // })
-            // .detach();
+            let mut old_dock_position = this.position(cx);
+            ProjectPanelSettings::register(cx);
+            cx.observe_global::<SettingsStore>(move |this, cx| {
+                let new_dock_position = this.position(cx);
+                if new_dock_position != old_dock_position {
+                    old_dock_position = new_dock_position;
+                    cx.emit(PanelEvent::ChangePosition);
+                }
+            })
+            .detach();
 
             this
         });
@@ -1339,7 +1339,7 @@ impl ProjectPanel {
         editor: Option<&View<Editor>>,
         padding: Pixels,
         cx: &mut ViewContext<Self>,
-    ) -> Div<Self> {
+    ) -> Div {
         let show_editor = details.is_editing && !details.is_processing;
 
         let theme = cx.theme();
@@ -1378,7 +1378,7 @@ impl ProjectPanel {
         details: EntryDetails,
         // dragged_entry_destination: &mut Option<Arc<Path>>,
         cx: &mut ViewContext<Self>,
-    ) -> Stateful<Self, Div<Self>> {
+    ) -> Stateful<Div> {
         let kind = details.kind;
         let settings = ProjectPanelSettings::get_global(cx);
         const INDENT_SIZE: Pixels = px(16.0);
@@ -1396,7 +1396,7 @@ impl ProjectPanel {
                 this.bg(cx.theme().colors().element_selected)
             })
             .hover(|style| style.bg(cx.theme().colors().element_hover))
-            .on_click(move |this, event, cx| {
+            .on_click(cx.listener(move |this, event: &gpui::ClickEvent, cx| {
                 if !show_editor {
                     if kind.is_dir() {
                         this.toggle_expanded(entry_id, cx);
@@ -1408,10 +1408,13 @@ impl ProjectPanel {
                         }
                     }
                 }
-            })
-            .on_mouse_down(MouseButton::Right, move |this, event, cx| {
-                this.deploy_context_menu(event.position, entry_id, cx);
-            })
+            }))
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |this, event: &MouseDownEvent, cx| {
+                    this.deploy_context_menu(event.position, entry_id, cx);
+                }),
+            )
         // .on_drop::<ProjectEntryId>(|this, event, cx| {
         //     this.move_entry(
         //         *dragged_entry,
@@ -1424,9 +1427,9 @@ impl ProjectPanel {
 }
 
 impl Render for ProjectPanel {
-    type Element = Focusable<Self, Stateful<Self, Div<Self>>>;
+    type Element = Focusable<Stateful<Div>>;
 
-    fn render(&mut self, _cx: &mut gpui::ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> Self::Element {
         let has_worktree = self.visible_entries.len() != 0;
 
         if has_worktree {
@@ -1434,40 +1437,43 @@ impl Render for ProjectPanel {
                 .id("project-panel")
                 .size_full()
                 .key_context("ProjectPanel")
-                .on_action(Self::select_next)
-                .on_action(Self::select_prev)
-                .on_action(Self::expand_selected_entry)
-                .on_action(Self::collapse_selected_entry)
-                .on_action(Self::collapse_all_entries)
-                .on_action(Self::new_file)
-                .on_action(Self::new_directory)
-                .on_action(Self::rename)
-                .on_action(Self::delete)
-                .on_action(Self::confirm)
-                .on_action(Self::open_file)
-                .on_action(Self::cancel)
-                .on_action(Self::cut)
-                .on_action(Self::copy)
-                .on_action(Self::copy_path)
-                .on_action(Self::copy_relative_path)
-                .on_action(Self::paste)
-                .on_action(Self::reveal_in_finder)
-                .on_action(Self::open_in_terminal)
-                .on_action(Self::new_search_in_directory)
+                .on_action(cx.listener(Self::select_next))
+                .on_action(cx.listener(Self::select_prev))
+                .on_action(cx.listener(Self::expand_selected_entry))
+                .on_action(cx.listener(Self::collapse_selected_entry))
+                .on_action(cx.listener(Self::collapse_all_entries))
+                .on_action(cx.listener(Self::new_file))
+                .on_action(cx.listener(Self::new_directory))
+                .on_action(cx.listener(Self::rename))
+                .on_action(cx.listener(Self::delete))
+                .on_action(cx.listener(Self::confirm))
+                .on_action(cx.listener(Self::open_file))
+                .on_action(cx.listener(Self::cancel))
+                .on_action(cx.listener(Self::cut))
+                .on_action(cx.listener(Self::copy))
+                .on_action(cx.listener(Self::copy_path))
+                .on_action(cx.listener(Self::copy_relative_path))
+                .on_action(cx.listener(Self::paste))
+                .on_action(cx.listener(Self::reveal_in_finder))
+                .on_action(cx.listener(Self::open_in_terminal))
+                .on_action(cx.listener(Self::new_search_in_directory))
                 .track_focus(&self.focus_handle)
                 .child(
                     uniform_list(
+                        cx.view().clone(),
                         "entries",
                         self.visible_entries
                             .iter()
                             .map(|(_, worktree_entries)| worktree_entries.len())
                             .sum(),
-                        |this: &mut Self, range, cx| {
-                            let mut items = Vec::new();
-                            this.for_each_visible_entry(range, cx, |id, details, cx| {
-                                items.push(this.render_entry(id, details, cx));
-                            });
-                            items
+                        {
+                            |this, range, cx| {
+                                let mut items = Vec::new();
+                                this.for_each_visible_entry(range, cx, |id, details, cx| {
+                                    items.push(this.render_entry(id, details, cx));
+                                });
+                                items
+                            }
                         },
                     )
                     .size_full()
@@ -1485,7 +1491,7 @@ impl EventEmitter<Event> for ProjectPanel {}
 
 impl EventEmitter<PanelEvent> for ProjectPanel {}
 
-impl workspace::dock::Panel for ProjectPanel {
+impl Panel for ProjectPanel {
     fn position(&self, cx: &WindowContext) -> DockPosition {
         match ProjectPanelSettings::get_global(cx).dock {
             ProjectPanelDockPosition::Left => DockPosition::Left,
@@ -1571,7 +1577,7 @@ mod tests {
     use super::*;
     use gpui::{TestAppContext, View, VisualTestContext, WindowHandle};
     use pretty_assertions::assert_eq;
-    use project::FakeFs;
+    use project::{project_settings::ProjectSettings, FakeFs};
     use serde_json::json;
     use settings::SettingsStore;
     use std::{
@@ -1668,6 +1674,124 @@ mod tests {
                 "    > C",
                 "      .dockerignore",
                 "v root2",
+            ]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_exclusions_in_visible_list(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings::<ProjectSettings>(cx, |project_settings| {
+                    project_settings.file_scan_exclusions =
+                        Some(vec!["**/.git".to_string(), "**/4/**".to_string()]);
+                });
+            });
+        });
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/root1",
+            json!({
+                ".dockerignore": "",
+                ".git": {
+                    "HEAD": "",
+                },
+                "a": {
+                    "0": { "q": "", "r": "", "s": "" },
+                    "1": { "t": "", "u": "" },
+                    "2": { "v": "", "w": "", "x": "", "y": "" },
+                },
+                "b": {
+                    "3": { "Q": "" },
+                    "4": { "R": "", "S": "", "T": "", "U": "" },
+                },
+                "C": {
+                    "5": {},
+                    "6": { "V": "", "W": "" },
+                    "7": { "X": "" },
+                    "8": { "Y": {}, "Z": "" }
+                }
+            }),
+        )
+        .await;
+        fs.insert_tree(
+            "/root2",
+            json!({
+                "d": {
+                    "4": ""
+                },
+                "e": {}
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
+        let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let panel = workspace
+            .update(cx, |workspace, cx| ProjectPanel::new(workspace, cx))
+            .unwrap();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..50, cx),
+            &[
+                "v root1",
+                "    > a",
+                "    > b",
+                "    > C",
+                "      .dockerignore",
+                "v root2",
+                "    > d",
+                "    > e",
+            ]
+        );
+
+        toggle_expand_dir(&panel, "root1/b", cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..50, cx),
+            &[
+                "v root1",
+                "    > a",
+                "    v b  <== selected",
+                "        > 3",
+                "    > C",
+                "      .dockerignore",
+                "v root2",
+                "    > d",
+                "    > e",
+            ]
+        );
+
+        toggle_expand_dir(&panel, "root2/d", cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..50, cx),
+            &[
+                "v root1",
+                "    > a",
+                "    v b",
+                "        > 3",
+                "    > C",
+                "      .dockerignore",
+                "v root2",
+                "    v d  <== selected",
+                "    > e",
+            ]
+        );
+
+        toggle_expand_dir(&panel, "root2/e", cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..50, cx),
+            &[
+                "v root1",
+                "    > a",
+                "    v b",
+                "        > 3",
+                "    > C",
+                "      .dockerignore",
+                "v root2",
+                "    v d",
+                "    v e  <== selected",
             ]
         );
     }
@@ -2792,6 +2916,12 @@ mod tests {
             workspace::init_settings(cx);
             client::init_settings(cx);
             Project::init_settings(cx);
+
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings::<ProjectSettings>(cx, |project_settings| {
+                    project_settings.file_scan_exclusions = Some(Vec::new());
+                });
+            });
         });
     }
 

@@ -170,6 +170,15 @@ osx_minimum_system_version = "10.15.7"
 osx_info_plist_exts = ["resources/info/*"]
 osx_url_schemes = ["zed-dev"]
 
+[package.metadata.bundle-nightly]
+# TODO kb different icon?
+icon = ["resources/app-icon-preview@2x.png", "resources/app-icon-preview.png"]
+identifier = "dev.zed.Zed-Nightly"
+name = "Zed Nightly"
+osx_minimum_system_version = "10.15.7"
+osx_info_plist_exts = ["resources/info/*"]
+osx_url_schemes = ["zed-nightly"]
+
 [package.metadata.bundle-preview]
 icon = ["resources/app-icon-preview@2x.png", "resources/app-icon-preview.png"]
 identifier = "dev.zed.Zed-Preview"
@@ -177,7 +186,6 @@ name = "Zed Preview"
 osx_minimum_system_version = "10.15.7"
 osx_info_plist_exts = ["resources/info/*"]
 osx_url_schemes = ["zed-preview"]
-
 
 [package.metadata.bundle-stable]
 icon = ["resources/app-icon@2x.png", "resources/app-icon.png"]

@@ -14,7 +14,7 @@ use smallvec::SmallVec;
 pub use test_context::*;
 
 use crate::{
-    current_platform, image_cache::ImageCache, Action, ActionRegistry, AnyBox, AnyView,
+    current_platform, image_cache::ImageCache, Action, ActionRegistry, Any, AnyView,
     AnyWindowHandle, AppMetadata, AssetSource, BackgroundExecutor, ClipboardItem, Context,
     DispatchPhase, DisplayId, Entity, EventEmitter, FocusEvent, FocusHandle, FocusId,
     ForegroundExecutor, KeyBinding, Keymap, LayoutId, PathPromptOptions, Pixels, Platform,
@@ -28,7 +28,7 @@ use futures::{channel::oneshot, future::LocalBoxFuture, Future};
 use parking_lot::Mutex;
 use slotmap::SlotMap;
 use std::{
-    any::{type_name, Any, TypeId},
+    any::{type_name, TypeId},
     cell::{Ref, RefCell, RefMut},
     marker::PhantomData,
     mem,
@@ -194,7 +194,7 @@ pub struct AppContext {
     asset_source: Arc<dyn AssetSource>,
     pub(crate) image_cache: ImageCache,
     pub(crate) text_style_stack: Vec<TextStyleRefinement>,
-    pub(crate) globals_by_type: HashMap<TypeId, AnyBox>,
+    pub(crate) globals_by_type: HashMap<TypeId, Box<dyn Any>>,
     pub(crate) entities: EntityMap,
     pub(crate) new_view_observers: SubscriberSet<TypeId, NewViewListener>,
     pub(crate) windows: SlotMap<WindowId, Option<Window>>,
@@ -424,7 +424,7 @@ impl AppContext {
     /// Opens a new window with the given option and the root view returned by the given function.
     /// The function is invoked with a `WindowContext`, which can be used to interact with window-specific
     /// functionality.
-    pub fn open_window<V: Render>(
+    pub fn open_window<V: 'static + Render>(
         &mut self,
         options: crate::WindowOptions,
         build_root_view: impl FnOnce(&mut WindowContext) -> View<V>,
@@ -490,6 +490,10 @@ impl AppContext {
     /// Directs the platform's default browser to open the given URL.
     pub fn open_url(&self, url: &str) {
         self.platform.open_url(url);
+    }
+
+    pub fn app_path(&self) -> Result<PathBuf> {
+        self.platform.app_path()
     }
 
     pub fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf> {
@@ -1100,12 +1104,12 @@ pub(crate) enum Effect {
 
 /// Wraps a global variable value during `update_global` while the value has been moved to the stack.
 pub(crate) struct GlobalLease<G: 'static> {
-    global: AnyBox,
+    global: Box<dyn Any>,
     global_type: PhantomData<G>,
 }
 
 impl<G: 'static> GlobalLease<G> {
-    fn new(global: AnyBox) -> Self {
+    fn new(global: Box<dyn Any>) -> Self {
         GlobalLease {
             global,
             global_type: PhantomData,

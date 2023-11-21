@@ -1,4 +1,4 @@
-use gpui::{px, rgb, Div, Hsla, Render};
+use gpui::{px, rgb, Div, Hsla, Render, RenderOnce};
 use ui::prelude::*;
 
 use crate::story::Story;
@@ -7,7 +7,7 @@ use crate::story::Story;
 /// [https://developer.mozilla.org/en-US/docs/Web/CSS/z-index](https://developer.mozilla.org/en-US/docs/Web/CSS/z-index).
 pub struct ZIndexStory;
 
-impl Render for ZIndexStory {
+impl Render<Self> for ZIndexStory {
     type Element = Div<Self>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
@@ -79,17 +79,15 @@ trait Styles: Styled + Sized {
 
 impl<V: 'static> Styles for Div<V> {}
 
-#[derive(Component)]
+#[derive(RenderOnce)]
 struct ZIndexExample {
     z_index: u32,
 }
 
-impl ZIndexExample {
-    pub fn new(z_index: u32) -> Self {
-        Self { z_index }
-    }
+impl<V: 'static> Component<V> for ZIndexExample {
+    type Rendered = Div<V>;
 
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
         div()
             .relative()
             .size_full()
@@ -109,14 +107,14 @@ impl ZIndexExample {
                     // HACK: Simulate `text-align: center`.
                     .pl(px(24.))
                     .z_index(self.z_index)
-                    .child(format!(
+                    .child(SharedString::from(format!(
                         "z-index: {}",
                         if self.z_index == 0 {
                             "auto".to_string()
                         } else {
                             self.z_index.to_string()
                         }
-                    )),
+                    ))),
             )
             // Blue blocks.
             .child(
@@ -171,5 +169,11 @@ impl ZIndexExample {
                     .left(px(60.))
                     .child("z-index: auto"),
             )
+    }
+}
+
+impl ZIndexExample {
+    pub fn new(z_index: u32) -> Self {
+        Self { z_index }
     }
 }

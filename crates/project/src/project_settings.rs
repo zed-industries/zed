@@ -10,6 +10,8 @@ pub struct ProjectSettings {
     pub lsp: HashMap<Arc<str>, LspSettings>,
     #[serde(default)]
     pub git: GitSettings,
+    #[serde(default)]
+    pub file_scan_exclusions: Option<Vec<String>>,
 }
 
 #[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]

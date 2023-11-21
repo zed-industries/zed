@@ -77,6 +77,7 @@ pub fn handle_settings_file_changes(
     });
     cx.spawn(move |mut cx| async move {
         while let Some(user_settings_content) = user_settings_file_rx.next().await {
+            eprintln!("settings file changed");
             let result = cx.update_global(|store: &mut SettingsStore, cx| {
                 store
                     .set_user_settings(&user_settings_content, cx)

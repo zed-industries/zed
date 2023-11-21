@@ -72,7 +72,7 @@ impl ModalLayer {
 }
 
 impl Render for ModalLayer {
-    type Element = Div<Self>;
+    type Element = Div;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         let Some(active_modal) = &self.active_modal else {
@@ -97,11 +97,11 @@ impl Render for ModalLayer {
                         h_stack()
                             // needed to prevent mouse events leaking to the
                             // UI below. // todo! for gpui3.
-                            .on_any_mouse_down(|_, _, cx| cx.stop_propagation())
-                            .on_any_mouse_up(|_, _, cx| cx.stop_propagation())
-                            .on_mouse_down_out(|this: &mut Self, event, cx| {
+                            .on_any_mouse_down(|_, cx| cx.stop_propagation())
+                            .on_any_mouse_up(|_, cx| cx.stop_propagation())
+                            .on_mouse_down_out(cx.listener(|this, _, cx| {
                                 this.hide_modal(cx);
-                            })
+                            }))
                             .child(active_modal.modal.clone()),
                     ),
             )

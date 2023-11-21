@@ -3048,7 +3048,7 @@ fn test_move_line_up_down_with_blocks(cx: &mut TestAppContext) {
                 position: snapshot.anchor_after(Point::new(2, 0)),
                 disposition: BlockDisposition::Below,
                 height: 1,
-                render: Arc::new(|_| div().render()),
+                render: Arc::new(|_| div().into_any()),
             }],
             Some(Autoscroll::fit()),
             cx,
@@ -3853,7 +3853,7 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut gpui::TestAppContext) {
     let buffer = cx.build_model(|cx| MultiBuffer::singleton(buffer, cx));
     let (view, cx) = cx.add_window_view(|cx| build_editor(buffer, cx));
 
-    view.condition::<crate::Event>(&cx, |view, cx| !view.buffer.read(cx).is_parsing(cx))
+    view.condition::<crate::EditorEvent>(&cx, |view, cx| !view.buffer.read(cx).is_parsing(cx))
         .await;
 
     view.update(cx, |view, cx| {
@@ -4019,7 +4019,7 @@ async fn test_autoindent_selections(cx: &mut gpui::TestAppContext) {
     let buffer = cx.build_model(|cx| MultiBuffer::singleton(buffer, cx));
     let (editor, cx) = cx.add_window_view(|cx| build_editor(buffer, cx));
     editor
-        .condition::<crate::Event>(cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
+        .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
         .await;
 
     editor.update(cx, |editor, cx| {
@@ -4583,7 +4583,7 @@ async fn test_surround_with_pair(cx: &mut gpui::TestAppContext) {
     });
     let buffer = cx.build_model(|cx| MultiBuffer::singleton(buffer, cx));
     let (view, cx) = cx.add_window_view(|cx| build_editor(buffer, cx));
-    view.condition::<crate::Event>(cx, |view, cx| !view.buffer.read(cx).is_parsing(cx))
+    view.condition::<crate::EditorEvent>(cx, |view, cx| !view.buffer.read(cx).is_parsing(cx))
         .await;
 
     view.update(cx, |view, cx| {
@@ -4734,7 +4734,7 @@ async fn test_delete_autoclose_pair(cx: &mut gpui::TestAppContext) {
     let buffer = cx.build_model(|cx| MultiBuffer::singleton(buffer, cx));
     let (editor, cx) = cx.add_window_view(|cx| build_editor(buffer, cx));
     editor
-        .condition::<crate::Event>(cx, |view, cx| !view.buffer.read(cx).is_parsing(cx))
+        .condition::<crate::EditorEvent>(cx, |view, cx| !view.buffer.read(cx).is_parsing(cx))
         .await;
 
     editor.update(cx, |editor, cx| {
@@ -6295,7 +6295,7 @@ async fn test_extra_newline_insertion(cx: &mut gpui::TestAppContext) {
     });
     let buffer = cx.build_model(|cx| MultiBuffer::singleton(buffer, cx));
     let (view, cx) = cx.add_window_view(|cx| build_editor(buffer, cx));
-    view.condition::<crate::Event>(cx, |view, cx| !view.buffer.read(cx).is_parsing(cx))
+    view.condition::<crate::EditorEvent>(cx, |view, cx| !view.buffer.read(cx).is_parsing(cx))
         .await;
 
     view.update(cx, |view, cx| {

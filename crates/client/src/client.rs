@@ -987,9 +987,17 @@ impl Client {
         self.establish_websocket_connection(credentials, cx)
     }
 
-    async fn get_rpc_url(http: Arc<dyn HttpClient>, is_preview: bool) -> Result<Url> {
-        let preview_param = if is_preview { "?preview=1" } else { "" };
-        let url = format!("{}/rpc{preview_param}", *ZED_SERVER_URL);
+    async fn get_rpc_url(
+        http: Arc<dyn HttpClient>,
+        release_channel: Option<ReleaseChannel>,
+    ) -> Result<Url> {
+        let mut url = format!("{}/rpc", *ZED_SERVER_URL);
+        if let Some(preview_param) =
+            release_channel.and_then(|channel| channel.release_query_param())
+        {
+            url += "?";
+            url += preview_param;
+        }
         let response = http.get(&url, Default::default(), false).await?;
 
         // Normally, ZED_SERVER_URL is set to the URL of zed.dev website.
@@ -1024,11 +1032,11 @@ impl Client {
         credentials: &Credentials,
         cx: &AsyncAppContext,
     ) -> Task<Result<Connection, EstablishConnectionError>> {
-        let use_preview_server = cx.read(|cx| {
+        let release_channel = cx.read(|cx| {
             if cx.has_global::<ReleaseChannel>() {
-                *cx.global::<ReleaseChannel>() != ReleaseChannel::Stable
+                Some(*cx.global::<ReleaseChannel>())
             } else {
-                false
+                None
             }
         });
 
@@ -1041,7 +1049,7 @@ impl Client {
 
         let http = self.http.clone();
         cx.background().spawn(async move {
-            let mut rpc_url = Self::get_rpc_url(http, use_preview_server).await?;
+            let mut rpc_url = Self::get_rpc_url(http, release_channel).await?;
             let rpc_host = rpc_url
                 .host_str()
                 .zip(rpc_url.port_or_known_default())
@@ -1191,7 +1199,7 @@ impl Client {
 
         // Use the collab server's admin API to retrieve the id
         // of the impersonated user.
-        let mut url = Self::get_rpc_url(http.clone(), false).await?;
+        let mut url = Self::get_rpc_url(http.clone(), None).await?;
         url.set_path("/user");
         url.set_query(Some(&format!("github_login={login}")));
         let request = Request::get(url.as_str())

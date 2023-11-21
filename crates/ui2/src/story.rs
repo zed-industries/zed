@@ -5,7 +5,7 @@ use crate::prelude::*;
 pub struct Story {}
 
 impl Story {
-    pub fn container<V: 'static>(cx: &mut ViewContext<V>) -> Div<V> {
+    pub fn container(cx: &mut gpui::WindowContext) -> Div {
         div()
             .size_full()
             .flex()
@@ -15,23 +15,23 @@ impl Story {
             .bg(cx.theme().colors().background)
     }
 
-    pub fn title<V: 'static>(cx: &mut ViewContext<V>, title: &str) -> impl Component<V> {
+    pub fn title(cx: &mut WindowContext, title: impl Into<SharedString>) -> impl Element {
         div()
             .text_xl()
             .text_color(cx.theme().colors().text)
-            .child(title.to_owned())
+            .child(title.into())
     }
 
-    pub fn title_for<V: 'static, T>(cx: &mut ViewContext<V>) -> impl Component<V> {
+    pub fn title_for<T>(cx: &mut WindowContext) -> impl Element {
         Self::title(cx, std::any::type_name::<T>())
     }
 
-    pub fn label<V: 'static>(cx: &mut ViewContext<V>, label: &str) -> impl Component<V> {
+    pub fn label(cx: &mut WindowContext, label: impl Into<SharedString>) -> impl Element {
         div()
             .mt_4()
             .mb_2()
             .text_xs()
             .text_color(cx.theme().colors().text)
-            .child(label.to_owned())
+            .child(label.into())
     }
 }

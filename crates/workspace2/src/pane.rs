@@ -7,9 +7,9 @@ use crate::{
 use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
 use gpui::{
-    actions, prelude::*, Action, AppContext, AsyncWindowContext, Component, Div, EntityId,
-    EventEmitter, FocusHandle, Focusable, FocusableView, Model, Pixels, Point, PromptLevel, Render,
-    Task, View, ViewContext, VisualContext, WeakView, WindowContext,
+    actions, prelude::*, Action, AppContext, AsyncWindowContext, Div, EntityId, EventEmitter,
+    FocusHandle, Focusable, FocusableView, Model, Pixels, Point, PromptLevel, Render, Task, View,
+    ViewContext, VisualContext, WeakView, WindowContext,
 };
 use parking_lot::Mutex;
 use project2::{Project, ProjectEntryId, ProjectPath};
@@ -24,8 +24,9 @@ use std::{
         Arc,
     },
 };
+
 use ui::v_stack;
-use ui::{prelude::*, Icon, IconButton, IconElement, TextColor, Tooltip};
+use ui::{prelude::*, Color, Icon, IconButton, IconElement, Tooltip};
 use util::truncate_and_remove_front;
 
 #[derive(PartialEq, Clone, Copy, Deserialize, Debug)]
@@ -1343,7 +1344,7 @@ impl Pane {
         item: &Box<dyn ItemHandle>,
         detail: usize,
         cx: &mut ViewContext<'_, Pane>,
-    ) -> impl Component<Self> {
+    ) -> impl RenderOnce {
         let label = item.tab_content(Some(detail), cx);
         let close_icon = || {
             let id = item.item_id();
@@ -1352,12 +1353,14 @@ impl Pane {
                 .id(item.item_id())
                 .invisible()
                 .group_hover("", |style| style.visible())
-                .child(IconButton::new("close_tab", Icon::Close).on_click(
-                    move |pane: &mut Self, cx| {
-                        pane.close_item_by_id(id, SaveIntent::Close, cx)
-                            .detach_and_log_err(cx);
-                    },
-                ))
+                .child(
+                    IconButton::new("close_tab", Icon::Close).on_click(cx.listener(
+                        move |pane, _, cx| {
+                            pane.close_item_by_id(id, SaveIntent::Close, cx)
+                                .detach_and_log_err(cx);
+                        },
+                    )),
+                )
         };
 
         let (text_color, tab_bg, tab_hover_bg, tab_active_bg) = match ix == self.active_item_index {
@@ -1382,9 +1385,9 @@ impl Pane {
             .id(item.item_id())
             .cursor_pointer()
             .when_some(item.tab_tooltip_text(cx), |div, text| {
-                div.tooltip(move |_, cx| cx.build_view(|cx| Tooltip::new(text.clone())).into())
+                div.tooltip(move |cx| cx.build_view(|cx| Tooltip::new(text.clone())).into())
             })
-            .on_click(move |v: &mut Self, e, cx| v.activate_item(ix, true, true, cx))
+            .on_click(cx.listener(move |v: &mut Self, e, cx| v.activate_item(ix, true, true, cx)))
             // .on_drag(move |pane, cx| pane.render_tab(ix, item.boxed_clone(), detail, cx))
             // .drag_over::<DraggedTab>(|d| d.bg(cx.theme().colors().element_drop_target))
             // .on_drop(|_view, state: View<DraggedTab>, cx| {
@@ -1422,12 +1425,12 @@ impl Pane {
                             .then(|| {
                                 IconElement::new(Icon::ExclamationTriangle)
                                     .size(ui::IconSize::Small)
-                                    .color(TextColor::Warning)
+                                    .color(Color::Warning)
                             })
                             .or(item.is_dirty(cx).then(|| {
                                 IconElement::new(Icon::ExclamationTriangle)
                                     .size(ui::IconSize::Small)
-                                    .color(TextColor::Info)
+                                    .color(Color::Info)
                             })),
                     )
                     .children((!close_right).then(|| close_icon()))
@@ -1436,7 +1439,7 @@ impl Pane {
             )
     }
 
-    fn render_tab_bar(&mut self, cx: &mut ViewContext<'_, Pane>) -> impl Component<Self> {
+    fn render_tab_bar(&mut self, cx: &mut ViewContext<'_, Pane>) -> impl RenderOnce {
         div()
             .group("tab_bar")
             .id("tab_bar")
@@ -1480,15 +1483,10 @@ impl Pane {
             // Right Side
             .child(
                 div()
-                    // We only use absolute here since we don't
-                    // have opacity or `hidden()` yet
-                    .absolute()
-                    .neg_top_7()
                     .px_1()
                     .flex()
                     .flex_none()
                     .gap_2()
-                    .group_hover("tab_bar", |this| this.top_0())
                     // Nav Buttons
                     .child(
                         div()
@@ -1896,16 +1894,24 @@ impl FocusableView for Pane {
 }
 
 impl Render for Pane {
-    type Element = Focusable<Self, Div<Self>>;
+    type Element = Focusable<Div>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         v_stack()
             .key_context("Pane")
             .track_focus(&self.focus_handle)
-            .on_action(|pane: &mut Pane, _: &SplitLeft, cx| pane.split(SplitDirection::Left, cx))
-            .on_action(|pane: &mut Pane, _: &SplitUp, cx| pane.split(SplitDirection::Up, cx))
-            .on_action(|pane: &mut Pane, _: &SplitRight, cx| pane.split(SplitDirection::Right, cx))
-            .on_action(|pane: &mut Pane, _: &SplitDown, cx| pane.split(SplitDirection::Down, cx))
+            .on_action(cx.listener(|pane: &mut Pane, _: &SplitLeft, cx| {
+                pane.split(SplitDirection::Left, cx)
+            }))
+            .on_action(
+                cx.listener(|pane: &mut Pane, _: &SplitUp, cx| pane.split(SplitDirection::Up, cx)),
+            )
+            .on_action(cx.listener(|pane: &mut Pane, _: &SplitRight, cx| {
+                pane.split(SplitDirection::Right, cx)
+            }))
+            .on_action(cx.listener(|pane: &mut Pane, _: &SplitDown, cx| {
+                pane.split(SplitDirection::Down, cx)
+            }))
             //     cx.add_action(Pane::toggle_zoom);
             //     cx.add_action(|pane: &mut Pane, action: &ActivateItem, cx| {
             //         pane.activate_item(action.0, true, true, cx);
@@ -1926,14 +1932,16 @@ impl Render for Pane {
             //     cx.add_async_action(Pane::close_items_to_the_right);
             //     cx.add_async_action(Pane::close_all_items);
             .size_full()
-            .on_action(|pane: &mut Self, action: &CloseActiveItem, cx| {
-                pane.close_active_item(action, cx)
-                    .map(|task| task.detach_and_log_err(cx));
-            })
+            .on_action(
+                cx.listener(|pane: &mut Self, action: &CloseActiveItem, cx| {
+                    pane.close_active_item(action, cx)
+                        .map(|task| task.detach_and_log_err(cx));
+                }),
+            )
             .child(self.render_tab_bar(cx))
-            .child(div() /* todo!(toolbar) */)
+            .child(self.toolbar.clone())
             .child(if let Some(item) = self.active_item() {
-                div().flex_1().child(item.to_any())
+                div().flex().flex_1().child(item.to_any())
             } else {
                 // todo!()
                 div().child("Empty Pane")
@@ -2950,7 +2958,7 @@ struct DraggedTab {
 }
 
 impl Render for DraggedTab {
-    type Element = Div<Self>;
+    type Element = Div;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         div().w_8().h_4().bg(gpui::red())

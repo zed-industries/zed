@@ -1,6 +1,6 @@
 use gpui::Hsla;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct PlayerColor {
     pub cursor: Hsla,
     pub background: Hsla,
@@ -143,12 +143,12 @@ use crate::{amber, blue, jade, lime, orange, pink, purple, red};
 mod stories {
     use super::*;
     use crate::{ActiveTheme, Story};
-    use gpui::{div, img, px, Div, ParentComponent, Render, Styled, ViewContext};
+    use gpui::{div, img, px, Div, ParentElement, Render, Styled, ViewContext};
 
     pub struct PlayerStory;
 
     impl Render for PlayerStory {
-        type Element = Div<Self>;
+        type Element = Div;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             Story::container(cx).child(
@@ -156,7 +156,7 @@ mod stories {
                     .flex()
                     .flex_col()
                     .gap_4()
-                    .child(Story::title_for::<_, PlayerColors>(cx))
+                    .child(Story::title_for::<PlayerColors>(cx))
                     .child(Story::label(cx, "Player Colors"))
                     .child(
                         div()

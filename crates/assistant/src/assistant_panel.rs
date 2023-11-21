@@ -15,7 +15,7 @@ use ai::{
 use ai::prompts::repository_context::PromptCodeSnippet;
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Local};
-use client::{telemetry::AssistantKind, ClickhouseEvent, TelemetrySettings};
+use client::{telemetry::AssistantKind, TelemetrySettings};
 use collections::{hash_map, HashMap, HashSet, VecDeque};
 use editor::{
     display_map::{
@@ -3803,12 +3803,12 @@ fn report_assistant_event(
         .default_open_ai_model
         .clone();
 
-    let event = ClickhouseEvent::Assistant {
-        conversation_id,
-        kind: assistant_kind,
-        model: model.full_name(),
-    };
     let telemetry_settings = *settings::get::<TelemetrySettings>(cx);
 
-    telemetry.report_clickhouse_event(event, telemetry_settings)
+    telemetry.report_assistant_event(
+        telemetry_settings,
+        conversation_id,
+        assistant_kind,
+        model.full_name(),
+    )
 }

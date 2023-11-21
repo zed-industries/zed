@@ -1,0 +1,40 @@
+[package]
+name = "search2"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+path = "src/search.rs"
+doctest = false
+
+[dependencies]
+bitflags = "1"
+collections = { path = "../collections" }
+editor = { package = "editor2", path = "../editor2" }
+gpui = { package = "gpui2", path = "../gpui2" }
+language = { package = "language2", path = "../language2" }
+menu = { package = "menu2", path = "../menu2" }
+project = { package = "project2", path = "../project2" }
+settings = { package = "settings2", path = "../settings2" }
+theme = { package = "theme2", path = "../theme2" }
+util = { path = "../util" }
+ui = {package = "ui2", path = "../ui2"}
+workspace = { package = "workspace2", path = "../workspace2" }
+#semantic_index = { path = "../semantic_index" }
+anyhow.workspace = true
+futures.workspace = true
+log.workspace = true
+postage.workspace = true
+serde.workspace = true
+serde_derive.workspace = true
+smallvec.workspace = true
+smol.workspace = true
+serde_json.workspace = true
+[dev-dependencies]
+client = { package = "client2", path = "../client2", features = ["test-support"] }
+editor = { package = "editor2", path = "../editor2", features = ["test-support"] }
+gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"] }
+
+workspace = { package = "workspace2", path = "../workspace2", features = ["test-support"] }
+unindent.workspace = true

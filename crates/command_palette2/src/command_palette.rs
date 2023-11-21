@@ -1,8 +1,8 @@
 use collections::{CommandPaletteFilter, HashMap};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, div, prelude::*, Action, AppContext, Component, Dismiss, Div, FocusHandle, Keystroke,
-    ManagedView, ParentComponent, Render, Styled, View, ViewContext, VisualContext, WeakView,
+    actions, div, prelude::*, Action, AppContext, Div, EventEmitter, FocusHandle, FocusableView,
+    Keystroke, Manager, ParentElement, Render, Styled, View, ViewContext, VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};
 use std::{
@@ -68,14 +68,16 @@ impl CommandPalette {
     }
 }
 
-impl ManagedView for CommandPalette {
+impl EventEmitter<Manager> for CommandPalette {}
+
+impl FocusableView for CommandPalette {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
         self.picker.focus_handle(cx)
     }
 }
 
 impl Render for CommandPalette {
-    type Element = Div<Self>;
+    type Element = Div;
 
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
         v_stack().w_96().child(self.picker.clone())
@@ -114,6 +116,7 @@ impl Clone for Command {
         }
     }
 }
+
 /// Hit count for each command in the palette.
 /// We only account for commands triggered directly via command palette and not by e.g. keystrokes because
 /// if an user already knows a keystroke for a command, they are unlikely to use a command palette to look for it.
@@ -137,7 +140,7 @@ impl CommandPaletteDelegate {
 }
 
 impl PickerDelegate for CommandPaletteDelegate {
-    type ListItem = Div<Picker<Self>>;
+    type ListItem = Div;
 
     fn placeholder_text(&self) -> Arc<str> {
         "Execute a command...".into()
@@ -265,7 +268,7 @@ impl PickerDelegate for CommandPaletteDelegate {
 
     fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>) {
         self.command_palette
-            .update(cx, |_, cx| cx.emit(Dismiss))
+            .update(cx, |_, cx| cx.emit(Manager::Dismiss))
             .log_err();
     }
 

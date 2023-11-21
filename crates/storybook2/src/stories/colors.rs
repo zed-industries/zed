@@ -6,7 +6,7 @@ use ui::prelude::*;
 pub struct ColorsStory;
 
 impl Render for ColorsStory {
-    type Element = Div<Self>;
+    type Element = Div;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         let color_scales = default_color_scales();
@@ -28,7 +28,7 @@ impl Render for ColorsStory {
                                 div()
                                     .w(px(75.))
                                     .line_height(px(24.))
-                                    .child(scale.name().to_string()),
+                                    .child(scale.name().clone()),
                             )
                             .child(
                                 div()

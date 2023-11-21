@@ -9,6 +9,8 @@ local_arch=false
 local_only=false
 overwrite_local_app=false
 bundle_name=""
+zed_crate="zed"
+binary_name="Zed"
 
 # This must match the team in the provsiioning profile.
 APPLE_NOTORIZATION_TEAM="MQ55VZLNZQ"
@@ -25,13 +27,11 @@ Options:
   -o    Open the resulting DMG or the app itself in local mode.
   -f    Overwrite the local app bundle if it exists.
   -h    Display this help and exit.
+  -2    Build zed 2 instead of zed 1.
   "
 }
 
-# If -o option is specified, the folder of the resulting dmg will be opened in finder
-# If -d is specified, Zed will be compiled in debug mode and the application's path printed
-# If -od or -do is specified Zed will be bundled in debug and the application will be run.
-while getopts 'dlfoh' flag
+while getopts 'dlfoh2' flag
 do
     case "${flag}" in
         o) open_result=true;;
@@ -39,7 +39,6 @@ do
             export CARGO_INCREMENTAL=true
             export CARGO_BUNDLE_SKIP_BUILD=true
             build_flag="";
-            local_arch=true
             target_dir="debug"
             ;;
         l)
@@ -51,6 +50,10 @@ do
             target_dir="debug"
             ;;
         f) overwrite_local_app=true;;
+        2)
+            zed_crate="zed2"
+            binary_name="Zed2"
+            ;;
         h)
            help_info
            exit 0
@@ -83,16 +86,19 @@ local_target_triple=${host_line#*: }
 
 if [ "$local_arch" = true ]; then
     echo "Building for local target only."
-    cargo build ${build_flag} --package zed
+    cargo build ${build_flag} --package ${zed_crate}
     cargo build ${build_flag} --package cli
 else
     echo "Compiling zed binaries"
-    cargo build ${build_flag} --package zed --package cli --target aarch64-apple-darwin --target x86_64-apple-darwin
+    cargo build ${build_flag} --package ${zed_crate} --package cli --target aarch64-apple-darwin --target x86_64-apple-darwin
 fi
 
 echo "Creating application bundle"
 pushd crates/zed
 channel=$(<RELEASE_CHANNEL)
+popd
+
+pushd crates/${zed_crate}
 cp Cargo.toml Cargo.toml.backup
 sed \
     -i .backup \
@@ -113,9 +119,9 @@ if [ "$local_arch" = false ]; then
     echo "Creating fat binaries"
     lipo \
         -create \
-        target/{x86_64-apple-darwin,aarch64-apple-darwin}/${target_dir}/Zed \
+        target/{x86_64-apple-darwin,aarch64-apple-darwin}/${target_dir}/${binary_name} \
         -output \
-        "${app_path}/Contents/MacOS/zed"
+        "${app_path}/Contents/MacOS/${zed_crate}"
     lipo \
         -create \
         target/{x86_64-apple-darwin,aarch64-apple-darwin}/${target_dir}/cli \
@@ -131,7 +137,8 @@ else
     cp -R target/${target_dir}/WebRTC.framework "${app_path}/Contents/Frameworks/"
 fi
 
-cp crates/zed/contents/$channel/embedded.provisionprofile "${app_path}/Contents/"
+#todo!(The app identifier has been set to 'Dev', but the channel is nightly, RATIONALIZE ALL OF THIS MESS)
+cp crates/${zed_crate}/contents/$channel/embedded.provisionprofile "${app_path}/Contents/"
 
 if [[ -n $MACOS_CERTIFICATE && -n $MACOS_CERTIFICATE_PASSWORD && -n $APPLE_NOTARIZATION_USERNAME && -n $APPLE_NOTARIZATION_PASSWORD ]]; then
     echo "Signing bundle with Apple-issued certificate"
@@ -145,9 +152,14 @@ if [[ -n $MACOS_CERTIFICATE && -n $MACOS_CERTIFICATE_PASSWORD && -n $APPLE_NOTAR
 
     # sequence of codesign commands modeled after this example: https://developer.apple.com/forums/thread/701514
     /usr/bin/codesign --deep --force --timestamp --sign "Zed Industries, Inc." "${app_path}/Contents/Frameworks/WebRTC.framework" -v
-    /usr/bin/codesign --deep --force --timestamp --options runtime --sign "Zed Industries, Inc." "${app_path}/Contents/MacOS/cli" -v
-    /usr/bin/codesign --deep --force --timestamp --options runtime --entitlements crates/zed/resources/zed.entitlements --sign "Zed Industries, Inc." "${app_path}/Contents/MacOS/zed" -v
-    /usr/bin/codesign --force --timestamp --options runtime --entitlements crates/zed/resources/zed.entitlements --sign "Zed Industries, Inc." "${app_path}" -v
+
+    # todo!(restore cli to zed2)
+    if [[ "$zed_crate" == "zed" ]]; then
+        /usr/bin/codesign --deep --force --timestamp --options runtime --sign "Zed Industries, Inc." "${app_path}/Contents/MacOS/cli" -v
+    fi
+
+    /usr/bin/codesign --deep --force --timestamp --options runtime --entitlements crates/${zed_crate}/resources/zed.entitlements --sign "Zed Industries, Inc." "${app_path}/Contents/MacOS/${zed_crate}" -v
+    /usr/bin/codesign --force --timestamp --options runtime --entitlements crates/${zed_crate}/resources/zed.entitlements --sign "Zed Industries, Inc." "${app_path}" -v
 
     security default-keychain -s login.keychain
 else
@@ -166,7 +178,7 @@ else
     # - get a signing key for the MQ55VZLNZQ team from Nathan.
     # - create your own signing key, and update references to MQ55VZLNZQ to your own team ID
     # then comment out this line.
-    cat crates/zed/resources/zed.entitlements | sed '/com.apple.developer.associated-domains/,+1d' > "${app_path}/Contents/Resources/zed.entitlements"
+    cat crates/${zed_crate}/resources/zed.entitlements | sed '/com.apple.developer.associated-domains/,+1d' > "${app_path}/Contents/Resources/zed.entitlements"
 
     codesign --force --deep --entitlements "${app_path}/Contents/Resources/zed.entitlements" --sign ${MACOS_SIGNING_KEY:- -} "${app_path}" -v
 fi

@@ -1,10 +1,10 @@
-use crate::{private::Sealed, AnyBox, AppContext, Context, Entity, ModelContext};
+use crate::{private::Sealed, AppContext, Context, Entity, ModelContext};
 use anyhow::{anyhow, Result};
 use derive_more::{Deref, DerefMut};
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 use slotmap::{SecondaryMap, SlotMap};
 use std::{
-    any::{type_name, TypeId},
+    any::{type_name, Any, TypeId},
     fmt::{self, Display},
     hash::{Hash, Hasher},
     marker::PhantomData,
@@ -31,7 +31,7 @@ impl Display for EntityId {
 }
 
 pub(crate) struct EntityMap {
-    entities: SecondaryMap<EntityId, AnyBox>,
+    entities: SecondaryMap<EntityId, Box<dyn Any>>,
     ref_counts: Arc<RwLock<EntityRefCounts>>,
 }
 
@@ -71,11 +71,12 @@ impl EntityMap {
     #[track_caller]
     pub fn lease<'a, T>(&mut self, model: &'a Model<T>) -> Lease<'a, T> {
         self.assert_valid_context(model);
-        let entity = Some(
-            self.entities
-                .remove(model.entity_id)
-                .expect("Circular entity lease. Is the entity already being updated?"),
-        );
+        let entity = Some(self.entities.remove(model.entity_id).unwrap_or_else(|| {
+            panic!(
+                "Circular entity lease of {}. Is it already being updated?",
+                std::any::type_name::<T>()
+            )
+        }));
         Lease {
             model,
             entity,
@@ -101,7 +102,7 @@ impl EntityMap {
         );
     }
 
-    pub fn take_dropped(&mut self) -> Vec<(EntityId, AnyBox)> {
+    pub fn take_dropped(&mut self) -> Vec<(EntityId, Box<dyn Any>)> {
         let mut ref_counts = self.ref_counts.write();
         let dropped_entity_ids = mem::take(&mut ref_counts.dropped_entity_ids);
 
@@ -121,7 +122,7 @@ impl EntityMap {
 }
 
 pub struct Lease<'a, T> {
-    entity: Option<AnyBox>,
+    entity: Option<Box<dyn Any>>,
     pub model: &'a Model<T>,
     entity_type: PhantomData<T>,
 }

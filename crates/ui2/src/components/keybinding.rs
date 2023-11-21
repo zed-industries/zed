@@ -1,9 +1,7 @@
-use gpui::Action;
-use strum::EnumIter;
-
 use crate::prelude::*;
+use gpui::{Action, Div, RenderOnce};
 
-#[derive(Component, Clone)]
+#[derive(RenderOnce, Clone)]
 pub struct KeyBinding {
     /// A keybinding consists of a key and a set of modifier keys.
     /// More then one keybinding produces a chord.
@@ -12,19 +10,10 @@ pub struct KeyBinding {
     key_binding: gpui::KeyBinding,
 }
 
-impl KeyBinding {
-    pub fn for_action(action: &dyn Action, cx: &mut WindowContext) -> Option<Self> {
-        // todo! this last is arbitrary, we want to prefer users key bindings over defaults,
-        // and vim over normal (in vim mode), etc.
-        let key_binding = cx.bindings_for_action(action).last().cloned()?;
-        Some(Self::new(key_binding))
-    }
+impl Component for KeyBinding {
+    type Rendered = Div;
 
-    pub fn new(key_binding: gpui::KeyBinding) -> Self {
-        Self { key_binding }
-    }
-
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         div()
             .flex()
             .gap_2()
@@ -42,17 +31,28 @@ impl KeyBinding {
     }
 }
 
-#[derive(Component)]
+impl KeyBinding {
+    pub fn for_action(action: &dyn Action, cx: &mut WindowContext) -> Option<Self> {
+        // todo! this last is arbitrary, we want to prefer users key bindings over defaults,
+        // and vim over normal (in vim mode), etc.
+        let key_binding = cx.bindings_for_action(action).last().cloned()?;
+        Some(Self::new(key_binding))
+    }
+
+    pub fn new(key_binding: gpui::KeyBinding) -> Self {
+        Self { key_binding }
+    }
+}
+
+#[derive(RenderOnce)]
 pub struct Key {
     key: SharedString,
 }
 
-impl Key {
-    pub fn new(key: impl Into<SharedString>) -> Self {
-        Self { key: key.into() }
-    }
+impl Component for Key {
+    type Rendered = Div;
 
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         div()
             .px_2()
             .py_0()
@@ -64,79 +64,8 @@ impl Key {
     }
 }
 
-// NOTE: The order the modifier keys appear in this enum impacts the order in
-// which they are rendered in the UI.
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, EnumIter)]
-pub enum ModifierKey {
-    Control,
-    Alt,
-    Command,
-    Shift,
-}
-
-#[cfg(feature = "stories")]
-pub use stories::*;
-
-#[cfg(feature = "stories")]
-mod stories {
-    use super::*;
-    use crate::Story;
-    use gpui::{actions, Div, Render};
-    use itertools::Itertools;
-
-    pub struct KeybindingStory;
-
-    actions!(NoAction);
-
-    pub fn binding(key: &str) -> gpui::KeyBinding {
-        gpui::KeyBinding::new(key, NoAction {}, None)
-    }
-
-    impl Render for KeybindingStory {
-        type Element = Div<Self>;
-
-        fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-            let all_modifier_permutations =
-                ["ctrl", "alt", "cmd", "shift"].into_iter().permutations(2);
-
-            Story::container(cx)
-                .child(Story::title_for::<_, KeyBinding>(cx))
-                .child(Story::label(cx, "Single Key"))
-                .child(KeyBinding::new(binding("Z")))
-                .child(Story::label(cx, "Single Key with Modifier"))
-                .child(
-                    div()
-                        .flex()
-                        .gap_3()
-                        .child(KeyBinding::new(binding("ctrl-c")))
-                        .child(KeyBinding::new(binding("alt-c")))
-                        .child(KeyBinding::new(binding("cmd-c")))
-                        .child(KeyBinding::new(binding("shift-c"))),
-                )
-                .child(Story::label(cx, "Single Key with Modifier (Permuted)"))
-                .child(
-                    div().flex().flex_col().children(
-                        all_modifier_permutations
-                            .chunks(4)
-                            .into_iter()
-                            .map(|chunk| {
-                                div()
-                                    .flex()
-                                    .gap_4()
-                                    .py_3()
-                                    .children(chunk.map(|permutation| {
-                                        KeyBinding::new(binding(&*(permutation.join("-") + "-x")))
-                                    }))
-                            }),
-                    ),
-                )
-                .child(Story::label(cx, "Single Key with All Modifiers"))
-                .child(KeyBinding::new(binding("ctrl-alt-cmd-shift-z")))
-                .child(Story::label(cx, "Chord"))
-                .child(KeyBinding::new(binding("a z")))
-                .child(Story::label(cx, "Chord with Modifier"))
-                .child(KeyBinding::new(binding("ctrl-a shift-z")))
-                .child(KeyBinding::new(binding("fn-s")))
-        }
+impl Key {
+    pub fn new(key: impl Into<SharedString>) -> Self {
+        Self { key: key.into() }
     }
 }

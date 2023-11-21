@@ -2,7 +2,7 @@ use std::any::TypeId;
 
 use crate::{ItemHandle, Pane};
 use gpui::{
-    div, AnyView, Component, Div, ParentComponent, Render, Styled, Subscription, View, ViewContext,
+    div, AnyView, Div, ParentElement, Render, RenderOnce, Styled, Subscription, View, ViewContext,
     WindowContext,
 };
 use theme2::ActiveTheme;
@@ -35,7 +35,7 @@ pub struct StatusBar {
 }
 
 impl Render for StatusBar {
-    type Element = Div<Self>;
+    type Element = Div;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         div()
@@ -53,14 +53,14 @@ impl Render for StatusBar {
 }
 
 impl StatusBar {
-    fn render_left_tools(&self, cx: &mut ViewContext<Self>) -> impl Component<Self> {
+    fn render_left_tools(&self, cx: &mut ViewContext<Self>) -> impl RenderOnce {
         h_stack()
             .items_center()
-            .gap_1()
+            .gap_2()
             .children(self.left_items.iter().map(|item| item.to_any()))
     }
 
-    fn render_right_tools(&self, cx: &mut ViewContext<Self>) -> impl Component<Self> {
+    fn render_right_tools(&self, cx: &mut ViewContext<Self>) -> impl RenderOnce {
         h_stack()
             .items_center()
             .gap_2()

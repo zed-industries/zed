@@ -29,6 +29,7 @@ actions!(
         CycleMode,
         ToggleWholeWord,
         ToggleCaseSensitive,
+        ToggleIncludeIgnored,
         ToggleReplace,
         SelectNextMatch,
         SelectPrevMatch,
@@ -49,31 +50,35 @@ bitflags! {
         const NONE = 0b000;
         const WHOLE_WORD = 0b001;
         const CASE_SENSITIVE = 0b010;
+        const INCLUDE_IGNORED = 0b100;
     }
 }
 
 impl SearchOptions {
     pub fn label(&self) -> &'static str {
         match *self {
-            SearchOptions::WHOLE_WORD => "Match Whole Word",
-            SearchOptions::CASE_SENSITIVE => "Match Case",
-            _ => panic!("{:?} is not a named SearchOption", self),
+            Self::WHOLE_WORD => "Match Whole Word",
+            Self::CASE_SENSITIVE => "Match Case",
+            Self::INCLUDE_IGNORED => "Include Ignored",
+            _ => panic!("{self:?} is not a named SearchOption"),
         }
     }
 
     pub fn icon(&self) -> &'static str {
         match *self {
-            SearchOptions::WHOLE_WORD => "icons/word_search.svg",
-            SearchOptions::CASE_SENSITIVE => "icons/case_insensitive.svg",
-            _ => panic!("{:?} is not a named SearchOption", self),
+            Self::WHOLE_WORD => "icons/word_search.svg",
+            Self::CASE_SENSITIVE => "icons/case_insensitive.svg",
+            Self::INCLUDE_IGNORED => "icons/case_insensitive.svg",
+            _ => panic!("{self:?} is not a named SearchOption"),
         }
     }
 
     pub fn to_toggle_action(&self) -> Box<dyn Action> {
         match *self {
-            SearchOptions::WHOLE_WORD => Box::new(ToggleWholeWord),
-            SearchOptions::CASE_SENSITIVE => Box::new(ToggleCaseSensitive),
-            _ => panic!("{:?} is not a named SearchOption", self),
+            Self::WHOLE_WORD => Box::new(ToggleWholeWord),
+            Self::CASE_SENSITIVE => Box::new(ToggleCaseSensitive),
+            Self::INCLUDE_IGNORED => Box::new(ToggleIncludeIgnored),
+            _ => panic!("{self:?} is not a named SearchOption"),
         }
     }
 
@@ -85,6 +90,7 @@ impl SearchOptions {
         let mut options = SearchOptions::NONE;
         options.set(SearchOptions::WHOLE_WORD, query.whole_word());
         options.set(SearchOptions::CASE_SENSITIVE, query.case_sensitive());
+        options.set(SearchOptions::INCLUDE_IGNORED, query.include_ignored());
         options
     }
 

@@ -9,11 +9,10 @@ pub mod terminal_panel;
 // use crate::terminal_element::TerminalElement;
 use editor::{scroll::autoscroll::Autoscroll, Editor};
 use gpui::{
-    actions, div, img, red, Action, AnyElement, AppContext, Component, DispatchPhase, Div,
-    EventEmitter, FocusEvent, FocusHandle, Focusable, FocusableComponent, FocusableView,
-    InputHandler, InteractiveComponent, KeyDownEvent, Keystroke, Model, MouseButton,
-    ParentComponent, Pixels, Render, SharedString, Styled, Task, View, ViewContext, VisualContext,
-    WeakView,
+    actions, div, Action, AnyElement, AppContext, Div, Element, EventEmitter, FocusEvent,
+    FocusHandle, Focusable, FocusableElement, FocusableView, InputHandler, InteractiveElement,
+    KeyDownEvent, Keystroke, Model, MouseButton, MouseDownEvent, ParentElement, Pixels, Render,
+    SharedString, Styled, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use language::Bias;
 use persistence::TERMINAL_DB;
@@ -32,7 +31,7 @@ use workspace::{
     notifications::NotifyResultExt,
     register_deserializable_item,
     searchable::{SearchEvent, SearchOptions, SearchableItem},
-    ui::{ContextMenu, Label},
+    ui::{ContextMenu, Icon, IconElement, Label, ListItem},
     CloseActiveItem, NewCenterTerminal, Pane, ToolbarItemLocation, Workspace, WorkspaceId,
 };
 
@@ -64,7 +63,6 @@ pub struct SendKeystroke(String);
 actions!(Clear, Copy, Paste, ShowCharacterPalette, SearchTest);
 
 pub fn init(cx: &mut AppContext) {
-    workspace::ui::init(cx);
     terminal_panel::init(cx);
     terminal::init(cx);
 
@@ -300,11 +298,10 @@ impl TerminalView {
         position: gpui::Point<Pixels>,
         cx: &mut ViewContext<Self>,
     ) {
-        self.context_menu = Some(cx.build_view(|cx| {
-            ContextMenu::new(cx)
-                .entry(Label::new("Clear"), Box::new(Clear))
-                .entry(
-                    Label::new("Close"),
+        self.context_menu = Some(ContextMenu::build(cx, |menu, _| {
+            menu.action(ListItem::new("clear", Label::new("Clear")), Box::new(Clear))
+                .action(
+                    ListItem::new("close", Label::new("Close")),
                     Box::new(CloseActiveItem { save_intent: None }),
                 )
         }));
@@ -507,12 +504,7 @@ pub fn regex_search_for_query(query: &project::search::SearchQuery) -> Option<Re
 }
 
 impl TerminalView {
-    fn key_down(
-        &mut self,
-        event: &KeyDownEvent,
-        _dispatch_phase: DispatchPhase,
-        cx: &mut ViewContext<Self>,
-    ) {
+    fn key_down(&mut self, event: &KeyDownEvent, cx: &mut ViewContext<Self>) {
         self.clear_bel(cx);
         self.pause_cursor_blinking(cx);
 
@@ -540,7 +532,7 @@ impl TerminalView {
 }
 
 impl Render for TerminalView {
-    type Element = Focusable<Self, Div<Self>>;
+    type Element = Focusable<Div>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         let terminal_handle = self.terminal.clone().downgrade();
@@ -554,14 +546,14 @@ impl Render for TerminalView {
                 div()
                     .z_index(0)
                     .absolute()
-                    .on_key_down(Self::key_down)
-                    .on_action(TerminalView::send_text)
-                    .on_action(TerminalView::send_keystroke)
-                    .on_action(TerminalView::copy)
-                    .on_action(TerminalView::paste)
-                    .on_action(TerminalView::clear)
-                    .on_action(TerminalView::show_character_palette)
-                    .on_action(TerminalView::select_all)
+                    .on_key_down(cx.listener(Self::key_down))
+                    .on_action(cx.listener(TerminalView::send_text))
+                    .on_action(cx.listener(TerminalView::send_keystroke))
+                    .on_action(cx.listener(TerminalView::copy))
+                    .on_action(cx.listener(TerminalView::paste))
+                    .on_action(cx.listener(TerminalView::clear))
+                    .on_action(cx.listener(TerminalView::show_character_palette))
+                    .on_action(cx.listener(TerminalView::select_all))
                     // todo!()
                     .child(
                         "TERMINAL HERE", //     TerminalElement::new(
@@ -571,19 +563,22 @@ impl Render for TerminalView {
                                          //     self.can_navigate_to_selected_word,
                                          // )
                     )
-                    .on_mouse_down(MouseButton::Right, |this, event, cx| {
-                        this.deploy_context_menu(event.position, cx);
-                        cx.notify();
-                    }),
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(|this, event: &MouseDownEvent, cx| {
+                            this.deploy_context_menu(event.position, cx);
+                            cx.notify();
+                        }),
+                    ),
             )
             .children(
                 self.context_menu
                     .clone()
-                    .map(|context_menu| div().z_index(1).absolute().child(context_menu.render())),
+                    .map(|context_menu| div().z_index(1).absolute().child(context_menu)),
             )
             .track_focus(&self.focus_handle)
-            .on_focus_in(Self::focus_in)
-            .on_focus_out(Self::focus_out)
+            .on_focus_in(cx.listener(Self::focus_in))
+            .on_focus_out(cx.listener(Self::focus_out))
     }
 }
 
@@ -748,17 +743,13 @@ impl Item for TerminalView {
         Some(self.terminal().read(cx).title().into())
     }
 
-    fn tab_content<T: 'static>(
-        &self,
-        _detail: Option<usize>,
-        cx: &gpui::AppContext,
-    ) -> AnyElement<T> {
+    fn tab_content(&self, _detail: Option<usize>, cx: &WindowContext) -> AnyElement {
         let title = self.terminal().read(cx).title();
 
         div()
-            .child(img().uri("icons/terminal.svg").bg(red()))
-            .child(title)
-            .render()
+            .child(IconElement::new(Icon::Terminal))
+            .child(Label::new(title))
+            .into_any()
     }
 
     fn clone_on_split(
@@ -794,7 +785,7 @@ impl Item for TerminalView {
     // }
 
     fn breadcrumb_location(&self) -> ToolbarItemLocation {
-        ToolbarItemLocation::PrimaryLeft { flex: None }
+        ToolbarItemLocation::PrimaryLeft
     }
 
     fn breadcrumbs(&self, _: &theme::Theme, cx: &AppContext) -> Option<Vec<BreadcrumbText>> {

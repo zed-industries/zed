@@ -63,6 +63,12 @@ impl ActiveTheme for AppContext {
     }
 }
 
+// impl<'a> ActiveTheme for WindowContext<'a> {
+//     fn theme(&self) -> &Arc<Theme> {
+//         &ThemeSettings::get_global(self.app()).active_theme
+//     }
+// }
+
 pub struct ThemeFamily {
     pub id: String,
     pub name: SharedString,
@@ -130,7 +136,7 @@ impl Theme {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct DiagnosticStyle {
     pub error: Hsla,
     pub warning: Hsla,

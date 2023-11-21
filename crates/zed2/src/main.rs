@@ -6,6 +6,7 @@
 
 use anyhow::{anyhow, Context as _, Result};
 use backtrace::Backtrace;
+use chrono::Utc;
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
 use client::UserStore;
 use db::kvp::KEY_VALUE_STORE;
@@ -38,12 +39,11 @@ use std::{
         Arc,
     },
     thread,
-    time::{SystemTime, UNIX_EPOCH},
 };
 use theme::ActiveTheme;
 use util::{
     async_maybe,
-    channel::{parse_zed_link, ReleaseChannel, RELEASE_CHANNEL},
+    channel::{parse_zed_link, AppCommitSha, ReleaseChannel, RELEASE_CHANNEL},
     http::{self, HttpClient},
     paths, ResultExt,
 };
@@ -113,6 +113,10 @@ fn main() {
 
     app.run(move |cx| {
         cx.set_global(*RELEASE_CHANNEL);
+        if let Some(build_sha) = option_env!("ZED_COMMIT_SHA") {
+            cx.set_global(AppCommitSha(build_sha.into()))
+        }
+
         cx.set_global(listener.clone());
 
         load_embedded_fonts(cx);
@@ -146,6 +150,7 @@ fn main() {
         command_palette::init(cx);
         language::init(cx);
         editor::init(cx);
+        diagnostics::init(cx);
         copilot::init(
             copilot_language_server_id,
             http.clone(),
@@ -167,7 +172,7 @@ fn main() {
         // })
         // .detach();
 
-        // client.telemetry().start(installation_id, session_id, cx);
+        client.telemetry().start(installation_id, session_id, cx);
 
         let app_state = Arc::new(AppState {
             languages,
@@ -182,7 +187,7 @@ fn main() {
         cx.set_global(Arc::downgrade(&app_state));
 
         // audio::init(Assets, cx);
-        // auto_update::init(http.clone(), client::ZED_SERVER_URL.clone(), cx);
+        auto_update::init(http.clone(), client::ZED_SERVER_URL.clone(), cx);
 
         workspace::init(app_state.clone(), cx);
         // recent_projects::init(cx);
@@ -194,7 +199,7 @@ fn main() {
         project_panel::init(Assets, cx);
         // channel::init(&client, user_store.clone(), cx);
         // diagnostics::init(cx);
-        // search::init(cx);
+        search::init(cx);
         // semantic_index::init(fs.clone(), http.clone(), languages.clone(), cx);
         // vim::init(cx);
         terminal_view::init(cx);
@@ -423,7 +428,7 @@ struct Panic {
     os_name: String,
     os_version: Option<String>,
     architecture: String,
-    panicked_on: u128,
+    panicked_on: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     installation_id: Option<String>,
     session_id: String,
@@ -509,10 +514,7 @@ fn init_panic_hook(app: &App, installation_id: Option<String>, session_id: Strin
                 .as_ref()
                 .map(SemanticVersion::to_string),
             architecture: env::consts::ARCH.into(),
-            panicked_on: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_millis(),
+            panicked_on: Utc::now().timestamp_millis(),
             backtrace,
             installation_id: installation_id.clone(),
             session_id: session_id.clone(),

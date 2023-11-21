@@ -1,15 +1,15 @@
 use crate::{
-    key_dispatch::DispatchActionListener, px, size, Action, AnyBox, AnyDrag, AnyView, AppContext,
+    key_dispatch::DispatchActionListener, px, size, Action, AnyDrag, AnyView, AppContext,
     AsyncWindowContext, AvailableSpace, Bounds, BoxShadow, Context, Corners, CursorStyle,
     DevicePixels, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity, EntityId,
-    EventEmitter, FileDropEvent, FocusEvent, FontId, GlobalElementId, GlyphId, Hsla, ImageData,
-    InputEvent, IsZero, KeyBinding, KeyContext, KeyDownEvent, LayoutId, Model, ModelContext,
-    Modifiers, MonochromeSprite, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Path,
-    Pixels, PlatformAtlas, PlatformDisplay, PlatformInputHandler, PlatformWindow, Point,
-    PolychromeSprite, PromptLevel, Quad, Render, RenderGlyphParams, RenderImageParams,
-    RenderSvgParams, ScaledPixels, SceneBuilder, Shadow, SharedString, Size, Style, SubscriberSet,
-    Subscription, TaffyLayoutEngine, Task, Underline, UnderlineStyle, View, VisualContext,
-    WeakView, WindowBounds, WindowOptions, SUBPIXEL_VARIANTS,
+    EventEmitter, FileDropEvent, Flatten, FocusEvent, FontId, GlobalElementId, GlyphId, Hsla,
+    ImageData, InputEvent, IsZero, KeyBinding, KeyContext, KeyDownEvent, LayoutId, Model,
+    ModelContext, Modifiers, MonochromeSprite, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInputHandler,
+    PlatformWindow, Point, PolychromeSprite, PromptLevel, Quad, Render, RenderGlyphParams,
+    RenderImageParams, RenderSvgParams, ScaledPixels, SceneBuilder, Shadow, SharedString, Size,
+    Style, SubscriberSet, Subscription, TaffyLayoutEngine, Task, Underline, UnderlineStyle, View,
+    VisualContext, WeakView, WindowBounds, WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::HashMap;
@@ -187,23 +187,18 @@ impl Drop for FocusHandle {
 
 /// FocusableView allows users of your view to easily
 /// focus it (using cx.focus_view(view))
-pub trait FocusableView: Render {
+pub trait FocusableView: 'static + Render {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle;
 }
 
 /// ManagedView is a view (like a Modal, Popover, Menu, etc.)
 /// where the lifecycle of the view is handled by another view.
-pub trait ManagedView: Render {
-    fn focus_handle(&self, cx: &AppContext) -> FocusHandle;
-}
+pub trait ManagedView: FocusableView + EventEmitter<Manager> {}
 
-pub struct Dismiss;
-impl<T: ManagedView> EventEmitter<Dismiss> for T {}
+impl<M: FocusableView + EventEmitter<Manager>> ManagedView for M {}
 
-impl<T: ManagedView> FocusableView for T {
-    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
-        self.focus_handle(cx)
-    }
+pub enum Manager {
+    Dismiss,
 }
 
 // Holds the state for a specific window.
@@ -237,7 +232,7 @@ pub struct Window {
 
 // #[derive(Default)]
 pub(crate) struct Frame {
-    pub(crate) element_states: HashMap<GlobalElementId, AnyBox>,
+    pub(crate) element_states: HashMap<GlobalElementId, Box<dyn Any>>,
     mouse_listeners: HashMap<TypeId, Vec<(StackingOrder, AnyMouseListener)>>,
     pub(crate) dispatch_tree: DispatchTree,
     pub(crate) focus_listeners: Vec<AnyFocusListener>,
@@ -1441,6 +1436,82 @@ impl<'a> WindowContext<'a> {
             .dispatch_tree
             .bindings_for_action(action)
     }
+
+    pub fn listener_for<V: Render, E>(
+        &self,
+        view: &View<V>,
+        f: impl Fn(&mut V, &E, &mut ViewContext<V>) + 'static,
+    ) -> impl Fn(&E, &mut WindowContext) + 'static {
+        let view = view.downgrade();
+        move |e: &E, cx: &mut WindowContext| {
+            view.update(cx, |view, cx| f(view, e, cx)).ok();
+        }
+    }
+
+    pub fn constructor_for<V: Render, R>(
+        &self,
+        view: &View<V>,
+        f: impl Fn(&mut V, &mut ViewContext<V>) -> R + 'static,
+    ) -> impl Fn(&mut WindowContext) -> R + 'static {
+        let view = view.clone();
+        move |cx: &mut WindowContext| view.update(cx, |view, cx| f(view, cx))
+    }
+
+    //========== ELEMENT RELATED FUNCTIONS ===========
+    pub fn with_key_dispatch<R>(
+        &mut self,
+        context: KeyContext,
+        focus_handle: Option<FocusHandle>,
+        f: impl FnOnce(Option<FocusHandle>, &mut Self) -> R,
+    ) -> R {
+        let window = &mut self.window;
+        window
+            .current_frame
+            .dispatch_tree
+            .push_node(context.clone());
+        if let Some(focus_handle) = focus_handle.as_ref() {
+            window
+                .current_frame
+                .dispatch_tree
+                .make_focusable(focus_handle.id);
+        }
+        let result = f(focus_handle, self);
+
+        self.window.current_frame.dispatch_tree.pop_node();
+
+        result
+    }
+
+    /// Register a focus listener for the current frame only. It will be cleared
+    /// on the next frame render. You should use this method only from within elements,
+    /// and we may want to enforce that better via a different context type.
+    // todo!() Move this to `FrameContext` to emphasize its individuality?
+    pub fn on_focus_changed(
+        &mut self,
+        listener: impl Fn(&FocusEvent, &mut WindowContext) + 'static,
+    ) {
+        self.window
+            .current_frame
+            .focus_listeners
+            .push(Box::new(move |event, cx| {
+                listener(event, cx);
+            }));
+    }
+
+    /// Set an input handler, such as [ElementInputHandler], which interfaces with the
+    /// platform to receive textual input with proper integration with concerns such
+    /// as IME interactions.
+    pub fn handle_input(
+        &mut self,
+        focus_handle: &FocusHandle,
+        input_handler: impl PlatformInputHandler,
+    ) {
+        if focus_handle.is_focused(self) {
+            self.window
+                .platform_window
+                .set_input_handler(Box::new(input_handler));
+        }
+    }
 }
 
 impl Context for WindowContext<'_> {
@@ -1564,7 +1635,7 @@ impl VisualContext for WindowContext<'_> {
         build_view: impl FnOnce(&mut ViewContext<'_, V>) -> V,
     ) -> Self::Result<View<V>>
     where
-        V: Render,
+        V: 'static + Render,
     {
         let slot = self.app.entities.reserve();
         let view = View {
@@ -1581,6 +1652,13 @@ impl VisualContext for WindowContext<'_> {
         self.update_view(view, |view, cx| {
             view.focus_handle(cx).clone().focus(cx);
         })
+    }
+
+    fn dismiss_view<V>(&mut self, view: &View<V>) -> Self::Result<()>
+    where
+        V: ManagedView,
+    {
+        self.update_view(view, |_, cx| cx.emit(Manager::Dismiss))
     }
 }
 
@@ -1613,6 +1691,10 @@ impl<'a> BorrowMut<AppContext> for WindowContext<'a> {
 pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
     fn app_mut(&mut self) -> &mut AppContext {
         self.borrow_mut()
+    }
+
+    fn app(&self) -> &AppContext {
+        self.borrow()
     }
 
     fn window(&self) -> &Window {
@@ -2122,49 +2204,6 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         )
     }
 
-    /// Register a focus listener for the current frame only. It will be cleared
-    /// on the next frame render. You should use this method only from within elements,
-    /// and we may want to enforce that better via a different context type.
-    // todo!() Move this to `FrameContext` to emphasize its individuality?
-    pub fn on_focus_changed(
-        &mut self,
-        listener: impl Fn(&mut V, &FocusEvent, &mut ViewContext<V>) + 'static,
-    ) {
-        let handle = self.view().downgrade();
-        self.window
-            .current_frame
-            .focus_listeners
-            .push(Box::new(move |event, cx| {
-                handle
-                    .update(cx, |view, cx| listener(view, event, cx))
-                    .log_err();
-            }));
-    }
-
-    pub fn with_key_dispatch<R>(
-        &mut self,
-        context: KeyContext,
-        focus_handle: Option<FocusHandle>,
-        f: impl FnOnce(Option<FocusHandle>, &mut Self) -> R,
-    ) -> R {
-        let window = &mut self.window;
-        window
-            .current_frame
-            .dispatch_tree
-            .push_node(context.clone());
-        if let Some(focus_handle) = focus_handle.as_ref() {
-            window
-                .current_frame
-                .dispatch_tree
-                .make_focusable(focus_handle.id);
-        }
-        let result = f(focus_handle, self);
-
-        self.window.current_frame.dispatch_tree.pop_node();
-
-        result
-    }
-
     pub fn spawn<Fut, R>(
         &mut self,
         f: impl FnOnce(WeakView<V>, AsyncWindowContext) -> Fut,
@@ -2241,21 +2280,6 @@ impl<'a, V: 'static> ViewContext<'a, V> {
             });
     }
 
-    /// Set an input handler, such as [ElementInputHandler], which interfaces with the
-    /// platform to receive textual input with proper integration with concerns such
-    /// as IME interactions.
-    pub fn handle_input(
-        &mut self,
-        focus_handle: &FocusHandle,
-        input_handler: impl PlatformInputHandler,
-    ) {
-        if focus_handle.is_focused(self) {
-            self.window
-                .platform_window
-                .set_input_handler(Box::new(input_handler));
-        }
-    }
-
     pub fn emit<Evt>(&mut self, event: Evt)
     where
         Evt: 'static,
@@ -2274,6 +2298,23 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         V: FocusableView,
     {
         self.defer(|view, cx| view.focus_handle(cx).focus(cx))
+    }
+
+    pub fn dismiss_self(&mut self)
+    where
+        V: ManagedView,
+    {
+        self.defer(|_, cx| cx.emit(Manager::Dismiss))
+    }
+
+    pub fn listener<E>(
+        &self,
+        f: impl Fn(&mut V, &E, &mut ViewContext<V>) + 'static,
+    ) -> impl Fn(&E, &mut WindowContext) + 'static {
+        let view = self.view().downgrade();
+        move |e: &E, cx: &mut WindowContext| {
+            view.update(cx, |view, cx| f(view, e, cx)).ok();
+        }
     }
 }
 
@@ -2346,13 +2387,17 @@ impl<V: 'static> VisualContext for ViewContext<'_, V> {
         build_view: impl FnOnce(&mut ViewContext<'_, W>) -> W,
     ) -> Self::Result<View<W>>
     where
-        W: Render,
+        W: 'static + Render,
     {
         self.window_cx.replace_root_view(build_view)
     }
 
     fn focus_view<W: FocusableView>(&mut self, view: &View<W>) -> Self::Result<()> {
         self.window_cx.focus_view(view)
+    }
+
+    fn dismiss_view<W: ManagedView>(&mut self, view: &View<W>) -> Self::Result<()> {
+        self.window_cx.dismiss_view(view)
     }
 }
 
@@ -2396,6 +2441,17 @@ impl<V: 'static + Render> WindowHandle<V> {
             },
             state_type: PhantomData,
         }
+    }
+
+    pub fn root<C>(&self, cx: &mut C) -> Result<View<V>>
+    where
+        C: Context,
+    {
+        Flatten::flatten(cx.update_window(self.any_handle, |root_view, _| {
+            root_view
+                .downcast::<V>()
+                .map_err(|_| anyhow!("the type of the window's root view has changed"))
+        }))
     }
 
     pub fn update<C, R>(
@@ -2541,6 +2597,18 @@ pub enum ElementId {
     Integer(usize),
     Name(SharedString),
     FocusHandle(FocusId),
+}
+
+impl TryInto<SharedString> for ElementId {
+    type Error = anyhow::Error;
+
+    fn try_into(self) -> anyhow::Result<SharedString> {
+        if let ElementId::Name(name) = self {
+            Ok(name)
+        } else {
+            Err(anyhow!("element id is not string"))
+        }
+    }
 }
 
 impl From<EntityId> for ElementId {

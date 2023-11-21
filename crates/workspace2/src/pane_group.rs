@@ -6,7 +6,9 @@ use db2::sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
 };
-use gpui::{point, size, AnyElement, AnyWeakView, Bounds, Model, Pixels, Point, View, ViewContext};
+use gpui::{
+    point, size, AnyWeakView, Bounds, Div, Model, Pixels, Point, RenderOnce, View, ViewContext,
+};
 use parking_lot::Mutex;
 use project2::Project;
 use serde::Deserialize;
@@ -130,7 +132,7 @@ impl PaneGroup {
         zoomed: Option<&AnyWeakView>,
         app_state: &Arc<AppState>,
         cx: &mut ViewContext<Workspace>,
-    ) -> impl Component<Workspace> {
+    ) -> impl RenderOnce {
         self.root.render(
             project,
             0,
@@ -202,7 +204,7 @@ impl Member {
         zoomed: Option<&AnyWeakView>,
         app_state: &Arc<AppState>,
         cx: &mut ViewContext<Workspace>,
-    ) -> impl Component<Workspace> {
+    ) -> impl RenderOnce {
         match self {
             Member::Pane(pane) => {
                 // todo!()
@@ -212,7 +214,7 @@ impl Member {
                 //     Some(pane)
                 // };
 
-                div().size_full().child(pane.clone()).render()
+                div().size_full().child(pane.clone())
 
                 //         Stack::new()
                 //             .with_child(pane_element.contained().with_border(leader_border))
@@ -559,7 +561,7 @@ impl PaneAxis {
         zoomed: Option<&AnyWeakView>,
         app_state: &Arc<AppState>,
         cx: &mut ViewContext<Workspace>,
-    ) -> AnyElement<Workspace> {
+    ) -> Div {
         debug_assert!(self.members.len() == self.flexes.lock().len());
 
         div()
@@ -582,11 +584,10 @@ impl PaneAxis {
                             app_state,
                             cx,
                         )
-                        .render(),
-                    Member::Pane(pane) => pane.clone().render(),
+                        .render_into_any(),
+                    Member::Pane(pane) => pane.clone().render_into_any(),
                 }
             }))
-            .render()
 
         // let mut pane_axis = PaneAxisElement::new(
         //     self.axis,

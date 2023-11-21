@@ -1,0 +1,98 @@
+name: Release Nightly
+
+on:
+  schedule:
+    # Fire every night at 1:00am
+    - cron: "0 1 * * *"
+  push:
+    tags:
+      - "nightly"
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: 1
+
+jobs:
+  rustfmt:
+    name: Check formatting
+    runs-on:
+      - self-hosted
+      - test
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+        with:
+          clean: false
+          submodules: "recursive"
+
+      - name: Run rustfmt
+        uses: ./.github/actions/check_formatting
+
+  tests:
+    name: Run tests
+    runs-on:
+      - self-hosted
+      - test
+    needs: rustfmt
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+        with:
+          clean: false
+          submodules: "recursive"
+
+      - name: Run tests
+        uses: ./.github/actions/run_tests
+
+  bundle:
+    name: Bundle app
+    runs-on:
+      - self-hosted
+      - bundle
+    needs: tests
+    env:
+      MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      APPLE_NOTARIZATION_USERNAME: ${{ secrets.APPLE_NOTARIZATION_USERNAME }}
+      APPLE_NOTARIZATION_PASSWORD: ${{ secrets.APPLE_NOTARIZATION_PASSWORD }}
+      DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
+      DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_SECRET_KEY }}
+    steps:
+      - name: Install Rust
+        run: |
+          rustup set profile minimal
+          rustup update stable
+          rustup target add aarch64-apple-darwin
+          rustup target add x86_64-apple-darwin
+          rustup target add wasm32-wasi
+
+      - name: Install Node
+        uses: actions/setup-node@v3
+        with:
+          node-version: "18"
+
+      - name: Checkout repo
+        uses: actions/checkout@v3
+        with:
+          clean: false
+          submodules: "recursive"
+
+      - name: Limit target directory size
+        run: script/clear-target-dir-if-larger-than 70
+
+      - name: Set release channel to nightly
+        run: |
+          set -eu
+          version=$(git rev-parse --short HEAD)
+          echo "Publishing version: ${version} on release channel nightly"
+          echo "nightly" > crates/zed/RELEASE_CHANNEL
+
+      - name: Generate license file
+        run: script/generate-licenses
+
+      - name: Create app bundle
+        run: script/bundle -2
+
+      - name: Upload Zed Nightly
+        run: script/upload-nightly

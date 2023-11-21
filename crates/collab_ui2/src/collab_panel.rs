@@ -160,7 +160,7 @@ use std::sync::Arc;
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
     actions, div, serde_json, AppContext, AsyncWindowContext, Div, EventEmitter, FocusHandle,
-    Focusable, FocusableView, InteractiveComponent, ParentComponent, Render, View, ViewContext,
+    Focusable, FocusableView, InteractiveElement, ParentElement, Render, View, ViewContext,
     VisualContext, WeakView,
 };
 use project::Fs;
@@ -3295,7 +3295,7 @@ impl CollabPanel {
 // }
 
 impl Render for CollabPanel {
-    type Element = Focusable<Self, Div<Self>>;
+    type Element = Focusable<Div>;
 
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
         div()

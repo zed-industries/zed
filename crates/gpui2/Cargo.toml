@@ -47,7 +47,7 @@ serde_derive.workspace = true
 serde_json.workspace = true
 smallvec.workspace = true
 smol.workspace = true
-taffy = { git = "https://github.com/DioxusLabs/taffy", rev = "4fb530bdd71609bb1d3f76c6a8bde1ba82805d5e" }
+taffy = { git = "https://github.com/DioxusLabs/taffy", rev = "1876f72bee5e376023eaa518aa7b8a34c769bd1b" }
 thiserror.workspace = true
 time.workspace = true
 tiny-skia = "0.5"

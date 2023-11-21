@@ -1,7 +1,7 @@
 use crate::{
     editor_settings::SeedQuerySetting, link_go_to_definition::hide_link_definition,
     movement::surrounding_word, persistence::DB, scroll::ScrollAnchor, Anchor, Autoscroll, Editor,
-    EditorSettings, Event, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot,
+    EditorEvent, EditorSettings, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot,
     NavigationData, ToPoint as _,
 };
 use anyhow::{anyhow, Context, Result};
@@ -9,8 +9,8 @@ use collections::HashSet;
 use futures::future::try_join_all;
 use gpui::{
     div, point, AnyElement, AppContext, AsyncAppContext, Entity, EntityId, EventEmitter,
-    FocusHandle, Model, ParentComponent, Pixels, SharedString, Styled, Subscription, Task, View,
-    ViewContext, VisualContext, WeakView,
+    FocusHandle, Model, ParentElement, Pixels, SharedString, Styled, Subscription, Task, View,
+    ViewContext, VisualContext, WeakView, WindowContext,
 };
 use language::{
     proto::serialize_anchor as serialize_text_anchor, Bias, Buffer, CharKind, OffsetRangeExt,
@@ -30,7 +30,7 @@ use std::{
 };
 use text::Selection;
 use theme::{ActiveTheme, Theme};
-use ui::{Label, TextColor};
+use ui::{Color, Label};
 use util::{paths::PathExt, ResultExt, TryFutureExt};
 use workspace::item::{BreadcrumbText, FollowEvent, FollowableEvents, FollowableItemHandle};
 use workspace::{
@@ -41,11 +41,12 @@ use workspace::{
 
 pub const MAX_TAB_TITLE_LEN: usize = 24;
 
-impl FollowableEvents for Event {
+impl FollowableEvents for EditorEvent {
     fn to_follow_event(&self) -> Option<workspace::item::FollowEvent> {
         match self {
-            Event::Edited => Some(FollowEvent::Unfollow),
-            Event::SelectionsChanged { local } | Event::ScrollPositionChanged { local, .. } => {
+            EditorEvent::Edited => Some(FollowEvent::Unfollow),
+            EditorEvent::SelectionsChanged { local }
+            | EditorEvent::ScrollPositionChanged { local, .. } => {
                 if *local {
                     Some(FollowEvent::Unfollow)
                 } else {
@@ -60,7 +61,7 @@ impl FollowableEvents for Event {
 impl EventEmitter<ItemEvent> for Editor {}
 
 impl FollowableItem for Editor {
-    type FollowableEvent = Event;
+    type FollowableEvent = EditorEvent;
     fn remote_id(&self) -> Option<ViewId> {
         self.remote_id
     }
@@ -248,7 +249,7 @@ impl FollowableItem for Editor {
 
         match update {
             proto::update_view::Variant::Editor(update) => match event {
-                Event::ExcerptsAdded {
+                EditorEvent::ExcerptsAdded {
                     buffer,
                     predecessor,
                     excerpts,
@@ -269,20 +270,20 @@ impl FollowableItem for Editor {
                     }
                     true
                 }
-                Event::ExcerptsRemoved { ids } => {
+                EditorEvent::ExcerptsRemoved { ids } => {
                     update
                         .deleted_excerpts
                         .extend(ids.iter().map(ExcerptId::to_proto));
                     true
                 }
-                Event::ScrollPositionChanged { .. } => {
+                EditorEvent::ScrollPositionChanged { .. } => {
                     let scroll_anchor = self.scroll_manager.anchor();
                     update.scroll_top_anchor = Some(serialize_anchor(&scroll_anchor.anchor));
                     update.scroll_x = scroll_anchor.offset.x;
                     update.scroll_y = scroll_anchor.offset.y;
                     true
                 }
-                Event::SelectionsChanged { .. } => {
+                EditorEvent::SelectionsChanged { .. } => {
                     update.selections = self
                         .selections
                         .disjoint_anchors()
@@ -583,7 +584,7 @@ impl Item for Editor {
         Some(path.to_string_lossy().to_string().into())
     }
 
-    fn tab_content<T: 'static>(&self, detail: Option<usize>, cx: &AppContext) -> AnyElement<T> {
+    fn tab_content(&self, detail: Option<usize>, cx: &WindowContext) -> AnyElement {
         let theme = cx.theme();
 
         AnyElement::new(
@@ -603,7 +604,7 @@ impl Item for Editor {
                                 &description,
                                 MAX_TAB_TITLE_LEN,
                             ))
-                            .color(TextColor::Muted),
+                            .color(Color::Muted),
                         ),
                     )
                 })),
@@ -760,7 +761,7 @@ impl Item for Editor {
     }
 
     fn breadcrumb_location(&self) -> ToolbarItemLocation {
-        ToolbarItemLocation::PrimaryLeft { flex: None }
+        ToolbarItemLocation::PrimaryLeft
     }
 
     fn breadcrumbs(&self, variant: &Theme, cx: &AppContext) -> Option<Vec<BreadcrumbText>> {
@@ -906,17 +907,15 @@ impl SearchableItem for Editor {
     type Match = Range<Anchor>;
 
     fn clear_matches(&mut self, cx: &mut ViewContext<Self>) {
-        todo!()
-        // self.clear_background_highlights::<BufferSearchHighlights>(cx);
+        self.clear_background_highlights::<BufferSearchHighlights>(cx);
     }
 
     fn update_matches(&mut self, matches: Vec<Range<Anchor>>, cx: &mut ViewContext<Self>) {
-        todo!()
-        // self.highlight_background::<BufferSearchHighlights>(
-        //     matches,
-        //     |theme| theme.search.match_background,
-        //     cx,
-        // );
+        self.highlight_background::<BufferSearchHighlights>(
+            matches,
+            |theme| theme.title_bar_background, // todo: update theme
+            cx,
+        );
     }
 
     fn query_suggestion(&mut self, cx: &mut ViewContext<Self>) -> String {
@@ -951,22 +950,20 @@ impl SearchableItem for Editor {
         matches: Vec<Range<Anchor>>,
         cx: &mut ViewContext<Self>,
     ) {
-        todo!()
-        // self.unfold_ranges([matches[index].clone()], false, true, cx);
-        // let range = self.range_for_match(&matches[index]);
-        // self.change_selections(Some(Autoscroll::fit()), cx, |s| {
-        //     s.select_ranges([range]);
-        // })
+        self.unfold_ranges([matches[index].clone()], false, true, cx);
+        let range = self.range_for_match(&matches[index]);
+        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
+            s.select_ranges([range]);
+        })
     }
 
     fn select_matches(&mut self, matches: Vec<Self::Match>, cx: &mut ViewContext<Self>) {
-        todo!()
-        // self.unfold_ranges(matches.clone(), false, false, cx);
-        // let mut ranges = Vec::new();
-        // for m in &matches {
-        //     ranges.push(self.range_for_match(&m))
-        // }
-        // self.change_selections(None, cx, |s| s.select_ranges(ranges));
+        self.unfold_ranges(matches.clone(), false, false, cx);
+        let mut ranges = Vec::new();
+        for m in &matches {
+            ranges.push(self.range_for_match(&m))
+        }
+        self.change_selections(None, cx, |s| s.select_ranges(ranges));
     }
     fn replace(
         &mut self,
