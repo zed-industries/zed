@@ -247,7 +247,7 @@ mod stories {
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             Story::container(cx)
-                .child(Story::title_for::<_, Label>(cx))
+                .child(Story::title_for::<Label>(cx))
                 .child(Story::label(cx, "Default"))
                 .child(Label::new("Hello, world!"))
                 .child(Story::label(cx, "Highlighted"))

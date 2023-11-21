@@ -15,10 +15,7 @@ impl Story {
             .bg(cx.theme().colors().background)
     }
 
-    pub fn title<V: 'static>(
-        cx: &mut WindowContext,
-        title: impl Into<SharedString>,
-    ) -> impl Element {
+    pub fn title(cx: &mut WindowContext, title: impl Into<SharedString>) -> impl Element {
         div()
             .text_xl()
             .text_color(cx.theme().colors().text)
@@ -29,10 +26,7 @@ impl Story {
         Self::title(cx, std::any::type_name::<T>())
     }
 
-    pub fn label<V: 'static>(
-        cx: &mut WindowContext,
-        label: impl Into<SharedString>,
-    ) -> impl Element {
+    pub fn label(cx: &mut WindowContext, label: impl Into<SharedString>) -> impl Element {
         div()
             .mt_4()
             .mb_2()

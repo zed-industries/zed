@@ -178,7 +178,7 @@ mod stories {
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             {
                 Story::container(cx)
-                    .child(Story::title_for::<_, Palette>(cx))
+                    .child(Story::title_for::<Palette>(cx))
                     .child(Story::label(cx, "Default"))
                     .child(Palette::new("palette-1"))
                     .child(Story::label(cx, "With Items"))

@@ -31,34 +31,3 @@ impl Facepile {
 }
 
 use gpui::{Div, RenderOnce};
-#[cfg(feature = "stories")]
-pub use stories::*;
-
-#[cfg(feature = "stories")]
-mod stories {
-    use super::*;
-    use crate::{static_players, Story};
-    use gpui::{Div, Render};
-
-    pub struct FacepileStory;
-
-    impl Render for FacepileStory {
-        type Element = Div;
-
-        fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-            let players = static_players();
-
-            Story::container(cx)
-                .child(Story::title_for::<_, Facepile>(cx))
-                .child(Story::label(cx, "Default"))
-                .child(
-                    div()
-                        .flex()
-                        .gap_3()
-                        .child(Facepile::new(players.clone().into_iter().take(1)))
-                        .child(Facepile::new(players.clone().into_iter().take(2)))
-                        .child(Facepile::new(players.clone().into_iter().take(3))),
-                )
-        }
-    }
-}

@@ -251,7 +251,7 @@ mod stories {
             let states = InteractionState::iter();
 
             Story::container(cx)
-                .child(Story::title_for::<_, Button>(cx))
+                .child(Story::title_for::<Button>(cx))
                 .child(
                     div()
                         .flex()
@@ -394,7 +394,7 @@ mod stories {
                 .child(
                     Button::new("Label")
                         .variant(ButtonVariant::Ghost)
-                        .on_click(cx.callback(|_view, _, cx| println!("Button clicked."))),
+                        .on_click(|_, cx| println!("Button clicked.")),
                 )
         }
     }

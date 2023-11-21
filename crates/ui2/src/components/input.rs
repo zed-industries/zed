@@ -123,7 +123,7 @@ mod stories {
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             Story::container(cx)
-                .child(Story::title_for::<_, Input>(cx))
+                .child(Story::title_for::<Input>(cx))
                 .child(Story::label(cx, "Default"))
                 .child(div().flex().child(Input::new("Search")))
         }
