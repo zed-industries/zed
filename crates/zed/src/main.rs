@@ -766,3 +766,11 @@ pub fn background_actions() -> &'static [(&'static str, &'static dyn Action)] {
         ("Change your settings", &zed_actions::OpenSettings),
     ]
 }
+
+// TODO:
+// Cleanly identify open / first open
+// What should we do if we fail when looking for installation_id?
+// - set to true, false, or skip?
+// Report closed
+// Copy logic to zed2
+// If we don't add an app close, we should prob add back the flush on startup?

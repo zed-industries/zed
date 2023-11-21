@@ -464,7 +464,7 @@ impl ActiveCall {
         &self.pending_invites
     }
 
-    pub fn report_call_event(&self, operation: &'static str, cx: &AppContext) {
+    pub fn report_call_event(&self, operation: &'static str, cx: &mut AppContext) {
         if let Some(room) = self.room() {
             let room = room.read(cx);
             report_call_event_for_room(operation, room.id(), room.channel_id(), &self.client, cx);
@@ -477,7 +477,7 @@ pub fn report_call_event_for_room(
     room_id: u64,
     channel_id: Option<u64>,
     client: &Arc<Client>,
-    cx: &AppContext,
+    cx: &mut AppContext,
 ) {
     let telemetry = client.telemetry();
     let telemetry_settings = *TelemetrySettings::get_global(cx);

@@ -1,5 +1,6 @@
 use crate::{TelemetrySettings, ZED_SECRET_CLIENT_TOKEN, ZED_SERVER_URL};
 use chrono::{DateTime, Utc};
+use futures::Future;
 use gpui::{serde_json, AppContext, AppMetadata, BackgroundExecutor, Task};
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
@@ -126,12 +127,13 @@ const DEBOUNCE_INTERVAL: Duration = Duration::from_secs(1);
 const DEBOUNCE_INTERVAL: Duration = Duration::from_secs(30);
 
 impl Telemetry {
-    pub fn new(client: Arc<dyn HttpClient>, cx: &AppContext) -> Arc<Self> {
+    pub fn new(client: Arc<dyn HttpClient>, cx: &mut AppContext) -> Arc<Self> {
         let release_channel = if cx.has_global::<ReleaseChannel>() {
             Some(cx.global::<ReleaseChannel>().display_name())
         } else {
             None
         };
+
         // TODO: Replace all hardware stuff with nested SystemSpecs json
         let this = Arc::new(Self {
             http_client: client,
@@ -151,7 +153,20 @@ impl Telemetry {
             }),
         });
 
+        // We should only ever have one instance of Telemetry, leak the subscription to keep it alive
+        // rather than store in TelemetryState, complicating spawn as subscriptions are not Send
+        std::mem::forget(cx.on_app_quit({
+            let this = this.clone();
+            move |cx| this.shutdown_telemetry(cx)
+        }));
+
         this
+    }
+
+    fn shutdown_telemetry(self: &Arc<Self>, cx: &mut AppContext) -> impl Future<Output = ()> {
+        let telemetry_settings = TelemetrySettings::get_global(cx).clone();
+        self.report_app_event(telemetry_settings, "close");
+        Task::ready(())
     }
 
     pub fn log_file_path(&self) -> Option<PathBuf> {
@@ -455,6 +470,7 @@ impl Telemetry {
                             release_channel: state.release_channel,
                             events,
                         };
+                        dbg!(&request_body);
                         json_bytes.clear();
                         serde_json::to_writer(&mut json_bytes, &request_body)?;
                     }
