@@ -15,7 +15,8 @@ mod status_bar;
 mod toolbar;
 mod workspace_settings;
 
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{anyhow, bail, Context as _, Result};
+use async_trait::async_trait;
 use call2::ActiveCall;
 use client2::{
     proto::{self, PeerId},
@@ -33,8 +34,8 @@ use gpui::{
     AsyncWindowContext, Bounds, Context, Div, Entity, EntityId, EventEmitter, FocusHandle,
     FocusableView, GlobalPixels, InteractiveElement, KeyContext, ManagedView, Model, ModelContext,
     ParentElement, PathPromptOptions, Point, PromptLevel, Render, Size, Styled, Subscription, Task,
-    View, ViewContext, VisualContext, WeakView, WindowBounds, WindowContext, WindowHandle,
-    WindowOptions,
+    View, ViewContext, VisualContext, WeakModel, WeakView, WindowBounds, WindowContext,
+    WindowHandle, WindowOptions,
 };
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, ProjectItem};
 use itertools::Itertools;
@@ -408,6 +409,177 @@ pub enum Event {
     WorkspaceCreated(WeakView<Workspace>),
 }
 
+#[async_trait(?Send)]
+trait CallHandler {
+    fn leader_updated(&mut self, leader_id: PeerId, cx: &mut ViewContext<Workspace>) -> Option<()>;
+    fn shared_screen_for_peer(
+        &self,
+        peer_id: PeerId,
+        pane: &View<Pane>,
+        cx: &mut ViewContext<Workspace>,
+    ) -> Option<Box<dyn ItemHandle>>;
+    fn follower_states_mut(&mut self) -> &mut HashMap<View<Pane>, FollowerState>;
+    fn follower_states(&self) -> &HashMap<View<Pane>, FollowerState>;
+    fn room_id(&self, cx: &AppContext) -> Option<u64>;
+    fn is_in_room(&self, cx: &mut ViewContext<Workspace>) -> bool {
+        self.room_id(cx).is_some()
+    }
+    fn hang_up(&self, cx: AsyncWindowContext) -> Result<Task<Result<()>>>;
+    fn active_project(&self, cx: &AppContext) -> Option<WeakModel<Project>>;
+}
+struct Call {
+    follower_states: HashMap<View<Pane>, FollowerState>,
+    active_call: Option<(Model<ActiveCall>, Vec<Subscription>)>,
+    parent_workspace: WeakView<Workspace>,
+}
+
+impl Call {
+    fn new(parent_workspace: WeakView<Workspace>, cx: &mut ViewContext<'_, Workspace>) -> Self {
+        let mut active_call = None;
+        if cx.has_global::<Model<ActiveCall>>() {
+            let call = cx.global::<Model<ActiveCall>>().clone();
+            let subscriptions = vec![cx.subscribe(&call, Self::on_active_call_event)];
+            active_call = Some((call, subscriptions));
+        }
+        Self {
+            follower_states: Default::default(),
+            active_call,
+            parent_workspace,
+        }
+    }
+    fn on_active_call_event(
+        workspace: &mut Workspace,
+        _: Model<ActiveCall>,
+        event: &call2::room::Event,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        match event {
+            call2::room::Event::ParticipantLocationChanged { participant_id }
+            | call2::room::Event::RemoteVideoTracksChanged { participant_id } => {
+                workspace.leader_updated(*participant_id, cx);
+            }
+            _ => {}
+        }
+    }
+}
+
+#[async_trait(?Send)]
+impl CallHandler for Call {
+    fn leader_updated(&mut self, leader_id: PeerId, cx: &mut ViewContext<Workspace>) -> Option<()> {
+        cx.notify();
+
+        let (call, _) = self.active_call.as_ref()?;
+        let room = call.read(cx).room()?.read(cx);
+        let participant = room.remote_participant_for_peer_id(leader_id)?;
+        let mut items_to_activate = Vec::new();
+
+        let leader_in_this_app;
+        let leader_in_this_project;
+        match participant.location {
+            call2::ParticipantLocation::SharedProject { project_id } => {
+                leader_in_this_app = true;
+                leader_in_this_project = Some(project_id)
+                    == self
+                        .parent_workspace
+                        .update(cx, |this, cx| this.project.read(cx).remote_id())
+                        .log_err()
+                        .flatten();
+            }
+            call2::ParticipantLocation::UnsharedProject => {
+                leader_in_this_app = true;
+                leader_in_this_project = false;
+            }
+            call2::ParticipantLocation::External => {
+                leader_in_this_app = false;
+                leader_in_this_project = false;
+            }
+        };
+
+        for (pane, state) in &self.follower_states {
+            if state.leader_id != leader_id {
+                continue;
+            }
+            if let (Some(active_view_id), true) = (state.active_view_id, leader_in_this_app) {
+                if let Some(item) = state.items_by_leader_view_id.get(&active_view_id) {
+                    if leader_in_this_project || !item.is_project_item(cx) {
+                        items_to_activate.push((pane.clone(), item.boxed_clone()));
+                    }
+                } else {
+                    log::warn!(
+                        "unknown view id {:?} for leader {:?}",
+                        active_view_id,
+                        leader_id
+                    );
+                }
+                continue;
+            }
+            // todo!()
+            // if let Some(shared_screen) = self.shared_screen_for_peer(leader_id, pane, cx) {
+            //     items_to_activate.push((pane.clone(), Box::new(shared_screen)));
+            // }
+        }
+
+        for (pane, item) in items_to_activate {
+            let pane_was_focused = pane.read(cx).has_focus(cx);
+            if let Some(index) = pane.update(cx, |pane, _| pane.index_for_item(item.as_ref())) {
+                pane.update(cx, |pane, cx| pane.activate_item(index, false, false, cx));
+            } else {
+                pane.update(cx, |pane, mut cx| {
+                    pane.add_item(item.boxed_clone(), false, false, None, &mut cx)
+                });
+            }
+
+            if pane_was_focused {
+                pane.update(cx, |pane, cx| pane.focus_active_item(cx));
+            }
+        }
+
+        None
+    }
+
+    fn shared_screen_for_peer(
+        &self,
+        peer_id: PeerId,
+        pane: &View<Pane>,
+        cx: &mut ViewContext<Workspace>,
+    ) -> Option<Box<dyn ItemHandle>> {
+        let (call, _) = self.active_call.as_ref()?;
+        let room = call.read(cx).room()?.read(cx);
+        let participant = room.remote_participant_for_peer_id(peer_id)?;
+        let track = participant.video_tracks.values().next()?.clone();
+        let user = participant.user.clone();
+        todo!();
+        // for item in pane.read(cx).items_of_type::<SharedScreen>() {
+        //     if item.read(cx).peer_id == peer_id {
+        //         return Box::new(Some(item));
+        //     }
+        // }
+
+        // Some(Box::new(cx.build_view(|cx| {
+        //     SharedScreen::new(&track, peer_id, user.clone(), cx)
+        // })))
+    }
+
+    fn follower_states_mut(&mut self) -> &mut HashMap<View<Pane>, FollowerState> {
+        &mut self.follower_states
+    }
+    fn follower_states(&self) -> &HashMap<View<Pane>, FollowerState> {
+        &self.follower_states
+    }
+    fn room_id(&self, cx: &AppContext) -> Option<u64> {
+        Some(self.active_call.as_ref()?.0.read(cx).room()?.read(cx).id())
+    }
+    fn hang_up(&self, mut cx: AsyncWindowContext) -> Result<Task<Result<()>>> {
+        let Some((call, _)) = self.active_call.as_ref() else {
+            bail!("Cannot exit a call; not in a call");
+        };
+
+        call.update(&mut cx, |this, cx| this.hang_up(cx))
+    }
+    fn active_project(&self, cx: &AppContext) -> Option<WeakModel<Project>> {
+        ActiveCall::global(cx).read(cx).location().cloned()
+    }
+}
 pub struct Workspace {
     window_self: WindowHandle<Self>,
     weak_self: WeakView<Self>,
@@ -428,10 +600,9 @@ pub struct Workspace {
     titlebar_item: Option<AnyView>,
     notifications: Vec<(TypeId, usize, Box<dyn NotificationHandle>)>,
     project: Model<Project>,
-    follower_states: HashMap<View<Pane>, FollowerState>,
+    call_handler: Box<dyn CallHandler>,
     last_leaders_by_pane: HashMap<WeakView<Pane>, PeerId>,
     window_edited: bool,
-    active_call: Option<(Model<ActiveCall>, Vec<Subscription>)>,
     leader_updates_tx: mpsc::UnboundedSender<(PeerId, proto::UpdateFollowers)>,
     database_id: WorkspaceId,
     app_state: Arc<AppState>,
@@ -550,9 +721,19 @@ impl Workspace {
             mpsc::unbounded::<(PeerId, proto::UpdateFollowers)>();
         let _apply_leader_updates = cx.spawn(|this, mut cx| async move {
             while let Some((leader_id, update)) = leader_updates_rx.next().await {
-                Self::process_leader_update(&this, leader_id, update, &mut cx)
+                let mut cx2 = cx.clone();
+                let t = this.clone();
+
+                Workspace::process_leader_update(&this, leader_id, update, &mut cx)
                     .await
                     .log_err();
+
+                // this.update(&mut cx, |this, cxx| {
+                //     this.call_handler
+                //         .process_leader_update(leader_id, update, cx2)
+                // })?
+                // .await
+                // .log_err();
             }
 
             Ok(())
@@ -584,14 +765,6 @@ impl Workspace {
         // cx.update_default_global::<DragAndDrop<Workspace>, _, _>(|drag_and_drop, _| {
         //     drag_and_drop.register_container(weak_handle.clone());
         // });
-
-        let mut active_call = None;
-        if cx.has_global::<Model<ActiveCall>>() {
-            let call = cx.global::<Model<ActiveCall>>().clone();
-            let mut subscriptions = Vec::new();
-            subscriptions.push(cx.subscribe(&call, Self::on_active_call_event));
-            active_call = Some((call, subscriptions));
-        }
 
         let subscriptions = vec![
             cx.observe_window_activation(Self::on_window_activation_changed),
@@ -652,10 +825,11 @@ impl Workspace {
             bottom_dock,
             right_dock,
             project: project.clone(),
-            follower_states: Default::default(),
+
             last_leaders_by_pane: Default::default(),
             window_edited: false,
-            active_call,
+
+            call_handler: Box::new(Call::new(weak_handle.clone(), cx)),
             database_id: workspace_id,
             app_state,
             _observe_current_user,
@@ -1102,7 +1276,7 @@ impl Workspace {
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<bool>> {
         //todo!(saveing)
-        let active_call = self.active_call().cloned();
+
         let window = cx.window_handle();
 
         cx.spawn(|this, mut cx| async move {
@@ -1113,27 +1287,27 @@ impl Workspace {
                     .count()
             })?;
 
-            if let Some(active_call) = active_call {
-                if !quitting
-                    && workspace_count == 1
-                    && active_call.read_with(&cx, |call, _| call.room().is_some())?
-                {
-                    let answer = window.update(&mut cx, |_, cx| {
-                        cx.prompt(
-                            PromptLevel::Warning,
-                            "Do you want to leave the current call?",
-                            &["Close window and hang up", "Cancel"],
-                        )
-                    })?;
+            if !quitting
+                && workspace_count == 1
+                && this
+                    .update(&mut cx, |this, cx| this.call_handler.is_in_room(cx))
+                    .log_err()
+                    .unwrap_or_default()
+            {
+                let answer = window.update(&mut cx, |_, cx| {
+                    cx.prompt(
+                        PromptLevel::Warning,
+                        "Do you want to leave the current call?",
+                        &["Close window and hang up", "Cancel"],
+                    )
+                })?;
 
-                    if answer.await.log_err() == Some(1) {
-                        return anyhow::Ok(false);
-                    } else {
-                        active_call
-                            .update(&mut cx, |call, cx| call.hang_up(cx))?
-                            .await
-                            .log_err();
-                    }
+                if answer.await.log_err() == Some(1) {
+                    return anyhow::Ok(false);
+                } else {
+                    this.update(&mut cx, |this, cx| this.call_handler.hang_up(cx.to_async()))??
+                        .await
+                        .log_err();
                 }
             }
 
@@ -2238,7 +2412,7 @@ impl Workspace {
     }
 
     fn collaborator_left(&mut self, peer_id: PeerId, cx: &mut ViewContext<Self>) {
-        self.follower_states.retain(|_, state| {
+        self.call_handler.follower_states_mut().retain(|_, state| {
             if state.leader_id == peer_id {
                 for item in state.items_by_leader_view_id.values() {
                     item.set_leader_peer_id(None, cx);
@@ -2391,19 +2565,19 @@ impl Workspace {
     //     }
 
     pub fn unfollow(&mut self, pane: &View<Pane>, cx: &mut ViewContext<Self>) -> Option<PeerId> {
-        let state = self.follower_states.remove(pane)?;
+        let follower_states = self.call_handler.follower_states_mut();
+        let state = follower_states.remove(pane)?;
         let leader_id = state.leader_id;
         for (_, item) in state.items_by_leader_view_id {
             item.set_leader_peer_id(None, cx);
         }
 
-        if self
-            .follower_states
+        if follower_states
             .values()
             .all(|state| state.leader_id != state.leader_id)
         {
             let project_id = self.project.read(cx).remote_id();
-            let room_id = self.active_call()?.read(cx).room()?.read(cx).id();
+            let room_id = self.call_handler.room_id(cx)?;
             self.app_state
                 .client
                 .send(proto::Unfollow {
@@ -2614,7 +2788,7 @@ impl Workspace {
         match update.variant.ok_or_else(|| anyhow!("invalid update"))? {
             proto::update_followers::Variant::UpdateActiveView(update_active_view) => {
                 this.update(cx, |this, _| {
-                    for (_, state) in &mut this.follower_states {
+                    for (_, state) in this.call_handler.follower_states_mut() {
                         if state.leader_id == leader_id {
                             state.active_view_id =
                                 if let Some(active_view_id) = update_active_view.id.clone() {
@@ -2637,7 +2811,7 @@ impl Workspace {
                 let mut tasks = Vec::new();
                 this.update(cx, |this, cx| {
                     let project = this.project.clone();
-                    for (_, state) in &mut this.follower_states {
+                    for (_, state) in this.call_handler.follower_states_mut() {
                         if state.leader_id == leader_id {
                             let view_id = ViewId::from_proto(id.clone())?;
                             if let Some(item) = state.items_by_leader_view_id.get(&view_id) {
@@ -2651,7 +2825,8 @@ impl Workspace {
             }
             proto::update_followers::Variant::CreateView(view) => {
                 let panes = this.update(cx, |this, _| {
-                    this.follower_states
+                    this.call_handler
+                        .follower_states()
                         .iter()
                         .filter_map(|(pane, state)| (state.leader_id == leader_id).then_some(pane))
                         .cloned()
@@ -2711,7 +2886,7 @@ impl Workspace {
         for (pane, (item_tasks, leader_view_ids)) in item_tasks_by_pane {
             let items = futures::future::try_join_all(item_tasks).await?;
             this.update(cx, |this, cx| {
-                let state = this.follower_states.get_mut(&pane)?;
+                let state = this.call_handler.follower_states_mut().get_mut(&pane)?;
                 for (id, item) in leader_view_ids.into_iter().zip(items) {
                     item.set_leader_peer_id(Some(leader_id), cx);
                     state.items_by_leader_view_id.insert(id, item);
@@ -2768,74 +2943,14 @@ impl Workspace {
     }
 
     pub fn leader_for_pane(&self, pane: &View<Pane>) -> Option<PeerId> {
-        self.follower_states.get(pane).map(|state| state.leader_id)
+        self.call_handler
+            .follower_states()
+            .get(pane)
+            .map(|state| state.leader_id)
     }
 
     fn leader_updated(&mut self, leader_id: PeerId, cx: &mut ViewContext<Self>) -> Option<()> {
-        cx.notify();
-
-        let call = self.active_call()?;
-        let room = call.read(cx).room()?.read(cx);
-        let participant = room.remote_participant_for_peer_id(leader_id)?;
-        let mut items_to_activate = Vec::new();
-
-        let leader_in_this_app;
-        let leader_in_this_project;
-        match participant.location {
-            call2::ParticipantLocation::SharedProject { project_id } => {
-                leader_in_this_app = true;
-                leader_in_this_project = Some(project_id) == self.project.read(cx).remote_id();
-            }
-            call2::ParticipantLocation::UnsharedProject => {
-                leader_in_this_app = true;
-                leader_in_this_project = false;
-            }
-            call2::ParticipantLocation::External => {
-                leader_in_this_app = false;
-                leader_in_this_project = false;
-            }
-        };
-
-        for (pane, state) in &self.follower_states {
-            if state.leader_id != leader_id {
-                continue;
-            }
-            if let (Some(active_view_id), true) = (state.active_view_id, leader_in_this_app) {
-                if let Some(item) = state.items_by_leader_view_id.get(&active_view_id) {
-                    if leader_in_this_project || !item.is_project_item(cx) {
-                        items_to_activate.push((pane.clone(), item.boxed_clone()));
-                    }
-                } else {
-                    log::warn!(
-                        "unknown view id {:?} for leader {:?}",
-                        active_view_id,
-                        leader_id
-                    );
-                }
-                continue;
-            }
-            // todo!()
-            // if let Some(shared_screen) = self.shared_screen_for_peer(leader_id, pane, cx) {
-            //     items_to_activate.push((pane.clone(), Box::new(shared_screen)));
-            // }
-        }
-
-        for (pane, item) in items_to_activate {
-            let pane_was_focused = pane.read(cx).has_focus(cx);
-            if let Some(index) = pane.update(cx, |pane, _| pane.index_for_item(item.as_ref())) {
-                pane.update(cx, |pane, cx| pane.activate_item(index, false, false, cx));
-            } else {
-                pane.update(cx, |pane, cx| {
-                    pane.add_item(item.boxed_clone(), false, false, None, cx)
-                });
-            }
-
-            if pane_was_focused {
-                pane.update(cx, |pane, cx| pane.focus_active_item(cx));
-            }
-        }
-
-        None
+        self.call_handler.leader_updated(leader_id, cx)
     }
 
     // todo!()
@@ -2883,25 +2998,6 @@ impl Workspace {
                     }
                 });
             }
-        }
-    }
-
-    fn active_call(&self) -> Option<&Model<ActiveCall>> {
-        self.active_call.as_ref().map(|(call, _)| call)
-    }
-
-    fn on_active_call_event(
-        &mut self,
-        _: Model<ActiveCall>,
-        event: &call2::room::Event,
-        cx: &mut ViewContext<Self>,
-    ) {
-        match event {
-            call2::room::Event::ParticipantLocationChanged { participant_id }
-            | call2::room::Event::RemoteVideoTracksChanged { participant_id } => {
-                self.leader_updated(*participant_id, cx);
-            }
-            _ => {}
         }
     }
 
@@ -3671,8 +3767,7 @@ impl Render for Workspace {
                                     .flex_1()
                                     .child(self.center.render(
                                         &self.project,
-                                        &self.follower_states,
-                                        self.active_call(),
+                                        &self.call_handler.follower_states(),
                                         &self.active_pane,
                                         self.zoomed.as_ref(),
                                         &self.app_state,
@@ -3845,11 +3940,12 @@ impl WorkspaceStore {
         update: proto::update_followers::Variant,
         cx: &AppContext,
     ) -> Option<()> {
-        if !cx.has_global::<Model<ActiveCall>>() {
-            return None;
-        }
-
-        let room_id = ActiveCall::global(cx).read(cx).room()?.read(cx).id();
+        let room_id = self.workspaces.iter().next().and_then(|workspace| {
+            workspace
+                .read_with(cx, |this, cx| this.call_handler.room_id(cx))
+                .log_err()
+                .flatten()
+        })?;
         let follower_ids: Vec<_> = self
             .followers
             .iter()
@@ -3885,9 +3981,17 @@ impl WorkspaceStore {
                 project_id: envelope.payload.project_id,
                 peer_id: envelope.original_sender_id()?,
             };
-            let active_project = ActiveCall::global(cx).read(cx).location().cloned();
-
             let mut response = proto::FollowResponse::default();
+            let active_project = this
+                .workspaces
+                .iter()
+                .next()
+                .and_then(|workspace| {
+                    workspace
+                        .read_with(cx, |this, cx| this.call_handler.active_project(cx))
+                        .log_err()
+                })
+                .flatten();
             for workspace in &this.workspaces {
                 workspace
                     .update(cx, |workspace, cx| {
