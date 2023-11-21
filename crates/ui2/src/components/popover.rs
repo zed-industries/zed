@@ -6,6 +6,33 @@ use smallvec::SmallVec;
 
 use crate::{v_stack, StyledExt};
 
+/// A popover is used to display a menu or show some options.
+///
+/// Clicking the element that launches the popover should not change the current view,
+/// and the popover should be statically positioned relative to that element (not the
+/// user's mouse.)
+///
+/// Example: A "new" menu with options like "new file", "new folder", etc,
+/// Linear's "Display" menu, a profile menu that appers when you click your avatar.
+///
+/// Related elements:
+///
+/// `ContextMenu`:
+///
+/// Used to display a popover menu that only contains a list of items. Context menus are always
+/// launched by secondary clicking on an element. The menu is positioned relative to the user's cursor.
+///
+/// Example: Right clicking a file in the file tree to get a list of actions, right clicking
+/// a tab to in the tab bar to get a list of actions.
+///
+/// `Dropdown`:
+///
+/// Used to display a list of options when the user clicks an element. The menu is
+/// positioned relative the element that was clicked, and clicking an item in the
+/// dropdown should change the value of the element that was clicked.
+///
+/// Example: A theme select control. Displays "One Dark", clicking it opens a list of themes.
+/// When one is selected, the theme select control displays the selected theme.
 #[derive(RenderOnce)]
 pub struct Popover {
     children: SmallVec<[AnyElement; 2]>,
@@ -23,7 +50,7 @@ impl Component for Popover {
             .children(self.children)
             .when_some(self.aside, |this, aside| {
                 // TODO: This will statically position the aside to the top right of the popover.
-                // We should update this to avoid collisions with the window edges.
+                // We should update this to use gpui2::overlay avoid collisions with the window edges.
                 this.child(
                     v_stack()
                         .top_0()
