@@ -1,7 +1,6 @@
 use gpui::{px, rgb, Div, Hsla, Render, RenderOnce};
+use story::Story;
 use ui::prelude::*;
-
-use crate::story::Story;
 
 /// A reimplementation of the MDN `z-index` example, found here:
 /// [https://developer.mozilla.org/en-US/docs/Web/CSS/z-index](https://developer.mozilla.org/en-US/docs/Web/CSS/z-index).
@@ -11,42 +10,40 @@ impl Render for ZIndexStory {
     type Element = Div;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-        Story::container(cx)
-            .child(Story::title(cx, "z-index"))
-            .child(
-                div()
-                    .flex()
-                    .child(
-                        div()
-                            .w(px(250.))
-                            .child(Story::label(cx, "z-index: auto"))
-                            .child(ZIndexExample::new(0)),
-                    )
-                    .child(
-                        div()
-                            .w(px(250.))
-                            .child(Story::label(cx, "z-index: 1"))
-                            .child(ZIndexExample::new(1)),
-                    )
-                    .child(
-                        div()
-                            .w(px(250.))
-                            .child(Story::label(cx, "z-index: 3"))
-                            .child(ZIndexExample::new(3)),
-                    )
-                    .child(
-                        div()
-                            .w(px(250.))
-                            .child(Story::label(cx, "z-index: 5"))
-                            .child(ZIndexExample::new(5)),
-                    )
-                    .child(
-                        div()
-                            .w(px(250.))
-                            .child(Story::label(cx, "z-index: 7"))
-                            .child(ZIndexExample::new(7)),
-                    ),
-            )
+        Story::container().child(Story::title("z-index")).child(
+            div()
+                .flex()
+                .child(
+                    div()
+                        .w(px(250.))
+                        .child(Story::label("z-index: auto"))
+                        .child(ZIndexExample::new(0)),
+                )
+                .child(
+                    div()
+                        .w(px(250.))
+                        .child(Story::label("z-index: 1"))
+                        .child(ZIndexExample::new(1)),
+                )
+                .child(
+                    div()
+                        .w(px(250.))
+                        .child(Story::label("z-index: 3"))
+                        .child(ZIndexExample::new(3)),
+                )
+                .child(
+                    div()
+                        .w(px(250.))
+                        .child(Story::label("z-index: 5"))
+                        .child(ZIndexExample::new(5)),
+                )
+                .child(
+                    div()
+                        .w(px(250.))
+                        .child(Story::label("z-index: 7"))
+                        .child(ZIndexExample::new(7)),
+                ),
+        )
     }
 }
 
@@ -87,7 +84,7 @@ struct ZIndexExample {
 impl Component for ZIndexExample {
     type Rendered = Div;
 
-    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
+    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         div()
             .relative()
             .size_full()
