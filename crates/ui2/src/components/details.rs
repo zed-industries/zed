@@ -2,16 +2,16 @@ use crate::prelude::*;
 use crate::{v_stack, ButtonGroup};
 
 #[derive(RenderOnce)]
-pub struct Details<V: 'static> {
+pub struct Details {
     text: &'static str,
     meta: Option<&'static str>,
-    actions: Option<ButtonGroup<V>>,
+    actions: Option<ButtonGroup>,
 }
 
-impl<V: 'static> Component<V> for Details<V> {
-    type Rendered = Div<V>;
+impl Component for Details {
+    type Rendered = Div;
 
-    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
+    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         v_stack()
             .p_1()
             .gap_0p5()
@@ -24,7 +24,7 @@ impl<V: 'static> Component<V> for Details<V> {
     }
 }
 
-impl<V: 'static> Details<V> {
+impl Details {
     pub fn new(text: &'static str) -> Self {
         Self {
             text,
@@ -38,7 +38,7 @@ impl<V: 'static> Details<V> {
         self
     }
 
-    pub fn actions(mut self, actions: ButtonGroup<V>) -> Self {
+    pub fn actions(mut self, actions: ButtonGroup) -> Self {
         self.actions = Some(actions);
         self
     }
@@ -56,12 +56,12 @@ mod stories {
 
     pub struct DetailsStory;
 
-    impl Render<Self> for DetailsStory {
-        type Element = Div<Self>;
+    impl Render for DetailsStory {
+        type Element = Div;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             Story::container(cx)
-                .child(Story::title_for::<_, Details<Self>>(cx))
+                .child(Story::title_for::<Details>(cx))
                 .child(Story::label(cx, "Default"))
                 .child(Details::new("The quick brown fox jumps over the lazy dog"))
                 .child(Story::label(cx, "With meta"))

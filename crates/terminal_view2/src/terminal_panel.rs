@@ -335,8 +335,8 @@ impl TerminalPanel {
 
 impl EventEmitter<PanelEvent> for TerminalPanel {}
 
-impl Render<Self> for TerminalPanel {
-    type Element = Div<Self>;
+impl Render for TerminalPanel {
+    type Element = Div;
 
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
         div().child(self.pane.clone())

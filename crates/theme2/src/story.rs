@@ -1,11 +1,11 @@
-use gpui::{div, Div, Element, ParentElement, SharedString, Styled, ViewContext};
+use gpui::{div, Div, Element, ParentElement, SharedString, Styled, WindowContext};
 
 use crate::ActiveTheme;
 
 pub struct Story {}
 
 impl Story {
-    pub fn container<V: 'static>(cx: &mut ViewContext<V>) -> Div<V> {
+    pub fn container(cx: &mut WindowContext) -> Div {
         div()
             .size_full()
             .flex()
@@ -16,21 +16,18 @@ impl Story {
             .bg(cx.theme().colors().background)
     }
 
-    pub fn title<V: 'static>(cx: &mut ViewContext<V>, title: SharedString) -> impl Element<V> {
+    pub fn title(cx: &mut WindowContext, title: SharedString) -> impl Element {
         div()
             .text_xl()
             .text_color(cx.theme().colors().text)
             .child(title)
     }
 
-    pub fn title_for<V: 'static, T>(cx: &mut ViewContext<V>) -> impl Element<V> {
+    pub fn title_for<T>(cx: &mut WindowContext) -> impl Element {
         Self::title(cx, std::any::type_name::<T>().into())
     }
 
-    pub fn label<V: 'static>(
-        cx: &mut ViewContext<V>,
-        label: impl Into<SharedString>,
-    ) -> impl Element<V> {
+    pub fn label(cx: &mut WindowContext, label: impl Into<SharedString>) -> impl Element {
         div()
             .mt_4()
             .mb_2()

@@ -476,8 +476,8 @@ impl Dock {
     }
 }
 
-impl Render<Self> for Dock {
-    type Element = Div<Self>;
+impl Render for Dock {
+    type Element = Div;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         if let Some(entry) = self.visible_entry() {
@@ -662,8 +662,8 @@ impl PanelButtons {
 // }
 
 // here be kittens
-impl Render<Self> for PanelButtons {
-    type Element = Div<Self>;
+impl Render for PanelButtons {
+    type Element = Div;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         // todo!()
@@ -688,30 +688,31 @@ impl Render<Self> for PanelButtons {
                 let name = entry.panel.persistent_name();
                 let panel = entry.panel.clone();
 
-                let mut button: IconButton<Self> = if i == active_index && is_open {
+                let mut button: IconButton = if i == active_index && is_open {
                     let action = dock.toggle_action();
                     let tooltip: SharedString =
                         format!("Close {} dock", dock.position.to_label()).into();
                     IconButton::new(name, icon)
                         .state(InteractionState::Active)
                         .action(action.boxed_clone())
-                        .tooltip(move |_, cx| Tooltip::for_action(tooltip.clone(), &*action, cx))
+                        .tooltip(move |cx| Tooltip::for_action(tooltip.clone(), &*action, cx))
                 } else {
                     let action = entry.panel.toggle_action(cx);
 
                     IconButton::new(name, icon)
                         .action(action.boxed_clone())
-                        .tooltip(move |_, cx| Tooltip::for_action(name, &*action, cx))
+                        .tooltip(move |cx| Tooltip::for_action(name, &*action, cx))
                 };
 
                 Some(
                     menu_handle(name)
-                        .menu(move |_, cx| {
+                        .menu(move |cx| {
                             const POSITIONS: [DockPosition; 3] = [
                                 DockPosition::Left,
                                 DockPosition::Right,
                                 DockPosition::Bottom,
                             ];
+
                             ContextMenu::build(cx, |mut menu, cx| {
                                 for position in POSITIONS {
                                     if position != dock_position
@@ -720,7 +721,7 @@ impl Render<Self> for PanelButtons {
                                         let panel = panel.clone();
                                         menu = menu.entry(
                                             ListItem::new(
-                                                SharedString::from(format!("dock-{position:?}")),
+                                                panel.entity_id(),
                                                 Label::new(format!("Dock {}", position.to_label())),
                                             ),
                                             move |_, cx| {
@@ -780,8 +781,8 @@ pub mod test {
         }
     }
 
-    impl Render<Self> for TestPanel {
-        type Element = Div<Self>;
+    impl Render for TestPanel {
+        type Element = Div;
 
         fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
             div()

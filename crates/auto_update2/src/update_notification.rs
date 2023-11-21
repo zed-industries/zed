@@ -8,8 +8,8 @@ pub struct UpdateNotification {
 
 impl EventEmitter<NotificationEvent> for UpdateNotification {}
 
-impl Render<Self> for UpdateNotification {
-    type Element = Div<Self>;
+impl Render for UpdateNotification {
+    type Element = Div;
 
     fn render(&mut self, _cx: &mut gpui::ViewContext<Self>) -> Self::Element {
         div().child("Updated zed!")

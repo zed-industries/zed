@@ -1,8 +1,8 @@
-use gpui::{prelude::*, AbsoluteLength, AnyElement, Div, RenderOnce, Stateful};
+use gpui::px;
+use gpui::{prelude::*, AbsoluteLength, AnyElement, Div, RenderOnce};
 use smallvec::SmallVec;
 
 use crate::prelude::*;
-use crate::settings::user_settings;
 use crate::v_stack;
 
 #[derive(Default, Debug, PartialEq, Eq, Hash, Clone, Copy)]
@@ -39,20 +39,20 @@ pub enum PanelSide {
 use std::collections::HashSet;
 
 #[derive(RenderOnce)]
-pub struct Panel<V: 'static> {
+pub struct Panel {
     id: ElementId,
     current_side: PanelSide,
     /// Defaults to PanelAllowedSides::LeftAndRight
     allowed_sides: PanelAllowedSides,
     initial_width: AbsoluteLength,
     width: Option<AbsoluteLength>,
-    children: SmallVec<[AnyElement<V>; 2]>,
+    children: SmallVec<[AnyElement; 2]>,
 }
 
-impl<V: 'static> Component<V> for Panel<V> {
-    type Rendered = Stateful<V, Div<V>>;
+impl Component for Panel {
+    type Rendered = gpui::Stateful<Div>;
 
-    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
+    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         let current_size = self.width.unwrap_or(self.initial_width);
 
         v_stack()
@@ -73,15 +73,13 @@ impl<V: 'static> Component<V> for Panel<V> {
     }
 }
 
-impl<V: 'static> Panel<V> {
+impl Panel {
     pub fn new(id: impl Into<ElementId>, cx: &mut WindowContext) -> Self {
-        let settings = user_settings(cx);
-
         Self {
             id: id.into(),
             current_side: PanelSide::default(),
             allowed_sides: PanelAllowedSides::default(),
-            initial_width: *settings.default_panel_size,
+            initial_width: px(320.).into(),
             width: None,
             children: SmallVec::new(),
         }
@@ -117,8 +115,8 @@ impl<V: 'static> Panel<V> {
     }
 }
 
-impl<V: 'static> ParentElement<V> for Panel<V> {
-    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<V>; 2]> {
+impl ParentElement for Panel {
+    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement; 2]> {
         &mut self.children
     }
 }
@@ -134,12 +132,12 @@ mod stories {
 
     pub struct PanelStory;
 
-    impl Render<Self> for PanelStory {
-        type Element = Div<Self>;
+    impl Render for PanelStory {
+        type Element = Div;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             Story::container(cx)
-                .child(Story::title_for::<_, Panel<Self>>(cx))
+                .child(Story::title_for::<Panel>(cx))
                 .child(Story::label(cx, "Default"))
                 .child(
                     Panel::new("panel", cx).child(

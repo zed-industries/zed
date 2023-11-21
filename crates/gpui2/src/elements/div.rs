@@ -3,7 +3,7 @@ use crate::{
     BorrowWindow, Bounds, ClickEvent, DispatchPhase, Element, ElementId, FocusEvent, FocusHandle,
     KeyContext, KeyDownEvent, KeyUpEvent, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent,
     MouseUpEvent, ParentElement, Pixels, Point, Render, RenderOnce, ScrollWheelEvent, SharedString,
-    Size, Style, StyleRefinement, Styled, Task, View, ViewContext, Visibility,
+    Size, Style, StyleRefinement, Styled, Task, View, Visibility, WindowContext,
 };
 use collections::HashMap;
 use refineable::Refineable;
@@ -12,7 +12,6 @@ use std::{
     any::{Any, TypeId},
     cell::RefCell,
     fmt::Debug,
-    marker::PhantomData,
     mem,
     rc::Rc,
     time::Duration,
@@ -28,30 +27,24 @@ pub struct GroupStyle {
     pub style: StyleRefinement,
 }
 
-pub trait InteractiveElement<V: 'static>: Sized + Element<V> {
-    fn interactivity(&mut self) -> &mut Interactivity<V>;
+pub trait InteractiveElement: Sized + Element {
+    fn interactivity(&mut self) -> &mut Interactivity;
 
     fn group(mut self, group: impl Into<SharedString>) -> Self {
         self.interactivity().group = Some(group.into());
         self
     }
 
-    fn id(mut self, id: impl Into<ElementId>) -> Stateful<V, Self> {
+    fn id(mut self, id: impl Into<ElementId>) -> Stateful<Self> {
         self.interactivity().element_id = Some(id.into());
 
-        Stateful {
-            element: self,
-            view_type: PhantomData,
-        }
+        Stateful { element: self }
     }
 
-    fn track_focus(mut self, focus_handle: &FocusHandle) -> Focusable<V, Self> {
+    fn track_focus(mut self, focus_handle: &FocusHandle) -> Focusable<Self> {
         self.interactivity().focusable = true;
         self.interactivity().tracked_focus_handle = Some(focus_handle.clone());
-        Focusable {
-            element: self,
-            view_type: PhantomData,
-        }
+        Focusable { element: self }
     }
 
     fn key_context<C, E>(mut self, key_context: C) -> Self
@@ -85,15 +78,15 @@ pub trait InteractiveElement<V: 'static>: Sized + Element<V> {
     fn on_mouse_down(
         mut self,
         button: MouseButton,
-        handler: impl Fn(&mut V, &MouseDownEvent, &mut ViewContext<V>) + 'static,
+        listener: impl Fn(&MouseDownEvent, &mut WindowContext) + 'static,
     ) -> Self {
         self.interactivity().mouse_down_listeners.push(Box::new(
-            move |view, event, bounds, phase, cx| {
+            move |event, bounds, phase, cx| {
                 if phase == DispatchPhase::Bubble
                     && event.button == button
                     && bounds.contains_point(&event.position)
                 {
-                    handler(view, event, cx)
+                    (listener)(event, cx)
                 }
             },
         ));
@@ -102,12 +95,12 @@ pub trait InteractiveElement<V: 'static>: Sized + Element<V> {
 
     fn on_any_mouse_down(
         mut self,
-        handler: impl Fn(&mut V, &MouseDownEvent, &mut ViewContext<V>) + 'static,
+        listener: impl Fn(&MouseDownEvent, &mut WindowContext) + 'static,
     ) -> Self {
         self.interactivity().mouse_down_listeners.push(Box::new(
-            move |view, event, bounds, phase, cx| {
+            move |event, bounds, phase, cx| {
                 if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position) {
-                    handler(view, event, cx)
+                    (listener)(event, cx)
                 }
             },
         ));
@@ -117,43 +110,43 @@ pub trait InteractiveElement<V: 'static>: Sized + Element<V> {
     fn on_mouse_up(
         mut self,
         button: MouseButton,
-        handler: impl Fn(&mut V, &MouseUpEvent, &mut ViewContext<V>) + 'static,
+        listener: impl Fn(&MouseUpEvent, &mut WindowContext) + 'static,
     ) -> Self {
-        self.interactivity().mouse_up_listeners.push(Box::new(
-            move |view, event, bounds, phase, cx| {
+        self.interactivity()
+            .mouse_up_listeners
+            .push(Box::new(move |event, bounds, phase, cx| {
                 if phase == DispatchPhase::Bubble
                     && event.button == button
                     && bounds.contains_point(&event.position)
                 {
-                    handler(view, event, cx)
+                    (listener)(event, cx)
                 }
-            },
-        ));
+            }));
         self
     }
 
     fn on_any_mouse_up(
         mut self,
-        handler: impl Fn(&mut V, &MouseUpEvent, &mut ViewContext<V>) + 'static,
+        listener: impl Fn(&MouseUpEvent, &mut WindowContext) + 'static,
     ) -> Self {
-        self.interactivity().mouse_up_listeners.push(Box::new(
-            move |view, event, bounds, phase, cx| {
+        self.interactivity()
+            .mouse_up_listeners
+            .push(Box::new(move |event, bounds, phase, cx| {
                 if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position) {
-                    handler(view, event, cx)
+                    (listener)(event, cx)
                 }
-            },
-        ));
+            }));
         self
     }
 
     fn on_mouse_down_out(
         mut self,
-        handler: impl Fn(&mut V, &MouseDownEvent, &mut ViewContext<V>) + 'static,
+        listener: impl Fn(&MouseDownEvent, &mut WindowContext) + 'static,
     ) -> Self {
         self.interactivity().mouse_down_listeners.push(Box::new(
-            move |view, event, bounds, phase, cx| {
+            move |event, bounds, phase, cx| {
                 if phase == DispatchPhase::Capture && !bounds.contains_point(&event.position) {
-                    handler(view, event, cx)
+                    (listener)(event, cx)
                 }
             },
         ));
@@ -163,29 +156,29 @@ pub trait InteractiveElement<V: 'static>: Sized + Element<V> {
     fn on_mouse_up_out(
         mut self,
         button: MouseButton,
-        handler: impl Fn(&mut V, &MouseUpEvent, &mut ViewContext<V>) + 'static,
+        listener: impl Fn(&MouseUpEvent, &mut WindowContext) + 'static,
     ) -> Self {
-        self.interactivity().mouse_up_listeners.push(Box::new(
-            move |view, event, bounds, phase, cx| {
+        self.interactivity()
+            .mouse_up_listeners
+            .push(Box::new(move |event, bounds, phase, cx| {
                 if phase == DispatchPhase::Capture
                     && event.button == button
                     && !bounds.contains_point(&event.position)
                 {
-                    handler(view, event, cx);
+                    (listener)(event, cx);
                 }
-            },
-        ));
+            }));
         self
     }
 
     fn on_mouse_move(
         mut self,
-        handler: impl Fn(&mut V, &MouseMoveEvent, &mut ViewContext<V>) + 'static,
+        listener: impl Fn(&MouseMoveEvent, &mut WindowContext) + 'static,
     ) -> Self {
         self.interactivity().mouse_move_listeners.push(Box::new(
-            move |view, event, bounds, phase, cx| {
+            move |event, bounds, phase, cx| {
                 if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position) {
-                    handler(view, event, cx);
+                    (listener)(event, cx);
                 }
             },
         ));
@@ -194,29 +187,29 @@ pub trait InteractiveElement<V: 'static>: Sized + Element<V> {
 
     fn on_scroll_wheel(
         mut self,
-        handler: impl Fn(&mut V, &ScrollWheelEvent, &mut ViewContext<V>) + 'static,
+        listener: impl Fn(&ScrollWheelEvent, &mut WindowContext) + 'static,
     ) -> Self {
         self.interactivity().scroll_wheel_listeners.push(Box::new(
-            move |view, event, bounds, phase, cx| {
+            move |event, bounds, phase, cx| {
                 if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position) {
-                    handler(view, event, cx);
+                    (listener)(event, cx);
                 }
             },
         ));
         self
     }
 
-    /// Capture the given action, fires during the capture phase
+    /// Capture the given action, before normal action dispatch can fire
     fn capture_action<A: Action>(
         mut self,
-        listener: impl Fn(&mut V, &A, &mut ViewContext<V>) + 'static,
+        listener: impl Fn(&A, &mut WindowContext) + 'static,
     ) -> Self {
         self.interactivity().action_listeners.push((
             TypeId::of::<A>(),
-            Box::new(move |view, action, phase, cx| {
+            Box::new(move |action, phase, cx| {
                 let action = action.downcast_ref().unwrap();
                 if phase == DispatchPhase::Capture {
-                    listener(view, action, cx)
+                    (listener)(action, cx)
                 }
             }),
         ));
@@ -224,10 +217,7 @@ pub trait InteractiveElement<V: 'static>: Sized + Element<V> {
     }
 
     /// Add a listener for the given action, fires during the bubble event phase
-    fn on_action<A: Action>(
-        mut self,
-        listener: impl Fn(&mut V, &A, &mut ViewContext<V>) + 'static,
-    ) -> Self {
+    fn on_action<A: Action>(mut self, listener: impl Fn(&A, &mut WindowContext) + 'static) -> Self {
         // NOTE: this debug assert has the side-effect of working around
         // a bug where a crate consisting only of action definitions does
         // not register the actions in debug builds:
@@ -244,10 +234,10 @@ pub trait InteractiveElement<V: 'static>: Sized + Element<V> {
         // );
         self.interactivity().action_listeners.push((
             TypeId::of::<A>(),
-            Box::new(move |view, action, phase, cx| {
+            Box::new(move |action, phase, cx| {
                 let action = action.downcast_ref().unwrap();
                 if phase == DispatchPhase::Bubble {
-                    listener(view, action, cx)
+                    (listener)(action, cx)
                 }
             }),
         ));
@@ -256,24 +246,53 @@ pub trait InteractiveElement<V: 'static>: Sized + Element<V> {
 
     fn on_key_down(
         mut self,
-        listener: impl Fn(&mut V, &KeyDownEvent, DispatchPhase, &mut ViewContext<V>) + 'static,
+        listener: impl Fn(&KeyDownEvent, &mut WindowContext) + 'static,
     ) -> Self {
         self.interactivity()
             .key_down_listeners
-            .push(Box::new(move |view, event, phase, cx| {
-                listener(view, event, phase, cx)
+            .push(Box::new(move |event, phase, cx| {
+                if phase == DispatchPhase::Bubble {
+                    (listener)(event, cx)
+                }
             }));
         self
     }
 
-    fn on_key_up(
+    fn capture_key_down(
         mut self,
-        listener: impl Fn(&mut V, &KeyUpEvent, DispatchPhase, &mut ViewContext<V>) + 'static,
+        listener: impl Fn(&KeyDownEvent, &mut WindowContext) + 'static,
+    ) -> Self {
+        self.interactivity()
+            .key_down_listeners
+            .push(Box::new(move |event, phase, cx| {
+                if phase == DispatchPhase::Capture {
+                    listener(event, cx)
+                }
+            }));
+        self
+    }
+
+    fn on_key_up(mut self, listener: impl Fn(&KeyUpEvent, &mut WindowContext) + 'static) -> Self {
+        self.interactivity()
+            .key_up_listeners
+            .push(Box::new(move |event, phase, cx| {
+                if phase == DispatchPhase::Bubble {
+                    listener(event, cx)
+                }
+            }));
+        self
+    }
+
+    fn capture_key_up(
+        mut self,
+        listener: impl Fn(&KeyUpEvent, &mut WindowContext) + 'static,
     ) -> Self {
         self.interactivity()
             .key_up_listeners
-            .push(Box::new(move |view, event, phase, cx| {
-                listener(view, event, phase, cx)
+            .push(Box::new(move |event, phase, cx| {
+                if phase == DispatchPhase::Capture {
+                    listener(event, cx)
+                }
             }));
         self
     }
@@ -302,25 +321,22 @@ pub trait InteractiveElement<V: 'static>: Sized + Element<V> {
 
     fn on_drop<W: 'static>(
         mut self,
-        listener: impl Fn(&mut V, View<W>, &mut ViewContext<V>) + 'static,
+        listener: impl Fn(&View<W>, &mut WindowContext) + 'static,
     ) -> Self {
         self.interactivity().drop_listeners.push((
             TypeId::of::<W>(),
-            Box::new(move |view, dragged_view, cx| {
-                listener(view, dragged_view.downcast().unwrap(), cx);
+            Box::new(move |dragged_view, cx| {
+                listener(&dragged_view.downcast().unwrap(), cx);
             }),
         ));
         self
     }
 }
 
-pub trait StatefulInteractiveElement<V: 'static, E: Element<V>>: InteractiveElement<V> {
-    fn focusable(mut self) -> Focusable<V, Self> {
+pub trait StatefulInteractiveElement: InteractiveElement {
+    fn focusable(mut self) -> Focusable<Self> {
         self.interactivity().focusable = true;
-        Focusable {
-            element: self,
-            view_type: PhantomData,
-        }
+        Focusable { element: self }
     }
 
     fn overflow_scroll(mut self) -> Self {
@@ -362,40 +378,33 @@ pub trait StatefulInteractiveElement<V: 'static, E: Element<V>>: InteractiveElem
         self
     }
 
-    fn on_click(
-        mut self,
-        listener: impl Fn(&mut V, &ClickEvent, &mut ViewContext<V>) + 'static,
-    ) -> Self
+    fn on_click(mut self, listener: impl Fn(&ClickEvent, &mut WindowContext) + 'static) -> Self
     where
         Self: Sized,
     {
         self.interactivity()
             .click_listeners
-            .push(Box::new(move |view, event, cx| listener(view, event, cx)));
+            .push(Box::new(move |event, cx| listener(event, cx)));
         self
     }
 
-    fn on_drag<W>(
-        mut self,
-        listener: impl Fn(&mut V, &mut ViewContext<V>) -> View<W> + 'static,
-    ) -> Self
+    fn on_drag<W>(mut self, listener: impl Fn(&mut WindowContext) -> View<W> + 'static) -> Self
     where
         Self: Sized,
-        W: 'static + Render<W>,
+        W: 'static + Render,
     {
         debug_assert!(
             self.interactivity().drag_listener.is_none(),
             "calling on_drag more than once on the same element is not supported"
         );
-        self.interactivity().drag_listener =
-            Some(Box::new(move |view_state, cursor_offset, cx| AnyDrag {
-                view: listener(view_state, cx).into(),
-                cursor_offset,
-            }));
+        self.interactivity().drag_listener = Some(Box::new(move |cursor_offset, cx| AnyDrag {
+            view: listener(cx).into(),
+            cursor_offset,
+        }));
         self
     }
 
-    fn on_hover(mut self, listener: impl 'static + Fn(&mut V, bool, &mut ViewContext<V>)) -> Self
+    fn on_hover(mut self, listener: impl Fn(&bool, &mut WindowContext) + 'static) -> Self
     where
         Self: Sized,
     {
@@ -407,10 +416,7 @@ pub trait StatefulInteractiveElement<V: 'static, E: Element<V>>: InteractiveElem
         self
     }
 
-    fn tooltip(
-        mut self,
-        build_tooltip: impl Fn(&mut V, &mut ViewContext<V>) -> AnyView + 'static,
-    ) -> Self
+    fn tooltip(mut self, build_tooltip: impl Fn(&mut WindowContext) -> AnyView + 'static) -> Self
     where
         Self: Sized,
     {
@@ -418,14 +424,13 @@ pub trait StatefulInteractiveElement<V: 'static, E: Element<V>>: InteractiveElem
             self.interactivity().tooltip_builder.is_none(),
             "calling tooltip more than once on the same element is not supported"
         );
-        self.interactivity().tooltip_builder =
-            Some(Rc::new(move |view_state, cx| build_tooltip(view_state, cx)));
+        self.interactivity().tooltip_builder = Some(Rc::new(build_tooltip));
 
         self
     }
 }
 
-pub trait FocusableElement<V: 'static>: InteractiveElement<V> {
+pub trait FocusableElement: InteractiveElement {
     fn focus(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self
     where
         Self: Sized,
@@ -442,49 +447,41 @@ pub trait FocusableElement<V: 'static>: InteractiveElement<V> {
         self
     }
 
-    fn on_focus(
-        mut self,
-        listener: impl Fn(&mut V, &FocusEvent, &mut ViewContext<V>) + 'static,
-    ) -> Self
+    fn on_focus(mut self, listener: impl Fn(&FocusEvent, &mut WindowContext) + 'static) -> Self
     where
         Self: Sized,
     {
-        self.interactivity().focus_listeners.push(Box::new(
-            move |view, focus_handle, event, cx| {
+        self.interactivity()
+            .focus_listeners
+            .push(Box::new(move |focus_handle, event, cx| {
                 if event.focused.as_ref() == Some(focus_handle) {
-                    listener(view, event, cx)
+                    listener(event, cx)
                 }
-            },
-        ));
+            }));
         self
     }
 
-    fn on_blur(
-        mut self,
-        listener: impl Fn(&mut V, &FocusEvent, &mut ViewContext<V>) + 'static,
-    ) -> Self
+    fn on_blur(mut self, listener: impl Fn(&FocusEvent, &mut WindowContext) + 'static) -> Self
     where
         Self: Sized,
     {
-        self.interactivity().focus_listeners.push(Box::new(
-            move |view, focus_handle, event, cx| {
+        self.interactivity()
+            .focus_listeners
+            .push(Box::new(move |focus_handle, event, cx| {
                 if event.blurred.as_ref() == Some(focus_handle) {
-                    listener(view, event, cx)
+                    listener(event, cx)
                 }
-            },
-        ));
+            }));
         self
     }
 
-    fn on_focus_in(
-        mut self,
-        listener: impl Fn(&mut V, &FocusEvent, &mut ViewContext<V>) + 'static,
-    ) -> Self
+    fn on_focus_in(mut self, listener: impl Fn(&FocusEvent, &mut WindowContext) + 'static) -> Self
     where
         Self: Sized,
     {
-        self.interactivity().focus_listeners.push(Box::new(
-            move |view, focus_handle, event, cx| {
+        self.interactivity()
+            .focus_listeners
+            .push(Box::new(move |focus_handle, event, cx| {
                 let descendant_blurred = event
                     .blurred
                     .as_ref()
@@ -495,22 +492,19 @@ pub trait FocusableElement<V: 'static>: InteractiveElement<V> {
                     .map_or(false, |focused| focus_handle.contains(focused, cx));
 
                 if !descendant_blurred && descendant_focused {
-                    listener(view, event, cx)
+                    listener(event, cx)
                 }
-            },
-        ));
+            }));
         self
     }
 
-    fn on_focus_out(
-        mut self,
-        listener: impl Fn(&mut V, &FocusEvent, &mut ViewContext<V>) + 'static,
-    ) -> Self
+    fn on_focus_out(mut self, listener: impl Fn(&FocusEvent, &mut WindowContext) + 'static) -> Self
     where
         Self: Sized,
     {
-        self.interactivity().focus_listeners.push(Box::new(
-            move |view, focus_handle, event, cx| {
+        self.interactivity()
+            .focus_listeners
+            .push(Box::new(move |focus_handle, event, cx| {
                 let descendant_blurred = event
                     .blurred
                     .as_ref()
@@ -520,93 +514,79 @@ pub trait FocusableElement<V: 'static>: InteractiveElement<V> {
                     .as_ref()
                     .map_or(false, |focused| focus_handle.contains(focused, cx));
                 if descendant_blurred && !descendant_focused {
-                    listener(view, event, cx)
+                    listener(event, cx)
                 }
-            },
-        ));
+            }));
         self
     }
 }
 
-pub type FocusListeners<V> = SmallVec<[FocusListener<V>; 2]>;
+pub type FocusListeners = SmallVec<[FocusListener; 2]>;
 
-pub type FocusListener<V> =
-    Box<dyn Fn(&mut V, &FocusHandle, &FocusEvent, &mut ViewContext<V>) + 'static>;
+pub type FocusListener = Box<dyn Fn(&FocusHandle, &FocusEvent, &mut WindowContext) + 'static>;
 
-pub type MouseDownListener<V> = Box<
-    dyn Fn(&mut V, &MouseDownEvent, &Bounds<Pixels>, DispatchPhase, &mut ViewContext<V>) + 'static,
->;
-pub type MouseUpListener<V> = Box<
-    dyn Fn(&mut V, &MouseUpEvent, &Bounds<Pixels>, DispatchPhase, &mut ViewContext<V>) + 'static,
->;
+pub type MouseDownListener =
+    Box<dyn Fn(&MouseDownEvent, &Bounds<Pixels>, DispatchPhase, &mut WindowContext) + 'static>;
+pub type MouseUpListener =
+    Box<dyn Fn(&MouseUpEvent, &Bounds<Pixels>, DispatchPhase, &mut WindowContext) + 'static>;
 
-pub type MouseMoveListener<V> = Box<
-    dyn Fn(&mut V, &MouseMoveEvent, &Bounds<Pixels>, DispatchPhase, &mut ViewContext<V>) + 'static,
->;
+pub type MouseMoveListener =
+    Box<dyn Fn(&MouseMoveEvent, &Bounds<Pixels>, DispatchPhase, &mut WindowContext) + 'static>;
 
-pub type ScrollWheelListener<V> = Box<
-    dyn Fn(&mut V, &ScrollWheelEvent, &Bounds<Pixels>, DispatchPhase, &mut ViewContext<V>)
-        + 'static,
->;
+pub type ScrollWheelListener =
+    Box<dyn Fn(&ScrollWheelEvent, &Bounds<Pixels>, DispatchPhase, &mut WindowContext) + 'static>;
 
-pub type ClickListener<V> = Box<dyn Fn(&mut V, &ClickEvent, &mut ViewContext<V>) + 'static>;
+pub type ClickListener = Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>;
 
-pub type DragListener<V> =
-    Box<dyn Fn(&mut V, Point<Pixels>, &mut ViewContext<V>) -> AnyDrag + 'static>;
+pub type DragListener = Box<dyn Fn(Point<Pixels>, &mut WindowContext) -> AnyDrag + 'static>;
 
-type DropListener<V> = dyn Fn(&mut V, AnyView, &mut ViewContext<V>) + 'static;
+type DropListener = dyn Fn(AnyView, &mut WindowContext) + 'static;
 
-pub type HoverListener<V> = Box<dyn Fn(&mut V, bool, &mut ViewContext<V>) + 'static>;
+pub type TooltipBuilder = Rc<dyn Fn(&mut WindowContext) -> AnyView + 'static>;
 
-pub type TooltipBuilder<V> = Rc<dyn Fn(&mut V, &mut ViewContext<V>) -> AnyView + 'static>;
+pub type KeyDownListener = Box<dyn Fn(&KeyDownEvent, DispatchPhase, &mut WindowContext) + 'static>;
 
-pub type KeyDownListener<V> =
-    Box<dyn Fn(&mut V, &KeyDownEvent, DispatchPhase, &mut ViewContext<V>) + 'static>;
+pub type KeyUpListener = Box<dyn Fn(&KeyUpEvent, DispatchPhase, &mut WindowContext) + 'static>;
 
-pub type KeyUpListener<V> =
-    Box<dyn Fn(&mut V, &KeyUpEvent, DispatchPhase, &mut ViewContext<V>) + 'static>;
+pub type ActionListener = Box<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext) + 'static>;
 
-pub type ActionListener<V> =
-    Box<dyn Fn(&mut V, &dyn Any, DispatchPhase, &mut ViewContext<V>) + 'static>;
-
-pub fn div<V: 'static>() -> Div<V> {
+pub fn div() -> Div {
     Div {
         interactivity: Interactivity::default(),
         children: SmallVec::default(),
     }
 }
 
-pub struct Div<V> {
-    interactivity: Interactivity<V>,
-    children: SmallVec<[AnyElement<V>; 2]>,
+pub struct Div {
+    interactivity: Interactivity,
+    children: SmallVec<[AnyElement; 2]>,
 }
 
-impl<V> Styled for Div<V> {
+impl Styled for Div {
     fn style(&mut self) -> &mut StyleRefinement {
         &mut self.interactivity.base_style
     }
 }
 
-impl<V: 'static> InteractiveElement<V> for Div<V> {
-    fn interactivity(&mut self) -> &mut Interactivity<V> {
+impl InteractiveElement for Div {
+    fn interactivity(&mut self) -> &mut Interactivity {
         &mut self.interactivity
     }
 }
 
-impl<V: 'static> ParentElement<V> for Div<V> {
-    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<V>; 2]> {
+impl ParentElement for Div {
+    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement; 2]> {
         &mut self.children
     }
 }
 
-impl<V: 'static> Element<V> for Div<V> {
+impl Element for Div {
     type State = DivState;
 
     fn layout(
         &mut self,
-        view_state: &mut V,
         element_state: Option<Self::State>,
-        cx: &mut ViewContext<V>,
+        cx: &mut WindowContext,
     ) -> (LayoutId, Self::State) {
         let mut child_layout_ids = SmallVec::new();
         let mut interactivity = mem::take(&mut self.interactivity);
@@ -618,7 +598,7 @@ impl<V: 'static> Element<V> for Div<V> {
                     child_layout_ids = self
                         .children
                         .iter_mut()
-                        .map(|child| child.layout(view_state, cx))
+                        .map(|child| child.layout(cx))
                         .collect::<SmallVec<_>>();
                     cx.request_layout(&style, child_layout_ids.iter().copied())
                 })
@@ -637,9 +617,8 @@ impl<V: 'static> Element<V> for Div<V> {
     fn paint(
         self,
         bounds: Bounds<Pixels>,
-        view_state: &mut V,
         element_state: &mut Self::State,
-        cx: &mut ViewContext<V>,
+        cx: &mut WindowContext,
     ) {
         let mut child_min = point(Pixels::MAX, Pixels::MAX);
         let mut child_max = Point::default();
@@ -675,7 +654,7 @@ impl<V: 'static> Element<V> for Div<V> {
                             cx.with_content_mask(style.overflow_mask(bounds), |cx| {
                                 cx.with_element_offset(scroll_offset, |cx| {
                                     for child in self.children {
-                                        child.paint(view_state, cx);
+                                        child.paint(cx);
                                     }
                                 })
                             })
@@ -687,7 +666,7 @@ impl<V: 'static> Element<V> for Div<V> {
     }
 }
 
-impl<V: 'static> RenderOnce<V> for Div<V> {
+impl RenderOnce for Div {
     type Element = Self;
 
     fn element_id(&self) -> Option<ElementId> {
@@ -710,12 +689,12 @@ impl DivState {
     }
 }
 
-pub struct Interactivity<V> {
+pub struct Interactivity {
     pub element_id: Option<ElementId>,
     pub key_context: KeyContext,
     pub focusable: bool,
     pub tracked_focus_handle: Option<FocusHandle>,
-    pub focus_listeners: FocusListeners<V>,
+    pub focus_listeners: FocusListeners,
     pub group: Option<SharedString>,
     pub base_style: StyleRefinement,
     pub focus_style: StyleRefinement,
@@ -726,29 +705,26 @@ pub struct Interactivity<V> {
     pub group_active_style: Option<GroupStyle>,
     pub drag_over_styles: SmallVec<[(TypeId, StyleRefinement); 2]>,
     pub group_drag_over_styles: SmallVec<[(TypeId, GroupStyle); 2]>,
-    pub mouse_down_listeners: SmallVec<[MouseDownListener<V>; 2]>,
-    pub mouse_up_listeners: SmallVec<[MouseUpListener<V>; 2]>,
-    pub mouse_move_listeners: SmallVec<[MouseMoveListener<V>; 2]>,
-    pub scroll_wheel_listeners: SmallVec<[ScrollWheelListener<V>; 2]>,
-    pub key_down_listeners: SmallVec<[KeyDownListener<V>; 2]>,
-    pub key_up_listeners: SmallVec<[KeyUpListener<V>; 2]>,
-    pub action_listeners: SmallVec<[(TypeId, ActionListener<V>); 8]>,
-    pub drop_listeners: SmallVec<[(TypeId, Box<DropListener<V>>); 2]>,
-    pub click_listeners: SmallVec<[ClickListener<V>; 2]>,
-    pub drag_listener: Option<DragListener<V>>,
-    pub hover_listener: Option<HoverListener<V>>,
-    pub tooltip_builder: Option<TooltipBuilder<V>>,
+    pub mouse_down_listeners: SmallVec<[MouseDownListener; 2]>,
+    pub mouse_up_listeners: SmallVec<[MouseUpListener; 2]>,
+    pub mouse_move_listeners: SmallVec<[MouseMoveListener; 2]>,
+    pub scroll_wheel_listeners: SmallVec<[ScrollWheelListener; 2]>,
+    pub key_down_listeners: SmallVec<[KeyDownListener; 2]>,
+    pub key_up_listeners: SmallVec<[KeyUpListener; 2]>,
+    pub action_listeners: SmallVec<[(TypeId, ActionListener); 8]>,
+    pub drop_listeners: SmallVec<[(TypeId, Box<DropListener>); 2]>,
+    pub click_listeners: SmallVec<[ClickListener; 2]>,
+    pub drag_listener: Option<DragListener>,
+    pub hover_listener: Option<Box<dyn Fn(&bool, &mut WindowContext)>>,
+    pub tooltip_builder: Option<TooltipBuilder>,
 }
 
-impl<V> Interactivity<V>
-where
-    V: 'static,
-{
+impl Interactivity {
     pub fn layout(
         &mut self,
         element_state: Option<InteractiveElementState>,
-        cx: &mut ViewContext<V>,
-        f: impl FnOnce(Style, &mut ViewContext<V>) -> LayoutId,
+        cx: &mut WindowContext,
+        f: impl FnOnce(Style, &mut WindowContext) -> LayoutId,
     ) -> (LayoutId, InteractiveElementState) {
         let mut element_state = element_state.unwrap_or_default();
 
@@ -774,8 +750,8 @@ where
         bounds: Bounds<Pixels>,
         content_size: Size<Pixels>,
         element_state: &mut InteractiveElementState,
-        cx: &mut ViewContext<V>,
-        f: impl FnOnce(Style, Point<Pixels>, &mut ViewContext<V>),
+        cx: &mut WindowContext,
+        f: impl FnOnce(Style, Point<Pixels>, &mut WindowContext),
     ) {
         let style = self.compute_style(Some(bounds), element_state, cx);
 
@@ -786,27 +762,27 @@ where
             }
         }
 
-        for listener in self.mouse_down_listeners {
-            cx.on_mouse_event(move |state, event: &MouseDownEvent, phase, cx| {
-                listener(state, event, &bounds, phase, cx);
+        for listener in self.mouse_down_listeners.drain(..) {
+            cx.on_mouse_event(move |event: &MouseDownEvent, phase, cx| {
+                listener(event, &bounds, phase, cx);
             })
         }
 
-        for listener in self.mouse_up_listeners {
-            cx.on_mouse_event(move |state, event: &MouseUpEvent, phase, cx| {
-                listener(state, event, &bounds, phase, cx);
+        for listener in self.mouse_up_listeners.drain(..) {
+            cx.on_mouse_event(move |event: &MouseUpEvent, phase, cx| {
+                listener(event, &bounds, phase, cx);
             })
         }
 
-        for listener in self.mouse_move_listeners {
-            cx.on_mouse_event(move |state, event: &MouseMoveEvent, phase, cx| {
-                listener(state, event, &bounds, phase, cx);
+        for listener in self.mouse_move_listeners.drain(..) {
+            cx.on_mouse_event(move |event: &MouseMoveEvent, phase, cx| {
+                listener(event, &bounds, phase, cx);
             })
         }
 
-        for listener in self.scroll_wheel_listeners {
-            cx.on_mouse_event(move |state, event: &ScrollWheelEvent, phase, cx| {
-                listener(state, event, &bounds, phase, cx);
+        for listener in self.scroll_wheel_listeners.drain(..) {
+            cx.on_mouse_event(move |event: &ScrollWheelEvent, phase, cx| {
+                listener(event, &bounds, phase, cx);
             })
         }
 
@@ -817,7 +793,7 @@ where
 
         if let Some(group_bounds) = hover_group_bounds {
             let hovered = group_bounds.contains_point(&cx.mouse_position());
-            cx.on_mouse_event(move |_, event: &MouseMoveEvent, phase, cx| {
+            cx.on_mouse_event(move |event: &MouseMoveEvent, phase, cx| {
                 if phase == DispatchPhase::Capture {
                     if group_bounds.contains_point(&event.position) != hovered {
                         cx.notify();
@@ -830,7 +806,7 @@ where
             || (cx.active_drag.is_some() && !self.drag_over_styles.is_empty())
         {
             let hovered = bounds.contains_point(&cx.mouse_position());
-            cx.on_mouse_event(move |_, event: &MouseMoveEvent, phase, cx| {
+            cx.on_mouse_event(move |event: &MouseMoveEvent, phase, cx| {
                 if phase == DispatchPhase::Capture {
                     if bounds.contains_point(&event.position) != hovered {
                         cx.notify();
@@ -840,8 +816,8 @@ where
         }
 
         if cx.active_drag.is_some() {
-            let drop_listeners = self.drop_listeners;
-            cx.on_mouse_event(move |view, event: &MouseUpEvent, phase, cx| {
+            let drop_listeners = mem::take(&mut self.drop_listeners);
+            cx.on_mouse_event(move |event: &MouseUpEvent, phase, cx| {
                 if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position) {
                     if let Some(drag_state_type) =
                         cx.active_drag.as_ref().map(|drag| drag.view.entity_type())
@@ -852,7 +828,7 @@ where
                                     .active_drag
                                     .take()
                                     .expect("checked for type drag state type above");
-                                listener(view, drag.view.clone(), cx);
+                                listener(drag.view.clone(), cx);
                                 cx.notify();
                                 cx.stop_propagation();
                             }
@@ -872,7 +848,7 @@ where
                 if let Some(drag_listener) = drag_listener {
                     let active_state = element_state.clicked_state.clone();
 
-                    cx.on_mouse_event(move |view_state, event: &MouseMoveEvent, phase, cx| {
+                    cx.on_mouse_event(move |event: &MouseMoveEvent, phase, cx| {
                         if cx.active_drag.is_some() {
                             if phase == DispatchPhase::Capture {
                                 cx.notify();
@@ -883,7 +859,7 @@ where
                         {
                             *active_state.borrow_mut() = ElementClickedState::default();
                             let cursor_offset = event.position - bounds.origin;
-                            let drag = drag_listener(view_state, cursor_offset, cx);
+                            let drag = drag_listener(cursor_offset, cx);
                             cx.active_drag = Some(drag);
                             cx.notify();
                             cx.stop_propagation();
@@ -891,21 +867,21 @@ where
                     });
                 }
 
-                cx.on_mouse_event(move |view_state, event: &MouseUpEvent, phase, cx| {
+                cx.on_mouse_event(move |event: &MouseUpEvent, phase, cx| {
                     if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position) {
                         let mouse_click = ClickEvent {
                             down: mouse_down.clone(),
                             up: event.clone(),
                         };
                         for listener in &click_listeners {
-                            listener(view_state, &mouse_click, cx);
+                            listener(&mouse_click, cx);
                         }
                     }
                     *pending_mouse_down.borrow_mut() = None;
                     cx.notify();
                 });
             } else {
-                cx.on_mouse_event(move |_view_state, event: &MouseDownEvent, phase, cx| {
+                cx.on_mouse_event(move |event: &MouseDownEvent, phase, cx| {
                     if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position) {
                         *pending_mouse_down.borrow_mut() = Some(event.clone());
                         cx.notify();
@@ -918,7 +894,7 @@ where
             let was_hovered = element_state.hover_state.clone();
             let has_mouse_down = element_state.pending_mouse_down.clone();
 
-            cx.on_mouse_event(move |view_state, event: &MouseMoveEvent, phase, cx| {
+            cx.on_mouse_event(move |event: &MouseMoveEvent, phase, cx| {
                 if phase != DispatchPhase::Bubble {
                     return;
                 }
@@ -930,7 +906,7 @@ where
                     *was_hovered = is_hovered;
                     drop(was_hovered);
 
-                    hover_listener(view_state, is_hovered, cx);
+                    hover_listener(&is_hovered, cx);
                 }
             });
         }
@@ -939,7 +915,7 @@ where
             let active_tooltip = element_state.active_tooltip.clone();
             let pending_mouse_down = element_state.pending_mouse_down.clone();
 
-            cx.on_mouse_event(move |_, event: &MouseMoveEvent, phase, cx| {
+            cx.on_mouse_event(move |event: &MouseMoveEvent, phase, cx| {
                 if phase != DispatchPhase::Bubble {
                     return;
                 }
@@ -956,12 +932,12 @@ where
                         let active_tooltip = active_tooltip.clone();
                         let tooltip_builder = tooltip_builder.clone();
 
-                        move |view, mut cx| async move {
+                        move |mut cx| async move {
                             cx.background_executor().timer(TOOLTIP_DELAY).await;
-                            view.update(&mut cx, move |view_state, cx| {
+                            cx.update(|_, cx| {
                                 active_tooltip.borrow_mut().replace(ActiveTooltip {
                                     tooltip: Some(AnyTooltip {
-                                        view: tooltip_builder(view_state, cx),
+                                        view: tooltip_builder(cx),
                                         cursor_offset: cx.mouse_position(),
                                     }),
                                     _task: None,
@@ -979,7 +955,7 @@ where
             });
 
             let active_tooltip = element_state.active_tooltip.clone();
-            cx.on_mouse_event(move |_, _: &MouseDownEvent, _, _| {
+            cx.on_mouse_event(move |_: &MouseDownEvent, _, _| {
                 active_tooltip.borrow_mut().take();
             });
 
@@ -992,7 +968,7 @@ where
 
         let active_state = element_state.clicked_state.clone();
         if !active_state.borrow().is_clicked() {
-            cx.on_mouse_event(move |_, _: &MouseUpEvent, phase, cx| {
+            cx.on_mouse_event(move |_: &MouseUpEvent, phase, cx| {
                 if phase == DispatchPhase::Capture {
                     *active_state.borrow_mut() = ElementClickedState::default();
                     cx.notify();
@@ -1003,7 +979,7 @@ where
                 .group_active_style
                 .as_ref()
                 .and_then(|group_active| GroupBounds::get(&group_active.group, cx));
-            cx.on_mouse_event(move |_view, down: &MouseDownEvent, phase, cx| {
+            cx.on_mouse_event(move |down: &MouseDownEvent, phase, cx| {
                 if phase == DispatchPhase::Bubble {
                     let group = active_group_bounds
                         .map_or(false, |bounds| bounds.contains_point(&down.position));
@@ -1025,7 +1001,7 @@ where
             let line_height = cx.line_height();
             let scroll_max = (content_size - bounds.size).max(&Size::default());
 
-            cx.on_mouse_event(move |_, event: &ScrollWheelEvent, phase, cx| {
+            cx.on_mouse_event(move |event: &ScrollWheelEvent, phase, cx| {
                 if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position) {
                     let mut scroll_offset = scroll_offset.borrow_mut();
                     let old_scroll_offset = *scroll_offset;
@@ -1062,15 +1038,15 @@ where
             self.key_context.clone(),
             element_state.focus_handle.clone(),
             |_, cx| {
-                for listener in self.key_down_listeners {
-                    cx.on_key_event(move |state, event: &KeyDownEvent, phase, cx| {
-                        listener(state, event, phase, cx);
+                for listener in self.key_down_listeners.drain(..) {
+                    cx.on_key_event(move |event: &KeyDownEvent, phase, cx| {
+                        listener(event, phase, cx);
                     })
                 }
 
-                for listener in self.key_up_listeners {
-                    cx.on_key_event(move |state, event: &KeyUpEvent, phase, cx| {
-                        listener(state, event, phase, cx);
+                for listener in self.key_up_listeners.drain(..) {
+                    cx.on_key_event(move |event: &KeyUpEvent, phase, cx| {
+                        listener(event, phase, cx);
                     })
                 }
 
@@ -1081,9 +1057,7 @@ where
                 if let Some(focus_handle) = element_state.focus_handle.as_ref() {
                     for listener in self.focus_listeners {
                         let focus_handle = focus_handle.clone();
-                        cx.on_focus_changed(move |view, event, cx| {
-                            listener(view, &focus_handle, event, cx)
-                        });
+                        cx.on_focus_changed(move |event, cx| listener(&focus_handle, event, cx));
                     }
                 }
 
@@ -1100,7 +1074,7 @@ where
         &self,
         bounds: Option<Bounds<Pixels>>,
         element_state: &mut InteractiveElementState,
-        cx: &mut ViewContext<V>,
+        cx: &mut WindowContext,
     ) -> Style {
         let mut style = Style::default();
         style.refine(&self.base_style);
@@ -1171,7 +1145,7 @@ where
     }
 }
 
-impl<V: 'static> Default for Interactivity<V> {
+impl Default for Interactivity {
     fn default() -> Self {
         Self {
             element_id: None,
@@ -1259,31 +1233,25 @@ impl GroupBounds {
     }
 }
 
-pub struct Focusable<V, E> {
+pub struct Focusable<E> {
     element: E,
-    view_type: PhantomData<V>,
 }
 
-impl<V: 'static + Render<V>, E: InteractiveElement<V>> FocusableElement<V> for Focusable<V, E> {}
+impl<E: InteractiveElement> FocusableElement for Focusable<E> {}
 
-impl<V, E> InteractiveElement<V> for Focusable<V, E>
+impl<E> InteractiveElement for Focusable<E>
 where
-    V: 'static + Render<V>,
-    E: InteractiveElement<V>,
+    E: InteractiveElement,
 {
-    fn interactivity(&mut self) -> &mut Interactivity<V> {
+    fn interactivity(&mut self) -> &mut Interactivity {
         self.element.interactivity()
     }
 }
 
-impl<V: 'static + Render<V>, E: StatefulInteractiveElement<V, E>> StatefulInteractiveElement<V, E>
-    for Focusable<V, E>
-{
-}
+impl<E: StatefulInteractiveElement> StatefulInteractiveElement for Focusable<E> {}
 
-impl<V, E> Styled for Focusable<V, E>
+impl<E> Styled for Focusable<E>
 where
-    V: 'static,
     E: Styled,
 {
     fn style(&mut self) -> &mut StyleRefinement {
@@ -1291,67 +1259,55 @@ where
     }
 }
 
-impl<V, E> Element<V> for Focusable<V, E>
+impl<E> Element for Focusable<E>
 where
-    V: 'static + Render<V>,
-    E: Element<V>,
+    E: Element,
 {
     type State = E::State;
 
     fn layout(
         &mut self,
-        view_state: &mut V,
-        element_state: Option<Self::State>,
-        cx: &mut ViewContext<V>,
+        state: Option<Self::State>,
+        cx: &mut WindowContext,
     ) -> (LayoutId, Self::State) {
-        self.element.layout(view_state, element_state, cx)
+        self.element.layout(state, cx)
     }
 
-    fn paint(
-        self,
-        bounds: Bounds<Pixels>,
-        view_state: &mut V,
-        element_state: &mut Self::State,
-        cx: &mut ViewContext<V>,
-    ) {
-        self.element.paint(bounds, view_state, element_state, cx)
+    fn paint(self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut WindowContext) {
+        self.element.paint(bounds, state, cx)
     }
 }
 
-impl<V, E> RenderOnce<V> for Focusable<V, E>
+impl<E> RenderOnce for Focusable<E>
 where
-    V: 'static + Render<V>,
-    E: Element<V>,
+    E: Element,
 {
-    type Element = Self;
+    type Element = E;
 
     fn element_id(&self) -> Option<ElementId> {
         self.element.element_id()
     }
 
     fn render_once(self) -> Self::Element {
-        self
+        self.element
     }
 }
 
-impl<V, E> ParentElement<V> for Focusable<V, E>
+impl<E> ParentElement for Focusable<E>
 where
-    V: 'static,
-    E: ParentElement<V>,
+    E: ParentElement,
 {
-    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<V>; 2]> {
+    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement; 2]> {
         self.element.children_mut()
     }
 }
 
-pub struct Stateful<V, E> {
+pub struct Stateful<E> {
     element: E,
-    view_type: PhantomData<V>,
 }
 
-impl<V, E> Styled for Stateful<V, E>
+impl<E> Styled for Stateful<E>
 where
-    V: 'static,
     E: Styled,
 {
     fn style(&mut self) -> &mut StyleRefinement {
@@ -1359,57 +1315,46 @@ where
     }
 }
 
-impl<V, E> StatefulInteractiveElement<V, E> for Stateful<V, E>
+impl<E> StatefulInteractiveElement for Stateful<E>
 where
-    V: 'static,
-    E: Element<V>,
-    Self: InteractiveElement<V>,
+    E: Element,
+    Self: InteractiveElement,
 {
 }
 
-impl<V, E> InteractiveElement<V> for Stateful<V, E>
+impl<E> InteractiveElement for Stateful<E>
 where
-    V: 'static,
-    E: InteractiveElement<V>,
+    E: InteractiveElement,
 {
-    fn interactivity(&mut self) -> &mut Interactivity<V> {
+    fn interactivity(&mut self) -> &mut Interactivity {
         self.element.interactivity()
     }
 }
 
-impl<V: 'static, E: FocusableElement<V>> FocusableElement<V> for Stateful<V, E> {}
+impl<E: FocusableElement> FocusableElement for Stateful<E> {}
 
-impl<V, E> Element<V> for Stateful<V, E>
+impl<E> Element for Stateful<E>
 where
-    V: 'static,
-    E: Element<V>,
+    E: Element,
 {
     type State = E::State;
 
     fn layout(
         &mut self,
-        view_state: &mut V,
-        element_state: Option<Self::State>,
-        cx: &mut ViewContext<V>,
+        state: Option<Self::State>,
+        cx: &mut WindowContext,
     ) -> (LayoutId, Self::State) {
-        self.element.layout(view_state, element_state, cx)
+        self.element.layout(state, cx)
     }
 
-    fn paint(
-        self,
-        bounds: Bounds<Pixels>,
-        view_state: &mut V,
-        element_state: &mut Self::State,
-        cx: &mut ViewContext<V>,
-    ) {
-        self.element.paint(bounds, view_state, element_state, cx)
+    fn paint(self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut WindowContext) {
+        self.element.paint(bounds, state, cx)
     }
 }
 
-impl<V, E> RenderOnce<V> for Stateful<V, E>
+impl<E> RenderOnce for Stateful<E>
 where
-    V: 'static,
-    E: Element<V>,
+    E: Element,
 {
     type Element = Self;
 
@@ -1422,12 +1367,11 @@ where
     }
 }
 
-impl<V, E> ParentElement<V> for Stateful<V, E>
+impl<E> ParentElement for Stateful<E>
 where
-    V: 'static,
-    E: ParentElement<V>,
+    E: ParentElement,
 {
-    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<V>; 2]> {
+    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement; 2]> {
         self.element.children_mut()
     }
 }

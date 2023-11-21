@@ -7,10 +7,10 @@ pub struct Avatar {
     shape: Shape,
 }
 
-impl<V: 'static> Component<V> for Avatar {
-    type Rendered = Img<V>;
+impl Component for Avatar {
+    type Rendered = Img;
 
-    fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
+    fn render(self, _: &mut WindowContext) -> Self::Rendered {
         let mut img = img();
 
         if self.shape == Shape::Circle {
@@ -51,12 +51,12 @@ mod stories {
 
     pub struct AvatarStory;
 
-    impl Render<Self> for AvatarStory {
-        type Element = Div<Self>;
+    impl Render for AvatarStory {
+        type Element = Div;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             Story::container(cx)
-                .child(Story::title_for::<_, Avatar>(cx))
+                .child(Story::title_for::<Avatar>(cx))
                 .child(Story::label(cx, "Default"))
                 .child(Avatar::new(
                     "https://avatars.githubusercontent.com/u/1714999?v=4",

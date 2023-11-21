@@ -1,9 +1,9 @@
-use gpui::{Styled, ViewContext};
+use gpui::{Styled, WindowContext};
 use theme2::ActiveTheme;
 
 use crate::{ElevationIndex, UITextSize};
 
-fn elevated<E: Styled, V: 'static>(this: E, cx: &mut ViewContext<V>, index: ElevationIndex) -> E {
+fn elevated<E: Styled>(this: E, cx: &mut WindowContext, index: ElevationIndex) -> E {
     this.bg(cx.theme().colors().elevated_surface_background)
         .z_index(index.z_index())
         .rounded_lg()
@@ -65,7 +65,7 @@ pub trait StyledExt: Styled + Sized {
     /// Sets `bg()`, `rounded_lg()`, `border()`, `border_color()`, `shadow()`
     ///
     /// Example Elements: Title Bar, Panel, Tab Bar, Editor
-    fn elevation_1<V: 'static>(self, cx: &mut ViewContext<V>) -> Self {
+    fn elevation_1(self, cx: &mut WindowContext) -> Self {
         elevated(self, cx, ElevationIndex::Surface)
     }
 
@@ -74,7 +74,7 @@ pub trait StyledExt: Styled + Sized {
     /// Sets `bg()`, `rounded_lg()`, `border()`, `border_color()`, `shadow()`
     ///
     /// Examples: Notifications, Palettes, Detached/Floating Windows, Detached/Floating Panels
-    fn elevation_2<V: 'static>(self, cx: &mut ViewContext<V>) -> Self {
+    fn elevation_2(self, cx: &mut WindowContext) -> Self {
         elevated(self, cx, ElevationIndex::ElevatedSurface)
     }
 
@@ -89,7 +89,7 @@ pub trait StyledExt: Styled + Sized {
     /// Sets `bg()`, `rounded_lg()`, `border()`, `border_color()`, `shadow()`
     ///
     /// Examples: Settings Modal, Channel Management, Wizards/Setup UI, Dialogs
-    fn elevation_4<V: 'static>(self, cx: &mut ViewContext<V>) -> Self {
+    fn elevation_4(self, cx: &mut WindowContext) -> Self {
         elevated(self, cx, ElevationIndex::ModalSurface)
     }
 }

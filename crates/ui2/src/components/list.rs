@@ -1,8 +1,9 @@
-use gpui::{div, AnyElement, Div, RenderOnce, Stateful, StatefulInteractiveElement};
+use gpui::{
+    div, px, AnyElement, ClickEvent, Div, RenderOnce, Stateful, StatefulInteractiveElement,
+};
 use smallvec::SmallVec;
 use std::rc::Rc;
 
-use crate::settings::user_settings;
 use crate::{
     disclosure_control, h_stack, v_stack, Avatar, Icon, IconElement, IconSize, Label, Toggle,
 };
@@ -33,10 +34,10 @@ pub struct ListHeader {
     toggle: Toggle,
 }
 
-impl<V: 'static> Component<V> for ListHeader {
-    type Rendered = Div<V>;
+impl Component for ListHeader {
+    type Rendered = Div;
 
-    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
+    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         let disclosure_control = disclosure_control(self.toggle);
 
         let meta = match self.meta {
@@ -118,7 +119,7 @@ impl ListHeader {
     }
 
     // before_ship!("delete")
-    // fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
+    // fn render<V: 'static>(self,  cx: &mut WindowContext) -> impl Element<V> {
     //     let disclosure_control = disclosure_control(self.toggle);
 
     //     let meta = match self.meta {
@@ -200,10 +201,10 @@ impl ListSubHeader {
     }
 }
 
-impl<V: 'static> Component<V> for ListSubHeader {
-    type Rendered = Div<V>;
+impl Component for ListSubHeader {
+    type Rendered = Div;
 
-    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
+    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         h_stack().flex_1().w_full().relative().py_1().child(
             div()
                 .h_6()
@@ -238,7 +239,7 @@ pub enum ListEntrySize {
 }
 
 #[derive(RenderOnce)]
-pub struct ListItem<V: 'static> {
+pub struct ListItem {
     id: ElementId,
     disabled: bool,
     // TODO: Reintroduce this
@@ -250,10 +251,10 @@ pub struct ListItem<V: 'static> {
     size: ListEntrySize,
     toggle: Toggle,
     variant: ListItemVariant,
-    on_click: Option<Rc<dyn Fn(&mut V, &mut ViewContext<V>) + 'static>>,
+    on_click: Option<Rc<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
 }
 
-impl<V> Clone for ListItem<V> {
+impl Clone for ListItem {
     fn clone(&self) -> Self {
         Self {
             id: self.id.clone(),
@@ -270,7 +271,7 @@ impl<V> Clone for ListItem<V> {
     }
 }
 
-impl<V: 'static> ListItem<V> {
+impl ListItem {
     pub fn new(id: impl Into<ElementId>, label: Label) -> Self {
         Self {
             id: id.into(),
@@ -286,7 +287,7 @@ impl<V: 'static> ListItem<V> {
         }
     }
 
-    pub fn on_click(mut self, handler: impl Fn(&mut V, &mut ViewContext<V>) + 'static) -> Self {
+    pub fn on_click(mut self, handler: impl Fn(&ClickEvent, &mut WindowContext) + 'static) -> Self {
         self.on_click = Some(Rc::new(handler));
         self
     }
@@ -327,12 +328,10 @@ impl<V: 'static> ListItem<V> {
     }
 }
 
-impl<V: 'static> Component<V> for ListItem<V> {
-    type Rendered = Stateful<V, Div<V>>;
+impl Component for ListItem {
+    type Rendered = Stateful<Div>;
 
-    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
-        let settings = user_settings(cx);
-
+    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         let left_content = match self.left_slot.clone() {
             Some(GraphicSlot::Icon(i)) => Some(
                 h_stack().child(
@@ -359,10 +358,9 @@ impl<V: 'static> Component<V> for ListItem<V> {
             })
             .on_click({
                 let on_click = self.on_click.clone();
-
-                move |view: &mut V, event, cx| {
+                move |event, cx| {
                     if let Some(on_click) = &on_click {
-                        (on_click)(view, cx)
+                        (on_click)(event, cx)
                     }
                 }
             })
@@ -378,7 +376,7 @@ impl<V: 'static> Component<V> for ListItem<V> {
                     // .ml(rems(0.75 * self.indent_level as f32))
                     .children((0..self.indent_level).map(|_| {
                         div()
-                            .w(*settings.list_indent_depth)
+                            .w(px(4.))
                             .h_full()
                             .flex()
                             .justify_center()
@@ -409,28 +407,28 @@ impl ListSeparator {
     }
 }
 
-impl<V: 'static> Component<V> for ListSeparator {
-    type Rendered = Div<V>;
+impl Component for ListSeparator {
+    type Rendered = Div;
 
-    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
+    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         div().h_px().w_full().bg(cx.theme().colors().border_variant)
     }
 }
 
 #[derive(RenderOnce)]
-pub struct List<V: 'static> {
+pub struct List {
     /// Message to display when the list is empty
     /// Defaults to "No items"
     empty_message: SharedString,
     header: Option<ListHeader>,
     toggle: Toggle,
-    children: SmallVec<[AnyElement<V>; 2]>,
+    children: SmallVec<[AnyElement; 2]>,
 }
 
-impl<V: 'static> Component<V> for List<V> {
-    type Rendered = Div<V>;
+impl Component for List {
+    type Rendered = Div;
 
-    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
+    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         let list_content = match (self.children.is_empty(), self.toggle) {
             (false, _) => div().children(self.children),
             (true, Toggle::Toggled(false)) => div(),
@@ -447,7 +445,7 @@ impl<V: 'static> Component<V> for List<V> {
     }
 }
 
-impl<V: 'static> List<V> {
+impl List {
     pub fn new() -> Self {
         Self {
             empty_message: "No items".into(),
@@ -473,8 +471,8 @@ impl<V: 'static> List<V> {
     }
 }
 
-impl<V: 'static> ParentElement<V> for List<V> {
-    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<V>; 2]> {
+impl ParentElement for List {
+    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement; 2]> {
         &mut self.children
     }
 }

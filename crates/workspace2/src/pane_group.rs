@@ -132,7 +132,7 @@ impl PaneGroup {
         zoomed: Option<&AnyWeakView>,
         app_state: &Arc<AppState>,
         cx: &mut ViewContext<Workspace>,
-    ) -> impl RenderOnce<Workspace> {
+    ) -> impl RenderOnce {
         self.root.render(
             project,
             0,
@@ -204,7 +204,7 @@ impl Member {
         zoomed: Option<&AnyWeakView>,
         app_state: &Arc<AppState>,
         cx: &mut ViewContext<Workspace>,
-    ) -> impl RenderOnce<Workspace> {
+    ) -> impl RenderOnce {
         match self {
             Member::Pane(pane) => {
                 // todo!()
@@ -561,7 +561,7 @@ impl PaneAxis {
         zoomed: Option<&AnyWeakView>,
         app_state: &Arc<AppState>,
         cx: &mut ViewContext<Workspace>,
-    ) -> Div<Workspace> {
+    ) -> Div {
         debug_assert!(self.members.len() == self.flexes.lock().len());
 
         div()

@@ -147,8 +147,8 @@ mod stories {
 
     pub struct PlayerStory;
 
-    impl Render<Self> for PlayerStory {
-        type Element = Div<Self>;
+    impl Render for PlayerStory {
+        type Element = Div;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             Story::container(cx).child(
@@ -156,7 +156,7 @@ mod stories {
                     .flex()
                     .flex_col()
                     .gap_4()
-                    .child(Story::title_for::<_, PlayerColors>(cx))
+                    .child(Story::title_for::<PlayerColors>(cx))
                     .child(Story::label(cx, "Player Colors"))
                     .child(
                         div()

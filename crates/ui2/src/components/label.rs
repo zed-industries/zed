@@ -68,10 +68,10 @@ pub struct Label {
     strikethrough: bool,
 }
 
-impl<V: 'static> Component<V> for Label {
-    type Rendered = Div<V>;
+impl Component for Label {
+    type Rendered = Div;
 
-    fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
+    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         div()
             .when(self.strikethrough, |this| {
                 this.relative().child(
@@ -136,10 +136,10 @@ pub struct HighlightedLabel {
     strikethrough: bool,
 }
 
-impl<V: 'static> Component<V> for HighlightedLabel {
-    type Rendered = Div<V>;
+impl Component for HighlightedLabel {
+    type Rendered = Div;
 
-    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
+    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         let highlight_color = cx.theme().colors().text_accent;
         let mut text_style = cx.text_style().clone();
 
@@ -242,12 +242,12 @@ mod stories {
 
     pub struct LabelStory;
 
-    impl Render<Self> for LabelStory {
-        type Element = Div<Self>;
+    impl Render for LabelStory {
+        type Element = Div;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             Story::container(cx)
-                .child(Story::title_for::<_, Label>(cx))
+                .child(Story::title_for::<Label>(cx))
                 .child(Story::label(cx, "Default"))
                 .child(Label::new("Hello, world!"))
                 .child(Story::label(cx, "Highlighted"))
