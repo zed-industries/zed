@@ -180,6 +180,7 @@ fn main() {
             user_store,
             fs,
             build_window_options,
+            call_factory: call::Call::new,
             // background_actions: todo!("ask Mikayla"),
             workspace_store,
             node_runtime,
@@ -189,7 +190,7 @@ fn main() {
         // audio::init(Assets, cx);
         auto_update::init(http.clone(), client::ZED_SERVER_URL.clone(), cx);
 
-        workspace::init(app_state.clone(), cx, call::Call::new);
+        workspace::init(app_state.clone(), cx);
         // recent_projects::init(cx);
 
         go_to_line::init(cx);

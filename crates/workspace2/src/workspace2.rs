@@ -207,10 +207,9 @@ pub fn init_settings(cx: &mut AppContext) {
     ItemSettings::register(cx);
 }
 
-pub fn init(app_state: Arc<AppState>, cx: &mut AppContext, call_factory: CallFactory) {
+pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
     init_settings(cx);
     notifications::init(cx);
-    cx.set_global(call_factory);
     //     cx.add_global_action({
     //         let app_state = Arc::downgrade(&app_state);
     //         move |_: &Open, cx: &mut AppContext| {
@@ -304,6 +303,7 @@ pub struct AppState {
     pub user_store: Model<UserStore>,
     pub workspace_store: Model<WorkspaceStore>,
     pub fs: Arc<dyn fs2::Fs>,
+    pub call_factory: CallFactory,
     pub build_window_options:
         fn(Option<WindowBounds>, Option<Uuid>, &mut AppContext) -> WindowOptions,
     pub node_runtime: Arc<dyn NodeRuntime>,
@@ -653,7 +653,6 @@ impl Workspace {
         ];
 
         cx.defer(|this, cx| this.update_window_title(cx));
-        let call_factory = cx.global::<CallFactory>();
         Workspace {
             window_self: window_handle,
             weak_self: weak_handle.clone(),
@@ -677,7 +676,7 @@ impl Workspace {
             last_leaders_by_pane: Default::default(),
             window_edited: false,
 
-            call_handler: call_factory(weak_handle.clone(), cx),
+            call_handler: (app_state.call_factory)(weak_handle.clone(), cx),
             database_id: workspace_id,
             app_state,
             _observe_current_user,
@@ -2784,8 +2783,9 @@ impl Workspace {
         } else {
             None
         };
+        let room_id = self.call_handler.room_id(cx)?;
         self.app_state().workspace_store.update(cx, |store, cx| {
-            store.update_followers(project_id, update, cx)
+            store.update_followers(project_id, room_id, update, cx)
         })
     }
 
@@ -3825,15 +3825,10 @@ impl WorkspaceStore {
     pub fn update_followers(
         &self,
         project_id: Option<u64>,
+        room_id: u64,
         update: proto::update_followers::Variant,
         cx: &AppContext,
     ) -> Option<()> {
-        let room_id = self.workspaces.iter().next().and_then(|workspace| {
-            workspace
-                .read_with(cx, |this, cx| this.call_handler.room_id(cx))
-                .log_err()
-                .flatten()
-        })?;
         let follower_ids: Vec<_> = self
             .followers
             .iter()
