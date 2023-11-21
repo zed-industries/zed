@@ -111,6 +111,7 @@ members = [
     "crates/ui2",
     "crates/util",
     "crates/semantic_index",
+    "crates/story",
     "crates/vim",
     "crates/vcs_menu",
     "crates/workspace2",

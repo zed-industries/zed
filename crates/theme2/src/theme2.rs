@@ -144,8 +144,3 @@ pub struct DiagnosticStyle {
     pub hint: Hsla,
     pub ignored: Hsla,
 }
-
-#[cfg(feature = "stories")]
-mod story;
-#[cfg(feature = "stories")]
-pub use story::*;

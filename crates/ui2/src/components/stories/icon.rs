@@ -1,8 +1,9 @@
 use gpui::{Div, Render};
+use story::Story;
 use strum::IntoEnumIterator;
 
 use crate::prelude::*;
-use crate::{Icon, IconElement, Story};
+use crate::{Icon, IconElement};
 
 pub struct IconStory;
 
@@ -12,9 +13,9 @@ impl Render for IconStory {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         let icons = Icon::iter();
 
-        Story::container(cx)
-            .child(Story::title_for::<IconElement>(cx))
-            .child(Story::label(cx, "All Icons"))
+        Story::container()
+            .child(Story::title_for::<IconElement>())
+            .child(Story::label("All Icons"))
             .child(div().flex().gap_3().children(icons.map(IconElement::new)))
     }
 }
