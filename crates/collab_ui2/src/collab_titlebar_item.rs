@@ -37,7 +37,7 @@ use gpui::{
 };
 use project::Project;
 use theme::ActiveTheme;
-use ui::{h_stack, Button, ButtonVariant, KeyBinding, Label, TextColor, Tooltip};
+use ui::{h_stack, Button, ButtonVariant, Color, KeyBinding, Label, Tooltip};
 use workspace::Workspace;
 
 // const MAX_PROJECT_NAME_LENGTH: usize = 40;
@@ -115,7 +115,7 @@ impl Render for CollabTitlebarItem {
                             .child(
                                 Button::new("player")
                                     .variant(ButtonVariant::Ghost)
-                                    .color(Some(TextColor::Player(0))),
+                                    .color(Some(Color::Player(0))),
                             )
                             .tooltip(move |cx| Tooltip::text("Toggle following", cx)),
                     )
@@ -133,7 +133,7 @@ impl Render for CollabTitlebarItem {
                             .child(
                                 Button::new("branch_name")
                                     .variant(ButtonVariant::Ghost)
-                                    .color(Some(TextColor::Muted)),
+                                    .color(Some(Color::Muted)),
                             )
                             .tooltip(move |cx| {
                                 cx.build_view(|_| {

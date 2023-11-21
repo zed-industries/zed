@@ -5,7 +5,7 @@ use gpui::{prelude::*, Action, AnyView, Div, MouseButton, MouseDownEvent, Statef
 pub struct IconButton {
     id: ElementId,
     icon: Icon,
-    color: TextColor,
+    color: Color,
     variant: ButtonVariant,
     state: InteractionState,
     selected: bool,
@@ -18,8 +18,8 @@ impl Component for IconButton {
 
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         let icon_color = match (self.state, self.color) {
-            (InteractionState::Disabled, _) => TextColor::Disabled,
-            (InteractionState::Active, _) => TextColor::Selected,
+            (InteractionState::Disabled, _) => Color::Disabled,
+            (InteractionState::Active, _) => Color::Selected,
             _ => self.color,
         };
 
@@ -76,7 +76,7 @@ impl IconButton {
         Self {
             id: id.into(),
             icon,
-            color: TextColor::default(),
+            color: Color::default(),
             variant: ButtonVariant::default(),
             state: InteractionState::default(),
             selected: false,
@@ -90,7 +90,7 @@ impl IconButton {
         self
     }
 
-    pub fn color(mut self, color: TextColor) -> Self {
+    pub fn color(mut self, color: Color) -> Self {
         self.color = color;
         self
     }

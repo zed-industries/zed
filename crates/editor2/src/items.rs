@@ -30,7 +30,7 @@ use std::{
 };
 use text::Selection;
 use theme::{ActiveTheme, Theme};
-use ui::{Label, TextColor};
+use ui::{Color, Label};
 use util::{paths::PathExt, ResultExt, TryFutureExt};
 use workspace::item::{BreadcrumbText, FollowEvent, FollowableEvents, FollowableItemHandle};
 use workspace::{
@@ -604,7 +604,7 @@ impl Item for Editor {
                                 &description,
                                 MAX_TAB_TITLE_LEN,
                             ))
-                            .color(TextColor::Muted),
+                            .color(Color::Muted),
                         ),
                     )
                 })),

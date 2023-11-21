@@ -36,7 +36,7 @@ use std::{
 };
 use theme::ActiveTheme;
 pub use toolbar_controls::ToolbarControls;
-use ui::{h_stack, HighlightedLabel, Icon, IconElement, Label, TextColor};
+use ui::{h_stack, Color, HighlightedLabel, Icon, IconElement, Label};
 use util::TryFutureExt;
 use workspace::{
     item::{BreadcrumbText, Item, ItemEvent, ItemHandle},
@@ -778,15 +778,15 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
             .bg(gpui::red())
             .map(|stack| {
                 let icon = if diagnostic.severity == DiagnosticSeverity::ERROR {
-                    IconElement::new(Icon::XCircle).color(TextColor::Error)
+                    IconElement::new(Icon::XCircle).color(Color::Error)
                 } else {
-                    IconElement::new(Icon::ExclamationTriangle).color(TextColor::Warning)
+                    IconElement::new(Icon::ExclamationTriangle).color(Color::Warning)
                 };
 
                 stack.child(div().pl_8().child(icon))
             })
             .when_some(diagnostic.source.as_ref(), |stack, source| {
-                stack.child(Label::new(format!("{source}:")).color(TextColor::Accent))
+                stack.child(Label::new(format!("{source}:")).color(Color::Accent))
             })
             .child(HighlightedLabel::new(message.clone(), highlights.clone()))
             .when_some(diagnostic.code.as_ref(), |stack, code| {

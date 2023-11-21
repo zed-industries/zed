@@ -1,6 +1,13 @@
 use crate::prelude::*;
 use gpui::{img, Img, RenderOnce};
 
+#[derive(Debug, Default, PartialEq, Clone)]
+pub enum Shape {
+    #[default]
+    Circle,
+    RoundedRectangle,
+}
+
 #[derive(RenderOnce)]
 pub struct Avatar {
     src: SharedString,
@@ -37,33 +44,5 @@ impl Avatar {
     pub fn shape(mut self, shape: Shape) -> Self {
         self.shape = shape;
         self
-    }
-}
-
-#[cfg(feature = "stories")]
-pub use stories::*;
-
-#[cfg(feature = "stories")]
-mod stories {
-    use super::*;
-    use crate::Story;
-    use gpui::{Div, Render};
-
-    pub struct AvatarStory;
-
-    impl Render for AvatarStory {
-        type Element = Div;
-
-        fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-            Story::container(cx)
-                .child(Story::title_for::<Avatar>(cx))
-                .child(Story::label(cx, "Default"))
-                .child(Avatar::new(
-                    "https://avatars.githubusercontent.com/u/1714999?v=4",
-                ))
-                .child(Avatar::new(
-                    "https://avatars.githubusercontent.com/u/326587?v=4",
-                ))
-        }
     }
 }

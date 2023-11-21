@@ -4,7 +4,7 @@ use gpui::{
     ViewContext, WindowContext,
 };
 use theme2::ActiveTheme;
-use ui::{h_stack, v_stack, Button, Icon, IconButton, Label, TextColor};
+use ui::{h_stack, v_stack, Button, Color, Icon, IconButton, Label};
 
 pub enum ToolbarItemEvent {
     ChangeLocation(ToolbarItemLocation),
@@ -92,7 +92,7 @@ impl Render for Toolbar {
                         h_stack()
                             .p_1()
                             .child(Button::new("crates"))
-                            .child(Label::new("/").color(TextColor::Muted))
+                            .child(Label::new("/").color(Color::Muted))
                             .child(Button::new("workspace2")),
                     )
                     // Toolbar right side

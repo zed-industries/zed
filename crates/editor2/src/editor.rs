@@ -4408,7 +4408,7 @@ impl Editor {
                                         editor.fold_at(&FoldAt { buffer_row }, cx);
                                     }
                                 }))
-                                .color(ui::TextColor::Muted)
+                                .color(ui::Color::Muted)
                         })
                     })
                     .flatten()

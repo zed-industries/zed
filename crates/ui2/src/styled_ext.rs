@@ -78,8 +78,6 @@ pub trait StyledExt: Styled + Sized {
         elevated(self, cx, ElevationIndex::ElevatedSurface)
     }
 
-    // There is no elevation 3, as the third elevation level is reserved for wash layers. See [`Elevation`](ui2::Elevation).
-
     /// Modal Surfaces are used for elements that should appear above all other UI elements and are located above the wash layer. This is the maximum elevation at which UI elements can be rendered in their default state.
     ///
     /// Elements rendered at this layer should have an enforced behavior: Any interaction outside of the modal will either dismiss the modal or prompt an action (Save your progress, etc) then dismiss the modal.
@@ -89,7 +87,7 @@ pub trait StyledExt: Styled + Sized {
     /// Sets `bg()`, `rounded_lg()`, `border()`, `border_color()`, `shadow()`
     ///
     /// Examples: Settings Modal, Channel Management, Wizards/Setup UI, Dialogs
-    fn elevation_4(self, cx: &mut WindowContext) -> Self {
+    fn elevation_3(self, cx: &mut WindowContext) -> Self {
         elevated(self, cx, ElevationIndex::ModalSurface)
     }
 }
