@@ -15,7 +15,7 @@ mod status_bar;
 mod toolbar;
 mod workspace_settings;
 
-use anyhow::{anyhow, bail, Context as _, Result};
+use anyhow::{anyhow, Context as _, Result};
 use async_trait::async_trait;
 use client2::{
     proto::{self, PeerId},
@@ -207,10 +207,10 @@ pub fn init_settings(cx: &mut AppContext) {
     ItemSettings::register(cx);
 }
 
-pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
+pub fn init(app_state: Arc<AppState>, cx: &mut AppContext, call_factory: CallFactory) {
     init_settings(cx);
     notifications::init(cx);
-
+    cx.set_global(call_factory);
     //     cx.add_global_action({
     //         let app_state = Arc::downgrade(&app_state);
     //         move |_: &Open, cx: &mut AppContext| {
@@ -410,15 +410,13 @@ pub enum Event {
 
 #[async_trait(?Send)]
 pub trait CallHandler {
-    fn leader_updated(&mut self, leader_id: PeerId, cx: &mut ViewContext<Workspace>) -> Option<()>;
+    fn peer_state(&mut self, id: PeerId, cx: &mut ViewContext<Workspace>) -> Option<(bool, bool)>;
     fn shared_screen_for_peer(
         &self,
         peer_id: PeerId,
         pane: &View<Pane>,
         cx: &mut ViewContext<Workspace>,
     ) -> Option<Box<dyn ItemHandle>>;
-    fn follower_states_mut(&mut self) -> &mut HashMap<View<Pane>, FollowerState>;
-    fn follower_states(&self) -> &HashMap<View<Pane>, FollowerState>;
     fn room_id(&self, cx: &AppContext) -> Option<u64>;
     fn is_in_room(&self, cx: &mut ViewContext<Workspace>) -> bool {
         self.room_id(cx).is_some()
@@ -448,6 +446,7 @@ pub struct Workspace {
     notifications: Vec<(TypeId, usize, Box<dyn NotificationHandle>)>,
     project: Model<Project>,
     call_handler: Box<dyn CallHandler>,
+    follower_states: HashMap<View<Pane>, FollowerState>,
     last_leaders_by_pane: HashMap<WeakView<Pane>, PeerId>,
     window_edited: bool,
     leader_updates_tx: mpsc::UnboundedSender<(PeerId, proto::UpdateFollowers)>,
@@ -458,7 +457,6 @@ pub struct Workspace {
     _observe_current_user: Task<Result<()>>,
     _schedule_serialize: Option<Task<()>>,
     pane_history_timestamp: Arc<AtomicUsize>,
-    call_factory: CallFactory,
 }
 
 impl EventEmitter<Event> for Workspace {}
@@ -484,7 +482,6 @@ impl Workspace {
         workspace_id: WorkspaceId,
         project: Model<Project>,
         app_state: Arc<AppState>,
-        call_factory: CallFactory,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         cx.observe(&project, |_, _, cx| cx.notify()).detach();
@@ -656,6 +653,7 @@ impl Workspace {
         ];
 
         cx.defer(|this, cx| this.update_window_title(cx));
+        let call_factory = cx.global::<CallFactory>();
         Workspace {
             window_self: window_handle,
             weak_self: weak_handle.clone(),
@@ -675,7 +673,7 @@ impl Workspace {
             bottom_dock,
             right_dock,
             project: project.clone(),
-
+            follower_states: Default::default(),
             last_leaders_by_pane: Default::default(),
             window_edited: false,
 
@@ -689,7 +687,6 @@ impl Workspace {
             subscriptions,
             pane_history_timestamp,
             workspace_actions: Default::default(),
-            call_factory,
         }
     }
 
@@ -697,7 +694,6 @@ impl Workspace {
         abs_paths: Vec<PathBuf>,
         app_state: Arc<AppState>,
         requesting_window: Option<WindowHandle<Workspace>>,
-        call_factory: CallFactory,
         cx: &mut AppContext,
     ) -> Task<
         anyhow::Result<(
@@ -748,13 +744,7 @@ impl Workspace {
             let window = if let Some(window) = requesting_window {
                 cx.update_window(window.into(), |old_workspace, cx| {
                     cx.replace_root_view(|cx| {
-                        Workspace::new(
-                            workspace_id,
-                            project_handle.clone(),
-                            app_state.clone(),
-                            call_factory,
-                            cx,
-                        )
+                        Workspace::new(workspace_id, project_handle.clone(), app_state.clone(), cx)
                     });
                 })?;
                 window
@@ -800,13 +790,7 @@ impl Workspace {
                     let project_handle = project_handle.clone();
                     move |cx| {
                         cx.build_view(|cx| {
-                            Workspace::new(
-                                workspace_id,
-                                project_handle,
-                                app_state,
-                                call_factory,
-                                cx,
-                            )
+                            Workspace::new(workspace_id, project_handle, app_state, cx)
                         })
                     }
                 })?
@@ -1067,13 +1051,7 @@ impl Workspace {
         if self.project.read(cx).is_local() {
             Task::Ready(Some(Ok(callback(self, cx))))
         } else {
-            let task = Self::new_local(
-                Vec::new(),
-                self.app_state.clone(),
-                None,
-                self.call_factory,
-                cx,
-            );
+            let task = Self::new_local(Vec::new(), self.app_state.clone(), None, cx);
             cx.spawn(|_vh, mut cx| async move {
                 let (workspace, _) = task.await?;
                 workspace.update(&mut cx, callback)
@@ -1302,7 +1280,7 @@ impl Workspace {
             Some(self.prepare_to_close(false, cx))
         };
         let app_state = self.app_state.clone();
-        let call_factory = self.call_factory;
+
         cx.spawn(|_, mut cx| async move {
             let window_to_replace = if let Some(close_task) = close_task {
                 if !close_task.await? {
@@ -1312,7 +1290,7 @@ impl Workspace {
             } else {
                 None
             };
-            cx.update(|_, cx| open_paths(&paths, &app_state, window_to_replace, call_factory, cx))?
+            cx.update(|_, cx| open_paths(&paths, &app_state, window_to_replace, cx))?
                 .await?;
             Ok(())
         })
@@ -2282,7 +2260,7 @@ impl Workspace {
     }
 
     fn collaborator_left(&mut self, peer_id: PeerId, cx: &mut ViewContext<Self>) {
-        self.call_handler.follower_states_mut().retain(|_, state| {
+        self.follower_states.retain(|_, state| {
             if state.leader_id == peer_id {
                 for item in state.items_by_leader_view_id.values() {
                     item.set_leader_peer_id(None, cx);
@@ -2435,7 +2413,7 @@ impl Workspace {
     //     }
 
     pub fn unfollow(&mut self, pane: &View<Pane>, cx: &mut ViewContext<Self>) -> Option<PeerId> {
-        let follower_states = self.call_handler.follower_states_mut();
+        let follower_states = &mut self.follower_states;
         let state = follower_states.remove(pane)?;
         let leader_id = state.leader_id;
         for (_, item) in state.items_by_leader_view_id {
@@ -2658,7 +2636,7 @@ impl Workspace {
         match update.variant.ok_or_else(|| anyhow!("invalid update"))? {
             proto::update_followers::Variant::UpdateActiveView(update_active_view) => {
                 this.update(cx, |this, _| {
-                    for (_, state) in this.call_handler.follower_states_mut() {
+                    for (_, state) in &mut this.follower_states {
                         if state.leader_id == leader_id {
                             state.active_view_id =
                                 if let Some(active_view_id) = update_active_view.id.clone() {
@@ -2681,7 +2659,7 @@ impl Workspace {
                 let mut tasks = Vec::new();
                 this.update(cx, |this, cx| {
                     let project = this.project.clone();
-                    for (_, state) in this.call_handler.follower_states_mut() {
+                    for (_, state) in &mut this.follower_states {
                         if state.leader_id == leader_id {
                             let view_id = ViewId::from_proto(id.clone())?;
                             if let Some(item) = state.items_by_leader_view_id.get(&view_id) {
@@ -2695,8 +2673,7 @@ impl Workspace {
             }
             proto::update_followers::Variant::CreateView(view) => {
                 let panes = this.update(cx, |this, _| {
-                    this.call_handler
-                        .follower_states()
+                    this.follower_states
                         .iter()
                         .filter_map(|(pane, state)| (state.leader_id == leader_id).then_some(pane))
                         .cloned()
@@ -2756,7 +2733,7 @@ impl Workspace {
         for (pane, (item_tasks, leader_view_ids)) in item_tasks_by_pane {
             let items = futures::future::try_join_all(item_tasks).await?;
             this.update(cx, |this, cx| {
-                let state = this.call_handler.follower_states_mut().get_mut(&pane)?;
+                let state = this.follower_states.get_mut(&pane)?;
                 for (id, item) in leader_view_ids.into_iter().zip(items) {
                     item.set_leader_peer_id(Some(leader_id), cx);
                     state.items_by_leader_view_id.insert(id, item);
@@ -2813,14 +2790,55 @@ impl Workspace {
     }
 
     pub fn leader_for_pane(&self, pane: &View<Pane>) -> Option<PeerId> {
-        self.call_handler
-            .follower_states()
-            .get(pane)
-            .map(|state| state.leader_id)
+        self.follower_states.get(pane).map(|state| state.leader_id)
     }
 
-    fn leader_updated(&mut self, leader_id: PeerId, cx: &mut ViewContext<Self>) -> Option<()> {
-        self.call_handler.leader_updated(leader_id, cx)
+    pub fn leader_updated(&mut self, leader_id: PeerId, cx: &mut ViewContext<Self>) -> Option<()> {
+        cx.notify();
+
+        let (leader_in_this_project, leader_in_this_app) =
+            self.call_handler.peer_state(leader_id, cx)?;
+        let mut items_to_activate = Vec::new();
+        for (pane, state) in &self.follower_states {
+            if state.leader_id != leader_id {
+                continue;
+            }
+            if let (Some(active_view_id), true) = (state.active_view_id, leader_in_this_app) {
+                if let Some(item) = state.items_by_leader_view_id.get(&active_view_id) {
+                    if leader_in_this_project || !item.is_project_item(cx) {
+                        items_to_activate.push((pane.clone(), item.boxed_clone()));
+                    }
+                } else {
+                    log::warn!(
+                        "unknown view id {:?} for leader {:?}",
+                        active_view_id,
+                        leader_id
+                    );
+                }
+                continue;
+            }
+            // todo!()
+            // if let Some(shared_screen) = self.shared_screen_for_peer(leader_id, pane, cx) {
+            //     items_to_activate.push((pane.clone(), Box::new(shared_screen)));
+            // }
+        }
+
+        for (pane, item) in items_to_activate {
+            let pane_was_focused = pane.read(cx).has_focus(cx);
+            if let Some(index) = pane.update(cx, |pane, _| pane.index_for_item(item.as_ref())) {
+                pane.update(cx, |pane, cx| pane.activate_item(index, false, false, cx));
+            } else {
+                pane.update(cx, |pane, mut cx| {
+                    pane.add_item(item.boxed_clone(), false, false, None, &mut cx)
+                });
+            }
+
+            if pane_was_focused {
+                pane.update(cx, |pane, cx| pane.focus_active_item(cx));
+            }
+        }
+
+        None
     }
 
     // todo!()
@@ -3637,7 +3655,7 @@ impl Render for Workspace {
                                     .flex_1()
                                     .child(self.center.render(
                                         &self.project,
-                                        &self.call_handler.follower_states(),
+                                        &self.follower_states,
                                         &self.active_pane,
                                         self.zoomed.as_ref(),
                                         &self.app_state,
@@ -4201,7 +4219,6 @@ pub fn open_paths(
     abs_paths: &[PathBuf],
     app_state: &Arc<AppState>,
     requesting_window: Option<WindowHandle<Workspace>>,
-    call_factory: CallFactory,
     cx: &mut AppContext,
 ) -> Task<
     anyhow::Result<(
@@ -4228,13 +4245,7 @@ pub fn open_paths(
             todo!()
         } else {
             cx.update(move |cx| {
-                Workspace::new_local(
-                    abs_paths,
-                    app_state.clone(),
-                    requesting_window,
-                    call_factory,
-                    cx,
-                )
+                Workspace::new_local(abs_paths, app_state.clone(), requesting_window, cx)
             })?
             .await
         }
@@ -4245,9 +4256,8 @@ pub fn open_new(
     app_state: &Arc<AppState>,
     cx: &mut AppContext,
     init: impl FnOnce(&mut Workspace, &mut ViewContext<Workspace>) + 'static + Send,
-    call_factory: CallFactory,
 ) -> Task<()> {
-    let task = Workspace::new_local(Vec::new(), app_state.clone(), None, call_factory, cx);
+    let task = Workspace::new_local(Vec::new(), app_state.clone(), None, cx);
     cx.spawn(|mut cx| async move {
         if let Some((workspace, opened_paths)) = task.await.log_err() {
             workspace

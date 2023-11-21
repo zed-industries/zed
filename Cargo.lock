@@ -1175,6 +1175,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-broadcast",
+ "async-trait",
  "audio2",
  "client2",
  "collections",

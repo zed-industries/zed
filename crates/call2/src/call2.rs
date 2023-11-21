@@ -2,24 +2,29 @@ pub mod call_settings;
 pub mod participant;
 pub mod room;
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
+use async_trait::async_trait;
 use audio::Audio;
 use call_settings::CallSettings;
-use client::{proto, Client, TelemetrySettings, TypedEnvelope, User, UserStore, ZED_ALWAYS_ACTIVE};
+use client::{
+    proto::{self, PeerId},
+    Client, TelemetrySettings, TypedEnvelope, User, UserStore, ZED_ALWAYS_ACTIVE,
+};
 use collections::HashSet;
 use futures::{channel::oneshot, future::Shared, Future, FutureExt};
 use gpui::{
-    AppContext, AsyncAppContext, Context, EventEmitter, Model, ModelContext, Subscription, Task,
-    WeakModel,
+    AppContext, AsyncAppContext, AsyncWindowContext, Context, EventEmitter, Model, ModelContext,
+    Subscription, Task, View, ViewContext, WeakModel, WeakView,
 };
+pub use participant::ParticipantLocation;
 use postage::watch;
 use project::Project;
 use room::Event;
+pub use room::Room;
 use settings::Settings;
 use std::sync::Arc;
-
-pub use participant::ParticipantLocation;
-pub use room::Room;
+use util::ResultExt;
+use workspace::{item::ItemHandle, CallHandler, Pane, Workspace};
 
 pub fn init(client: Arc<Client>, user_store: Model<UserStore>, cx: &mut AppContext) {
     CallSettings::register(cx);
@@ -505,35 +510,36 @@ pub fn report_call_event_for_channel(
     )
 }
 
-struct Call {
-    follower_states: HashMap<View<Pane>, FollowerState>,
+pub struct Call {
     active_call: Option<(Model<ActiveCall>, Vec<Subscription>)>,
     parent_workspace: WeakView<Workspace>,
 }
 
 impl Call {
-    fn new(parent_workspace: WeakView<Workspace>, cx: &mut ViewContext<'_, Workspace>) -> Self {
+    pub fn new(
+        parent_workspace: WeakView<Workspace>,
+        cx: &mut ViewContext<'_, Workspace>,
+    ) -> Box<dyn CallHandler> {
         let mut active_call = None;
         if cx.has_global::<Model<ActiveCall>>() {
             let call = cx.global::<Model<ActiveCall>>().clone();
             let subscriptions = vec![cx.subscribe(&call, Self::on_active_call_event)];
             active_call = Some((call, subscriptions));
         }
-        Self {
-            follower_states: Default::default(),
+        Box::new(Self {
             active_call,
             parent_workspace,
-        }
+        })
     }
     fn on_active_call_event(
         workspace: &mut Workspace,
         _: Model<ActiveCall>,
-        event: &call2::room::Event,
+        event: &room::Event,
         cx: &mut ViewContext<Workspace>,
     ) {
         match event {
-            call2::room::Event::ParticipantLocationChanged { participant_id }
-            | call2::room::Event::RemoteVideoTracksChanged { participant_id } => {
+            room::Event::ParticipantLocationChanged { participant_id }
+            | room::Event::RemoteVideoTracksChanged { participant_id } => {
                 workspace.leader_updated(*participant_id, cx);
             }
             _ => {}
@@ -543,78 +549,6 @@ impl Call {
 
 #[async_trait(?Send)]
 impl CallHandler for Call {
-    fn leader_updated(&mut self, leader_id: PeerId, cx: &mut ViewContext<Workspace>) -> Option<()> {
-        cx.notify();
-
-        let (call, _) = self.active_call.as_ref()?;
-        let room = call.read(cx).room()?.read(cx);
-        let participant = room.remote_participant_for_peer_id(leader_id)?;
-        let mut items_to_activate = Vec::new();
-
-        let leader_in_this_app;
-        let leader_in_this_project;
-        match participant.location {
-            call2::ParticipantLocation::SharedProject { project_id } => {
-                leader_in_this_app = true;
-                leader_in_this_project = Some(project_id)
-                    == self
-                        .parent_workspace
-                        .update(cx, |this, cx| this.project.read(cx).remote_id())
-                        .log_err()
-                        .flatten();
-            }
-            call2::ParticipantLocation::UnsharedProject => {
-                leader_in_this_app = true;
-                leader_in_this_project = false;
-            }
-            call2::ParticipantLocation::External => {
-                leader_in_this_app = false;
-                leader_in_this_project = false;
-            }
-        };
-
-        for (pane, state) in &self.follower_states {
-            if state.leader_id != leader_id {
-                continue;
-            }
-            if let (Some(active_view_id), true) = (state.active_view_id, leader_in_this_app) {
-                if let Some(item) = state.items_by_leader_view_id.get(&active_view_id) {
-                    if leader_in_this_project || !item.is_project_item(cx) {
-                        items_to_activate.push((pane.clone(), item.boxed_clone()));
-                    }
-                } else {
-                    log::warn!(
-                        "unknown view id {:?} for leader {:?}",
-                        active_view_id,
-                        leader_id
-                    );
-                }
-                continue;
-            }
-            // todo!()
-            // if let Some(shared_screen) = self.shared_screen_for_peer(leader_id, pane, cx) {
-            //     items_to_activate.push((pane.clone(), Box::new(shared_screen)));
-            // }
-        }
-
-        for (pane, item) in items_to_activate {
-            let pane_was_focused = pane.read(cx).has_focus(cx);
-            if let Some(index) = pane.update(cx, |pane, _| pane.index_for_item(item.as_ref())) {
-                pane.update(cx, |pane, cx| pane.activate_item(index, false, false, cx));
-            } else {
-                pane.update(cx, |pane, mut cx| {
-                    pane.add_item(item.boxed_clone(), false, false, None, &mut cx)
-                });
-            }
-
-            if pane_was_focused {
-                pane.update(cx, |pane, cx| pane.focus_active_item(cx));
-            }
-        }
-
-        None
-    }
-
     fn shared_screen_for_peer(
         &self,
         peer_id: PeerId,
@@ -638,12 +572,6 @@ impl CallHandler for Call {
         // })))
     }
 
-    fn follower_states_mut(&mut self) -> &mut HashMap<View<Pane>, FollowerState> {
-        &mut self.follower_states
-    }
-    fn follower_states(&self) -> &HashMap<View<Pane>, FollowerState> {
-        &self.follower_states
-    }
     fn room_id(&self, cx: &AppContext) -> Option<u64> {
         Some(self.active_call.as_ref()?.0.read(cx).room()?.read(cx).id())
     }
@@ -656,6 +584,39 @@ impl CallHandler for Call {
     }
     fn active_project(&self, cx: &AppContext) -> Option<WeakModel<Project>> {
         ActiveCall::global(cx).read(cx).location().cloned()
+    }
+    fn peer_state(
+        &mut self,
+        leader_id: PeerId,
+        cx: &mut ViewContext<Workspace>,
+    ) -> Option<(bool, bool)> {
+        let (call, _) = self.active_call.as_ref()?;
+        let room = call.read(cx).room()?.read(cx);
+        let participant = room.remote_participant_for_peer_id(leader_id)?;
+
+        let leader_in_this_app;
+        let leader_in_this_project;
+        match participant.location {
+            ParticipantLocation::SharedProject { project_id } => {
+                leader_in_this_app = true;
+                leader_in_this_project = Some(project_id)
+                    == self
+                        .parent_workspace
+                        .update(cx, |this, cx| this.project().read(cx).remote_id())
+                        .log_err()
+                        .flatten();
+            }
+            ParticipantLocation::UnsharedProject => {
+                leader_in_this_app = true;
+                leader_in_this_project = false;
+            }
+            ParticipantLocation::External => {
+                leader_in_this_app = false;
+                leader_in_this_project = false;
+            }
+        };
+
+        Some((leader_in_this_project, leader_in_this_app))
     }
 }
 
