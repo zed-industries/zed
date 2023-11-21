@@ -1,6 +1,5 @@
 use crate::{AppState, FollowerState, Pane, Workspace};
 use anyhow::{anyhow, bail, Result};
-use call2::ActiveCall;
 use collections::HashMap;
 use db2::sqlez::{
     bindable::{Bind, Column, StaticColumnCount},

@@ -20,7 +20,6 @@ test-support = [
 
 [dependencies]
 db2 = { path = "../db2" }
-call2 = { path = "../call2" }
 client2 = { path = "../client2" }
 collections = { path = "../collections" }
 # context_menu = { path = "../context_menu" }

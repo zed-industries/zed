@@ -17,7 +17,6 @@ mod workspace_settings;
 
 use anyhow::{anyhow, bail, Context as _, Result};
 use async_trait::async_trait;
-use call2::ActiveCall;
 use client2::{
     proto::{self, PeerId},
     Client, TypedEnvelope, UserStore,
@@ -410,7 +409,7 @@ pub enum Event {
 }
 
 #[async_trait(?Send)]
-trait CallHandler {
+pub trait CallHandler {
     fn leader_updated(&mut self, leader_id: PeerId, cx: &mut ViewContext<Workspace>) -> Option<()>;
     fn shared_screen_for_peer(
         &self,
@@ -427,159 +426,7 @@ trait CallHandler {
     fn hang_up(&self, cx: AsyncWindowContext) -> Result<Task<Result<()>>>;
     fn active_project(&self, cx: &AppContext) -> Option<WeakModel<Project>>;
 }
-struct Call {
-    follower_states: HashMap<View<Pane>, FollowerState>,
-    active_call: Option<(Model<ActiveCall>, Vec<Subscription>)>,
-    parent_workspace: WeakView<Workspace>,
-}
 
-impl Call {
-    fn new(parent_workspace: WeakView<Workspace>, cx: &mut ViewContext<'_, Workspace>) -> Self {
-        let mut active_call = None;
-        if cx.has_global::<Model<ActiveCall>>() {
-            let call = cx.global::<Model<ActiveCall>>().clone();
-            let subscriptions = vec![cx.subscribe(&call, Self::on_active_call_event)];
-            active_call = Some((call, subscriptions));
-        }
-        Self {
-            follower_states: Default::default(),
-            active_call,
-            parent_workspace,
-        }
-    }
-    fn on_active_call_event(
-        workspace: &mut Workspace,
-        _: Model<ActiveCall>,
-        event: &call2::room::Event,
-        cx: &mut ViewContext<Workspace>,
-    ) {
-        match event {
-            call2::room::Event::ParticipantLocationChanged { participant_id }
-            | call2::room::Event::RemoteVideoTracksChanged { participant_id } => {
-                workspace.leader_updated(*participant_id, cx);
-            }
-            _ => {}
-        }
-    }
-}
-
-#[async_trait(?Send)]
-impl CallHandler for Call {
-    fn leader_updated(&mut self, leader_id: PeerId, cx: &mut ViewContext<Workspace>) -> Option<()> {
-        cx.notify();
-
-        let (call, _) = self.active_call.as_ref()?;
-        let room = call.read(cx).room()?.read(cx);
-        let participant = room.remote_participant_for_peer_id(leader_id)?;
-        let mut items_to_activate = Vec::new();
-
-        let leader_in_this_app;
-        let leader_in_this_project;
-        match participant.location {
-            call2::ParticipantLocation::SharedProject { project_id } => {
-                leader_in_this_app = true;
-                leader_in_this_project = Some(project_id)
-                    == self
-                        .parent_workspace
-                        .update(cx, |this, cx| this.project.read(cx).remote_id())
-                        .log_err()
-                        .flatten();
-            }
-            call2::ParticipantLocation::UnsharedProject => {
-                leader_in_this_app = true;
-                leader_in_this_project = false;
-            }
-            call2::ParticipantLocation::External => {
-                leader_in_this_app = false;
-                leader_in_this_project = false;
-            }
-        };
-
-        for (pane, state) in &self.follower_states {
-            if state.leader_id != leader_id {
-                continue;
-            }
-            if let (Some(active_view_id), true) = (state.active_view_id, leader_in_this_app) {
-                if let Some(item) = state.items_by_leader_view_id.get(&active_view_id) {
-                    if leader_in_this_project || !item.is_project_item(cx) {
-                        items_to_activate.push((pane.clone(), item.boxed_clone()));
-                    }
-                } else {
-                    log::warn!(
-                        "unknown view id {:?} for leader {:?}",
-                        active_view_id,
-                        leader_id
-                    );
-                }
-                continue;
-            }
-            // todo!()
-            // if let Some(shared_screen) = self.shared_screen_for_peer(leader_id, pane, cx) {
-            //     items_to_activate.push((pane.clone(), Box::new(shared_screen)));
-            // }
-        }
-
-        for (pane, item) in items_to_activate {
-            let pane_was_focused = pane.read(cx).has_focus(cx);
-            if let Some(index) = pane.update(cx, |pane, _| pane.index_for_item(item.as_ref())) {
-                pane.update(cx, |pane, cx| pane.activate_item(index, false, false, cx));
-            } else {
-                pane.update(cx, |pane, mut cx| {
-                    pane.add_item(item.boxed_clone(), false, false, None, &mut cx)
-                });
-            }
-
-            if pane_was_focused {
-                pane.update(cx, |pane, cx| pane.focus_active_item(cx));
-            }
-        }
-
-        None
-    }
-
-    fn shared_screen_for_peer(
-        &self,
-        peer_id: PeerId,
-        pane: &View<Pane>,
-        cx: &mut ViewContext<Workspace>,
-    ) -> Option<Box<dyn ItemHandle>> {
-        let (call, _) = self.active_call.as_ref()?;
-        let room = call.read(cx).room()?.read(cx);
-        let participant = room.remote_participant_for_peer_id(peer_id)?;
-        let track = participant.video_tracks.values().next()?.clone();
-        let user = participant.user.clone();
-        todo!();
-        // for item in pane.read(cx).items_of_type::<SharedScreen>() {
-        //     if item.read(cx).peer_id == peer_id {
-        //         return Box::new(Some(item));
-        //     }
-        // }
-
-        // Some(Box::new(cx.build_view(|cx| {
-        //     SharedScreen::new(&track, peer_id, user.clone(), cx)
-        // })))
-    }
-
-    fn follower_states_mut(&mut self) -> &mut HashMap<View<Pane>, FollowerState> {
-        &mut self.follower_states
-    }
-    fn follower_states(&self) -> &HashMap<View<Pane>, FollowerState> {
-        &self.follower_states
-    }
-    fn room_id(&self, cx: &AppContext) -> Option<u64> {
-        Some(self.active_call.as_ref()?.0.read(cx).room()?.read(cx).id())
-    }
-    fn hang_up(&self, mut cx: AsyncWindowContext) -> Result<Task<Result<()>>> {
-        let Some((call, _)) = self.active_call.as_ref() else {
-            bail!("Cannot exit a call; not in a call");
-        };
-
-        call.update(&mut cx, |this, cx| this.hang_up(cx))
-    }
-    fn active_project(&self, cx: &AppContext) -> Option<WeakModel<Project>> {
-        ActiveCall::global(cx).read(cx).location().cloned()
-    }
-}
 pub struct Workspace {
     window_self: WindowHandle<Self>,
     weak_self: WeakView<Self>,
@@ -611,6 +458,7 @@ pub struct Workspace {
     _observe_current_user: Task<Result<()>>,
     _schedule_serialize: Option<Task<()>>,
     pane_history_timestamp: Arc<AtomicUsize>,
+    call_factory: CallFactory,
 }
 
 impl EventEmitter<Event> for Workspace {}
@@ -630,11 +478,13 @@ struct FollowerState {
 
 enum WorkspaceBounds {}
 
+type CallFactory = fn(WeakView<Workspace>, &mut ViewContext<Workspace>) -> Box<dyn CallHandler>;
 impl Workspace {
     pub fn new(
         workspace_id: WorkspaceId,
         project: Model<Project>,
         app_state: Arc<AppState>,
+        call_factory: CallFactory,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         cx.observe(&project, |_, _, cx| cx.notify()).detach();
@@ -829,7 +679,7 @@ impl Workspace {
             last_leaders_by_pane: Default::default(),
             window_edited: false,
 
-            call_handler: Box::new(Call::new(weak_handle.clone(), cx)),
+            call_handler: call_factory(weak_handle.clone(), cx),
             database_id: workspace_id,
             app_state,
             _observe_current_user,
@@ -839,6 +689,7 @@ impl Workspace {
             subscriptions,
             pane_history_timestamp,
             workspace_actions: Default::default(),
+            call_factory,
         }
     }
 
@@ -846,6 +697,7 @@ impl Workspace {
         abs_paths: Vec<PathBuf>,
         app_state: Arc<AppState>,
         requesting_window: Option<WindowHandle<Workspace>>,
+        call_factory: CallFactory,
         cx: &mut AppContext,
     ) -> Task<
         anyhow::Result<(
@@ -896,7 +748,13 @@ impl Workspace {
             let window = if let Some(window) = requesting_window {
                 cx.update_window(window.into(), |old_workspace, cx| {
                     cx.replace_root_view(|cx| {
-                        Workspace::new(workspace_id, project_handle.clone(), app_state.clone(), cx)
+                        Workspace::new(
+                            workspace_id,
+                            project_handle.clone(),
+                            app_state.clone(),
+                            call_factory,
+                            cx,
+                        )
                     });
                 })?;
                 window
@@ -942,7 +800,13 @@ impl Workspace {
                     let project_handle = project_handle.clone();
                     move |cx| {
                         cx.build_view(|cx| {
-                            Workspace::new(workspace_id, project_handle, app_state, cx)
+                            Workspace::new(
+                                workspace_id,
+                                project_handle,
+                                app_state,
+                                call_factory,
+                                cx,
+                            )
                         })
                     }
                 })?
@@ -1203,7 +1067,13 @@ impl Workspace {
         if self.project.read(cx).is_local() {
             Task::Ready(Some(Ok(callback(self, cx))))
         } else {
-            let task = Self::new_local(Vec::new(), self.app_state.clone(), None, cx);
+            let task = Self::new_local(
+                Vec::new(),
+                self.app_state.clone(),
+                None,
+                self.call_factory,
+                cx,
+            );
             cx.spawn(|_vh, mut cx| async move {
                 let (workspace, _) = task.await?;
                 workspace.update(&mut cx, callback)
@@ -1432,7 +1302,7 @@ impl Workspace {
             Some(self.prepare_to_close(false, cx))
         };
         let app_state = self.app_state.clone();
-
+        let call_factory = self.call_factory;
         cx.spawn(|_, mut cx| async move {
             let window_to_replace = if let Some(close_task) = close_task {
                 if !close_task.await? {
@@ -1442,7 +1312,7 @@ impl Workspace {
             } else {
                 None
             };
-            cx.update(|_, cx| open_paths(&paths, &app_state, window_to_replace, cx))?
+            cx.update(|_, cx| open_paths(&paths, &app_state, window_to_replace, call_factory, cx))?
                 .await?;
             Ok(())
         })
@@ -4331,6 +4201,7 @@ pub fn open_paths(
     abs_paths: &[PathBuf],
     app_state: &Arc<AppState>,
     requesting_window: Option<WindowHandle<Workspace>>,
+    call_factory: CallFactory,
     cx: &mut AppContext,
 ) -> Task<
     anyhow::Result<(
@@ -4357,7 +4228,13 @@ pub fn open_paths(
             todo!()
         } else {
             cx.update(move |cx| {
-                Workspace::new_local(abs_paths, app_state.clone(), requesting_window, cx)
+                Workspace::new_local(
+                    abs_paths,
+                    app_state.clone(),
+                    requesting_window,
+                    call_factory,
+                    cx,
+                )
             })?
             .await
         }
@@ -4368,8 +4245,9 @@ pub fn open_new(
     app_state: &Arc<AppState>,
     cx: &mut AppContext,
     init: impl FnOnce(&mut Workspace, &mut ViewContext<Workspace>) + 'static + Send,
+    call_factory: CallFactory,
 ) -> Task<()> {
-    let task = Workspace::new_local(Vec::new(), app_state.clone(), None, cx);
+    let task = Workspace::new_local(Vec::new(), app_state.clone(), None, call_factory, cx);
     cx.spawn(|mut cx| async move {
         if let Some((workspace, opened_paths)) = task.await.log_err() {
             workspace

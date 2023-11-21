@@ -1193,6 +1193,7 @@ dependencies = [
  "serde_json",
  "settings2",
  "util",
+ "workspace2",
 ]
 
 [[package]]
