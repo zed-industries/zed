@@ -694,8 +694,8 @@ impl Client {
         }
     }
 
-    pub async fn has_keychain_credentials(&self, cx: &AsyncAppContext) -> bool {
-        read_credentials_from_keychain(cx).await.is_some()
+    pub fn has_keychain_credentials(&self, cx: &AsyncAppContext) -> bool {
+        read_credentials_from_keychain(cx).is_some()
     }
 
     #[async_recursion(?Send)]
@@ -726,7 +726,7 @@ impl Client {
         let mut read_from_keychain = false;
         let mut credentials = self.state.read().credentials.clone();
         if credentials.is_none() && try_keychain {
-            credentials = read_credentials_from_keychain(cx).await;
+            credentials = read_credentials_from_keychain(cx);
             read_from_keychain = credentials.is_some();
         }
         if credentials.is_none() {
@@ -1325,7 +1325,7 @@ impl Client {
     }
 }
 
-async fn read_credentials_from_keychain(cx: &AsyncAppContext) -> Option<Credentials> {
+fn read_credentials_from_keychain(cx: &AsyncAppContext) -> Option<Credentials> {
     if IMPERSONATE_LOGIN.is_some() {
         return None;
     }

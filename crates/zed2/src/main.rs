@@ -8,7 +8,7 @@ use anyhow::{anyhow, Context as _, Result};
 use backtrace::Backtrace;
 use chrono::Utc;
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
-use client::UserStore;
+use client::{Client, UserStore};
 use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
 use fs::RealFs;
@@ -36,7 +36,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicU32, Ordering},
-        Arc,
+        Arc, Weak,
     },
     thread,
 };
@@ -99,16 +99,15 @@ fn main() {
     let listener = Arc::new(listener);
     let open_listener = listener.clone();
     app.on_open_urls(move |urls, _| open_listener.open_urls(&urls));
-    app.on_reopen(move |_cx| {
-        // todo!("workspace")
-        // if cx.has_global::<Weak<AppState>>() {
-        // if let Some(app_state) = cx.global::<Weak<AppState>>().upgrade() {
-        // workspace::open_new(&app_state, cx, |workspace, cx| {
-        //     Editor::new_file(workspace, &Default::default(), cx)
-        // })
-        // .detach();
-        // }
-        // }
+    app.on_reopen(move |cx| {
+        if cx.has_global::<Weak<AppState>>() {
+            if let Some(app_state) = cx.global::<Weak<AppState>>().upgrade() {
+                workspace::open_new(&app_state, cx, |workspace, cx| {
+                    Editor::new_file(workspace, &Default::default(), cx)
+                })
+                .detach();
+            }
+        }
     });
 
     app.run(move |cx| {
@@ -180,7 +179,6 @@ fn main() {
             user_store,
             fs,
             build_window_options,
-            // background_actions: todo!("ask Mikayla"),
             workspace_store,
             node_runtime,
         });
@@ -236,7 +234,7 @@ fn main() {
             }
         }
 
-        let mut _triggered_authentication = false;
+        let mut triggered_authentication = false;
 
         fn open_paths_and_log_errs(
             paths: &[PathBuf],
@@ -266,17 +264,17 @@ fn main() {
                     .detach();
             }
             Ok(Some(OpenRequest::JoinChannel { channel_id: _ })) => {
-                todo!()
-                // triggered_authentication = true;
-                // let app_state = app_state.clone();
-                // let client = client.clone();
-                // cx.spawn(|mut cx| async move {
-                //     // ignore errors here, we'll show a generic "not signed in"
-                //     let _ = authenticate(client, &cx).await;
-                //     cx.update(|cx| workspace::join_channel(channel_id, app_state, None, cx))
-                //         .await
-                // })
-                // .detach_and_log_err(cx)
+                triggered_authentication = true;
+                let app_state = app_state.clone();
+                let client = client.clone();
+                cx.spawn(|mut cx| async move {
+                    // ignore errors here, we'll show a generic "not signed in"
+                    let _ = authenticate(client, &cx).await;
+                    // cx.update(|cx| workspace::join_channel(channel_id, app_state, None, cx))
+                    // .await
+                    anyhow::Ok(())
+                })
+                .detach_and_log_err(cx)
             }
             Ok(Some(OpenRequest::OpenChannelNotes { channel_id: _ })) => {
                 todo!()
@@ -315,23 +313,23 @@ fn main() {
         })
         .detach();
 
-        // if !triggered_authentication {
-        //     cx.spawn(|cx| async move { authenticate(client, &cx).await })
-        //         .detach_and_log_err(cx);
-        // }
+        if !triggered_authentication {
+            cx.spawn(|cx| async move { authenticate(client, &cx).await })
+                .detach_and_log_err(cx);
+        }
     });
 }
 
-// async fn authenticate(client: Arc<Client>, cx: &AsyncAppContext) -> Result<()> {
-//     if stdout_is_a_pty() {
-//         if client::IMPERSONATE_LOGIN.is_some() {
-//             client.authenticate_and_connect(false, &cx).await?;
-//         }
-//     } else if client.has_keychain_credentials(&cx) {
-//         client.authenticate_and_connect(true, &cx).await?;
-//     }
-//     Ok::<_, anyhow::Error>(())
-// }
+async fn authenticate(client: Arc<Client>, cx: &AsyncAppContext) -> Result<()> {
+    if stdout_is_a_pty() {
+        if client::IMPERSONATE_LOGIN.is_some() {
+            client.authenticate_and_connect(false, &cx).await?;
+        }
+    } else if client.has_keychain_credentials(&cx) {
+        client.authenticate_and_connect(true, &cx).await?;
+    }
+    Ok::<_, anyhow::Error>(())
+}
 
 async fn installation_id() -> Result<String> {
     let legacy_key_name = "device_id";
@@ -355,11 +353,8 @@ async fn restore_or_create_workspace(app_state: &Arc<AppState>, mut cx: AsyncApp
             cx.update(|cx| workspace::open_paths(location.paths().as_ref(), app_state, None, cx))?
                 .await
                 .log_err();
-        } else if matches!(KEY_VALUE_STORE.read_kvp("******* THIS IS A BAD KEY PLEASE UNCOMMENT BELOW TO FIX THIS VERY LONG LINE *******"), Ok(None)) {
-            // todo!(welcome)
-            //} else if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
-            //todo!()
-            // cx.update(|cx| show_welcome_experience(app_state, cx));
+        } else if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
+            cx.update(|cx| show_welcome_experience(app_state, cx));
         } else {
             cx.update(|cx| {
                 workspace::open_new(app_state, cx, |workspace, cx| {

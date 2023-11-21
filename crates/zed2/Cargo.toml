@@ -66,12 +66,12 @@ shellexpand = "2.1.0"
 text = { package = "text2", path = "../text2" }
 terminal_view = { package = "terminal_view2", path = "../terminal_view2" }
 theme = { package = "theme2", path = "../theme2" }
-# theme_selector = { path = "../theme_selector" }
+theme_selector = { package = "theme_selector2", path = "../theme_selector2" }
 util = { path = "../util" }
 # semantic_index = { path = "../semantic_index" }
 # vim = { path = "../vim" }
 workspace = { package = "workspace2", path = "../workspace2" }
-# welcome = { path = "../welcome" }
+welcome = { package = "welcome2", path = "../welcome2" }
 zed_actions = {package = "zed_actions2", path = "../zed_actions2"}
 anyhow.workspace = true
 async-compression = { version = "0.3", features = ["gzip", "futures-bufread"] }
