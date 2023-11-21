@@ -24,12 +24,22 @@ pub enum OverflowStyle {
 
 #[derive(Default, PartialEq, Copy, Clone, EnumIter, strum::Display)]
 pub enum InteractionState {
+    /// An element that is enabled and not hovered, active, focused, or disabled.
+    ///
+    /// This is often referred to as the "default" state.
     #[default]
     Enabled,
+    /// An element that is hovered.
     Hovered,
+    /// An element has an active mouse down or touch start event on it.
     Active,
+    /// An element that is focused using the keyboard.
     Focused,
+    /// An element that is disabled.
     Disabled,
+    /// A toggleable element that is selected, like the active button in a
+    /// button toggle group.
+    Selected,
 }
 
 impl InteractionState {
