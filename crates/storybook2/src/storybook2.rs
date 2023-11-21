@@ -105,8 +105,8 @@ impl StoryWrapper {
     }
 }
 
-impl Render<Self> for StoryWrapper {
-    type Element = Div<Self>;
+impl Render for StoryWrapper {
+    type Element = Div;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         div()

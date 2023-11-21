@@ -11,6 +11,7 @@ pub struct FocusStory {
     child_2_focus: FocusHandle,
 }
 
+
 impl FocusStory {
     pub fn view(cx: &mut WindowContext) -> View<Self> {
         cx.bind_keys([
@@ -26,7 +27,7 @@ impl FocusStory {
     }
 }
 
-impl Render<Self> for FocusStory {
+impl Render for FocusStory {
     type Element = Focusable<Stateful<Div>>;
 
     fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> Self::Element {

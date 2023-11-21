@@ -205,6 +205,7 @@ impl Element for UniformList {
 
                     if self.item_count > 0 {
                         if let Some(scroll_handle) = self.scroll_handle.clone() {
+                            dbg!("update scroll handle", &shared_scroll_offset);
                             scroll_handle.0.borrow_mut().replace(ScrollHandleState {
                                 item_height,
                                 list_height: padded_bounds.size.height,

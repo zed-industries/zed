@@ -7,8 +7,8 @@ use crate::story::Story;
 /// [https://developer.mozilla.org/en-US/docs/Web/CSS/z-index](https://developer.mozilla.org/en-US/docs/Web/CSS/z-index).
 pub struct ZIndexStory;
 
-impl Render<Self> for ZIndexStory {
-    type Element = Div<Self>;
+impl Render for ZIndexStory {
+    type Element = Div;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         Story::container(cx)
@@ -77,15 +77,15 @@ trait Styles: Styled + Sized {
     }
 }
 
-impl<V: 'static> Styles for Div<V> {}
+impl Styles for Div {}
 
 #[derive(RenderOnce)]
 struct ZIndexExample {
     z_index: u32,
 }
 
-impl<V: 'static> Component<V> for ZIndexExample {
-    type Rendered = Div<V>;
+impl Component for ZIndexExample {
+    type Rendered = Div;
 
     fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
         div()

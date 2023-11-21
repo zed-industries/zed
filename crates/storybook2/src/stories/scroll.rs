@@ -10,8 +10,8 @@ impl ScrollStory {
     }
 }
 
-impl Render<Self> for ScrollStory {
-    type Element = Stateful<Self, Div<Self>>;
+impl Render for ScrollStory {
+    type Element = Stateful<Div>;
 
     fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> Self::Element {
         let theme = cx.theme();
