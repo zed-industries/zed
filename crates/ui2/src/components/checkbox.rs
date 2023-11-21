@@ -291,7 +291,7 @@ pub use stories::*;
 mod stories {
     use super::*;
     use crate::{h_stack, Story};
-    use gpui::{Div, Render};
+    use gpui::{Div, Render, ViewContext};
 
     pub struct CheckboxStory;
 
@@ -300,7 +300,7 @@ mod stories {
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             Story::container(cx)
-                .child(Story::title_for::<_, Checkbox<Self>>(cx))
+                .child(Story::title_for::<Checkbox>(cx))
                 .child(Story::label(cx, "Default"))
                 .child(
                     h_stack()

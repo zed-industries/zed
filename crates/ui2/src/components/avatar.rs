@@ -54,7 +54,7 @@ mod stories {
     impl Render for AvatarStory {
         type Element = Div;
 
-        fn render(&mut self, cx: &mut WindowContext) -> Self::Element {
+        fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             Story::container(cx)
                 .child(Story::title_for::<Avatar>(cx))
                 .child(Story::label(cx, "Default"))

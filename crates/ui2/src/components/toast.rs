@@ -109,7 +109,7 @@ mod stories {
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             Story::container(cx)
-                .child(Story::title_for::<Toast<Self>>(cx))
+                .child(Story::title_for::<Toast>(cx))
                 .child(Story::label(cx, "Default"))
                 .child(Toast::new(ToastOrigin::Bottom).child(Label::new("label")))
         }

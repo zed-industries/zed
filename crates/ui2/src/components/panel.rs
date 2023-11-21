@@ -137,7 +137,7 @@ mod stories {
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             Story::container(cx)
-                .child(Story::title_for::<Panel<Self>>(cx))
+                .child(Story::title_for::<Panel>(cx))
                 .child(Story::label(cx, "Default"))
                 .child(
                     Panel::new("panel", cx).child(

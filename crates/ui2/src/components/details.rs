@@ -61,7 +61,7 @@ mod stories {
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             Story::container(cx)
-                .child(Story::title_for::<_, Details<Self>>(cx))
+                .child(Story::title_for::<Details>(cx))
                 .child(Story::label(cx, "Default"))
                 .child(Details::new("The quick brown fox jumps over the lazy dog"))
                 .child(Story::label(cx, "With meta"))

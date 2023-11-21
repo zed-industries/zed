@@ -309,10 +309,7 @@ mod stories {
 
     actions!(PrintCurrentDate, PrintBestFood);
 
-    fn build_menu<V: Render>(
-        cx: &mut WindowContext,
-        header: impl Into<SharedString>,
-    ) -> View<ContextMenu> {
+    fn build_menu(cx: &mut WindowContext, header: impl Into<SharedString>) -> View<ContextMenu> {
         ContextMenu::build(cx, |menu, _| {
             menu.header(header)
                 .separator()
@@ -337,13 +334,13 @@ mod stories {
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
             Story::container(cx)
-                .on_action(|_, _: &PrintCurrentDate, _| {
+                .on_action(|_: &PrintCurrentDate, _| {
                     println!("printing unix time!");
                     if let Ok(unix_time) = std::time::UNIX_EPOCH.elapsed() {
                         println!("Current Unix time is {:?}", unix_time.as_secs());
                     }
                 })
-                .on_action(|_, _: &PrintBestFood, _| {
+                .on_action(|_: &PrintBestFood, _| {
                     println!("burrito");
                 })
                 .flex()
@@ -363,7 +360,7 @@ mod stories {
                                         "RIGHT CLICK ME"
                                     })
                                 })
-                                .menu(move |_, cx| build_menu(cx, "top left")),
+                                .menu(move |cx| build_menu(cx, "top left")),
                         )
                         .child(
                             menu_handle("test1")
@@ -376,7 +373,7 @@ mod stories {
                                 })
                                 .anchor(AnchorCorner::BottomLeft)
                                 .attach(AnchorCorner::TopLeft)
-                                .menu(move |_, cx| build_menu(cx, "bottom left")),
+                                .menu(move |cx| build_menu(cx, "bottom left")),
                         ),
                 )
                 .child(
@@ -394,7 +391,7 @@ mod stories {
                                     })
                                 })
                                 .anchor(AnchorCorner::TopRight)
-                                .menu(move |_, cx| build_menu(cx, "top right")),
+                                .menu(move |cx| build_menu(cx, "top right")),
                         )
                         .child(
                             menu_handle("test4")
@@ -407,7 +404,7 @@ mod stories {
                                 })
                                 .anchor(AnchorCorner::BottomRight)
                                 .attach(AnchorCorner::TopRight)
-                                .menu(move |_, cx| build_menu(cx, "bottom right")),
+                                .menu(move |cx| build_menu(cx, "bottom right")),
                         ),
                 )
         }

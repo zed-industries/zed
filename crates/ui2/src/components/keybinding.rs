@@ -96,7 +96,7 @@ mod stories {
                 ["ctrl", "alt", "cmd", "shift"].into_iter().permutations(2);
 
             Story::container(cx)
-                .child(Story::title_for::<_, KeyBinding>(cx))
+                .child(Story::title_for::<KeyBinding>(cx))
                 .child(Story::label(cx, "Single Key"))
                 .child(KeyBinding::new(binding("Z")))
                 .child(Story::label(cx, "Single Key with Modifier"))
