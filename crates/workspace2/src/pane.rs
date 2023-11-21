@@ -1939,9 +1939,7 @@ impl Render for Pane {
                 }),
             )
             .child(self.render_tab_bar(cx))
-            // .child(
-            //     div()
-            // ) /* todo!(toolbar) */
+            .child(self.toolbar.clone())
             .child(if let Some(item) = self.active_item() {
                 div().flex().flex_1().child(item.to_any())
             } else {

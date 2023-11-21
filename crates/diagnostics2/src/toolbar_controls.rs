@@ -49,7 +49,7 @@ impl ToolbarItemView for ToolbarControls {
         if let Some(pane_item) = active_pane_item.as_ref() {
             if let Some(editor) = pane_item.downcast::<ProjectDiagnosticsEditor>() {
                 self.editor = Some(editor.downgrade());
-                ToolbarItemLocation::PrimaryRight { flex: None }
+                ToolbarItemLocation::PrimaryRight
             } else {
                 ToolbarItemLocation::Hidden
             }

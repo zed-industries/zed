@@ -66,6 +66,8 @@ pub enum Icon {
     SplitMessage,
     Terminal,
     XCircle,
+    WholeWord,
+    CaseSensitive,
 }
 
 impl Icon {
@@ -125,6 +127,8 @@ impl Icon {
             Icon::SplitMessage => "icons/split_message.svg",
             Icon::Terminal => "icons/terminal.svg",
             Icon::XCircle => "icons/error.svg",
+            Icon::WholeWord => "icons/word_search.svg",
+            Icon::CaseSensitive => "icons/case_insensitive.svg",
         }
     }
 }

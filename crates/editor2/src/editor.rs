@@ -2325,6 +2325,7 @@ impl Editor {
 
         self.blink_manager.update(cx, BlinkManager::pause_blinking);
         cx.emit(EditorEvent::SelectionsChanged { local });
+        cx.emit(SearchEvent::MatchesInvalidated);
 
         if self.selections.disjoint_anchors().len() == 1 {
             cx.emit(SearchEvent::ActiveMatchChanged)

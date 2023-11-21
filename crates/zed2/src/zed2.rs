@@ -98,8 +98,8 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                             // todo!()
                             //     let breadcrumbs = cx.add_view(|_| Breadcrumbs::new(workspace));
                             //     toolbar.add_item(breadcrumbs, cx);
-                            //     let buffer_search_bar = cx.add_view(BufferSearchBar::new);
-                            //     toolbar.add_item(buffer_search_bar.clone(), cx);
+                            let buffer_search_bar = cx.build_view(search::BufferSearchBar::new);
+                            toolbar.add_item(buffer_search_bar.clone(), cx);
                             //     let quick_action_bar = cx.add_view(|_| {
                             //         QuickActionBar::new(buffer_search_bar, workspace)
                             //     });
