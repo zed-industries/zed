@@ -27,7 +27,8 @@ impl Component for Popover {
                 this.child(
                     v_stack()
                         .top_0()
-                        .neg_right_1()
+                        .left_full()
+                        .ml_1()
                         .absolute()
                         .elevation_2(cx)
                         .p_1()
