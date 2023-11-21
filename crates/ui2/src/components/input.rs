@@ -36,15 +36,15 @@ impl Component for Input {
         };
 
         let placeholder_label = Label::new(self.placeholder.clone()).color(if self.disabled {
-            TextColor::Disabled
+            Color::Disabled
         } else {
-            TextColor::Placeholder
+            Color::Placeholder
         });
 
         let label = Label::new(self.value.clone()).color(if self.disabled {
-            TextColor::Disabled
+            Color::Disabled
         } else {
-            TextColor::Default
+            Color::Default
         });
 
         div()

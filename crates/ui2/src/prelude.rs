@@ -4,7 +4,7 @@ pub use gpui::{
 };
 
 pub use crate::StyledExt;
-pub use crate::{ButtonVariant, TextColor};
+pub use crate::{ButtonVariant, Color};
 pub use theme2::ActiveTheme;
 
 use strum::EnumIter;

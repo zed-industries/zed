@@ -47,7 +47,7 @@ impl Component for ListHeader {
                     .items_center()
                     .children(icons.into_iter().map(|i| {
                         IconElement::new(i)
-                            .color(TextColor::Muted)
+                            .color(Color::Muted)
                             .size(IconSize::Small)
                     })),
             ),
@@ -80,10 +80,10 @@ impl Component for ListHeader {
                                     .items_center()
                                     .children(self.left_icon.map(|i| {
                                         IconElement::new(i)
-                                            .color(TextColor::Muted)
+                                            .color(Color::Muted)
                                             .size(IconSize::Small)
                                     }))
-                                    .child(Label::new(self.label.clone()).color(TextColor::Muted)),
+                                    .child(Label::new(self.label.clone()).color(Color::Muted)),
                             )
                             .child(disclosure_control),
                     )
@@ -222,10 +222,10 @@ impl Component for ListSubHeader {
                         .items_center()
                         .children(self.left_icon.map(|i| {
                             IconElement::new(i)
-                                .color(TextColor::Muted)
+                                .color(Color::Muted)
                                 .size(IconSize::Small)
                         }))
-                        .child(Label::new(self.label.clone()).color(TextColor::Muted)),
+                        .child(Label::new(self.label.clone()).color(Color::Muted)),
                 ),
         )
     }
@@ -337,7 +337,7 @@ impl Component for ListItem {
                 h_stack().child(
                     IconElement::new(i)
                         .size(IconSize::Small)
-                        .color(TextColor::Muted),
+                        .color(Color::Muted),
                 ),
             ),
             Some(GraphicSlot::Avatar(src)) => Some(h_stack().child(Avatar::new(src))),
@@ -432,9 +432,7 @@ impl Component for List {
         let list_content = match (self.children.is_empty(), self.toggle) {
             (false, _) => div().children(self.children),
             (true, Toggle::Toggled(false)) => div(),
-            (true, _) => {
-                div().child(Label::new(self.empty_message.clone()).color(TextColor::Muted))
-            }
+            (true, _) => div().child(Label::new(self.empty_message.clone()).color(Color::Muted)),
         };
 
         v_stack()

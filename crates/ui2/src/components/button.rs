@@ -6,7 +6,7 @@ use gpui::{
 };
 
 use crate::prelude::*;
-use crate::{h_stack, Icon, IconButton, IconElement, Label, LineHeightStyle, TextColor};
+use crate::{h_stack, Color, Icon, IconButton, IconElement, Label, LineHeightStyle};
 
 /// Provides the flexibility to use either a standard
 /// button or an icon button in a given context.
@@ -73,7 +73,7 @@ pub struct Button {
     label: SharedString,
     variant: ButtonVariant,
     width: Option<DefiniteLength>,
-    color: Option<TextColor>,
+    color: Option<Color>,
 }
 
 impl Component for Button {
@@ -81,9 +81,9 @@ impl Component for Button {
 
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         let (icon_color, label_color) = match (self.disabled, self.color) {
-            (true, _) => (TextColor::Disabled, TextColor::Disabled),
-            (_, None) => (TextColor::Default, TextColor::Default),
-            (_, Some(color)) => (TextColor::from(color), color),
+            (true, _) => (Color::Disabled, Color::Disabled),
+            (_, None) => (Color::Default, Color::Default),
+            (_, Some(color)) => (Color::from(color), color),
         };
 
         let mut button = h_stack()
@@ -181,14 +181,14 @@ impl Button {
         self
     }
 
-    pub fn color(mut self, color: Option<TextColor>) -> Self {
+    pub fn color(mut self, color: Option<Color>) -> Self {
         self.color = color;
         self
     }
 
-    pub fn label_color(&self, color: Option<TextColor>) -> TextColor {
+    pub fn label_color(&self, color: Option<Color>) -> Color {
         if self.disabled {
-            TextColor::Disabled
+            Color::Disabled
         } else if let Some(color) = color {
             color
         } else {
@@ -196,13 +196,13 @@ impl Button {
         }
     }
 
-    fn render_label(&self, color: TextColor) -> Label {
+    fn render_label(&self, color: Color) -> Label {
         Label::new(self.label.clone())
             .color(color)
             .line_height_style(LineHeightStyle::UILabel)
     }
 
-    fn render_icon(&self, icon_color: TextColor) -> Option<IconElement> {
+    fn render_icon(&self, icon_color: Color) -> Option<IconElement> {
         self.icon.map(|i| IconElement::new(i).color(icon_color))
     }
 }

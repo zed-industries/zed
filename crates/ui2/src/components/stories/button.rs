@@ -4,7 +4,7 @@ pub use stories::*;
 #[cfg(feature = "stories")]
 mod stories {
     use super::*;
-    use crate::{h_stack, v_stack, Story, TextColor};
+    use crate::{h_stack, v_stack, Color, Story};
     use gpui::{rems, Div, Render};
     use strum::IntoEnumIterator;
 

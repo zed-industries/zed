@@ -2,7 +2,7 @@ use gpui::{div, prelude::*, Div, Element, ElementId, RenderOnce, Styled, WindowC
 
 use theme2::ActiveTheme;
 
-use crate::{Icon, IconElement, Selection, TextColor};
+use crate::{Color, Icon, IconElement, Selection};
 
 pub type CheckHandler = Box<dyn Fn(&Selection, &mut WindowContext) + 'static>;
 
@@ -34,9 +34,9 @@ impl Component for Checkbox {
                         .color(
                             // If the checkbox is disabled we change the color of the icon.
                             if self.disabled {
-                                TextColor::Disabled
+                                Color::Disabled
                             } else {
-                                TextColor::Selected
+                                Color::Selected
                             },
                         ),
                 )
@@ -49,9 +49,9 @@ impl Component for Checkbox {
                         .color(
                             // If the checkbox is disabled we change the color of the icon.
                             if self.disabled {
-                                TextColor::Disabled
+                                Color::Disabled
                             } else {
-                                TextColor::Selected
+                                Color::Selected
                             },
                         ),
                 )
@@ -176,9 +176,9 @@ impl Checkbox {
                         .color(
                             // If the checkbox is disabled we change the color of the icon.
                             if self.disabled {
-                                TextColor::Disabled
+                                Color::Disabled
                             } else {
-                                TextColor::Selected
+                                Color::Selected
                             },
                         ),
                 )
@@ -191,9 +191,9 @@ impl Checkbox {
                         .color(
                             // If the checkbox is disabled we change the color of the icon.
                             if self.disabled {
-                                TextColor::Disabled
+                                Color::Disabled
                             } else {
-                                TextColor::Selected
+                                Color::Selected
                             },
                         ),
                 )
