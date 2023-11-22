@@ -552,14 +552,14 @@ impl CallHandler for Call {
     fn shared_screen_for_peer(
         &self,
         peer_id: PeerId,
-        pane: &View<Pane>,
+        _pane: &View<Pane>,
         cx: &mut ViewContext<Workspace>,
     ) -> Option<Box<dyn ItemHandle>> {
         let (call, _) = self.active_call.as_ref()?;
         let room = call.read(cx).room()?.read(cx);
         let participant = room.remote_participant_for_peer_id(peer_id)?;
-        let track = participant.video_tracks.values().next()?.clone();
-        let user = participant.user.clone();
+        let _track = participant.video_tracks.values().next()?.clone();
+        let _user = participant.user.clone();
         todo!();
         // for item in pane.read(cx).items_of_type::<SharedScreen>() {
         //     if item.read(cx).peer_id == peer_id {
