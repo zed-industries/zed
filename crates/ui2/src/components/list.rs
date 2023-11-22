@@ -245,28 +245,28 @@ pub struct ListItem {
     // TODO: Reintroduce this
     // disclosure_control_style: DisclosureControlVisibility,
     indent_level: u32,
-    label: Label,
     left_slot: Option<GraphicSlot>,
     overflow: OverflowStyle,
     size: ListEntrySize,
     toggle: Toggle,
     variant: ListItemVariant,
     on_click: Option<Rc<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
+    children: SmallVec<[AnyElement; 2]>,
 }
 
 impl ListItem {
-    pub fn new(id: impl Into<ElementId>, label: Label) -> Self {
+    pub fn new(id: impl Into<ElementId>) -> Self {
         Self {
             id: id.into(),
             disabled: false,
             indent_level: 0,
-            label,
             left_slot: None,
             overflow: OverflowStyle::Hidden,
             size: ListEntrySize::default(),
             toggle: Toggle::NotToggleable,
             variant: ListItemVariant::default(),
             on_click: Default::default(),
+            children: SmallVec::new(),
         }
     }
 
@@ -377,8 +377,14 @@ impl Component for ListItem {
                     .relative()
                     .child(disclosure_control(self.toggle))
                     .children(left_content)
-                    .child(self.label),
+                    .children(self.children),
             )
+    }
+}
+
+impl ParentElement for ListItem {
+    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement; 2]> {
+        &mut self.children
     }
 }
 

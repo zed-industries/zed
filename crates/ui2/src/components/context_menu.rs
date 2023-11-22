@@ -113,7 +113,8 @@ impl Render for ContextMenu {
                             let callback = callback.clone();
                             let dismiss = cx.listener(|_, _, cx| cx.emit(Manager::Dismiss));
 
-                            ListItem::new(entry.clone(), Label::new(entry.clone()))
+                            ListItem::new(entry.clone())
+                                .child(Label::new(entry.clone()))
                                 .on_click(move |event, cx| {
                                     callback(event, cx);
                                     dismiss(event, cx)
