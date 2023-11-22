@@ -8,9 +8,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use theme2::ActiveTheme;
-use ui::{
-    h_stack, menu_handle, ContextMenu, IconButton, InteractionState, Label, ListItem, Tooltip,
-};
+use ui::{h_stack, menu_handle, ContextMenu, IconButton, InteractionState, Tooltip};
 
 pub enum PanelEvent {
     ChangePosition,
@@ -720,10 +718,7 @@ impl Render for PanelButtons {
                                     {
                                         let panel = panel.clone();
                                         menu = menu.entry(
-                                            ListItem::new(
-                                                panel.entity_id(),
-                                                Label::new(format!("Dock {}", position.to_label())),
-                                            ),
+                                            format!("Dock {}", position.to_label()),
                                             move |_, cx| {
                                                 panel.set_position(position, cx);
                                             },
