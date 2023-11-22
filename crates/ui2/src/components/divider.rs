@@ -14,9 +14,9 @@ pub struct Divider {
 }
 
 impl RenderOnce for Divider {
-    type Rendered = Div;
+    type Output = Div;
 
-    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
+    fn render_once(self, cx: &mut WindowContext) -> Self::Output {
         div()
             .map(|this| match self.direction {
                 DividerDirection::Horizontal => {

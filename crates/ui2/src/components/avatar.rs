@@ -15,9 +15,9 @@ pub struct Avatar {
 }
 
 impl RenderOnce for Avatar {
-    type Rendered = Img;
+    type Output = Img;
 
-    fn render(self, _: &mut WindowContext) -> Self::Rendered {
+    fn render_once(self, _: &mut WindowContext) -> Self::Output {
         let mut img = img();
 
         if self.shape == Shape::Circle {

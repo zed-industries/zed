@@ -77,9 +77,9 @@ pub struct Button {
 }
 
 impl RenderOnce for Button {
-    type Rendered = gpui::Stateful<Div>;
+    type Output = gpui::Stateful<Div>;
 
-    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
+    fn render_once(self, cx: &mut WindowContext) -> Self::Output {
         let (icon_color, label_color) = match (self.disabled, self.color) {
             (true, _) => (Color::Disabled, Color::Disabled),
             (_, None) => (Color::Default, Color::Default),
@@ -213,13 +213,13 @@ pub struct ButtonGroup {
 }
 
 impl RenderOnce for ButtonGroup {
-    type Rendered = Div;
+    type Output = Div;
 
-    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
+    fn render_once(self, cx: &mut WindowContext) -> Self::Output {
         let mut group = h_stack();
 
         for button in self.buttons.into_iter() {
-            group = group.child(button.render(cx));
+            group = group.child(button.render_once(cx));
         }
 
         group

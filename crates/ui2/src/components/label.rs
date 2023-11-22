@@ -27,9 +27,9 @@ pub struct Label {
 }
 
 impl RenderOnce for Label {
-    type Rendered = Div;
+    type Output = Div;
 
-    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
+    fn render_once(self, cx: &mut WindowContext) -> Self::Output {
         div()
             .when(self.strikethrough, |this| {
                 this.relative().child(
@@ -95,9 +95,9 @@ pub struct HighlightedLabel {
 }
 
 impl RenderOnce for HighlightedLabel {
-    type Rendered = Div;
+    type Output = Div;
 
-    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
+    fn render_once(self, cx: &mut WindowContext) -> Self::Output {
         let highlight_color = cx.theme().colors().text_accent;
         let mut text_style = cx.text_style().clone();
 

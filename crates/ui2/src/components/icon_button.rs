@@ -14,9 +14,9 @@ pub struct IconButton {
 }
 
 impl RenderOnce for IconButton {
-    type Rendered = Stateful<Div>;
+    type Output = Stateful<Div>;
 
-    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
+    fn render_once(self, cx: &mut WindowContext) -> Self::Output {
         let icon_color = match (self.state, self.color) {
             (InteractionState::Disabled, _) => Color::Disabled,
             (InteractionState::Active, _) => Color::Selected,

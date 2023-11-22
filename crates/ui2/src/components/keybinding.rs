@@ -11,9 +11,9 @@ pub struct KeyBinding {
 }
 
 impl RenderOnce for KeyBinding {
-    type Rendered = Div;
+    type Output = Div;
 
-    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
+    fn render_once(self, cx: &mut WindowContext) -> Self::Output {
         div()
             .flex()
             .gap_2()
@@ -50,9 +50,9 @@ pub struct Key {
 }
 
 impl RenderOnce for Key {
-    type Rendered = Div;
+    type Output = Div;
 
-    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
+    fn render_once(self, cx: &mut WindowContext) -> Self::Output {
         div()
             .px_2()
             .py_0()

@@ -40,9 +40,9 @@ pub struct Popover {
 }
 
 impl RenderOnce for Popover {
-    type Rendered = Div;
+    type Output = Div;
 
-    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
+    fn render_once(self, cx: &mut WindowContext) -> Self::Output {
         v_stack()
             .relative()
             .elevation_2(cx)

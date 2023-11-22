@@ -19,9 +19,9 @@ pub struct Input {
 }
 
 impl RenderOnce for Input {
-    type Rendered = Stateful<Div>;
+    type Output = Stateful<Div>;
 
-    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
+    fn render_once(self, cx: &mut WindowContext) -> Self::Output {
         let (input_bg, input_hover_bg, input_active_bg) = match self.variant {
             InputVariant::Ghost => (
                 cx.theme().colors().ghost_element_background,

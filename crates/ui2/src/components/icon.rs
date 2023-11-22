@@ -141,9 +141,9 @@ pub struct IconElement {
 }
 
 impl RenderOnce for IconElement {
-    type Rendered = Svg;
+    type Output = Svg;
 
-    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
+    fn render_once(self, cx: &mut WindowContext) -> Self::Output {
         let svg_size = match self.size {
             IconSize::Small => rems(0.75),
             IconSize::Medium => rems(0.9375),

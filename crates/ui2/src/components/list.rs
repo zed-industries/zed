@@ -35,9 +35,9 @@ pub struct ListHeader {
 }
 
 impl RenderOnce for ListHeader {
-    type Rendered = Div;
+    type Output = Div;
 
-    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
+    fn render_once(self, cx: &mut WindowContext) -> Self::Output {
         let disclosure_control = disclosure_control(self.toggle);
 
         let meta = match self.meta {
@@ -202,9 +202,9 @@ impl ListSubHeader {
 }
 
 impl RenderOnce for ListSubHeader {
-    type Rendered = Div;
+    type Output = Div;
 
-    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
+    fn render_once(self, cx: &mut WindowContext) -> Self::Output {
         h_stack().flex_1().w_full().relative().py_1().child(
             div()
                 .h_6()
@@ -329,9 +329,9 @@ impl ListItem {
 }
 
 impl RenderOnce for ListItem {
-    type Rendered = Stateful<Div>;
+    type Output = Stateful<Div>;
 
-    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
+    fn render_once(self, cx: &mut WindowContext) -> Self::Output {
         let left_content = match self.left_slot.clone() {
             Some(GraphicSlot::Icon(i)) => Some(
                 h_stack().child(
@@ -409,9 +409,9 @@ impl ListSeparator {
 }
 
 impl RenderOnce for ListSeparator {
-    type Rendered = Div;
+    type Output = Div;
 
-    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
+    fn render_once(self, cx: &mut WindowContext) -> Self::Output {
         div().h_px().w_full().bg(cx.theme().colors().border_variant)
     }
 }
@@ -427,9 +427,9 @@ pub struct List {
 }
 
 impl RenderOnce for List {
-    type Rendered = Div;
+    type Output = Div;
 
-    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
+    fn render_once(self, cx: &mut WindowContext) -> Self::Output {
         let list_content = match (self.children.is_empty(), self.toggle) {
             (false, _) => div().children(self.children),
             (true, Toggle::Toggled(false)) => div(),

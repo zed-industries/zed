@@ -12,6 +12,21 @@ pub trait Render: 'static + Sized {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element;
 }
 
+pub trait RenderOnce: 'static {
+    type Output: IntoElement;
+
+    fn render_once(self, cx: &mut WindowContext) -> Self::Output;
+}
+
+pub trait RenderOnceStateful: 'static {
+    type Output: IntoElement;
+    type State: 'static;
+
+    fn element_id(&self) -> ElementId;
+
+    fn render_once(self, state: &mut Option<Self::State>, cx: &mut WindowContext) -> Self::Output;
+}
+
 pub trait IntoElement: Sized {
     type Element: Element + 'static;
 
@@ -99,40 +114,30 @@ pub trait Element: 'static + IntoElement {
     }
 }
 
-pub trait RenderOnce: 'static {
-    type Rendered: IntoElement;
+pub struct Component<R>(Option<R>);
 
-    fn render(self, cx: &mut WindowContext) -> Self::Rendered;
+pub struct ComponentState<C: RenderOnce> {
+    rendered_element: Option<<C::Output as IntoElement>::Element>,
+    rendered_element_state: <<C::Output as IntoElement>::Element as Element>::State,
 }
 
-pub struct Component<C> {
-    component: Option<C>,
-}
-
-pub struct CompositeElementState<C: RenderOnce> {
-    rendered_element: Option<<C::Rendered as IntoElement>::Element>,
-    rendered_element_state: <<C::Rendered as IntoElement>::Element as Element>::State,
-}
-
-impl<C> Component<C> {
-    pub fn new(component: C) -> Self {
-        Component {
-            component: Some(component),
-        }
+impl<R> Component<R> {
+    pub fn new(renderable: R) -> Self {
+        Component(Some(renderable))
     }
 }
 
-impl<C: RenderOnce> Element for Component<C> {
-    type State = CompositeElementState<C>;
+impl<R: RenderOnce> Element for Component<R> {
+    type State = ComponentState<R>;
 
     fn layout(
         &mut self,
         state: Option<Self::State>,
         cx: &mut WindowContext,
     ) -> (LayoutId, Self::State) {
-        let mut element = self.component.take().unwrap().render(cx).into_element();
+        let mut element = self.0.take().unwrap().render_once(cx).into_element();
         let (layout_id, state) = element.layout(state.map(|s| s.rendered_element_state), cx);
-        let state = CompositeElementState {
+        let state = ComponentState {
             rendered_element: Some(element),
             rendered_element_state: state,
         };
@@ -153,6 +158,83 @@ impl<C: RenderOnce> IntoElement for Component<C> {
 
     fn element_id(&self) -> Option<ElementId> {
         None
+    }
+
+    fn into_element(self) -> Self::Element {
+        self
+    }
+}
+
+pub struct StatefulComponent<R>(Option<R>);
+
+pub struct StatefulComponentState<R: RenderOnceStateful> {
+    rendered_element: Option<<R::Output as IntoElement>::Element>,
+    rendered_element_state: <<R::Output as IntoElement>::Element as Element>::State,
+    component_state: Option<R::State>,
+}
+
+impl<R: RenderOnceStateful> Element for StatefulComponent<R> {
+    type State = StatefulComponentState<R>;
+
+    fn layout(
+        &mut self,
+        state: Option<Self::State>,
+        cx: &mut WindowContext,
+    ) -> (LayoutId, Self::State) {
+        if let Some(StatefulComponentState {
+            rendered_element_state,
+            mut component_state,
+            ..
+        }) = state
+        {
+            let mut rendered_element = self
+                .0
+                .take()
+                .unwrap()
+                .render_once(&mut component_state, cx)
+                .into_element();
+            let (layout_id, rendered_element_state) =
+                rendered_element.layout(Some(rendered_element_state), cx);
+
+            let state = StatefulComponentState {
+                rendered_element: Some(rendered_element),
+                rendered_element_state,
+                component_state,
+            };
+            (layout_id, state)
+        } else {
+            let mut component_state = None;
+            let mut rendered_element = self
+                .0
+                .take()
+                .unwrap()
+                .render_once(&mut component_state, cx)
+                .into_element();
+            let (layout_id, rendered_element_state) = rendered_element.layout(None, cx);
+
+            let state = StatefulComponentState {
+                rendered_element: Some(rendered_element),
+                rendered_element_state,
+                component_state,
+            };
+            (layout_id, state)
+        }
+    }
+
+    fn paint(self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut WindowContext) {
+        state
+            .rendered_element
+            .take()
+            .unwrap()
+            .paint(bounds, &mut state.rendered_element_state, cx)
+    }
+}
+
+impl<R: RenderOnceStateful> IntoElement for StatefulComponent<R> {
+    type Element = Self;
+
+    fn element_id(&self) -> Option<ElementId> {
+        Some(self.0.as_ref().unwrap().element_id())
     }
 
     fn into_element(self) -> Self::Element {
@@ -350,39 +432,6 @@ impl<E: Element> DrawableElement<E> {
     }
 }
 
-// impl<V: 'static, E: Element> Element for DrawableElement<V, E> {
-//     type State = <E::Element as Element>::State;
-
-//     fn layout(
-//         &mut self,
-//         element_state: Option<Self::State>,
-//         cx: &mut WindowContext,
-//     ) -> (LayoutId, Self::State) {
-
-//     }
-
-//     fn paint(
-//         self,
-//         bounds: Bounds<Pixels>,
-//         element_state: &mut Self::State,
-//         cx: &mut WindowContext,
-//     ) {
-//         todo!()
-//     }
-// }
-
-// impl<V: 'static, E: 'static + Element> RenderOnce for DrawableElement<V, E> {
-//     type Element = Self;
-
-//     fn element_id(&self) -> Option<ElementId> {
-//         self.element.as_ref()?.element_id()
-//     }
-
-//     fn render_once(self) -> Self::Element {
-//         self
-//     }
-// }
-
 impl<E> ElementObject for Option<DrawableElement<E>>
 where
     E: Element,
@@ -494,49 +543,3 @@ impl IntoElement for AnyElement {
         self
     }
 }
-
-// impl<V, E, F> Element for Option<F>
-// where
-//     V: 'static,
-//     E: Element,
-//     F: FnOnce(&mut V, &mut WindowContext<'_, V>) -> E + 'static,
-// {
-//     type State = Option<AnyElement>;
-
-//     fn element_id(&self) -> Option<ElementId> {
-//         None
-//     }
-
-//     fn layout(
-//         &mut self,
-//         _: Option<Self::State>,
-//         cx: &mut WindowContext,
-//     ) -> (LayoutId, Self::State) {
-//         let render = self.take().unwrap();
-//         let mut element = (render)(view_state, cx).into_any();
-//         let layout_id = element.layout(view_state, cx);
-//         (layout_id, Some(element))
-//     }
-
-//     fn paint(
-//         self,
-//         _bounds: Bounds<Pixels>,
-//         rendered_element: &mut Self::State,
-//         cx: &mut WindowContext,
-//     ) {
-//         rendered_element.take().unwrap().paint(view_state, cx);
-//     }
-// }
-
-// impl<V, E, F> RenderOnce for Option<F>
-// where
-//     V: 'static,
-//     E: Element,
-//     F: FnOnce(&mut V, &mut WindowContext) -> E + 'static,
-// {
-//     type Element = Self;
-
-//     fn render(self) -> Self::Element {
-//         self
-//     }
-// }

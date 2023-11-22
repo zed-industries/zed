@@ -20,9 +20,9 @@ pub struct Checkbox {
 }
 
 impl RenderOnce for Checkbox {
-    type Rendered = gpui::Stateful<Div>;
+    type Output = gpui::Stateful<Div>;
 
-    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
+    fn render_once(self, cx: &mut WindowContext) -> Self::Output {
         let group_id = format!("checkbox_group_{:?}", self.id);
 
         let icon = match self.checked {
