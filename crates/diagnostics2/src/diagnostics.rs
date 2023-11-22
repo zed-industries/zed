@@ -774,24 +774,41 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
     Arc::new(move |_| {
         h_stack()
             .id("diagnostic header")
-            .gap_3()
-            .bg(gpui::red())
-            .map(|stack| {
-                let icon = if diagnostic.severity == DiagnosticSeverity::ERROR {
-                    IconElement::new(Icon::XCircle).color(Color::Error)
-                } else {
-                    IconElement::new(Icon::ExclamationTriangle).color(Color::Warning)
-                };
+            .px_3()
+            .w_full()
+            .justify_between()
+            .gap_2()
+            .child(
+                h_stack()
+                    .gap_3()
+                    .map(|stack| {
+                        let icon = if diagnostic.severity == DiagnosticSeverity::ERROR {
+                            IconElement::new(Icon::XCircle).color(Color::Error)
+                        } else {
+                            IconElement::new(Icon::ExclamationTriangle).color(Color::Warning)
+                        };
 
-                stack.child(div().pl_8().child(icon))
-            })
-            .when_some(diagnostic.source.as_ref(), |stack, source| {
-                stack.child(Label::new(format!("{source}:")).color(Color::Accent))
-            })
-            .child(HighlightedLabel::new(message.clone(), highlights.clone()))
-            .when_some(diagnostic.code.as_ref(), |stack, code| {
-                stack.child(Label::new(code.clone()))
-            })
+                        stack.child(icon)
+                    })
+                    .child(
+                        h_stack()
+                            .gap_1()
+                            .child(HighlightedLabel::new(message.clone(), highlights.clone()))
+                            .when_some(diagnostic.code.as_ref(), |stack, code| {
+                                stack.child(Label::new(format!("({code})")).color(Color::Muted))
+                            }),
+                    ),
+            )
+            .child(
+                h_stack()
+                    .gap_1()
+                    // Make sure something is there to reserve the right group space
+                    // In case both source and code are not present
+                    .child(div())
+                    .when_some(diagnostic.source.as_ref(), |stack, source| {
+                        stack.child(Label::new(format!("{source}")).color(Color::Muted))
+                    }),
+            )
             .render_into_any()
     })
 }
