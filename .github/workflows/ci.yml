@@ -23,6 +23,9 @@ jobs:
       - self-hosted
       - test
     steps:
+      - name: Set up default .cargo/config.toml
+        run: printf "[build]\nrustflags = [\"-D\", \"warnings\"]" > $HOME/.cargo/config.toml
+
       - name: Checkout repo
         uses: actions/checkout@v3
         with:
@@ -87,7 +90,7 @@ jobs:
           submodules: "recursive"
 
       - name: Limit target directory size
-        run: script/clear-target-dir-if-larger-than 70
+        run: script/clear-target-dir-if-larger-than 100
 
       - name: Determine version and release channel
         if: ${{ startsWith(github.ref, 'refs/tags/v') }}

@@ -1186,6 +1186,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-broadcast",
+ "async-trait",
  "audio2",
  "client2",
  "collections",
@@ -1204,6 +1205,7 @@ dependencies = [
  "serde_json",
  "settings2",
  "util",
+ "workspace2",
 ]
 
 [[package]]
@@ -1664,7 +1666,7 @@ dependencies = [
 
 [[package]]
 name = "collab"
-version = "0.28.0"
+version = "0.29.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -11381,6 +11383,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-recursion 1.0.5",
+ "async-trait",
  "bincode",
  "call2",
  "client2",
@@ -11493,7 +11496,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.114.0"
+version = "0.115.0"
 dependencies = [
  "activity_indicator",
  "ai",

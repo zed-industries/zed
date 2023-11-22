@@ -1,7 +1,7 @@
 use crate::{
-    point, px, size, AnyElement, AvailableSpace, Bounds, Element, ElementId, InteractiveElement,
-    InteractiveElementState, Interactivity, LayoutId, Pixels, Point, Render, RenderOnce, Size,
-    StyleRefinement, Styled, View, ViewContext, WindowContext,
+    point, px, size, AnyElement, AvailableSpace, BorrowWindow, Bounds, ContentMask, Element,
+    ElementId, InteractiveElement, InteractiveElementState, Interactivity, LayoutId, Pixels, Point,
+    Render, RenderOnce, Size, StyleRefinement, Styled, View, ViewContext, WindowContext,
 };
 use smallvec::SmallVec;
 use std::{cell::RefCell, cmp, ops::Range, rc::Rc};
@@ -22,8 +22,8 @@ where
     V: Render,
 {
     let id = id.into();
-    let mut style = StyleRefinement::default();
-    style.overflow.y = Some(Overflow::Hidden);
+    let mut base_style = StyleRefinement::default();
+    base_style.overflow.y = Some(Overflow::Scroll);
 
     let render_range = move |range, cx: &mut WindowContext| {
         view.update(cx, |this, cx| {
@@ -36,12 +36,12 @@ where
 
     UniformList {
         id: id.clone(),
-        style,
         item_count,
         item_to_measure_index: 0,
         render_items: Box::new(render_range),
         interactivity: Interactivity {
             element_id: Some(id.into()),
+            base_style,
             ..Default::default()
         },
         scroll_handle: None,
@@ -50,7 +50,6 @@ where
 
 pub struct UniformList {
     id: ElementId,
-    style: StyleRefinement,
     item_count: usize,
     item_to_measure_index: usize,
     render_items:
@@ -91,7 +90,7 @@ impl UniformListScrollHandle {
 
 impl Styled for UniformList {
     fn style(&mut self) -> &mut StyleRefinement {
-        &mut self.style
+        &mut self.interactivity.base_style
     }
 }
 
@@ -211,31 +210,31 @@ impl Element for UniformList {
                                 scroll_offset: shared_scroll_offset,
                             });
                         }
-                        let visible_item_count = if item_height > px(0.) {
-                            (padded_bounds.size.height / item_height).ceil() as usize + 1
-                        } else {
-                            0
-                        };
 
                         let first_visible_element_ix =
                             (-scroll_offset.y / item_height).floor() as usize;
+                        let last_visible_element_ix =
+                            ((-scroll_offset.y + padded_bounds.size.height) / item_height).ceil()
+                                as usize;
                         let visible_range = first_visible_element_ix
-                            ..cmp::min(
-                                first_visible_element_ix + visible_item_count,
-                                self.item_count,
-                            );
+                            ..cmp::min(last_visible_element_ix, self.item_count);
 
                         let items = (self.render_items)(visible_range.clone(), cx);
                         cx.with_z_index(1, |cx| {
-                            for (item, ix) in items.into_iter().zip(visible_range) {
-                                let item_origin = padded_bounds.origin
-                                    + point(px(0.), item_height * ix + scroll_offset.y);
-                                let available_space = size(
-                                    AvailableSpace::Definite(padded_bounds.size.width),
-                                    AvailableSpace::Definite(item_height),
-                                );
-                                item.draw(item_origin, available_space, cx);
-                            }
+                            let content_mask = ContentMask {
+                                bounds: padded_bounds,
+                            };
+                            cx.with_content_mask(Some(content_mask), |cx| {
+                                for (item, ix) in items.into_iter().zip(visible_range) {
+                                    let item_origin = padded_bounds.origin
+                                        + point(px(0.), item_height * ix + scroll_offset.y);
+                                    let available_space = size(
+                                        AvailableSpace::Definite(padded_bounds.size.width),
+                                        AvailableSpace::Definite(item_height),
+                                    );
+                                    item.draw(item_origin, available_space, cx);
+                                }
+                            });
                         });
                     }
                 })

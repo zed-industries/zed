@@ -128,6 +128,13 @@ pub struct BoxShadow {
     pub spread_radius: Pixels,
 }
 
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum WhiteSpace {
+    #[default]
+    Normal,
+    Nowrap,
+}
+
 #[derive(Refineable, Clone, Debug)]
 #[refineable(Debug)]
 pub struct TextStyle {
@@ -139,6 +146,7 @@ pub struct TextStyle {
     pub font_weight: FontWeight,
     pub font_style: FontStyle,
     pub underline: Option<UnderlineStyle>,
+    pub white_space: WhiteSpace,
 }
 
 impl Default for TextStyle {
@@ -152,6 +160,7 @@ impl Default for TextStyle {
             font_weight: FontWeight::default(),
             font_style: FontStyle::default(),
             underline: None,
+            white_space: WhiteSpace::Normal,
         }
     }
 }

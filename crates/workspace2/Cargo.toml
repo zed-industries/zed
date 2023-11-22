@@ -20,7 +20,6 @@ test-support = [
 
 [dependencies]
 db2 = { path = "../db2" }
-call2 = { path = "../call2" }
 client2 = { path = "../client2" }
 collections = { path = "../collections" }
 # context_menu = { path = "../context_menu" }
@@ -37,6 +36,7 @@ theme2 = { path = "../theme2" }
 util = { path = "../util" }
 ui = { package = "ui2", path = "../ui2" }
 
+async-trait.workspace = true
 async-recursion = "1.0.0"
 itertools = "0.10"
 bincode = "1.2.1"

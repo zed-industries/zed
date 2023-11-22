@@ -180,6 +180,7 @@ fn main() {
             user_store,
             fs,
             build_window_options,
+            call_factory: call::Call::new,
             // background_actions: todo!("ask Mikayla"),
             workspace_store,
             node_runtime,
@@ -355,7 +356,6 @@ async fn restore_or_create_workspace(app_state: &Arc<AppState>, mut cx: AsyncApp
             cx.update(|cx| workspace::open_paths(location.paths().as_ref(), app_state, None, cx))?
                 .await
                 .log_err();
-
             // todo!(welcome)
             //} else if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
             //todo!()
