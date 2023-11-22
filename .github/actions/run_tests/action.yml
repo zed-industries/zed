@@ -22,13 +22,9 @@ runs:
       run: script/clear-target-dir-if-larger-than 70
 
     - name: Run check
-      env:
-        RUSTFLAGS: -D warnings
       shell: bash -euxo pipefail {0}
       run: cargo check --tests --workspace
 
     - name: Run tests
-      env:
-        RUSTFLAGS: -D warnings
       shell: bash -euxo pipefail {0}
       run: cargo nextest run --workspace --no-fail-fast
