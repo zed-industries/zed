@@ -482,27 +482,26 @@ pub fn report_call_event_for_room(
     let telemetry = client.telemetry();
     let telemetry_settings = *TelemetrySettings::get_global(cx);
 
-    telemetry.report_call_event(telemetry_settings, operation, Some(room_id), channel_id)
+    telemetry.update(cx, |this, cx| {
+        this.report_call_event(telemetry_settings, operation, Some(room_id), channel_id, cx)
+    });
 }
 
 pub fn report_call_event_for_channel(
     operation: &'static str,
     channel_id: u64,
     client: &Arc<Client>,
-    cx: &AppContext,
+    cx: &mut AppContext,
 ) {
     let room = ActiveCall::global(cx).read(cx).room();
+    let room_id = room.map(|r| r.read(cx).id());
 
     let telemetry = client.telemetry();
-
     let telemetry_settings = *TelemetrySettings::get_global(cx);
 
-    telemetry.report_call_event(
-        telemetry_settings,
-        operation,
-        room.map(|r| r.read(cx).id()),
-        Some(channel_id),
-    )
+    telemetry.update(cx, |this, cx| {
+        this.report_call_event(telemetry_settings, operation, room_id, Some(channel_id), cx)
+    });
 }
 
 #[cfg(test)]

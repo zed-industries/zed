@@ -121,7 +121,7 @@ pub struct Client {
     id: AtomicU64,
     peer: Arc<Peer>,
     http: Arc<dyn HttpClient>,
-    telemetry: Arc<Telemetry>,
+    telemetry: Model<Telemetry>,
     state: RwLock<ClientState>,
 
     #[allow(clippy::type_complexity)]
@@ -501,8 +501,12 @@ impl Client {
                 }));
             }
             Status::SignedOut | Status::UpgradeRequired => {
-                cx.update(|cx| self.telemetry.set_authenticated_user_info(None, false, cx))
-                    .log_err();
+                cx.update(|cx| {
+                    self.telemetry.update(cx, |this, cx| {
+                        this.set_authenticated_user_info(None, false, cx)
+                    })
+                })
+                .log_err();
                 state._reconnect_task.take();
             }
             _ => {}
@@ -1320,7 +1324,7 @@ impl Client {
         }
     }
 
-    pub fn telemetry(&self) -> &Arc<Telemetry> {
+    pub fn telemetry(&self) -> &Model<Telemetry> {
         &self.telemetry
     }
 }

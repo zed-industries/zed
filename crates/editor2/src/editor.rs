@@ -8951,7 +8951,7 @@ impl Editor {
         &self,
         suggestion_id: Option<String>,
         suggestion_accepted: bool,
-        cx: &AppContext,
+        cx: &mut AppContext,
     ) {
         let Some(project) = &self.project else { return };
 
@@ -8968,12 +8968,15 @@ impl Editor {
         let telemetry = project.read(cx).client().telemetry().clone();
         let telemetry_settings = *TelemetrySettings::get_global(cx);
 
-        telemetry.report_copilot_event(
-            telemetry_settings,
-            suggestion_id,
-            suggestion_accepted,
-            file_extension,
-        )
+        telemetry.update(cx, |this, cx| {
+            this.report_copilot_event(
+                telemetry_settings,
+                suggestion_id,
+                suggestion_accepted,
+                file_extension,
+                cx,
+            )
+        });
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -8981,7 +8984,7 @@ impl Editor {
         &self,
         _operation: &'static str,
         _file_extension: Option<String>,
-        _cx: &AppContext,
+        _cx: &mut AppContext,
     ) {
     }
 
@@ -8990,7 +8993,7 @@ impl Editor {
         &self,
         operation: &'static str,
         file_extension: Option<String>,
-        cx: &AppContext,
+        cx: &mut AppContext,
     ) {
         let Some(project) = &self.project else { return };
 
@@ -9020,14 +9023,17 @@ impl Editor {
             .show_copilot_suggestions;
 
         let telemetry = project.read(cx).client().telemetry().clone();
-        telemetry.report_editor_event(
-            telemetry_settings,
-            file_extension,
-            vim_mode,
-            operation,
-            copilot_enabled,
-            copilot_enabled_for_language,
-        )
+        telemetry.update(cx, |this, cx| {
+            this.report_editor_event(
+                telemetry_settings,
+                file_extension,
+                vim_mode,
+                operation,
+                copilot_enabled,
+                copilot_enabled_for_language,
+                cx,
+            )
+        });
     }
 
     /// Copy the highlighted chunks to the clipboard as JSON. The format is an array of lines,
