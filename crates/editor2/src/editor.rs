@@ -1370,6 +1370,7 @@ impl CompletionsMenu {
                     .collect()
             },
         )
+        .track_scroll(self.scroll_handle.clone())
         .with_width_from_item(widest_completion_ix);
 
         list.render_into_any()
@@ -1587,6 +1588,7 @@ impl CodeActionsMenu {
         .elevation_1(cx)
         .px_2()
         .py_1()
+        .track_scroll(self.scroll_handle.clone())
         .with_width_from_item(
             self.actions
                 .iter()
