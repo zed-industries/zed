@@ -22,8 +22,8 @@ where
     V: Render,
 {
     let id = id.into();
-    let mut style = StyleRefinement::default();
-    style.overflow.y = Some(Overflow::Hidden);
+    let mut base_style = StyleRefinement::default();
+    base_style.overflow.y = Some(Overflow::Scroll);
 
     let render_range = move |range, cx: &mut WindowContext| {
         view.update(cx, |this, cx| {
@@ -36,12 +36,12 @@ where
 
     UniformList {
         id: id.clone(),
-        style,
         item_count,
         item_to_measure_index: 0,
         render_items: Box::new(render_range),
         interactivity: Interactivity {
             element_id: Some(id.into()),
+            base_style,
             ..Default::default()
         },
         scroll_handle: None,
@@ -50,7 +50,6 @@ where
 
 pub struct UniformList {
     id: ElementId,
-    style: StyleRefinement,
     item_count: usize,
     item_to_measure_index: usize,
     render_items:
@@ -91,7 +90,7 @@ impl UniformListScrollHandle {
 
 impl Styled for UniformList {
     fn style(&mut self) -> &mut StyleRefinement {
-        &mut self.style
+        &mut self.interactivity.base_style
     }
 }
 
