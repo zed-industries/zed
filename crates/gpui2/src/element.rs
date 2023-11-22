@@ -36,7 +36,17 @@ pub trait RenderOnce: 'static {
 }
 
 /// This trait is similar to [RenderOnce], but allows state to maintained across frames and requires
-/// your type to be associated with an id to support this.
+/// your type to be associated with an id to support this. If a type implements this trait, you can
+/// derive IntoElement by adding the stateful attribute:
+///
+/// #[derive(IntoElement)]
+/// #[stateful]
+/// struct MyComponent {
+///   id: usize,
+///   // ...
+/// }
+///
+/// impl RenderOnceStateful { /* ... */ }
 pub trait RenderOnceStateful: 'static {
     type Output: IntoElement;
     type State: 'static;
@@ -50,6 +60,8 @@ pub trait RenderOnceStateful: 'static {
     fn render_once(self, state: &mut Option<Self::State>, cx: &mut WindowContext) -> Self::Output;
 }
 
+/// Anything that can be turned into an element. You can derive this trait on your type by implementing
+/// [RenderOnce] or [RenderOnceStateful].
 pub trait IntoElement: Sized {
     type Output: Element + 'static;
 
@@ -61,6 +73,9 @@ pub trait IntoElement: Sized {
         self.into_element().into_any()
     }
 
+    /// Convert into an element and draw at the specified origin, laying out the element at the root
+    /// of its own layout tree in the given available space. The given function is passed the
+    /// element's frame state after paint if the element does not have an id.
     fn draw<T, R>(
         self,
         origin: Point<Pixels>,
