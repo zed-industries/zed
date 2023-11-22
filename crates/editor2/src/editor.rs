@@ -8954,7 +8954,7 @@ impl Editor {
         &self,
         suggestion_id: Option<String>,
         suggestion_accepted: bool,
-        cx: &mut AppContext,
+        cx: &AppContext,
     ) {
         let Some(project) = &self.project else { return };
 
@@ -8971,15 +8971,12 @@ impl Editor {
         let telemetry = project.read(cx).client().telemetry().clone();
         let telemetry_settings = *TelemetrySettings::get_global(cx);
 
-        telemetry.update(cx, |this, cx| {
-            this.report_copilot_event(
-                telemetry_settings,
-                suggestion_id,
-                suggestion_accepted,
-                file_extension,
-                cx,
-            )
-        });
+        telemetry.report_copilot_event(
+            telemetry_settings,
+            suggestion_id,
+            suggestion_accepted,
+            file_extension,
+        )
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -8987,7 +8984,7 @@ impl Editor {
         &self,
         _operation: &'static str,
         _file_extension: Option<String>,
-        _cx: &mut AppContext,
+        _cx: &AppContext,
     ) {
     }
 
@@ -8996,7 +8993,7 @@ impl Editor {
         &self,
         operation: &'static str,
         file_extension: Option<String>,
-        cx: &mut AppContext,
+        cx: &AppContext,
     ) {
         let Some(project) = &self.project else { return };
 
@@ -9026,17 +9023,14 @@ impl Editor {
             .show_copilot_suggestions;
 
         let telemetry = project.read(cx).client().telemetry().clone();
-        telemetry.update(cx, |this, cx| {
-            this.report_editor_event(
-                telemetry_settings,
-                file_extension,
-                vim_mode,
-                operation,
-                copilot_enabled,
-                copilot_enabled_for_language,
-                cx,
-            )
-        });
+        telemetry.report_editor_event(
+            telemetry_settings,
+            file_extension,
+            vim_mode,
+            operation,
+            copilot_enabled,
+            copilot_enabled_for_language,
+        )
     }
 
     /// Copy the highlighted chunks to the clipboard as JSON. The format is an array of lines,

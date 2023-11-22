@@ -168,13 +168,11 @@ impl UserStore {
                                 cx.update(|cx| {
                                     if let Some(info) = info {
                                         cx.update_flags(info.staff, info.flags);
-                                        client.telemetry.update(cx, |this, cx| {
-                                            this.set_authenticated_user_info(
-                                                Some(info.metrics_id.clone()),
-                                                info.staff,
-                                                cx,
-                                            )
-                                        })
+                                        client.telemetry.set_authenticated_user_info(
+                                            Some(info.metrics_id.clone()),
+                                            info.staff,
+                                            cx,
+                                        )
                                     }
                                 })?;
 

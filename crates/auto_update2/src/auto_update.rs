@@ -302,11 +302,7 @@ impl AutoUpdater {
         let mut dmg_file = File::create(&dmg_path).await?;
 
         let (installation_id, release_channel, telemetry) = cx.update(|cx| {
-            let installation_id = cx
-                .global::<Arc<Client>>()
-                .telemetry()
-                .read(cx)
-                .installation_id();
+            let installation_id = cx.global::<Arc<Client>>().telemetry().installation_id();
             let release_channel = cx
                 .has_global::<ReleaseChannel>()
                 .then(|| cx.global::<ReleaseChannel>().display_name());

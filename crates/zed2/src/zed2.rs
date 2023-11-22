@@ -10,8 +10,8 @@ pub use assets::*;
 use collections::VecDeque;
 use editor::{Editor, MultiBuffer};
 use gpui::{
-    actions, point, px, AppContext, AsyncAppContext, Context, FocusableView, PromptLevel,
-    TitlebarOptions, ViewContext, VisualContext, WindowBounds, WindowKind, WindowOptions,
+    actions, point, px, AppContext, Context, FocusableView, PromptLevel, TitlebarOptions,
+    ViewContext, VisualContext, WindowBounds, WindowKind, WindowOptions,
 };
 pub use only_instance::*;
 pub use open_listener::*;
@@ -628,12 +628,12 @@ fn open_telemetry_log_file(workspace: &mut Workspace, cx: &mut ViewContext<Works
     workspace.with_local_workspace(cx, move |workspace, cx| {
         let app_state = workspace.app_state().clone();
         cx.spawn(|workspace, mut cx| async move {
-            async fn fetch_log_string(app_state: &Arc<AppState>, cx: &AsyncAppContext) -> Option<String> {
-                let path = cx.update(|cx| app_state.client.telemetry().read(cx).log_file_path()).ok()??;
+            async fn fetch_log_string(app_state: &Arc<AppState>) -> Option<String> {
+                let path = app_state.client.telemetry().log_file_path()?;
                 app_state.fs.load(&path).await.log_err()
             }
 
-            let log = fetch_log_string(&app_state, &cx).await.unwrap_or_else(|| "// No data has been collected yet".to_string());
+            let log = fetch_log_string(&app_state).await.unwrap_or_else(|| "// No data has been collected yet".to_string());
 
             const MAX_TELEMETRY_LOG_LEN: usize = 5 * 1024 * 1024;
             let mut start_offset = log.len().saturating_sub(MAX_TELEMETRY_LOG_LEN);
