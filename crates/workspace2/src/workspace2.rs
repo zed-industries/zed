@@ -411,7 +411,7 @@ pub enum Event {
 pub struct Workspace {
     window_self: WindowHandle<Self>,
     weak_self: WeakView<Self>,
-    workspace_actions: Vec<Box<dyn Fn(Div<Workspace>) -> Div<Workspace>>>,
+    workspace_actions: Vec<Box<dyn Fn(Div, &mut ViewContext<Self>) -> Div>>,
     zoomed: Option<AnyWeakView>,
     zoomed_position: Option<DockPosition>,
     center: PaneGroup,
@@ -3204,53 +3204,63 @@ impl Workspace {
         })
     }
 
-    fn actions(&self, div: Div<Self>) -> Div<Self> {
-        self.add_workspace_actions_listeners(div)
+    fn actions(&self, div: Div, cx: &mut ViewContext<Self>) -> Div {
+        self.add_workspace_actions_listeners(div, cx)
             //     cx.add_async_action(Workspace::open);
             //     cx.add_async_action(Workspace::follow_next_collaborator);
             //     cx.add_async_action(Workspace::close);
-            .on_action(Self::close_inactive_items_and_panes)
-            .on_action(Self::close_all_items_and_panes)
+            .on_action(cx.listener(Self::close_inactive_items_and_panes))
+            .on_action(cx.listener(Self::close_all_items_and_panes))
             //     cx.add_global_action(Workspace::close_global);
             //     cx.add_global_action(restart);
-            .on_action(Self::save_all)
-            .on_action(Self::add_folder_to_project)
-            .on_action(|workspace, _: &Unfollow, cx| {
+            .on_action(cx.listener(Self::save_all))
+            .on_action(cx.listener(Self::add_folder_to_project))
+            .on_action(cx.listener(|workspace, _: &Unfollow, cx| {
                 let pane = workspace.active_pane().clone();
                 workspace.unfollow(&pane, cx);
-            })
-            .on_action(|workspace, action: &Save, cx| {
+            }))
+            .on_action(cx.listener(|workspace, action: &Save, cx| {
                 workspace
                     .save_active_item(action.save_intent.unwrap_or(SaveIntent::Save), cx)
                     .detach_and_log_err(cx);
-            })
-            .on_action(|workspace, _: &SaveAs, cx| {
+            }))
+            .on_action(cx.listener(|workspace, _: &SaveAs, cx| {
                 workspace
                     .save_active_item(SaveIntent::SaveAs, cx)
                     .detach_and_log_err(cx);
-            })
-            .on_action(|workspace, _: &ActivatePreviousPane, cx| {
+            }))
+            .on_action(cx.listener(|workspace, _: &ActivatePreviousPane, cx| {
                 workspace.activate_previous_pane(cx)
-            })
-            .on_action(|workspace, _: &ActivateNextPane, cx| workspace.activate_next_pane(cx))
-            .on_action(|workspace, action: &ActivatePaneInDirection, cx| {
-                workspace.activate_pane_in_direction(action.0, cx)
-            })
-            .on_action(|workspace, action: &SwapPaneInDirection, cx| {
+            }))
+            .on_action(
+                cx.listener(|workspace, _: &ActivateNextPane, cx| workspace.activate_next_pane(cx)),
+            )
+            .on_action(
+                cx.listener(|workspace, action: &ActivatePaneInDirection, cx| {
+                    workspace.activate_pane_in_direction(action.0, cx)
+                }),
+            )
+            .on_action(cx.listener(|workspace, action: &SwapPaneInDirection, cx| {
                 workspace.swap_pane_in_direction(action.0, cx)
-            })
-            .on_action(|this, e: &ToggleLeftDock, cx| {
+            }))
+            .on_action(cx.listener(|this, e: &ToggleLeftDock, cx| {
                 this.toggle_dock(DockPosition::Left, cx);
-            })
-            .on_action(|workspace: &mut Workspace, _: &ToggleRightDock, cx| {
-                workspace.toggle_dock(DockPosition::Right, cx);
-            })
-            .on_action(|workspace: &mut Workspace, _: &ToggleBottomDock, cx| {
-                workspace.toggle_dock(DockPosition::Bottom, cx);
-            })
-            .on_action(|workspace: &mut Workspace, _: &CloseAllDocks, cx| {
-                workspace.close_all_docks(cx);
-            })
+            }))
+            .on_action(
+                cx.listener(|workspace: &mut Workspace, _: &ToggleRightDock, cx| {
+                    workspace.toggle_dock(DockPosition::Right, cx);
+                }),
+            )
+            .on_action(
+                cx.listener(|workspace: &mut Workspace, _: &ToggleBottomDock, cx| {
+                    workspace.toggle_dock(DockPosition::Bottom, cx);
+                }),
+            )
+            .on_action(
+                cx.listener(|workspace: &mut Workspace, _: &CloseAllDocks, cx| {
+                    workspace.close_all_docks(cx);
+                }),
+            )
         //     cx.add_action(Workspace::activate_pane_at_index);
         //     cx.add_action(|workspace: &mut Workspace, _: &ReopenClosedItem, cx| {
         //         workspace.reopen_closed_item(cx).detach();
@@ -3346,22 +3356,24 @@ impl Workspace {
     ) -> &mut Self {
         let callback = Arc::new(callback);
 
-        self.workspace_actions.push(Box::new(move |div| {
+        self.workspace_actions.push(Box::new(move |div, cx| {
             let callback = callback.clone();
-            div.on_action(move |workspace, event, cx| (callback.clone())(workspace, event, cx))
+            div.on_action(
+                cx.listener(move |workspace, event, cx| (callback.clone())(workspace, event, cx)),
+            )
         }));
         self
     }
 
-    fn add_workspace_actions_listeners(&self, mut div: Div<Workspace>) -> Div<Workspace> {
+    fn add_workspace_actions_listeners(&self, mut div: Div, cx: &mut ViewContext<Self>) -> Div {
         let mut div = div
-            .on_action(Self::close_inactive_items_and_panes)
-            .on_action(Self::close_all_items_and_panes)
-            .on_action(Self::add_folder_to_project)
-            .on_action(Self::save_all)
-            .on_action(Self::open);
+            .on_action(cx.listener(Self::close_inactive_items_and_panes))
+            .on_action(cx.listener(Self::close_all_items_and_panes))
+            .on_action(cx.listener(Self::add_folder_to_project))
+            .on_action(cx.listener(Self::save_all))
+            .on_action(cx.listener(Self::open));
         for action in self.workspace_actions.iter() {
-            div = (action)(div)
+            div = (action)(div, cx)
         }
         div
     }
@@ -3594,8 +3606,8 @@ impl FocusableView for Workspace {
     }
 }
 
-impl Render<Self> for Workspace {
-    type Element = Div<Self>;
+impl Render for Workspace {
+    type Element = Div;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         let mut context = KeyContext::default();
@@ -3611,7 +3623,7 @@ impl Render<Self> for Workspace {
 
         cx.set_rem_size(ui_font_size);
 
-        self.actions(div())
+        self.actions(div(), cx)
             .key_context(context)
             .relative()
             .size_full()

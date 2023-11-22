@@ -1,13 +1,16 @@
 use crate::ItemHandle;
 use gpui::{
-    AnyView, Div, Entity, EntityId, EventEmitter, Render, View, ViewContext, WindowContext,
+    AnyView, Div, Entity, EntityId, EventEmitter, ParentElement as _, Render, Styled, View,
+    ViewContext, WindowContext,
 };
+use theme2::ActiveTheme;
+use ui::{h_stack, v_stack, Button, Color, Icon, IconButton, Label};
 
 pub enum ToolbarItemEvent {
     ChangeLocation(ToolbarItemLocation),
 }
 
-pub trait ToolbarItemView: Render<Self> + EventEmitter<ToolbarItemEvent> {
+pub trait ToolbarItemView: Render + EventEmitter<ToolbarItemEvent> {
     fn set_active_pane_item(
         &mut self,
         active_pane_item: Option<&dyn crate::ItemHandle>,
@@ -39,8 +42,8 @@ trait ToolbarItemViewHandle: Send {
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum ToolbarItemLocation {
     Hidden,
-    PrimaryLeft { flex: Option<(f32, bool)> },
-    PrimaryRight { flex: Option<(f32, bool)> },
+    PrimaryLeft,
+    PrimaryRight,
     Secondary,
 }
 
@@ -51,11 +54,57 @@ pub struct Toolbar {
     items: Vec<(Box<dyn ToolbarItemViewHandle>, ToolbarItemLocation)>,
 }
 
-impl Render<Self> for Toolbar {
-    type Element = Div<Self>;
+impl Toolbar {
+    fn left_items(&self) -> impl Iterator<Item = &dyn ToolbarItemViewHandle> {
+        self.items.iter().filter_map(|(item, location)| {
+            if *location == ToolbarItemLocation::PrimaryLeft {
+                Some(item.as_ref())
+            } else {
+                None
+            }
+        })
+    }
+
+    fn right_items(&self) -> impl Iterator<Item = &dyn ToolbarItemViewHandle> {
+        self.items.iter().filter_map(|(item, location)| {
+            if *location == ToolbarItemLocation::PrimaryRight {
+                Some(item.as_ref())
+            } else {
+                None
+            }
+        })
+    }
+}
+
+impl Render for Toolbar {
+    type Element = Div;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-        todo!()
+        //dbg!(&self.items.len());
+        v_stack()
+            .border_b()
+            .border_color(cx.theme().colors().border_variant)
+            .bg(cx.theme().colors().toolbar_background)
+            .child(
+                h_stack()
+                    .justify_between()
+                    .child(
+                        // Toolbar left side
+                        h_stack()
+                            .p_1()
+                            .child(Button::new("crates"))
+                            .child(Label::new("/").color(Color::Muted))
+                            .child(Button::new("workspace2")),
+                    )
+                    // Toolbar right side
+                    .child(
+                        h_stack()
+                            .p_1()
+                            .child(IconButton::new("buffer-search", Icon::MagnifyingGlass))
+                            .child(IconButton::new("inline-assist", Icon::MagicWand)),
+                    ),
+            )
+            .children(self.items.iter().map(|(child, _)| child.to_any()))
     }
 }
 

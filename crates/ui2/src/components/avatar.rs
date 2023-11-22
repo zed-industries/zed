@@ -1,16 +1,23 @@
 use crate::prelude::*;
 use gpui::{img, Img, RenderOnce};
 
+#[derive(Debug, Default, PartialEq, Clone)]
+pub enum Shape {
+    #[default]
+    Circle,
+    RoundedRectangle,
+}
+
 #[derive(RenderOnce)]
 pub struct Avatar {
     src: SharedString,
     shape: Shape,
 }
 
-impl<V: 'static> Component<V> for Avatar {
-    type Rendered = Img<V>;
+impl Component for Avatar {
+    type Rendered = Img;
 
-    fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
+    fn render(self, _: &mut WindowContext) -> Self::Rendered {
         let mut img = img();
 
         if self.shape == Shape::Circle {
@@ -37,33 +44,5 @@ impl Avatar {
     pub fn shape(mut self, shape: Shape) -> Self {
         self.shape = shape;
         self
-    }
-}
-
-#[cfg(feature = "stories")]
-pub use stories::*;
-
-#[cfg(feature = "stories")]
-mod stories {
-    use super::*;
-    use crate::Story;
-    use gpui::{Div, Render};
-
-    pub struct AvatarStory;
-
-    impl Render<Self> for AvatarStory {
-        type Element = Div<Self>;
-
-        fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-            Story::container(cx)
-                .child(Story::title_for::<_, Avatar>(cx))
-                .child(Story::label(cx, "Default"))
-                .child(Avatar::new(
-                    "https://avatars.githubusercontent.com/u/1714999?v=4",
-                ))
-                .child(Avatar::new(
-                    "https://avatars.githubusercontent.com/u/326587?v=4",
-                ))
-        }
     }
 }

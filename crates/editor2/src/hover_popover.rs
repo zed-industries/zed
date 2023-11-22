@@ -422,7 +422,7 @@ impl HoverState {
         visible_rows: Range<u32>,
         workspace: Option<WeakView<Workspace>>,
         cx: &mut ViewContext<Editor>,
-    ) -> Option<(DisplayPoint, Vec<AnyElement<Editor>>)> {
+    ) -> Option<(DisplayPoint, Vec<AnyElement>)> {
         todo!("old version below")
     }
     //     // If there is a diagnostic, position the popovers based on that.
@@ -504,7 +504,7 @@ pub struct DiagnosticPopover {
 }
 
 impl DiagnosticPopover {
-    pub fn render(&self, style: &EditorStyle, cx: &mut ViewContext<Editor>) -> AnyElement<Editor> {
+    pub fn render(&self, style: &EditorStyle, cx: &mut ViewContext<Editor>) -> AnyElement {
         todo!()
         // enum PrimaryDiagnostic {}
 

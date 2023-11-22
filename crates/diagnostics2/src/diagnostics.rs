@@ -16,7 +16,7 @@ use gpui::{
     actions, div, AnyElement, AnyView, AppContext, Context, Div, EventEmitter, FocusEvent,
     FocusHandle, Focusable, FocusableElement, FocusableView, InteractiveElement, Model,
     ParentElement, Render, RenderOnce, SharedString, Styled, Subscription, Task, View, ViewContext,
-    VisualContext, WeakView,
+    VisualContext, WeakView, WindowContext,
 };
 use language::{
     Anchor, Bias, Buffer, Diagnostic, DiagnosticEntry, DiagnosticSeverity, Point, Selection,
@@ -36,7 +36,7 @@ use std::{
 };
 use theme::ActiveTheme;
 pub use toolbar_controls::ToolbarControls;
-use ui::{h_stack, HighlightedLabel, Icon, IconElement, Label, TextColor};
+use ui::{h_stack, Color, HighlightedLabel, Icon, IconElement, Label};
 use util::TryFutureExt;
 use workspace::{
     item::{BreadcrumbText, Item, ItemEvent, ItemHandle},
@@ -90,8 +90,8 @@ struct DiagnosticGroupState {
 
 impl EventEmitter<ItemEvent> for ProjectDiagnosticsEditor {}
 
-impl Render<Self> for ProjectDiagnosticsEditor {
-    type Element = Focusable<Self, Div<Self>>;
+impl Render for ProjectDiagnosticsEditor {
+    type Element = Focusable<Div>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         let child = if self.path_states.is_empty() {
@@ -109,8 +109,8 @@ impl Render<Self> for ProjectDiagnosticsEditor {
         div()
             .track_focus(&self.focus_handle)
             .size_full()
-            .on_focus_in(Self::focus_in)
-            .on_action(Self::toggle_warnings)
+            .on_focus_in(cx.listener(Self::focus_in))
+            .on_action(cx.listener(Self::toggle_warnings))
             .child(child)
     }
 }
@@ -662,7 +662,7 @@ impl Item for ProjectDiagnosticsEditor {
         Some("Project Diagnostics".into())
     }
 
-    fn tab_content<T: 'static>(&self, _detail: Option<usize>, _: &AppContext) -> AnyElement<T> {
+    fn tab_content(&self, _detail: Option<usize>, _: &WindowContext) -> AnyElement {
         render_summary(&self.summary)
     }
 
@@ -742,7 +742,7 @@ impl Item for ProjectDiagnosticsEditor {
     }
 
     fn breadcrumb_location(&self) -> ToolbarItemLocation {
-        ToolbarItemLocation::PrimaryLeft { flex: None }
+        ToolbarItemLocation::PrimaryLeft
     }
 
     fn breadcrumbs(&self, theme: &theme::Theme, cx: &AppContext) -> Option<Vec<BreadcrumbText>> {
@@ -778,15 +778,15 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
             .bg(gpui::red())
             .map(|stack| {
                 let icon = if diagnostic.severity == DiagnosticSeverity::ERROR {
-                    IconElement::new(Icon::XCircle).color(TextColor::Error)
+                    IconElement::new(Icon::XCircle).color(Color::Error)
                 } else {
-                    IconElement::new(Icon::ExclamationTriangle).color(TextColor::Warning)
+                    IconElement::new(Icon::ExclamationTriangle).color(Color::Warning)
                 };
 
                 stack.child(div().pl_8().child(icon))
             })
             .when_some(diagnostic.source.as_ref(), |stack, source| {
-                stack.child(Label::new(format!("{source}:")).color(TextColor::Accent))
+                stack.child(Label::new(format!("{source}:")).color(Color::Accent))
             })
             .child(HighlightedLabel::new(message.clone(), highlights.clone()))
             .when_some(diagnostic.code.as_ref(), |stack, code| {
@@ -796,11 +796,10 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
     })
 }
 
-pub(crate) fn render_summary<T: 'static>(summary: &DiagnosticSummary) -> AnyElement<T> {
+pub(crate) fn render_summary(summary: &DiagnosticSummary) -> AnyElement {
     if summary.error_count == 0 && summary.warning_count == 0 {
         let label = Label::new("No problems");
         label.render_into_any()
-        //.render()
     } else {
         h_stack()
             .bg(gpui::red())

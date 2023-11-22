@@ -2,7 +2,7 @@ use crate::{
     black, phi, point, rems, AbsoluteLength, BorrowAppContext, BorrowWindow, Bounds, ContentMask,
     Corners, CornersRefinement, CursorStyle, DefiniteLength, Edges, EdgesRefinement, Font,
     FontFeatures, FontStyle, FontWeight, Hsla, Length, Pixels, Point, PointRefinement, Rgba,
-    SharedString, Size, SizeRefinement, Styled, TextRun, ViewContext,
+    SharedString, Size, SizeRefinement, Styled, TextRun, WindowContext,
 };
 use refineable::{Cascade, Refineable};
 use smallvec::SmallVec;
@@ -128,6 +128,13 @@ pub struct BoxShadow {
     pub spread_radius: Pixels,
 }
 
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum WhiteSpace {
+    #[default]
+    Normal,
+    Nowrap,
+}
+
 #[derive(Refineable, Clone, Debug)]
 #[refineable(Debug)]
 pub struct TextStyle {
@@ -139,6 +146,7 @@ pub struct TextStyle {
     pub font_weight: FontWeight,
     pub font_style: FontStyle,
     pub underline: Option<UnderlineStyle>,
+    pub white_space: WhiteSpace,
 }
 
 impl Default for TextStyle {
@@ -152,6 +160,7 @@ impl Default for TextStyle {
             font_weight: FontWeight::default(),
             font_style: FontStyle::default(),
             underline: None,
+            white_space: WhiteSpace::Normal,
         }
     }
 }
@@ -313,7 +322,7 @@ impl Style {
     }
 
     /// Paints the background of an element styled with this style.
-    pub fn paint<V: 'static>(&self, bounds: Bounds<Pixels>, cx: &mut ViewContext<V>) {
+    pub fn paint(&self, bounds: Bounds<Pixels>, cx: &mut WindowContext) {
         let rem_size = cx.rem_size();
 
         cx.with_z_index(0, |cx| {

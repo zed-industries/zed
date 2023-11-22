@@ -1,7 +1,3 @@
-use gpui::{div, Element, ParentElement};
-
-use crate::{Icon, IconElement, IconSize, TextColor};
-
 /// Whether the entry is toggleable, and if so, whether it is currently toggled.
 ///
 /// To make an element toggleable, simply add a `Toggle::Toggled(_)` and handle it's cases.
@@ -41,21 +37,5 @@ impl Toggle {
 impl From<bool> for Toggle {
     fn from(toggled: bool) -> Self {
         Toggle::Toggled(toggled)
-    }
-}
-
-pub fn disclosure_control<V: 'static>(toggle: Toggle) -> impl Element<V> {
-    match (toggle.is_toggleable(), toggle.is_toggled()) {
-        (false, _) => div(),
-        (_, true) => div().child(
-            IconElement::new(Icon::ChevronDown)
-                .color(TextColor::Muted)
-                .size(IconSize::Small),
-        ),
-        (_, false) => div().child(
-            IconElement::new(Icon::ChevronRight)
-                .color(TextColor::Muted)
-                .size(IconSize::Small),
-        ),
     }
 }

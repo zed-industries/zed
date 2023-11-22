@@ -1,10 +1,10 @@
-use gpui::{div, prelude::*, Div, Element, ElementId, RenderOnce, Stateful, Styled, ViewContext};
-use std::sync::Arc;
+use gpui::{div, prelude::*, Div, Element, ElementId, RenderOnce, Styled, WindowContext};
+
 use theme2::ActiveTheme;
 
-use crate::{Icon, IconElement, Selection, TextColor};
+use crate::{Color, Icon, IconElement, Selection};
 
-pub type CheckHandler<V> = Arc<dyn Fn(Selection, &mut V, &mut ViewContext<V>) + Send + Sync>;
+pub type CheckHandler = Box<dyn Fn(&Selection, &mut WindowContext) + 'static>;
 
 /// # Checkbox
 ///
@@ -12,17 +12,17 @@ pub type CheckHandler<V> = Arc<dyn Fn(Selection, &mut V, &mut ViewContext<V>) + 
 /// Each checkbox works independently from other checkboxes in the list,
 /// therefore checking an additional box does not affect any other selections.
 #[derive(RenderOnce)]
-pub struct Checkbox<V: 'static> {
+pub struct Checkbox {
     id: ElementId,
     checked: Selection,
     disabled: bool,
-    on_click: Option<CheckHandler<V>>,
+    on_click: Option<CheckHandler>,
 }
 
-impl<V: 'static> Component<V> for Checkbox<V> {
-    type Rendered = Stateful<V, Div<V>>;
+impl Component for Checkbox {
+    type Rendered = gpui::Stateful<Div>;
 
-    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
+    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         let group_id = format!("checkbox_group_{:?}", self.id);
 
         let icon = match self.checked {
@@ -34,9 +34,9 @@ impl<V: 'static> Component<V> for Checkbox<V> {
                         .color(
                             // If the checkbox is disabled we change the color of the icon.
                             if self.disabled {
-                                TextColor::Disabled
+                                Color::Disabled
                             } else {
-                                TextColor::Selected
+                                Color::Selected
                             },
                         ),
                 )
@@ -49,9 +49,9 @@ impl<V: 'static> Component<V> for Checkbox<V> {
                         .color(
                             // If the checkbox is disabled we change the color of the icon.
                             if self.disabled {
-                                TextColor::Disabled
+                                Color::Disabled
                             } else {
-                                TextColor::Selected
+                                Color::Selected
                             },
                         ),
                 )
@@ -137,13 +137,11 @@ impl<V: 'static> Component<V> for Checkbox<V> {
             )
             .when_some(
                 self.on_click.filter(|_| !self.disabled),
-                |this, on_click| {
-                    this.on_click(move |view, _, cx| on_click(self.checked.inverse(), view, cx))
-                },
+                |this, on_click| this.on_click(move |_, cx| on_click(&self.checked.inverse(), cx)),
             )
     }
 }
-impl<V: 'static> Checkbox<V> {
+impl Checkbox {
     pub fn new(id: impl Into<ElementId>, checked: Selection) -> Self {
         Self {
             id: id.into(),
@@ -160,13 +158,13 @@ impl<V: 'static> Checkbox<V> {
 
     pub fn on_click(
         mut self,
-        handler: impl 'static + Fn(Selection, &mut V, &mut ViewContext<V>) + Send + Sync,
+        handler: impl 'static + Fn(&Selection, &mut WindowContext) + Send + Sync,
     ) -> Self {
-        self.on_click = Some(Arc::new(handler));
+        self.on_click = Some(Box::new(handler));
         self
     }
 
-    pub fn render(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Element<V> {
+    pub fn render(self, cx: &mut WindowContext) -> impl Element {
         let group_id = format!("checkbox_group_{:?}", self.id);
 
         let icon = match self.checked {
@@ -178,9 +176,9 @@ impl<V: 'static> Checkbox<V> {
                         .color(
                             // If the checkbox is disabled we change the color of the icon.
                             if self.disabled {
-                                TextColor::Disabled
+                                Color::Disabled
                             } else {
-                                TextColor::Selected
+                                Color::Selected
                             },
                         ),
                 )
@@ -193,9 +191,9 @@ impl<V: 'static> Checkbox<V> {
                         .color(
                             // If the checkbox is disabled we change the color of the icon.
                             if self.disabled {
-                                TextColor::Disabled
+                                Color::Disabled
                             } else {
-                                TextColor::Selected
+                                Color::Selected
                             },
                         ),
                 )
@@ -281,69 +279,7 @@ impl<V: 'static> Checkbox<V> {
             )
             .when_some(
                 self.on_click.filter(|_| !self.disabled),
-                |this, on_click| {
-                    this.on_click(move |view, _, cx| on_click(self.checked.inverse(), view, cx))
-                },
+                |this, on_click| this.on_click(move |_, cx| on_click(&self.checked.inverse(), cx)),
             )
-    }
-}
-
-#[cfg(feature = "stories")]
-pub use stories::*;
-
-#[cfg(feature = "stories")]
-mod stories {
-    use super::*;
-    use crate::{h_stack, Story};
-    use gpui::{Div, Render};
-
-    pub struct CheckboxStory;
-
-    impl Render<Self> for CheckboxStory {
-        type Element = Div<Self>;
-
-        fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-            Story::container(cx)
-                .child(Story::title_for::<_, Checkbox<Self>>(cx))
-                .child(Story::label(cx, "Default"))
-                .child(
-                    h_stack()
-                        .p_2()
-                        .gap_2()
-                        .rounded_md()
-                        .border()
-                        .border_color(cx.theme().colors().border)
-                        .child(Checkbox::new("checkbox-enabled", Selection::Unselected))
-                        .child(Checkbox::new(
-                            "checkbox-intermediate",
-                            Selection::Indeterminate,
-                        ))
-                        .child(Checkbox::new("checkbox-selected", Selection::Selected)),
-                )
-                .child(Story::label(cx, "Disabled"))
-                .child(
-                    h_stack()
-                        .p_2()
-                        .gap_2()
-                        .rounded_md()
-                        .border()
-                        .border_color(cx.theme().colors().border)
-                        .child(
-                            Checkbox::new("checkbox-disabled", Selection::Unselected)
-                                .disabled(true),
-                        )
-                        .child(
-                            Checkbox::new(
-                                "checkbox-disabled-intermediate",
-                                Selection::Indeterminate,
-                            )
-                            .disabled(true),
-                        )
-                        .child(
-                            Checkbox::new("checkbox-disabled-selected", Selection::Selected)
-                                .disabled(true),
-                        ),
-                )
-        }
     }
 }

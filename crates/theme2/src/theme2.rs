@@ -63,6 +63,12 @@ impl ActiveTheme for AppContext {
     }
 }
 
+// impl<'a> ActiveTheme for WindowContext<'a> {
+//     fn theme(&self) -> &Arc<Theme> {
+//         &ThemeSettings::get_global(self.app()).active_theme
+//     }
+// }
+
 pub struct ThemeFamily {
     pub id: String,
     pub name: SharedString,
@@ -138,8 +144,3 @@ pub struct DiagnosticStyle {
     pub hint: Hsla,
     pub ignored: Hsla,
 }
-
-#[cfg(feature = "stories")]
-mod story;
-#[cfg(feature = "stories")]
-pub use story::*;

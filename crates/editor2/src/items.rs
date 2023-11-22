@@ -10,7 +10,7 @@ use futures::future::try_join_all;
 use gpui::{
     div, point, AnyElement, AppContext, AsyncAppContext, Entity, EntityId, EventEmitter,
     FocusHandle, Model, ParentElement, Pixels, SharedString, Styled, Subscription, Task, View,
-    ViewContext, VisualContext, WeakView,
+    ViewContext, VisualContext, WeakView, WindowContext,
 };
 use language::{
     proto::serialize_anchor as serialize_text_anchor, Bias, Buffer, CharKind, OffsetRangeExt,
@@ -30,7 +30,7 @@ use std::{
 };
 use text::Selection;
 use theme::{ActiveTheme, Theme};
-use ui::{Label, TextColor};
+use ui::{Color, Label};
 use util::{paths::PathExt, ResultExt, TryFutureExt};
 use workspace::item::{BreadcrumbText, FollowEvent, FollowableEvents, FollowableItemHandle};
 use workspace::{
@@ -584,7 +584,7 @@ impl Item for Editor {
         Some(path.to_string_lossy().to_string().into())
     }
 
-    fn tab_content<T: 'static>(&self, detail: Option<usize>, cx: &AppContext) -> AnyElement<T> {
+    fn tab_content(&self, detail: Option<usize>, cx: &WindowContext) -> AnyElement {
         let theme = cx.theme();
 
         AnyElement::new(
@@ -604,7 +604,7 @@ impl Item for Editor {
                                 &description,
                                 MAX_TAB_TITLE_LEN,
                             ))
-                            .color(TextColor::Muted),
+                            .color(Color::Muted),
                         ),
                     )
                 })),
@@ -761,7 +761,7 @@ impl Item for Editor {
     }
 
     fn breadcrumb_location(&self) -> ToolbarItemLocation {
-        ToolbarItemLocation::PrimaryLeft { flex: None }
+        ToolbarItemLocation::PrimaryLeft
     }
 
     fn breadcrumbs(&self, variant: &Theme, cx: &AppContext) -> Option<Vec<BreadcrumbText>> {
@@ -907,17 +907,15 @@ impl SearchableItem for Editor {
     type Match = Range<Anchor>;
 
     fn clear_matches(&mut self, cx: &mut ViewContext<Self>) {
-        todo!()
-        // self.clear_background_highlights::<BufferSearchHighlights>(cx);
+        self.clear_background_highlights::<BufferSearchHighlights>(cx);
     }
 
     fn update_matches(&mut self, matches: Vec<Range<Anchor>>, cx: &mut ViewContext<Self>) {
-        todo!()
-        // self.highlight_background::<BufferSearchHighlights>(
-        //     matches,
-        //     |theme| theme.search.match_background,
-        //     cx,
-        // );
+        self.highlight_background::<BufferSearchHighlights>(
+            matches,
+            |theme| theme.title_bar_background, // todo: update theme
+            cx,
+        );
     }
 
     fn query_suggestion(&mut self, cx: &mut ViewContext<Self>) -> String {
@@ -952,22 +950,20 @@ impl SearchableItem for Editor {
         matches: Vec<Range<Anchor>>,
         cx: &mut ViewContext<Self>,
     ) {
-        todo!()
-        // self.unfold_ranges([matches[index].clone()], false, true, cx);
-        // let range = self.range_for_match(&matches[index]);
-        // self.change_selections(Some(Autoscroll::fit()), cx, |s| {
-        //     s.select_ranges([range]);
-        // })
+        self.unfold_ranges([matches[index].clone()], false, true, cx);
+        let range = self.range_for_match(&matches[index]);
+        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
+            s.select_ranges([range]);
+        })
     }
 
     fn select_matches(&mut self, matches: Vec<Self::Match>, cx: &mut ViewContext<Self>) {
-        todo!()
-        // self.unfold_ranges(matches.clone(), false, false, cx);
-        // let mut ranges = Vec::new();
-        // for m in &matches {
-        //     ranges.push(self.range_for_match(&m))
-        // }
-        // self.change_selections(None, cx, |s| s.select_ranges(ranges));
+        self.unfold_ranges(matches.clone(), false, false, cx);
+        let mut ranges = Vec::new();
+        for m in &matches {
+            ranges.push(self.range_for_match(&m))
+        }
+        self.change_selections(None, cx, |s| s.select_ranges(ranges));
     }
     fn replace(
         &mut self,

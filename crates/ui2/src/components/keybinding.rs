@@ -10,10 +10,10 @@ pub struct KeyBinding {
     key_binding: gpui::KeyBinding,
 }
 
-impl<V: 'static> Component<V> for KeyBinding {
-    type Rendered = Div<V>;
+impl Component for KeyBinding {
+    type Rendered = Div;
 
-    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
+    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         div()
             .flex()
             .gap_2()
@@ -49,11 +49,10 @@ pub struct Key {
     key: SharedString,
 }
 
-impl<V: 'static> Component<V> for Key {
-    type Rendered = Div<V>;
+impl Component for Key {
+    type Rendered = Div;
 
-    fn render(self, view: &mut V, cx: &mut ViewContext<V>) -> Self::Rendered {
-        let _view: &mut V = view;
+    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         div()
             .px_2()
             .py_0()
@@ -68,72 +67,5 @@ impl<V: 'static> Component<V> for Key {
 impl Key {
     pub fn new(key: impl Into<SharedString>) -> Self {
         Self { key: key.into() }
-    }
-}
-
-#[cfg(feature = "stories")]
-pub use stories::*;
-
-#[cfg(feature = "stories")]
-mod stories {
-    use super::*;
-    pub use crate::KeyBinding;
-    use crate::Story;
-    use gpui::{actions, Div, Render};
-    use itertools::Itertools;
-    pub struct KeybindingStory;
-
-    actions!(NoAction);
-
-    pub fn binding(key: &str) -> gpui::KeyBinding {
-        gpui::KeyBinding::new(key, NoAction {}, None)
-    }
-
-    impl Render<Self> for KeybindingStory {
-        type Element = Div<Self>;
-
-        fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-            let all_modifier_permutations =
-                ["ctrl", "alt", "cmd", "shift"].into_iter().permutations(2);
-
-            Story::container(cx)
-                .child(Story::title_for::<_, KeyBinding>(cx))
-                .child(Story::label(cx, "Single Key"))
-                .child(KeyBinding::new(binding("Z")))
-                .child(Story::label(cx, "Single Key with Modifier"))
-                .child(
-                    div()
-                        .flex()
-                        .gap_3()
-                        .child(KeyBinding::new(binding("ctrl-c")))
-                        .child(KeyBinding::new(binding("alt-c")))
-                        .child(KeyBinding::new(binding("cmd-c")))
-                        .child(KeyBinding::new(binding("shift-c"))),
-                )
-                .child(Story::label(cx, "Single Key with Modifier (Permuted)"))
-                .child(
-                    div().flex().flex_col().children(
-                        all_modifier_permutations
-                            .chunks(4)
-                            .into_iter()
-                            .map(|chunk| {
-                                div()
-                                    .flex()
-                                    .gap_4()
-                                    .py_3()
-                                    .children(chunk.map(|permutation| {
-                                        KeyBinding::new(binding(&*(permutation.join("-") + "-x")))
-                                    }))
-                            }),
-                    ),
-                )
-                .child(Story::label(cx, "Single Key with All Modifiers"))
-                .child(KeyBinding::new(binding("ctrl-alt-cmd-shift-z")))
-                .child(Story::label(cx, "Chord"))
-                .child(KeyBinding::new(binding("a z")))
-                .child(Story::label(cx, "Chord with Modifier"))
-                .child(KeyBinding::new(binding("ctrl-a shift-z")))
-                .child(KeyBinding::new(binding("fn-s")))
-        }
     }
 }

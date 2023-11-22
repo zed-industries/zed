@@ -36,7 +36,7 @@ impl Delegate {
 }
 
 impl PickerDelegate for Delegate {
-    type ListItem = Div<Picker<Self>>;
+    type ListItem = Div;
 
     fn match_count(&self) -> usize {
         self.candidates.len()
@@ -205,8 +205,8 @@ impl PickerStory {
     }
 }
 
-impl Render<Self> for PickerStory {
-    type Element = Div<Self>;
+impl Render for PickerStory {
+    type Element = Div;
 
     fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> Self::Element {
         div()

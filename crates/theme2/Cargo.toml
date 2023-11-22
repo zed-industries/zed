@@ -5,9 +5,9 @@ edition = "2021"
 publish = false
 
 [features]
-default = ["stories"]
+default = []
 importing-themes = []
-stories = ["dep:itertools"]
+stories = ["dep:itertools", "dep:story"]
 test-support = [
     "gpui/test-support",
     "fs/test-support",
@@ -30,6 +30,7 @@ serde.workspace = true
 serde_derive.workspace = true
 serde_json.workspace = true
 settings = { package = "settings2", path = "../settings2" }
+story = { path = "../story", optional = true }
 toml.workspace = true
 uuid.workspace = true
 util = { path = "../util" }

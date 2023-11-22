@@ -3,7 +3,7 @@ use settings2::Settings;
 use theme2::{ActiveTheme, ThemeSettings};
 
 use crate::prelude::*;
-use crate::{h_stack, v_stack, KeyBinding, Label, LabelSize, StyledExt, TextColor};
+use crate::{h_stack, v_stack, Color, KeyBinding, Label, LabelSize, StyledExt};
 
 pub struct Tooltip {
     title: SharedString,
@@ -67,8 +67,8 @@ impl Tooltip {
     }
 }
 
-impl Render<Self> for Tooltip {
-    type Element = Overlay<Self>;
+impl Render for Tooltip {
+    type Element = Overlay;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         let ui_font = ThemeSettings::get_global(cx).ui_font.family.clone();
@@ -90,11 +90,7 @@ impl Render<Self> for Tooltip {
                             }),
                     )
                     .when_some(self.meta.clone(), |this, meta| {
-                        this.child(
-                            Label::new(meta)
-                                .size(LabelSize::Small)
-                                .color(TextColor::Muted),
-                        )
+                        this.child(Label::new(meta).size(LabelSize::Small).color(Color::Muted))
                     }),
             ),
         )

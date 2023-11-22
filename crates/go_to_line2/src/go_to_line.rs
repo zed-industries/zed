@@ -5,7 +5,7 @@ use gpui::{
 };
 use text::{Bias, Point};
 use theme::ActiveTheme;
-use ui::{h_stack, v_stack, Label, StyledExt, TextColor};
+use ui::{h_stack, v_stack, Color, Label, StyledExt};
 use util::paths::FILE_ROW_COLUMN_DELIMITER;
 use workspace::Workspace;
 
@@ -144,15 +144,15 @@ impl GoToLine {
     }
 }
 
-impl Render<Self> for GoToLine {
-    type Element = Div<Self>;
+impl Render for GoToLine {
+    type Element = Div;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         div()
             .elevation_2(cx)
             .key_context("GoToLine")
-            .on_action(Self::cancel)
-            .on_action(Self::confirm)
+            .on_action(cx.listener(Self::cancel))
+            .on_action(cx.listener(Self::confirm))
             .w_96()
             .child(
                 v_stack()
@@ -176,7 +176,7 @@ impl Render<Self> for GoToLine {
                             .justify_between()
                             .px_2()
                             .py_1()
-                            .child(Label::new(self.current_text.clone()).color(TextColor::Muted)),
+                            .child(Label::new(self.current_text.clone()).color(Color::Muted)),
                     ),
             )
     }

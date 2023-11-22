@@ -1,17 +1,17 @@
 use crate::{
-    BorrowWindow, Bounds, Element, InteractiveElement, InteractiveElementState, Interactivity,
-    LayoutId, Pixels, RenderOnce, SharedString, StyleRefinement, Styled, ViewContext,
+    Bounds, Element, InteractiveElement, InteractiveElementState, Interactivity, LayoutId, Pixels,
+    RenderOnce, SharedString, StyleRefinement, Styled, WindowContext,
 };
 use futures::FutureExt;
 use util::ResultExt;
 
-pub struct Img<V: 'static> {
-    interactivity: Interactivity<V>,
+pub struct Img {
+    interactivity: Interactivity,
     uri: Option<SharedString>,
     grayscale: bool,
 }
 
-pub fn img<V: 'static>() -> Img<V> {
+pub fn img() -> Img {
     Img {
         interactivity: Interactivity::default(),
         uri: None,
@@ -19,10 +19,7 @@ pub fn img<V: 'static>() -> Img<V> {
     }
 }
 
-impl<V> Img<V>
-where
-    V: 'static,
-{
+impl Img {
     pub fn uri(mut self, uri: impl Into<SharedString>) -> Self {
         self.uri = Some(uri.into());
         self
@@ -34,14 +31,13 @@ where
     }
 }
 
-impl<V> Element<V> for Img<V> {
+impl Element for Img {
     type State = InteractiveElementState;
 
     fn layout(
         &mut self,
-        _view_state: &mut V,
         element_state: Option<Self::State>,
-        cx: &mut ViewContext<V>,
+        cx: &mut WindowContext,
     ) -> (LayoutId, Self::State) {
         self.interactivity.layout(element_state, cx, |style, cx| {
             cx.request_layout(&style, None)
@@ -51,9 +47,8 @@ impl<V> Element<V> for Img<V> {
     fn paint(
         self,
         bounds: Bounds<Pixels>,
-        _view_state: &mut V,
         element_state: &mut Self::State,
-        cx: &mut ViewContext<V>,
+        cx: &mut WindowContext,
     ) {
         self.interactivity.paint(
             bounds,
@@ -78,7 +73,7 @@ impl<V> Element<V> for Img<V> {
                                 .log_err()
                         });
                     } else {
-                        cx.spawn(|_, mut cx| async move {
+                        cx.spawn(|mut cx| async move {
                             if image_future.await.ok().is_some() {
                                 cx.on_next_frame(|cx| cx.notify());
                             }
@@ -91,7 +86,7 @@ impl<V> Element<V> for Img<V> {
     }
 }
 
-impl<V: 'static> RenderOnce<V> for Img<V> {
+impl RenderOnce for Img {
     type Element = Self;
 
     fn element_id(&self) -> Option<crate::ElementId> {
@@ -103,14 +98,14 @@ impl<V: 'static> RenderOnce<V> for Img<V> {
     }
 }
 
-impl<V> Styled for Img<V> {
+impl Styled for Img {
     fn style(&mut self) -> &mut StyleRefinement {
         &mut self.interactivity.base_style
     }
 }
 
-impl<V> InteractiveElement<V> for Img<V> {
-    fn interactivity(&mut self) -> &mut Interactivity<V> {
+impl InteractiveElement for Img {
+    fn interactivity(&mut self) -> &mut Interactivity {
         &mut self.interactivity
     }
 }

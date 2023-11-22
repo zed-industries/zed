@@ -1664,7 +1664,7 @@ dependencies = [
 
 [[package]]
 name = "collab"
-version = "0.28.0"
+version = "0.29.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -8032,6 +8032,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "search2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bitflags 1.3.2",
+ "client2",
+ "collections",
+ "editor2",
+ "futures 0.3.28",
+ "gpui2",
+ "language2",
+ "log",
+ "menu2",
+ "postage",
+ "project2",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "settings2",
+ "smallvec",
+ "smol",
+ "theme2",
+ "ui2",
+ "unindent",
+ "util",
+ "workspace2",
+]
+
+[[package]]
 name = "security-framework"
 version = "2.9.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8855,6 +8884,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
+name = "story"
+version = "0.1.0"
+dependencies = [
+ "gpui2",
+]
+
+[[package]]
 name = "storybook2"
 version = "0.1.0"
 dependencies = [
@@ -8875,22 +8911,12 @@ dependencies = [
  "settings2",
  "simplelog",
  "smallvec",
+ "story",
  "strum",
  "theme",
  "theme2",
  "ui2",
  "util",
-]
-
-[[package]]
-name = "storybook3"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "gpui2",
- "settings2",
- "theme2",
- "ui2",
 ]
 
 [[package]]
@@ -9396,6 +9422,7 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "settings2",
+ "story",
  "toml 0.5.11",
  "util",
  "uuid 1.4.1",
@@ -10239,6 +10266,7 @@ dependencies = [
  "serde",
  "settings2",
  "smallvec",
+ "story",
  "strum",
  "theme2",
 ]
@@ -11465,7 +11493,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.114.0"
+version = "0.115.0"
 dependencies = [
  "activity_indicator",
  "ai",
@@ -11660,6 +11688,7 @@ dependencies = [
  "rsa 0.4.0",
  "rust-embed",
  "schemars",
+ "search2",
  "serde",
  "serde_derive",
  "serde_json",

@@ -44,7 +44,7 @@ use gpui::{
     EventEmitter, FocusHandle, FocusableView, FontFeatures, FontStyle, FontWeight, HighlightStyle,
     Hsla, InputHandler, KeyContext, Model, MouseButton, ParentElement, Pixels, Render,
     SharedString, Styled, Subscription, Task, TextStyle, UniformListScrollHandle, View,
-    ViewContext, VisualContext, WeakView, WindowContext,
+    ViewContext, VisualContext, WeakView, WhiteSpace, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -54,13 +54,13 @@ use itertools::Itertools;
 pub use language::{char_kind, CharKind};
 use language::{
     language_settings::{self, all_language_settings, InlayHintSettings},
-    point_from_lsp, AutoindentMode, BracketPair, Buffer, CodeAction, Completion, CursorShape,
-    Diagnostic, IndentKind, IndentSize, Language, LanguageRegistry, LanguageServerName,
-    OffsetRangeExt, Point, Selection, SelectionGoal, TransactionId,
+    point_from_lsp, AutoindentMode, BracketPair, Buffer, CodeAction, CodeLabel, Completion,
+    CursorShape, Diagnostic, Documentation, IndentKind, IndentSize, Language, LanguageRegistry,
+    LanguageServerName, OffsetRangeExt, Point, Selection, SelectionGoal, TransactionId,
 };
 use lazy_static::lazy_static;
 use link_go_to_definition::{GoToDefinitionLink, InlayHighlight, LinkGoToDefinitionState};
-use lsp::{DiagnosticSeverity, Documentation, LanguageServerId};
+use lsp::{DiagnosticSeverity, LanguageServerId};
 use movement::TextLayoutDetails;
 use multi_buffer::ToOffsetUtf16;
 pub use multi_buffer::{
@@ -97,7 +97,7 @@ use text::{OffsetUtf16, Rope};
 use theme::{
     ActiveTheme, DiagnosticStyle, PlayerColor, SyntaxTheme, Theme, ThemeColors, ThemeSettings,
 };
-use ui::{v_stack, HighlightedLabel, IconButton, StyledExt, Tooltip};
+use ui::{h_stack, v_stack, HighlightedLabel, IconButton, StyledExt, Tooltip};
 use util::{post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::{
     item::{ItemEvent, ItemHandle},
@@ -907,7 +907,7 @@ impl ContextMenu {
         style: &EditorStyle,
         workspace: Option<WeakView<Workspace>>,
         cx: &mut ViewContext<Editor>,
-    ) -> (DisplayPoint, AnyElement<Editor>) {
+    ) -> (DisplayPoint, AnyElement) {
         match self {
             ContextMenu::Completions(menu) => (cursor_position, menu.render(style, workspace, cx)),
             ContextMenu::CodeActions(menu) => menu.render(cursor_position, style, cx),
@@ -1223,208 +1223,202 @@ impl CompletionsMenu {
         style: &EditorStyle,
         workspace: Option<WeakView<Workspace>>,
         cx: &mut ViewContext<Editor>,
-    ) -> AnyElement<Editor> {
-        todo!("old implementation below")
+    ) -> AnyElement {
+        let settings = EditorSettings::get_global(cx);
+        let show_completion_documentation = settings.show_completion_documentation;
+
+        let widest_completion_ix = self
+            .matches
+            .iter()
+            .enumerate()
+            .max_by_key(|(_, mat)| {
+                let completions = self.completions.read();
+                let completion = &completions[mat.candidate_id];
+                let documentation = &completion.documentation;
+
+                let mut len = completion.label.text.chars().count();
+                if let Some(Documentation::SingleLine(text)) = documentation {
+                    if show_completion_documentation {
+                        len += text.chars().count();
+                    }
+                }
+
+                len
+            })
+            .map(|(ix, _)| ix);
+
+        let completions = self.completions.clone();
+        let matches = self.matches.clone();
+        let selected_item = self.selected_item;
+
+        let list = uniform_list(
+            cx.view().clone(),
+            "completions",
+            matches.len(),
+            move |editor, range, cx| {
+                let start_ix = range.start;
+                let completions_guard = completions.read();
+
+                matches[range]
+                    .iter()
+                    .enumerate()
+                    .map(|(ix, mat)| {
+                        let item_ix = start_ix + ix;
+                        let candidate_id = mat.candidate_id;
+                        let completion = &completions_guard[candidate_id];
+
+                        let documentation = if show_completion_documentation {
+                            &completion.documentation
+                        } else {
+                            &None
+                        };
+
+                        // todo!("highlights")
+                        // let highlights = combine_syntax_and_fuzzy_match_highlights(
+                        //     &completion.label.text,
+                        //     style.text.color.into(),
+                        //     styled_runs_for_code_label(&completion.label, &style.syntax),
+                        //     &mat.positions,
+                        // )
+
+                        // todo!("documentation")
+                        // MouseEventHandler::new::<CompletionTag, _>(mat.candidate_id, cx, |state, _| {
+                        //     let completion_label = HighlightedLabel::new(
+                        //         completion.label.text.clone(),
+                        //         combine_syntax_and_fuzzy_match_highlights(
+                        //             &completion.label.text,
+                        //             style.text.color.into(),
+                        //             styled_runs_for_code_label(&completion.label, &style.syntax),
+                        //             &mat.positions,
+                        //         ),
+                        //     );
+                        //     Text::new(completion.label.text.clone(), style.text.clone())
+                        //         .with_soft_wrap(false)
+                        //         .with_highlights();
+
+                        //     if let Some(Documentation::SingleLine(text)) = documentation {
+                        //         h_stack()
+                        //             .child(completion_label)
+                        //             .with_children((|| {
+                        //                 let text_style = TextStyle {
+                        //                     color: style.autocomplete.inline_docs_color,
+                        //                     font_size: style.text.font_size
+                        //                         * style.autocomplete.inline_docs_size_percent,
+                        //                     ..style.text.clone()
+                        //                 };
+
+                        //                 let label = Text::new(text.clone(), text_style)
+                        //                     .aligned()
+                        //                     .constrained()
+                        //                     .dynamically(move |constraint, _, _| gpui::SizeConstraint {
+                        //                         min: constraint.min,
+                        //                         max: vec2f(constraint.max.x(), constraint.min.y()),
+                        //                     });
+
+                        //                 if Some(item_ix) == widest_completion_ix {
+                        //                     Some(
+                        //                         label
+                        //                             .contained()
+                        //                             .with_style(style.autocomplete.inline_docs_container)
+                        //                             .into_any(),
+                        //                     )
+                        //                 } else {
+                        //                     Some(label.flex_float().into_any())
+                        //                 }
+                        //             })())
+                        //             .into_any()
+                        //     } else {
+                        //         completion_label.into_any()
+                        //     }
+                        //     .contained()
+                        //     .with_style(item_style)
+                        //     .constrained()
+                        //     .dynamically(move |constraint, _, _| {
+                        //         if Some(item_ix) == widest_completion_ix {
+                        //             constraint
+                        //         } else {
+                        //             gpui::SizeConstraint {
+                        //                 min: constraint.min,
+                        //                 max: constraint.min,
+                        //             }
+                        //         }
+                        //     })
+                        // })
+                        // .with_cursor_style(CursorStyle::PointingHand)
+                        // .on_down(MouseButton::Left, move |_, this, cx| {
+                        //     this.confirm_completion(
+                        //         &ConfirmCompletion {
+                        //             item_ix: Some(item_ix),
+                        //         },
+                        //         cx,
+                        //     )
+                        //     .map(|task| task.detach());
+                        // })
+                        // .constrained()
+                        //
+                        div()
+                            .id(mat.candidate_id)
+                            .whitespace_nowrap()
+                            .overflow_hidden()
+                            .bg(gpui::green())
+                            .hover(|style| style.bg(gpui::blue()))
+                            .when(item_ix == selected_item, |div| div.bg(gpui::red()))
+                            .child(SharedString::from(completion.label.text.clone()))
+                            .min_w(px(300.))
+                            .max_w(px(700.))
+                    })
+                    .collect()
+            },
+        )
+        .track_scroll(self.scroll_handle.clone())
+        .with_width_from_item(widest_completion_ix);
+
+        list.render_into_any()
+        // todo!("multiline documentation")
+        //     enum MultiLineDocumentation {}
+
+        //     Flex::row()
+        //         .with_child(list.flex(1., false))
+        //         .with_children({
+        //             let mat = &self.matches[selected_item];
+        //             let completions = self.completions.read();
+        //             let completion = &completions[mat.candidate_id];
+        //             let documentation = &completion.documentation;
+
+        //             match documentation {
+        //                 Some(Documentation::MultiLinePlainText(text)) => Some(
+        //                     Flex::column()
+        //                         .scrollable::<MultiLineDocumentation>(0, None, cx)
+        //                         .with_child(
+        //                             Text::new(text.clone(), style.text.clone()).with_soft_wrap(true),
+        //                         )
+        //                         .contained()
+        //                         .with_style(style.autocomplete.alongside_docs_container)
+        //                         .constrained()
+        //                         .with_max_width(style.autocomplete.alongside_docs_max_width)
+        //                         .flex(1., false),
+        //                 ),
+
+        //                 Some(Documentation::MultiLineMarkdown(parsed)) => Some(
+        //                     Flex::column()
+        //                         .scrollable::<MultiLineDocumentation>(0, None, cx)
+        //                         .with_child(render_parsed_markdown::<MultiLineDocumentation>(
+        //                             parsed, &style, workspace, cx,
+        //                         ))
+        //                         .contained()
+        //                         .with_style(style.autocomplete.alongside_docs_container)
+        //                         .constrained()
+        //                         .with_max_width(style.autocomplete.alongside_docs_max_width)
+        //                         .flex(1., false),
+        //                 ),
+
+        //                 _ => None,
+        //             }
+        //         })
+        //         .contained()
+        //         .with_style(style.autocomplete.container)
+        //         .into_any()
     }
-
-    //     enum CompletionTag {}
-
-    //     let settings = EditorSettings>(cx);
-    //     let show_completion_documentation = settings.show_completion_documentation;
-
-    //     let widest_completion_ix = self
-    //         .matches
-    //         .iter()
-    //         .enumerate()
-    //         .max_by_key(|(_, mat)| {
-    //             let completions = self.completions.read();
-    //             let completion = &completions[mat.candidate_id];
-    //             let documentation = &completion.documentation;
-
-    //             let mut len = completion.label.text.chars().count();
-    //             if let Some(Documentation::SingleLine(text)) = documentation {
-    //                 if show_completion_documentation {
-    //                     len += text.chars().count();
-    //                 }
-    //             }
-
-    //             len
-    //         })
-    //         .map(|(ix, _)| ix);
-
-    //     let completions = self.completions.clone();
-    //     let matches = self.matches.clone();
-    //     let selected_item = self.selected_item;
-
-    //     let list = UniformList::new(self.list.clone(), matches.len(), cx, {
-    //         let style = style.clone();
-    //         move |_, range, items, cx| {
-    //             let start_ix = range.start;
-    //             let completions_guard = completions.read();
-
-    //             for (ix, mat) in matches[range].iter().enumerate() {
-    //                 let item_ix = start_ix + ix;
-    //                 let candidate_id = mat.candidate_id;
-    //                 let completion = &completions_guard[candidate_id];
-
-    //                 let documentation = if show_completion_documentation {
-    //                     &completion.documentation
-    //                 } else {
-    //                     &None
-    //                 };
-
-    //                 items.push(
-    //                     MouseEventHandler::new::<CompletionTag, _>(
-    //                         mat.candidate_id,
-    //                         cx,
-    //                         |state, _| {
-    //                             let item_style = if item_ix == selected_item {
-    //                                 style.autocomplete.selected_item
-    //                             } else if state.hovered() {
-    //                                 style.autocomplete.hovered_item
-    //                             } else {
-    //                                 style.autocomplete.item
-    //                             };
-
-    //                             let completion_label =
-    //                                 Text::new(completion.label.text.clone(), style.text.clone())
-    //                                     .with_soft_wrap(false)
-    //                                     .with_highlights(
-    //                                         combine_syntax_and_fuzzy_match_highlights(
-    //                                             &completion.label.text,
-    //                                             style.text.color.into(),
-    //                                             styled_runs_for_code_label(
-    //                                                 &completion.label,
-    //                                                 &style.syntax,
-    //                                             ),
-    //                                             &mat.positions,
-    //                                         ),
-    //                                     );
-
-    //                             if let Some(Documentation::SingleLine(text)) = documentation {
-    //                                 Flex::row()
-    //                                     .with_child(completion_label)
-    //                                     .with_children((|| {
-    //                                         let text_style = TextStyle {
-    //                                             color: style.autocomplete.inline_docs_color,
-    //                                             font_size: style.text.font_size
-    //                                                 * style.autocomplete.inline_docs_size_percent,
-    //                                             ..style.text.clone()
-    //                                         };
-
-    //                                         let label = Text::new(text.clone(), text_style)
-    //                                             .aligned()
-    //                                             .constrained()
-    //                                             .dynamically(move |constraint, _, _| {
-    //                                                 gpui::SizeConstraint {
-    //                                                     min: constraint.min,
-    //                                                     max: vec2f(
-    //                                                         constraint.max.x(),
-    //                                                         constraint.min.y(),
-    //                                                     ),
-    //                                                 }
-    //                                             });
-
-    //                                         if Some(item_ix) == widest_completion_ix {
-    //                                             Some(
-    //                                                 label
-    //                                                     .contained()
-    //                                                     .with_style(
-    //                                                         style
-    //                                                             .autocomplete
-    //                                                             .inline_docs_container,
-    //                                                     )
-    //                                                     .into_any(),
-    //                                             )
-    //                                         } else {
-    //                                             Some(label.flex_float().into_any())
-    //                                         }
-    //                                     })())
-    //                                     .into_any()
-    //                             } else {
-    //                                 completion_label.into_any()
-    //                             }
-    //                             .contained()
-    //                             .with_style(item_style)
-    //                             .constrained()
-    //                             .dynamically(
-    //                                 move |constraint, _, _| {
-    //                                     if Some(item_ix) == widest_completion_ix {
-    //                                         constraint
-    //                                     } else {
-    //                                         gpui::SizeConstraint {
-    //                                             min: constraint.min,
-    //                                             max: constraint.min,
-    //                                         }
-    //                                     }
-    //                                 },
-    //                             )
-    //                         },
-    //                     )
-    //                     .with_cursor_style(CursorStyle::PointingHand)
-    //                     .on_down(MouseButton::Left, move |_, this, cx| {
-    //                         this.confirm_completion(
-    //                             &ConfirmCompletion {
-    //                                 item_ix: Some(item_ix),
-    //                             },
-    //                             cx,
-    //                         )
-    //                         .map(|task| task.detach());
-    //                     })
-    //                     .constrained()
-    //                     .with_min_width(style.autocomplete.completion_min_width)
-    //                     .with_max_width(style.autocomplete.completion_max_width)
-    //                     .into_any(),
-    //                 );
-    //             }
-    //         }
-    //     })
-    //     .with_width_from_item(widest_completion_ix);
-
-    //     enum MultiLineDocumentation {}
-
-    //     Flex::row()
-    //         .with_child(list.flex(1., false))
-    //         .with_children({
-    //             let mat = &self.matches[selected_item];
-    //             let completions = self.completions.read();
-    //             let completion = &completions[mat.candidate_id];
-    //             let documentation = &completion.documentation;
-
-    //             match documentation {
-    //                 Some(Documentation::MultiLinePlainText(text)) => Some(
-    //                     Flex::column()
-    //                         .scrollable::<MultiLineDocumentation>(0, None, cx)
-    //                         .with_child(
-    //                             Text::new(text.clone(), style.text.clone()).with_soft_wrap(true),
-    //                         )
-    //                         .contained()
-    //                         .with_style(style.autocomplete.alongside_docs_container)
-    //                         .constrained()
-    //                         .with_max_width(style.autocomplete.alongside_docs_max_width)
-    //                         .flex(1., false),
-    //                 ),
-
-    //                 Some(Documentation::MultiLineMarkdown(parsed)) => Some(
-    //                     Flex::column()
-    //                         .scrollable::<MultiLineDocumentation>(0, None, cx)
-    //                         .with_child(render_parsed_markdown::<MultiLineDocumentation>(
-    //                             parsed, &style, workspace, cx,
-    //                         ))
-    //                         .contained()
-    //                         .with_style(style.autocomplete.alongside_docs_container)
-    //                         .constrained()
-    //                         .with_max_width(style.autocomplete.alongside_docs_max_width)
-    //                         .flex(1., false),
-    //                 ),
-
-    //                 _ => None,
-    //             }
-    //         })
-    //         .contained()
-    //         .with_style(style.autocomplete.container)
-    //         .into_any()
-    // }
 
     pub async fn filter(&mut self, query: Option<&str>, executor: BackgroundExecutor) {
         let mut matches = if let Some(query) = query {
@@ -1541,13 +1535,15 @@ impl CodeActionsMenu {
         mut cursor_position: DisplayPoint,
         style: &EditorStyle,
         cx: &mut ViewContext<Editor>,
-    ) -> (DisplayPoint, AnyElement<Editor>) {
+    ) -> (DisplayPoint, AnyElement) {
         let actions = self.actions.clone();
         let selected_item = self.selected_item;
+
         let element = uniform_list(
+            cx.view().clone(),
             "code_actions_menu",
             self.actions.len(),
-            move |editor, range, cx| {
+            move |this, range, cx| {
                 actions[range.clone()]
                     .iter()
                     .enumerate()
@@ -1569,17 +1565,20 @@ impl CodeActionsMenu {
                                     .bg(colors.element_hover)
                                     .text_color(colors.text_accent)
                             })
-                            .on_mouse_down(MouseButton::Left, move |editor: &mut Editor, _, cx| {
-                                cx.stop_propagation();
-                                editor
-                                    .confirm_code_action(
-                                        &ConfirmCodeAction {
-                                            item_ix: Some(item_ix),
-                                        },
-                                        cx,
-                                    )
-                                    .map(|task| task.detach_and_log_err(cx));
-                            })
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |editor, _, cx| {
+                                    cx.stop_propagation();
+                                    editor
+                                        .confirm_code_action(
+                                            &ConfirmCodeAction {
+                                                item_ix: Some(item_ix),
+                                            },
+                                            cx,
+                                        )
+                                        .map(|task| task.detach_and_log_err(cx));
+                                }),
+                            )
                             // TASK: It would be good to make lsp_action.title a SharedString to avoid allocating here.
                             .child(SharedString::from(action.lsp_action.title.clone()))
                     })
@@ -1589,6 +1588,7 @@ impl CodeActionsMenu {
         .elevation_1(cx)
         .px_2()
         .py_1()
+        .track_scroll(self.scroll_handle.clone())
         .with_width_from_item(
             self.actions
                 .iter()
@@ -2320,6 +2320,7 @@ impl Editor {
 
         self.blink_manager.update(cx, BlinkManager::pause_blinking);
         cx.emit(EditorEvent::SelectionsChanged { local });
+        cx.emit(SearchEvent::MatchesInvalidated);
 
         if self.selections.disjoint_anchors().len() == 1 {
             cx.emit(SearchEvent::ActiveMatchChanged)
@@ -4354,11 +4355,11 @@ impl Editor {
         style: &EditorStyle,
         is_active: bool,
         cx: &mut ViewContext<Self>,
-    ) -> Option<IconButton<Self>> {
+    ) -> Option<IconButton> {
         if self.available_code_actions.is_some() {
             Some(
-                IconButton::new("code_actions_indicator", ui::Icon::Bolt).on_click(
-                    |editor: &mut Editor, cx| {
+                IconButton::new("code_actions_indicator", ui::Icon::Bolt).on_click(cx.listener(
+                    |editor, e, cx| {
                         editor.toggle_code_actions(
                             &ToggleCodeActions {
                                 deployed_from_indicator: true,
@@ -4366,7 +4367,7 @@ impl Editor {
                             cx,
                         );
                     },
-                ),
+                )),
             )
         } else {
             None
@@ -4381,7 +4382,7 @@ impl Editor {
         line_height: Pixels,
         gutter_margin: Pixels,
         cx: &mut ViewContext<Self>,
-    ) -> Vec<Option<IconButton<Self>>> {
+    ) -> Vec<Option<IconButton>> {
         fold_data
             .iter()
             .enumerate()
@@ -4394,15 +4395,15 @@ impl Editor {
                                 FoldStatus::Foldable => ui::Icon::ChevronDown,
                             };
                             IconButton::new(ix as usize, icon)
-                                .on_click(move |editor: &mut Editor, cx| match fold_status {
+                                .on_click(cx.listener(move |editor, e, cx| match fold_status {
                                     FoldStatus::Folded => {
                                         editor.unfold_at(&UnfoldAt { buffer_row }, cx);
                                     }
                                     FoldStatus::Foldable => {
                                         editor.fold_at(&FoldAt { buffer_row }, cx);
                                     }
-                                })
-                                .color(ui::TextColor::Muted)
+                                }))
+                                .color(ui::Color::Muted)
                         })
                     })
                     .flatten()
@@ -4422,7 +4423,7 @@ impl Editor {
         cursor_position: DisplayPoint,
         style: &EditorStyle,
         cx: &mut ViewContext<Editor>,
-    ) -> Option<(DisplayPoint, AnyElement<Editor>)> {
+    ) -> Option<(DisplayPoint, AnyElement)> {
         self.context_menu.read().as_ref().map(|menu| {
             menu.render(
                 cursor_position,
@@ -7781,7 +7782,7 @@ impl Editor {
                                     }
                                     div()
                                         .pl(cx.anchor_x)
-                                        .child(rename_editor.render_with(EditorElement::new(
+                                        .child(EditorElement::new(
                                             &rename_editor,
                                             EditorStyle {
                                                 background: cx.theme().system().transparent,
@@ -7789,10 +7790,12 @@ impl Editor {
                                                 text: text_style,
                                                 scrollbar_width: cx.editor_style.scrollbar_width,
                                                 syntax: cx.editor_style.syntax.clone(),
-                                                diagnostic_style:
-                                                    cx.editor_style.diagnostic_style.clone(),
+                                                diagnostic_style: cx
+                                                    .editor_style
+                                                    .diagnostic_style
+                                                    .clone(),
                                             },
-                                        )))
+                                        ))
                                         .render_into_any()
                                 }
                             }),
@@ -9388,7 +9391,7 @@ impl FocusableView for Editor {
     }
 }
 
-impl Render<Self> for Editor {
+impl Render for Editor {
     type Element = EditorElement;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
@@ -9403,6 +9406,7 @@ impl Render<Self> for Editor {
                 font_style: FontStyle::Normal,
                 line_height: relative(1.).into(),
                 underline: None,
+                white_space: WhiteSpace::Normal,
             },
 
             EditorMode::AutoHeight { max_lines } => todo!(),
@@ -9416,6 +9420,7 @@ impl Render<Self> for Editor {
                 font_style: FontStyle::Normal,
                 line_height: relative(settings.buffer_line_height.value()),
                 underline: None,
+                white_space: WhiteSpace::Normal,
             },
         };
 
@@ -10002,10 +10007,10 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, is_valid: bool) -> Rend
                     .ml(cx.anchor_x)
             }))
             .cursor_pointer()
-            .on_click(move |_, _, cx| {
+            .on_click(cx.listener(move |_, _, cx| {
                 cx.write_to_clipboard(ClipboardItem::new(message.clone()));
-            })
-            .tooltip(|_, cx| Tooltip::text("Copy diagnostic message", cx))
+            }))
+            .tooltip(|cx| Tooltip::text("Copy diagnostic message", cx))
             .render_into_any()
     })
 }
@@ -10124,49 +10129,50 @@ pub fn combine_syntax_and_fuzzy_match_highlights(
     result
 }
 
-// pub fn styled_runs_for_code_label<'a>(
-//     label: &'a CodeLabel,
-//     syntax_theme: &'a theme::SyntaxTheme,
-// ) -> impl 'a + Iterator<Item = (Range<usize>, HighlightStyle)> {
-//     let fade_out = HighlightStyle {
-//         fade_out: Some(0.35),
-//         ..Default::default()
-//     };
+pub fn styled_runs_for_code_label<'a>(
+    label: &'a CodeLabel,
+    syntax_theme: &'a theme::SyntaxTheme,
+) -> impl 'a + Iterator<Item = (Range<usize>, HighlightStyle)> {
+    let fade_out = HighlightStyle {
+        fade_out: Some(0.35),
+        ..Default::default()
+    };
 
-//     let mut prev_end = label.filter_range.end;
-//     label
-//         .runs
-//         .iter()
-//         .enumerate()
-//         .flat_map(move |(ix, (range, highlight_id))| {
-//             let style = if let Some(style) = highlight_id.style(syntax_theme) {
-//                 style
-//             } else {
-//                 return Default::default();
-//             };
-//             let mut muted_style = style;
-//             muted_style.highlight(fade_out);
+    let mut prev_end = label.filter_range.end;
+    label
+        .runs
+        .iter()
+        .enumerate()
+        .flat_map(move |(ix, (range, highlight_id))| {
+            let style = if let Some(style) = highlight_id.style(syntax_theme) {
+                style
+            } else {
+                return Default::default();
+            };
+            let mut muted_style = style;
+            muted_style.highlight(fade_out);
 
-//             let mut runs = SmallVec::<[(Range<usize>, HighlightStyle); 3]>::new();
-//             if range.start >= label.filter_range.end {
-//                 if range.start > prev_end {
-//                     runs.push((prev_end..range.start, fade_out));
-//                 }
-//                 runs.push((range.clone(), muted_style));
-//             } else if range.end <= label.filter_range.end {
-//                 runs.push((range.clone(), style));
-//             } else {
-//                 runs.push((range.start..label.filter_range.end, style));
-//                 runs.push((label.filter_range.end..range.end, muted_style));
-//             }
-//             prev_end = cmp::max(prev_end, range.end);
+            let mut runs = SmallVec::<[(Range<usize>, HighlightStyle); 3]>::new();
+            if range.start >= label.filter_range.end {
+                if range.start > prev_end {
+                    runs.push((prev_end..range.start, fade_out));
+                }
+                runs.push((range.clone(), muted_style));
+            } else if range.end <= label.filter_range.end {
+                runs.push((range.clone(), style));
+            } else {
+                runs.push((range.start..label.filter_range.end, style));
+                runs.push((label.filter_range.end..range.end, muted_style));
+            }
+            prev_end = cmp::max(prev_end, range.end);
 
-//             if ix + 1 == label.runs.len() && label.text.len() > prev_end {
-//                 runs.push((prev_end..label.text.len(), fade_out));
-//             }
+            if ix + 1 == label.runs.len() && label.text.len() > prev_end {
+                runs.push((prev_end..label.text.len(), fade_out));
+            }
 
-//             runs
-//         })
+            runs
+        })
+}
 
 pub fn split_words<'a>(text: &'a str) -> impl std::iter::Iterator<Item = &'a str> + 'a {
     let mut index = 0;

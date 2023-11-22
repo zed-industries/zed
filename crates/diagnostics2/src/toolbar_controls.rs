@@ -7,8 +7,8 @@ pub struct ToolbarControls {
     editor: Option<WeakView<ProjectDiagnosticsEditor>>,
 }
 
-impl Render<Self> for ToolbarControls {
-    type Element = Div<Self>;
+impl Render for ToolbarControls {
+    type Element = Div;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         let include_warnings = self
@@ -26,14 +26,14 @@ impl Render<Self> for ToolbarControls {
 
         div().child(
             IconButton::new("toggle-warnings", Icon::ExclamationTriangle)
-                .tooltip(move |_, cx| Tooltip::text(tooltip, cx))
-                .on_click(|this: &mut Self, cx| {
+                .tooltip(move |cx| Tooltip::text(tooltip, cx))
+                .on_click(cx.listener(|this, _, cx| {
                     if let Some(editor) = this.editor.as_ref().and_then(|editor| editor.upgrade()) {
                         editor.update(cx, |editor, cx| {
                             editor.toggle_warnings(&Default::default(), cx);
                         });
                     }
-                }),
+                })),
         )
     }
 }
@@ -49,7 +49,7 @@ impl ToolbarItemView for ToolbarControls {
         if let Some(pane_item) = active_pane_item.as_ref() {
             if let Some(editor) = pane_item.downcast::<ProjectDiagnosticsEditor>() {
                 self.editor = Some(editor.downgrade());
-                ToolbarItemLocation::PrimaryRight { flex: None }
+                ToolbarItemLocation::PrimaryRight
             } else {
                 ToolbarItemLocation::Hidden
             }

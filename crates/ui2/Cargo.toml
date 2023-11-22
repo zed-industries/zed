@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2021"
 publish = false
 
+[lib]
+name = "ui2"
+path = "src/ui2.rs"
+
 [dependencies]
 anyhow.workspace = true
 chrono = "0.4"
@@ -13,10 +17,11 @@ menu = { package = "menu2", path = "../menu2"}
 serde.workspace = true
 settings2 = { path = "../settings2" }
 smallvec.workspace = true
+story = { path = "../story", optional = true }
 strum = { version = "0.25.0", features = ["derive"] }
 theme2 = { path = "../theme2" }
 rand = "0.8"
 
 [features]
 default = []
-stories = ["dep:itertools"]
+stories = ["dep:itertools", "dep:story"]
