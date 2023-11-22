@@ -8,10 +8,11 @@ use file_associations::FileAssociations;
 
 use anyhow::{anyhow, Result};
 use gpui::{
-    actions, div, px, uniform_list, Action, AppContext, AssetSource, AsyncWindowContext,
+    actions, div, overlay, px, uniform_list, Action, AppContext, AssetSource, AsyncWindowContext,
     ClipboardItem, Div, EventEmitter, FocusHandle, Focusable, FocusableView, InteractiveElement,
-    Model, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, Stateful, Styled,
-    Task, UniformListScrollHandle, View, ViewContext, VisualContext as _, WeakView, WindowContext,
+    Model, MouseButton, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render,
+    Stateful, Styled, Subscription, Task, UniformListScrollHandle, View, ViewContext,
+    VisualContext as _, WeakView, WindowContext,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
 use project::{
@@ -29,7 +30,7 @@ use std::{
     sync::Arc,
 };
 use theme::ActiveTheme as _;
-use ui::{v_stack, IconElement, Label, ListItem};
+use ui::{v_stack, ContextMenu, IconElement, Label, ListItem};
 use unicase::UniCase;
 use util::{maybe, ResultExt, TryFutureExt};
 use workspace::{
@@ -49,6 +50,7 @@ pub struct ProjectPanel {
     last_worktree_root_id: Option<ProjectEntryId>,
     expanded_dir_ids: HashMap<WorktreeId, Vec<ProjectEntryId>>,
     selection: Option<Selection>,
+    context_menu: Option<(View<ContextMenu>, Point<Pixels>, Subscription)>,
     edit_state: Option<EditState>,
     filename_editor: View<Editor>,
     clipboard_entry: Option<ClipboardEntry>,
@@ -231,6 +233,7 @@ impl ProjectPanel {
                 expanded_dir_ids: Default::default(),
                 selection: None,
                 edit_state: None,
+                context_menu: None,
                 filename_editor,
                 clipboard_entry: None,
                 // context_menu: cx.add_view(|cx| ContextMenu::new(view_id, cx)),
@@ -366,80 +369,92 @@ impl ProjectPanel {
 
     fn deploy_context_menu(
         &mut self,
-        _position: Point<Pixels>,
-        _entry_id: ProjectEntryId,
-        _cx: &mut ViewContext<Self>,
+        position: Point<Pixels>,
+        entry_id: ProjectEntryId,
+        cx: &mut ViewContext<Self>,
     ) {
-        // todo!()
-        //     let project = self.project.read(cx);
+        let this = cx.view().clone();
+        let project = self.project.read(cx);
 
-        //     let worktree_id = if let Some(id) = project.worktree_id_for_entry(entry_id, cx) {
-        //         id
-        //     } else {
-        //         return;
-        //     };
+        let worktree_id = if let Some(id) = project.worktree_id_for_entry(entry_id, cx) {
+            id
+        } else {
+            return;
+        };
 
-        //     self.selection = Some(Selection {
-        //         worktree_id,
-        //         entry_id,
-        //     });
+        self.selection = Some(Selection {
+            worktree_id,
+            entry_id,
+        });
 
-        //     let mut menu_entries = Vec::new();
-        //     if let Some((worktree, entry)) = self.selected_entry(cx) {
-        //         let is_root = Some(entry) == worktree.root_entry();
-        //         if !project.is_remote() {
-        //             menu_entries.push(ContextMenuItem::action(
-        //                 "Add Folder to Project",
-        //                 workspace::AddFolderToProject,
-        //             ));
-        //             if is_root {
-        //                 let project = self.project.clone();
-        //                 menu_entries.push(ContextMenuItem::handler("Remove from Project", move |cx| {
-        //                     project.update(cx, |project, cx| project.remove_worktree(worktree_id, cx));
-        //                 }));
-        //             }
-        //         }
-        //         menu_entries.push(ContextMenuItem::action("New File", NewFile));
-        //         menu_entries.push(ContextMenuItem::action("New Folder", NewDirectory));
-        //         menu_entries.push(ContextMenuItem::Separator);
-        //         menu_entries.push(ContextMenuItem::action("Cut", Cut));
-        //         menu_entries.push(ContextMenuItem::action("Copy", Copy));
-        //         if let Some(clipboard_entry) = self.clipboard_entry {
-        //             if clipboard_entry.worktree_id() == worktree.id() {
-        //                 menu_entries.push(ContextMenuItem::action("Paste", Paste));
-        //             }
-        //         }
-        //         menu_entries.push(ContextMenuItem::Separator);
-        //         menu_entries.push(ContextMenuItem::action("Copy Path", CopyPath));
-        //         menu_entries.push(ContextMenuItem::action(
-        //             "Copy Relative Path",
-        //             CopyRelativePath,
-        //         ));
+        if let Some((worktree, entry)) = self.selected_entry(cx) {
+            let is_root = Some(entry) == worktree.root_entry();
+            let is_dir = entry.is_dir();
+            let worktree_id = worktree.id();
+            let is_local = project.is_local();
 
-        //         if entry.is_dir() {
-        //             menu_entries.push(ContextMenuItem::Separator);
-        //         }
-        //         menu_entries.push(ContextMenuItem::action("Reveal in Finder", RevealInFinder));
-        //         if entry.is_dir() {
-        //             menu_entries.push(ContextMenuItem::action("Open in Terminal", OpenInTerminal));
-        //             menu_entries.push(ContextMenuItem::action(
-        //                 "Search Inside",
-        //                 NewSearchInDirectory,
-        //             ));
-        //         }
+            let context_menu = ContextMenu::build(cx, |mut menu, cx| {
+                if is_local {
+                    menu = menu.action(
+                        "Add Folder to Project",
+                        Box::new(workspace::AddFolderToProject),
+                    );
+                    if is_root {
+                        menu = menu.entry(
+                            "Remove from Project",
+                            cx.listener_for(&this, move |this, _, cx| {
+                                this.project.update(cx, |project, cx| {
+                                    project.remove_worktree(worktree_id, cx)
+                                });
+                            }),
+                        );
+                    }
+                }
 
-        //         menu_entries.push(ContextMenuItem::Separator);
-        //         menu_entries.push(ContextMenuItem::action("Rename", Rename));
-        //         if !is_root {
-        //             menu_entries.push(ContextMenuItem::action("Delete", Delete));
-        //         }
-        //     }
+                menu = menu
+                    .action("New File", Box::new(NewFile))
+                    .action("New Folder", Box::new(NewDirectory))
+                    .separator()
+                    .action("Cut", Box::new(Cut))
+                    .action("Copy", Box::new(Copy));
 
-        //     // self.context_menu.update(cx, |menu, cx| {
-        //     //     menu.show(position, AnchorCorner::TopLeft, menu_entries, cx);
-        //     // });
+                if let Some(clipboard_entry) = self.clipboard_entry {
+                    if clipboard_entry.worktree_id() == worktree_id {
+                        menu = menu.action("Paste", Box::new(Paste));
+                    }
+                }
 
-        //     cx.notify();
+                menu = menu
+                    .separator()
+                    .action("Copy Path", Box::new(CopyPath))
+                    .action("Copy Relative Path", Box::new(CopyRelativePath))
+                    .separator()
+                    .action("Reveal in Finder", Box::new(RevealInFinder));
+
+                if is_dir {
+                    menu = menu
+                        .action("Open in Terminal", Box::new(OpenInTerminal))
+                        .action("Search Inside", Box::new(NewSearchInDirectory))
+                }
+
+                menu = menu.separator().action("Rename", Box::new(Rename));
+
+                if !is_root {
+                    menu = menu.action("Delete", Box::new(Delete));
+                }
+
+                menu
+            });
+
+            cx.focus_view(&context_menu);
+            let subscription = cx.on_blur(&context_menu.focus_handle(cx), |this, cx| {
+                this.context_menu.take();
+                cx.notify();
+            });
+            self.context_menu = Some((context_menu, position, subscription));
+        }
+
+        cx.notify();
     }
 
     fn expand_selected_entry(&mut self, _: &ExpandSelectedEntry, cx: &mut ViewContext<Self>) {
@@ -1379,6 +1394,9 @@ impl ProjectPanel {
                 .ml_1(),
             )
             .on_click(cx.listener(move |this, event: &gpui::ClickEvent, cx| {
+                if event.down.button == MouseButton::Right {
+                    return;
+                }
                 if !show_editor {
                     if kind.is_dir() {
                         this.toggle_expanded(entry_id, cx);
@@ -1415,6 +1433,7 @@ impl Render for ProjectPanel {
             div()
                 .id("project-panel")
                 .size_full()
+                .relative()
                 .key_context("ProjectPanel")
                 .on_action(cx.listener(Self::select_next))
                 .on_action(cx.listener(Self::select_prev))
@@ -1458,6 +1477,12 @@ impl Render for ProjectPanel {
                     .size_full()
                     .track_scroll(self.list.clone()),
                 )
+                .children(self.context_menu.as_ref().map(|(menu, position, _)| {
+                    overlay()
+                        .position(*position)
+                        .anchor(gpui::AnchorCorner::BottomLeft)
+                        .child(menu.clone())
+                }))
         } else {
             v_stack()
                 .id("empty-project_panel")

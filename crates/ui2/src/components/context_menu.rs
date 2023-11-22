@@ -1,13 +1,10 @@
-use std::cell::RefCell;
-use std::rc::Rc;
-
-use crate::{prelude::*, v_stack, Label, List};
-use crate::{ListItem, ListSeparator, ListSubHeader};
+use crate::{prelude::*, v_stack, Label, List, ListItem, ListSeparator, ListSubHeader};
 use gpui::{
     overlay, px, Action, AnchorCorner, AnyElement, AppContext, Bounds, ClickEvent, DismissEvent,
     DispatchPhase, Div, EventEmitter, FocusHandle, FocusableView, IntoElement, LayoutId,
     ManagedView, MouseButton, MouseDownEvent, Pixels, Point, Render, View, VisualContext,
 };
+use std::{cell::RefCell, rc::Rc};
 
 pub enum ContextMenuItem {
     Separator,
@@ -177,6 +174,7 @@ pub struct MenuHandleState<M> {
     child_element: Option<AnyElement>,
     menu_element: Option<AnyElement>,
 }
+
 impl<M: ManagedView> Element for MenuHandle<M> {
     type State = MenuHandleState<M>;
 
