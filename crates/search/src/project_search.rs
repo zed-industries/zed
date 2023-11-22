@@ -219,7 +219,7 @@ impl ProjectSearch {
                 this.no_results = Some(true);
             });
 
-            // TODO kb check for cancellations here and actually stop the search
+            // TODO kb check for cancellations here and actually stop the search?
             while let Some((buffer, anchors)) = matches.next().await {
                 let mut ranges = this.update(&mut cx, |this, cx| {
                     this.no_results = Some(false);
