@@ -254,23 +254,6 @@ pub struct ListItem {
     on_click: Option<Rc<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
 }
 
-impl Clone for ListItem {
-    fn clone(&self) -> Self {
-        Self {
-            id: self.id.clone(),
-            disabled: self.disabled,
-            indent_level: self.indent_level,
-            label: self.label.clone(),
-            left_slot: self.left_slot.clone(),
-            overflow: self.overflow,
-            size: self.size,
-            toggle: self.toggle,
-            variant: self.variant,
-            on_click: self.on_click.clone(),
-        }
-    }
-}
-
 impl ListItem {
     pub fn new(id: impl Into<ElementId>, label: Label) -> Self {
         Self {
