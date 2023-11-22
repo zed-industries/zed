@@ -214,7 +214,7 @@ impl Member {
                 //     Some(pane)
                 // };
 
-                div().size_full().child(pane.clone())
+                div().size_full().child(pane.clone()).into_any()
 
                 //         Stack::new()
                 //             .with_child(pane_element.contained().with_border(leader_border))
@@ -230,16 +230,18 @@ impl Member {
                 //     .bg(cx.theme().colors().editor)
                 //     .children();
             }
-            Member::Axis(axis) => axis.render(
-                project,
-                basis + 1,
-                follower_states,
-                active_call,
-                active_pane,
-                zoomed,
-                app_state,
-                cx,
-            ),
+            Member::Axis(axis) => axis
+                .render(
+                    project,
+                    basis + 1,
+                    follower_states,
+                    active_call,
+                    active_pane,
+                    zoomed,
+                    app_state,
+                    cx,
+                )
+                .into_any(),
         }
 
         // enum FollowIntoExternalProject {}

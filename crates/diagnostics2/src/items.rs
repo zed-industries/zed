@@ -44,7 +44,7 @@ impl Render for DiagnosticIndicator {
         };
 
         h_stack()
-            .id(cx.entity_id())
+            .id("diagnostic-indicator")
             .on_action(cx.listener(Self::go_to_next_diagnostic))
             .rounded_md()
             .flex_none()

@@ -721,7 +721,7 @@ impl Render for PanelButtons {
                                         let panel = panel.clone();
                                         menu = menu.entry(
                                             ListItem::new(
-                                                panel.entity_id(),
+                                                position.to_label(),
                                                 Label::new(format!("Dock {}", position.to_label())),
                                             ),
                                             move |_, cx| {

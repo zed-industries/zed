@@ -432,10 +432,6 @@ impl AnyElement {
         AnyElement(Box::new(Some(DrawableElement::new(element))) as Box<dyn ElementObject>)
     }
 
-    pub fn element_id(&self) -> Option<ElementId> {
-        self.0.element_id()
-    }
-
     pub fn layout(&mut self, cx: &mut WindowContext) -> LayoutId {
         self.0.layout(cx)
     }
@@ -490,7 +486,7 @@ impl RenderOnce for AnyElement {
     type Element = Self;
 
     fn element_id(&self) -> Option<ElementId> {
-        AnyElement::element_id(self)
+        None
     }
 
     fn render_once(self) -> Self::Element {
