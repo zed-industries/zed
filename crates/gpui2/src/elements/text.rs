@@ -174,10 +174,7 @@ impl TextState {
 
                 let Some(lines) = text_system
                     .shape_text(
-                        &text,
-                        font_size,
-                        &runs[..],
-                        wrap_width, // Wrap if we know the width.
+                        &text, font_size, &runs, wrap_width, // Wrap if we know the width.
                     )
                     .log_err()
                 else {
