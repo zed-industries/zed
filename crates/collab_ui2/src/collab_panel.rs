@@ -3295,9 +3295,9 @@ impl CollabPanel {
 // }
 
 impl Render for CollabPanel {
-    type Element = Focusable<Div>;
+    type Output = Focusable<Div>;
 
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Output {
         div()
             .key_context("CollabPanel")
             .track_focus(&self.focus_handle)

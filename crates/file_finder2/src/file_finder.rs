@@ -118,9 +118,9 @@ impl FocusableView for FileFinder {
     }
 }
 impl Render for FileFinder {
-    type Element = Div;
+    type Output = Div;
 
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Output {
         v_stack().w_96().child(self.picker.clone())
     }
 }

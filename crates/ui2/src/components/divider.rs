@@ -50,7 +50,7 @@ impl Divider {
         self
     }
 
-    fn render(self, cx: &mut WindowContext) -> impl Element {
+    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         div()
             .map(|this| match self.direction {
                 DividerDirection::Horizontal => {

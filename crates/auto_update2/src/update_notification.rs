@@ -9,9 +9,9 @@ pub struct UpdateNotification {
 impl EventEmitter<NotificationEvent> for UpdateNotification {}
 
 impl Render for UpdateNotification {
-    type Element = Div;
+    type Output = Div;
 
-    fn render(&mut self, _cx: &mut gpui::ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, _cx: &mut gpui::ViewContext<Self>) -> Self::Output {
         div().child("Updated zed!")
         // let theme = theme::current(cx).clone();
         // let theme = &theme.update_notification;

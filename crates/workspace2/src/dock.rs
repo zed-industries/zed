@@ -477,9 +477,9 @@ impl Dock {
 }
 
 impl Render for Dock {
-    type Element = Div;
+    type Output = Div;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Output {
         if let Some(entry) = self.visible_entry() {
             let size = entry.panel.size(cx);
 
@@ -663,9 +663,9 @@ impl PanelButtons {
 
 // here be kittens
 impl Render for PanelButtons {
-    type Element = Div;
+    type Output = Div;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Output {
         // todo!()
         let dock = self.dock.read(cx);
         let active_index = dock.active_panel_index;
@@ -782,9 +782,9 @@ pub mod test {
     }
 
     impl Render for TestPanel {
-        type Element = Div;
+        type Output = Div;
 
-        fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
+        fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Output {
             div()
         }
     }

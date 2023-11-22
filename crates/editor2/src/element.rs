@@ -2654,13 +2654,13 @@ impl Element for EditorElement {
 }
 
 impl IntoElement for EditorElement {
-    type Element = Self;
+    type Output = Self;
 
     fn element_id(&self) -> Option<gpui::ElementId> {
         self.editor.element_id()
     }
 
-    fn into_element(self) -> Self::Element {
+    fn into_element(self) -> Self::Output {
         self
     }
 }

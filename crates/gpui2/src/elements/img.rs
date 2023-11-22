@@ -87,13 +87,13 @@ impl Element for Img {
 }
 
 impl IntoElement for Img {
-    type Element = Self;
+    type Output = Self;
 
     fn element_id(&self) -> Option<crate::ElementId> {
         self.interactivity.element_id.clone()
     }
 
-    fn into_element(self) -> Self::Element {
+    fn into_element(self) -> Self::Output {
         self
     }
 }

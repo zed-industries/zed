@@ -27,9 +27,9 @@ impl FocusStory {
 }
 
 impl Render for FocusStory {
-    type Element = Focusable<Stateful<Div>>;
+    type Output = Focusable<Stateful<Div>>;
 
-    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> Self::Output {
         let theme = cx.theme();
         let color_1 = theme.status().created;
         let color_2 = theme.status().modified;

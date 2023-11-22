@@ -91,9 +91,9 @@ struct DiagnosticGroupState {
 impl EventEmitter<ItemEvent> for ProjectDiagnosticsEditor {}
 
 impl Render for ProjectDiagnosticsEditor {
-    type Element = Focusable<Div>;
+    type Output = Focusable<Div>;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Output {
         let child = if self.path_states.is_empty() {
             div()
                 .bg(cx.theme().colors().editor_background)

@@ -102,9 +102,9 @@ impl StoryWrapper {
 }
 
 impl Render for StoryWrapper {
-    type Element = Div;
+    type Output = Div;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Output {
         div()
             .flex()
             .flex_col()

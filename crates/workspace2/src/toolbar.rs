@@ -77,9 +77,9 @@ impl Toolbar {
 }
 
 impl Render for Toolbar {
-    type Element = Div;
+    type Output = Div;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Output {
         //dbg!(&self.items.len());
         v_stack()
             .border_b()

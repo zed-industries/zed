@@ -22,9 +22,9 @@ pub struct DiagnosticIndicator {
 }
 
 impl Render for DiagnosticIndicator {
-    type Element = Stateful<Div>;
+    type Output = Stateful<Div>;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Output {
         let diagnostic_indicator = match (self.summary.error_count, self.summary.warning_count) {
             (0, 0) => h_stack().child(IconElement::new(Icon::Check).color(Color::Success)),
             (0, warning_count) => h_stack()

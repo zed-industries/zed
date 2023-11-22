@@ -1427,9 +1427,9 @@ impl ProjectPanel {
 }
 
 impl Render for ProjectPanel {
-    type Element = Focusable<Stateful<Div>>;
+    type Output = Focusable<Stateful<Div>>;
 
-    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> Self::Output {
         let has_worktree = self.visible_entries.len() != 0;
 
         if has_worktree {

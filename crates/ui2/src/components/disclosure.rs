@@ -1,8 +1,8 @@
-use gpui::{div, Element, ParentElement};
+use gpui::{div, IntoElement, ParentElement};
 
 use crate::{Color, Icon, IconElement, IconSize, Toggle};
 
-pub fn disclosure_control(toggle: Toggle) -> impl Element {
+pub fn disclosure_control(toggle: Toggle) -> impl IntoElement {
     match (toggle.is_toggleable(), toggle.is_toggled()) {
         (false, _) => div(),
         (_, true) => div().child(

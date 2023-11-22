@@ -13,18 +13,18 @@ impl Story {
         ))
     }
 
-    pub fn title(title: impl Into<SharedString>) -> impl Element {
+    pub fn title(title: impl Into<SharedString>) -> impl IntoElement {
         div()
             .text_xl()
             .text_color(hsla(0. / 360., 0. / 100., 0. / 100., 1.))
             .child(title.into())
     }
 
-    pub fn title_for<T>() -> impl Element {
+    pub fn title_for<T>() -> impl IntoElement {
         Self::title(std::any::type_name::<T>())
     }
 
-    pub fn label(label: impl Into<SharedString>) -> impl Element {
+    pub fn label(label: impl Into<SharedString>) -> impl IntoElement {
         div()
             .mt_4()
             .mb_2()

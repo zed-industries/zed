@@ -8,9 +8,9 @@ use crate::{h_stack, v_stack, Button, Icon, IconPosition, Label};
 pub struct ButtonStory;
 
 impl Render for ButtonStory {
-    type Element = Div;
+    type Output = Div;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Output {
         let states = InteractionState::iter();
 
         Story::container()

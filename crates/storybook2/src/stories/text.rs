@@ -12,9 +12,9 @@ impl TextStory {
 }
 
 impl Render for TextStory {
-    type Element = Div;
+    type Output = Div;
 
-    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> Self::Output {
         v_stack()
             .bg(blue())
             .child(

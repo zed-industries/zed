@@ -181,9 +181,9 @@ impl<D: PickerDelegate> Picker<D> {
 }
 
 impl<D: PickerDelegate> Render for Picker<D> {
-    type Element = Div;
+    type Output = Div;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Output {
         div()
             .key_context("picker")
             .size_full()

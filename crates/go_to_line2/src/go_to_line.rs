@@ -145,9 +145,9 @@ impl GoToLine {
 }
 
 impl Render for GoToLine {
-    type Element = Div;
+    type Output = Div;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Output {
         div()
             .elevation_2(cx)
             .key_context("GoToLine")

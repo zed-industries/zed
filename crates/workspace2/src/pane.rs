@@ -1894,9 +1894,9 @@ impl FocusableView for Pane {
 }
 
 impl Render for Pane {
-    type Element = Focusable<Div>;
+    type Output = Focusable<Div>;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Output {
         v_stack()
             .key_context("Pane")
             .track_focus(&self.focus_handle)
@@ -2958,9 +2958,9 @@ struct DraggedTab {
 }
 
 impl Render for DraggedTab {
-    type Element = Div;
+    type Output = Div;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Output {
         div().w_8().h_4().bg(gpui::red())
     }
 }

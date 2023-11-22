@@ -1,4 +1,4 @@
-use gpui::{div, prelude::*, Div, Element, ElementId, IntoElement, Styled, WindowContext};
+use gpui::{div, prelude::*, Div, ElementId, IntoElement, Styled, WindowContext};
 
 use theme2::ActiveTheme;
 
@@ -164,7 +164,7 @@ impl Checkbox {
         self
     }
 
-    pub fn render(self, cx: &mut WindowContext) -> impl Element {
+    pub fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         let group_id = format!("checkbox_group_{:?}", self.id);
 
         let icon = match self.checked {

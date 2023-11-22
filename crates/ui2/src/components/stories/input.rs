@@ -7,9 +7,9 @@ use crate::Input;
 pub struct InputStory;
 
 impl Render for InputStory {
-    type Element = Div;
+    type Output = Div;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Output {
         Story::container()
             .child(Story::title_for::<Input>())
             .child(Story::label("Default"))

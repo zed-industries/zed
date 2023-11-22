@@ -244,13 +244,13 @@ impl Element for UniformList {
 }
 
 impl IntoElement for UniformList {
-    type Element = Self;
+    type Output = Self;
 
     fn element_id(&self) -> Option<crate::ElementId> {
         Some(self.id.clone())
     }
 
-    fn into_element(self) -> Self::Element {
+    fn into_element(self) -> Self::Output {
         self
     }
 }

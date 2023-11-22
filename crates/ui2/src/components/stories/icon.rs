@@ -8,9 +8,9 @@ use crate::{Icon, IconElement};
 pub struct IconStory;
 
 impl Render for IconStory {
-    type Element = Div;
+    type Output = Div;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Output {
         let icons = Icon::iter();
 
         Story::container()

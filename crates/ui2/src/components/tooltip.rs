@@ -68,9 +68,9 @@ impl Tooltip {
 }
 
 impl Render for Tooltip {
-    type Element = Overlay;
+    type Output = Overlay;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Output {
         let ui_font = ThemeSettings::get_global(cx).ui_font.family.clone();
         overlay().child(
             // padding to avoid mouse cursor

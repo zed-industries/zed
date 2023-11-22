@@ -152,13 +152,13 @@ impl Element for Overlay {
 }
 
 impl IntoElement for Overlay {
-    type Element = Self;
+    type Output = Self;
 
     fn element_id(&self) -> Option<crate::ElementId> {
         None
     }
 
-    fn into_element(self) -> Self::Element {
+    fn into_element(self) -> Self::Output {
         self
     }
 }

@@ -3607,9 +3607,9 @@ impl FocusableView for Workspace {
 }
 
 impl Render for Workspace {
-    type Element = Div;
+    type Output = Div;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Output {
         let mut context = KeyContext::default();
         context.add("Workspace");
 

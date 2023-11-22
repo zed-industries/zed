@@ -9,8 +9,8 @@ pub mod terminal_panel;
 // use crate::terminal_element::TerminalElement;
 use editor::{scroll::autoscroll::Autoscroll, Editor};
 use gpui::{
-    actions, div, Action, AnyElement, AppContext, Div, Element, EventEmitter, FocusEvent,
-    FocusHandle, Focusable, FocusableElement, FocusableView, InputHandler, InteractiveElement,
+    actions, div, Action, AnyElement, AppContext, Div, EventEmitter, FocusEvent, FocusHandle,
+    Focusable, FocusableElement, FocusableView, InputHandler, InteractiveElement, IntoElement,
     KeyDownEvent, Keystroke, Model, MouseButton, MouseDownEvent, ParentElement, Pixels, Render,
     SharedString, Styled, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
@@ -532,9 +532,9 @@ impl TerminalView {
 }
 
 impl Render for TerminalView {
-    type Element = Focusable<Div>;
+    type Output = Focusable<Div>;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Output {
         let terminal_handle = self.terminal.clone().downgrade();
 
         let self_id = cx.entity_id();
@@ -749,7 +749,7 @@ impl Item for TerminalView {
         div()
             .child(IconElement::new(Icon::Terminal))
             .child(Label::new(title))
-            .into_any()
+            .into_any_element()
     }
 
     fn clone_on_split(

@@ -1,6 +1,6 @@
 pub use gpui::{
-    div, Element, ElementId, InteractiveElement, ParentElement, RenderOnce, SharedString, Styled,
-    ViewContext, WindowContext,
+    div, ElementId, InteractiveElement, IntoElement, ParentElement, RenderOnce, SharedString,
+    Styled, ViewContext, WindowContext,
 };
 
 pub use crate::StyledExt;

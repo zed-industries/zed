@@ -184,7 +184,7 @@ impl IconElement {
         self
     }
 
-    fn render(self, cx: &mut WindowContext) -> impl Element {
+    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         let svg_size = match self.size {
             IconSize::Small => rems(0.75),
             IconSize::Medium => rems(0.9375),

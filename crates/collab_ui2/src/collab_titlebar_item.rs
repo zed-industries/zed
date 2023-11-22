@@ -82,9 +82,9 @@ pub struct CollabTitlebarItem {
 }
 
 impl Render for CollabTitlebarItem {
-    type Element = Stateful<Div>;
+    type Output = Stateful<Div>;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Output {
         h_stack()
             .id("titlebar")
             .justify_between()

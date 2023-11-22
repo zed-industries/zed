@@ -667,13 +667,13 @@ impl Element for Div {
 }
 
 impl IntoElement for Div {
-    type Element = Self;
+    type Output = Self;
 
     fn element_id(&self) -> Option<ElementId> {
         self.interactivity.element_id.clone()
     }
 
-    fn into_element(self) -> Self::Element {
+    fn into_element(self) -> Self::Output {
         self
     }
 }
@@ -1282,13 +1282,13 @@ impl<E> IntoElement for Focusable<E>
 where
     E: Element,
 {
-    type Element = E;
+    type Output = E;
 
     fn element_id(&self) -> Option<ElementId> {
         self.element.element_id()
     }
 
-    fn into_element(self) -> Self::Element {
+    fn into_element(self) -> Self::Output {
         self.element
     }
 }
@@ -1317,7 +1317,7 @@ where
 
 impl<E> StatefulInteractiveElement for Stateful<E>
 where
-    E: Element,
+    E: IntoElement,
     Self: InteractiveElement,
 {
 }
@@ -1356,13 +1356,13 @@ impl<E> IntoElement for Stateful<E>
 where
     E: Element,
 {
-    type Element = Self;
+    type Output = Self;
 
     fn element_id(&self) -> Option<ElementId> {
         self.element.element_id()
     }
 
-    fn into_element(self) -> Self::Element {
+    fn into_element(self) -> Self::Output {
         self
     }
 }

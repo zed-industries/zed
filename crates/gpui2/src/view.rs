@@ -85,7 +85,7 @@ impl<V: Render> Element for View<V> {
         _state: Option<Self::State>,
         cx: &mut WindowContext,
     ) -> (LayoutId, Self::State) {
-        let mut element = self.update(cx, |view, cx| view.render(cx).into_any());
+        let mut element = self.update(cx, |view, cx| view.render(cx).into_any_element());
         let layout_id = element.layout(cx);
         (layout_id, Some(element))
     }
@@ -245,25 +245,25 @@ impl Element for AnyView {
 }
 
 impl<V: 'static + Render> IntoElement for View<V> {
-    type Element = View<V>;
+    type Output = View<V>;
 
     fn element_id(&self) -> Option<ElementId> {
         Some(self.model.entity_id.into())
     }
 
-    fn into_element(self) -> Self::Element {
+    fn into_element(self) -> Self::Output {
         self
     }
 }
 
 impl IntoElement for AnyView {
-    type Element = Self;
+    type Output = Self;
 
     fn element_id(&self) -> Option<ElementId> {
         Some(self.model.entity_id.into())
     }
 
-    fn into_element(self) -> Self::Element {
+    fn into_element(self) -> Self::Output {
         self
     }
 }
@@ -298,17 +298,17 @@ impl<V: 'static + Render> From<WeakView<V>> for AnyWeakView {
 impl<T, E> Render for T
 where
     T: 'static + FnMut(&mut WindowContext) -> E,
-    E: 'static + Send + Element,
+    E: 'static + Send + IntoElement,
 {
-    type Element = E;
+    type Output = E;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Output {
         (self)(cx)
     }
 }
 
 mod any_view {
-    use crate::{AnyElement, AnyView, BorrowWindow, Element, LayoutId, Render, WindowContext};
+    use crate::{AnyElement, AnyView, BorrowWindow, IntoElement, LayoutId, Render, WindowContext};
 
     pub(crate) fn layout<V: 'static + Render>(
         view: &AnyView,
@@ -316,7 +316,7 @@ mod any_view {
     ) -> (LayoutId, AnyElement) {
         cx.with_element_id(Some(view.model.entity_id), |cx| {
             let view = view.clone().downcast::<V>().unwrap();
-            let mut element = view.update(cx, |view, cx| view.render(cx).into_any());
+            let mut element = view.update(cx, |view, cx| view.render(cx).into_any_element());
             let layout_id = element.layout(cx);
             (layout_id, element)
         })

@@ -64,8 +64,8 @@ pub struct BufferSearchBar {
 impl EventEmitter<Event> for BufferSearchBar {}
 impl EventEmitter<workspace::ToolbarItemEvent> for BufferSearchBar {}
 impl Render for BufferSearchBar {
-    type Element = Div;
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    type Output = Div;
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Output {
         // let query_container_style = if self.query_contains_error {
         //     theme.search.invalid_editor
         // } else {

@@ -6,10 +6,14 @@ use derive_more::{Deref, DerefMut};
 pub(crate) use smallvec::SmallVec;
 use std::{any::Any, fmt::Debug};
 
+/// To create a window, you'll need to pass a `View<V>`, requires type `V` to
+/// implement this trait to GPUI knows how to present it on screen. See [View]
+/// for more details.
 pub trait Render: 'static + Sized {
-    type Element: Element + 'static;
+    /// The type of the element returned
+    type Output: IntoElement + 'static;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element;
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Output;
 }
 
 pub trait RenderOnce: 'static {
@@ -28,11 +32,11 @@ pub trait RenderOnceStateful: 'static {
 }
 
 pub trait IntoElement: Sized {
-    type Element: Element + 'static;
+    type Output: Element + 'static;
 
     fn element_id(&self) -> Option<ElementId>;
 
-    fn into_element(self) -> Self::Element;
+    fn into_element(self) -> Self::Output;
 
     fn into_any_element(self) -> AnyElement {
         self.into_element().into_any()
@@ -43,7 +47,7 @@ pub trait IntoElement: Sized {
         origin: Point<Pixels>,
         available_space: Size<T>,
         cx: &mut WindowContext,
-        f: impl FnOnce(&mut <Self::Element as Element>::State, &mut WindowContext) -> R,
+        f: impl FnOnce(&mut <Self::Output as Element>::State, &mut WindowContext) -> R,
     ) -> R
     where
         T: Clone + Default + Debug + Into<AvailableSpace>,
@@ -117,8 +121,8 @@ pub trait Element: 'static + IntoElement {
 pub struct Component<R>(Option<R>);
 
 pub struct ComponentState<C: RenderOnce> {
-    rendered_element: Option<<C::Output as IntoElement>::Element>,
-    rendered_element_state: <<C::Output as IntoElement>::Element as Element>::State,
+    rendered_element: Option<<C::Output as IntoElement>::Output>,
+    rendered_element_state: <<C::Output as IntoElement>::Output as Element>::State,
 }
 
 impl<R> Component<R> {
@@ -154,13 +158,13 @@ impl<R: RenderOnce> Element for Component<R> {
 }
 
 impl<C: RenderOnce> IntoElement for Component<C> {
-    type Element = Self;
+    type Output = Self;
 
     fn element_id(&self) -> Option<ElementId> {
         None
     }
 
-    fn into_element(self) -> Self::Element {
+    fn into_element(self) -> Self::Output {
         self
     }
 }
@@ -168,8 +172,8 @@ impl<C: RenderOnce> IntoElement for Component<C> {
 pub struct StatefulComponent<R>(Option<R>);
 
 pub struct StatefulComponentState<R: RenderOnceStateful> {
-    rendered_element: Option<<R::Output as IntoElement>::Element>,
-    rendered_element_state: <<R::Output as IntoElement>::Element as Element>::State,
+    rendered_element: Option<<R::Output as IntoElement>::Output>,
+    rendered_element_state: <<R::Output as IntoElement>::Output as Element>::State,
     component_state: Option<R::State>,
 }
 
@@ -231,13 +235,13 @@ impl<R: RenderOnceStateful> Element for StatefulComponent<R> {
 }
 
 impl<R: RenderOnceStateful> IntoElement for StatefulComponent<R> {
-    type Element = Self;
+    type Output = Self;
 
     fn element_id(&self) -> Option<ElementId> {
         Some(self.0.as_ref().unwrap().element_id())
     }
 
-    fn into_element(self) -> Self::Element {
+    fn into_element(self) -> Self::Output {
         self
     }
 }
@@ -533,13 +537,13 @@ impl Element for AnyElement {
 }
 
 impl IntoElement for AnyElement {
-    type Element = Self;
+    type Output = Self;
 
     fn element_id(&self) -> Option<ElementId> {
         AnyElement::element_id(self)
     }
 
-    fn into_element(self) -> Self::Element {
+    fn into_element(self) -> Self::Output {
         self
     }
 }

@@ -5,8 +5,8 @@ use crate::{prelude::*, v_stack, List};
 use crate::{ListItem, ListSeparator, ListSubHeader};
 use gpui::{
     overlay, px, Action, AnchorCorner, AnyElement, AppContext, Bounds, ClickEvent, DispatchPhase,
-    Div, EventEmitter, FocusHandle, FocusableView, IntoElement, LayoutId, ManagedView, Manager,
-    MouseButton, MouseDownEvent, Pixels, Point, Render, View, VisualContext,
+    Div, Element, EventEmitter, FocusHandle, FocusableView, IntoElement, LayoutId, ManagedView,
+    Manager, MouseButton, MouseDownEvent, Pixels, Point, Render, View, VisualContext,
 };
 
 pub enum ContextMenuItem {
@@ -82,9 +82,9 @@ impl ContextMenu {
 }
 
 impl Render for ContextMenu {
-    type Element = Div;
+    type Output = Div;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Output {
         div().elevation_2(cx).flex().flex_row().child(
             v_stack()
                 .min_w(px(200.))
@@ -287,13 +287,13 @@ impl<M: ManagedView> Element for MenuHandle<M> {
 }
 
 impl<M: ManagedView> IntoElement for MenuHandle<M> {
-    type Element = Self;
+    type Output = Self;
 
     fn element_id(&self) -> Option<gpui::ElementId> {
         Some(self.id.clone())
     }
 
-    fn into_element(self) -> Self::Element {
+    fn into_element(self) -> Self::Output {
         self
     }
 }

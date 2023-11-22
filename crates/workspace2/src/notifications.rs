@@ -254,9 +254,9 @@ pub mod simple_message_notification {
     }
 
     impl Render for MessageNotification {
-        type Element = Div;
+        type Output = Div;
 
-        fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+        fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Output {
             todo!()
         }
     }

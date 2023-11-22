@@ -27,13 +27,13 @@ impl Element for &'static str {
 }
 
 impl IntoElement for &'static str {
-    type Element = Self;
+    type Output = Self;
 
     fn element_id(&self) -> Option<ElementId> {
         None
     }
 
-    fn into_element(self) -> Self::Element {
+    fn into_element(self) -> Self::Output {
         self
     }
 }
@@ -58,13 +58,13 @@ impl Element for SharedString {
 }
 
 impl IntoElement for SharedString {
-    type Element = Self;
+    type Output = Self;
 
     fn element_id(&self) -> Option<ElementId> {
         None
     }
 
-    fn into_element(self) -> Self::Element {
+    fn into_element(self) -> Self::Output {
         self
     }
 }
@@ -107,13 +107,13 @@ impl Element for StyledText {
 }
 
 impl IntoElement for StyledText {
-    type Element = Self;
+    type Output = Self;
 
     fn element_id(&self) -> Option<crate::ElementId> {
         None
     }
 
-    fn into_element(self) -> Self::Element {
+    fn into_element(self) -> Self::Output {
         self
     }
 }
@@ -273,13 +273,13 @@ impl Element for InteractiveText {
 }
 
 impl IntoElement for InteractiveText {
-    type Element = Self;
+    type Output = Self;
 
     fn element_id(&self) -> Option<ElementId> {
         Some(self.element_id.clone())
     }
 
-    fn into_element(self) -> Self::Element {
+    fn into_element(self) -> Self::Output {
         self
     }
 }
