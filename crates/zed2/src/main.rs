@@ -180,6 +180,7 @@ fn main() {
             user_store,
             fs,
             build_window_options,
+            call_factory: call::Call::new,
             // background_actions: todo!("ask Mikayla"),
             workspace_store,
             node_runtime,

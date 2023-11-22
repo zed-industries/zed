@@ -1186,6 +1186,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-broadcast",
+ "async-trait",
  "audio2",
  "client2",
  "collections",
@@ -1204,6 +1205,7 @@ dependencies = [
  "serde_json",
  "settings2",
  "util",
+ "workspace2",
 ]
 
 [[package]]
@@ -11381,6 +11383,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-recursion 1.0.5",
+ "async-trait",
  "bincode",
  "call2",
  "client2",

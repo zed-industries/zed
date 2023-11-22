@@ -1,6 +1,5 @@
 use crate::{AppState, FollowerState, Pane, Workspace};
 use anyhow::{anyhow, bail, Result};
-use call2::ActiveCall;
 use collections::HashMap;
 use db2::sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
@@ -127,7 +126,6 @@ impl PaneGroup {
         &self,
         project: &Model<Project>,
         follower_states: &HashMap<View<Pane>, FollowerState>,
-        active_call: Option<&Model<ActiveCall>>,
         active_pane: &View<Pane>,
         zoomed: Option<&AnyWeakView>,
         app_state: &Arc<AppState>,
@@ -137,7 +135,6 @@ impl PaneGroup {
             project,
             0,
             follower_states,
-            active_call,
             active_pane,
             zoomed,
             app_state,
@@ -199,7 +196,6 @@ impl Member {
         project: &Model<Project>,
         basis: usize,
         follower_states: &HashMap<View<Pane>, FollowerState>,
-        active_call: Option<&Model<ActiveCall>>,
         active_pane: &View<Pane>,
         zoomed: Option<&AnyWeakView>,
         app_state: &Arc<AppState>,
@@ -234,7 +230,6 @@ impl Member {
                 project,
                 basis + 1,
                 follower_states,
-                active_call,
                 active_pane,
                 zoomed,
                 app_state,
@@ -556,7 +551,7 @@ impl PaneAxis {
         project: &Model<Project>,
         basis: usize,
         follower_states: &HashMap<View<Pane>, FollowerState>,
-        active_call: Option<&Model<ActiveCall>>,
+
         active_pane: &View<Pane>,
         zoomed: Option<&AnyWeakView>,
         app_state: &Arc<AppState>,
@@ -578,7 +573,6 @@ impl PaneAxis {
                             project,
                             basis,
                             follower_states,
-                            active_call,
                             active_pane,
                             zoomed,
                             app_state,
