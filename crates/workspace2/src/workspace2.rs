@@ -322,6 +322,36 @@ struct Follower {
     peer_id: PeerId,
 }
 
+#[cfg(any(test, feature = "test-support"))]
+pub struct TestCallHandler;
+
+#[cfg(any(test, feature = "test-support"))]
+impl CallHandler for TestCallHandler {
+    fn peer_state(&mut self, id: PeerId, cx: &mut ViewContext<Workspace>) -> Option<(bool, bool)> {
+        None
+    }
+
+    fn shared_screen_for_peer(
+        &self,
+        peer_id: PeerId,
+        pane: &View<Pane>,
+        cx: &mut ViewContext<Workspace>,
+    ) -> Option<Box<dyn ItemHandle>> {
+        None
+    }
+
+    fn room_id(&self, cx: &AppContext) -> Option<u64> {
+        None
+    }
+
+    fn hang_up(&self, cx: AsyncWindowContext) -> Result<Task<Result<()>>> {
+        anyhow::bail!("TestCallHandler should not be hanging up")
+    }
+
+    fn active_project(&self, cx: &AppContext) -> Option<WeakModel<Project>> {
+        None
+    }
+}
 impl AppState {
     #[cfg(any(test, feature = "test-support"))]
     pub fn test(cx: &mut AppContext) -> Arc<Self> {
@@ -352,6 +382,7 @@ impl AppState {
             workspace_store,
             node_runtime: FakeNodeRuntime::new(),
             build_window_options: |_, _, _| Default::default(),
+            call_factory: |_, _| Box::new(TestCallHandler),
         })
     }
 }
@@ -3298,6 +3329,7 @@ impl Workspace {
             fs: project.read(cx).fs().clone(),
             build_window_options: |_, _, _| Default::default(),
             node_runtime: FakeNodeRuntime::new(),
+            call_factory: |_, _| Box::new(TestCallHandler),
         });
         let workspace = Self::new(0, project, app_state, cx);
         workspace.active_pane.update(cx, |pane, cx| pane.focus(cx));
