@@ -191,7 +191,7 @@ impl TextState {
                 for line in &lines {
                     let line_size = line.size(line_height);
                     size.height += line_size.height;
-                    size.width = size.width.max(line_size.width);
+                    size.width = size.width.max(line_size.width).ceil();
                 }
 
                 element_state.lock().replace(TextStateInner {
