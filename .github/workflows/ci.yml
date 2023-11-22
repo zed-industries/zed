@@ -24,7 +24,7 @@ jobs:
       - test
     steps:
       - name: Set up default .cargo/config.toml
-	run: echo "[build]\nrustflags = [\"-D\", \"warnings\"]" > $HOME/.cargo/config.toml
+        run: echo "[build]\nrustflags = [\"-D\", \"warnings\"]" > $HOME/.cargo/config.toml
 
       - name: Checkout repo
         uses: actions/checkout@v3
