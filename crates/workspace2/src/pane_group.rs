@@ -210,7 +210,7 @@ impl Member {
                 //     Some(pane)
                 // };
 
-                div().size_full().child(pane.clone())
+                div().size_full().child(pane.clone()).into_any()
 
                 //         Stack::new()
                 //             .with_child(pane_element.contained().with_border(leader_border))
@@ -226,15 +226,17 @@ impl Member {
                 //     .bg(cx.theme().colors().editor)
                 //     .children();
             }
-            Member::Axis(axis) => axis.render(
-                project,
-                basis + 1,
-                follower_states,
-                active_pane,
-                zoomed,
-                app_state,
-                cx,
-            ),
+            Member::Axis(axis) => axis
+                .render(
+                    project,
+                    basis + 1,
+                    follower_states,
+                    active_pane,
+                    zoomed,
+                    app_state,
+                    cx,
+                )
+                .into_any(),
         }
 
         // enum FollowIntoExternalProject {}
@@ -551,7 +553,6 @@ impl PaneAxis {
         project: &Model<Project>,
         basis: usize,
         follower_states: &HashMap<View<Pane>, FollowerState>,
-
         active_pane: &View<Pane>,
         zoomed: Option<&AnyWeakView>,
         app_state: &Arc<AppState>,

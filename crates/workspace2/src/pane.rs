@@ -1350,7 +1350,7 @@ impl Pane {
             let id = item.item_id();
 
             div()
-                .id(item.item_id())
+                .id(ix)
                 .invisible()
                 .group_hover("", |style| style.visible())
                 .child(
@@ -1382,7 +1382,7 @@ impl Pane {
 
         div()
             .group("")
-            .id(item.item_id())
+            .id(ix)
             .cursor_pointer()
             .when_some(item.tab_tooltip_text(cx), |div, text| {
                 div.tooltip(move |cx| cx.build_view(|cx| Tooltip::new(text.clone())).into())

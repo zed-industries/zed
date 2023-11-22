@@ -1550,7 +1550,7 @@ mod tests {
                                 block_id: ix,
                                 editor_style: &editor::EditorStyle::default(),
                             })
-                            .element_id()?
+                            .inner_id()?
                             .try_into()
                             .ok()?,
 

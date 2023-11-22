@@ -230,9 +230,15 @@ pub struct Window {
     pub(crate) focus: Option<FocusId>,
 }
 
+pub(crate) struct ElementStateBox {
+    inner: Box<dyn Any>,
+    #[cfg(debug_assertions)]
+    type_name: &'static str,
+}
+
 // #[derive(Default)]
 pub(crate) struct Frame {
-    pub(crate) element_states: HashMap<GlobalElementId, Box<dyn Any>>,
+    pub(crate) element_states: HashMap<GlobalElementId, ElementStateBox>,
     mouse_listeners: HashMap<TypeId, Vec<(StackingOrder, AnyMouseListener)>>,
     pub(crate) dispatch_tree: DispatchTree,
     pub(crate) focus_listeners: Vec<AnyFocusListener>,
@@ -1815,10 +1821,37 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
                         .remove(&global_id)
                 })
             {
+                let ElementStateBox {
+                    inner,
+
+                    #[cfg(debug_assertions)]
+                    type_name
+                } = any;
                 // Using the extra inner option to avoid needing to reallocate a new box.
-                let mut state_box = any
+                let mut state_box = inner
                     .downcast::<Option<S>>()
-                    .expect("invalid element state type for id");
+                    .map_err(|_| {
+                        #[cfg(debug_assertions)]
+                        {
+                            anyhow!(
+                                "invalid element state type for id, requested_type {:?}, actual type: {:?}",
+                                std::any::type_name::<S>(),
+                                type_name
+                            )
+                        }
+
+                        #[cfg(not(debug_assertions))]
+                        {
+                            anyhow!(
+                                "invalid element state type for id, requested_type {:?}",
+                                std::any::type_name::<S>(),
+                            )
+                        }
+                    })
+                    .unwrap();
+
+                // Actual: Option<AnyElement> <- View
+                // Requested: () <- AnyElemet
                 let state = state_box
                     .take()
                     .expect("element state is already on the stack");
@@ -1827,14 +1860,27 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
                 cx.window_mut()
                     .current_frame
                     .element_states
-                    .insert(global_id, state_box);
+                    .insert(global_id, ElementStateBox {
+                        inner: state_box,
+
+                        #[cfg(debug_assertions)]
+                        type_name
+                    });
                 result
             } else {
                 let (result, state) = f(None, cx);
                 cx.window_mut()
                     .current_frame
                     .element_states
-                    .insert(global_id, Box::new(Some(state)));
+                    .insert(global_id,
+                        ElementStateBox {
+                            inner: Box::new(Some(state)),
+
+                            #[cfg(debug_assertions)]
+                            type_name: std::any::type_name::<S>()
+                        }
+
+                    );
                 result
             }
         })
@@ -2599,6 +2645,12 @@ pub enum ElementId {
     FocusHandle(FocusId),
 }
 
+impl ElementId {
+    pub(crate) fn from_entity_id(entity_id: EntityId) -> Self {
+        ElementId::View(entity_id)
+    }
+}
+
 impl TryInto<SharedString> for ElementId {
     type Error = anyhow::Error;
 
@@ -2608,12 +2660,6 @@ impl TryInto<SharedString> for ElementId {
         } else {
             Err(anyhow!("element id is not string"))
         }
-    }
-}
-
-impl From<EntityId> for ElementId {
-    fn from(id: EntityId) -> Self {
-        ElementId::View(id)
     }
 }
 
