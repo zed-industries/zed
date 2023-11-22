@@ -44,7 +44,7 @@ use gpui::{
     EventEmitter, FocusHandle, FocusableView, FontFeatures, FontStyle, FontWeight, HighlightStyle,
     Hsla, InputHandler, KeyContext, Model, MouseButton, ParentElement, Pixels, Render,
     SharedString, Styled, Subscription, Task, TextStyle, UniformListScrollHandle, View,
-    ViewContext, VisualContext, WeakView, WindowContext,
+    ViewContext, VisualContext, WeakView, WhiteSpace, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -1358,9 +1358,11 @@ impl CompletionsMenu {
                         //
                         div()
                             .id(mat.candidate_id)
+                            .whitespace_nowrap()
+                            .overflow_hidden()
                             .bg(gpui::green())
                             .hover(|style| style.bg(gpui::blue()))
-                            .when(item_ix == selected_item, |div| div.bg(gpui::blue()))
+                            .when(item_ix == selected_item, |div| div.bg(gpui::red()))
                             .child(SharedString::from(completion.label.text.clone()))
                             .min_w(px(300.))
                             .max_w(px(700.))
@@ -9396,6 +9398,7 @@ impl Render for Editor {
                 font_style: FontStyle::Normal,
                 line_height: relative(1.).into(),
                 underline: None,
+                white_space: WhiteSpace::Normal,
             },
 
             EditorMode::AutoHeight { max_lines } => todo!(),
@@ -9409,6 +9412,7 @@ impl Render for Editor {
                 font_style: FontStyle::Normal,
                 line_height: relative(settings.buffer_line_height.value()),
                 underline: None,
+                white_space: WhiteSpace::Normal,
             },
         };
 

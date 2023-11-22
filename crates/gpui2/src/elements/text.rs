@@ -1,6 +1,6 @@
 use crate::{
     Bounds, Element, ElementId, LayoutId, Pixels, RenderOnce, SharedString, Size, TextRun,
-    WindowContext, WrappedLine,
+    WhiteSpace, WindowContext, WrappedLine,
 };
 use anyhow::anyhow;
 use parking_lot::{Mutex, MutexGuard};
@@ -159,10 +159,14 @@ impl TextState {
             let element_state = self.clone();
 
             move |known_dimensions, available_space| {
-                let wrap_width = known_dimensions.width.or(match available_space.width {
-                    crate::AvailableSpace::Definite(x) => Some(x),
-                    _ => None,
-                });
+                let wrap_width = if text_style.white_space == WhiteSpace::Normal {
+                    known_dimensions.width.or(match available_space.width {
+                        crate::AvailableSpace::Definite(x) => Some(x),
+                        _ => None,
+                    })
+                } else {
+                    None
+                };
 
                 if let Some(text_state) = element_state.0.lock().as_ref() {
                     if text_state.size.is_some()
