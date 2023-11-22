@@ -36,7 +36,7 @@ use std::{
 };
 use theme::ActiveTheme;
 pub use toolbar_controls::ToolbarControls;
-use ui::{h_stack, Color, HighlightedLabel, Icon, IconElement, Label};
+use ui::{h_stack, Color, HighlightedLabel, Icon, IconElement, Label, LabelSize};
 use util::TryFutureExt;
 use workspace::{
     item::{BreadcrumbText, Item, ItemEvent, ItemHandle},
@@ -802,11 +802,22 @@ pub(crate) fn render_summary(summary: &DiagnosticSummary) -> AnyElement {
         label.render_into_any()
     } else {
         h_stack()
-            .bg(gpui::red())
-            .child(IconElement::new(Icon::XCircle))
-            .child(Label::new(summary.error_count.to_string()))
-            .child(IconElement::new(Icon::ExclamationTriangle))
-            .child(Label::new(summary.warning_count.to_string()))
+            .gap_1()
+            .when(summary.error_count > 0, |then| {
+                then.child(
+                    h_stack()
+                        .gap_1()
+                        .child(IconElement::new(Icon::XCircle).color(Color::Error))
+                        .child(Label::new(summary.error_count.to_string())),
+                )
+            })
+            .when(summary.warning_count > 0, |then| {
+                then.child(
+                    h_stack()
+                        .child(IconElement::new(Icon::ExclamationTriangle).color(Color::Warning))
+                        .child(Label::new(summary.warning_count.to_string())),
+                )
+            })
             .render_into_any()
     }
 }
