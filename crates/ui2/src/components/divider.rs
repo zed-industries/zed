@@ -1,4 +1,4 @@
-use gpui::{Div, RenderOnce};
+use gpui::{Div, IntoElement};
 
 use crate::prelude::*;
 
@@ -7,13 +7,13 @@ enum DividerDirection {
     Vertical,
 }
 
-#[derive(RenderOnce)]
+#[derive(IntoElement)]
 pub struct Divider {
     direction: DividerDirection,
     inset: bool,
 }
 
-impl Component for Divider {
+impl RenderOnce for Divider {
     type Rendered = Div;
 
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {

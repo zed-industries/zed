@@ -19,8 +19,8 @@ use anyhow::Result;
 use collections::{BTreeMap, HashMap};
 use gpui::{
     div, point, px, relative, size, transparent_black, Action, AnyElement, AvailableSpace,
-    BorrowWindow, Bounds, Component, ContentMask, Corners, DispatchPhase, Edges, Element,
-    ElementId, ElementInputHandler, Entity, EntityId, Hsla, InteractiveElement, LineLayout,
+    BorrowWindow, Bounds, ContentMask, Corners, DispatchPhase, Edges, Element, ElementId,
+    ElementInputHandler, Entity, EntityId, Hsla, InteractiveElement, IntoElement, LineLayout,
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, RenderOnce,
     ScrollWheelEvent, ShapedLine, SharedString, Size, StatefulInteractiveElement, Style, Styled,
     TextRun, TextStyle, View, ViewContext, WeakView, WindowContext, WrappedLine,
@@ -663,7 +663,7 @@ impl EditorElement {
 
         for (ix, fold_indicator) in layout.fold_indicators.drain(..).enumerate() {
             if let Some(mut fold_indicator) = fold_indicator {
-                let mut fold_indicator = fold_indicator.render_into_any();
+                let mut fold_indicator = fold_indicator.into_any_element();
                 let available_space = size(
                     AvailableSpace::MinContent,
                     AvailableSpace::Definite(line_height * 0.55),
@@ -684,7 +684,7 @@ impl EditorElement {
         }
 
         if let Some(indicator) = layout.code_actions_indicator.take() {
-            let mut button = indicator.button.render_into_any();
+            let mut button = indicator.button.into_any_element();
             let available_space = size(
                 AvailableSpace::MinContent,
                 AvailableSpace::Definite(line_height),
@@ -2653,14 +2653,14 @@ impl Element for EditorElement {
     }
 }
 
-impl RenderOnce for EditorElement {
+impl IntoElement for EditorElement {
     type Element = Self;
 
     fn element_id(&self) -> Option<gpui::ElementId> {
         self.editor.element_id()
     }
 
-    fn render_once(self) -> Self::Element {
+    fn into_element(self) -> Self::Element {
         self
     }
 }

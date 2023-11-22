@@ -1,8 +1,8 @@
 use std::rc::Rc;
 
 use gpui::{
-    DefiniteLength, Div, Hsla, MouseButton, MouseDownEvent, RenderOnce, StatefulInteractiveElement,
-    WindowContext,
+    DefiniteLength, Div, Hsla, IntoElement, MouseButton, MouseDownEvent,
+    StatefulInteractiveElement, WindowContext,
 };
 
 use crate::prelude::*;
@@ -64,7 +64,7 @@ impl ButtonVariant {
     }
 }
 
-#[derive(RenderOnce)]
+#[derive(IntoElement)]
 pub struct Button {
     disabled: bool,
     click_handler: Option<Rc<dyn Fn(&MouseDownEvent, &mut WindowContext)>>,
@@ -76,7 +76,7 @@ pub struct Button {
     color: Option<Color>,
 }
 
-impl Component for Button {
+impl RenderOnce for Button {
     type Rendered = gpui::Stateful<Div>;
 
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {
@@ -207,12 +207,12 @@ impl Button {
     }
 }
 
-#[derive(RenderOnce)]
+#[derive(IntoElement)]
 pub struct ButtonGroup {
     buttons: Vec<Button>,
 }
 
-impl Component for ButtonGroup {
+impl RenderOnce for ButtonGroup {
     type Rendered = Div;
 
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {

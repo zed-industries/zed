@@ -7,7 +7,7 @@ use db2::sqlez::{
     statement::Statement,
 };
 use gpui::{
-    point, size, AnyWeakView, Bounds, Div, Model, Pixels, Point, RenderOnce, View, ViewContext,
+    point, size, AnyWeakView, Bounds, Div, IntoElement, Model, Pixels, Point, View, ViewContext,
 };
 use parking_lot::Mutex;
 use project2::Project;
@@ -132,7 +132,7 @@ impl PaneGroup {
         zoomed: Option<&AnyWeakView>,
         app_state: &Arc<AppState>,
         cx: &mut ViewContext<Workspace>,
-    ) -> impl RenderOnce {
+    ) -> impl IntoElement {
         self.root.render(
             project,
             0,
@@ -204,7 +204,7 @@ impl Member {
         zoomed: Option<&AnyWeakView>,
         app_state: &Arc<AppState>,
         cx: &mut ViewContext<Workspace>,
-    ) -> impl RenderOnce {
+    ) -> impl IntoElement {
         match self {
             Member::Pane(pane) => {
                 // todo!()
@@ -584,8 +584,8 @@ impl PaneAxis {
                             app_state,
                             cx,
                         )
-                        .render_into_any(),
-                    Member::Pane(pane) => pane.clone().render_into_any(),
+                        .into_any_element(),
+                    Member::Pane(pane) => pane.clone().into_any_element(),
                 }
             }))
 

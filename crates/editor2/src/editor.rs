@@ -40,9 +40,9 @@ use fuzzy::{StringMatch, StringMatchCandidate};
 use git::diff_hunk_to_display;
 use gpui::{
     actions, div, point, prelude::*, px, relative, rems, size, uniform_list, Action, AnyElement,
-    AppContext, AsyncWindowContext, BackgroundExecutor, Bounds, ClipboardItem, Component, Context,
+    AppContext, AsyncWindowContext, BackgroundExecutor, Bounds, ClipboardItem, Context,
     EventEmitter, FocusHandle, FocusableView, FontFeatures, FontStyle, FontWeight, HighlightStyle,
-    Hsla, InputHandler, KeyContext, Model, MouseButton, ParentElement, Pixels, Render,
+    Hsla, InputHandler, KeyContext, Model, MouseButton, ParentElement, Pixels, Render, RenderOnce,
     SharedString, Styled, Subscription, Task, TextStyle, UniformListScrollHandle, View,
     ViewContext, VisualContext, WeakView, WhiteSpace, WindowContext,
 };
@@ -1373,7 +1373,7 @@ impl CompletionsMenu {
         .track_scroll(self.scroll_handle.clone())
         .with_width_from_item(widest_completion_ix);
 
-        list.render_into_any()
+        list.into_any_element()
         // todo!("multiline documentation")
         //     enum MultiLineDocumentation {}
 
@@ -1596,7 +1596,7 @@ impl CodeActionsMenu {
                 .max_by_key(|(_, action)| action.lsp_action.title.chars().count())
                 .map(|(ix, _)| ix),
         )
-        .render_into_any();
+        .into_any_element();
 
         if self.deployed_from_indicator {
             *cursor_position.column_mut() = 0;
@@ -7796,7 +7796,7 @@ impl Editor {
                                                     .clone(),
                                             },
                                         ))
-                                        .render_into_any()
+                                        .into_any_element()
                                 }
                             }),
                             disposition: BlockDisposition::Below,
@@ -10005,7 +10005,7 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, is_valid: bool) -> Rend
                 cx.write_to_clipboard(ClipboardItem::new(message.clone()));
             }))
             .tooltip(|cx| Tooltip::text("Copy diagnostic message", cx))
-            .render_into_any()
+            .into_any_element()
     })
 }
 

@@ -1,4 +1,4 @@
-use gpui::{div, prelude::*, Div, Element, ElementId, RenderOnce, Styled, WindowContext};
+use gpui::{div, prelude::*, Div, Element, ElementId, IntoElement, Styled, WindowContext};
 
 use theme2::ActiveTheme;
 
@@ -11,7 +11,7 @@ pub type CheckHandler = Box<dyn Fn(&Selection, &mut WindowContext) + 'static>;
 /// Checkboxes are used for multiple choices, not for mutually exclusive choices.
 /// Each checkbox works independently from other checkboxes in the list,
 /// therefore checking an additional box does not affect any other selections.
-#[derive(RenderOnce)]
+#[derive(IntoElement)]
 pub struct Checkbox {
     id: ElementId,
     checked: Selection,
@@ -19,7 +19,7 @@ pub struct Checkbox {
     on_click: Option<CheckHandler>,
 }
 
-impl Component for Checkbox {
+impl RenderOnce for Checkbox {
     type Rendered = gpui::Stateful<Div>;
 
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {

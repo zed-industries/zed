@@ -1,5 +1,5 @@
 use gpui::{
-    div, px, AnyElement, ClickEvent, Div, RenderOnce, Stateful, StatefulInteractiveElement,
+    div, px, AnyElement, ClickEvent, Div, IntoElement, Stateful, StatefulInteractiveElement,
 };
 use smallvec::SmallVec;
 use std::rc::Rc;
@@ -25,7 +25,7 @@ pub enum ListHeaderMeta {
     Text(Label),
 }
 
-#[derive(RenderOnce)]
+#[derive(IntoElement)]
 pub struct ListHeader {
     label: SharedString,
     left_icon: Option<Icon>,
@@ -34,7 +34,7 @@ pub struct ListHeader {
     toggle: Toggle,
 }
 
-impl Component for ListHeader {
+impl RenderOnce for ListHeader {
     type Rendered = Div;
 
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {
@@ -179,7 +179,7 @@ impl ListHeader {
     // }
 }
 
-#[derive(RenderOnce, Clone)]
+#[derive(IntoElement, Clone)]
 pub struct ListSubHeader {
     label: SharedString,
     left_icon: Option<Icon>,
@@ -201,7 +201,7 @@ impl ListSubHeader {
     }
 }
 
-impl Component for ListSubHeader {
+impl RenderOnce for ListSubHeader {
     type Rendered = Div;
 
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {
@@ -238,7 +238,7 @@ pub enum ListEntrySize {
     Medium,
 }
 
-#[derive(RenderOnce)]
+#[derive(IntoElement)]
 pub struct ListItem {
     id: ElementId,
     disabled: bool,
@@ -328,7 +328,7 @@ impl ListItem {
     }
 }
 
-impl Component for ListItem {
+impl RenderOnce for ListItem {
     type Rendered = Stateful<Div>;
 
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {
@@ -399,7 +399,7 @@ impl Component for ListItem {
     }
 }
 
-#[derive(RenderOnce, Clone)]
+#[derive(IntoElement, Clone)]
 pub struct ListSeparator;
 
 impl ListSeparator {
@@ -408,7 +408,7 @@ impl ListSeparator {
     }
 }
 
-impl Component for ListSeparator {
+impl RenderOnce for ListSeparator {
     type Rendered = Div;
 
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {
@@ -416,7 +416,7 @@ impl Component for ListSeparator {
     }
 }
 
-#[derive(RenderOnce)]
+#[derive(IntoElement)]
 pub struct List {
     /// Message to display when the list is empty
     /// Defaults to "No items"
@@ -426,7 +426,7 @@ pub struct List {
     children: SmallVec<[AnyElement; 2]>,
 }
 
-impl Component for List {
+impl RenderOnce for List {
     type Rendered = Div;
 
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {

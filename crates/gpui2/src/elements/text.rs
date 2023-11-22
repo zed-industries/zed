@@ -1,5 +1,5 @@
 use crate::{
-    Bounds, Element, ElementId, LayoutId, Pixels, RenderOnce, SharedString, Size, TextRun,
+    Bounds, Element, ElementId, IntoElement, LayoutId, Pixels, SharedString, Size, TextRun,
     WhiteSpace, WindowContext, WrappedLine,
 };
 use anyhow::anyhow;
@@ -26,14 +26,14 @@ impl Element for &'static str {
     }
 }
 
-impl RenderOnce for &'static str {
+impl IntoElement for &'static str {
     type Element = Self;
 
     fn element_id(&self) -> Option<ElementId> {
         None
     }
 
-    fn render_once(self) -> Self::Element {
+    fn into_element(self) -> Self::Element {
         self
     }
 }
@@ -57,14 +57,14 @@ impl Element for SharedString {
     }
 }
 
-impl RenderOnce for SharedString {
+impl IntoElement for SharedString {
     type Element = Self;
 
     fn element_id(&self) -> Option<ElementId> {
         None
     }
 
-    fn render_once(self) -> Self::Element {
+    fn into_element(self) -> Self::Element {
         self
     }
 }
@@ -106,14 +106,14 @@ impl Element for StyledText {
     }
 }
 
-impl RenderOnce for StyledText {
+impl IntoElement for StyledText {
     type Element = Self;
 
     fn element_id(&self) -> Option<crate::ElementId> {
         None
     }
 
-    fn render_once(self) -> Self::Element {
+    fn into_element(self) -> Self::Element {
         self
     }
 }
@@ -272,14 +272,14 @@ impl Element for InteractiveText {
     }
 }
 
-impl RenderOnce for InteractiveText {
+impl IntoElement for InteractiveText {
     type Element = Self;
 
     fn element_id(&self) -> Option<ElementId> {
         Some(self.element_id.clone())
     }
 
-    fn render_once(self) -> Self::Element {
+    fn into_element(self) -> Self::Element {
         self
     }
 }

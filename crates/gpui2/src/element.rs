@@ -12,15 +12,15 @@ pub trait Render: 'static + Sized {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element;
 }
 
-pub trait RenderOnce: Sized {
+pub trait IntoElement: Sized {
     type Element: Element + 'static;
 
     fn element_id(&self) -> Option<ElementId>;
 
-    fn render_once(self) -> Self::Element;
+    fn into_element(self) -> Self::Element;
 
-    fn render_into_any(self) -> AnyElement {
-        self.render_once().into_any()
+    fn into_any_element(self) -> AnyElement {
+        self.into_element().into_any()
     }
 
     fn draw<T, R>(
@@ -33,7 +33,7 @@ pub trait RenderOnce: Sized {
     where
         T: Clone + Default + Debug + Into<AvailableSpace>,
     {
-        let element = self.render_once();
+        let element = self.into_element();
         let element_id = element.element_id();
         let element = DrawableElement {
             element: Some(element),
@@ -57,7 +57,7 @@ pub trait RenderOnce: Sized {
     fn map<U>(self, f: impl FnOnce(Self) -> U) -> U
     where
         Self: Sized,
-        U: RenderOnce,
+        U: IntoElement,
     {
         f(self)
     }
@@ -83,7 +83,7 @@ pub trait RenderOnce: Sized {
     }
 }
 
-pub trait Element: 'static + RenderOnce {
+pub trait Element: 'static + IntoElement {
     type State: 'static;
 
     fn layout(
@@ -99,30 +99,30 @@ pub trait Element: 'static + RenderOnce {
     }
 }
 
-pub trait Component: 'static {
-    type Rendered: RenderOnce;
+pub trait RenderOnce: 'static {
+    type Rendered: IntoElement;
 
     fn render(self, cx: &mut WindowContext) -> Self::Rendered;
 }
 
-pub struct CompositeElement<C> {
+pub struct Component<C> {
     component: Option<C>,
 }
 
-pub struct CompositeElementState<C: Component> {
-    rendered_element: Option<<C::Rendered as RenderOnce>::Element>,
-    rendered_element_state: <<C::Rendered as RenderOnce>::Element as Element>::State,
+pub struct CompositeElementState<C: RenderOnce> {
+    rendered_element: Option<<C::Rendered as IntoElement>::Element>,
+    rendered_element_state: <<C::Rendered as IntoElement>::Element as Element>::State,
 }
 
-impl<C> CompositeElement<C> {
+impl<C> Component<C> {
     pub fn new(component: C) -> Self {
-        CompositeElement {
+        Component {
             component: Some(component),
         }
     }
 }
 
-impl<C: Component> Element for CompositeElement<C> {
+impl<C: RenderOnce> Element for Component<C> {
     type State = CompositeElementState<C>;
 
     fn layout(
@@ -130,7 +130,7 @@ impl<C: Component> Element for CompositeElement<C> {
         state: Option<Self::State>,
         cx: &mut WindowContext,
     ) -> (LayoutId, Self::State) {
-        let mut element = self.component.take().unwrap().render(cx).render_once();
+        let mut element = self.component.take().unwrap().render(cx).into_element();
         let (layout_id, state) = element.layout(state.map(|s| s.rendered_element_state), cx);
         let state = CompositeElementState {
             rendered_element: Some(element),
@@ -148,14 +148,14 @@ impl<C: Component> Element for CompositeElement<C> {
     }
 }
 
-impl<C: Component> RenderOnce for CompositeElement<C> {
+impl<C: RenderOnce> IntoElement for Component<C> {
     type Element = Self;
 
     fn element_id(&self) -> Option<ElementId> {
         None
     }
 
-    fn render_once(self) -> Self::Element {
+    fn into_element(self) -> Self::Element {
         self
     }
 }
@@ -166,23 +166,20 @@ pub struct GlobalElementId(SmallVec<[ElementId; 32]>);
 pub trait ParentElement {
     fn children_mut(&mut self) -> &mut SmallVec<[AnyElement; 2]>;
 
-    fn child(mut self, child: impl RenderOnce) -> Self
+    fn child(mut self, child: impl IntoElement) -> Self
     where
         Self: Sized,
     {
-        self.children_mut().push(child.render_once().into_any());
+        self.children_mut().push(child.into_element().into_any());
         self
     }
 
-    fn children(mut self, children: impl IntoIterator<Item = impl RenderOnce>) -> Self
+    fn children(mut self, children: impl IntoIterator<Item = impl IntoElement>) -> Self
     where
         Self: Sized,
     {
-        self.children_mut().extend(
-            children
-                .into_iter()
-                .map(|child| child.render_once().into_any()),
-        );
+        self.children_mut()
+            .extend(children.into_iter().map(|child| child.into_any_element()));
         self
     }
 }
@@ -486,14 +483,14 @@ impl Element for AnyElement {
     }
 }
 
-impl RenderOnce for AnyElement {
+impl IntoElement for AnyElement {
     type Element = Self;
 
     fn element_id(&self) -> Option<ElementId> {
         AnyElement::element_id(self)
     }
 
-    fn render_once(self) -> Self::Element {
+    fn into_element(self) -> Self::Element {
         self
     }
 }

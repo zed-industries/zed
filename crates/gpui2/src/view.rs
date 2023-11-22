@@ -1,7 +1,7 @@
 use crate::{
     private::Sealed, AnyElement, AnyModel, AnyWeakModel, AppContext, AvailableSpace, BorrowWindow,
-    Bounds, Element, ElementId, Entity, EntityId, Flatten, FocusHandle, FocusableView, LayoutId,
-    Model, Pixels, Point, Render, RenderOnce, Size, ViewContext, VisualContext, WeakModel,
+    Bounds, Element, ElementId, Entity, EntityId, Flatten, FocusHandle, FocusableView, IntoElement,
+    LayoutId, Model, Pixels, Point, Render, Size, ViewContext, VisualContext, WeakModel,
     WindowContext,
 };
 use anyhow::{Context, Result};
@@ -244,26 +244,26 @@ impl Element for AnyView {
     }
 }
 
-impl<V: 'static + Render> RenderOnce for View<V> {
+impl<V: 'static + Render> IntoElement for View<V> {
     type Element = View<V>;
 
     fn element_id(&self) -> Option<ElementId> {
         Some(self.model.entity_id.into())
     }
 
-    fn render_once(self) -> Self::Element {
+    fn into_element(self) -> Self::Element {
         self
     }
 }
 
-impl RenderOnce for AnyView {
+impl IntoElement for AnyView {
     type Element = Self;
 
     fn element_id(&self) -> Option<ElementId> {
         Some(self.model.entity_id.into())
     }
 
-    fn render_once(self) -> Self::Element {
+    fn into_element(self) -> Self::Element {
         self
     }
 }

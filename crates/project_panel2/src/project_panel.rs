@@ -10,8 +10,8 @@ use anyhow::{anyhow, Result};
 use gpui::{
     actions, div, px, uniform_list, Action, AppContext, AssetSource, AsyncWindowContext,
     ClipboardItem, Div, EventEmitter, FocusHandle, Focusable, FocusableView, InteractiveElement,
-    Model, MouseButton, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render,
-    RenderOnce, Stateful, StatefulInteractiveElement, Styled, Task, UniformListScrollHandle, View,
+    IntoElement, Model, MouseButton, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel,
+    Render, Stateful, StatefulInteractiveElement, Styled, Task, UniformListScrollHandle, View,
     ViewContext, VisualContext as _, WeakView, WindowContext,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
