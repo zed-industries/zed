@@ -463,6 +463,10 @@ impl AnyElement {
     pub fn into_any(self) -> AnyElement {
         AnyElement::new(self)
     }
+
+    pub fn inner_id(&self) -> Option<ElementId> {
+        self.0.element_id()
+    }
 }
 
 impl Element for AnyElement {
