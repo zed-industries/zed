@@ -1770,8 +1770,7 @@ impl View for ProjectSearchBar {
 
             let include_ignored = is_semantic_disabled.then(|| {
                 render_option_button_icon(
-                    // TODO proper icon
-                    "icons/case_insensitive.svg",
+                    "icons/file_icons/git.svg",
                     SearchOptions::INCLUDE_IGNORED,
                     cx,
                 )
