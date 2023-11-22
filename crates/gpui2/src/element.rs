@@ -7,8 +7,14 @@ pub(crate) use smallvec::SmallVec;
 use std::{any::Any, fmt::Debug};
 
 /// To create a window, you'll need to pass a `View<V>`, requires type `V` to
-/// implement this trait to GPUI knows how to present it on screen. See [View]
-/// for more details.
+/// implement this trait to GPUI knows how to present it on screen. Since `View`s
+/// are themselves elements, they can be used to embed a stateful subset within
+/// a larger element tree.
+///
+/// In Zed, major parts of the UI such as editors and panels are implemented as
+/// views. If you only require state that lives as long as an identified element
+/// is present in the element tree, consider implementing `RenderOnceStateful` instead,
+/// which moves self and fully constructed on each render.
 pub trait Render: 'static + Sized {
     /// The type of the element returned
     type Output: IntoElement + 'static;
@@ -16,18 +22,31 @@ pub trait Render: 'static + Sized {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Output;
 }
 
+/// Use this trait to implement components that don't maintain state across frames.
+/// If you implement this trait, your type can be annotated #[derive(IntoElement)], which
+/// enables it to be passed as a child of other elements.
+///
+/// If none of your types fields are optional, you should consider using a simple function
+/// instead, but this trait can be useful for building a builder-style API for your component
+/// that allow users to opt into functionality with chained method calls.
 pub trait RenderOnce: 'static {
     type Output: IntoElement;
 
     fn render_once(self, cx: &mut WindowContext) -> Self::Output;
 }
 
+/// This trait is similar to [RenderOnce], but allows state to maintained across frames and requires
+/// your type to be associated with an id to support this.
 pub trait RenderOnceStateful: 'static {
     type Output: IntoElement;
     type State: 'static;
 
+    /// An identifier that's unique in the containing namespace, which is introduced by the nearest
+    /// containing element with an id.
     fn element_id(&self) -> ElementId;
 
+    /// The first time your element appears, `state` will be `None`, and you can reassign it.
+    /// If your element disappears for one frame and then reappears, the state will be discarded.
     fn render_once(self, state: &mut Option<Self::State>, cx: &mut WindowContext) -> Self::Output;
 }
 
