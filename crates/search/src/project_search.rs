@@ -219,6 +219,7 @@ impl ProjectSearch {
                 this.no_results = Some(true);
             });
 
+            // TODO kb check for cancellations here and actually stop the search
             while let Some((buffer, anchors)) = matches.next().await {
                 let mut ranges = this.update(&mut cx, |this, cx| {
                     this.no_results = Some(false);
@@ -1767,7 +1768,7 @@ impl View for ProjectSearchBar {
                 render_option_button_icon("icons/word_search.svg", SearchOptions::WHOLE_WORD, cx)
             });
 
-            let mut include_ignored = is_semantic_disabled.then(|| {
+            let include_ignored = is_semantic_disabled.then(|| {
                 render_option_button_icon(
                     // TODO proper icon
                     "icons/case_insensitive.svg",
@@ -1775,8 +1776,6 @@ impl View for ProjectSearchBar {
                     cx,
                 )
             });
-            // TODO not implemented yet
-            let _ = include_ignored.take();
 
             let search_button_for_mode = |mode, side, cx: &mut ViewContext<ProjectSearchBar>| {
                 let is_active = if let Some(search) = self.active_project_search.as_ref() {

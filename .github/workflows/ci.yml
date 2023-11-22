@@ -134,8 +134,6 @@ jobs:
 
       - uses: softprops/action-gh-release@v1
         name: Upload app bundle to release
-        # TODO kb seems that zed.dev relies on GitHub releases for release version tracking.
-        # Find alternatives for `nightly` or just go on with more releases?
         if: ${{ env.RELEASE_CHANNEL == 'preview' || env.RELEASE_CHANNEL == 'stable' }}
         with:
           draft: true

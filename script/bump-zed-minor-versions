@@ -59,7 +59,6 @@ if ! git show-ref --quiet refs/heads/${prev_minor_branch_name}; then
   echo "previous branch ${minor_branch_name} doesn't exist"
   exit 1
 fi
-# TODO kb anything else for RELEASE_CHANNEL == nightly needs to be done below?
 if [[ $(git show ${prev_minor_branch_name}:crates/zed/RELEASE_CHANNEL) != preview ]]; then
   echo "release channel on branch ${prev_minor_branch_name} should be preview"
   exit 1

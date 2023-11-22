@@ -13,7 +13,7 @@ mod worktree_tests;
 use anyhow::{anyhow, Context, Result};
 use client::{proto, Client, Collaborator, TypedEnvelope, UserStore};
 use clock::ReplicaId;
-use collections::{hash_map, BTreeMap, HashMap, HashSet};
+use collections::{hash_map, BTreeMap, HashMap, HashSet, VecDeque};
 use copilot::Copilot;
 use futures::{
     channel::{
@@ -5742,8 +5742,89 @@ impl Project {
                 .await
                 .log_err();
         }
+
         background
             .scoped(|scope| {
+                if query.include_ignored() {
+                    scope.spawn(async move {
+                        for snapshot in snapshots {
+                            for ignored_entry in snapshot
+                                .entries(query.include_ignored())
+                                .filter(|e| e.is_ignored)
+                            {
+                                let mut ignored_paths_to_process =
+                                    VecDeque::from([snapshot.abs_path().join(&ignored_entry.path)]);
+                                while let Some(ignored_abs_path) =
+                                    ignored_paths_to_process.pop_front()
+                                {
+                                    if !query.file_matches(Some(&ignored_abs_path))
+                                        || snapshot.is_abs_path_excluded(&ignored_abs_path)
+                                    {
+                                        continue;
+                                    }
+                                    if let Some(fs_metadata) = fs
+                                        .metadata(&ignored_abs_path)
+                                        .await
+                                        .with_context(|| {
+                                            format!("fetching fs metadata for {ignored_abs_path:?}")
+                                        })
+                                        .log_err()
+                                        .flatten()
+                                    {
+                                        if fs_metadata.is_dir {
+                                            if let Some(mut subfiles) = fs
+                                                .read_dir(&ignored_abs_path)
+                                                .await
+                                                .with_context(|| {
+                                                    format!(
+                                                        "listing ignored path {ignored_abs_path:?}"
+                                                    )
+                                                })
+                                                .log_err()
+                                            {
+                                                while let Some(subfile) = subfiles.next().await {
+                                                    if let Some(subfile) = subfile.log_err() {
+                                                        ignored_paths_to_process
+                                                            .push_front(subfile);
+                                                    }
+                                                }
+                                            }
+                                        } else if !fs_metadata.is_symlink {
+                                            let matches = if let Some(file) = fs
+                                                .open_sync(&ignored_abs_path)
+                                                .await
+                                                .with_context(|| {
+                                                    format!(
+                                                        "Opening ignored path {ignored_abs_path:?}"
+                                                    )
+                                                })
+                                                .log_err()
+                                            {
+                                                query.detect(file).unwrap_or(false)
+                                            } else {
+                                                false
+                                            };
+                                            if matches {
+                                                let project_path = SearchMatchCandidate::Path {
+                                                    worktree_id: snapshot.id(),
+                                                    path: ignored_entry.path.clone(),
+                                                };
+                                                if matching_paths_tx
+                                                    .send(project_path)
+                                                    .await
+                                                    .is_err()
+                                                {
+                                                    return;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    });
+                }
+
                 for worker_ix in 0..workers {
                     let worker_start_ix = worker_ix * paths_per_worker;
                     let worker_end_ix = worker_start_ix + paths_per_worker;

@@ -171,7 +171,6 @@ osx_info_plist_exts = ["resources/info/*"]
 osx_url_schemes = ["zed-dev"]
 
 [package.metadata.bundle-nightly]
-# TODO kb different icon?
 icon = ["resources/app-icon-preview@2x.png", "resources/app-icon-preview.png"]
 identifier = "dev.zed.Zed-Nightly"
 name = "Zed Nightly"
