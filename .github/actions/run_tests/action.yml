@@ -19,7 +19,7 @@ runs:
 
     - name: Limit target directory size
       shell: bash -euxo pipefail {0}
-      run: script/clear-target-dir-if-larger-than 70
+      run: script/clear-target-dir-if-larger-than 100
 
     - name: Run check
       shell: bash -euxo pipefail {0}

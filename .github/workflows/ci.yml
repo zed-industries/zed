@@ -90,7 +90,7 @@ jobs:
           submodules: "recursive"
 
       - name: Limit target directory size
-        run: script/clear-target-dir-if-larger-than 70
+        run: script/clear-target-dir-if-larger-than 100
 
       - name: Determine version and release channel
         if: ${{ startsWith(github.ref, 'refs/tags/v') }}
