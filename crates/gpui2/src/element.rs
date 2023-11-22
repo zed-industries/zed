@@ -107,6 +107,7 @@ pub trait IntoElement: Sized {
         }
     }
 
+    /// Map this type to a different type with the given function. Useful when method chaining.
     fn map<U>(self, f: impl FnOnce(Self) -> U) -> U
     where
         Self: Sized,
