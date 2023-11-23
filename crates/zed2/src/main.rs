@@ -8,7 +8,7 @@ use anyhow::{anyhow, Context as _, Result};
 use backtrace::Backtrace;
 use chrono::Utc;
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
-use client::UserStore;
+use client::{Client, UserStore};
 use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
 use fs::RealFs;
@@ -249,7 +249,7 @@ fn main() {
             }
         }
 
-        let mut _triggered_authentication = false;
+        let mut triggered_authentication = false;
 
         fn open_paths_and_log_errs(
             paths: &[PathBuf],
@@ -328,23 +328,23 @@ fn main() {
         })
         .detach();
 
-        // if !triggered_authentication {
-        //     cx.spawn(|cx| async move { authenticate(client, &cx).await })
-        //         .detach_and_log_err(cx);
-        // }
+        if !triggered_authentication {
+            cx.spawn(|cx| async move { authenticate(client, &cx).await })
+                .detach_and_log_err(cx);
+        }
     });
 }
 
-// async fn authenticate(client: Arc<Client>, cx: &AsyncAppContext) -> Result<()> {
-//     if stdout_is_a_pty() {
-//         if client::IMPERSONATE_LOGIN.is_some() {
-//             client.authenticate_and_connect(false, &cx).await?;
-//         }
-//     } else if client.has_keychain_credentials(&cx) {
-//         client.authenticate_and_connect(true, &cx).await?;
-//     }
-//     Ok::<_, anyhow::Error>(())
-// }
+async fn authenticate(client: Arc<Client>, cx: &AsyncAppContext) -> Result<()> {
+    if stdout_is_a_pty() {
+        if client::IMPERSONATE_LOGIN.is_some() {
+            client.authenticate_and_connect(false, &cx).await?;
+        }
+    } else if client.has_keychain_credentials(&cx).await {
+        client.authenticate_and_connect(true, &cx).await?;
+    }
+    Ok::<_, anyhow::Error>(())
+}
 
 async fn installation_id() -> Result<(String, bool)> {
     let legacy_key_name = "device_id";
