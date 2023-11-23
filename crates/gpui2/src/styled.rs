@@ -361,6 +361,13 @@ pub trait Styled: Sized {
         self
     }
 
+    fn text_bg(mut self, bg: impl Into<Hsla>) -> Self {
+        self.text_style()
+            .get_or_insert_with(Default::default)
+            .background_color = Some(bg.into());
+        self
+    }
+
     fn text_size(mut self, size: impl Into<AbsoluteLength>) -> Self {
         self.text_style()
             .get_or_insert_with(Default::default)

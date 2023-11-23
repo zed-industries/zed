@@ -150,7 +150,7 @@ impl RenderOnce for HighlightedLabel {
                 LabelSize::Default => this.text_ui(),
                 LabelSize::Small => this.text_ui_sm(),
             })
-            .child(StyledText::new(self.label, runs))
+            .child(StyledText::new(self.label).with_runs(runs))
     }
 }
 

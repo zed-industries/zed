@@ -1,5 +1,6 @@
 use gpui::{
-    blue, div, red, white, Div, ParentElement, Render, Styled, View, VisualContext, WindowContext,
+    blue, div, green, red, white, Div, InteractiveText, ParentElement, Render, Styled, StyledText,
+    TextRun, View, VisualContext, WindowContext,
 };
 use ui::v_stack;
 
@@ -55,6 +56,21 @@ impl Render for TextStory {
                 "flex-row. width 96. The quick brown fox jumps over the lazy dog. ",
                 "Meanwhile, the lazy dog decided it was time for a change. ",
                 "He started daily workout routines, ate healthier and became the fastest dog in town.",
-            )))
+            ))).child(
+                InteractiveText::new(
+                    "interactive",
+                    StyledText::new("Hello world, how is it going?").with_runs(vec![
+                        cx.text_style().to_run(6),
+                        TextRun {
+                            background_color: Some(green()),
+                            ..cx.text_style().to_run(5)
+                        },
+                        cx.text_style().to_run(18),
+                    ]),
+                )
+                .on_click(vec![2..4, 1..3, 7..9], |range_ix, cx| {
+                    println!("Clicked range {range_ix}");
+                })
+            )
     }
 }

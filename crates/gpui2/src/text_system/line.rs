@@ -1,6 +1,7 @@
 use crate::{
-    black, point, px, BorrowWindow, Bounds, Hsla, LineLayout, Pixels, Point, Result, SharedString,
-    UnderlineStyle, WindowContext, WrapBoundary, WrappedLineLayout,
+    black, point, px, size, transparent_black, BorrowWindow, Bounds, Corners, Edges, Hsla,
+    LineLayout, Pixels, Point, Result, SharedString, UnderlineStyle, WindowContext, WrapBoundary,
+    WrappedLineLayout,
 };
 use derive_more::{Deref, DerefMut};
 use smallvec::SmallVec;
@@ -10,6 +11,7 @@ use std::sync::Arc;
 pub struct DecorationRun {
     pub len: u32,
     pub color: Hsla,
+    pub background_color: Option<Hsla>,
     pub underline: Option<UnderlineStyle>,
 }
 
@@ -97,6 +99,7 @@ fn paint_line(
     let mut run_end = 0;
     let mut color = black();
     let mut current_underline: Option<(Point<Pixels>, UnderlineStyle)> = None;
+    let mut current_background: Option<(Point<Pixels>, Hsla)> = None;
     let text_system = cx.text_system().clone();
     let mut glyph_origin = origin;
     let mut prev_glyph_position = Point::default();
@@ -110,12 +113,24 @@ fn paint_line(
 
             if wraps.peek() == Some(&&WrapBoundary { run_ix, glyph_ix }) {
                 wraps.next();
+                if let Some((background_origin, background_color)) = current_background.take() {
+                    cx.paint_quad(
+                        Bounds {
+                            origin: background_origin,
+                            size: size(glyph_origin.x - background_origin.x, line_height),
+                        },
+                        Corners::default(),
+                        background_color,
+                        Edges::default(),
+                        transparent_black(),
+                    );
+                }
                 if let Some((underline_origin, underline_style)) = current_underline.take() {
                     cx.paint_underline(
                         underline_origin,
                         glyph_origin.x - underline_origin.x,
                         &underline_style,
-                    )?;
+                    );
                 }
 
                 glyph_origin.x = origin.x;
@@ -123,9 +138,20 @@ fn paint_line(
             }
             prev_glyph_position = glyph.position;
 
+            let mut finished_background: Option<(Point<Pixels>, Hsla)> = None;
             let mut finished_underline: Option<(Point<Pixels>, UnderlineStyle)> = None;
             if glyph.index >= run_end {
                 if let Some(style_run) = decoration_runs.next() {
+                    if let Some((_, background_color)) = &mut current_background {
+                        if style_run.background_color.as_ref() != Some(background_color) {
+                            finished_background = current_background.take();
+                        }
+                    }
+                    if let Some(run_background) = style_run.background_color {
+                        current_background
+                            .get_or_insert((point(glyph_origin.x, origin.y), run_background));
+                    }
+
                     if let Some((_, underline_style)) = &mut current_underline {
                         if style_run.underline.as_ref() != Some(underline_style) {
                             finished_underline = current_underline.take();
@@ -149,8 +175,22 @@ fn paint_line(
                     color = style_run.color;
                 } else {
                     run_end = layout.len;
+                    finished_background = current_background.take();
                     finished_underline = current_underline.take();
                 }
+            }
+
+            if let Some((background_origin, background_color)) = finished_background {
+                cx.paint_quad(
+                    Bounds {
+                        origin: background_origin,
+                        size: size(glyph_origin.x - background_origin.x, line_height),
+                    },
+                    Corners::default(),
+                    background_color,
+                    Edges::default(),
+                    transparent_black(),
+                );
             }
 
             if let Some((underline_origin, underline_style)) = finished_underline {
@@ -158,7 +198,7 @@ fn paint_line(
                     underline_origin,
                     glyph_origin.x - underline_origin.x,
                     &underline_style,
-                )?;
+                );
             }
 
             let max_glyph_bounds = Bounds {
@@ -188,13 +228,27 @@ fn paint_line(
         }
     }
 
+    if let Some((background_origin, background_color)) = current_background.take() {
+        let line_end_x = origin.x + wrap_width.unwrap_or(Pixels::MAX).min(layout.width);
+        cx.paint_quad(
+            Bounds {
+                origin: background_origin,
+                size: size(line_end_x - background_origin.x, line_height),
+            },
+            Corners::default(),
+            background_color,
+            Edges::default(),
+            transparent_black(),
+        );
+    }
+
     if let Some((underline_start, underline_style)) = current_underline.take() {
         let line_end_x = origin.x + wrap_width.unwrap_or(Pixels::MAX).min(layout.width);
         cx.paint_underline(
             underline_start,
             line_end_x - underline_start.x,
             &underline_style,
-        )?;
+        );
     }
 
     Ok(())
