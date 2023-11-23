@@ -155,19 +155,19 @@ impl Telemetry {
 
         // We should only ever have one instance of Telemetry, leak the subscription to keep it alive
         // rather than store in TelemetryState, complicating spawn as subscriptions are not Send
-        std::mem::forget(cx.on_app_quit({
-            let this = this.clone();
-            move |cx| this.shutdown_telemetry(cx)
-        }));
+        // std::mem::forget(cx.on_app_quit({
+        //     let this = this.clone();
+        //     move |cx| this.shutdown_telemetry(cx)
+        // }));
 
         this
     }
 
-    fn shutdown_telemetry(self: &Arc<Self>, cx: &mut AppContext) -> impl Future<Output = ()> {
-        let telemetry_settings = TelemetrySettings::get_global(cx).clone();
-        self.report_app_event(telemetry_settings, "close");
-        Task::ready(())
-    }
+    // fn shutdown_telemetry(self: &Arc<Self>, cx: &mut AppContext) -> impl Future<Output = ()> {
+    //     let telemetry_settings = TelemetrySettings::get_global(cx).clone();
+    //     self.report_app_event(telemetry_settings, "close");
+    //     Task::ready(())
+    // }
 
     pub fn log_file_path(&self) -> Option<PathBuf> {
         Some(self.state.lock().log_file.as_ref()?.path().to_path_buf())
