@@ -4,6 +4,7 @@ const {spawn, execFileSync} = require('child_process')
 
 const RESOLUTION_REGEX = /(\d+) x (\d+)/
 const DIGIT_FLAG_REGEX = /^--?(\d+)$/
+const ZED_2_MODE = "--zed2"
 
 const args = process.argv.slice(2)
 
@@ -14,6 +15,7 @@ if (digitMatch) {
   instanceCount = parseInt(digitMatch[1])
   args.shift()
 }
+const isZed2 = args.some(arg => arg === ZED_2_MODE);
 if (instanceCount > 4) {
   throw new Error('Cannot spawn more than 4 instances')
 }
@@ -70,11 +72,12 @@ const positions = [
   `${instanceWidth},${instanceHeight}`
 ]
 
-execFileSync('cargo', ['build'], {stdio: 'inherit'})
-
+const buildArgs = isZed2 ? ["build", "-p", "zed2"] : ["build"]
+const zedBinary = isZed2 ? "target/debug/Zed2" : "target/debug/Zed"
+execFileSync('cargo', buildArgs, { stdio: 'inherit' })
 setTimeout(() => {
   for (let i = 0; i < instanceCount; i++) {
-    spawn('target/debug/Zed', i == 0 ? args : [], {
+    spawn(zedBinary, i == 0 ? args : [], {
       stdio: 'inherit',
       env: {
         ZED_IMPERSONATE: users[i],
