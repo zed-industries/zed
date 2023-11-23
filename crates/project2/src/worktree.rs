@@ -2222,7 +2222,7 @@ impl LocalSnapshot {
         paths
     }
 
-    fn is_abs_path_excluded(&self, abs_path: &Path) -> bool {
+    pub fn is_abs_path_excluded(&self, abs_path: &Path) -> bool {
         self.file_scan_exclusions
             .iter()
             .any(|exclude_matcher| exclude_matcher.is_match(abs_path))
