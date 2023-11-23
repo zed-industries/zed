@@ -1,9 +1,9 @@
 use crate::{
     point, px, Action, AnyDrag, AnyElement, AnyTooltip, AnyView, AppContext, BorrowAppContext,
     BorrowWindow, Bounds, ClickEvent, DispatchPhase, Element, ElementId, FocusEvent, FocusHandle,
-    KeyContext, KeyDownEvent, KeyUpEvent, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, ParentElement, Pixels, Point, Render, RenderOnce, ScrollWheelEvent, SharedString,
-    Size, Style, StyleRefinement, Styled, Task, View, Visibility, WindowContext,
+    IntoElement, KeyContext, KeyDownEvent, KeyUpEvent, LayoutId, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, Render, ScrollWheelEvent,
+    SharedString, Size, Style, StyleRefinement, Styled, Task, View, Visibility, WindowContext,
 };
 use collections::HashMap;
 use refineable::Refineable;
@@ -666,14 +666,14 @@ impl Element for Div {
     }
 }
 
-impl RenderOnce for Div {
+impl IntoElement for Div {
     type Element = Self;
 
     fn element_id(&self) -> Option<ElementId> {
         self.interactivity.element_id.clone()
     }
 
-    fn render_once(self) -> Self::Element {
+    fn into_element(self) -> Self::Element {
         self
     }
 }
@@ -1278,7 +1278,7 @@ where
     }
 }
 
-impl<E> RenderOnce for Focusable<E>
+impl<E> IntoElement for Focusable<E>
 where
     E: Element,
 {
@@ -1288,7 +1288,7 @@ where
         self.element.element_id()
     }
 
-    fn render_once(self) -> Self::Element {
+    fn into_element(self) -> Self::Element {
         self.element
     }
 }
@@ -1352,7 +1352,7 @@ where
     }
 }
 
-impl<E> RenderOnce for Stateful<E>
+impl<E> IntoElement for Stateful<E>
 where
     E: Element,
 {
@@ -1362,7 +1362,7 @@ where
         self.element.element_id()
     }
 
-    fn render_once(self) -> Self::Element {
+    fn into_element(self) -> Self::Element {
         self
     }
 }

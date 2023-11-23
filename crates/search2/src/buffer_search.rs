@@ -10,9 +10,9 @@ use collections::HashMap;
 use editor::Editor;
 use futures::channel::oneshot;
 use gpui::{
-    actions, div, red, Action, AppContext, Div, EventEmitter, InteractiveElement as _,
-    ParentElement as _, Render, RenderOnce, Styled, Subscription, Task, View, ViewContext,
-    VisualContext as _, WindowContext,
+    actions, div, red, Action, AppContext, Div, EventEmitter, InteractiveElement as _, IntoElement,
+    ParentElement as _, Render, Styled, Subscription, Task, View, ViewContext, VisualContext as _,
+    WindowContext,
 };
 use project::search::SearchQuery;
 use serde::Deserialize;
@@ -538,7 +538,7 @@ impl BufferSearchBar {
         self.update_matches(cx)
     }
 
-    fn render_action_button(&self) -> impl RenderOnce {
+    fn render_action_button(&self) -> impl IntoElement {
         // let tooltip_style = theme.tooltip.clone();
 
         // let style = theme.search.action_button.clone();

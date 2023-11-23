@@ -14,8 +14,8 @@ use editor::{
 use futures::future::try_join_all;
 use gpui::{
     actions, div, AnyElement, AnyView, AppContext, Context, Div, EventEmitter, FocusEvent,
-    FocusHandle, Focusable, FocusableElement, FocusableView, InteractiveElement, Model,
-    ParentElement, Render, RenderOnce, SharedString, Styled, Subscription, Task, View, ViewContext,
+    FocusHandle, Focusable, FocusableElement, FocusableView, InteractiveElement, IntoElement,
+    Model, ParentElement, Render, SharedString, Styled, Subscription, Task, View, ViewContext,
     VisualContext, WeakView, WindowContext,
 };
 use language::{
@@ -792,14 +792,14 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
             .when_some(diagnostic.code.as_ref(), |stack, code| {
                 stack.child(Label::new(code.clone()))
             })
-            .render_into_any()
+            .into_any_element()
     })
 }
 
 pub(crate) fn render_summary(summary: &DiagnosticSummary) -> AnyElement {
     if summary.error_count == 0 && summary.warning_count == 0 {
         let label = Label::new("No problems");
-        label.render_into_any()
+        label.into_any_element()
     } else {
         h_stack()
             .bg(gpui::red())
@@ -807,7 +807,7 @@ pub(crate) fn render_summary(summary: &DiagnosticSummary) -> AnyElement {
             .child(Label::new(summary.error_count.to_string()))
             .child(IconElement::new(Icon::ExclamationTriangle))
             .child(Label::new(summary.warning_count.to_string()))
-            .render_into_any()
+            .into_any_element()
     }
 }
 

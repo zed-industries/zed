@@ -1,5 +1,5 @@
 use crate::{prelude::*, Label};
-use gpui::{prelude::*, Div, RenderOnce, Stateful};
+use gpui::{prelude::*, Div, IntoElement, Stateful};
 
 #[derive(Default, PartialEq)]
 pub enum InputVariant {
@@ -8,7 +8,7 @@ pub enum InputVariant {
     Filled,
 }
 
-#[derive(RenderOnce)]
+#[derive(IntoElement)]
 pub struct Input {
     placeholder: SharedString,
     value: String,
@@ -18,7 +18,7 @@ pub struct Input {
     is_active: bool,
 }
 
-impl Component for Input {
+impl RenderOnce for Input {
     type Rendered = Stateful<Div>;
 
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {

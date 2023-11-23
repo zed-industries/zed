@@ -15,7 +15,7 @@ pub struct Picker<D: PickerDelegate> {
 }
 
 pub trait PickerDelegate: Sized + 'static {
-    type ListItem: RenderOnce;
+    type ListItem: IntoElement;
 
     fn match_count(&self) -> usize;
     fn selected_index(&self) -> usize;
