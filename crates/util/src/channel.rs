@@ -59,7 +59,6 @@ impl ReleaseChannel {
     pub fn link_prefix(&self) -> &'static str {
         match self {
             ReleaseChannel::Dev => "https://zed.dev/dev/",
-            // TODO kb need to add server handling
             ReleaseChannel::Nightly => "https://zed.dev/nightly/",
             ReleaseChannel::Preview => "https://zed.dev/preview/",
             ReleaseChannel::Stable => "https://zed.dev/",

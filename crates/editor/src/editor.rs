@@ -3423,7 +3423,7 @@ impl Editor {
             to_insert,
         }) = self.inlay_hint_cache.spawn_hint_refresh(
             reason_description,
-            self.excerpt_visible_offsets(required_languages.as_ref(), cx),
+            self.excerpts_for_inlay_hints_query(required_languages.as_ref(), cx),
             invalidate_cache,
             cx,
         ) {
@@ -3442,11 +3442,15 @@ impl Editor {
             .collect()
     }
 
-    pub fn excerpt_visible_offsets(
+    pub fn excerpts_for_inlay_hints_query(
         &self,
         restrict_to_languages: Option<&HashSet<Arc<Language>>>,
         cx: &mut ViewContext<'_, '_, Editor>,
     ) -> HashMap<ExcerptId, (ModelHandle<Buffer>, Global, Range<usize>)> {
+        let Some(project) = self.project.as_ref() else {
+            return HashMap::default();
+        };
+        let project = project.read(cx);
         let multi_buffer = self.buffer().read(cx);
         let multi_buffer_snapshot = multi_buffer.snapshot(cx);
         let multi_buffer_visible_start = self
@@ -3466,6 +3470,14 @@ impl Editor {
             .filter(|(_, excerpt_visible_range, _)| !excerpt_visible_range.is_empty())
             .filter_map(|(buffer_handle, excerpt_visible_range, excerpt_id)| {
                 let buffer = buffer_handle.read(cx);
+                let buffer_file = project::worktree::File::from_dyn(buffer.file())?;
+                let buffer_worktree = project.worktree_for_id(buffer_file.worktree_id(cx), cx)?;
+                let worktree_entry = buffer_worktree
+                    .read(cx)
+                    .entry_for_id(buffer_file.project_entry_id(cx)?)?;
+                if worktree_entry.is_ignored {
+                    return None;
+                }
                 let language = buffer.language()?;
                 if let Some(restrict_to_languages) = restrict_to_languages {
                     if !restrict_to_languages.contains(language) {
