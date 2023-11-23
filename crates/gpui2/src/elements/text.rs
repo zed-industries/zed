@@ -1,11 +1,11 @@
 use crate::{
-    Bounds, Element, ElementId, IntoElement, LayoutId, Pixels, SharedString, Size, TextRun,
-    WhiteSpace, WindowContext, WrappedLine,
+    Bounds, DispatchPhase, Element, ElementId, IntoElement, LayoutId, MouseDownEvent, MouseUpEvent,
+    Pixels, Point, SharedString, Size, TextRun, WhiteSpace, WindowContext, WrappedLine,
 };
 use anyhow::anyhow;
 use parking_lot::{Mutex, MutexGuard};
 use smallvec::SmallVec;
-use std::{cell::Cell, rc::Rc, sync::Arc};
+use std::{cell::Cell, ops::Range, rc::Rc, sync::Arc};
 use util::ResultExt;
 
 impl Element for &'static str {
@@ -69,22 +69,27 @@ impl IntoElement for SharedString {
     }
 }
 
+/// Renders text with runs of different styles.
+///
+/// Callers are responsible for setting the correct style for each run.
+/// For text with a uniform style, you can usually avoid calling this constructor
+/// and just pass text directly.
 pub struct StyledText {
     text: SharedString,
     runs: Option<Vec<TextRun>>,
 }
 
 impl StyledText {
-    /// Renders text with runs of different styles.
-    ///
-    /// Callers are responsible for setting the correct style for each run.
-    /// For text with a uniform style, you can usually avoid calling this constructor
-    /// and just pass text directly.
-    pub fn new(text: SharedString, runs: Vec<TextRun>) -> Self {
+    pub fn new(text: impl Into<SharedString>) -> Self {
         StyledText {
-            text,
-            runs: Some(runs),
+            text: text.into(),
+            runs: None,
         }
+    }
+
+    pub fn with_runs(mut self, runs: Vec<TextRun>) -> Self {
+        self.runs = Some(runs);
+        self
     }
 }
 
@@ -226,16 +231,73 @@ impl TextState {
             line_origin.y += line.size(line_height).height;
         }
     }
+
+    fn index_for_position(&self, bounds: Bounds<Pixels>, position: Point<Pixels>) -> Option<usize> {
+        if !bounds.contains_point(&position) {
+            return None;
+        }
+
+        let element_state = self.lock();
+        let element_state = element_state
+            .as_ref()
+            .expect("measurement has not been performed");
+
+        let line_height = element_state.line_height;
+        let mut line_origin = bounds.origin;
+        for line in &element_state.lines {
+            let line_bottom = line_origin.y + line.size(line_height).height;
+            if position.y > line_bottom {
+                line_origin.y = line_bottom;
+            } else {
+                let position_within_line = position - line_origin;
+                return line.index_for_position(position_within_line, line_height);
+            }
+        }
+
+        None
+    }
 }
 
-struct InteractiveText {
+pub struct InteractiveText {
     element_id: ElementId,
     text: StyledText,
+    click_listener: Option<Box<dyn Fn(InteractiveTextClickEvent, &mut WindowContext<'_>)>>,
 }
 
-struct InteractiveTextState {
+struct InteractiveTextClickEvent {
+    mouse_down_index: usize,
+    mouse_up_index: usize,
+}
+
+pub struct InteractiveTextState {
     text_state: TextState,
-    clicked_range_ixs: Rc<Cell<SmallVec<[usize; 1]>>>,
+    mouse_down_index: Rc<Cell<Option<usize>>>,
+}
+
+impl InteractiveText {
+    pub fn new(id: impl Into<ElementId>, text: StyledText) -> Self {
+        Self {
+            element_id: id.into(),
+            text,
+            click_listener: None,
+        }
+    }
+
+    pub fn on_click(
+        mut self,
+        ranges: Vec<Range<usize>>,
+        listener: impl Fn(usize, &mut WindowContext<'_>) + 'static,
+    ) -> Self {
+        self.click_listener = Some(Box::new(move |event, cx| {
+            for (range_ix, range) in ranges.iter().enumerate() {
+                if range.contains(&event.mouse_down_index) && range.contains(&event.mouse_up_index)
+                {
+                    listener(range_ix, cx);
+                }
+            }
+        }));
+        self
+    }
 }
 
 impl Element for InteractiveText {
@@ -247,27 +309,62 @@ impl Element for InteractiveText {
         cx: &mut WindowContext,
     ) -> (LayoutId, Self::State) {
         if let Some(InteractiveTextState {
-            text_state,
-            clicked_range_ixs,
+            mouse_down_index, ..
         }) = state
         {
-            let (layout_id, text_state) = self.text.layout(Some(text_state), cx);
+            let (layout_id, text_state) = self.text.layout(None, cx);
             let element_state = InteractiveTextState {
                 text_state,
-                clicked_range_ixs,
+                mouse_down_index,
             };
             (layout_id, element_state)
         } else {
             let (layout_id, text_state) = self.text.layout(None, cx);
             let element_state = InteractiveTextState {
                 text_state,
-                clicked_range_ixs: Rc::default(),
+                mouse_down_index: Rc::default(),
             };
             (layout_id, element_state)
         }
     }
 
     fn paint(self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut WindowContext) {
+        if let Some(click_listener) = self.click_listener {
+            let text_state = state.text_state.clone();
+            let mouse_down = state.mouse_down_index.clone();
+            if let Some(mouse_down_index) = mouse_down.get() {
+                cx.on_mouse_event(move |event: &MouseUpEvent, phase, cx| {
+                    if phase == DispatchPhase::Bubble {
+                        if let Some(mouse_up_index) =
+                            text_state.index_for_position(bounds, event.position)
+                        {
+                            click_listener(
+                                InteractiveTextClickEvent {
+                                    mouse_down_index,
+                                    mouse_up_index,
+                                },
+                                cx,
+                            )
+                        }
+
+                        mouse_down.take();
+                        cx.notify();
+                    }
+                });
+            } else {
+                cx.on_mouse_event(move |event: &MouseDownEvent, phase, cx| {
+                    if phase == DispatchPhase::Bubble {
+                        if let Some(mouse_down_index) =
+                            text_state.index_for_position(bounds, event.position)
+                        {
+                            mouse_down.set(Some(mouse_down_index));
+                            cx.notify();
+                        }
+                    }
+                });
+            }
+        }
+
         self.text.paint(bounds, &mut state.text_state, cx)
     }
 }

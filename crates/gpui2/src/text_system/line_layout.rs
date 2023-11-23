@@ -198,6 +198,41 @@ impl WrappedLineLayout {
     pub fn runs(&self) -> &[ShapedRun] {
         &self.unwrapped_layout.runs
     }
+
+    pub fn index_for_position(
+        &self,
+        position: Point<Pixels>,
+        line_height: Pixels,
+    ) -> Option<usize> {
+        let wrapped_line_ix = (position.y / line_height) as usize;
+
+        let wrapped_line_start_x = if wrapped_line_ix > 0 {
+            let wrap_boundary_ix = wrapped_line_ix - 1;
+            let wrap_boundary = self.wrap_boundaries[wrap_boundary_ix];
+            let run = &self.unwrapped_layout.runs[wrap_boundary.run_ix];
+            run.glyphs[wrap_boundary.glyph_ix].position.x
+        } else {
+            Pixels::ZERO
+        };
+
+        let wrapped_line_end_x = if wrapped_line_ix < self.wrap_boundaries.len() {
+            let next_wrap_boundary_ix = wrapped_line_ix;
+            let next_wrap_boundary = self.wrap_boundaries[next_wrap_boundary_ix];
+            let run = &self.unwrapped_layout.runs[next_wrap_boundary.run_ix];
+            run.glyphs[next_wrap_boundary.glyph_ix].position.x
+        } else {
+            self.unwrapped_layout.width
+        };
+
+        let mut position_in_unwrapped_line = position;
+        position_in_unwrapped_line.x += wrapped_line_start_x;
+        if position_in_unwrapped_line.x > wrapped_line_end_x {
+            None
+        } else {
+            self.unwrapped_layout
+                .index_for_x(position_in_unwrapped_line.x)
+        }
+    }
 }
 
 pub(crate) struct LineLayoutCache {
