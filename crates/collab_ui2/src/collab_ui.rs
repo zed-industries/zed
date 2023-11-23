@@ -7,11 +7,14 @@ pub mod notification_panel;
 pub mod notifications;
 mod panel_settings;
 
-use std::sync::Arc;
+use std::{rc::Rc, sync::Arc};
 
 pub use collab_panel::CollabPanel;
 pub use collab_titlebar_item::CollabTitlebarItem;
-use gpui::AppContext;
+use gpui::{
+    point, px, AppContext, GlobalPixels, Pixels, PlatformDisplay, Point, Size, WindowBounds,
+    WindowKind, WindowOptions,
+};
 pub use panel_settings::{
     ChatPanelSettings, CollaborationPanelSettings, NotificationPanelSettings,
 };
@@ -23,7 +26,7 @@ use workspace::AppState;
 //     [ToggleScreenSharing, ToggleMute, ToggleDeafen, LeaveCall]
 // );
 
-pub fn init(_app_state: &Arc<AppState>, cx: &mut AppContext) {
+pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
     CollaborationPanelSettings::register(cx);
     ChatPanelSettings::register(cx);
     NotificationPanelSettings::register(cx);
@@ -32,7 +35,7 @@ pub fn init(_app_state: &Arc<AppState>, cx: &mut AppContext) {
     collab_titlebar_item::init(cx);
     collab_panel::init(cx);
     // chat_panel::init(cx);
-    // notifications::init(&app_state, cx);
+    notifications::init(&app_state, cx);
 
     // cx.add_global_action(toggle_screen_sharing);
     // cx.add_global_action(toggle_mute);
@@ -95,31 +98,30 @@ pub fn init(_app_state: &Arc<AppState>, cx: &mut AppContext) {
 //     }
 // }
 
-// fn notification_window_options(
-//     screen: Rc<dyn Screen>,
-//     window_size: Vector2F,
-// ) -> WindowOptions<'static> {
-//     const NOTIFICATION_PADDING: f32 = 16.;
+fn notification_window_options(
+    screen: Rc<dyn PlatformDisplay>,
+    window_size: Size<Pixels>,
+) -> WindowOptions {
+    let notification_padding = Pixels::from(16.);
 
-//     let screen_bounds = screen.content_bounds();
-//     WindowOptions {
-//         bounds: WindowBounds::Fixed(RectF::new(
-//             screen_bounds.upper_right()
-//                 + vec2f(
-//                     -NOTIFICATION_PADDING - window_size.x(),
-//                     NOTIFICATION_PADDING,
-//                 ),
-//             window_size,
-//         )),
-//         titlebar: None,
-//         center: false,
-//         focus: false,
-//         show: true,
-//         kind: WindowKind::PopUp,
-//         is_movable: false,
-//         screen: Some(screen),
-//     }
-// }
+    let screen_bounds = screen.bounds();
+    let size: Size<GlobalPixels> = window_size.into();
+
+    let bounds = gpui::Bounds::<GlobalPixels> {
+        origin: screen_bounds.origin,
+        size: window_size.into(),
+    };
+    WindowOptions {
+        bounds: WindowBounds::Fixed(bounds),
+        titlebar: None,
+        center: false,
+        focus: false,
+        show: true,
+        kind: WindowKind::PopUp,
+        is_movable: false,
+        display_id: Some(screen.id()),
+    }
+}
 
 // fn render_avatar<T: 'static>(
 //     avatar: Option<Arc<ImageData>>,

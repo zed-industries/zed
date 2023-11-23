@@ -199,7 +199,7 @@ fn main() {
         });
         cx.set_global(Arc::downgrade(&app_state));
 
-        // audio::init(Assets, cx);
+        audio::init(Assets, cx);
         auto_update::init(http.clone(), client::ZED_SERVER_URL.clone(), cx);
 
         workspace::init(app_state.clone(), cx);

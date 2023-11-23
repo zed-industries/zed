@@ -11644,6 +11644,7 @@ dependencies = [
  "async-recursion 0.3.2",
  "async-tar",
  "async-trait",
+ "audio2",
  "auto_update2",
  "backtrace",
  "call2",
