@@ -19,7 +19,7 @@ lazy_static! {
 
 pub struct AppCommitSha(pub String);
 
-#[derive(Copy, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
 pub enum ReleaseChannel {
     #[default]
     Dev,

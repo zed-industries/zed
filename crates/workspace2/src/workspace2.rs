@@ -3408,6 +3408,10 @@ impl Workspace {
         self.modal_layer
             .update(cx, |modal_layer, cx| modal_layer.toggle_modal(cx, build))
     }
+
+    pub fn call_state(&mut self) -> &mut dyn CallHandler {
+        &mut *self.call_handler
+    }
 }
 
 fn window_bounds_env_override(cx: &AsyncAppContext) -> Option<WindowBounds> {

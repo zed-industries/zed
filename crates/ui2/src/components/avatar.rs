@@ -1,5 +1,5 @@
 use crate::prelude::*;
-use gpui::{img, Img, RenderOnce};
+use gpui::{img, ImageSource, Img, RenderOnce};
 
 #[derive(Debug, Default, PartialEq, Clone)]
 pub enum Shape {
@@ -10,7 +10,7 @@ pub enum Shape {
 
 #[derive(RenderOnce)]
 pub struct Avatar {
-    src: SharedString,
+    src: ImageSource,
     shape: Shape,
 }
 
@@ -26,7 +26,7 @@ impl Component for Avatar {
             img = img.rounded_md();
         }
 
-        img.uri(self.src.clone())
+        img.source(self.src.clone())
             .size_4()
             // todo!(Pull the avatar fallback background from the theme.)
             .bg(gpui::red())
@@ -34,7 +34,7 @@ impl Component for Avatar {
 }
 
 impl Avatar {
-    pub fn new(src: impl Into<SharedString>) -> Self {
+    pub fn new(src: impl Into<ImageSource>) -> Self {
         Self {
             src: src.into(),
             shape: Shape::Circle,

@@ -37,7 +37,7 @@ use gpui::{
 };
 use project::Project;
 use theme::ActiveTheme;
-use ui::{h_stack, Button, ButtonVariant, Color, KeyBinding, Label, Tooltip};
+use ui::{h_stack, Button, ButtonVariant, Color, IconButton, KeyBinding, Tooltip};
 use workspace::Workspace;
 
 // const MAX_PROJECT_NAME_LENGTH: usize = 40;
@@ -85,6 +85,13 @@ impl Render for CollabTitlebarItem {
     type Element = Stateful<Div>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+        let is_in_room = self
+            .workspace
+            .update(cx, |this, cx| this.call_state().is_in_room(cx))
+            .unwrap_or_default();
+        let is_shared = is_in_room && self.project.read(cx).is_shared();
+        let current_user = self.user_store.read(cx).current_user();
+        let client = self.client.clone();
         h_stack()
             .id("titlebar")
             .justify_between()
@@ -149,8 +156,40 @@ impl Render for CollabTitlebarItem {
                                 .into()
                             }),
                     ),
-            ) // self.titlebar_item
-            .child(h_stack().child(Label::new("Right side titlebar item")))
+            )
+            .map(|this| {
+                if let Some(user) = current_user {
+                    this.when_some(user.avatar.clone(), |this, avatar| {
+                        this.child(ui::Avatar::new(avatar))
+                    })
+                } else {
+                    this.child(Button::new("Sign in").on_click(move |_, cx| {
+                        let client = client.clone();
+                        cx.spawn(move |cx| async move {
+                            client.authenticate_and_connect(true, &cx).await?;
+                            Ok::<(), anyhow::Error>(())
+                        })
+                        .detach_and_log_err(cx);
+                    }))
+                }
+            }) // that's obviously wrong as we should check for current call,not current user
+            .when(is_in_room, |this| {
+                this.child(
+                    h_stack()
+                        .child(
+                            h_stack()
+                                .child(Button::new(if is_shared { "Unshare" } else { "Share" }))
+                                .child(IconButton::new("leave-call", ui::Icon::Exit)),
+                        )
+                        .child(
+                            h_stack()
+                                .child(IconButton::new("mute-microphone", ui::Icon::Mic))
+                                .child(IconButton::new("mute-sound", ui::Icon::AudioOn))
+                                .child(IconButton::new("screen-share", ui::Icon::Screen))
+                                .pl_2(),
+                        ),
+                )
+            })
     }
 }
 

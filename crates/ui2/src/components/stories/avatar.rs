@@ -14,10 +14,10 @@ impl Render for AvatarStory {
             .child(Story::title_for::<Avatar>())
             .child(Story::label("Default"))
             .child(Avatar::new(
-                "https://avatars.githubusercontent.com/u/1714999?v=4",
+                "https://avatars.githubusercontent.com/u/1714999?v=4".into(),
             ))
             .child(Avatar::new(
-                "https://avatars.githubusercontent.com/u/326587?v=4",
+                "https://avatars.githubusercontent.com/u/326587?v=4".into(),
             ))
     }
 }
