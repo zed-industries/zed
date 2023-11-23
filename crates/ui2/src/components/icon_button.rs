@@ -1,7 +1,7 @@
 use crate::{h_stack, prelude::*, Icon, IconElement, IconSize};
 use gpui::{prelude::*, Action, AnyView, Div, MouseButton, MouseDownEvent, Stateful};
 
-#[derive(RenderOnce)]
+#[derive(IntoElement)]
 pub struct IconButton {
     id: ElementId,
     icon: Icon,
@@ -14,7 +14,7 @@ pub struct IconButton {
     on_mouse_down: Option<Box<dyn Fn(&MouseDownEvent, &mut WindowContext) + 'static>>,
 }
 
-impl Component for IconButton {
+impl RenderOnce for IconButton {
     type Rendered = Stateful<Div>;
 
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {

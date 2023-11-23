@@ -1344,7 +1344,7 @@ impl Pane {
         item: &Box<dyn ItemHandle>,
         detail: usize,
         cx: &mut ViewContext<'_, Pane>,
-    ) -> impl RenderOnce {
+    ) -> impl IntoElement {
         let label = item.tab_content(Some(detail), cx);
         let close_icon = || {
             let id = item.item_id();
@@ -1439,7 +1439,7 @@ impl Pane {
             )
     }
 
-    fn render_tab_bar(&mut self, cx: &mut ViewContext<'_, Pane>) -> impl RenderOnce {
+    fn render_tab_bar(&mut self, cx: &mut ViewContext<'_, Pane>) -> impl IntoElement {
         div()
             .group("tab_bar")
             .id("tab_bar")

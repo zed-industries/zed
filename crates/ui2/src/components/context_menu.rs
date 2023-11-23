@@ -5,8 +5,8 @@ use crate::{prelude::*, v_stack, Label, List};
 use crate::{ListItem, ListSeparator, ListSubHeader};
 use gpui::{
     overlay, px, Action, AnchorCorner, AnyElement, AppContext, Bounds, ClickEvent, DispatchPhase,
-    Div, EventEmitter, FocusHandle, FocusableView, LayoutId, ManagedView, Manager, MouseButton,
-    MouseDownEvent, Pixels, Point, Render, RenderOnce, View, VisualContext,
+    Div, EventEmitter, FocusHandle, FocusableView, IntoElement, LayoutId, ManagedView, Manager,
+    MouseButton, MouseDownEvent, Pixels, Point, Render, View, VisualContext,
 };
 
 pub enum ContextMenuItem {
@@ -105,9 +105,9 @@ impl Render for ContextMenu {
                 // .border_color(cx.theme().colors().border)
                 .child(
                     List::new().children(self.items.iter().map(|item| match item {
-                        ContextMenuItem::Separator => ListSeparator::new().render_into_any(),
+                        ContextMenuItem::Separator => ListSeparator::new().into_any_element(),
                         ContextMenuItem::Header(header) => {
-                            ListSubHeader::new(header.clone()).render_into_any()
+                            ListSubHeader::new(header.clone()).into_any_element()
                         }
                         ContextMenuItem::Entry(entry, callback) => {
                             let callback = callback.clone();
@@ -119,7 +119,7 @@ impl Render for ContextMenu {
                                     callback(event, cx);
                                     dismiss(event, cx)
                                 })
-                                .render_into_any()
+                                .into_any_element()
                         }
                     })),
                 ),
@@ -141,8 +141,8 @@ impl<M: ManagedView> MenuHandle<M> {
         self
     }
 
-    pub fn child<R: RenderOnce>(mut self, f: impl FnOnce(bool) -> R + 'static) -> Self {
-        self.child_builder = Some(Box::new(|b| f(b).render_once().into_any()));
+    pub fn child<R: IntoElement>(mut self, f: impl FnOnce(bool) -> R + 'static) -> Self {
+        self.child_builder = Some(Box::new(|b| f(b).into_element().into_any()));
         self
     }
 
@@ -287,14 +287,14 @@ impl<M: ManagedView> Element for MenuHandle<M> {
     }
 }
 
-impl<M: ManagedView> RenderOnce for MenuHandle<M> {
+impl<M: ManagedView> IntoElement for MenuHandle<M> {
     type Element = Self;
 
     fn element_id(&self) -> Option<gpui::ElementId> {
         Some(self.id.clone())
     }
 
-    fn render_once(self) -> Self::Element {
+    fn into_element(self) -> Self::Element {
         self
     }
 }

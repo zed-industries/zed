@@ -881,7 +881,7 @@ impl<'a> WindowContext<'a> {
         origin: Point<Pixels>,
         width: Pixels,
         style: &UnderlineStyle,
-    ) -> Result<()> {
+    ) {
         let scale_factor = self.scale_factor();
         let height = if style.wavy {
             style.thickness * 3.
@@ -905,7 +905,6 @@ impl<'a> WindowContext<'a> {
                 wavy: style.wavy,
             },
         );
-        Ok(())
     }
 
     /// Paint a monochrome (non-emoji) glyph into the scene for the current frame at the current z-index.

@@ -10,6 +10,7 @@ pub use entity_map::*;
 pub use model_context::*;
 use refineable::Refineable;
 use smallvec::SmallVec;
+use smol::future::FutureExt;
 #[cfg(any(test, feature = "test-support"))]
 pub use test_context::*;
 
@@ -982,6 +983,22 @@ impl AppContext {
 
     pub fn all_action_names(&self) -> &[SharedString] {
         self.actions.all_action_names()
+    }
+
+    pub fn on_app_quit<Fut>(
+        &mut self,
+        mut on_quit: impl FnMut(&mut AppContext) -> Fut + 'static,
+    ) -> Subscription
+    where
+        Fut: 'static + Future<Output = ()>,
+    {
+        self.quit_observers.insert(
+            (),
+            Box::new(move |cx| {
+                let future = on_quit(cx);
+                async move { future.await }.boxed_local()
+            }),
+        )
     }
 }
 

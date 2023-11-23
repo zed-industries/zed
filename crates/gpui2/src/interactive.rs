@@ -1,6 +1,6 @@
 use crate::{
-    div, point, Div, Element, FocusHandle, Keystroke, Modifiers, Pixels, Point, Render, RenderOnce,
-    ViewContext,
+    div, point, Div, Element, FocusHandle, IntoElement, Keystroke, Modifiers, Pixels, Point,
+    Render, ViewContext,
 };
 use smallvec::SmallVec;
 use std::{any::Any, fmt::Debug, marker::PhantomData, ops::Deref, path::PathBuf};
@@ -64,7 +64,7 @@ pub struct Drag<S, R, V, E>
 where
     R: Fn(&mut V, &mut ViewContext<V>) -> E,
     V: 'static,
-    E: RenderOnce,
+    E: IntoElement,
 {
     pub state: S,
     pub render_drag_handle: R,
@@ -286,8 +286,8 @@ pub struct FocusEvent {
 #[cfg(test)]
 mod test {
     use crate::{
-        self as gpui, div, Div, FocusHandle, InteractiveElement, KeyBinding, Keystroke,
-        ParentElement, Render, RenderOnce, Stateful, TestAppContext, VisualContext,
+        self as gpui, div, Div, FocusHandle, InteractiveElement, IntoElement, KeyBinding,
+        Keystroke, ParentElement, Render, Stateful, TestAppContext, VisualContext,
     };
 
     struct TestView {
@@ -315,7 +315,7 @@ mod test {
                         div()
                             .key_context("nested")
                             .track_focus(&self.focus_handle)
-                            .render_once(),
+                            .into_element(),
                     ),
             )
         }

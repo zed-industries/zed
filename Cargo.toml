@@ -208,11 +208,12 @@ core-graphics = { git = "https://github.com/servo/core-foundation-rs", rev = "07
 
 [profile.dev]
 split-debuginfo = "unpacked"
+debug = "limited"
 
 [profile.dev.package.taffy]
 opt-level = 3
 
 [profile.release]
-debug = true
+debug = "limited"
 lto = "thin"
 codegen-units = 1

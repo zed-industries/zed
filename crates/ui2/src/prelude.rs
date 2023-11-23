@@ -1,5 +1,5 @@
 pub use gpui::{
-    div, Component, Element, ElementId, InteractiveElement, ParentElement, SharedString, Styled,
+    div, Element, ElementId, InteractiveElement, ParentElement, RenderOnce, SharedString, Styled,
     ViewContext, WindowContext,
 };
 

@@ -1,6 +1,6 @@
 use crate::{
-    Bounds, Element, InteractiveElement, InteractiveElementState, Interactivity, LayoutId, Pixels,
-    RenderOnce, SharedString, StyleRefinement, Styled, WindowContext,
+    Bounds, Element, InteractiveElement, InteractiveElementState, Interactivity, IntoElement,
+    LayoutId, Pixels, SharedString, StyleRefinement, Styled, WindowContext,
 };
 use futures::FutureExt;
 use util::ResultExt;
@@ -86,14 +86,14 @@ impl Element for Img {
     }
 }
 
-impl RenderOnce for Img {
+impl IntoElement for Img {
     type Element = Self;
 
     fn element_id(&self) -> Option<crate::ElementId> {
         self.interactivity.element_id.clone()
     }
 
-    fn render_once(self) -> Self::Element {
+    fn into_element(self) -> Self::Element {
         self
     }
 }

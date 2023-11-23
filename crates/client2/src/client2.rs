@@ -382,7 +382,7 @@ impl settings::Settings for TelemetrySettings {
 }
 
 impl Client {
-    pub fn new(http: Arc<dyn HttpClient>, cx: &AppContext) -> Arc<Self> {
+    pub fn new(http: Arc<dyn HttpClient>, cx: &mut AppContext) -> Arc<Self> {
         Arc::new(Self {
             id: AtomicU64::new(0),
             peer: Peer::new(0),

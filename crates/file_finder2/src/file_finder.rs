@@ -3,7 +3,7 @@ use editor::{scroll::autoscroll::Autoscroll, Bias, Editor};
 use fuzzy::{CharBag, PathMatch, PathMatchCandidate};
 use gpui::{
     actions, div, AppContext, Div, EventEmitter, FocusHandle, FocusableView, InteractiveElement,
-    Manager, Model, ParentElement, Render, RenderOnce, Styled, Task, View, ViewContext,
+    IntoElement, Manager, Model, ParentElement, Render, Styled, Task, View, ViewContext,
     VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};

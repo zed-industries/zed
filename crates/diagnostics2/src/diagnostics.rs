@@ -14,8 +14,8 @@ use editor::{
 use futures::future::try_join_all;
 use gpui::{
     actions, div, AnyElement, AnyView, AppContext, Context, Div, EventEmitter, FocusEvent,
-    FocusHandle, Focusable, FocusableElement, FocusableView, InteractiveElement, Model,
-    ParentElement, Render, RenderOnce, SharedString, Styled, Subscription, Task, View, ViewContext,
+    FocusHandle, Focusable, FocusableElement, FocusableView, InteractiveElement, IntoElement,
+    Model, ParentElement, Render, SharedString, Styled, Subscription, Task, View, ViewContext,
     VisualContext, WeakView, WindowContext,
 };
 use language::{
@@ -789,7 +789,6 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
                         } else {
                             IconElement::new(Icon::ExclamationTriangle).color(Color::Warning)
                         };
-
                         stack.child(icon)
                     })
                     .child(
@@ -815,7 +814,7 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
 pub(crate) fn render_summary(summary: &DiagnosticSummary) -> AnyElement {
     if summary.error_count == 0 && summary.warning_count == 0 {
         let label = Label::new("No problems");
-        label.render_into_any()
+        label.into_any_element()
     } else {
         h_stack()
             .gap_1()

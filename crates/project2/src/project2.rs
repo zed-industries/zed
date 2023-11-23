@@ -13,7 +13,7 @@ mod worktree_tests;
 use anyhow::{anyhow, Context as _, Result};
 use client::{proto, Client, Collaborator, TypedEnvelope, UserStore};
 use clock::ReplicaId;
-use collections::{hash_map, BTreeMap, HashMap, HashSet};
+use collections::{hash_map, BTreeMap, HashMap, HashSet, VecDeque};
 use copilot::Copilot;
 use futures::{
     channel::{
@@ -63,6 +63,7 @@ use settings::{Settings, SettingsStore};
 use sha2::{Digest, Sha256};
 use similar::{ChangeTag, TextDiff};
 use smol::channel::{Receiver, Sender};
+use smol::lock::Semaphore;
 use std::{
     cmp::{self, Ordering},
     convert::TryInto,
@@ -557,6 +558,7 @@ enum SearchMatchCandidate {
     },
     Path {
         worktree_id: WorktreeId,
+        is_ignored: bool,
         path: Arc<Path>,
     },
 }
@@ -5815,11 +5817,15 @@ impl Project {
         }
         executor
             .scoped(|scope| {
+                let max_concurrent_workers = Arc::new(Semaphore::new(workers));
+
                 for worker_ix in 0..workers {
                     let worker_start_ix = worker_ix * paths_per_worker;
                     let worker_end_ix = worker_start_ix + paths_per_worker;
                     let unnamed_buffers = opened_buffers.clone();
+                    let limiter = Arc::clone(&max_concurrent_workers);
                     scope.spawn(async move {
+                        let _guard = limiter.acquire().await;
                         let mut snapshot_start_ix = 0;
                         let mut abs_path = PathBuf::new();
                         for snapshot in snapshots {
@@ -5868,6 +5874,7 @@ impl Project {
                                         let project_path = SearchMatchCandidate::Path {
                                             worktree_id: snapshot.id(),
                                             path: entry.path.clone(),
+                                            is_ignored: entry.is_ignored,
                                         };
                                         if matching_paths_tx.send(project_path).await.is_err() {
                                             break;
@@ -5879,6 +5886,94 @@ impl Project {
                             }
                         }
                     });
+                }
+
+                if query.include_ignored() {
+                    for snapshot in snapshots {
+                        for ignored_entry in snapshot
+                            .entries(query.include_ignored())
+                            .filter(|e| e.is_ignored)
+                        {
+                            let limiter = Arc::clone(&max_concurrent_workers);
+                            scope.spawn(async move {
+                                let _guard = limiter.acquire().await;
+                                let mut ignored_paths_to_process =
+                                    VecDeque::from([snapshot.abs_path().join(&ignored_entry.path)]);
+                                while let Some(ignored_abs_path) =
+                                    ignored_paths_to_process.pop_front()
+                                {
+                                    if !query.file_matches(Some(&ignored_abs_path))
+                                        || snapshot.is_abs_path_excluded(&ignored_abs_path)
+                                    {
+                                        continue;
+                                    }
+                                    if let Some(fs_metadata) = fs
+                                        .metadata(&ignored_abs_path)
+                                        .await
+                                        .with_context(|| {
+                                            format!("fetching fs metadata for {ignored_abs_path:?}")
+                                        })
+                                        .log_err()
+                                        .flatten()
+                                    {
+                                        if fs_metadata.is_dir {
+                                            if let Some(mut subfiles) = fs
+                                                .read_dir(&ignored_abs_path)
+                                                .await
+                                                .with_context(|| {
+                                                    format!(
+                                                        "listing ignored path {ignored_abs_path:?}"
+                                                    )
+                                                })
+                                                .log_err()
+                                            {
+                                                while let Some(subfile) = subfiles.next().await {
+                                                    if let Some(subfile) = subfile.log_err() {
+                                                        ignored_paths_to_process.push_back(subfile);
+                                                    }
+                                                }
+                                            }
+                                        } else if !fs_metadata.is_symlink {
+                                            let matches = if let Some(file) = fs
+                                                .open_sync(&ignored_abs_path)
+                                                .await
+                                                .with_context(|| {
+                                                    format!(
+                                                        "Opening ignored path {ignored_abs_path:?}"
+                                                    )
+                                                })
+                                                .log_err()
+                                            {
+                                                query.detect(file).unwrap_or(false)
+                                            } else {
+                                                false
+                                            };
+                                            if matches {
+                                                let project_path = SearchMatchCandidate::Path {
+                                                    worktree_id: snapshot.id(),
+                                                    path: Arc::from(
+                                                        ignored_abs_path
+                                                            .strip_prefix(snapshot.abs_path())
+                                                            .expect(
+                                                                "scanning worktree-related files",
+                                                            ),
+                                                    ),
+                                                    is_ignored: true,
+                                                };
+                                                if matching_paths_tx
+                                                    .send(project_path)
+                                                    .await
+                                                    .is_err()
+                                                {
+                                                    return;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            });
+                        }
+                    }
                 }
             })
             .await;
@@ -5986,11 +6081,24 @@ impl Project {
         let (buffers_tx, buffers_rx) = smol::channel::bounded(1024);
         let (sorted_buffers_tx, sorted_buffers_rx) = futures::channel::oneshot::channel();
         cx.spawn(move |this, cx| async move {
-            let mut buffers = vec![];
+            let mut buffers = Vec::new();
+            let mut ignored_buffers = Vec::new();
             while let Some(entry) = matching_paths_rx.next().await {
-                buffers.push(entry);
+                if matches!(
+                    entry,
+                    SearchMatchCandidate::Path {
+                        is_ignored: true,
+                        ..
+                    }
+                ) {
+                    ignored_buffers.push(entry);
+                } else {
+                    buffers.push(entry);
+                }
             }
             buffers.sort_by_key(|candidate| candidate.path());
+            ignored_buffers.sort_by_key(|candidate| candidate.path());
+            buffers.extend(ignored_buffers);
             let matching_paths = buffers.clone();
             let _ = sorted_buffers_tx.send(buffers);
             for (index, candidate) in matching_paths.into_iter().enumerate() {
@@ -6002,7 +6110,9 @@ impl Project {
                 cx.spawn(move |mut cx| async move {
                     let buffer = match candidate {
                         SearchMatchCandidate::OpenBuffer { buffer, .. } => Some(buffer),
-                        SearchMatchCandidate::Path { worktree_id, path } => this
+                        SearchMatchCandidate::Path {
+                            worktree_id, path, ..
+                        } => this
                             .update(&mut cx, |this, cx| {
                                 this.open_buffer((worktree_id, path), cx)
                             })?

@@ -1,7 +1,7 @@
 use crate::prelude::*;
-use gpui::{Action, Div, RenderOnce};
+use gpui::{Action, Div, IntoElement};
 
-#[derive(RenderOnce, Clone)]
+#[derive(IntoElement, Clone)]
 pub struct KeyBinding {
     /// A keybinding consists of a key and a set of modifier keys.
     /// More then one keybinding produces a chord.
@@ -10,7 +10,7 @@ pub struct KeyBinding {
     key_binding: gpui::KeyBinding,
 }
 
-impl Component for KeyBinding {
+impl RenderOnce for KeyBinding {
     type Rendered = Div;
 
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {
@@ -44,12 +44,12 @@ impl KeyBinding {
     }
 }
 
-#[derive(RenderOnce)]
+#[derive(IntoElement)]
 pub struct Key {
     key: SharedString,
 }
 
-impl Component for Key {
+impl RenderOnce for Key {
     type Rendered = Div;
 
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {

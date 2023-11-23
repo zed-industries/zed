@@ -1,4 +1,4 @@
-use gpui::{rems, svg, RenderOnce, Svg};
+use gpui::{rems, svg, IntoElement, Svg};
 use strum::EnumIter;
 
 use crate::prelude::*;
@@ -133,14 +133,14 @@ impl Icon {
     }
 }
 
-#[derive(RenderOnce)]
+#[derive(IntoElement)]
 pub struct IconElement {
     path: SharedString,
     color: Color,
     size: IconSize,
 }
 
-impl Component for IconElement {
+impl RenderOnce for IconElement {
     type Rendered = Svg;
 
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {
