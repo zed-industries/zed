@@ -97,7 +97,9 @@ use text::{OffsetUtf16, Rope};
 use theme::{
     ActiveTheme, DiagnosticStyle, PlayerColor, SyntaxTheme, Theme, ThemeColors, ThemeSettings,
 };
-use ui::{h_stack, v_stack, HighlightedLabel, IconButton, StyledExt, Tooltip};
+use ui::{
+    h_stack, v_stack, Color, HighlightedLabel, Icon, IconButton, IconSize, StyledExt, Tooltip,
+};
 use util::{post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::{
     item::{ItemEvent, ItemHandle},
@@ -10017,20 +10019,33 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, is_valid: bool) -> Rend
     let message = diagnostic.message;
     Arc::new(move |cx: &mut BlockContext| {
         let message = message.clone();
+        let copy_id: SharedString = format!("copy-{}", cx.block_id.clone()).to_string().into();
+        let write_to_clipboard = cx.write_to_clipboard(ClipboardItem::new(message.clone()));
+
+        // TODO: Nate: We should tint the background of the block with the severity color
+        // We need to extend the theme before we can do this
         v_stack()
             .id(cx.block_id)
+            .relative()
             .size_full()
-            .bg(gpui::red())
             .children(highlighted_lines.iter().map(|(line, highlights)| {
-                div()
+                h_stack()
+                    .items_start()
+                    .gap_2()
+                    .elevation_2(cx)
+                    .absolute()
+                    .left(cx.anchor_x)
+                    .px_1p5()
+                    .py_0p5()
                     .child(HighlightedLabel::new(line.clone(), highlights.clone()))
-                    .ml(cx.anchor_x)
+                    .child(
+                        IconButton::new(copy_id.clone(), Icon::Copy)
+                            .color(Color::Muted)
+                            .size(IconSize::Small)
+                            .on_click(cx.listener(move |_, _, cx| write_to_clipboard))
+                            .tooltip(|cx| Tooltip::text("Copy diagnostic message", cx)),
+                    )
             }))
-            .cursor_pointer()
-            .on_click(cx.listener(move |_, _, cx| {
-                cx.write_to_clipboard(ClipboardItem::new(message.clone()));
-            }))
-            .tooltip(|cx| Tooltip::text("Copy diagnostic message", cx))
             .into_any_element()
     })
 }
