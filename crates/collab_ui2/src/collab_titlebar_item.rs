@@ -172,7 +172,7 @@ impl Render for CollabTitlebarItem {
                         .detach_and_log_err(cx);
                     }))
                 }
-            }) // that's obviously wrong as we should check for current call,not current user
+            })
             .when(is_in_room, |this| {
                 this.child(
                     h_stack()
