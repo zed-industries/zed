@@ -774,7 +774,9 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
     Arc::new(move |_| {
         h_stack()
             .id("diagnostic header")
-            .px_3()
+            .py_2()
+            .pl_10()
+            .pr_5()
             .w_full()
             .justify_between()
             .gap_2()
@@ -802,9 +804,6 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
             .child(
                 h_stack()
                     .gap_1()
-                    // Make sure something is there to reserve the right group space
-                    // In case both source and code are not present
-                    .child(div())
                     .when_some(diagnostic.source.as_ref(), |stack, source| {
                         stack.child(Label::new(format!("{source}")).color(Color::Muted))
                     }),
