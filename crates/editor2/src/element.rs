@@ -2452,7 +2452,7 @@ impl LineWithInvisibles {
                         len: line_chunk.len(),
                         font: text_style.font(),
                         color: text_style.color,
-                        background_color: None,
+                        background_color: text_style.background_color,
                         underline: text_style.underline,
                     });
 

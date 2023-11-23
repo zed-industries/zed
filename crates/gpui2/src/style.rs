@@ -145,6 +145,7 @@ pub struct TextStyle {
     pub line_height: DefiniteLength,
     pub font_weight: FontWeight,
     pub font_style: FontStyle,
+    pub background_color: Option<Hsla>,
     pub underline: Option<UnderlineStyle>,
     pub white_space: WhiteSpace,
 }
@@ -159,6 +160,7 @@ impl Default for TextStyle {
             line_height: phi(),
             font_weight: FontWeight::default(),
             font_style: FontStyle::default(),
+            background_color: None,
             underline: None,
             white_space: WhiteSpace::Normal,
         }
@@ -180,6 +182,10 @@ impl TextStyle {
 
         if let Some(factor) = style.fade_out {
             self.color.fade_out(factor);
+        }
+
+        if let Some(background_color) = style.background_color {
+            self.background_color = Some(background_color);
         }
 
         if let Some(underline) = style.underline {
@@ -212,7 +218,7 @@ impl TextStyle {
                 style: self.font_style,
             },
             color: self.color,
-            background_color: None,
+            background_color: self.background_color,
             underline: self.underline.clone(),
         }
     }
@@ -223,6 +229,7 @@ pub struct HighlightStyle {
     pub color: Option<Hsla>,
     pub font_weight: Option<FontWeight>,
     pub font_style: Option<FontStyle>,
+    pub background_color: Option<Hsla>,
     pub underline: Option<UnderlineStyle>,
     pub fade_out: Option<f32>,
 }
@@ -441,6 +448,7 @@ impl From<&TextStyle> for HighlightStyle {
             color: Some(other.color),
             font_weight: Some(other.font_weight),
             font_style: Some(other.font_style),
+            background_color: other.background_color,
             underline: other.underline.clone(),
             fade_out: None,
         }
@@ -465,6 +473,10 @@ impl HighlightStyle {
 
         if other.font_style.is_some() {
             self.font_style = other.font_style;
+        }
+
+        if other.background_color.is_some() {
+            self.background_color = other.background_color;
         }
 
         if other.underline.is_some() {
