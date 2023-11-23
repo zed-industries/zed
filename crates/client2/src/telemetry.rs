@@ -1,6 +1,5 @@
 use crate::{TelemetrySettings, ZED_SECRET_CLIENT_TOKEN, ZED_SERVER_URL};
 use chrono::{DateTime, Utc};
-use futures::Future;
 use gpui::{serde_json, AppContext, AppMetadata, BackgroundExecutor, Task};
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
