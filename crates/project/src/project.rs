@@ -62,7 +62,10 @@ use serde::Serialize;
 use settings::SettingsStore;
 use sha2::{Digest, Sha256};
 use similar::{ChangeTag, TextDiff};
-use smol::channel::{Receiver, Sender};
+use smol::{
+    channel::{Receiver, Sender},
+    lock::Semaphore,
+};
 use std::{
     cmp::{self, Ordering},
     convert::TryInto,
@@ -5744,14 +5747,17 @@ impl Project {
                 .log_err();
         }
 
-        // TODO kb parallelize directory traversal
         background
             .scoped(|scope| {
+                let max_concurrent_workers = Arc::new(Semaphore::new(workers));
+
                 for worker_ix in 0..workers {
                     let worker_start_ix = worker_ix * paths_per_worker;
                     let worker_end_ix = worker_start_ix + paths_per_worker;
                     let unnamed_buffers = opened_buffers.clone();
+                    let limiter = Arc::clone(&max_concurrent_workers);
                     scope.spawn(async move {
+                        let _guard = limiter.acquire().await;
                         let mut snapshot_start_ix = 0;
                         let mut abs_path = PathBuf::new();
                         for snapshot in snapshots {
@@ -5815,12 +5821,14 @@ impl Project {
                 }
 
                 if query.include_ignored() {
-                    scope.spawn(async move {
-                        for snapshot in snapshots {
-                            for ignored_entry in snapshot
-                                .entries(query.include_ignored())
-                                .filter(|e| e.is_ignored)
-                            {
+                    for snapshot in snapshots {
+                        for ignored_entry in snapshot
+                            .entries(query.include_ignored())
+                            .filter(|e| e.is_ignored)
+                        {
+                            let limiter = Arc::clone(&max_concurrent_workers);
+                            scope.spawn(async move {
+                                let _guard = limiter.acquire().await;
                                 let mut ignored_paths_to_process =
                                     VecDeque::from([snapshot.abs_path().join(&ignored_entry.path)]);
                                 while let Some(ignored_abs_path) =
@@ -5895,9 +5903,9 @@ impl Project {
                                         }
                                     }
                                 }
-                            }
+                            });
                         }
-                    });
+                    }
                 }
             })
             .await;
