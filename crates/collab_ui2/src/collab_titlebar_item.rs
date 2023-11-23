@@ -31,7 +31,7 @@ use std::sync::Arc;
 use call::ActiveCall;
 use client::{Client, UserStore};
 use gpui::{
-    div, px, rems, AppContext, Div, InteractiveElement, Model, ParentElement, Render, RenderOnce,
+    div, px, rems, AppContext, Div, InteractiveElement, IntoElement, Model, ParentElement, Render,
     Stateful, StatefulInteractiveElement, Styled, Subscription, ViewContext, VisualContext,
     WeakView, WindowBounds,
 };

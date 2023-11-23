@@ -1,4 +1,4 @@
-use gpui::{MouseDownEvent, RenderOnce, WindowContext};
+use gpui::{IntoElement, MouseDownEvent, WindowContext};
 use ui::{Button, ButtonVariant, IconButton};
 
 use crate::mode::SearchMode;
@@ -7,7 +7,7 @@ pub(super) fn render_nav_button(
     icon: ui::Icon,
     _active: bool,
     on_click: impl Fn(&MouseDownEvent, &mut WindowContext) + 'static,
-) -> impl RenderOnce {
+) -> impl IntoElement {
     // let tooltip_style = cx.theme().tooltip.clone();
     // let cursor_style = if active {
     //     CursorStyle::PointingHand

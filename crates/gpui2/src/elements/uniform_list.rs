@@ -1,7 +1,7 @@
 use crate::{
     point, px, size, AnyElement, AvailableSpace, BorrowWindow, Bounds, ContentMask, Element,
-    ElementId, InteractiveElement, InteractiveElementState, Interactivity, LayoutId, Pixels, Point,
-    Render, RenderOnce, Size, StyleRefinement, Styled, View, ViewContext, WindowContext,
+    ElementId, InteractiveElement, InteractiveElementState, Interactivity, IntoElement, LayoutId,
+    Pixels, Point, Render, Size, StyleRefinement, Styled, View, ViewContext, WindowContext,
 };
 use smallvec::SmallVec;
 use std::{cell::RefCell, cmp, ops::Range, rc::Rc};
@@ -18,7 +18,7 @@ pub fn uniform_list<I, R, V>(
 ) -> UniformList
 where
     I: Into<ElementId>,
-    R: RenderOnce,
+    R: IntoElement,
     V: Render,
 {
     let id = id.into();
@@ -29,7 +29,7 @@ where
         view.update(cx, |this, cx| {
             f(this, range, cx)
                 .into_iter()
-                .map(|component| component.render_into_any())
+                .map(|component| component.into_any_element())
                 .collect()
         })
     };
@@ -243,14 +243,14 @@ impl Element for UniformList {
     }
 }
 
-impl RenderOnce for UniformList {
+impl IntoElement for UniformList {
     type Element = Self;
 
     fn element_id(&self) -> Option<crate::ElementId> {
         Some(self.id.clone())
     }
 
-    fn render_once(self) -> Self::Element {
+    fn into_element(self) -> Self::Element {
         self
     }
 }

@@ -1,5 +1,5 @@
 use crate::prelude::*;
-use gpui::{img, ImageSource, Img, RenderOnce};
+use gpui::{img, ImageSource, Img, IntoElement};
 
 #[derive(Debug, Default, PartialEq, Clone)]
 pub enum Shape {
@@ -8,13 +8,13 @@ pub enum Shape {
     RoundedRectangle,
 }
 
-#[derive(RenderOnce)]
+#[derive(IntoElement)]
 pub struct Avatar {
     src: ImageSource,
     shape: Shape,
 }
 
-impl Component for Avatar {
+impl RenderOnce for Avatar {
     type Rendered = Img;
 
     fn render(self, _: &mut WindowContext) -> Self::Rendered {

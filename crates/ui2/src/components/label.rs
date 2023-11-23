@@ -1,6 +1,6 @@
 use crate::prelude::*;
 use crate::styled_ext::StyledExt;
-use gpui::{relative, Div, Hsla, RenderOnce, StyledText, TextRun, WindowContext};
+use gpui::{relative, Div, Hsla, IntoElement, StyledText, TextRun, WindowContext};
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Default)]
 pub enum LabelSize {
@@ -17,7 +17,7 @@ pub enum LineHeightStyle {
     UILabel,
 }
 
-#[derive(Clone, RenderOnce)]
+#[derive(IntoElement, Clone)]
 pub struct Label {
     label: SharedString,
     size: LabelSize,
@@ -26,7 +26,7 @@ pub struct Label {
     strikethrough: bool,
 }
 
-impl Component for Label {
+impl RenderOnce for Label {
     type Rendered = Div;
 
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {
@@ -85,7 +85,7 @@ impl Label {
     }
 }
 
-#[derive(RenderOnce)]
+#[derive(IntoElement)]
 pub struct HighlightedLabel {
     label: SharedString,
     size: LabelSize,
@@ -94,7 +94,7 @@ pub struct HighlightedLabel {
     strikethrough: bool,
 }
 
-impl Component for HighlightedLabel {
+impl RenderOnce for HighlightedLabel {
     type Rendered = Div;
 
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {

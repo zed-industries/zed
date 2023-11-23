@@ -1,5 +1,5 @@
 use gpui::{
-    AnyElement, Component, Div, Element, ElementId, ParentElement, RenderOnce, Styled,
+    AnyElement, Div, Element, ElementId, IntoElement, ParentElement, RenderOnce, Styled,
     WindowContext,
 };
 use smallvec::SmallVec;
@@ -33,13 +33,13 @@ use crate::{v_stack, StyledExt};
 ///
 /// Example: A theme select control. Displays "One Dark", clicking it opens a list of themes.
 /// When one is selected, the theme select control displays the selected theme.
-#[derive(RenderOnce)]
+#[derive(IntoElement)]
 pub struct Popover {
     children: SmallVec<[AnyElement; 2]>,
     aside: Option<AnyElement>,
 }
 
-impl Component for Popover {
+impl RenderOnce for Popover {
     type Rendered = Div;
 
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {
@@ -73,11 +73,11 @@ impl Popover {
         }
     }
 
-    pub fn aside(mut self, aside: impl RenderOnce) -> Self
+    pub fn aside(mut self, aside: impl IntoElement) -> Self
     where
         Self: Sized,
     {
-        self.aside = Some(aside.render_once().into_any());
+        self.aside = Some(aside.into_element().into_any());
         self
     }
 }

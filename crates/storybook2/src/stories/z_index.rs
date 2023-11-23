@@ -1,4 +1,4 @@
-use gpui::{px, rgb, Div, Hsla, Render, RenderOnce};
+use gpui::{px, rgb, Div, Hsla, IntoElement, Render, RenderOnce};
 use story::Story;
 use ui::prelude::*;
 
@@ -76,12 +76,12 @@ trait Styles: Styled + Sized {
 
 impl Styles for Div {}
 
-#[derive(RenderOnce)]
+#[derive(IntoElement)]
 struct ZIndexExample {
     z_index: u32,
 }
 
-impl Component for ZIndexExample {
+impl RenderOnce for ZIndexExample {
     type Rendered = Div;
 
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {

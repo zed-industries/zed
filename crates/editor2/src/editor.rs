@@ -40,9 +40,9 @@ use fuzzy::{StringMatch, StringMatchCandidate};
 use git::diff_hunk_to_display;
 use gpui::{
     actions, div, point, prelude::*, px, relative, rems, size, uniform_list, Action, AnyElement,
-    AppContext, AsyncWindowContext, BackgroundExecutor, Bounds, ClipboardItem, Component, Context,
+    AppContext, AsyncWindowContext, BackgroundExecutor, Bounds, ClipboardItem, Context,
     EventEmitter, FocusHandle, FocusableView, FontFeatures, FontStyle, FontWeight, HighlightStyle,
-    Hsla, InputHandler, KeyContext, Model, MouseButton, ParentElement, Pixels, Render,
+    Hsla, InputHandler, KeyContext, Model, MouseButton, ParentElement, Pixels, Render, RenderOnce,
     SharedString, Styled, Subscription, Task, TextStyle, UniformListScrollHandle, View,
     ViewContext, VisualContext, WeakView, WhiteSpace, WindowContext,
 };
@@ -966,20 +966,22 @@ impl CompletionsMenu {
 
     fn pre_resolve_completion_documentation(
         &self,
-        project: Option<Model<Project>>,
-        cx: &mut ViewContext<Editor>,
-    ) {
+        _editor: &Editor,
+        _cx: &mut ViewContext<Editor>,
+    ) -> Option<Task<()>> {
         // todo!("implementation below ");
+        None
     }
-    // ) {
+    // {
     //     let settings = EditorSettings::get_global(cx);
     //     if !settings.show_completion_documentation {
-    //         return;
+    //         return None;
     //     }
 
-    //     let Some(project) = project else {
-    //         return;
+    //     let Some(project) = editor.project.clone() else {
+    //         return None;
     //     };
+
     //     let client = project.read(cx).client();
     //     let language_registry = project.read(cx).languages().clone();
 
@@ -989,7 +991,7 @@ impl CompletionsMenu {
     //     let completions = self.completions.clone();
     //     let completion_indices: Vec<_> = self.matches.iter().map(|m| m.candidate_id).collect();
 
-    //     cx.spawn(move |this, mut cx| async move {
+    //     Some(cx.spawn(move |this, mut cx| async move {
     //         if is_remote {
     //             let Some(project_id) = project_id else {
     //                 log::error!("Remote project without remote_id");
@@ -1051,8 +1053,7 @@ impl CompletionsMenu {
     //                 _ = this.update(&mut cx, |_, cx| cx.notify());
     //             }
     //         }
-    //     })
-    //     .detach();
+    //     }))
     // }
 
     fn attempt_resolve_selected_completion_documentation(
@@ -1373,7 +1374,7 @@ impl CompletionsMenu {
         .track_scroll(self.scroll_handle.clone())
         .with_width_from_item(widest_completion_ix);
 
-        list.render_into_any()
+        list.into_any_element()
         // todo!("multiline documentation")
         //     enum MultiLineDocumentation {}
 
@@ -1596,7 +1597,7 @@ impl CodeActionsMenu {
                 .max_by_key(|(_, action)| action.lsp_action.title.chars().count())
                 .map(|(ix, _)| ix),
         )
-        .render_into_any();
+        .into_any_element();
 
         if self.deployed_from_indicator {
             *cursor_position.column_mut() = 0;
@@ -3596,7 +3597,8 @@ impl Editor {
         let id = post_inc(&mut self.next_completion_id);
         let task = cx.spawn(|this, mut cx| {
             async move {
-                let menu = if let Some(completions) = completions.await.log_err() {
+                let completions = completions.await.log_err();
+                let (menu, pre_resolve_task) = if let Some(completions) = completions {
                     let mut menu = CompletionsMenu {
                         id,
                         initial_position: position,
@@ -3619,20 +3621,24 @@ impl Editor {
                     };
                     menu.filter(query.as_deref(), cx.background_executor().clone())
                         .await;
+
                     if menu.matches.is_empty() {
-                        None
+                        (None, None)
                     } else {
-                        _ = this.update(&mut cx, |editor, cx| {
-                            menu.pre_resolve_completion_documentation(editor.project.clone(), cx);
-                        });
-                        Some(menu)
+                        let pre_resolve_task = this
+                            .update(&mut cx, |editor, cx| {
+                                menu.pre_resolve_completion_documentation(editor, cx)
+                            })
+                            .ok()
+                            .flatten();
+                        (Some(menu), pre_resolve_task)
                     }
                 } else {
-                    None
+                    (None, None)
                 };
 
                 this.update(&mut cx, |this, cx| {
-                    this.completion_tasks.retain(|(task_id, _)| *task_id > id);
+                    this.completion_tasks.retain(|(task_id, _)| *task_id >= id);
 
                     let mut context_menu = this.context_menu.write();
                     match context_menu.as_ref() {
@@ -3664,10 +3670,15 @@ impl Editor {
                     }
                 })?;
 
+                if let Some(pre_resolve_task) = pre_resolve_task {
+                    pre_resolve_task.await;
+                }
+
                 Ok::<_, anyhow::Error>(())
             }
             .log_err()
         });
+
         self.completion_tasks.push((id, task));
     }
 
@@ -7796,7 +7807,7 @@ impl Editor {
                                                     .clone(),
                                             },
                                         ))
-                                        .render_into_any()
+                                        .into_any_element()
                                 }
                             }),
                             disposition: BlockDisposition::Below,
@@ -10005,7 +10016,7 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, is_valid: bool) -> Rend
                 cx.write_to_clipboard(ClipboardItem::new(message.clone()));
             }))
             .tooltip(|cx| Tooltip::text("Copy diagnostic message", cx))
-            .render_into_any()
+            .into_any_element()
     })
 }
 
