@@ -1,4 +1,4 @@
-use crate::{h_stack, prelude::*, Icon, IconElement};
+use crate::{h_stack, prelude::*, Icon, IconElement, IconSize};
 use gpui::{prelude::*, Action, AnyView, Div, MouseButton, MouseDownEvent, Stateful};
 
 #[derive(RenderOnce)]
@@ -9,6 +9,7 @@ pub struct IconButton {
     variant: ButtonVariant,
     state: InteractionState,
     selected: bool,
+    size: IconSize,
     tooltip: Option<Box<dyn Fn(&mut WindowContext) -> AnyView + 'static>>,
     on_mouse_down: Option<Box<dyn Fn(&MouseDownEvent, &mut WindowContext) + 'static>>,
 }
@@ -52,7 +53,11 @@ impl Component for IconButton {
             // place we use an icon button.
             // .hover(|style| style.bg(bg_hover_color))
             .active(|style| style.bg(bg_active_color))
-            .child(IconElement::new(self.icon).color(icon_color));
+            .child(
+                IconElement::new(self.icon)
+                    .color(icon_color)
+                    .size(self.size),
+            );
 
         if let Some(click_handler) = self.on_mouse_down {
             button = button.on_mouse_down(MouseButton::Left, move |event, cx| {
@@ -82,6 +87,7 @@ impl IconButton {
             selected: false,
             tooltip: None,
             on_mouse_down: None,
+            size: IconSize::default(),
         }
     }
 
@@ -92,6 +98,11 @@ impl IconButton {
 
     pub fn color(mut self, color: Color) -> Self {
         self.color = color;
+        self
+    }
+
+    pub fn size(mut self, size: IconSize) -> Self {
+        self.size = size;
         self
     }
 
