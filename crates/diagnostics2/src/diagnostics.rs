@@ -807,7 +807,7 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
                         stack.child(Label::new(format!("{source}")).color(Color::Muted))
                     }),
             )
-            .render_into_any()
+            .into_any_element()
     })
 }
 
@@ -833,7 +833,7 @@ pub(crate) fn render_summary(summary: &DiagnosticSummary) -> AnyElement {
                         .child(Label::new(summary.warning_count.to_string())),
                 )
             })
-            .render_into_any()
+            .into_any_element()
     }
 }
 
