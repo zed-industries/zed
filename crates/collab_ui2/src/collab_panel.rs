@@ -157,15 +157,17 @@ const COLLABORATION_PANEL_KEY: &'static str = "CollaborationPanel";
 
 use std::sync::Arc;
 
+use client::{Client, Contact, UserStore};
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
     actions, div, serde_json, AppContext, AsyncWindowContext, Div, EventEmitter, FocusHandle,
-    Focusable, FocusableView, InteractiveElement, ParentElement, Render, View, ViewContext,
-    VisualContext, WeakView,
+    Focusable, FocusableView, InteractiveElement, Model, ParentElement, Render, Styled, View,
+    ViewContext, VisualContext, WeakView,
 };
 use project::Fs;
 use serde_derive::{Deserialize, Serialize};
 use settings::Settings;
+use ui::{h_stack, Avatar, Label};
 use util::ResultExt;
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
@@ -299,8 +301,8 @@ pub struct CollabPanel {
     // channel_editing_state: Option<ChannelEditingState>,
     // entries: Vec<ListEntry>,
     // selection: Option<usize>,
-    // user_store: ModelHandle<UserStore>,
-    // client: Arc<Client>,
+    user_store: Model<UserStore>,
+    client: Arc<Client>,
     // channel_store: ModelHandle<ChannelStore>,
     // project: ModelHandle<Project>,
     // match_candidates: Vec<StringMatchCandidate>,
@@ -595,7 +597,7 @@ impl CollabPanel {
                 //                 entries: Vec::default(),
                 //                 channel_editing_state: None,
                 //                 selection: None,
-                //                 user_store: workspace.user_store().clone(),
+                user_store: workspace.user_store().clone(),
                 //                 channel_store: ChannelStore::global(cx),
                 //                 project: workspace.project().clone(),
                 //                 subscriptions: Vec::default(),
@@ -603,7 +605,7 @@ impl CollabPanel {
                 //                 collapsed_sections: vec![Section::Offline],
                 //                 collapsed_channels: Vec::default(),
                 _workspace: workspace.weak_handle(),
-                //                 client: workspace.app_state().client.clone(),
+                client: workspace.app_state().client.clone(),
                 //                 context_menu_on_selected: true,
                 //                 drag_target_channel: ChannelDragTarget::None,
                 //                 list_state,
@@ -663,6 +665,9 @@ impl CollabPanel {
         })
     }
 
+    fn contacts(&self, cx: &AppContext) -> Option<Vec<Arc<Contact>>> {
+        Some(self.user_store.read(cx).contacts().to_owned())
+    }
     pub async fn load(
         workspace: WeakView<Workspace>,
         mut cx: AsyncWindowContext,
@@ -3297,11 +3302,32 @@ impl CollabPanel {
 impl Render for CollabPanel {
     type Element = Focusable<Div>;
 
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+        let contacts = self.contacts(cx).unwrap_or_default();
+        let workspace = self._workspace.clone();
         div()
             .key_context("CollabPanel")
             .track_focus(&self.focus_handle)
-            .child("COLLAB PANEL")
+            .children(contacts.into_iter().map(|contact| {
+                let id = contact.user.id;
+                h_stack()
+                    .p_2()
+                    .gap_2()
+                    .children(
+                        contact
+                            .user
+                            .avatar
+                            .as_ref()
+                            .map(|avatar| Avatar::new(avatar.clone())),
+                    )
+                    .child(Label::new(contact.user.github_login.clone()))
+                    .on_mouse_down(gpui::MouseButton::Left, {
+                        let workspace = workspace.clone();
+                        move |event, cx| {
+                            workspace.update(cx, |this, cx| this.call_state().invite(id, None, cx));
+                        }
+                    })
+            }))
     }
 }
 

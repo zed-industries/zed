@@ -454,6 +454,12 @@ pub trait CallHandler {
     }
     fn hang_up(&self, cx: AsyncWindowContext) -> Result<Task<Result<()>>>;
     fn active_project(&self, cx: &AppContext) -> Option<WeakModel<Project>>;
+    fn invite(
+        &mut self,
+        called_user_id: u64,
+        initial_project: Option<Model<Project>>,
+        cx: &mut AppContext,
+    ) -> Task<Result<()>>;
 }
 
 pub struct Workspace {

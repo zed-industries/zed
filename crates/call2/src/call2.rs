@@ -549,42 +549,6 @@ impl Call {
 
 #[async_trait(?Send)]
 impl CallHandler for Call {
-    fn shared_screen_for_peer(
-        &self,
-        peer_id: PeerId,
-        _pane: &View<Pane>,
-        cx: &mut ViewContext<Workspace>,
-    ) -> Option<Box<dyn ItemHandle>> {
-        let (call, _) = self.active_call.as_ref()?;
-        let room = call.read(cx).room()?.read(cx);
-        let participant = room.remote_participant_for_peer_id(peer_id)?;
-        let _track = participant.video_tracks.values().next()?.clone();
-        let _user = participant.user.clone();
-        todo!();
-        // for item in pane.read(cx).items_of_type::<SharedScreen>() {
-        //     if item.read(cx).peer_id == peer_id {
-        //         return Box::new(Some(item));
-        //     }
-        // }
-
-        // Some(Box::new(cx.build_view(|cx| {
-        //     SharedScreen::new(&track, peer_id, user.clone(), cx)
-        // })))
-    }
-
-    fn room_id(&self, cx: &AppContext) -> Option<u64> {
-        Some(self.active_call.as_ref()?.0.read(cx).room()?.read(cx).id())
-    }
-    fn hang_up(&self, mut cx: AsyncWindowContext) -> Result<Task<Result<()>>> {
-        let Some((call, _)) = self.active_call.as_ref() else {
-            bail!("Cannot exit a call; not in a call");
-        };
-
-        call.update(&mut cx, |this, cx| this.hang_up(cx))
-    }
-    fn active_project(&self, cx: &AppContext) -> Option<WeakModel<Project>> {
-        ActiveCall::global(cx).read(cx).location().cloned()
-    }
     fn peer_state(
         &mut self,
         leader_id: PeerId,
@@ -617,6 +581,52 @@ impl CallHandler for Call {
         };
 
         Some((leader_in_this_project, leader_in_this_app))
+    }
+
+    fn shared_screen_for_peer(
+        &self,
+        peer_id: PeerId,
+        _pane: &View<Pane>,
+        cx: &mut ViewContext<Workspace>,
+    ) -> Option<Box<dyn ItemHandle>> {
+        let (call, _) = self.active_call.as_ref()?;
+        let room = call.read(cx).room()?.read(cx);
+        let participant = room.remote_participant_for_peer_id(peer_id)?;
+        let _track = participant.video_tracks.values().next()?.clone();
+        let _user = participant.user.clone();
+        todo!();
+        // for item in pane.read(cx).items_of_type::<SharedScreen>() {
+        //     if item.read(cx).peer_id == peer_id {
+        //         return Box::new(Some(item));
+        //     }
+        // }
+
+        // Some(Box::new(cx.build_view(|cx| {
+        //     SharedScreen::new(&track, peer_id, user.clone(), cx)
+        // })))
+    }
+    fn room_id(&self, cx: &AppContext) -> Option<u64> {
+        Some(self.active_call.as_ref()?.0.read(cx).room()?.read(cx).id())
+    }
+    fn hang_up(&self, mut cx: AsyncWindowContext) -> Result<Task<Result<()>>> {
+        let Some((call, _)) = self.active_call.as_ref() else {
+            bail!("Cannot exit a call; not in a call");
+        };
+
+        call.update(&mut cx, |this, cx| this.hang_up(cx))
+    }
+    fn active_project(&self, cx: &AppContext) -> Option<WeakModel<Project>> {
+        ActiveCall::global(cx).read(cx).location().cloned()
+    }
+    fn invite(
+        &mut self,
+        called_user_id: u64,
+        initial_project: Option<Model<Project>>,
+        cx: &mut AppContext,
+    ) -> Task<Result<()>> {
+        ActiveCall::global(cx).update(cx, |this, cx| {
+            this.invite(called_user_id, initial_project, cx)
+        })
     }
 }
 
