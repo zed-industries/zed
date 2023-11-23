@@ -371,7 +371,7 @@ impl ProjectPanel {
         _entry_id: ProjectEntryId,
         _cx: &mut ViewContext<Self>,
     ) {
-        todo!()
+        // todo!()
         //     let project = self.project.read(cx);
 
         //     let worktree_id = if let Some(id) = project.worktree_id_for_entry(entry_id, cx) {

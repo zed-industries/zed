@@ -1051,7 +1051,7 @@ impl EditorElement {
                         }
 
                         if list_origin.y + list_height > text_bounds.lower_right().y {
-                            list_origin.y -= layout.position_map.line_height - list_height;
+                            list_origin.y -= layout.position_map.line_height + list_height;
                         }
 
                         context_menu.draw(list_origin, available_space, cx);

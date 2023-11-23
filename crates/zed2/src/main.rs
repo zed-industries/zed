@@ -71,7 +71,11 @@ fn main() {
     log::info!("========== starting zed ==========");
     let app = App::production(Arc::new(Assets));
 
-    let installation_id = app.background_executor().block(installation_id()).ok();
+    let (installation_id, existing_installation_id_found) = app
+        .background_executor()
+        .block(installation_id())
+        .ok()
+        .unzip();
     let session_id = Uuid::new_v4().to_string();
     init_panic_hook(&app, installation_id.clone(), session_id.clone());
 
@@ -173,6 +177,14 @@ fn main() {
         // .detach();
 
         client.telemetry().start(installation_id, session_id, cx);
+        let telemetry_settings = *client::TelemetrySettings::get_global(cx);
+        let event_operation = match existing_installation_id_found {
+            Some(false) => "first open",
+            _ => "open",
+        };
+        client
+            .telemetry()
+            .report_app_event(telemetry_settings, event_operation);
 
         let app_state = Arc::new(AppState {
             languages,
@@ -180,6 +192,7 @@ fn main() {
             user_store,
             fs,
             build_window_options,
+            call_factory: call::Call::new,
             // background_actions: todo!("ask Mikayla"),
             workspace_store,
             node_runtime,
@@ -333,11 +346,11 @@ fn main() {
 //     Ok::<_, anyhow::Error>(())
 // }
 
-async fn installation_id() -> Result<String> {
+async fn installation_id() -> Result<(String, bool)> {
     let legacy_key_name = "device_id";
 
     if let Ok(Some(installation_id)) = KEY_VALUE_STORE.read_kvp(legacy_key_name) {
-        Ok(installation_id)
+        Ok((installation_id, true))
     } else {
         let installation_id = Uuid::new_v4().to_string();
 
@@ -345,7 +358,7 @@ async fn installation_id() -> Result<String> {
             .write_kvp(legacy_key_name.to_string(), installation_id.clone())
             .await?;
 
-        Ok(installation_id)
+        Ok((installation_id, false))
     }
 }
 

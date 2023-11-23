@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::{prelude::*, v_stack, List};
+use crate::{prelude::*, v_stack, Label, List};
 use crate::{ListItem, ListSeparator, ListSubHeader};
 use gpui::{
     overlay, px, Action, AnchorCorner, AnyElement, AppContext, Bounds, ClickEvent, DispatchPhase,
@@ -10,9 +10,9 @@ use gpui::{
 };
 
 pub enum ContextMenuItem {
-    Separator(ListSeparator),
-    Header(ListSubHeader),
-    Entry(ListItem, Rc<dyn Fn(&ClickEvent, &mut WindowContext)>),
+    Separator,
+    Header(SharedString),
+    Entry(SharedString, Rc<dyn Fn(&ClickEvent, &mut WindowContext)>),
 }
 
 pub struct ContextMenu {
@@ -46,29 +46,30 @@ impl ContextMenu {
     }
 
     pub fn header(mut self, title: impl Into<SharedString>) -> Self {
-        self.items
-            .push(ContextMenuItem::Header(ListSubHeader::new(title)));
+        self.items.push(ContextMenuItem::Header(title.into()));
         self
     }
 
     pub fn separator(mut self) -> Self {
-        self.items.push(ContextMenuItem::Separator(ListSeparator));
+        self.items.push(ContextMenuItem::Separator);
         self
     }
 
     pub fn entry(
         mut self,
-        view: ListItem,
+        label: impl Into<SharedString>,
         on_click: impl Fn(&ClickEvent, &mut WindowContext) + 'static,
     ) -> Self {
         self.items
-            .push(ContextMenuItem::Entry(view, Rc::new(on_click)));
+            .push(ContextMenuItem::Entry(label.into(), Rc::new(on_click)));
         self
     }
 
-    pub fn action(self, view: ListItem, action: Box<dyn Action>) -> Self {
+    pub fn action(self, label: impl Into<SharedString>, action: Box<dyn Action>) -> Self {
         // todo: add the keybindings to the list entry
-        self.entry(view, move |_, cx| cx.dispatch_action(action.boxed_clone()))
+        self.entry(label.into(), move |_, cx| {
+            cx.dispatch_action(action.boxed_clone())
+        })
     }
 
     pub fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
@@ -104,16 +105,16 @@ impl Render for ContextMenu {
                 // .border_color(cx.theme().colors().border)
                 .child(
                     List::new().children(self.items.iter().map(|item| match item {
-                        ContextMenuItem::Separator(separator) => {
-                            separator.clone().into_any_element()
+                        ContextMenuItem::Separator => ListSeparator::new().into_any_element(),
+                        ContextMenuItem::Header(header) => {
+                            ListSubHeader::new(header.clone()).into_any_element()
                         }
-                        ContextMenuItem::Header(header) => header.clone().into_any_element(),
                         ContextMenuItem::Entry(entry, callback) => {
                             let callback = callback.clone();
                             let dismiss = cx.listener(|_, _, cx| cx.emit(Manager::Dismiss));
 
-                            entry
-                                .clone()
+                            ListItem::new(entry.clone())
+                                .child(Label::new(entry.clone()))
                                 .on_click(move |event, cx| {
                                     callback(event, cx);
                                     dismiss(event, cx)

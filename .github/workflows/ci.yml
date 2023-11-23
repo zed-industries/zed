@@ -23,14 +23,14 @@ jobs:
       - self-hosted
       - test
     steps:
-      - name: Set up default .cargo/config.toml
-        run: printf "[build]\nrustflags = [\"-D\", \"warnings\"]" > $HOME/.cargo/config.toml
-
       - name: Checkout repo
         uses: actions/checkout@v3
         with:
           clean: false
           submodules: "recursive"
+
+      - name: Set up default .cargo/config.toml
+        run: cp ./.cargo/ci-config.toml ~/.cargo/config.toml
 
       - name: Run rustfmt
         uses: ./.github/actions/check_formatting

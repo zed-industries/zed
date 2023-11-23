@@ -107,6 +107,10 @@ pub enum ClickhouseEvent {
         virtual_memory_in_bytes: u64,
         milliseconds_since_first_event: i64,
     },
+    App {
+        operation: &'static str,
+        milliseconds_since_first_event: i64,
+    },
 }
 
 #[cfg(debug_assertions)]
@@ -122,12 +126,13 @@ const DEBOUNCE_INTERVAL: Duration = Duration::from_secs(1);
 const DEBOUNCE_INTERVAL: Duration = Duration::from_secs(30);
 
 impl Telemetry {
-    pub fn new(client: Arc<dyn HttpClient>, cx: &AppContext) -> Arc<Self> {
+    pub fn new(client: Arc<dyn HttpClient>, cx: &mut AppContext) -> Arc<Self> {
         let release_channel = if cx.has_global::<ReleaseChannel>() {
             Some(cx.global::<ReleaseChannel>().display_name())
         } else {
             None
         };
+
         // TODO: Replace all hardware stuff with nested SystemSpecs json
         let this = Arc::new(Self {
             http_client: client,
@@ -147,8 +152,21 @@ impl Telemetry {
             }),
         });
 
+        // We should only ever have one instance of Telemetry, leak the subscription to keep it alive
+        // rather than store in TelemetryState, complicating spawn as subscriptions are not Send
+        // std::mem::forget(cx.on_app_quit({
+        //     let this = this.clone();
+        //     move |cx| this.shutdown_telemetry(cx)
+        // }));
+
         this
     }
+
+    // fn shutdown_telemetry(self: &Arc<Self>, cx: &mut AppContext) -> impl Future<Output = ()> {
+    //     let telemetry_settings = TelemetrySettings::get_global(cx).clone();
+    //     self.report_app_event(telemetry_settings, "close");
+    //     Task::ready(())
+    // }
 
     pub fn log_file_path(&self) -> Option<PathBuf> {
         Some(self.state.lock().log_file.as_ref()?.path().to_path_buf())
@@ -163,12 +181,7 @@ impl Telemetry {
         let mut state = self.state.lock();
         state.installation_id = installation_id.map(|id| id.into());
         state.session_id = Some(session_id.into());
-        let has_clickhouse_events = !state.clickhouse_events_queue.is_empty();
         drop(state);
-
-        if has_clickhouse_events {
-            self.flush_clickhouse_events();
-        }
 
         let this = self.clone();
         cx.spawn(|cx| async move {
@@ -257,7 +270,7 @@ impl Telemetry {
             milliseconds_since_first_event: self.milliseconds_since_first_event(),
         };
 
-        self.report_clickhouse_event(event, telemetry_settings)
+        self.report_clickhouse_event(event, telemetry_settings, false)
     }
 
     pub fn report_copilot_event(
@@ -274,7 +287,7 @@ impl Telemetry {
             milliseconds_since_first_event: self.milliseconds_since_first_event(),
         };
 
-        self.report_clickhouse_event(event, telemetry_settings)
+        self.report_clickhouse_event(event, telemetry_settings, false)
     }
 
     pub fn report_assistant_event(
@@ -291,7 +304,7 @@ impl Telemetry {
             milliseconds_since_first_event: self.milliseconds_since_first_event(),
         };
 
-        self.report_clickhouse_event(event, telemetry_settings)
+        self.report_clickhouse_event(event, telemetry_settings, false)
     }
 
     pub fn report_call_event(
@@ -308,7 +321,7 @@ impl Telemetry {
             milliseconds_since_first_event: self.milliseconds_since_first_event(),
         };
 
-        self.report_clickhouse_event(event, telemetry_settings)
+        self.report_clickhouse_event(event, telemetry_settings, false)
     }
 
     pub fn report_cpu_event(
@@ -323,7 +336,7 @@ impl Telemetry {
             milliseconds_since_first_event: self.milliseconds_since_first_event(),
         };
 
-        self.report_clickhouse_event(event, telemetry_settings)
+        self.report_clickhouse_event(event, telemetry_settings, false)
     }
 
     pub fn report_memory_event(
@@ -338,7 +351,21 @@ impl Telemetry {
             milliseconds_since_first_event: self.milliseconds_since_first_event(),
         };
 
-        self.report_clickhouse_event(event, telemetry_settings)
+        self.report_clickhouse_event(event, telemetry_settings, false)
+    }
+
+    // app_events are called at app open and app close, so flush is set to immediately send
+    pub fn report_app_event(
+        self: &Arc<Self>,
+        telemetry_settings: TelemetrySettings,
+        operation: &'static str,
+    ) {
+        let event = ClickhouseEvent::App {
+            operation,
+            milliseconds_since_first_event: self.milliseconds_since_first_event(),
+        };
+
+        self.report_clickhouse_event(event, telemetry_settings, true)
     }
 
     fn milliseconds_since_first_event(&self) -> i64 {
@@ -359,6 +386,7 @@ impl Telemetry {
         self: &Arc<Self>,
         event: ClickhouseEvent,
         telemetry_settings: TelemetrySettings,
+        immediate_flush: bool,
     ) {
         if !telemetry_settings.metrics {
             return;
@@ -371,7 +399,7 @@ impl Telemetry {
             .push(ClickhouseEventWrapper { signed_in, event });
 
         if state.installation_id.is_some() {
-            if state.clickhouse_events_queue.len() >= MAX_QUEUE_LEN {
+            if immediate_flush || state.clickhouse_events_queue.len() >= MAX_QUEUE_LEN {
                 drop(state);
                 self.flush_clickhouse_events();
             } else {

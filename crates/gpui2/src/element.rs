@@ -429,10 +429,6 @@ impl AnyElement {
         AnyElement(Box::new(Some(DrawableElement::new(element))) as Box<dyn ElementObject>)
     }
 
-    pub fn element_id(&self) -> Option<ElementId> {
-        self.0.element_id()
-    }
-
     pub fn layout(&mut self, cx: &mut WindowContext) -> LayoutId {
         self.0.layout(cx)
     }
@@ -464,6 +460,10 @@ impl AnyElement {
     pub fn into_any(self) -> AnyElement {
         AnyElement::new(self)
     }
+
+    pub fn inner_id(&self) -> Option<ElementId> {
+        self.0.element_id()
+    }
 }
 
 impl Element for AnyElement {
@@ -487,7 +487,7 @@ impl IntoElement for AnyElement {
     type Element = Self;
 
     fn element_id(&self) -> Option<ElementId> {
-        AnyElement::element_id(self)
+        None
     }
 
     fn into_element(self) -> Self::Element {

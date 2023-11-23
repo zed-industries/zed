@@ -248,7 +248,7 @@ impl<V: 'static + Render> IntoElement for View<V> {
     type Element = View<V>;
 
     fn element_id(&self) -> Option<ElementId> {
-        Some(self.model.entity_id.into())
+        Some(ElementId::from_entity_id(self.model.entity_id))
     }
 
     fn into_element(self) -> Self::Element {
@@ -260,7 +260,7 @@ impl IntoElement for AnyView {
     type Element = Self;
 
     fn element_id(&self) -> Option<ElementId> {
-        Some(self.model.entity_id.into())
+        Some(ElementId::from_entity_id(self.model.entity_id))
     }
 
     fn into_element(self) -> Self::Element {
@@ -308,27 +308,23 @@ where
 }
 
 mod any_view {
-    use crate::{AnyElement, AnyView, BorrowWindow, Element, LayoutId, Render, WindowContext};
+    use crate::{AnyElement, AnyView, Element, LayoutId, Render, WindowContext};
 
     pub(crate) fn layout<V: 'static + Render>(
         view: &AnyView,
         cx: &mut WindowContext,
     ) -> (LayoutId, AnyElement) {
-        cx.with_element_id(Some(view.model.entity_id), |cx| {
-            let view = view.clone().downcast::<V>().unwrap();
-            let mut element = view.update(cx, |view, cx| view.render(cx).into_any());
-            let layout_id = element.layout(cx);
-            (layout_id, element)
-        })
+        let view = view.clone().downcast::<V>().unwrap();
+        let mut element = view.update(cx, |view, cx| view.render(cx).into_any());
+        let layout_id = element.layout(cx);
+        (layout_id, element)
     }
 
     pub(crate) fn paint<V: 'static + Render>(
-        view: &AnyView,
+        _view: &AnyView,
         element: AnyElement,
         cx: &mut WindowContext,
     ) {
-        cx.with_element_id(Some(view.model.entity_id), |cx| {
-            element.paint(cx);
-        })
+        element.paint(cx);
     }
 }
