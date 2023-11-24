@@ -1281,95 +1281,40 @@ impl CompletionsMenu {
                             styled_runs_for_code_label(&completion.label, &style.syntax),
                             &mat.positions,
                         );
+                        let completion_label = StyledText::new(completion.label.text.clone())
+                            .with_runs(completion_runs);
+                        let documentation_label =
+                            if let Some(Documentation::SingleLine(text)) = documentation {
+                                Some(SharedString::from(text.clone()))
+                            } else {
+                                None
+                            };
 
-                        // todo!("documentation")
-                        // MouseEventHandler::new::<CompletionTag, _>(mat.candidate_id, cx, |state, _| {
-                        //     let completion_label = HighlightedLabel::new(
-                        //         completion.label.text.clone(),
-                        //         combine_syntax_and_fuzzy_match_highlights(
-                        //             &completion.label.text,
-                        //             style.text.color.into(),
-                        //             styled_runs_for_code_label(&completion.label, &style.syntax),
-                        //             &mat.positions,
-                        //         ),
-                        //     );
-                        //     Text::new(completion.label.text.clone(), style.text.clone())
-                        //         .with_soft_wrap(false)
-                        //         .with_highlights();
-
-                        //     if let Some(Documentation::SingleLine(text)) = documentation {
-                        //         h_stack()
-                        //             .child(completion_label)
-                        //             .with_children((|| {
-                        //                 let text_style = TextStyle {
-                        //                     color: style.autocomplete.inline_docs_color,
-                        //                     font_size: style.text.font_size
-                        //                         * style.autocomplete.inline_docs_size_percent,
-                        //                     ..style.text.clone()
-                        //                 };
-
-                        //                 let label = Text::new(text.clone(), text_style)
-                        //                     .aligned()
-                        //                     .constrained()
-                        //                     .dynamically(move |constraint, _, _| gpui::SizeConstraint {
-                        //                         min: constraint.min,
-                        //                         max: vec2f(constraint.max.x(), constraint.min.y()),
-                        //                     });
-
-                        //                 if Some(item_ix) == widest_completion_ix {
-                        //                     Some(
-                        //                         label
-                        //                             .contained()
-                        //                             .with_style(style.autocomplete.inline_docs_container)
-                        //                             .into_any(),
-                        //                     )
-                        //                 } else {
-                        //                     Some(label.flex_float().into_any())
-                        //                 }
-                        //             })())
-                        //             .into_any()
-                        //     } else {
-                        //         completion_label.into_any()
-                        //     }
-                        //     .contained()
-                        //     .with_style(item_style)
-                        //     .constrained()
-                        //     .dynamically(move |constraint, _, _| {
-                        //         if Some(item_ix) == widest_completion_ix {
-                        //             constraint
-                        //         } else {
-                        //             gpui::SizeConstraint {
-                        //                 min: constraint.min,
-                        //                 max: constraint.min,
-                        //             }
-                        //         }
-                        //     })
-                        // })
-                        // .with_cursor_style(CursorStyle::PointingHand)
-                        // .on_down(MouseButton::Left, move |_, this, cx| {
-                        //     this.confirm_completion(
-                        //         &ConfirmCompletion {
-                        //             item_ix: Some(item_ix),
-                        //         },
-                        //         cx,
-                        //     )
-                        //     .map(|task| task.detach());
-                        // })
-                        // .constrained()
-                        //
                         div()
                             .id(mat.candidate_id)
+                            .min_w(px(300.))
+                            .max_w(px(700.))
                             .whitespace_nowrap()
                             .overflow_hidden()
                             .bg(gpui::green())
                             .hover(|style| style.bg(gpui::blue()))
                             .when(item_ix == selected_item, |div| div.bg(gpui::red()))
-                            .child(
-                                StyledText::new(completion.label.text.clone())
-                                    .with_runs(completion_runs),
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |editor, event, cx| {
+                                    cx.stop_propagation();
+                                    editor
+                                        .confirm_completion(
+                                            &ConfirmCompletion {
+                                                item_ix: Some(item_ix),
+                                            },
+                                            cx,
+                                        )
+                                        .map(|task| task.detach_and_log_err(cx));
+                                }),
                             )
-                            .min_w(px(300.))
-                            .max_w(px(700.))
+                            .child(completion_label)
+                            .children(documentation_label)
                     })
                     .collect()
             },
@@ -3698,135 +3643,135 @@ impl Editor {
         self.completion_tasks.push((id, task));
     }
 
-    //     pub fn confirm_completion(
-    //         &mut self,
-    //         action: &ConfirmCompletion,
-    //         cx: &mut ViewContext<Self>,
-    //     ) -> Option<Task<Result<()>>> {
-    //         use language::ToOffset as _;
+    pub fn confirm_completion(
+        &mut self,
+        action: &ConfirmCompletion,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<Task<Result<()>>> {
+        use language::ToOffset as _;
 
-    //         let completions_menu = if let ContextMenu::Completions(menu) = self.hide_context_menu(cx)? {
-    //             menu
-    //         } else {
-    //             return None;
-    //         };
+        let completions_menu = if let ContextMenu::Completions(menu) = self.hide_context_menu(cx)? {
+            menu
+        } else {
+            return None;
+        };
 
-    //         let mat = completions_menu
-    //             .matches
-    //             .get(action.item_ix.unwrap_or(completions_menu.selected_item))?;
-    //         let buffer_handle = completions_menu.buffer;
-    //         let completions = completions_menu.completions.read();
-    //         let completion = completions.get(mat.candidate_id)?;
+        let mat = completions_menu
+            .matches
+            .get(action.item_ix.unwrap_or(completions_menu.selected_item))?;
+        let buffer_handle = completions_menu.buffer;
+        let completions = completions_menu.completions.read();
+        let completion = completions.get(mat.candidate_id)?;
 
-    //         let snippet;
-    //         let text;
-    //         if completion.is_snippet() {
-    //             snippet = Some(Snippet::parse(&completion.new_text).log_err()?);
-    //             text = snippet.as_ref().unwrap().text.clone();
-    //         } else {
-    //             snippet = None;
-    //             text = completion.new_text.clone();
-    //         };
-    //         let selections = self.selections.all::<usize>(cx);
-    //         let buffer = buffer_handle.read(cx);
-    //         let old_range = completion.old_range.to_offset(buffer);
-    //         let old_text = buffer.text_for_range(old_range.clone()).collect::<String>();
+        let snippet;
+        let text;
+        if completion.is_snippet() {
+            snippet = Some(Snippet::parse(&completion.new_text).log_err()?);
+            text = snippet.as_ref().unwrap().text.clone();
+        } else {
+            snippet = None;
+            text = completion.new_text.clone();
+        };
+        let selections = self.selections.all::<usize>(cx);
+        let buffer = buffer_handle.read(cx);
+        let old_range = completion.old_range.to_offset(buffer);
+        let old_text = buffer.text_for_range(old_range.clone()).collect::<String>();
 
-    //         let newest_selection = self.selections.newest_anchor();
-    //         if newest_selection.start.buffer_id != Some(buffer_handle.read(cx).remote_id()) {
-    //             return None;
-    //         }
+        let newest_selection = self.selections.newest_anchor();
+        if newest_selection.start.buffer_id != Some(buffer_handle.read(cx).remote_id()) {
+            return None;
+        }
 
-    //         let lookbehind = newest_selection
-    //             .start
-    //             .text_anchor
-    //             .to_offset(buffer)
-    //             .saturating_sub(old_range.start);
-    //         let lookahead = old_range
-    //             .end
-    //             .saturating_sub(newest_selection.end.text_anchor.to_offset(buffer));
-    //         let mut common_prefix_len = old_text
-    //             .bytes()
-    //             .zip(text.bytes())
-    //             .take_while(|(a, b)| a == b)
-    //             .count();
+        let lookbehind = newest_selection
+            .start
+            .text_anchor
+            .to_offset(buffer)
+            .saturating_sub(old_range.start);
+        let lookahead = old_range
+            .end
+            .saturating_sub(newest_selection.end.text_anchor.to_offset(buffer));
+        let mut common_prefix_len = old_text
+            .bytes()
+            .zip(text.bytes())
+            .take_while(|(a, b)| a == b)
+            .count();
 
-    //         let snapshot = self.buffer.read(cx).snapshot(cx);
-    //         let mut range_to_replace: Option<Range<isize>> = None;
-    //         let mut ranges = Vec::new();
-    //         for selection in &selections {
-    //             if snapshot.contains_str_at(selection.start.saturating_sub(lookbehind), &old_text) {
-    //                 let start = selection.start.saturating_sub(lookbehind);
-    //                 let end = selection.end + lookahead;
-    //                 if selection.id == newest_selection.id {
-    //                     range_to_replace = Some(
-    //                         ((start + common_prefix_len) as isize - selection.start as isize)
-    //                             ..(end as isize - selection.start as isize),
-    //                     );
-    //                 }
-    //                 ranges.push(start + common_prefix_len..end);
-    //             } else {
-    //                 common_prefix_len = 0;
-    //                 ranges.clear();
-    //                 ranges.extend(selections.iter().map(|s| {
-    //                     if s.id == newest_selection.id {
-    //                         range_to_replace = Some(
-    //                             old_range.start.to_offset_utf16(&snapshot).0 as isize
-    //                                 - selection.start as isize
-    //                                 ..old_range.end.to_offset_utf16(&snapshot).0 as isize
-    //                                     - selection.start as isize,
-    //                         );
-    //                         old_range.clone()
-    //                     } else {
-    //                         s.start..s.end
-    //                     }
-    //                 }));
-    //                 break;
-    //             }
-    //         }
-    //         let text = &text[common_prefix_len..];
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let mut range_to_replace: Option<Range<isize>> = None;
+        let mut ranges = Vec::new();
+        for selection in &selections {
+            if snapshot.contains_str_at(selection.start.saturating_sub(lookbehind), &old_text) {
+                let start = selection.start.saturating_sub(lookbehind);
+                let end = selection.end + lookahead;
+                if selection.id == newest_selection.id {
+                    range_to_replace = Some(
+                        ((start + common_prefix_len) as isize - selection.start as isize)
+                            ..(end as isize - selection.start as isize),
+                    );
+                }
+                ranges.push(start + common_prefix_len..end);
+            } else {
+                common_prefix_len = 0;
+                ranges.clear();
+                ranges.extend(selections.iter().map(|s| {
+                    if s.id == newest_selection.id {
+                        range_to_replace = Some(
+                            old_range.start.to_offset_utf16(&snapshot).0 as isize
+                                - selection.start as isize
+                                ..old_range.end.to_offset_utf16(&snapshot).0 as isize
+                                    - selection.start as isize,
+                        );
+                        old_range.clone()
+                    } else {
+                        s.start..s.end
+                    }
+                }));
+                break;
+            }
+        }
+        let text = &text[common_prefix_len..];
 
-    //         cx.emit(Event::InputHandled {
-    //             utf16_range_to_replace: range_to_replace,
-    //             text: text.into(),
-    //         });
+        cx.emit(EditorEvent::InputHandled {
+            utf16_range_to_replace: range_to_replace,
+            text: text.into(),
+        });
 
-    //         self.transact(cx, |this, cx| {
-    //             if let Some(mut snippet) = snippet {
-    //                 snippet.text = text.to_string();
-    //                 for tabstop in snippet.tabstops.iter_mut().flatten() {
-    //                     tabstop.start -= common_prefix_len as isize;
-    //                     tabstop.end -= common_prefix_len as isize;
-    //                 }
+        self.transact(cx, |this, cx| {
+            if let Some(mut snippet) = snippet {
+                snippet.text = text.to_string();
+                for tabstop in snippet.tabstops.iter_mut().flatten() {
+                    tabstop.start -= common_prefix_len as isize;
+                    tabstop.end -= common_prefix_len as isize;
+                }
 
-    //                 this.insert_snippet(&ranges, snippet, cx).log_err();
-    //             } else {
-    //                 this.buffer.update(cx, |buffer, cx| {
-    //                     buffer.edit(
-    //                         ranges.iter().map(|range| (range.clone(), text)),
-    //                         this.autoindent_mode.clone(),
-    //                         cx,
-    //                     );
-    //                 });
-    //             }
+                this.insert_snippet(&ranges, snippet, cx).log_err();
+            } else {
+                this.buffer.update(cx, |buffer, cx| {
+                    buffer.edit(
+                        ranges.iter().map(|range| (range.clone(), text)),
+                        this.autoindent_mode.clone(),
+                        cx,
+                    );
+                });
+            }
 
-    //             this.refresh_copilot_suggestions(true, cx);
-    //         });
+            this.refresh_copilot_suggestions(true, cx);
+        });
 
-    //         let project = self.project.clone()?;
-    //         let apply_edits = project.update(cx, |project, cx| {
-    //             project.apply_additional_edits_for_completion(
-    //                 buffer_handle,
-    //                 completion.clone(),
-    //                 true,
-    //                 cx,
-    //             )
-    //         });
-    //         Some(cx.foreground().spawn(async move {
-    //             apply_edits.await?;
-    //             Ok(())
-    //         }))
-    //     }
+        let project = self.project.clone()?;
+        let apply_edits = project.update(cx, |project, cx| {
+            project.apply_additional_edits_for_completion(
+                buffer_handle,
+                completion.clone(),
+                true,
+                cx,
+            )
+        });
+        Some(cx.foreground_executor().spawn(async move {
+            apply_edits.await?;
+            Ok(())
+        }))
+    }
 
     pub fn toggle_code_actions(&mut self, action: &ToggleCodeActions, cx: &mut ViewContext<Self>) {
         let mut context_menu = self.context_menu.write();

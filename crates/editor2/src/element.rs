@@ -268,7 +268,11 @@ impl EditorElement {
         });
         register_action(view, cx, Editor::restart_language_server);
         register_action(view, cx, Editor::show_character_palette);
-        // on_action(cx, Editor::confirm_completion); todo!()
+        register_action(view, cx, |editor, action, cx| {
+            editor
+                .confirm_completion(action, cx)
+                .map(|task| task.detach_and_log_err(cx));
+        });
         register_action(view, cx, |editor, action, cx| {
             editor
                 .confirm_code_action(action, cx)
