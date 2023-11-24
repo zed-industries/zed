@@ -5903,7 +5903,7 @@ impl Project {
                                     ignored_paths_to_process.pop_front()
                                 {
                                     if !query.file_matches(Some(&ignored_abs_path))
-                                        || snapshot.is_abs_path_excluded(&ignored_abs_path)
+                                        || snapshot.is_path_excluded(&ignored_abs_path)
                                     {
                                         continue;
                                     }
