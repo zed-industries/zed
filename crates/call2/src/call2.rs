@@ -17,6 +17,7 @@ use gpui::{
     Subscription, Task, View, ViewContext, WeakModel, WeakView,
 };
 pub use participant::ParticipantLocation;
+use participant::RemoteParticipant;
 use postage::watch;
 use project::Project;
 use room::Event;
@@ -627,6 +628,42 @@ impl CallHandler for Call {
         ActiveCall::global(cx).update(cx, |this, cx| {
             this.invite(called_user_id, initial_project, cx)
         })
+    }
+    fn remote_participants(&self, cx: &AppContext) -> Option<Vec<Arc<User>>> {
+        self.active_call
+            .as_ref()
+            .map(|call| {
+                call.0.read(cx).room().map(|room| {
+                    room.read(cx)
+                        .remote_participants()
+                        .iter()
+                        .map(|participant| participant.1.user.clone())
+                        .collect()
+                })
+            })
+            .flatten()
+    }
+    fn is_muted(&self, cx: &AppContext) -> Option<bool> {
+        self.active_call
+            .as_ref()
+            .map(|call| {
+                call.0
+                    .read(cx)
+                    .room()
+                    .map(|room| room.read(cx).is_muted(cx))
+            })
+            .flatten()
+    }
+    fn toggle_mute(&self, cx: &mut AppContext) {
+        self.active_call.as_ref().map(|call| {
+            call.0.update(cx, |this, cx| {
+                this.room().map(|room| {
+                    room.update(cx, |this, cx| {
+                        this.toggle_mute(cx);
+                    })
+                })
+            })
+        });
     }
 }
 

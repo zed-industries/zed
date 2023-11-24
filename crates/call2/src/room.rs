@@ -333,7 +333,8 @@ impl Room {
     }
 
     pub fn mute_on_join(cx: &AppContext) -> bool {
-        CallSettings::get_global(cx).mute_on_join || client::IMPERSONATE_LOGIN.is_some()
+        false
+        //CallSettings::get_global(cx).mute_on_join || client::IMPERSONATE_LOGIN.is_some()
     }
 
     fn from_join_response(

@@ -19,7 +19,7 @@ use anyhow::{anyhow, Context as _, Result};
 use async_trait::async_trait;
 use client2::{
     proto::{self, PeerId},
-    Client, TypedEnvelope, UserStore,
+    Client, TypedEnvelope, User, UserStore,
 };
 use collections::{hash_map, HashMap, HashSet};
 use dock::{Dock, DockPosition, Panel, PanelButtons, PanelHandle};
@@ -351,7 +351,27 @@ impl CallHandler for TestCallHandler {
     fn active_project(&self, cx: &AppContext) -> Option<WeakModel<Project>> {
         None
     }
+
+    fn invite(
+        &mut self,
+        called_user_id: u64,
+        initial_project: Option<Model<Project>>,
+        cx: &mut AppContext,
+    ) -> Task<Result<()>> {
+        unimplemented!()
+    }
+
+    fn remote_participants(&self, cx: &AppContext) -> Option<Vec<User>> {
+        None
+    }
+
+    fn is_muted(&self, cx: &AppContext) -> Option<bool> {
+        None
+    }
+
+    fn toggle_mute(&self, cx: &mut AppContext) {}
 }
+
 impl AppState {
     #[cfg(any(test, feature = "test-support"))]
     pub fn test(cx: &mut AppContext) -> Arc<Self> {
@@ -460,6 +480,9 @@ pub trait CallHandler {
         initial_project: Option<Model<Project>>,
         cx: &mut AppContext,
     ) -> Task<Result<()>>;
+    fn remote_participants(&self, cx: &AppContext) -> Option<Vec<Arc<User>>>;
+    fn is_muted(&self, cx: &AppContext) -> Option<bool>;
+    fn toggle_mute(&self, cx: &mut AppContext);
 }
 
 pub struct Workspace {

@@ -37,7 +37,8 @@ use gpui::{
 };
 use project::Project;
 use theme::ActiveTheme;
-use ui::{h_stack, Button, ButtonVariant, Color, IconButton, KeyBinding, Tooltip};
+use ui::{h_stack, Avatar, Button, ButtonVariant, Color, IconButton, KeyBinding, Label, Tooltip};
+use util::ResultExt;
 use workspace::Workspace;
 
 // const MAX_PROJECT_NAME_LENGTH: usize = 40;
@@ -92,6 +93,23 @@ impl Render for CollabTitlebarItem {
         let is_shared = is_in_room && self.project.read(cx).is_shared();
         let current_user = self.user_store.read(cx).current_user();
         let client = self.client.clone();
+        let users = self
+            .workspace
+            .update(cx, |this, cx| this.call_state().remote_participants(cx))
+            .log_err()
+            .flatten();
+        let mic_icon = if self
+            .workspace
+            .update(cx, |this, cx| this.call_state().is_muted(cx))
+            .log_err()
+            .flatten()
+            .unwrap_or_default()
+        {
+            ui::Icon::MicMute
+        } else {
+            ui::Icon::Mic
+        };
+        let workspace = self.workspace.clone();
         h_stack()
             .id("titlebar")
             .justify_between()
@@ -157,6 +175,46 @@ impl Render for CollabTitlebarItem {
                             }),
                     ),
             )
+            .when_some(
+                users.zip(current_user.clone()),
+                |this, (remote_participants, current_user)| {
+                    this.children(
+                        current_user
+                            .avatar
+                            .clone()
+                            .map(|avatar| Avatar::new(avatar.clone()))
+                            .into_iter()
+                            .chain(remote_participants.into_iter().flat_map(|user| {
+                                user.avatar
+                                    .as_ref()
+                                    .map(|avatar| Avatar::new(avatar.clone()))
+                            })),
+                    )
+                },
+            )
+            .when(is_in_room, |this| {
+                this.child(
+                    h_stack()
+                        .child(
+                            h_stack()
+                                .child(Button::new(if is_shared { "Unshare" } else { "Share" }))
+                                .child(IconButton::new("leave-call", ui::Icon::Exit)),
+                        )
+                        .child(
+                            h_stack()
+                                .child(IconButton::new("mute-microphone", mic_icon).on_click(
+                                    move |_, cx| {
+                                        workspace.update(cx, |this, cx| {
+                                            this.call_state().toggle_mute(cx);
+                                        });
+                                    },
+                                ))
+                                .child(IconButton::new("mute-sound", ui::Icon::AudioOn))
+                                .child(IconButton::new("screen-share", ui::Icon::Screen))
+                                .pl_2(),
+                        ),
+                )
+            })
             .map(|this| {
                 if let Some(user) = current_user {
                     this.when_some(user.avatar.clone(), |this, avatar| {
@@ -172,23 +230,6 @@ impl Render for CollabTitlebarItem {
                         .detach_and_log_err(cx);
                     }))
                 }
-            })
-            .when(is_in_room, |this| {
-                this.child(
-                    h_stack()
-                        .child(
-                            h_stack()
-                                .child(Button::new(if is_shared { "Unshare" } else { "Share" }))
-                                .child(IconButton::new("leave-call", ui::Icon::Exit)),
-                        )
-                        .child(
-                            h_stack()
-                                .child(IconButton::new("mute-microphone", ui::Icon::Mic))
-                                .child(IconButton::new("mute-sound", ui::Icon::AudioOn))
-                                .child(IconButton::new("screen-share", ui::Icon::Screen))
-                                .pl_2(),
-                        ),
-                )
             })
     }
 }
