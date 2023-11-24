@@ -1,9 +1,12 @@
+use std::{iter, mem, ops::Range};
+
 use crate::{
     black, phi, point, rems, AbsoluteLength, BorrowAppContext, BorrowWindow, Bounds, ContentMask,
     Corners, CornersRefinement, CursorStyle, DefiniteLength, Edges, EdgesRefinement, Font,
     FontFeatures, FontStyle, FontWeight, Hsla, Length, Pixels, Point, PointRefinement, Rgba,
     SharedString, Size, SizeRefinement, Styled, TextRun, WindowContext,
 };
+use collections::HashSet;
 use refineable::{Cascade, Refineable};
 use smallvec::SmallVec;
 pub use taffy::style::{
@@ -512,11 +515,157 @@ impl From<FontWeight> for HighlightStyle {
     }
 }
 
+impl From<FontStyle> for HighlightStyle {
+    fn from(font_style: FontStyle) -> Self {
+        Self {
+            font_style: Some(font_style),
+            ..Default::default()
+        }
+    }
+}
+
 impl From<Rgba> for HighlightStyle {
     fn from(color: Rgba) -> Self {
         Self {
             color: Some(color.into()),
             ..Default::default()
         }
+    }
+}
+
+pub fn combine_highlights(
+    a: impl IntoIterator<Item = (Range<usize>, HighlightStyle)>,
+    b: impl IntoIterator<Item = (Range<usize>, HighlightStyle)>,
+) -> impl Iterator<Item = (Range<usize>, HighlightStyle)> {
+    let mut endpoints = Vec::new();
+    let mut highlights = Vec::new();
+    for (range, highlight) in a.into_iter().chain(b) {
+        if !range.is_empty() {
+            let highlight_id = highlights.len();
+            endpoints.push((range.start, highlight_id, true));
+            endpoints.push((range.end, highlight_id, false));
+            highlights.push(highlight);
+        }
+    }
+    endpoints.sort_unstable_by_key(|(position, _, _)| *position);
+    let mut endpoints = endpoints.into_iter().peekable();
+
+    let mut active_styles = HashSet::default();
+    let mut ix = 0;
+    iter::from_fn(move || {
+        while let Some((endpoint_ix, highlight_id, is_start)) = endpoints.peek() {
+            let prev_index = mem::replace(&mut ix, *endpoint_ix);
+            if ix > prev_index && !active_styles.is_empty() {
+                let mut current_style = HighlightStyle::default();
+                for highlight_id in &active_styles {
+                    current_style.highlight(highlights[*highlight_id]);
+                }
+                return Some((prev_index..ix, current_style));
+            }
+
+            if *is_start {
+                active_styles.insert(*highlight_id);
+            } else {
+                active_styles.remove(highlight_id);
+            }
+            endpoints.next();
+        }
+        None
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{blue, green, red, yellow};
+
+    use super::*;
+
+    #[test]
+    fn test_combine_highlights() {
+        assert_eq!(
+            combine_highlights(
+                [
+                    (0..5, green().into()),
+                    (4..10, FontWeight::BOLD.into()),
+                    (15..20, yellow().into()),
+                ],
+                [
+                    (2..6, FontStyle::Italic.into()),
+                    (1..3, blue().into()),
+                    (21..23, red().into()),
+                ]
+            )
+            .collect::<Vec<_>>(),
+            [
+                (
+                    0..1,
+                    HighlightStyle {
+                        color: Some(green()),
+                        ..Default::default()
+                    }
+                ),
+                (
+                    1..2,
+                    HighlightStyle {
+                        color: Some(blue()),
+                        ..Default::default()
+                    }
+                ),
+                (
+                    2..3,
+                    HighlightStyle {
+                        color: Some(blue()),
+                        font_style: Some(FontStyle::Italic),
+                        ..Default::default()
+                    }
+                ),
+                (
+                    3..4,
+                    HighlightStyle {
+                        color: Some(green()),
+                        font_style: Some(FontStyle::Italic),
+                        ..Default::default()
+                    }
+                ),
+                (
+                    4..5,
+                    HighlightStyle {
+                        color: Some(green()),
+                        font_weight: Some(FontWeight::BOLD),
+                        font_style: Some(FontStyle::Italic),
+                        ..Default::default()
+                    }
+                ),
+                (
+                    5..6,
+                    HighlightStyle {
+                        font_weight: Some(FontWeight::BOLD),
+                        font_style: Some(FontStyle::Italic),
+                        ..Default::default()
+                    }
+                ),
+                (
+                    6..10,
+                    HighlightStyle {
+                        font_weight: Some(FontWeight::BOLD),
+                        ..Default::default()
+                    }
+                ),
+                (
+                    15..20,
+                    HighlightStyle {
+                        color: Some(yellow()),
+                        ..Default::default()
+                    }
+                ),
+                (
+                    21..23,
+                    HighlightStyle {
+                        color: Some(red()),
+                        ..Default::default()
+                    }
+                )
+            ]
+        );
     }
 }

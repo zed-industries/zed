@@ -1276,11 +1276,16 @@ impl CompletionsMenu {
                             &None
                         };
 
-                        let highlights = combine_syntax_and_fuzzy_match_highlights(
-                            &completion.label.text,
-                            &style.text,
-                            styled_runs_for_code_label(&completion.label, &style.syntax),
-                            &mat.positions,
+                        let highlights = gpui::combine_highlights(
+                            mat.ranges().map(|range| (range, FontWeight::BOLD.into())),
+                            styled_runs_for_code_label(&completion.label, &style.syntax).map(
+                                |(range, mut highlight)| {
+                                    // Ignore font weight for syntax highlighting, as we'll use it
+                                    // for fuzzy matches.
+                                    highlight.font_weight = None;
+                                    (range, highlight)
+                                },
+                            ),
                         );
                         let completion_label = StyledText::new(completion.label.text.clone())
                             .with_runs(text_runs_for_highlights(
@@ -10054,75 +10059,6 @@ pub fn text_runs_for_highlights(
         runs.push(default_style.to_run(text.len() - ix));
     }
     runs
-}
-
-pub fn combine_syntax_and_fuzzy_match_highlights(
-    text: &str,
-    default_style: &TextStyle,
-    syntax_ranges: impl Iterator<Item = (Range<usize>, HighlightStyle)>,
-    match_indices: &[usize],
-) -> Vec<(Range<usize>, HighlightStyle)> {
-    let mut highlights = Vec::new();
-    let mut match_indices = match_indices.iter().copied().peekable();
-
-    for (range, mut syntax_highlight) in syntax_ranges.chain([(usize::MAX..0, Default::default())])
-    {
-        syntax_highlight.font_weight = None;
-
-        // Add highlights for any fuzzy match characters before the next
-        // syntax highlight range.
-        while let Some(&match_index) = match_indices.peek() {
-            if match_index >= range.start {
-                break;
-            }
-            match_indices.next();
-            let end_index = char_ix_after(match_index, text);
-            highlights.push((match_index..end_index, FontWeight::BOLD.into()));
-        }
-
-        if range.start == usize::MAX {
-            break;
-        }
-
-        // Add highlights for any fuzzy match characters within the
-        // syntax highlight range.
-        let mut offset = range.start;
-        while let Some(&match_index) = match_indices.peek() {
-            if match_index >= range.end {
-                break;
-            }
-
-            match_indices.next();
-            if match_index > offset {
-                highlights.push((offset..match_index, syntax_highlight));
-            }
-
-            let mut end_index = char_ix_after(match_index, text);
-            while let Some(&next_match_index) = match_indices.peek() {
-                if next_match_index == end_index && next_match_index < range.end {
-                    end_index = char_ix_after(next_match_index, text);
-                    match_indices.next();
-                } else {
-                    break;
-                }
-            }
-
-            let mut match_style = syntax_highlight;
-            match_style.font_weight = Some(FontWeight::BOLD);
-            highlights.push((match_index..end_index, match_style));
-            offset = end_index;
-        }
-
-        if offset < range.end {
-            highlights.push((offset..range.end, syntax_highlight));
-        }
-    }
-
-    fn char_ix_after(ix: usize, text: &str) -> usize {
-        ix + text[ix..].chars().next().unwrap().len_utf8()
-    }
-
-    highlights
 }
 
 pub fn styled_runs_for_code_label<'a>(
