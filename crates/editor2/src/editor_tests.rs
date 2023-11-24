@@ -6758,6 +6758,13 @@ fn test_combine_syntax_and_fuzzy_match_highlights() {
                 ..Default::default()
             },
         ),
+        (
+            12..13,
+            HighlightStyle {
+                color: Some(Hsla::blue()),
+                ..Default::default()
+            },
+        ),
     ];
     let match_indices = [4, 6, 7, 8];
     assert_eq!(
@@ -6768,43 +6775,27 @@ fn test_combine_syntax_and_fuzzy_match_highlights() {
             &match_indices,
         ),
         &[
-            (
-                0..3,
-                HighlightStyle {
-                    color: Some(Hsla::red()),
-                    ..Default::default()
-                },
-            ),
-            (
-                4..5,
-                HighlightStyle {
+            TextStyle::default().highlight(Hsla::red()).to_run(3),
+            TextStyle::default().to_run(1),
+            TextStyle::default()
+                .highlight(HighlightStyle {
                     color: Some(Hsla::green()),
-                    font_weight: Some(gpui::FontWeight::BOLD),
+                    font_weight: Some(FontWeight::BOLD),
                     ..Default::default()
-                },
-            ),
-            (
-                5..6,
-                HighlightStyle {
+                })
+                .to_run(1),
+            TextStyle::default().highlight(Hsla::green()).to_run(1),
+            TextStyle::default()
+                .highlight(HighlightStyle {
                     color: Some(Hsla::green()),
+                    font_weight: Some(FontWeight::BOLD),
                     ..Default::default()
-                },
-            ),
-            (
-                6..8,
-                HighlightStyle {
-                    color: Some(Hsla::green()),
-                    font_weight: Some(gpui::FontWeight::BOLD),
-                    ..Default::default()
-                },
-            ),
-            (
-                8..9,
-                HighlightStyle {
-                    font_weight: Some(gpui::FontWeight::BOLD),
-                    ..Default::default()
-                },
-            ),
+                })
+                .to_run(2),
+            TextStyle::default().highlight(FontWeight::BOLD).to_run(1),
+            TextStyle::default().to_run(3),
+            TextStyle::default().highlight(Hsla::blue()).to_run(1),
+            TextStyle::default().to_run(3),
         ]
     );
 }

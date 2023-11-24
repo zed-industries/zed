@@ -43,7 +43,7 @@ use gpui::{
     AppContext, AsyncWindowContext, BackgroundExecutor, Bounds, ClipboardItem, Context,
     EventEmitter, FocusHandle, FocusableView, FontFeatures, FontStyle, FontWeight, HighlightStyle,
     Hsla, InputHandler, KeyContext, Model, MouseButton, ParentElement, Pixels, Render, RenderOnce,
-    SharedString, Styled, Subscription, Task, TextStyle, UniformListScrollHandle, View,
+    SharedString, Styled, Subscription, Task, TextRun, TextStyle, UniformListScrollHandle, View,
     ViewContext, VisualContext, WeakView, WhiteSpace, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
@@ -10080,11 +10080,25 @@ pub fn diagnostic_style(
 
 pub fn combine_syntax_and_fuzzy_match_highlights(
     text: &str,
-    default_style: HighlightStyle,
+    default_style: TextStyle,
     syntax_ranges: impl Iterator<Item = (Range<usize>, HighlightStyle)>,
     match_indices: &[usize],
-) -> Vec<(Range<usize>, HighlightStyle)> {
-    let mut result = Vec::new();
+) -> Vec<TextRun> {
+    let mut current_index = 0;
+    let mut runs = Vec::new();
+    let mut push_run = |range: Range<usize>, highlight_style: HighlightStyle| {
+        if current_index < range.start {
+            runs.push(default_style.clone().to_run(range.start - current_index));
+        }
+        runs.push(
+            default_style
+                .clone()
+                .highlight(highlight_style)
+                .to_run(range.len()),
+        );
+        current_index = range.end;
+    };
+
     let mut match_indices = match_indices.iter().copied().peekable();
 
     for (range, mut syntax_highlight) in syntax_ranges.chain([(usize::MAX..0, Default::default())])
@@ -10099,9 +10113,7 @@ pub fn combine_syntax_and_fuzzy_match_highlights(
             }
             match_indices.next();
             let end_index = char_ix_after(match_index, text);
-            let mut match_style = default_style;
-            match_style.font_weight = Some(FontWeight::BOLD);
-            result.push((match_index..end_index, match_style));
+            push_run(match_index..end_index, FontWeight::BOLD.into());
         }
 
         if range.start == usize::MAX {
@@ -10118,7 +10130,7 @@ pub fn combine_syntax_and_fuzzy_match_highlights(
 
             match_indices.next();
             if match_index > offset {
-                result.push((offset..match_index, syntax_highlight));
+                push_run(offset..match_index, syntax_highlight);
             }
 
             let mut end_index = char_ix_after(match_index, text);
@@ -10133,20 +10145,24 @@ pub fn combine_syntax_and_fuzzy_match_highlights(
 
             let mut match_style = syntax_highlight;
             match_style.font_weight = Some(FontWeight::BOLD);
-            result.push((match_index..end_index, match_style));
+            push_run(match_index..end_index, match_style);
             offset = end_index;
         }
 
         if offset < range.end {
-            result.push((offset..range.end, syntax_highlight));
+            push_run(offset..range.end, syntax_highlight);
         }
+    }
+
+    if current_index < text.len() {
+        runs.push(default_style.to_run(text.len() - current_index));
     }
 
     fn char_ix_after(ix: usize, text: &str) -> usize {
         ix + text[ix..].chars().next().unwrap().len_utf8()
     }
 
-    result
+    runs
 }
 
 pub fn styled_runs_for_code_label<'a>(

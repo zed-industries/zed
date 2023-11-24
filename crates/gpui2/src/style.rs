@@ -168,7 +168,8 @@ impl Default for TextStyle {
 }
 
 impl TextStyle {
-    pub fn highlight(mut self, style: HighlightStyle) -> Self {
+    pub fn highlight(mut self, style: impl Into<HighlightStyle>) -> Self {
+        let style = style.into();
         if let Some(weight) = style.font_weight {
             self.font_weight = weight;
         }
@@ -497,6 +498,15 @@ impl From<Hsla> for HighlightStyle {
     fn from(color: Hsla) -> Self {
         Self {
             color: Some(color),
+            ..Default::default()
+        }
+    }
+}
+
+impl From<FontWeight> for HighlightStyle {
+    fn from(font_weight: FontWeight) -> Self {
+        Self {
+            font_weight: Some(font_weight),
             ..Default::default()
         }
     }
