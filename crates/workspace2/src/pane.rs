@@ -1379,6 +1379,7 @@ impl Pane {
         };
 
         let close_right = ItemSettings::get_global(cx).close_position.right();
+        let is_active = ix == self.active_item_index;
 
         div()
             .group("")
@@ -1406,12 +1407,25 @@ impl Pane {
             })
             .py_1()
             .bg(tab_bg)
-            .border_color(gpui::red())
-            // .border_color(cx.theme().colors().border)
-            .map(|this| match ix.cmp(&self.active_item_index) {
-                cmp::Ordering::Less => this.border_l().mr_px(),
-                cmp::Ordering::Equal => this.border_r().ml_px(),
-                cmp::Ordering::Greater => this.border_l().border_r(),
+            .border_color(cx.theme().colors().border)
+            .text_color(if is_active {
+                cx.theme().colors().text
+            } else {
+                cx.theme().colors().text_muted
+            })
+            .map(|this| {
+                let is_last_item = ix == self.items.len() - 1;
+                match ix.cmp(&self.active_item_index) {
+                    cmp::Ordering::Less => this.border_l().mr_px(),
+                    cmp::Ordering::Greater => {
+                        if is_last_item {
+                            this.mr_px().ml_px()
+                        } else {
+                            this.border_r().ml_px()
+                        }
+                    }
+                    cmp::Ordering::Equal => this.border_l().border_r(),
+                }
             })
             // .hover(|h| h.bg(tab_hover_bg))
             // .active(|a| a.bg(tab_active_bg))
