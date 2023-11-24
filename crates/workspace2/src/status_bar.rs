@@ -89,7 +89,7 @@ impl Render for StatusBar {
                                 div()
                                     .border()
                                     .border_color(gpui::red())
-                                    .child(IconButton::new("status-github", Icon::Hash)),
+                                    .child(IconButton::new("status-copilot", Icon::Copilot)),
                             )
                             .child(
                                 // Feedback Tool
