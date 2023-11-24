@@ -66,6 +66,8 @@ impl StringMatch {
                     if end == **next_start {
                         end += self.char_len_at_index(end);
                         positions.next();
+                    } else {
+                        break;
                     }
                 }
 

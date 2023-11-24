@@ -40,7 +40,7 @@ use fuzzy::{StringMatch, StringMatchCandidate};
 use git::diff_hunk_to_display;
 use gpui::{
     actions, div, point, prelude::*, px, relative, rems, size, uniform_list, Action, AnyElement,
-    AppContext, AsyncWindowContext, BackgroundExecutor, Bounds, ClipboardItem, Context,
+    AppContext, AsyncWindowContext, BackgroundExecutor, Bounds, ClipboardItem, Context, ElementId,
     EventEmitter, FocusHandle, FocusableView, FontFeatures, FontStyle, FontWeight, HighlightStyle,
     Hsla, InputHandler, InteractiveText, KeyContext, Model, MouseButton, ParentElement, Pixels,
     Render, RenderOnce, SharedString, Styled, StyledText, Subscription, Task, TextRun, TextStyle,
@@ -54,9 +54,10 @@ use itertools::Itertools;
 pub use language::{char_kind, CharKind};
 use language::{
     language_settings::{self, all_language_settings, InlayHintSettings},
-    point_from_lsp, AutoindentMode, BracketPair, Buffer, CodeAction, CodeLabel, Completion,
-    CursorShape, Diagnostic, Documentation, IndentKind, IndentSize, Language, LanguageRegistry,
-    LanguageServerName, OffsetRangeExt, Point, Selection, SelectionGoal, TransactionId,
+    markdown, point_from_lsp, AutoindentMode, BracketPair, Buffer, CodeAction, CodeLabel,
+    Completion, CursorShape, Diagnostic, Documentation, IndentKind, IndentSize, Language,
+    LanguageRegistry, LanguageServerName, OffsetRangeExt, Point, Selection, SelectionGoal,
+    TransactionId,
 };
 use lazy_static::lazy_static;
 use link_go_to_definition::{GoToDefinitionLink, InlayHighlight, LinkGoToDefinitionState};
@@ -97,7 +98,7 @@ use text::{OffsetUtf16, Rope};
 use theme::{
     ActiveTheme, DiagnosticStyle, PlayerColor, SyntaxTheme, Theme, ThemeColors, ThemeSettings,
 };
-use ui::{h_stack, v_stack, HighlightedLabel, IconButton, StyledExt, Tooltip};
+use ui::{h_stack, v_stack, HighlightedLabel, IconButton, Popover, StyledExt, Tooltip};
 use util::{post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::{
     item::{ItemEvent, ItemHandle},
@@ -115,71 +116,70 @@ pub const DOCUMENT_HIGHLIGHTS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis
 
 pub const FORMAT_TIMEOUT: Duration = Duration::from_secs(2);
 
-// pub fn render_parsed_markdown<Tag: 'static>(
-//     element_id: impl Into<ElementId>,
-//     parsed: &language::ParsedMarkdown,
-//     editor_style: &EditorStyle,
-//     workspace: Option<WeakView<Workspace>>,
-//     cx: &mut ViewContext<Editor>,
-// ) -> InteractiveText {
-//     enum RenderedMarkdown {}
+pub fn render_parsed_markdown(
+    element_id: impl Into<ElementId>,
+    parsed: &language::ParsedMarkdown,
+    editor_style: &EditorStyle,
+    workspace: Option<WeakView<Workspace>>,
+    cx: &mut ViewContext<Editor>,
+) -> InteractiveText {
+    let code_span_background_color = cx
+        .theme()
+        .colors()
+        .editor_document_highlight_read_background;
 
-//     let parsed = parsed.clone();
-//     let view_id = cx.view_id();
-//     let code_span_background_color = editor_style.document_highlight_read_background;
+    let highlights = gpui::combine_highlights(
+        parsed.highlights.iter().filter_map(|(range, highlight)| {
+            let highlight = highlight.to_highlight_style(&editor_style.syntax)?;
+            Some((range.clone(), highlight))
+        }),
+        parsed
+            .regions
+            .iter()
+            .zip(&parsed.region_ranges)
+            .filter_map(|(region, range)| {
+                if region.code {
+                    Some((
+                        range.clone(),
+                        HighlightStyle {
+                            background_color: Some(code_span_background_color),
+                            ..Default::default()
+                        },
+                    ))
+                } else {
+                    None
+                }
+            }),
+    );
+    let runs = text_runs_for_highlights(&parsed.text, &editor_style.text, highlights);
 
-//     let mut region_id = 0;
+    // todo!("add the ability to change cursor style for link ranges")
+    let mut links = Vec::new();
+    let mut link_ranges = Vec::new();
+    for (range, region) in parsed.region_ranges.iter().zip(&parsed.regions) {
+        if let Some(link) = region.link.clone() {
+            links.push(link);
+            link_ranges.push(range.clone());
+        }
+    }
 
-//     todo!()
-//     // Text::new(parsed.text, editor_style.text.clone())
-//     //     .with_highlights(
-//     //         parsed
-//     //             .highlights
-//     //             .iter()
-//     //             .filter_map(|(range, highlight)| {
-//     //                 let highlight = highlight.to_highlight_style(&editor_style.syntax)?;
-//     //                 Some((range.clone(), highlight))
-//     //             })
-//     //             .collect::<Vec<_>>(),
-//     //     )
-//     //     .with_custom_runs(parsed.region_ranges, move |ix, bounds, cx| {
-//     //         region_id += 1;
-//     //         let region = parsed.regions[ix].clone();
-
-//     //         if let Some(link) = region.link {
-//     //             cx.scene().push_cursor_region(CursorRegion {
-//     //                 bounds,
-//     //                 style: CursorStyle::PointingHand,
-//     //             });
-//     //             cx.scene().push_mouse_region(
-//     //                 MouseRegion::new::<(RenderedMarkdown, Tag)>(view_id, region_id, bounds)
-//     //                     .on_down::<Editor, _>(MouseButton::Left, move |_, _, cx| match &link {
-//     //                         markdown::Link::Web { url } => cx.platform().open_url(url),
-//     //                         markdown::Link::Path { path } => {
-//     //                             if let Some(workspace) = &workspace {
-//     //                                 _ = workspace.update(cx, |workspace, cx| {
-//     //                                     workspace.open_abs_path(path.clone(), false, cx).detach();
-//     //                                 });
-//     //                             }
-//     //                         }
-//     //                     }),
-//     //             );
-//     //         }
-
-//     //         if region.code {
-//     //             cx.draw_quad(Quad {
-//     //                 bounds,
-//     //                 background: Some(code_span_background_color),
-//     //                 corner_radii: (2.0).into(),
-//     //                 order: todo!(),
-//     //                 content_mask: todo!(),
-//     //                 border_color: todo!(),
-//     //                 border_widths: todo!(),
-//     //             });
-//     //         }
-//     //     })
-//     //     .with_soft_wrap(true)
-// }
+    InteractiveText::new(
+        element_id,
+        StyledText::new(parsed.text.clone()).with_runs(runs),
+    )
+    .on_click(link_ranges, move |clicked_range_ix, cx| {
+        match &links[clicked_range_ix] {
+            markdown::Link::Web { url } => cx.open_url(url),
+            markdown::Link::Path { path } => {
+                if let Some(workspace) = &workspace {
+                    _ = workspace.update(cx, |workspace, cx| {
+                        workspace.open_abs_path(path.clone(), false, cx).detach();
+                    });
+                }
+            }
+        }
+    })
+}
 
 #[derive(PartialEq, Clone, Deserialize, Default, Action)]
 pub struct SelectNext {
@@ -1254,6 +1254,18 @@ impl CompletionsMenu {
         let selected_item = self.selected_item;
         let style = style.clone();
 
+        let multiline_docs = {
+            let mat = &self.matches[selected_item];
+            match &self.completions.read()[mat.candidate_id].documentation {
+                Some(Documentation::MultiLinePlainText(text)) => {
+                    Some(div().child(SharedString::from(text.clone())))
+                }
+                Some(Documentation::MultiLineMarkdown(parsed)) => Some(div().child(
+                    render_parsed_markdown("completions_markdown", parsed, &style, workspace, cx),
+                )),
+                _ => None,
+            }
+        };
         let list = uniform_list(
             cx.view().clone(),
             "completions",
@@ -1332,51 +1344,12 @@ impl CompletionsMenu {
         .track_scroll(self.scroll_handle.clone())
         .with_width_from_item(widest_completion_ix);
 
-        list.into_any_element()
-        // todo!("multiline documentation")
-        //     enum MultiLineDocumentation {}
-
-        //     Flex::row()
-        //         .with_child(list.flex(1., false))
-        //         .with_children({
-        //             let mat = &self.matches[selected_item];
-        //             let completions = self.completions.read();
-        //             let completion = &completions[mat.candidate_id];
-        //             let documentation = &completion.documentation;
-
-        //             match documentation {
-        //                 Some(Documentation::MultiLinePlainText(text)) => Some(
-        //                     Flex::column()
-        //                         .scrollable::<MultiLineDocumentation>(0, None, cx)
-        //                         .with_child(
-        //                             Text::new(text.clone(), style.text.clone()).with_soft_wrap(true),
-        //                         )
-        //                         .contained()
-        //                         .with_style(style.autocomplete.alongside_docs_container)
-        //                         .constrained()
-        //                         .with_max_width(style.autocomplete.alongside_docs_max_width)
-        //                         .flex(1., false),
-        //                 ),
-
-        //                 Some(Documentation::MultiLineMarkdown(parsed)) => Some(
-        //                     Flex::column()
-        //                         .scrollable::<MultiLineDocumentation>(0, None, cx)
-        //                         .with_child(render_parsed_markdown::<MultiLineDocumentation>(
-        //                             parsed, &style, workspace, cx,
-        //                         ))
-        //                         .contained()
-        //                         .with_style(style.autocomplete.alongside_docs_container)
-        //                         .constrained()
-        //                         .with_max_width(style.autocomplete.alongside_docs_max_width)
-        //                         .flex(1., false),
-        //                 ),
-
-        //                 _ => None,
-        //             }
-        //         })
-        //         .contained()
-        //         .with_style(style.autocomplete.container)
-        //         .into_any()
+        Popover::new()
+            .child(list)
+            .when_some(multiline_docs, |popover, multiline_docs| {
+                popover.aside(multiline_docs.id("multiline_docs").overflow_y_scroll())
+            })
+            .into_any_element()
     }
 
     pub async fn filter(&mut self, query: Option<&str>, executor: BackgroundExecutor) {
