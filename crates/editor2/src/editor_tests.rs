@@ -6770,7 +6770,7 @@ fn test_combine_syntax_and_fuzzy_match_highlights() {
     assert_eq!(
         combine_syntax_and_fuzzy_match_highlights(
             string,
-            Default::default(),
+            &TextStyle::default(),
             syntax_ranges.into_iter(),
             &match_indices,
         ),

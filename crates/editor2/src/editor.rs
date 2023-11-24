@@ -43,8 +43,8 @@ use gpui::{
     AppContext, AsyncWindowContext, BackgroundExecutor, Bounds, ClipboardItem, Context,
     EventEmitter, FocusHandle, FocusableView, FontFeatures, FontStyle, FontWeight, HighlightStyle,
     Hsla, InputHandler, KeyContext, Model, MouseButton, ParentElement, Pixels, Render, RenderOnce,
-    SharedString, Styled, Subscription, Task, TextRun, TextStyle, UniformListScrollHandle, View,
-    ViewContext, VisualContext, WeakView, WhiteSpace, WindowContext,
+    SharedString, Styled, StyledText, Subscription, Task, TextRun, TextStyle,
+    UniformListScrollHandle, View, ViewContext, VisualContext, WeakView, WhiteSpace, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -1251,6 +1251,7 @@ impl CompletionsMenu {
         let completions = self.completions.clone();
         let matches = self.matches.clone();
         let selected_item = self.selected_item;
+        let style = style.clone();
 
         let list = uniform_list(
             cx.view().clone(),
@@ -1274,13 +1275,12 @@ impl CompletionsMenu {
                             &None
                         };
 
-                        // todo!("highlights")
-                        // let highlights = combine_syntax_and_fuzzy_match_highlights(
-                        //     &completion.label.text,
-                        //     style.text.color.into(),
-                        //     styled_runs_for_code_label(&completion.label, &style.syntax),
-                        //     &mat.positions,
-                        // )
+                        let completion_runs = combine_syntax_and_fuzzy_match_highlights(
+                            &completion.label.text,
+                            &style.text,
+                            styled_runs_for_code_label(&completion.label, &style.syntax),
+                            &mat.positions,
+                        );
 
                         // todo!("documentation")
                         // MouseEventHandler::new::<CompletionTag, _>(mat.candidate_id, cx, |state, _| {
@@ -1364,7 +1364,10 @@ impl CompletionsMenu {
                             .bg(gpui::green())
                             .hover(|style| style.bg(gpui::blue()))
                             .when(item_ix == selected_item, |div| div.bg(gpui::red()))
-                            .child(SharedString::from(completion.label.text.clone()))
+                            .child(
+                                StyledText::new(completion.label.text.clone())
+                                    .with_runs(completion_runs),
+                            )
                             .min_w(px(300.))
                             .max_w(px(700.))
                     })
@@ -10080,7 +10083,7 @@ pub fn diagnostic_style(
 
 pub fn combine_syntax_and_fuzzy_match_highlights(
     text: &str,
-    default_style: TextStyle,
+    default_style: &TextStyle,
     syntax_ranges: impl Iterator<Item = (Range<usize>, HighlightStyle)>,
     match_indices: &[usize],
 ) -> Vec<TextRun> {
