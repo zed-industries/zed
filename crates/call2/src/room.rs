@@ -1345,6 +1345,8 @@ impl Room {
                 let display = displays
                     .first()
                     .ok_or_else(|| anyhow!("no display found"))?;
+                dbg!("Been there");
+                dbg!(displays.len());
                 let track = LocalVideoTrack::screen_share_for_display(&display);
                 this.upgrade()
                     .ok_or_else(|| anyhow!("room was dropped"))?

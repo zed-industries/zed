@@ -31,9 +31,9 @@ use std::sync::Arc;
 use call::ActiveCall;
 use client::{Client, UserStore};
 use gpui::{
-    div, px, rems, AppContext, Div, InteractiveElement, IntoElement, Model, ParentElement, Render,
-    Stateful, StatefulInteractiveElement, Styled, Subscription, ViewContext, VisualContext,
-    WeakView, WindowBounds,
+    div, px, rems, AppContext, Div, InteractiveElement, IntoElement, Model, MouseButton,
+    ParentElement, Render, Stateful, StatefulInteractiveElement, Styled, Subscription, ViewContext,
+    VisualContext, WeakView, WindowBounds,
 };
 use project::Project;
 use theme::ActiveTheme;
@@ -182,12 +182,22 @@ impl Render for CollabTitlebarItem {
                         current_user
                             .avatar
                             .clone()
-                            .map(|avatar| Avatar::new(avatar.clone()))
+                            .map(|avatar| div().child(Avatar::new(avatar.clone())))
                             .into_iter()
-                            .chain(remote_participants.into_iter().flat_map(|user| {
-                                user.avatar
-                                    .as_ref()
-                                    .map(|avatar| Avatar::new(avatar.clone()))
+                            .chain(remote_participants.into_iter().flat_map(|(user, peer_id)| {
+                                user.avatar.as_ref().map(|avatar| {
+                                    div()
+                                        .child(Avatar::new(avatar.clone()).into_element())
+                                        .on_mouse_down(MouseButton::Left, {
+                                            let workspace = workspace.clone();
+                                            let id = peer_id.clone();
+                                            move |_, cx| {
+                                                workspace.update(cx, |this, cx| {
+                                                    this.open_shared_screen(peer_id, cx);
+                                                });
+                                            }
+                                        })
+                                })
                             })),
                     )
                 },
@@ -202,15 +212,22 @@ impl Render for CollabTitlebarItem {
                         )
                         .child(
                             h_stack()
-                                .child(IconButton::new("mute-microphone", mic_icon).on_click(
+                                .child(IconButton::new("mute-microphone", mic_icon).on_click({
+                                    let workspace = workspace.clone();
                                     move |_, cx| {
                                         workspace.update(cx, |this, cx| {
                                             this.call_state().toggle_mute(cx);
                                         });
+                                    }
+                                }))
+                                .child(IconButton::new("mute-sound", ui::Icon::AudioOn))
+                                .child(IconButton::new("screen-share", ui::Icon::Screen).on_click(
+                                    move |_, cx| {
+                                        workspace.update(cx, |this, cx| {
+                                            this.call_state().toggle_screen_share(cx);
+                                        });
                                     },
                                 ))
-                                .child(IconButton::new("mute-sound", ui::Icon::AudioOn))
-                                .child(IconButton::new("screen-share", ui::Icon::Screen))
                                 .pl_2(),
                         ),
                 )

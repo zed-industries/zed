@@ -4,7 +4,7 @@ use client::{proto, User};
 use collections::HashMap;
 use gpui::WeakModel;
 pub use live_kit_client::Frame;
-use live_kit_client::{RemoteAudioTrack, RemoteVideoTrack};
+pub(crate) use live_kit_client::{RemoteAudioTrack, RemoteVideoTrack};
 use project::Project;
 use std::sync::Arc;
 

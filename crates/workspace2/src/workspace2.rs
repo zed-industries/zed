@@ -361,7 +361,7 @@ impl CallHandler for TestCallHandler {
         unimplemented!()
     }
 
-    fn remote_participants(&self, cx: &AppContext) -> Option<Vec<User>> {
+    fn remote_participants(&self, cx: &AppContext) -> Option<Vec<(Arc<User>, PeerId)>> {
         None
     }
 
@@ -370,6 +370,8 @@ impl CallHandler for TestCallHandler {
     }
 
     fn toggle_mute(&self, cx: &mut AppContext) {}
+
+    fn toggle_screen_share(&self, cx: &mut AppContext) {}
 }
 
 impl AppState {
@@ -480,9 +482,10 @@ pub trait CallHandler {
         initial_project: Option<Model<Project>>,
         cx: &mut AppContext,
     ) -> Task<Result<()>>;
-    fn remote_participants(&self, cx: &AppContext) -> Option<Vec<Arc<User>>>;
+    fn remote_participants(&self, cx: &AppContext) -> Option<Vec<(Arc<User>, PeerId)>>;
     fn is_muted(&self, cx: &AppContext) -> Option<bool>;
     fn toggle_mute(&self, cx: &mut AppContext);
+    fn toggle_screen_share(&self, cx: &mut AppContext);
 }
 
 pub struct Workspace {
@@ -1996,13 +1999,15 @@ impl Workspace {
         item
     }
 
-    //     pub fn open_shared_screen(&mut self, peer_id: PeerId, cx: &mut ViewContext<Self>) {
-    //         if let Some(shared_screen) = self.shared_screen_for_peer(peer_id, &self.active_pane, cx) {
-    //             self.active_pane.update(cx, |pane, cx| {
-    //                 pane.add_item(Box::new(shared_screen), false, true, None, cx)
-    //             });
-    //         }
-    //     }
+    pub fn open_shared_screen(&mut self, peer_id: PeerId, cx: &mut ViewContext<Self>) {
+        if let Some(shared_screen) = self.shared_screen_for_peer(peer_id, &self.active_pane, cx) {
+            self.active_pane.update(cx, |pane, cx| {
+                pane.add_item(shared_screen, false, true, None, cx)
+            });
+        } else {
+            dbg!("WTF");
+        }
+    }
 
     pub fn activate_item(&mut self, item: &dyn ItemHandle, cx: &mut ViewContext<Self>) -> bool {
         let result = self.panes.iter().find_map(|pane| {
@@ -2877,10 +2882,10 @@ impl Workspace {
                 }
                 continue;
             }
-            // todo!()
-            // if let Some(shared_screen) = self.shared_screen_for_peer(leader_id, pane, cx) {
-            //     items_to_activate.push((pane.clone(), Box::new(shared_screen)));
-            // }
+
+            if let Some(shared_screen) = self.shared_screen_for_peer(leader_id, pane, cx) {
+                items_to_activate.push((pane.clone(), shared_screen));
+            }
         }
 
         for (pane, item) in items_to_activate {
@@ -2901,27 +2906,27 @@ impl Workspace {
         None
     }
 
-    // todo!()
-    //     fn shared_screen_for_peer(
-    //         &self,
-    //         peer_id: PeerId,
-    //         pane: &View<Pane>,
-    //         cx: &mut ViewContext<Self>,
-    //     ) -> Option<View<SharedScreen>> {
-    //         let call = self.active_call()?;
-    //         let room = call.read(cx).room()?.read(cx);
-    //         let participant = room.remote_participant_for_peer_id(peer_id)?;
-    //         let track = participant.video_tracks.values().next()?.clone();
-    //         let user = participant.user.clone();
+    fn shared_screen_for_peer(
+        &self,
+        peer_id: PeerId,
+        pane: &View<Pane>,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<Box<dyn ItemHandle>> {
+        self.call_handler.shared_screen_for_peer(peer_id, pane, cx)
+        // let call = self.active_call()?;
+        // let room = call.read(cx).room()?.read(cx);
+        // let participant = room.remote_participant_for_peer_id(peer_id)?;
+        // let track = participant.video_tracks.values().next()?.clone();
+        // let user = participant.user.clone();
 
-    //         for item in pane.read(cx).items_of_type::<SharedScreen>() {
-    //             if item.read(cx).peer_id == peer_id {
-    //                 return Some(item);
-    //             }
-    //         }
+        // for item in pane.read(cx).items_of_type::<SharedScreen>() {
+        //     if item.read(cx).peer_id == peer_id {
+        //         return Some(item);
+        //     }
+        // }
 
-    //         Some(cx.build_view(|cx| SharedScreen::new(&track, peer_id, user.clone(), cx)))
-    //     }
+        // Some(cx.build_view(|cx| SharedScreen::new(&track, peer_id, user.clone(), cx)))
+    }
 
     pub fn on_window_activation_changed(&mut self, cx: &mut ViewContext<Self>) {
         if cx.is_window_active() {

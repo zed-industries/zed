@@ -1193,6 +1193,7 @@ dependencies = [
  "fs2",
  "futures 0.3.28",
  "gpui2",
+ "image",
  "language2",
  "live_kit_client2",
  "log",
@@ -1204,6 +1205,7 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "settings2",
+ "smallvec",
  "util",
  "workspace2",
 ]
