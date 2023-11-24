@@ -1406,10 +1406,11 @@ impl Pane {
             })
             .py_1()
             .bg(tab_bg)
-            .border_color(cx.theme().colors().border)
+            .border_color(gpui::red())
+            // .border_color(cx.theme().colors().border)
             .map(|this| match ix.cmp(&self.active_item_index) {
-                cmp::Ordering::Less => this.border_l(),
-                cmp::Ordering::Equal => this.border_r(),
+                cmp::Ordering::Less => this.border_l().mr_px(),
+                cmp::Ordering::Equal => this.border_r().ml_px(),
                 cmp::Ordering::Greater => this.border_l().border_r(),
             })
             // .hover(|h| h.bg(tab_hover_bg))
