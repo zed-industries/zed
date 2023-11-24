@@ -42,8 +42,8 @@ use gpui::{
     actions, div, point, prelude::*, px, relative, rems, size, uniform_list, Action, AnyElement,
     AppContext, AsyncWindowContext, BackgroundExecutor, Bounds, ClipboardItem, Context,
     EventEmitter, FocusHandle, FocusableView, FontFeatures, FontStyle, FontWeight, HighlightStyle,
-    Hsla, InputHandler, KeyContext, Model, MouseButton, ParentElement, Pixels, Render, RenderOnce,
-    SharedString, Styled, StyledText, Subscription, Task, TextRun, TextStyle,
+    Hsla, InputHandler, InteractiveText, KeyContext, Model, MouseButton, ParentElement, Pixels,
+    Render, RenderOnce, SharedString, Styled, StyledText, Subscription, Task, TextRun, TextStyle,
     UniformListScrollHandle, View, ViewContext, VisualContext, WeakView, WhiteSpace, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
@@ -116,11 +116,12 @@ pub const DOCUMENT_HIGHLIGHTS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis
 pub const FORMAT_TIMEOUT: Duration = Duration::from_secs(2);
 
 // pub fn render_parsed_markdown<Tag: 'static>(
+//     element_id: impl Into<ElementId>,
 //     parsed: &language::ParsedMarkdown,
 //     editor_style: &EditorStyle,
 //     workspace: Option<WeakView<Workspace>>,
 //     cx: &mut ViewContext<Editor>,
-// ) -> Text {
+// ) -> InteractiveText {
 //     enum RenderedMarkdown {}
 
 //     let parsed = parsed.clone();
@@ -1275,14 +1276,18 @@ impl CompletionsMenu {
                             &None
                         };
 
-                        let completion_runs = combine_syntax_and_fuzzy_match_highlights(
+                        let highlights = combine_syntax_and_fuzzy_match_highlights(
                             &completion.label.text,
                             &style.text,
                             styled_runs_for_code_label(&completion.label, &style.syntax),
                             &mat.positions,
                         );
                         let completion_label = StyledText::new(completion.label.text.clone())
-                            .with_runs(completion_runs);
+                            .with_runs(text_runs_for_highlights(
+                                &completion.label.text,
+                                &style.text,
+                                highlights,
+                            ));
                         let documentation_label =
                             if let Some(Documentation::SingleLine(text)) = documentation {
                                 Some(SharedString::from(text.clone()))
@@ -10026,27 +10031,38 @@ pub fn diagnostic_style(
     }
 }
 
+pub fn text_runs_for_highlights(
+    text: &str,
+    default_style: &TextStyle,
+    highlights: impl IntoIterator<Item = (Range<usize>, HighlightStyle)>,
+) -> Vec<TextRun> {
+    let mut runs = Vec::new();
+    let mut ix = 0;
+    for (range, highlight) in highlights {
+        if ix < range.start {
+            runs.push(default_style.clone().to_run(range.start - ix));
+        }
+        runs.push(
+            default_style
+                .clone()
+                .highlight(highlight)
+                .to_run(range.len()),
+        );
+        ix = range.end;
+    }
+    if ix < text.len() {
+        runs.push(default_style.to_run(text.len() - ix));
+    }
+    runs
+}
+
 pub fn combine_syntax_and_fuzzy_match_highlights(
     text: &str,
     default_style: &TextStyle,
     syntax_ranges: impl Iterator<Item = (Range<usize>, HighlightStyle)>,
     match_indices: &[usize],
-) -> Vec<TextRun> {
-    let mut current_index = 0;
-    let mut runs = Vec::new();
-    let mut push_run = |range: Range<usize>, highlight_style: HighlightStyle| {
-        if current_index < range.start {
-            runs.push(default_style.clone().to_run(range.start - current_index));
-        }
-        runs.push(
-            default_style
-                .clone()
-                .highlight(highlight_style)
-                .to_run(range.len()),
-        );
-        current_index = range.end;
-    };
-
+) -> Vec<(Range<usize>, HighlightStyle)> {
+    let mut highlights = Vec::new();
     let mut match_indices = match_indices.iter().copied().peekable();
 
     for (range, mut syntax_highlight) in syntax_ranges.chain([(usize::MAX..0, Default::default())])
@@ -10061,7 +10077,7 @@ pub fn combine_syntax_and_fuzzy_match_highlights(
             }
             match_indices.next();
             let end_index = char_ix_after(match_index, text);
-            push_run(match_index..end_index, FontWeight::BOLD.into());
+            highlights.push((match_index..end_index, FontWeight::BOLD.into()));
         }
 
         if range.start == usize::MAX {
@@ -10078,7 +10094,7 @@ pub fn combine_syntax_and_fuzzy_match_highlights(
 
             match_indices.next();
             if match_index > offset {
-                push_run(offset..match_index, syntax_highlight);
+                highlights.push((offset..match_index, syntax_highlight));
             }
 
             let mut end_index = char_ix_after(match_index, text);
@@ -10093,24 +10109,20 @@ pub fn combine_syntax_and_fuzzy_match_highlights(
 
             let mut match_style = syntax_highlight;
             match_style.font_weight = Some(FontWeight::BOLD);
-            push_run(match_index..end_index, match_style);
+            highlights.push((match_index..end_index, match_style));
             offset = end_index;
         }
 
         if offset < range.end {
-            push_run(offset..range.end, syntax_highlight);
+            highlights.push((offset..range.end, syntax_highlight));
         }
-    }
-
-    if current_index < text.len() {
-        runs.push(default_style.to_run(text.len() - current_index));
     }
 
     fn char_ix_after(ix: usize, text: &str) -> usize {
         ix + text[ix..].chars().next().unwrap().len_utf8()
     }
 
-    runs
+    highlights
 }
 
 pub fn styled_runs_for_code_label<'a>(
