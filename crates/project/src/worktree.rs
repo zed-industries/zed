@@ -2400,11 +2400,6 @@ impl BackgroundScannerState {
     }
 
     fn reload_repositories(&mut self, dot_git_dirs_to_reload: &HashSet<PathBuf>, fs: &dyn Fs) {
-        if dot_git_dirs_to_reload.is_empty() {
-            return;
-        }
-
-        log::debug!("reloading repositories: {dot_git_dirs_to_reload:?}");
         let scan_id = self.snapshot.scan_id;
         for dot_git_dir in dot_git_dirs_to_reload {
             // If there is already a repository for this .git directory, reload
@@ -3310,16 +3305,18 @@ impl BackgroundScanner {
         abs_paths.retain(|abs_path| {
             let snapshot = &self.state.lock().snapshot;
             {
+                let mut is_git_related = false;
                 if let Some(dot_git_dir) = abs_path
                     .ancestors()
                     .find(|ancestor| ancestor.file_name() == Some(&*DOT_GIT))
                 {
-                    let dog_git_path = dot_git_dir
+                    let dot_git_path = dot_git_dir
                         .strip_prefix(&root_canonical_path)
                         .ok()
                         .map(|path| path.to_path_buf())
                         .unwrap_or_else(|| dot_git_dir.to_path_buf());
-                    dot_git_paths_to_reload.insert(dog_git_path.to_path_buf());
+                    dot_git_paths_to_reload.insert(dot_git_path.to_path_buf());
+                    is_git_related = true;
                 }
 
                 let relative_path: Arc<Path> =
@@ -3351,7 +3348,9 @@ impl BackgroundScanner {
                     }
                 }
                 if excluded_file_event {
-                    log::debug!("ignoring FS event for excluded path {relative_path:?}");
+                    if !is_git_related {
+                        log::debug!("ignoring FS event for excluded path {relative_path:?}");
+                    }
                     return false;
                 }
 
@@ -3360,31 +3359,39 @@ impl BackgroundScanner {
             }
         });
 
-        if relative_paths.is_empty() {
+        if dot_git_paths_to_reload.is_empty() && relative_paths.is_empty() {
             return;
         }
 
-        log::debug!("received fs events {:?}", relative_paths);
+        if !relative_paths.is_empty() {
+            log::debug!("received fs events {:?}", relative_paths);
 
-        let (scan_job_tx, scan_job_rx) = channel::unbounded();
-        self.reload_entries_for_paths(
-            root_path,
-            root_canonical_path,
-            &relative_paths,
-            abs_paths,
-            Some(scan_job_tx.clone()),
-        )
-        .await;
-        drop(scan_job_tx);
-        self.scan_dirs(false, scan_job_rx).await;
+            let (scan_job_tx, scan_job_rx) = channel::unbounded();
+            self.reload_entries_for_paths(
+                root_path,
+                root_canonical_path,
+                &relative_paths,
+                abs_paths,
+                Some(scan_job_tx.clone()),
+            )
+            .await;
+            drop(scan_job_tx);
+            self.scan_dirs(false, scan_job_rx).await;
 
-        let (scan_job_tx, scan_job_rx) = channel::unbounded();
-        self.update_ignore_statuses(scan_job_tx).await;
-        self.scan_dirs(false, scan_job_rx).await;
+            let (scan_job_tx, scan_job_rx) = channel::unbounded();
+            self.update_ignore_statuses(scan_job_tx).await;
+            self.scan_dirs(false, scan_job_rx).await;
+        }
 
         {
             let mut state = self.state.lock();
-            state.reload_repositories(&dot_git_paths_to_reload, self.fs.as_ref());
+            if !dot_git_paths_to_reload.is_empty() {
+                if relative_paths.is_empty() {
+                    state.snapshot.scan_id += 1;
+                }
+                log::debug!("reloading repositories: {dot_git_paths_to_reload:?}");
+                state.reload_repositories(&dot_git_paths_to_reload, self.fs.as_ref());
+            }
             state.snapshot.completed_scan_id = state.snapshot.scan_id;
             for (_, entry_id) in mem::take(&mut state.removed_entry_ids) {
                 state.scanned_dirs.remove(&entry_id);
