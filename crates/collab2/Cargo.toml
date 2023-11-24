@@ -10,7 +10,7 @@ publish = false
 name = "collab2"
 
 [[bin]]
-name = "seed"
+name = "seed2"
 required-features = ["seed-support"]
 
 [dependencies]
