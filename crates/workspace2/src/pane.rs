@@ -1423,14 +1423,18 @@ impl Pane {
                     .children(
                         item.has_conflict(cx)
                             .then(|| {
-                                IconElement::new(Icon::ExclamationTriangle)
-                                    .size(ui::IconSize::Small)
-                                    .color(Color::Warning)
+                                div().border().border_color(gpui::red()).child(
+                                    IconElement::new(Icon::ExclamationTriangle)
+                                        .size(ui::IconSize::Small)
+                                        .color(Color::Warning),
+                                )
                             })
                             .or(item.is_dirty(cx).then(|| {
-                                IconElement::new(Icon::ExclamationTriangle)
-                                    .size(ui::IconSize::Small)
-                                    .color(Color::Info)
+                                div().border().border_color(gpui::red()).child(
+                                    IconElement::new(Icon::ExclamationTriangle)
+                                        .size(ui::IconSize::Small)
+                                        .color(Color::Info),
+                                )
                             })),
                     )
                     .children((!close_right).then(|| close_icon()))
@@ -1461,12 +1465,22 @@ impl Pane {
                             .flex()
                             .items_center()
                             .gap_px()
-                            .child(IconButton::new("navigate_backward", Icon::ArrowLeft).state(
-                                InteractionState::Enabled.if_enabled(self.can_navigate_backward()),
-                            ))
-                            .child(IconButton::new("navigate_forward", Icon::ArrowRight).state(
-                                InteractionState::Enabled.if_enabled(self.can_navigate_forward()),
-                            )),
+                            .child(
+                                div().border().border_color(gpui::red()).child(
+                                    IconButton::new("navigate_backward", Icon::ArrowLeft).state(
+                                        InteractionState::Enabled
+                                            .if_enabled(self.can_navigate_backward()),
+                                    ),
+                                ),
+                            )
+                            .child(
+                                div().border().border_color(gpui::red()).child(
+                                    IconButton::new("navigate_forward", Icon::ArrowRight).state(
+                                        InteractionState::Enabled
+                                            .if_enabled(self.can_navigate_forward()),
+                                    ),
+                                ),
+                            ),
                     ),
             )
             .child(
@@ -1493,8 +1507,18 @@ impl Pane {
                             .flex()
                             .items_center()
                             .gap_px()
-                            .child(IconButton::new("plus", Icon::Plus))
-                            .child(IconButton::new("split", Icon::Split)),
+                            .child(
+                                div()
+                                    .border()
+                                    .border_color(gpui::red())
+                                    .child(IconButton::new("plus", Icon::Plus)),
+                            )
+                            .child(
+                                div()
+                                    .border()
+                                    .border_color(gpui::red())
+                                    .child(IconButton::new("split", Icon::Split)),
+                            ),
                     ),
             )
     }
