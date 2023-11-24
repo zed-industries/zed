@@ -290,7 +290,15 @@ impl TextSystem {
                 text: SharedString::from(line_text),
             });
 
-            line_start = line_end + 1; // Skip `\n` character.
+            // Skip `\n` character.
+            line_start = line_end + 1;
+            if let Some(run) = runs.peek_mut() {
+                run.len = run.len.saturating_sub(1);
+                if run.len == 0 {
+                    runs.next();
+                }
+            }
+
             font_runs.clear();
         }
 
