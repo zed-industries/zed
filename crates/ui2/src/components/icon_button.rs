@@ -37,7 +37,7 @@ impl RenderOnce for IconButton {
         };
 
         if self.selected {
-            bg_color = bg_hover_color;
+            bg_color = cx.theme().colors().element_selected;
         }
 
         let mut button = h_stack()

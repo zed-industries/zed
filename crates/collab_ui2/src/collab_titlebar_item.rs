@@ -111,6 +111,8 @@ impl Render for CollabTitlebarItem {
                     // TODO - Add player menu
                     .child(
                         div()
+                            .border()
+                            .border_color(gpui::red())
                             .id("project_owner_indicator")
                             .child(
                                 Button::new("player")
@@ -122,6 +124,8 @@ impl Render for CollabTitlebarItem {
                     // TODO - Add project menu
                     .child(
                         div()
+                            .border()
+                            .border_color(gpui::red())
                             .id("titlebar_project_menu_button")
                             .child(Button::new("project_name").variant(ButtonVariant::Ghost))
                             .tooltip(move |cx| Tooltip::text("Recent Projects", cx)),
@@ -129,6 +133,8 @@ impl Render for CollabTitlebarItem {
                     // TODO - Add git menu
                     .child(
                         div()
+                            .border()
+                            .border_color(gpui::red())
                             .id("titlebar_git_menu_button")
                             .child(
                                 Button::new("branch_name")
