@@ -105,6 +105,7 @@ impl Element for Overlay {
             origin: Point::zero(),
             size: cx.viewport_size(),
         };
+        dbg!(limits);
 
         match self.fit_mode {
             OverlayFitMode::SnapToWindow => {

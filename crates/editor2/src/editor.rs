@@ -39,12 +39,13 @@ use futures::FutureExt;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use git::diff_hunk_to_display;
 use gpui::{
-    actions, div, point, prelude::*, px, relative, rems, size, uniform_list, Action, AnyElement,
-    AppContext, AsyncWindowContext, BackgroundExecutor, Bounds, ClipboardItem, Context, ElementId,
-    EventEmitter, FocusHandle, FocusableView, FontFeatures, FontStyle, FontWeight, HighlightStyle,
-    Hsla, InputHandler, InteractiveText, KeyContext, Model, MouseButton, ParentElement, Pixels,
-    Render, RenderOnce, SharedString, Styled, StyledText, Subscription, Task, TextRun, TextStyle,
-    UniformListScrollHandle, View, ViewContext, VisualContext, WeakView, WhiteSpace, WindowContext,
+    actions, div, overlay, point, prelude::*, px, relative, rems, size, uniform_list, Action,
+    AnyElement, AppContext, AsyncWindowContext, BackgroundExecutor, Bounds, ClipboardItem, Context,
+    ElementId, EventEmitter, FocusHandle, FocusableView, FontFeatures, FontStyle, FontWeight,
+    HighlightStyle, Hsla, InputHandler, InteractiveText, KeyContext, Model, MouseButton,
+    ParentElement, Pixels, Render, RenderOnce, SharedString, Styled, StyledText, Subscription,
+    Task, TextRun, TextStyle, UniformListScrollHandle, View, ViewContext, VisualContext, WeakView,
+    WhiteSpace, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -1335,7 +1336,7 @@ impl CompletionsMenu {
                         div()
                             .id(mat.candidate_id)
                             .min_w(px(220.))
-                            .max_w(px(640.))
+                            .max_w(px(540.))
                             .whitespace_nowrap()
                             .overflow_hidden()
                             .text_ui()
@@ -1370,11 +1371,23 @@ impl CompletionsMenu {
         .track_scroll(self.scroll_handle.clone())
         .with_width_from_item(widest_completion_ix);
 
-        Popover::new()
-            .child(list)
-            .when_some(multiline_docs, |popover, multiline_docs| {
-                popover.aside(multiline_docs)
-            })
+        // Old:
+        // Popover::new()
+        //     .child(list)
+        //     .when_some(multiline_docs, |popover, multiline_docs| {
+        //         popover.aside(multiline_docs)
+        //     })
+        //     .into_any_element()
+
+        overlay()
+            .anchor(gpui::AnchorCorner::TopLeft)
+            .child(
+                Popover::new()
+                    .child(list)
+                    .when_some(multiline_docs, |popover, multiline_docs| {
+                        popover.aside(multiline_docs)
+                    }),
+            )
             .into_any_element()
     }
 
