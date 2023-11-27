@@ -765,35 +765,44 @@ impl Item for Editor {
     }
 
     fn breadcrumbs(&self, variant: &Theme, cx: &AppContext) -> Option<Vec<BreadcrumbText>> {
-        todo!();
-        // let cursor = self.selections.newest_anchor().head();
-        // let multibuffer = &self.buffer().read(cx);
-        // let (buffer_id, symbols) =
-        //     multibuffer.symbols_containing(cursor, Some(&theme.editor.syntax), cx)?;
-        // let buffer = multibuffer.buffer(buffer_id)?;
+        let cursor = self.selections.newest_anchor().head();
+        let multibuffer = &self.buffer().read(cx);
+        let (buffer_id, symbols) =
+            multibuffer.symbols_containing(cursor, Some(&cx.theme().styles.syntax), cx)?;
+        let buffer = multibuffer.buffer(buffer_id)?;
 
-        // let buffer = buffer.read(cx);
-        // let filename = buffer
-        //     .snapshot()
-        //     .resolve_file_path(
-        //         cx,
-        //         self.project
-        //             .as_ref()
-        //             .map(|project| project.read(cx).visible_worktrees(cx).count() > 1)
-        //             .unwrap_or_default(),
-        //     )
-        //     .map(|path| path.to_string_lossy().to_string())
-        //     .unwrap_or_else(|| "untitled".to_string());
+        let buffer = buffer.read(cx);
+        let filename = buffer
+            .snapshot()
+            .resolve_file_path(
+                cx,
+                self.project
+                    .as_ref()
+                    .map(|project| project.read(cx).visible_worktrees(cx).count() > 1)
+                    .unwrap_or_default(),
+            )
+            .map(|path| path.to_string_lossy().to_string())
+            .unwrap_or_else(|| "untitled".to_string());
 
-        // let mut breadcrumbs = vec![BreadcrumbText {
-        //     text: filename,
-        //     highlights: None,
-        // }];
-        // breadcrumbs.extend(symbols.into_iter().map(|symbol| BreadcrumbText {
-        //     text: symbol.text,
-        //     highlights: Some(symbol.highlight_ranges),
-        // }));
-        // Some(breadcrumbs)
+        let mut breadcrumbs = vec![BreadcrumbText {
+            text: filename,
+            highlights: None,
+        }];
+        breadcrumbs.extend(symbols.into_iter().map(|symbol| {
+            // eprintln!(
+            //     "ranges: {:?}",
+            //     symbol
+            //         .highlight_ranges
+            //         .iter()
+            //         .map(|range| &symbol.text[range.0.clone()])
+            //         .collect::<Vec<_>>()
+            // );
+            BreadcrumbText {
+                text: symbol.text,
+                highlights: Some(symbol.highlight_ranges),
+            }
+        }));
+        Some(breadcrumbs)
     }
 
     fn added_to_workspace(&mut self, workspace: &mut Workspace, cx: &mut ViewContext<Self>) {

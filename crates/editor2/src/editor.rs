@@ -151,7 +151,6 @@ pub fn render_parsed_markdown(
                 }
             }),
     );
-    let runs = text_runs_for_highlights(&parsed.text, &editor_style.text, highlights);
 
     // todo!("add the ability to change cursor style for link ranges")
     let mut links = Vec::new();
@@ -165,7 +164,7 @@ pub fn render_parsed_markdown(
 
     InteractiveText::new(
         element_id,
-        StyledText::new(parsed.text.clone()).with_runs(runs),
+        StyledText::new(parsed.text.clone()).with_highlights(&editor_style.text, highlights),
     )
     .on_click(link_ranges, move |clicked_range_ix, cx| {
         match &links[clicked_range_ix] {
@@ -1313,11 +1312,7 @@ impl CompletionsMenu {
                             ),
                         );
                         let completion_label = StyledText::new(completion.label.text.clone())
-                            .with_runs(text_runs_for_highlights(
-                                &completion.label.text,
-                                &style.text,
-                                highlights,
-                            ));
+                            .with_highlights(&style.text, highlights);
                         let documentation_label =
                             if let Some(Documentation::SingleLine(text)) = documentation {
                                 Some(SharedString::from(text.clone()))
@@ -10025,31 +10020,6 @@ pub fn diagnostic_style(
         (DiagnosticSeverity::HINT, false) => style.info,
         _ => style.ignored,
     }
-}
-
-pub fn text_runs_for_highlights(
-    text: &str,
-    default_style: &TextStyle,
-    highlights: impl IntoIterator<Item = (Range<usize>, HighlightStyle)>,
-) -> Vec<TextRun> {
-    let mut runs = Vec::new();
-    let mut ix = 0;
-    for (range, highlight) in highlights {
-        if ix < range.start {
-            runs.push(default_style.clone().to_run(range.start - ix));
-        }
-        runs.push(
-            default_style
-                .clone()
-                .highlight(highlight)
-                .to_run(range.len()),
-        );
-        ix = range.end;
-    }
-    if ix < text.len() {
-        runs.push(default_style.to_run(text.len() - ix));
-    }
-    runs
 }
 
 pub fn styled_runs_for_code_label<'a>(

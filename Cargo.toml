@@ -8,6 +8,7 @@ members = [
     "crates/auto_update",
     "crates/auto_update2",
     "crates/breadcrumbs",
+    "crates/breadcrumbs2",
     "crates/call",
     "crates/call2",
     "crates/channel",

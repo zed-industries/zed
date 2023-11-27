@@ -19,7 +19,7 @@ ai = { package = "ai2", path = "../ai2"}
 # audio = { path = "../audio" }
 # activity_indicator = { path = "../activity_indicator" }
 auto_update = { package = "auto_update2", path = "../auto_update2" }
-# breadcrumbs = { path = "../breadcrumbs" }
+breadcrumbs = { package = "breadcrumbs2", path = "../breadcrumbs2" }
 call = { package = "call2", path = "../call2" }
 # channel = { path = "../channel" }
 cli = { path = "../cli" }

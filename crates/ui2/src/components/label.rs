@@ -1,6 +1,8 @@
+use std::ops::Range;
+
 use crate::prelude::*;
 use crate::styled_ext::StyledExt;
-use gpui::{relative, Div, Hsla, IntoElement, StyledText, TextRun, WindowContext};
+use gpui::{relative, Div, HighlightStyle, Hsla, IntoElement, StyledText, WindowContext};
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Default)]
 pub enum LabelSize {
@@ -99,38 +101,32 @@ impl RenderOnce for HighlightedLabel {
 
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         let highlight_color = cx.theme().colors().text_accent;
-        let mut text_style = cx.text_style().clone();
 
         let mut highlight_indices = self.highlight_indices.iter().copied().peekable();
+        let mut highlights: Vec<(Range<usize>, HighlightStyle)> = Vec::new();
 
-        let mut runs: Vec<TextRun> = Vec::new();
+        while let Some(start_ix) = highlight_indices.next() {
+            let mut end_ix = start_ix;
 
-        for (char_ix, char) in self.label.char_indices() {
-            let mut color = self.color.color(cx);
-
-            if let Some(highlight_ix) = highlight_indices.peek() {
-                if char_ix == *highlight_ix {
-                    color = highlight_color;
-                    highlight_indices.next();
+            loop {
+                end_ix = end_ix + self.label[end_ix..].chars().next().unwrap().len_utf8();
+                if let Some(&next_ix) = highlight_indices.peek() {
+                    if next_ix == end_ix {
+                        end_ix = next_ix;
+                        highlight_indices.next();
+                        continue;
+                    }
                 }
+                break;
             }
 
-            let last_run = runs.last_mut();
-            let start_new_run = if let Some(last_run) = last_run {
-                if color == last_run.color {
-                    last_run.len += char.len_utf8();
-                    false
-                } else {
-                    true
-                }
-            } else {
-                true
-            };
-
-            if start_new_run {
-                text_style.color = color;
-                runs.push(text_style.to_run(char.len_utf8()))
-            }
+            highlights.push((
+                start_ix..end_ix,
+                HighlightStyle {
+                    color: Some(highlight_color),
+                    ..Default::default()
+                },
+            ));
         }
 
         div()
@@ -150,7 +146,7 @@ impl RenderOnce for HighlightedLabel {
                 LabelSize::Default => this.text_ui(),
                 LabelSize::Small => this.text_ui_sm(),
             })
-            .child(StyledText::new(self.label).with_runs(runs))
+            .child(StyledText::new(self.label).with_highlights(&cx.text_style(), highlights))
     }
 }
 

@@ -1077,6 +1077,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "breadcrumbs2"
+version = "0.1.0"
+dependencies = [
+ "collections",
+ "editor2",
+ "gpui2",
+ "itertools 0.10.5",
+ "language2",
+ "project2",
+ "search2",
+ "settings2",
+ "theme2",
+ "ui2",
+ "workspace2",
+]
+
+[[package]]
 name = "bromberg_sl2"
 version = "0.6.0"
 source = "git+https://github.com/zed-industries/bromberg_sl2?rev=950bc5482c216c395049ae33ae4501e08975f17f#950bc5482c216c395049ae33ae4501e08975f17f"
@@ -11646,6 +11663,7 @@ dependencies = [
  "async-trait",
  "auto_update2",
  "backtrace",
+ "breadcrumbs2",
  "call2",
  "chrono",
  "cli",
