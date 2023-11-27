@@ -1273,6 +1273,13 @@ impl CompletionsMenu {
             multiline_docs.map(|div| {
                 div.id("multiline_docs")
                     .max_h(max_height)
+                    .flex_1()
+                    .px_1p5()
+                    .py_1()
+                    .min_w(px(260.))
+                    .max_w(px(640.))
+                    .w(px(500.))
+                    .text_ui()
                     .overflow_y_scroll()
                     // Prevent a mouse down on documentation from being propagated to the editor,
                     // because that would move the cursor.
@@ -1327,13 +1334,18 @@ impl CompletionsMenu {
 
                         div()
                             .id(mat.candidate_id)
-                            .min_w(px(300.))
-                            .max_w(px(700.))
+                            .min_w(px(220.))
+                            .max_w(px(640.))
                             .whitespace_nowrap()
                             .overflow_hidden()
-                            .bg(gpui::green())
-                            .hover(|style| style.bg(gpui::blue()))
-                            .when(item_ix == selected_item, |div| div.bg(gpui::red()))
+                            .text_ui()
+                            .px_1()
+                            .rounded(px(4.))
+                            .bg(cx.theme().colors().ghost_element_background)
+                            .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
+                            .when(item_ix == selected_item, |div| {
+                                div.bg(cx.theme().colors().ghost_element_selected)
+                            })
                             .on_mouse_down(
                                 MouseButton::Left,
                                 cx.listener(move |editor, event, cx| {

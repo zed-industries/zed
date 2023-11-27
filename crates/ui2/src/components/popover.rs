@@ -3,6 +3,7 @@ use gpui::{
     WindowContext,
 };
 use smallvec::SmallVec;
+use theme2::ActiveTheme;
 
 use crate::{v_stack, StyledExt};
 
@@ -58,6 +59,7 @@ impl RenderOnce for Popover {
                         .ml_1()
                         .absolute()
                         .elevation_2(cx)
+                        .bg(cx.theme().colors().surface_background)
                         .p_1()
                         .child(aside),
                 )
