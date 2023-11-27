@@ -12,8 +12,8 @@ use std::{rc::Rc, sync::Arc};
 pub use collab_panel::CollabPanel;
 pub use collab_titlebar_item::CollabTitlebarItem;
 use gpui::{
-    point, px, AppContext, GlobalPixels, Pixels, PlatformDisplay, Point, Size, WindowBounds,
-    WindowKind, WindowOptions,
+    AppContext, GlobalPixels, Pixels, PlatformDisplay, Size, WindowBounds, WindowKind,
+    WindowOptions,
 };
 pub use panel_settings::{
     ChatPanelSettings, CollaborationPanelSettings, NotificationPanelSettings,
@@ -102,10 +102,10 @@ fn notification_window_options(
     screen: Rc<dyn PlatformDisplay>,
     window_size: Size<Pixels>,
 ) -> WindowOptions {
-    let notification_padding = Pixels::from(16.);
+    let _notification_padding = Pixels::from(16.);
 
     let screen_bounds = screen.bounds();
-    let size: Size<GlobalPixels> = window_size.into();
+    let _size: Size<GlobalPixels> = window_size.into();
 
     let bounds = gpui::Bounds::<GlobalPixels> {
         origin: screen_bounds.origin,

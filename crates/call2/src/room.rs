@@ -1,7 +1,4 @@
-use crate::{
-    call_settings::CallSettings,
-    participant::{LocalParticipant, ParticipantLocation, RemoteParticipant},
-};
+use crate::participant::{LocalParticipant, ParticipantLocation, RemoteParticipant};
 use anyhow::{anyhow, Result};
 use audio::{Audio, Sound};
 use client::{
@@ -21,7 +18,6 @@ use live_kit_client::{
 };
 use postage::{sink::Sink, stream::Stream, watch};
 use project::Project;
-use settings::Settings;
 use std::{future::Future, mem, sync::Arc, time::Duration};
 use util::{post_inc, ResultExt, TryFutureExt};
 
@@ -332,7 +328,8 @@ impl Room {
         }
     }
 
-    pub fn mute_on_join(cx: &AppContext) -> bool {
+    pub fn mute_on_join(_cx: &AppContext) -> bool {
+        // todo!() po: This should be uncommented, though then unmuting does not work
         false
         //CallSettings::get_global(cx).mute_on_join || client::IMPERSONATE_LOGIN.is_some()
     }

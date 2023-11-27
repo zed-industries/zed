@@ -302,7 +302,7 @@ pub struct CollabPanel {
     // entries: Vec<ListEntry>,
     // selection: Option<usize>,
     user_store: Model<UserStore>,
-    client: Arc<Client>,
+    _client: Arc<Client>,
     // channel_store: ModelHandle<ChannelStore>,
     // project: ModelHandle<Project>,
     // match_candidates: Vec<StringMatchCandidate>,
@@ -605,7 +605,7 @@ impl CollabPanel {
                 //                 collapsed_sections: vec![Section::Offline],
                 //                 collapsed_channels: Vec::default(),
                 _workspace: workspace.weak_handle(),
-                client: workspace.app_state().client.clone(),
+                _client: workspace.app_state().client.clone(),
                 //                 context_menu_on_selected: true,
                 //                 drag_target_channel: ChannelDragTarget::None,
                 //                 list_state,
@@ -3323,8 +3323,14 @@ impl Render for CollabPanel {
                     .child(Label::new(contact.user.github_login.clone()))
                     .on_mouse_down(gpui::MouseButton::Left, {
                         let workspace = workspace.clone();
-                        move |event, cx| {
-                            workspace.update(cx, |this, cx| this.call_state().invite(id, None, cx));
+                        move |_, cx| {
+                            workspace
+                                .update(cx, |this, cx| {
+                                    this.call_state()
+                                        .invite(id, None, cx)
+                                        .detach_and_log_err(cx)
+                                })
+                                .log_err();
                         }
                     })
             }))

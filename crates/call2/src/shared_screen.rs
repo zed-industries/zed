@@ -3,19 +3,11 @@ use anyhow::Result;
 use client::{proto::PeerId, User};
 use futures::StreamExt;
 use gpui::{
-    div, img, AppContext, Div, Element, Entity, EventEmitter, FocusHandle, FocusableView,
-    ImageData, Img, MouseButton, ParentElement, Render, SharedString, Task, View, ViewContext,
-    VisualContext, WindowContext,
+    div, img, AppContext, Div, Element, EventEmitter, FocusHandle, FocusableView, ImageData,
+    ParentElement, Render, SharedString, Task, View, ViewContext, VisualContext, WindowContext,
 };
-use smallvec::SmallVec;
-use std::{
-    borrow::Cow,
-    sync::{Arc, Weak},
-};
-use workspace::{
-    item::{Item, ItemEvent},
-    ItemNavHistory, WorkspaceId,
-};
+use std::sync::{Arc, Weak};
+use workspace::{item::Item, ItemNavHistory, WorkspaceId};
 
 pub enum Event {
     Close,
@@ -65,13 +57,13 @@ impl EventEmitter<Event> for SharedScreen {}
 impl EventEmitter<workspace::item::ItemEvent> for SharedScreen {}
 
 impl FocusableView for SharedScreen {
-    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+    fn focus_handle(&self, _: &AppContext) -> FocusHandle {
         self.focus.clone()
     }
 }
 impl Render for SharedScreen {
     type Element = Div;
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, _: &mut ViewContext<Self>) -> Self::Element {
         let frame = self.frame.clone();
         div().children(frame.map(|frame| {
             img().data(Arc::new(ImageData::new(image::ImageBuffer::new(

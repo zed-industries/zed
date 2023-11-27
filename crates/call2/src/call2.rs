@@ -18,7 +18,6 @@ use gpui::{
     Subscription, Task, View, ViewContext, VisualContext, WeakModel, WeakView,
 };
 pub use participant::ParticipantLocation;
-use participant::RemoteParticipant;
 use postage::watch;
 use project::Project;
 use room::Event;
@@ -666,7 +665,7 @@ impl CallHandler for Call {
             call.0.update(cx, |this, cx| {
                 this.room().map(|room| {
                     room.update(cx, |this, cx| {
-                        this.toggle_mute(cx);
+                        this.toggle_mute(cx).log_err();
                     })
                 })
             })
@@ -678,12 +677,10 @@ impl CallHandler for Call {
                 this.room().map(|room| {
                     room.update(cx, |this, cx| {
                         if this.is_screen_sharing() {
-                            dbg!("Unsharing");
-                            this.unshare_screen(cx);
+                            this.unshare_screen(cx).log_err();
                         } else {
-                            dbg!("Sharing");
                             let t = this.share_screen(cx);
-                            cx.spawn(move |_, cx| async move {
+                            cx.spawn(move |_, _| async move {
                                 t.await.log_err();
                             })
                             .detach();

@@ -37,7 +37,7 @@ use gpui::{
 };
 use project::Project;
 use theme::ActiveTheme;
-use ui::{h_stack, Avatar, Button, ButtonVariant, Color, IconButton, KeyBinding, Label, Tooltip};
+use ui::{h_stack, Avatar, Button, ButtonVariant, Color, IconButton, KeyBinding, Tooltip};
 use util::ResultExt;
 use workspace::Workspace;
 
@@ -190,11 +190,12 @@ impl Render for CollabTitlebarItem {
                                         .child(Avatar::data(avatar.clone()).into_element())
                                         .on_mouse_down(MouseButton::Left, {
                                             let workspace = workspace.clone();
-                                            let id = peer_id.clone();
                                             move |_, cx| {
-                                                workspace.update(cx, |this, cx| {
-                                                    this.open_shared_screen(peer_id, cx);
-                                                });
+                                                workspace
+                                                    .update(cx, |this, cx| {
+                                                        this.open_shared_screen(peer_id, cx);
+                                                    })
+                                                    .log_err();
                                             }
                                         })
                                 })
@@ -215,17 +216,21 @@ impl Render for CollabTitlebarItem {
                                 .child(IconButton::new("mute-microphone", mic_icon).on_click({
                                     let workspace = workspace.clone();
                                     move |_, cx| {
-                                        workspace.update(cx, |this, cx| {
-                                            this.call_state().toggle_mute(cx);
-                                        });
+                                        workspace
+                                            .update(cx, |this, cx| {
+                                                this.call_state().toggle_mute(cx);
+                                            })
+                                            .log_err();
                                     }
                                 }))
                                 .child(IconButton::new("mute-sound", ui::Icon::AudioOn))
                                 .child(IconButton::new("screen-share", ui::Icon::Screen).on_click(
                                     move |_, cx| {
-                                        workspace.update(cx, |this, cx| {
-                                            this.call_state().toggle_screen_share(cx);
-                                        });
+                                        workspace
+                                            .update(cx, |this, cx| {
+                                                this.call_state().toggle_screen_share(cx);
+                                            })
+                                            .log_err();
                                     },
                                 ))
                                 .pl_2(),

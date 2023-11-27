@@ -1,11 +1,9 @@
 use crate::notification_window_options;
 use call::{ActiveCall, IncomingCall};
-use client::proto;
 use futures::StreamExt;
 use gpui::{
-    blue, div, green, px, red, AnyElement, AppContext, Component, Context, Div, Element, Entity,
-    EventEmitter, GlobalPixels, ParentElement, Render, RenderOnce, StatefulInteractiveElement,
-    Styled, View, ViewContext, VisualContext as _, WindowHandle,
+    div, green, px, red, AppContext, Div, Element, ParentElement, Render, RenderOnce,
+    StatefulInteractiveElement, Styled, ViewContext, VisualContext as _, WindowHandle,
 };
 use std::sync::{Arc, Weak};
 use ui::{h_stack, v_stack, Avatar, Button, Label};
@@ -19,11 +17,12 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
         let mut notification_windows: Vec<WindowHandle<IncomingCallNotification>> = Vec::new();
         while let Some(incoming_call) = incoming_call.next().await {
             for window in notification_windows.drain(..) {
-                window.update(&mut cx, |this, cx| {
-                    //cx.remove_window();
-                });
-                //cx.update_window(window.into(), |this, cx| cx.remove_window());
-                //window.remove(&mut cx);
+                window
+                    .update(&mut cx, |_, _| {
+                        // todo!()
+                        //cx.remove_window();
+                    })
+                    .log_err();
             }
 
             if let Some(incoming_call) = incoming_call {
@@ -85,15 +84,14 @@ impl IncomingCallNotificationState {
         let active_call = ActiveCall::global(cx);
         if accept {
             let join = active_call.update(cx, |active_call, cx| active_call.accept_incoming(cx));
-            let caller_user_id = self.call.calling_user.id;
             let initial_project_id = self.call.initial_project.as_ref().map(|project| project.id);
             let app_state = self.app_state.clone();
             let cx: &mut AppContext = cx;
-            cx.spawn(|mut cx| async move {
+            cx.spawn(|cx| async move {
                 join.await?;
-                if let Some(project_id) = initial_project_id {
-                    cx.update(|cx| {
-                        if let Some(app_state) = app_state.upgrade() {
+                if let Some(_project_id) = initial_project_id {
+                    cx.update(|_cx| {
+                        if let Some(_app_state) = app_state.upgrade() {
                             // workspace::join_remote_project(
                             //     project_id,
                             //     caller_user_id,
@@ -102,7 +100,8 @@ impl IncomingCallNotificationState {
                             // )
                             // .detach_and_log_err(cx);
                         }
-                    });
+                    })
+                    .log_err();
                 }
                 anyhow::Ok(())
             })
