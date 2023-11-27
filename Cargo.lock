@@ -1206,6 +1206,7 @@ dependencies = [
  "serde_json",
  "settings2",
  "smallvec",
+ "ui2",
  "util",
  "workspace2",
 ]

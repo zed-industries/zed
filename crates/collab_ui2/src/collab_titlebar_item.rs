@@ -203,6 +203,7 @@ impl Render for CollabTitlebarItem {
                     )
                 },
             )
+            .child(div().flex_1())
             .when(is_in_room, |this| {
                 this.child(
                     h_stack()

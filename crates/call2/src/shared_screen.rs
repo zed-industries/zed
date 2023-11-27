@@ -3,8 +3,8 @@ use anyhow::Result;
 use client::{proto::PeerId, User};
 use futures::StreamExt;
 use gpui::{
-    div, img, AppContext, Div, Element, EventEmitter, FocusHandle, FocusableView, ImageData,
-    ParentElement, Render, SharedString, Task, View, ViewContext, VisualContext, WindowContext,
+    div, AppContext, Div, Element, EventEmitter, FocusHandle, FocusableView, ParentElement, Render,
+    SharedString, Task, View, ViewContext, VisualContext, WindowContext,
 };
 use std::sync::{Arc, Weak};
 use workspace::{item::Item, ItemNavHistory, WorkspaceId};
@@ -16,6 +16,8 @@ pub enum Event {
 pub struct SharedScreen {
     track: Weak<RemoteVideoTrack>,
     frame: Option<Frame>,
+    // temporary addition just to render something interactive.
+    current_frame_id: usize,
     pub peer_id: PeerId,
     user: Arc<User>,
     nav_history: Option<ItemNavHistory>,
@@ -49,6 +51,7 @@ impl SharedScreen {
                 Ok(())
             }),
             focus: cx.focus_handle(),
+            current_frame_id: 0,
         }
     }
 }
@@ -65,11 +68,14 @@ impl Render for SharedScreen {
     type Element = Div;
     fn render(&mut self, _: &mut ViewContext<Self>) -> Self::Element {
         let frame = self.frame.clone();
-        div().children(frame.map(|frame| {
-            img().data(Arc::new(ImageData::new(image::ImageBuffer::new(
-                frame.width() as u32,
-                frame.height() as u32,
-            ))))
+        let frame_id = self.current_frame_id;
+        self.current_frame_id = self.current_frame_id.wrapping_add(1);
+        div().children(frame.map(|_| {
+            ui::Label::new(frame_id.to_string()).color(ui::Color::Error)
+            // img().data(Arc::new(ImageData::new(image::ImageBuffer::new(
+            //     frame.width() as u32,
+            //     frame.height() as u32,
+            // ))))
         }))
     }
 }
