@@ -906,12 +906,16 @@ impl ContextMenu {
         &self,
         cursor_position: DisplayPoint,
         style: &EditorStyle,
+        max_height: Pixels,
         workspace: Option<WeakView<Workspace>>,
         cx: &mut ViewContext<Editor>,
     ) -> (DisplayPoint, AnyElement) {
         match self {
-            ContextMenu::Completions(menu) => (cursor_position, menu.render(style, workspace, cx)),
-            ContextMenu::CodeActions(menu) => menu.render(cursor_position, style, cx),
+            ContextMenu::Completions(menu) => (
+                cursor_position,
+                menu.render(style, max_height, workspace, cx),
+            ),
+            ContextMenu::CodeActions(menu) => menu.render(cursor_position, style, max_height, cx),
         }
     }
 }
@@ -1223,6 +1227,7 @@ impl CompletionsMenu {
     fn render(
         &self,
         style: &EditorStyle,
+        max_height: Pixels,
         workspace: Option<WeakView<Workspace>>,
         cx: &mut ViewContext<Editor>,
     ) -> AnyElement {
@@ -1256,7 +1261,7 @@ impl CompletionsMenu {
 
         let multiline_docs = {
             let mat = &self.matches[selected_item];
-            match &self.completions.read()[mat.candidate_id].documentation {
+            let multiline_docs = match &self.completions.read()[mat.candidate_id].documentation {
                 Some(Documentation::MultiLinePlainText(text)) => {
                     Some(div().child(SharedString::from(text.clone())))
                 }
@@ -1264,7 +1269,12 @@ impl CompletionsMenu {
                     render_parsed_markdown("completions_markdown", parsed, &style, workspace, cx),
                 )),
                 _ => None,
-            }
+            };
+            multiline_docs.map(|div| {
+                div.id("multiline_docs")
+                    .max_h(max_height)
+                    .overflow_y_scroll()
+            })
         };
         let list = uniform_list(
             cx.view().clone(),
@@ -1341,13 +1351,14 @@ impl CompletionsMenu {
                     .collect()
             },
         )
+        .max_h(max_height)
         .track_scroll(self.scroll_handle.clone())
         .with_width_from_item(widest_completion_ix);
 
         Popover::new()
             .child(list)
             .when_some(multiline_docs, |popover, multiline_docs| {
-                popover.aside(multiline_docs.id("multiline_docs").overflow_y_scroll())
+                popover.aside(multiline_docs)
             })
             .into_any_element()
     }
@@ -1466,6 +1477,7 @@ impl CodeActionsMenu {
         &self,
         mut cursor_position: DisplayPoint,
         style: &EditorStyle,
+        max_height: Pixels,
         cx: &mut ViewContext<Editor>,
     ) -> (DisplayPoint, AnyElement) {
         let actions = self.actions.clone();
@@ -1520,6 +1532,7 @@ impl CodeActionsMenu {
         .elevation_1(cx)
         .px_2()
         .py_1()
+        .max_h(max_height)
         .track_scroll(self.scroll_handle.clone())
         .with_width_from_item(
             self.actions
@@ -4377,12 +4390,14 @@ impl Editor {
         &self,
         cursor_position: DisplayPoint,
         style: &EditorStyle,
+        max_height: Pixels,
         cx: &mut ViewContext<Editor>,
     ) -> Option<(DisplayPoint, AnyElement)> {
         self.context_menu.read().as_ref().map(|menu| {
             menu.render(
                 cursor_position,
                 style,
+                max_height,
                 self.workspace.as_ref().map(|(w, _)| w.clone()),
                 cx,
             )
