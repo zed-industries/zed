@@ -1055,7 +1055,9 @@ impl EditorElement {
                             list_origin.y -= layout.position_map.line_height + list_height;
                         }
 
-                        context_menu.draw(list_origin, available_space, cx);
+                        cx.break_content_mask(|cx| {
+                            context_menu.draw(list_origin, available_space, cx)
+                        });
                     }
 
                     if let Some((position, mut hover_popovers)) = layout.hover_popovers.take() {
@@ -1095,7 +1097,9 @@ impl EditorElement {
                                     popover_origin.x = popover_origin.x + x_out_of_bounds;
                                 }
 
-                                hover_popover.draw(popover_origin, available_space, cx);
+                                cx.break_content_mask(|cx| {
+                                    hover_popover.draw(popover_origin, available_space, cx)
+                                });
 
                                 current_y = popover_origin.y - HOVER_POPOVER_GAP;
                             }
