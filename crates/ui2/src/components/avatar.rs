@@ -1,5 +1,7 @@
+use std::sync::Arc;
+
 use crate::prelude::*;
-use gpui::{img, Img, IntoElement};
+use gpui::{img, ImageData, ImageSource, Img, IntoElement};
 
 #[derive(Debug, Default, PartialEq, Clone)]
 pub enum Shape {
@@ -10,7 +12,7 @@ pub enum Shape {
 
 #[derive(IntoElement)]
 pub struct Avatar {
-    src: SharedString,
+    src: ImageSource,
     shape: Shape,
 }
 
@@ -26,7 +28,7 @@ impl RenderOnce for Avatar {
             img = img.rounded_md();
         }
 
-        img.uri(self.src.clone())
+        img.source(self.src.clone())
             .size_4()
             // todo!(Pull the avatar fallback background from the theme.)
             .bg(gpui::red())
@@ -34,7 +36,13 @@ impl RenderOnce for Avatar {
 }
 
 impl Avatar {
-    pub fn new(src: impl Into<SharedString>) -> Self {
+    pub fn uri(src: impl Into<SharedString>) -> Self {
+        Self {
+            src: src.into().into(),
+            shape: Shape::Circle,
+        }
+    }
+    pub fn data(src: Arc<ImageData>) -> Self {
         Self {
             src: src.into(),
             shape: Shape::Circle,
