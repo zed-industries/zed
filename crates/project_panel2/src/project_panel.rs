@@ -644,6 +644,7 @@ impl ProjectPanel {
     }
 
     fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
+        dbg!("odd");
         self.edit_state = None;
         self.update_visible_entries(None, cx);
         cx.focus(&self.focus_handle);

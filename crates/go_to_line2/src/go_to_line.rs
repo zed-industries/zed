@@ -8,7 +8,6 @@ use text::{Bias, Point};
 use theme::ActiveTheme;
 use ui::{h_stack, v_stack, Color, Label, StyledExt};
 use util::paths::FILE_ROW_COLUMN_DELIMITER;
-use workspace::Workspace;
 
 actions!(Toggle);
 
@@ -26,22 +25,24 @@ pub struct GoToLine {
 
 impl FocusableView for GoToLine {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
-        self.active_editor.focus_handle(cx)
+        self.line_editor.focus_handle(cx)
     }
 }
 impl EventEmitter<DismissEvent> for GoToLine {}
 
 impl GoToLine {
-    fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
-        workspace.register_action(|workspace, _: &Toggle, cx| {
-            let Some(editor) = workspace
-                .active_item(cx)
-                .and_then(|active_item| active_item.downcast::<Editor>())
-            else {
+    fn register(editor: &mut Editor, cx: &mut ViewContext<Editor>) {
+        let handle = cx.view().downgrade();
+        editor.register_action(move |_: &Toggle, cx| {
+            let Some(editor) = handle.upgrade() else {
                 return;
             };
-
-            workspace.toggle_modal(cx, move |cx| GoToLine::new(editor, cx));
+            let Some(workspace) = editor.read(cx).workspace() else {
+                return;
+            };
+            workspace.update(cx, |workspace, cx| {
+                workspace.toggle_modal(cx, move |cx| GoToLine::new(editor, cx));
+            })
         });
     }
 
