@@ -1300,7 +1300,7 @@ fn assert_capture_ranges(
         .collect::<Vec<_>>();
     for capture in captures {
         let name = &queries[capture.grammar_index].capture_names()[capture.index as usize];
-        if highlight_query_capture_names.contains(&name.as_str()) {
+        if highlight_query_capture_names.contains(&name) {
             actual_ranges.push(capture.node.byte_range());
         }
     }
