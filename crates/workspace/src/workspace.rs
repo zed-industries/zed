@@ -63,7 +63,7 @@ use crate::{
 };
 use dock::{Dock, DockPosition, Panel, PanelButtons, PanelHandle};
 use lazy_static::lazy_static;
-use notifications::{NotificationHandle, NotifyResultExt};
+use notifications::{simple_message_notification, NotificationHandle, NotifyResultExt};
 pub use pane::*;
 pub use pane_group::*;
 use persistence::{model::SerializedItem, DB};
@@ -776,7 +776,23 @@ impl Workspace {
             }),
         ];
 
-        cx.defer(|this, cx| this.update_window_title(cx));
+        cx.defer(|this, cx| {
+            this.update_window_title(cx);
+
+            this.show_notification(0, cx, |cx| {
+                cx.add_view(|_cx| {
+                    simple_message_notification::MessageNotification::new(format!(
+                        "Error: what happens if this message is very very very very very long "
+                    ))
+                    .with_click_message("Click here because!")
+                })
+            });
+            this.show_notification(1, cx, |cx| {
+                cx.add_view(|_cx| {
+                    simple_message_notification::MessageNotification::new(format!("Nope"))
+                })
+            });
+        });
         Workspace {
             weak_self: weak_handle.clone(),
             modal: None,

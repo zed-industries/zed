@@ -4,9 +4,9 @@ use std::rc::Rc;
 use crate::{prelude::*, v_stack, Label, List};
 use crate::{ListItem, ListSeparator, ListSubHeader};
 use gpui::{
-    overlay, px, Action, AnchorCorner, AnyElement, AppContext, Bounds, ClickEvent, DispatchPhase,
-    Div, EventEmitter, FocusHandle, FocusableView, IntoElement, LayoutId, ManagedView, Manager,
-    MouseButton, MouseDownEvent, Pixels, Point, Render, View, VisualContext,
+    overlay, px, Action, AnchorCorner, AnyElement, AppContext, Bounds, ClickEvent, DismissEvent,
+    DispatchPhase, Div, EventEmitter, FocusHandle, FocusableView, IntoElement, LayoutId,
+    ManagedView, MouseButton, MouseDownEvent, Pixels, Point, Render, View, VisualContext,
 };
 
 pub enum ContextMenuItem {
@@ -26,7 +26,7 @@ impl FocusableView for ContextMenu {
     }
 }
 
-impl EventEmitter<Manager> for ContextMenu {}
+impl EventEmitter<DismissEvent> for ContextMenu {}
 
 impl ContextMenu {
     pub fn build(
@@ -74,11 +74,11 @@ impl ContextMenu {
 
     pub fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
         // todo!()
-        cx.emit(Manager::Dismiss);
+        cx.emit(DismissEvent::Dismiss);
     }
 
     pub fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
-        cx.emit(Manager::Dismiss);
+        cx.emit(DismissEvent::Dismiss);
     }
 }
 
@@ -111,7 +111,7 @@ impl Render for ContextMenu {
                         }
                         ContextMenuItem::Entry(entry, callback) => {
                             let callback = callback.clone();
-                            let dismiss = cx.listener(|_, _, cx| cx.emit(Manager::Dismiss));
+                            let dismiss = cx.listener(|_, _, cx| cx.emit(DismissEvent::Dismiss));
 
                             ListItem::new(entry.clone())
                                 .child(Label::new(entry.clone()))
@@ -265,7 +265,7 @@ impl<M: ManagedView> Element for MenuHandle<M> {
                 let new_menu = (builder)(cx);
                 let menu2 = menu.clone();
                 cx.subscribe(&new_menu, move |modal, e, cx| match e {
-                    &Manager::Dismiss => {
+                    &DismissEvent::Dismiss => {
                         *menu2.borrow_mut() = None;
                         cx.notify();
                     }

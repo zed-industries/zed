@@ -1,12 +1,13 @@
-use gpui::{div, Div, EventEmitter, ParentElement, Render, SemanticVersion, ViewContext};
+use gpui::{
+    div, DismissEvent, Div, EventEmitter, ParentElement, Render, SemanticVersion, ViewContext,
+};
 use menu::Cancel;
-use workspace::notifications::NotificationEvent;
 
 pub struct UpdateNotification {
     _version: SemanticVersion,
 }
 
-impl EventEmitter<NotificationEvent> for UpdateNotification {}
+impl EventEmitter<DismissEvent> for UpdateNotification {}
 
 impl Render for UpdateNotification {
     type Element = Div;
@@ -82,6 +83,6 @@ impl UpdateNotification {
     }
 
     pub fn _dismiss(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
-        cx.emit(NotificationEvent::Dismiss);
+        cx.emit(DismissEvent::Dismiss);
     }
 }
