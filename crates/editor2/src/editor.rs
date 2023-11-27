@@ -39,13 +39,12 @@ use futures::FutureExt;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use git::diff_hunk_to_display;
 use gpui::{
-    actions, div, overlay, point, prelude::*, px, relative, rems, size, uniform_list, Action,
-    AnyElement, AppContext, AsyncWindowContext, BackgroundExecutor, Bounds, ClipboardItem, Context,
-    ElementId, EventEmitter, FocusHandle, FocusableView, FontFeatures, FontStyle, FontWeight,
-    HighlightStyle, Hsla, InputHandler, InteractiveText, KeyContext, Model, MouseButton,
-    ParentElement, Pixels, Render, RenderOnce, SharedString, Styled, StyledText, Subscription,
-    Task, TextRun, TextStyle, UniformListScrollHandle, View, ViewContext, VisualContext, WeakView,
-    WhiteSpace, WindowContext,
+    actions, div, point, prelude::*, px, relative, rems, size, uniform_list, Action, AnyElement,
+    AppContext, AsyncWindowContext, BackgroundExecutor, Bounds, ClipboardItem, Context, ElementId,
+    EventEmitter, FocusHandle, FocusableView, FontFeatures, FontStyle, FontWeight, HighlightStyle,
+    Hsla, InputHandler, InteractiveText, KeyContext, Model, MouseButton, ParentElement, Pixels,
+    Render, RenderOnce, SharedString, Styled, StyledText, Subscription, Task, TextRun, TextStyle,
+    UniformListScrollHandle, View, ViewContext, VisualContext, WeakView, WhiteSpace, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -1369,23 +1368,11 @@ impl CompletionsMenu {
         .track_scroll(self.scroll_handle.clone())
         .with_width_from_item(widest_completion_ix);
 
-        // Old:
-        // Popover::new()
-        //     .child(list)
-        //     .when_some(multiline_docs, |popover, multiline_docs| {
-        //         popover.aside(multiline_docs)
-        //     })
-        //     .into_any_element()
-
-        overlay()
-            .anchor(gpui::AnchorCorner::TopLeft)
-            .child(
-                Popover::new()
-                    .child(list)
-                    .when_some(multiline_docs, |popover, multiline_docs| {
-                        popover.aside(multiline_docs)
-                    }),
-            )
+        Popover::new()
+            .child(list)
+            .when_some(multiline_docs, |popover, multiline_docs| {
+                popover.aside(multiline_docs)
+            })
             .into_any_element()
     }
 
