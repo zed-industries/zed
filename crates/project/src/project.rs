@@ -173,12 +173,59 @@ pub struct Project {
     prettier_instances: HashMap<PathBuf, PrettierInstance>,
 }
 
-type PrettierInstance = Shared<Task<PrettierProcess>>;
+type PrettierTask = Shared<Task<Result<Arc<Prettier>, Arc<anyhow::Error>>>>;
 
 #[derive(Clone)]
-enum PrettierProcess {
-    Running(Arc<Prettier>),
-    Stopped { start_attempts: usize },
+struct PrettierInstance {
+    attempt: usize,
+    prettier: Option<PrettierTask>,
+}
+
+impl PrettierInstance {
+    fn prettier_task(
+        &mut self,
+        node: &Arc<dyn NodeRuntime>,
+        prettier_dir: Option<&Path>,
+        worktree_id: Option<WorktreeId>,
+        cx: &mut ModelContext<'_, Project>,
+    ) -> Option<Task<anyhow::Result<PrettierTask>>> {
+        if self.attempt > prettier::LAUNCH_THRESHOLD {
+            match prettier_dir {
+                Some(prettier_dir) => log::warn!(
+                    "Prettier from path {prettier_dir:?} exceeded launch threshold, not starting"
+                ),
+                None => log::warn!("Default prettier exceeded launch threshold, not starting"),
+            }
+            return None;
+        }
+        Some(match &self.prettier {
+            Some(prettier_task) => Task::ready(Ok(prettier_task.clone())),
+            None => match prettier_dir {
+                Some(prettier_dir) => {
+                    let new_task = start_prettier(
+                        Arc::clone(node),
+                        prettier_dir.to_path_buf(),
+                        worktree_id,
+                        cx,
+                    );
+                    self.attempt += 1;
+                    self.prettier = Some(new_task.clone());
+                    Task::ready(Ok(new_task))
+                }
+                None => {
+                    self.attempt += 1;
+                    let node = Arc::clone(node);
+                    cx.spawn(|project, mut cx| async move {
+                        project
+                            .update(&mut cx, |_, cx| {
+                                start_default_prettier(node, worktree_id, cx)
+                            })
+                            .await
+                    })
+                }
+            },
+        })
+    }
 }
 
 struct DefaultPrettier {
@@ -212,6 +259,24 @@ impl DefaultPrettier {
             Some(instance)
         } else {
             None
+        }
+    }
+
+    fn prettier_task(
+        &mut self,
+        node: &Arc<dyn NodeRuntime>,
+        worktree_id: Option<WorktreeId>,
+        cx: &mut ModelContext<'_, Project>,
+    ) -> Option<Task<anyhow::Result<PrettierTask>>> {
+        match &mut self.prettier {
+            PrettierInstallation::NotInstalled { .. } => {
+                // `start_default_prettier` will start the installation process if it's not already running and wait for it to finish
+                let new_task = start_default_prettier(Arc::clone(node), worktree_id, cx);
+                Some(cx.spawn(|_, _| async move { new_task.await }))
+            }
+            PrettierInstallation::Installed(existing_instance) => {
+                existing_instance.prettier_task(node, None, worktree_id, cx)
+            }
         }
     }
 }
@@ -6575,20 +6640,23 @@ impl Project {
 
             cx.background()
                 .spawn(async move {
-                    let _: Vec<()> = future::join_all(prettiers_to_reload.into_iter().map(|(worktree_id, prettier_path, prettier_task)| {
+                    let _: Vec<()> = future::join_all(prettiers_to_reload.into_iter().map(|(worktree_id, prettier_path, prettier_instance)| {
                         async move {
-                            if let PrettierProcess::Running(prettier) = prettier_task.await {
-                                if let Err(e) = prettier
-                                        .clear_cache()
-                                        .await {
-                                            match prettier_path {
-                                                Some(prettier_path) => log::error!(
-                                                    "Failed to clear prettier {prettier_path:?} cache for worktree {worktree_id:?} on prettier settings update: {e:#}"
-                                                ),
-                                                None => log::error!(
-                                                    "Failed to clear default prettier cache for worktree {worktree_id:?} on prettier settings update: {e:#}"
-                                                ),
-                                            }
+                            if let Some(instance) = prettier_instance.prettier {
+                                match instance.await {
+                                    Ok(prettier) => {
+                                        prettier.clear_cache().log_err().await;
+                                    },
+                                    Err(e) => {
+                                        match prettier_path {
+                                            Some(prettier_path) => log::error!(
+                                                "Failed to clear prettier {prettier_path:?} cache for worktree {worktree_id:?} on prettier settings update: {e:#}"
+                                            ),
+                                            None => log::error!(
+                                                "Failed to clear default prettier cache for worktree {worktree_id:?} on prettier settings update: {e:#}"
+                                            ),
+                                        }
+                                    },
                                 }
                             }
                         }
@@ -8495,7 +8563,7 @@ impl Project {
         &mut self,
         buffer: &ModelHandle<Buffer>,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Option<(Option<PathBuf>, PrettierInstance)>> {
+    ) -> Task<Option<(Option<PathBuf>, PrettierTask)>> {
         let buffer = buffer.read(cx);
         let buffer_file = buffer.file();
         let Some(buffer_language) = buffer.language() else {
@@ -8531,32 +8599,19 @@ impl Project {
                                 return None;
                             }
                             Ok(ControlFlow::Continue(None)) => {
-                                let started_default_prettier =
-                                    project.update(&mut cx, |project, _| {
-                                        project
-                                            .prettiers_per_worktree
-                                            .entry(worktree_id)
-                                            .or_default()
-                                            .insert(None);
-                                        project.default_prettier.instance().cloned()
-                                    });
-                                match started_default_prettier {
-                                    Some(old_task) => {
-                                        dbg!("Old prettier was found!");
-                                        return Some((None, old_task));
-                                    }
-                                    None => {
-                                        dbg!("starting new default prettier");
-                                        let new_default_prettier = project
-                                            .update(&mut cx, |_, cx| {
-                                                start_default_prettier(node, Some(worktree_id), cx)
-                                            })
-                                            .log_err()
-                                            .await;
-                                        dbg!("started a default prettier");
-                                        return Some((None, new_default_prettier?));
-                                    }
-                                }
+                                let default_instance = project.update(&mut cx, |project, cx| {
+                                    project
+                                        .prettiers_per_worktree
+                                        .entry(worktree_id)
+                                        .or_default()
+                                        .insert(None);
+                                    project.default_prettier.prettier_task(
+                                        &node,
+                                        Some(worktree_id),
+                                        cx,
+                                    )
+                                });
+                                Some((None, default_instance?.log_err().await?))
                             }
                             Ok(ControlFlow::Continue(Some(prettier_dir))) => {
                                 project.update(&mut cx, |project, _| {
@@ -8566,15 +8621,27 @@ impl Project {
                                         .or_default()
                                         .insert(Some(prettier_dir.clone()))
                                 });
-                                if let Some(existing_prettier) =
-                                    project.update(&mut cx, |project, _| {
-                                        project.prettier_instances.get(&prettier_dir).cloned()
+                                if let Some(prettier_task) =
+                                    project.update(&mut cx, |project, cx| {
+                                        project.prettier_instances.get_mut(&prettier_dir).map(
+                                            |existing_instance| {
+                                                existing_instance.prettier_task(
+                                                    &node,
+                                                    Some(&prettier_dir),
+                                                    Some(worktree_id),
+                                                    cx,
+                                                )
+                                            },
+                                        )
                                     })
                                 {
                                     log::debug!(
                                         "Found already started prettier in {prettier_dir:?}"
                                     );
-                                    return Some((Some(prettier_dir), existing_prettier));
+                                    return Some((
+                                        Some(prettier_dir),
+                                        prettier_task?.await.log_err()?,
+                                    ));
                                 }
 
                                 log::info!("Found prettier in {prettier_dir:?}, starting.");
@@ -8585,9 +8652,13 @@ impl Project {
                                         Some(worktree_id),
                                         cx,
                                     );
-                                    project
-                                        .prettier_instances
-                                        .insert(prettier_dir.clone(), new_prettier_task.clone());
+                                    project.prettier_instances.insert(
+                                        prettier_dir.clone(),
+                                        PrettierInstance {
+                                            attempt: 0,
+                                            prettier: Some(new_prettier_task.clone()),
+                                        },
+                                    );
                                     new_prettier_task
                                 });
                                 Some((Some(prettier_dir), new_prettier_task))
@@ -8599,13 +8670,11 @@ impl Project {
                         }
                     });
                 }
-                None => match self.default_prettier.instance().cloned() {
-                    Some(old_task) => return Task::ready(Some((None, old_task))),
-                    None => {
-                        let new_task = start_default_prettier(node, None, cx).log_err();
-                        return cx.spawn(|_, _| async move { Some((None, new_task.await?)) });
-                    }
-                },
+                None => {
+                    let new_task = self.default_prettier.prettier_task(&node, None, cx);
+                    return cx
+                        .spawn(|_, _| async move { Some((None, new_task?.log_err().await?)) });
+                }
             }
         } else {
             return Task::ready(None);
@@ -8727,20 +8796,19 @@ impl Project {
                             if needs_install {
                                 let installed_plugins = plugins_to_install.clone();
                                 cx.background()
+                                    // TODO kb instead of always installing, try to start the existing installation first?
                                     .spawn(async move {
                                         install_default_prettier(plugins_to_install, node, fs).await
                                     })
                                     .await
                                     .context("prettier & plugins install")
                                     .map_err(Arc::new)?;
-                                this.update(&mut cx, |this, cx| {
+                                this.update(&mut cx, |this, _| {
                                     this.default_prettier.prettier =
-                                        PrettierInstallation::Installed(
-                                            cx.spawn(|_, _| async move {
-                                                PrettierProcess::Stopped { start_attempts: 0 }
-                                            })
-                                            .shared(),
-                                        );
+                                        PrettierInstallation::Installed(PrettierInstance {
+                                            attempt: 0,
+                                            prettier: None,
+                                        });
                                     this.default_prettier
                                         .installed_plugins
                                         .extend(installed_plugins);
@@ -8760,20 +8828,24 @@ fn start_default_prettier(
     node: Arc<dyn NodeRuntime>,
     worktree_id: Option<WorktreeId>,
     cx: &mut ModelContext<'_, Project>,
-) -> Task<anyhow::Result<PrettierInstance>> {
+) -> Task<anyhow::Result<PrettierTask>> {
     cx.spawn(|project, mut cx| async move {
         loop {
+            let mut install_attempt = 0;
             let installation_process = project.update(&mut cx, |project, _| {
                 match &project.default_prettier.prettier {
                     PrettierInstallation::NotInstalled {
                         installation_process,
-                        ..
-                    } => ControlFlow::Continue(installation_process.clone()),
+                        attempts
+                    } => {
+                        install_attempt = *attempts;
+                        ControlFlow::Continue(installation_process.clone())},
                     PrettierInstallation::Installed(default_prettier) => {
                         ControlFlow::Break(default_prettier.clone())
                     }
                 }
             });
+            install_attempt += 1;
 
             match installation_process {
                 ControlFlow::Continue(installation_process) => {
@@ -8786,12 +8858,26 @@ fn start_default_prettier(
                         let new_default_prettier =
                             start_prettier(node, DEFAULT_PRETTIER_DIR.clone(), worktree_id, cx);
                         project.default_prettier.prettier =
-                            PrettierInstallation::Installed(new_default_prettier.clone());
+                            PrettierInstallation::Installed(PrettierInstance { attempt: install_attempt, prettier: Some(new_default_prettier.clone()) });
                         new_default_prettier
                     });
                     return Ok(new_default_prettier);
                 }
-                ControlFlow::Break(prettier) => return Ok(prettier),
+                ControlFlow::Break(instance) => {
+                    match instance.prettier {
+                        Some(instance) => return Ok(instance),
+                        None => {
+                            let new_default_prettier = project.update(&mut cx, |project, cx| {
+                                let new_default_prettier =
+                                    start_prettier(node, DEFAULT_PRETTIER_DIR.clone(), worktree_id, cx);
+                                project.default_prettier.prettier =
+                                    PrettierInstallation::Installed(PrettierInstance { attempt: instance.attempt + 1, prettier: Some(new_default_prettier.clone()) });
+                                new_default_prettier
+                            });
+                            return Ok(new_default_prettier);
+                        },
+                    }
+                },
             }
         }
     })
@@ -8802,23 +8888,19 @@ fn start_prettier(
     prettier_dir: PathBuf,
     worktree_id: Option<WorktreeId>,
     cx: &mut ModelContext<'_, Project>,
-) -> PrettierInstance {
+) -> PrettierTask {
     cx.spawn(|project, mut cx| async move {
         let new_server_id = project.update(&mut cx, |project, _| {
             project.languages.next_language_server_id()
         });
 
-        match Prettier::start(new_server_id, prettier_dir.clone(), node, cx.clone()).await {
-            Ok(new_prettier) => {
-                register_new_prettier(&project, &new_prettier, worktree_id, new_server_id, &mut cx);
-                PrettierProcess::Running(Arc::new(new_prettier))
-            }
-            Err(e) => {
-                log::error!("Failed to start prettier in dir {prettier_dir:?}: {e:#}");
-                // TODO kb increment
-                PrettierProcess::Stopped { start_attempts: 1 }
-            }
-        }
+        let new_prettier = Prettier::start(new_server_id, prettier_dir, node, cx.clone())
+            .await
+            .context("default prettier spawn")
+            .map(Arc::new)
+            .map_err(Arc::new)?;
+        register_new_prettier(&project, &new_prettier, worktree_id, new_server_id, &mut cx);
+        Ok(new_prettier)
     })
     .shared()
 }
@@ -9235,19 +9317,42 @@ async fn format_with_prettier(
         })
         .await
     {
-        // TODO kb re-insert incremented value here?
-        if let PrettierProcess::Running(prettier) = prettier_task.await {
-            let buffer_path = buffer.update(cx, |buffer, cx| {
-                File::from_dyn(buffer.file()).map(|file| file.abs_path(cx))
-            });
-            match prettier.format(buffer, buffer_path, cx).await {
-                Ok(new_diff) => return Some(FormatOperation::Prettier(new_diff)),
-                Err(e) => {
-                    log::error!(
-                        "Prettier instance from {prettier_path:?} failed to format a buffer: {e:#}"
-                    );
+        match prettier_task.await {
+            Ok(prettier) => {
+                let buffer_path = buffer.update(cx, |buffer, cx| {
+                    File::from_dyn(buffer.file()).map(|file| file.abs_path(cx))
+                });
+                match prettier.format(buffer, buffer_path, cx).await {
+                    Ok(new_diff) => return Some(FormatOperation::Prettier(new_diff)),
+                    Err(e) => {
+                        log::error!(
+                            "Prettier instance from {prettier_path:?} failed to format a buffer: {e:#}"
+                        );
+                    }
                 }
             }
+            Err(e) => project.update(cx, |project, _| {
+                let instance_to_update = match prettier_path {
+                    Some(prettier_path) => {
+                        log::error!(
+                            "Prettier instance from path {prettier_path:?} failed to spawn: {e:#}"
+                        );
+                        project.prettier_instances.get_mut(&prettier_path)
+                    }
+                    None => {
+                        log::error!("Default prettier instance failed to spawn: {e:#}");
+                        match &mut project.default_prettier.prettier {
+                            PrettierInstallation::NotInstalled { .. } => None,
+                            PrettierInstallation::Installed(instance) => Some(instance),
+                        }
+                    }
+                };
+
+                if let Some(instance) = instance_to_update {
+                    instance.attempt += 1;
+                    instance.prettier = None;
+                }
+            }),
         }
     }
 
