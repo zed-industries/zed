@@ -1061,7 +1061,6 @@ impl EditorElement {
                     if let Some((position, mut hover_popovers)) = layout.hover_popovers.take() {
                         let available_space =
                             size(AvailableSpace::MinContent, AvailableSpace::MinContent);
-                        // cx.scene().push_stacking_context(None, None);
 
                         // This is safe because we check on layout whether the required row is available
                         let hovered_row_layout = &layout.position_map.line_layouts
@@ -1118,8 +1117,6 @@ impl EditorElement {
                                 current_y = popover_origin.y + size.height + HOVER_POPOVER_GAP;
                             }
                         }
-
-                        // cx.scene().pop_stacking_context();
                     }
                 })
             },
