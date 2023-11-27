@@ -868,48 +868,49 @@ mod tests {
     fn test_render_blocks(cx: &mut gpui::TestAppContext) {
         init_test(cx, |_| {});
 
-        cx.add_window(|cx| {
-            let editor = Editor::single_line(cx);
-            let style = editor.style.clone().unwrap();
+        let editor = cx.add_window(|cx| Editor::single_line(cx));
+        editor
+            .update(cx, |editor, cx| {
+                let style = editor.style.clone().unwrap();
 
-            struct Row {
-                blocks: Vec<HoverBlock>,
-                expected_marked_text: String,
-                expected_styles: Vec<HighlightStyle>,
-            }
+                struct Row {
+                    blocks: Vec<HoverBlock>,
+                    expected_marked_text: String,
+                    expected_styles: Vec<HighlightStyle>,
+                }
 
-            let rows = &[
-                // Strong emphasis
-                Row {
-                    blocks: vec![HoverBlock {
-                        text: "one **two** three".to_string(),
-                        kind: HoverBlockKind::Markdown,
-                    }],
-                    expected_marked_text: "one «two» three".to_string(),
-                    expected_styles: vec![HighlightStyle {
-                        font_weight: Some(FontWeight::BOLD),
-                        ..Default::default()
-                    }],
-                },
-                // Links
-                Row {
-                    blocks: vec![HoverBlock {
-                        text: "one [two](https://the-url) three".to_string(),
-                        kind: HoverBlockKind::Markdown,
-                    }],
-                    expected_marked_text: "one «two» three".to_string(),
-                    expected_styles: vec![HighlightStyle {
-                        underline: Some(UnderlineStyle {
-                            thickness: 1.0.into(),
+                let rows = &[
+                    // Strong emphasis
+                    Row {
+                        blocks: vec![HoverBlock {
+                            text: "one **two** three".to_string(),
+                            kind: HoverBlockKind::Markdown,
+                        }],
+                        expected_marked_text: "one «two» three".to_string(),
+                        expected_styles: vec![HighlightStyle {
+                            font_weight: Some(FontWeight::BOLD),
                             ..Default::default()
-                        }),
-                        ..Default::default()
-                    }],
-                },
-                // Lists
-                Row {
-                    blocks: vec![HoverBlock {
-                        text: "
+                        }],
+                    },
+                    // Links
+                    Row {
+                        blocks: vec![HoverBlock {
+                            text: "one [two](https://the-url) three".to_string(),
+                            kind: HoverBlockKind::Markdown,
+                        }],
+                        expected_marked_text: "one «two» three".to_string(),
+                        expected_styles: vec![HighlightStyle {
+                            underline: Some(UnderlineStyle {
+                                thickness: 1.0.into(),
+                                ..Default::default()
+                            }),
+                            ..Default::default()
+                        }],
+                    },
+                    // Lists
+                    Row {
+                        blocks: vec![HoverBlock {
+                            text: "
                             lists:
                             * one
                                 - a
@@ -917,10 +918,10 @@ mod tests {
                             * two
                                 - [c](https://the-url)
                                 - d"
-                        .unindent(),
-                        kind: HoverBlockKind::Markdown,
-                    }],
-                    expected_marked_text: "
+                            .unindent(),
+                            kind: HoverBlockKind::Markdown,
+                        }],
+                        expected_marked_text: "
                         lists:
                         - one
                           - a
@@ -928,19 +929,19 @@ mod tests {
                         - two
                           - «c»
                           - d"
-                    .unindent(),
-                    expected_styles: vec![HighlightStyle {
-                        underline: Some(UnderlineStyle {
-                            thickness: 1.0.into(),
+                        .unindent(),
+                        expected_styles: vec![HighlightStyle {
+                            underline: Some(UnderlineStyle {
+                                thickness: 1.0.into(),
+                                ..Default::default()
+                            }),
                             ..Default::default()
-                        }),
-                        ..Default::default()
-                    }],
-                },
-                // Multi-paragraph list items
-                Row {
-                    blocks: vec![HoverBlock {
-                        text: "
+                        }],
+                    },
+                    // Multi-paragraph list items
+                    Row {
+                        blocks: vec![HoverBlock {
+                            text: "
                             * one two
                               three
 
@@ -951,10 +952,10 @@ mod tests {
                                   nine
                                 * ten
                             * six"
-                            .unindent(),
-                        kind: HoverBlockKind::Markdown,
-                    }],
-                    expected_marked_text: "
+                                .unindent(),
+                            kind: HoverBlockKind::Markdown,
+                        }],
+                        expected_marked_text: "
                         - one two three
                         - four five
                           - six seven eight
@@ -962,52 +963,51 @@ mod tests {
                             nine
                           - ten
                         - six"
-                        .unindent(),
-                    expected_styles: vec![HighlightStyle {
-                        underline: Some(UnderlineStyle {
-                            thickness: 1.0.into(),
+                            .unindent(),
+                        expected_styles: vec![HighlightStyle {
+                            underline: Some(UnderlineStyle {
+                                thickness: 1.0.into(),
+                                ..Default::default()
+                            }),
                             ..Default::default()
-                        }),
-                        ..Default::default()
-                    }],
-                },
-            ];
+                        }],
+                    },
+                ];
 
-            for Row {
-                blocks,
-                expected_marked_text,
-                expected_styles,
-            } in &rows[0..]
-            {
-                let rendered = smol::block_on(parse_blocks(&blocks, &Default::default(), None));
+                for Row {
+                    blocks,
+                    expected_marked_text,
+                    expected_styles,
+                } in &rows[0..]
+                {
+                    let rendered = smol::block_on(parse_blocks(&blocks, &Default::default(), None));
 
-                let (expected_text, ranges) = marked_text_ranges(expected_marked_text, false);
-                let expected_highlights = ranges
-                    .into_iter()
-                    .zip(expected_styles.iter().cloned())
-                    .collect::<Vec<_>>();
-                assert_eq!(
-                    rendered.text, expected_text,
-                    "wrong text for input {blocks:?}"
-                );
+                    let (expected_text, ranges) = marked_text_ranges(expected_marked_text, false);
+                    let expected_highlights = ranges
+                        .into_iter()
+                        .zip(expected_styles.iter().cloned())
+                        .collect::<Vec<_>>();
+                    assert_eq!(
+                        rendered.text, expected_text,
+                        "wrong text for input {blocks:?}"
+                    );
 
-                let rendered_highlights: Vec<_> = rendered
-                    .highlights
-                    .iter()
-                    .filter_map(|(range, highlight)| {
-                        let highlight = highlight.to_highlight_style(&style.syntax)?;
-                        Some((range.clone(), highlight))
-                    })
-                    .collect();
+                    let rendered_highlights: Vec<_> = rendered
+                        .highlights
+                        .iter()
+                        .filter_map(|(range, highlight)| {
+                            let highlight = highlight.to_highlight_style(&style.syntax)?;
+                            Some((range.clone(), highlight))
+                        })
+                        .collect();
 
-                assert_eq!(
-                    rendered_highlights, expected_highlights,
-                    "wrong highlights for input {blocks:?}"
-                );
-            }
-
-            editor
-        });
+                    assert_eq!(
+                        rendered_highlights, expected_highlights,
+                        "wrong highlights for input {blocks:?}"
+                    );
+                }
+            })
+            .unwrap();
     }
 
     #[gpui::test]
