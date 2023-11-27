@@ -343,8 +343,8 @@ impl CallHandler for TestCallHandler {
         None
     }
 
-    fn hang_up(&self, cx: AsyncWindowContext) -> Result<Task<Result<()>>> {
-        anyhow::bail!("TestCallHandler should not be hanging up")
+    fn hang_up(&self, cx: &mut AppContext) -> Task<Result<()>> {
+        Task::ready(Err(anyhow!("TestCallHandler should not be hanging up")))
     }
 
     fn active_project(&self, cx: &AppContext) -> Option<WeakModel<Project>> {
