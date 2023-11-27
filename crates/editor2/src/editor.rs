@@ -40,11 +40,12 @@ use fuzzy::{StringMatch, StringMatchCandidate};
 use git::diff_hunk_to_display;
 use gpui::{
     actions, div, point, prelude::*, px, relative, rems, size, uniform_list, Action, AnyElement,
-    AppContext, AsyncWindowContext, BackgroundExecutor, Bounds, ClipboardItem, Context, ElementId,
-    EventEmitter, FocusHandle, FocusableView, FontFeatures, FontStyle, FontWeight, HighlightStyle,
-    Hsla, InputHandler, InteractiveText, KeyContext, Model, MouseButton, ParentElement, Pixels,
-    Render, RenderOnce, SharedString, Styled, StyledText, Subscription, Task, TextRun, TextStyle,
-    UniformListScrollHandle, View, ViewContext, VisualContext, WeakView, WhiteSpace, WindowContext,
+    AppContext, AsyncWindowContext, BackgroundExecutor, Bounds, ClipboardItem, Context,
+    DispatchPhase, Div, ElementId, EventEmitter, FocusHandle, FocusableView, FontFeatures,
+    FontStyle, FontWeight, HighlightStyle, Hsla, InputHandler, InteractiveText, KeyContext, Model,
+    MouseButton, ParentElement, Pixels, Render, RenderOnce, SharedString, Styled, StyledText,
+    Subscription, Task, TextRun, TextStyle, UniformListScrollHandle, View, ViewContext,
+    VisualContext, WeakView, WhiteSpace, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -103,7 +104,7 @@ use util::{post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::{
     item::{ItemEvent, ItemHandle},
     searchable::SearchEvent,
-    ItemNavHistory, SplitDirection, ViewId, Workspace,
+    ItemNavHistory, Pane, SplitDirection, ViewId, Workspace,
 };
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
@@ -662,6 +663,7 @@ pub struct Editor {
     pixel_position_of_newest_cursor: Option<gpui::Point<Pixels>>,
     gutter_width: Pixels,
     style: Option<EditorStyle>,
+    editor_actions: Vec<Box<dyn Fn(&mut ViewContext<Self>)>>,
 }
 
 pub struct EditorSnapshot {
@@ -1890,6 +1892,7 @@ impl Editor {
             pixel_position_of_newest_cursor: None,
             gutter_width: Default::default(),
             style: None,
+            editor_actions: Default::default(),
             _subscriptions: vec![
                 cx.observe(&buffer, Self::on_buffer_changed),
                 cx.subscribe(&buffer, Self::on_buffer_event),
@@ -2021,8 +2024,12 @@ impl Editor {
         &self.buffer
     }
 
-    fn workspace(&self) -> Option<View<Workspace>> {
+    pub fn workspace(&self) -> Option<View<Workspace>> {
         self.workspace.as_ref()?.0.upgrade()
+    }
+
+    pub fn pane(&self, cx: &AppContext) -> Option<View<Pane>> {
+        self.workspace()?.read(cx).pane_for(&self.handle.upgrade()?)
     }
 
     pub fn title<'a>(&self, cx: &'a AppContext) -> Cow<'a, str> {
@@ -9180,6 +9187,26 @@ impl Editor {
         hide_hover(self, cx);
         cx.emit(EditorEvent::Blurred);
         cx.notify();
+    }
+
+    pub fn register_action<A: Action>(
+        &mut self,
+        listener: impl Fn(&A, &mut WindowContext) + 'static,
+    ) -> &mut Self {
+        let listener = Arc::new(listener);
+
+        self.editor_actions.push(Box::new(move |cx| {
+            let view = cx.view().clone();
+            let cx = cx.window_context();
+            let listener = listener.clone();
+            cx.on_action(TypeId::of::<A>(), move |action, phase, cx| {
+                let action = action.downcast_ref().unwrap();
+                if phase == DispatchPhase::Bubble {
+                    listener(action, cx)
+                }
+            })
+        }));
+        self
     }
 }
 

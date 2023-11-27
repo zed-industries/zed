@@ -1517,6 +1517,13 @@ impl<'a> WindowContext<'a> {
                 .set_input_handler(Box::new(input_handler));
         }
     }
+
+    pub fn on_window_should_close(&mut self, f: impl Fn(&mut WindowContext) -> bool + 'static) {
+        let mut this = self.to_async();
+        self.window
+            .platform_window
+            .on_should_close(Box::new(move || this.update(|_, cx| f(cx)).unwrap_or(true)))
+    }
 }
 
 impl Context for WindowContext<'_> {

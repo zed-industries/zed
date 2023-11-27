@@ -2342,6 +2342,11 @@ impl Workspace {
         &self.active_pane
     }
 
+    pub fn pane_for(&self, handle: &dyn ItemHandle) -> Option<View<Pane>> {
+        let weak_pane = self.panes_by_item.get(&handle.item_id())?;
+        weak_pane.upgrade()
+    }
+
     fn collaborator_left(&mut self, peer_id: PeerId, cx: &mut ViewContext<Self>) {
         self.follower_states.retain(|_, state| {
             if state.leader_id == peer_id {
