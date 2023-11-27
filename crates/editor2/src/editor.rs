@@ -1274,6 +1274,9 @@ impl CompletionsMenu {
                 div.id("multiline_docs")
                     .max_h(max_height)
                     .overflow_y_scroll()
+                    // Prevent a mouse down on documentation from being propagated to the editor,
+                    // because that would move the cursor.
+                    .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
             })
         };
         let list = uniform_list(
