@@ -170,11 +170,13 @@ pub struct Project {
     node: Option<Arc<dyn NodeRuntime>>,
     default_prettier: Option<DefaultPrettier>,
     prettiers_per_worktree: HashMap<WorktreeId, HashSet<Option<PathBuf>>>,
-    prettier_instances: HashMap<PathBuf, Shared<Task<Result<Arc<Prettier>, Arc<anyhow::Error>>>>>,
+    prettier_instances: HashMap<PathBuf, PrettierInstance>,
 }
 
+type PrettierInstance = Shared<Task<Result<Arc<Prettier>, Arc<anyhow::Error>>>>;
+
 struct DefaultPrettier {
-    instance: Option<Shared<Task<Result<Arc<Prettier>, Arc<anyhow::Error>>>>>,
+    instance: Option<PrettierInstance>,
     installation_process: Option<Shared<Task<Result<(), Arc<anyhow::Error>>>>>,
     #[cfg(not(any(test, feature = "test-support")))]
     installed_plugins: HashSet<&'static str>,
@@ -540,6 +542,14 @@ pub enum FormatTrigger {
 struct ProjectLspAdapterDelegate {
     project: ModelHandle<Project>,
     http_client: Arc<dyn HttpClient>,
+}
+
+// Currently, formatting operations are represented differently depending on
+// whether they come from a language server or an external command.
+enum FormatOperation {
+    Lsp(Vec<(Range<Anchor>, String)>),
+    External(Diff),
+    Prettier(Diff),
 }
 
 impl FormatTrigger {
@@ -4099,14 +4109,6 @@ impl Project {
                         buffer.end_transaction(cx)
                     });
 
-                    // Currently, formatting operations are represented differently depending on
-                    // whether they come from a language server or an external command.
-                    enum FormatOperation {
-                        Lsp(Vec<(Range<Anchor>, String)>),
-                        External(Diff),
-                        Prettier(Diff),
-                    }
-
                     // Apply language-specific formatting using either a language server
                     // or external command.
                     let mut format_operation = None;
@@ -4155,46 +4157,10 @@ impl Project {
                             }
                         }
                         (Formatter::Auto, FormatOnSave::On | FormatOnSave::Off) => {
-                            if let Some((prettier_path, prettier_task)) = project
-                                .update(&mut cx, |project, cx| {
-                                    project.prettier_instance_for_buffer(buffer, cx)
-                                }).await {
-                                    match prettier_task.await
-                                    {
-                                        Ok(prettier) => {
-                                            let buffer_path = buffer.update(&mut cx, |buffer, cx| {
-                                                File::from_dyn(buffer.file()).map(|file| file.abs_path(cx))
-                                            });
-                                            format_operation = Some(FormatOperation::Prettier(
-                                                prettier
-                                                    .format(buffer, buffer_path, &cx)
-                                                    .await
-                                                    .context("formatting via prettier")?,
-                                            ));
-                                        }
-                                        Err(e) => {
-                                            project.update(&mut cx, |project, _| {
-                                                match &prettier_path {
-                                                    Some(prettier_path) => {
-                                                        project.prettier_instances.remove(prettier_path);
-                                                    },
-                                                    None => {
-                                                        if let Some(default_prettier) = project.default_prettier.as_mut() {
-                                                            default_prettier.instance = None;
-                                                        }
-                                                    },
-                                                }
-                                            });
-                                            match &prettier_path {
-                                                Some(prettier_path) => {
-                                                    log::error!("Failed to create prettier instance from {prettier_path:?} for buffer during autoformatting: {e:#}");
-                                                },
-                                                None => {
-                                                    log::error!("Failed to create default prettier instance for buffer during autoformatting: {e:#}");
-                                                },
-                                            }
-                                        }
-                                    }
+                            if let Some(new_operation) =
+                                format_with_prettier(&project, buffer, &mut cx).await
+                            {
+                                format_operation = Some(new_operation);
                             } else if let Some((language_server, buffer_abs_path)) =
                                 language_server.as_ref().zip(buffer_abs_path.as_ref())
                             {
@@ -4213,47 +4179,11 @@ impl Project {
                             }
                         }
                         (Formatter::Prettier { .. }, FormatOnSave::On | FormatOnSave::Off) => {
-                            if let Some((prettier_path, prettier_task)) = project
-                                .update(&mut cx, |project, cx| {
-                                    project.prettier_instance_for_buffer(buffer, cx)
-                                }).await {
-                                    match prettier_task.await
-                                    {
-                                        Ok(prettier) => {
-                                            let buffer_path = buffer.update(&mut cx, |buffer, cx| {
-                                                File::from_dyn(buffer.file()).map(|file| file.abs_path(cx))
-                                            });
-                                            format_operation = Some(FormatOperation::Prettier(
-                                                prettier
-                                                    .format(buffer, buffer_path, &cx)
-                                                    .await
-                                                    .context("formatting via prettier")?,
-                                            ));
-                                        }
-                                        Err(e) => {
-                                            project.update(&mut cx, |project, _| {
-                                                match &prettier_path {
-                                                    Some(prettier_path) => {
-                                                        project.prettier_instances.remove(prettier_path);
-                                                    },
-                                                    None => {
-                                                        if let Some(default_prettier) = project.default_prettier.as_mut() {
-                                                            default_prettier.instance = None;
-                                                        }
-                                                    },
-                                                }
-                                            });
-                                            match &prettier_path {
-                                                Some(prettier_path) => {
-                                                    log::error!("Failed to create prettier instance from {prettier_path:?} for buffer during autoformatting: {e:#}");
-                                                },
-                                                None => {
-                                                    log::error!("Failed to create default prettier instance for buffer during autoformatting: {e:#}");
-                                                },
-                                            }
-                                        }
-                                    }
-                                }
+                            if let Some(new_operation) =
+                                format_with_prettier(&project, buffer, &mut cx).await
+                            {
+                                format_operation = Some(new_operation);
+                            }
                         }
                     };
 
@@ -8541,12 +8471,7 @@ impl Project {
         &mut self,
         buffer: &ModelHandle<Buffer>,
         cx: &mut ModelContext<Self>,
-    ) -> Task<
-        Option<(
-            Option<PathBuf>,
-            Shared<Task<Result<Arc<Prettier>, Arc<anyhow::Error>>>>,
-        )>,
-    > {
+    ) -> Task<Option<(Option<PathBuf>, PrettierInstance)>> {
         let buffer = buffer.read(cx);
         let buffer_file = buffer.file();
         let Some(buffer_language) = buffer.language() else {
@@ -8814,7 +8739,7 @@ fn start_default_prettier(
     node: Arc<dyn NodeRuntime>,
     worktree_id: Option<WorktreeId>,
     cx: &mut ModelContext<'_, Project>,
-) -> Task<Shared<Task<Result<Arc<Prettier>, Arc<anyhow::Error>>>>> {
+) -> Task<PrettierInstance> {
     cx.spawn(|project, mut cx| async move {
         loop {
             let default_prettier_installing = project.update(&mut cx, |project, _| {
@@ -8864,7 +8789,7 @@ fn start_prettier(
     prettier_dir: PathBuf,
     worktree_id: Option<WorktreeId>,
     cx: &mut ModelContext<'_, Project>,
-) -> Shared<Task<Result<Arc<Prettier>, Arc<anyhow::Error>>>> {
+) -> PrettierInstance {
     cx.spawn(|project, mut cx| async move {
         let new_server_id = project.update(&mut cx, |project, _| {
             project.languages.next_language_server_id()
@@ -9280,4 +9205,49 @@ fn include_text(server: &lsp::LanguageServer) -> bool {
             lsp::TextDocumentSyncSaveOptions::SaveOptions(options) => options.include_text,
         })
         .unwrap_or(false)
+}
+
+async fn format_with_prettier(
+    project: &ModelHandle<Project>,
+    buffer: &ModelHandle<Buffer>,
+    cx: &mut AsyncAppContext,
+) -> Option<FormatOperation> {
+    if let Some((prettier_path, prettier_task)) = project
+        .update(cx, |project, cx| {
+            project.prettier_instance_for_buffer(buffer, cx)
+        })
+        .await
+    {
+        match prettier_task.await {
+            Ok(prettier) => {
+                let buffer_path = buffer.update(cx, |buffer, cx| {
+                    File::from_dyn(buffer.file()).map(|file| file.abs_path(cx))
+                });
+                match prettier.format(buffer, buffer_path, cx).await {
+                    Ok(new_diff) => return Some(FormatOperation::Prettier(new_diff)),
+                    Err(e) => {
+                        log::error!(
+                            "Prettier instance from {prettier_path:?} failed to format a buffer: {e:#}"
+                        );
+                    }
+                }
+            }
+            Err(e) => {
+                project.update(cx, |project, _| match &prettier_path {
+                    Some(prettier_path) => {
+                        log::error!("Failed to create prettier instance from {prettier_path:?} for buffer: {e:#}");
+                        project.prettier_instances.remove(prettier_path);
+                    }
+                    None => {
+                        log::error!("Failed to create default prettier instance from {prettier_path:?} for buffer: {e:#}");
+                        if let Some(default_prettier) = project.default_prettier.as_mut() {
+                            default_prettier.instance = None;
+                        }
+                    }
+                });
+            }
+        }
+    }
+
+    None
 }
