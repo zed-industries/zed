@@ -9,7 +9,7 @@ use taffy::style::Overflow;
 
 /// uniform_list provides lazy rendering for a set of items that are of uniform height.
 /// When rendered into a container with overflow-y: hidden and a fixed (or max) height,
-/// uniform_list will only render the visibile subset of items.
+/// uniform_list will only render the visible subset of items.
 pub fn uniform_list<I, R, V>(
     view: View<V>,
     id: I,
