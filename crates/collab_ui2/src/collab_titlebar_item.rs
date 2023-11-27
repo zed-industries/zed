@@ -230,7 +230,14 @@ impl Render for CollabTitlebarItem {
                         .child(
                             h_stack()
                                 .child(Button::new(if is_shared { "Unshare" } else { "Share" }))
-                                .child(IconButton::new("leave-call", ui::Icon::Exit)),
+                                .child(IconButton::new("leave-call", ui::Icon::Exit).on_click({
+                                    let workspace = workspace.clone();
+                                    move |_, cx| {
+                                        workspace.update(cx, |this, cx| {
+                                            this.call_state().hang_up(cx).detach();
+                                        });
+                                    }
+                                })),
                         )
                         .child(
                             h_stack()

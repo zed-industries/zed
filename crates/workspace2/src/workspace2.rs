@@ -479,7 +479,7 @@ pub trait CallHandler {
     fn is_in_room(&self, cx: &mut ViewContext<Workspace>) -> bool {
         self.room_id(cx).is_some()
     }
-    fn hang_up(&self, cx: AsyncWindowContext) -> Result<Task<Result<()>>>;
+    fn hang_up(&self, cx: &mut AppContext) -> Task<Result<()>>;
     fn active_project(&self, cx: &AppContext) -> Option<WeakModel<Project>>;
     fn invite(
         &mut self,
@@ -1222,7 +1222,7 @@ impl Workspace {
                 if answer.await.log_err() == Some(1) {
                     return anyhow::Ok(false);
                 } else {
-                    this.update(&mut cx, |this, cx| this.call_handler.hang_up(cx.to_async()))??
+                    this.update(&mut cx, |this, cx| this.call_handler.hang_up(cx))?
                         .await
                         .log_err();
                 }

@@ -609,12 +609,12 @@ impl CallHandler for Call {
     fn room_id(&self, cx: &AppContext) -> Option<u64> {
         Some(self.active_call.as_ref()?.0.read(cx).room()?.read(cx).id())
     }
-    fn hang_up(&self, mut cx: AsyncWindowContext) -> Result<Task<Result<()>>> {
+    fn hang_up(&self, mut cx: &mut AppContext) -> Task<Result<()>> {
         let Some((call, _)) = self.active_call.as_ref() else {
-            bail!("Cannot exit a call; not in a call");
+            return Task::ready(Err(anyhow!("Cannot exit a call; not in a call")));
         };
 
-        call.update(&mut cx, |this, cx| this.hang_up(cx))
+        call.update(cx, |this, cx| this.hang_up(cx))
     }
     fn active_project(&self, cx: &AppContext) -> Option<WeakModel<Project>> {
         ActiveCall::global(cx).read(cx).location().cloned()
