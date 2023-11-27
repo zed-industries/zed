@@ -268,7 +268,11 @@ impl EditorElement {
         });
         register_action(view, cx, Editor::restart_language_server);
         register_action(view, cx, Editor::show_character_palette);
-        // on_action(cx, Editor::confirm_completion); todo!()
+        register_action(view, cx, |editor, action, cx| {
+            editor
+                .confirm_completion(action, cx)
+                .map(|task| task.detach_and_log_err(cx));
+        });
         register_action(view, cx, |editor, action, cx| {
             editor
                 .confirm_code_action(action, cx)
@@ -1022,14 +1026,8 @@ impl EditorElement {
 
                 if let Some((position, mut context_menu)) = layout.context_menu.take() {
                     cx.with_z_index(1, |cx| {
-                        let line_height = self.style.text.line_height_in_pixels(cx.rem_size());
-                        let available_space = size(
-                            AvailableSpace::MinContent,
-                            AvailableSpace::Definite(
-                                (12. * line_height)
-                                    .min((text_bounds.size.height - line_height) / 2.),
-                            ),
-                        );
+                        let available_space =
+                            size(AvailableSpace::MinContent, AvailableSpace::MinContent);
                         let context_menu_size = context_menu.measure(available_space, cx);
 
                         let cursor_row_layout = &layout.position_map.line_layouts
@@ -1974,8 +1972,9 @@ impl EditorElement {
             if let Some(newest_selection_head) = newest_selection_head {
                 if (start_row..end_row).contains(&newest_selection_head.row()) {
                     if editor.context_menu_visible() {
+                        let max_height = (12. * line_height).min((bounds.size.height - line_height) / 2.);
                         context_menu =
-                            editor.render_context_menu(newest_selection_head, &self.style, cx);
+                            editor.render_context_menu(newest_selection_head, &self.style, max_height, cx);
                     }
 
                     let active = matches!(

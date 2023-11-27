@@ -244,13 +244,17 @@ impl TextState {
 
         let line_height = element_state.line_height;
         let mut line_origin = bounds.origin;
+        let mut line_start_ix = 0;
         for line in &element_state.lines {
             let line_bottom = line_origin.y + line.size(line_height).height;
             if position.y > line_bottom {
                 line_origin.y = line_bottom;
+                line_start_ix += line.len() + 1;
             } else {
                 let position_within_line = position - line_origin;
-                return line.index_for_position(position_within_line, line_height);
+                let index_within_line =
+                    line.index_for_position(position_within_line, line_height)?;
+                return Some(line_start_ix + index_within_line);
             }
         }
 
