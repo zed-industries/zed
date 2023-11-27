@@ -167,10 +167,11 @@ use gpui::{
 use project::Fs;
 use serde_derive::{Deserialize, Serialize};
 use settings::Settings;
-use ui::{h_stack, Avatar, Label};
+use ui::{h_stack, v_stack, Avatar, Button, Label};
 use util::ResultExt;
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
+    notifications::NotifyResultExt,
     Workspace,
 };
 
@@ -302,7 +303,7 @@ pub struct CollabPanel {
     // entries: Vec<ListEntry>,
     // selection: Option<usize>,
     user_store: Model<UserStore>,
-    _client: Arc<Client>,
+    client: Arc<Client>,
     // channel_store: ModelHandle<ChannelStore>,
     // project: ModelHandle<Project>,
     // match_candidates: Vec<StringMatchCandidate>,
@@ -311,7 +312,7 @@ pub struct CollabPanel {
     // collapsed_sections: Vec<Section>,
     // collapsed_channels: Vec<ChannelId>,
     // drag_target_channel: ChannelDragTarget,
-    _workspace: WeakView<Workspace>,
+    workspace: WeakView<Workspace>,
     // context_menu_on_selected: bool,
 }
 
@@ -604,8 +605,8 @@ impl CollabPanel {
                 //                 match_candidates: Vec::default(),
                 //                 collapsed_sections: vec![Section::Offline],
                 //                 collapsed_channels: Vec::default(),
-                _workspace: workspace.weak_handle(),
-                _client: workspace.app_state().client.clone(),
+                workspace: workspace.weak_handle(),
+                client: workspace.app_state().client.clone(),
                 //                 context_menu_on_selected: true,
                 //                 drag_target_channel: ChannelDragTarget::None,
                 //                 list_state,
@@ -3252,6 +3253,53 @@ impl CollabPanel {
     //         let item = ClipboardItem::new(channel.link());
     //         cx.write_to_clipboard(item)
     //     }
+
+    fn render_signed_out(&mut self, cx: &mut ViewContext<Self>) -> Div {
+        v_stack().child(Button::new("Sign in to collaborate").on_click(cx.listener(
+            |this, _, cx| {
+                let client = this.client.clone();
+                cx.spawn(|_, mut cx| async move {
+                    client
+                        .authenticate_and_connect(true, &cx)
+                        .await
+                        .notify_async_err(&mut cx);
+                })
+                .detach()
+            },
+        )))
+    }
+
+    fn render_signed_in(&mut self, cx: &mut ViewContext<Self>) -> Div {
+        let contacts = self.contacts(cx).unwrap_or_default();
+        let workspace = self.workspace.clone();
+
+        v_stack().children(contacts.into_iter().map(|contact| {
+            let id = contact.user.id;
+            h_stack()
+                .p_2()
+                .gap_2()
+                .children(
+                    contact
+                        .user
+                        .avatar
+                        .as_ref()
+                        .map(|avatar| Avatar::data(avatar.clone())),
+                )
+                .child(Label::new(contact.user.github_login.clone()))
+                .on_mouse_down(gpui::MouseButton::Left, {
+                    let workspace = workspace.clone();
+                    move |_, cx| {
+                        workspace
+                            .update(cx, |this, cx| {
+                                this.call_state()
+                                    .invite(id, None, cx)
+                                    .detach_and_log_err(cx)
+                            })
+                            .log_err();
+                    }
+                })
+        }))
+    }
 }
 
 // fn render_tree_branch(
@@ -3303,37 +3351,14 @@ impl Render for CollabPanel {
     type Element = Focusable<Div>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-        let contacts = self.contacts(cx).unwrap_or_default();
-        let workspace = self._workspace.clone();
         div()
             .key_context("CollabPanel")
             .track_focus(&self.focus_handle)
-            .children(contacts.into_iter().map(|contact| {
-                let id = contact.user.id;
-                h_stack()
-                    .p_2()
-                    .gap_2()
-                    .children(
-                        contact
-                            .user
-                            .avatar
-                            .as_ref()
-                            .map(|avatar| Avatar::data(avatar.clone())),
-                    )
-                    .child(Label::new(contact.user.github_login.clone()))
-                    .on_mouse_down(gpui::MouseButton::Left, {
-                        let workspace = workspace.clone();
-                        move |_, cx| {
-                            workspace
-                                .update(cx, |this, cx| {
-                                    this.call_state()
-                                        .invite(id, None, cx)
-                                        .detach_and_log_err(cx)
-                                })
-                                .log_err();
-                        }
-                    })
-            }))
+            .child(if self.user_store.read(cx).current_user().is_none() {
+                self.render_signed_out(cx)
+            } else {
+                self.render_signed_in(cx)
+            })
     }
 }
 

@@ -39,7 +39,7 @@ use project::Project;
 use theme::ActiveTheme;
 use ui::{h_stack, Avatar, Button, ButtonVariant, Color, IconButton, KeyBinding, Tooltip};
 use util::ResultExt;
-use workspace::Workspace;
+use workspace::{notifications::NotifyResultExt, Workspace};
 
 use crate::face_pile::FacePile;
 
@@ -290,11 +290,13 @@ impl Render for CollabTitlebarItem {
                 } else {
                     this.child(Button::new("Sign in").on_click(move |_, cx| {
                         let client = client.clone();
-                        cx.spawn(move |cx| async move {
-                            client.authenticate_and_connect(true, &cx).await?;
-                            Ok::<(), anyhow::Error>(())
+                        cx.spawn(move |mut cx| async move {
+                            client
+                                .authenticate_and_connect(true, &cx)
+                                .await
+                                .notify_async_err(&mut cx);
                         })
-                        .detach_and_log_err(cx);
+                        .detach();
                     }))
                 }
             })
