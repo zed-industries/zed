@@ -1,5 +1,7 @@
+use std::sync::Arc;
+
 use crate::prelude::*;
-use gpui::{img, ImageSource, Img, IntoElement};
+use gpui::{img, ImageData, ImageSource, Img, IntoElement};
 
 #[derive(Debug, Default, PartialEq, Clone)]
 pub enum Shape {
@@ -34,7 +36,13 @@ impl RenderOnce for Avatar {
 }
 
 impl Avatar {
-    pub fn new(src: impl Into<ImageSource>) -> Self {
+    pub fn uri(src: impl Into<SharedString>) -> Self {
+        Self {
+            src: src.into().into(),
+            shape: Shape::Circle,
+        }
+    }
+    pub fn data(src: Arc<ImageData>) -> Self {
         Self {
             src: src.into(),
             shape: Shape::Circle,

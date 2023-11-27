@@ -3318,7 +3318,7 @@ impl Render for CollabPanel {
                             .user
                             .avatar
                             .as_ref()
-                            .map(|avatar| Avatar::new(avatar.clone())),
+                            .map(|avatar| Avatar::data(avatar.clone())),
                     )
                     .child(Label::new(contact.user.github_login.clone()))
                     .on_mouse_down(gpui::MouseButton::Left, {

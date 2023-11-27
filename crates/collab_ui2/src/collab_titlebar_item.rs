@@ -182,12 +182,12 @@ impl Render for CollabTitlebarItem {
                         current_user
                             .avatar
                             .clone()
-                            .map(|avatar| div().child(Avatar::new(avatar.clone())))
+                            .map(|avatar| div().child(Avatar::data(avatar.clone())))
                             .into_iter()
                             .chain(remote_participants.into_iter().flat_map(|(user, peer_id)| {
                                 user.avatar.as_ref().map(|avatar| {
                                     div()
-                                        .child(Avatar::new(avatar.clone()).into_element())
+                                        .child(Avatar::data(avatar.clone()).into_element())
                                         .on_mouse_down(MouseButton::Left, {
                                             let workspace = workspace.clone();
                                             let id = peer_id.clone();
@@ -235,7 +235,7 @@ impl Render for CollabTitlebarItem {
             .map(|this| {
                 if let Some(user) = current_user {
                     this.when_some(user.avatar.clone(), |this, avatar| {
-                        this.child(ui::Avatar::new(avatar))
+                        this.child(ui::Avatar::data(avatar))
                     })
                 } else {
                     this.child(Button::new("Sign in").on_click(move |_, cx| {
