@@ -134,6 +134,12 @@ impl Theme {
             ignored: self.status().ignored,
         }
     }
+
+    /// Returns the [`Appearance`] for the theme.
+    #[inline(always)]
+    pub fn appearance(&self) -> Appearance {
+        self.appearance
+    }
 }
 
 #[derive(Clone, Debug, Default)]
