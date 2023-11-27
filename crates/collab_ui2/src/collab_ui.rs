@@ -12,7 +12,7 @@ use std::{rc::Rc, sync::Arc};
 pub use collab_panel::CollabPanel;
 pub use collab_titlebar_item::CollabTitlebarItem;
 use gpui::{
-    AppContext, GlobalPixels, Pixels, PlatformDisplay, Size, WindowBounds, WindowKind,
+    point, AppContext, GlobalPixels, Pixels, PlatformDisplay, Size, WindowBounds, WindowKind,
     WindowOptions,
 };
 pub use panel_settings::{
@@ -102,13 +102,19 @@ fn notification_window_options(
     screen: Rc<dyn PlatformDisplay>,
     window_size: Size<Pixels>,
 ) -> WindowOptions {
-    let _notification_padding = Pixels::from(16.);
+    let notification_margin_width = GlobalPixels::from(16.);
+    let notification_margin_height = GlobalPixels::from(-0.) - GlobalPixels::from(48.);
 
     let screen_bounds = screen.bounds();
-    let _size: Size<GlobalPixels> = window_size.into();
+    let size: Size<GlobalPixels> = window_size.into();
 
+    // todo!() use content bounds instead of screen.bounds and get rid of magics in point's 2nd argument.
     let bounds = gpui::Bounds::<GlobalPixels> {
-        origin: screen_bounds.origin,
+        origin: screen_bounds.upper_right()
+            - point(
+                size.width + notification_margin_width,
+                notification_margin_height,
+            ),
         size: window_size.into(),
     };
     WindowOptions {

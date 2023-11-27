@@ -34,7 +34,6 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
 
                 for window in unique_screens {
                     let options = notification_window_options(window, window_size);
-                    dbg!(&options);
                     let window = cx
                         .open_window(options, |cx| {
                             cx.build_view(|_| {
