@@ -1268,7 +1268,6 @@ impl Room {
                     .ok_or_else(|| anyhow!("live-kit was not initialized"))?
                     .await
             };
-
             let publication = publish_track.await;
             this.upgrade()
                 .ok_or_else(|| anyhow!("room was dropped"))?
