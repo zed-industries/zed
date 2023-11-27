@@ -2003,8 +2003,6 @@ impl Workspace {
             self.active_pane.update(cx, |pane, cx| {
                 pane.add_item(shared_screen, false, true, None, cx)
             });
-        } else {
-            dbg!("WTF");
         }
     }
 

@@ -31,15 +31,17 @@ use std::sync::Arc;
 use call::ActiveCall;
 use client::{Client, UserStore};
 use gpui::{
-    div, px, rems, AppContext, Div, InteractiveElement, IntoElement, Model, MouseButton,
-    ParentElement, Render, Stateful, StatefulInteractiveElement, Styled, Subscription, ViewContext,
-    VisualContext, WeakView, WindowBounds,
+    div, px, rems, AppContext, Div, Element, InteractiveElement, IntoElement, Model, MouseButton,
+    ParentElement, Render, RenderOnce, Stateful, StatefulInteractiveElement, Styled, Subscription,
+    ViewContext, VisualContext, WeakView, WindowBounds,
 };
 use project::Project;
 use theme::ActiveTheme;
 use ui::{h_stack, Avatar, Button, ButtonVariant, Color, IconButton, KeyBinding, Tooltip};
 use util::ResultExt;
 use workspace::Workspace;
+
+use crate::face_pile::FacePile;
 
 // const MAX_PROJECT_NAME_LENGTH: usize = 40;
 // const MAX_BRANCH_NAME_LENGTH: usize = 40;
@@ -178,16 +180,21 @@ impl Render for CollabTitlebarItem {
             .when_some(
                 users.zip(current_user.clone()),
                 |this, (remote_participants, current_user)| {
-                    this.children(
+                    let mut pile = FacePile::default();
+                    pile.extend(
                         current_user
                             .avatar
                             .clone()
-                            .map(|avatar| div().child(Avatar::data(avatar.clone())))
+                            .map(|avatar| {
+                                div().child(Avatar::data(avatar.clone())).into_any_element()
+                            })
                             .into_iter()
                             .chain(remote_participants.into_iter().flat_map(|(user, peer_id)| {
                                 user.avatar.as_ref().map(|avatar| {
                                     div()
-                                        .child(Avatar::data(avatar.clone()).into_element())
+                                        .child(
+                                            Avatar::data(avatar.clone()).into_element().into_any(),
+                                        )
                                         .on_mouse_down(MouseButton::Left, {
                                             let workspace = workspace.clone();
                                             move |_, cx| {
@@ -198,9 +205,11 @@ impl Render for CollabTitlebarItem {
                                                     .log_err();
                                             }
                                         })
+                                        .into_any_element()
                                 })
                             })),
-                    )
+                    );
+                    this.child(pile.render(cx))
                 },
             )
             .child(div().flex_1())
