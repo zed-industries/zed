@@ -1752,6 +1752,24 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
         }
     }
 
+    /// Invoke the given function with the content mask reset to that
+    /// of the window.
+    fn break_content_mask<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
+        let mask = ContentMask {
+            bounds: Bounds {
+                origin: Point::default(),
+                size: self.window().viewport_size,
+            },
+        };
+        self.window_mut()
+            .current_frame
+            .content_mask_stack
+            .push(mask);
+        let result = f(self);
+        self.window_mut().current_frame.content_mask_stack.pop();
+        result
+    }
+
     /// Update the global element offset relative to the current offset. This is used to implement
     /// scrolling.
     fn with_element_offset<R>(
