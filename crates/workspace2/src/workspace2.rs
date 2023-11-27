@@ -683,7 +683,21 @@ impl Workspace {
             }),
         ];
 
-        cx.defer(|this, cx| this.update_window_title(cx));
+        cx.defer(|this, cx| {
+            this.update_window_title(cx);
+            // todo! @nate - these are useful for testing notifications
+            // this.show_error(
+            //     &anyhow::anyhow!("what happens if this message is very very very very very long"),
+            //     cx,
+            // );
+
+            // this.show_notification(1, cx, |cx| {
+            //     cx.build_view(|_cx| {
+            //         simple_message_notification::MessageNotification::new(format!("Error:"))
+            //             .with_click_message("click here because!")
+            //     })
+            // });
+        });
         Workspace {
             window_self: window_handle,
             weak_self: weak_handle.clone(),
@@ -2566,32 +2580,31 @@ impl Workspace {
     //         }
     //     }
 
-    //     fn render_notifications(
-    //         &self,
-    //         theme: &theme::Workspace,
-    //         cx: &AppContext,
-    //     ) -> Option<AnyElement<Workspace>> {
-    //         if self.notifications.is_empty() {
-    //             None
-    //         } else {
-    //             Some(
-    //                 Flex::column()
-    //                     .with_children(self.notifications.iter().map(|(_, _, notification)| {
-    //                         ChildView::new(notification.as_any(), cx)
-    //                             .contained()
-    //                             .with_style(theme.notification)
-    //                     }))
-    //                     .constrained()
-    //                     .with_width(theme.notifications.width)
-    //                     .contained()
-    //                     .with_style(theme.notifications.container)
-    //                     .aligned()
-    //                     .bottom()
-    //                     .right()
-    //                     .into_any(),
-    //             )
-    //         }
-    //     }
+    fn render_notifications(&self, cx: &ViewContext<Self>) -> Option<Div> {
+        if self.notifications.is_empty() {
+            None
+        } else {
+            Some(
+                div()
+                    .absolute()
+                    .z_index(100)
+                    .right_3()
+                    .bottom_3()
+                    .w_96()
+                    .h_full()
+                    .flex()
+                    .flex_col()
+                    .justify_end()
+                    .gap_2()
+                    .children(self.notifications.iter().map(|(_, _, notification)| {
+                        div()
+                            .on_any_mouse_down(|_, cx| cx.stop_propagation())
+                            .on_any_mouse_up(|_, cx| cx.stop_propagation())
+                            .child(notification.to_any())
+                    })),
+            )
+        }
+    }
 
     //     // RPC handlers
 
@@ -3653,7 +3666,6 @@ impl Render for Workspace {
             .bg(cx.theme().colors().background)
             .children(self.titlebar_item.clone())
             .child(
-                // todo! should this be a component a view?
                 div()
                     .id("workspace")
                     .relative()
@@ -3703,7 +3715,8 @@ impl Render for Workspace {
                                     .overflow_hidden()
                                     .child(self.right_dock.clone()),
                             ),
-                    ),
+                    )
+                    .children(self.render_notifications(cx)),
             )
             .child(self.status_bar.clone())
     }
