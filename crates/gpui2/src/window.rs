@@ -193,11 +193,11 @@ pub trait FocusableView: 'static + Render {
 
 /// ManagedView is a view (like a Modal, Popover, Menu, etc.)
 /// where the lifecycle of the view is handled by another view.
-pub trait ManagedView: FocusableView + EventEmitter<Manager> {}
+pub trait ManagedView: FocusableView + EventEmitter<DismissEvent> {}
 
-impl<M: FocusableView + EventEmitter<Manager>> ManagedView for M {}
+impl<M: FocusableView + EventEmitter<DismissEvent>> ManagedView for M {}
 
-pub enum Manager {
+pub enum DismissEvent {
     Dismiss,
 }
 
@@ -1663,7 +1663,7 @@ impl VisualContext for WindowContext<'_> {
     where
         V: ManagedView,
     {
-        self.update_view(view, |_, cx| cx.emit(Manager::Dismiss))
+        self.update_view(view, |_, cx| cx.emit(DismissEvent::Dismiss))
     }
 }
 
@@ -1750,6 +1750,24 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
         } else {
             f(self)
         }
+    }
+
+    /// Invoke the given function with the content mask reset to that
+    /// of the window.
+    fn break_content_mask<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
+        let mask = ContentMask {
+            bounds: Bounds {
+                origin: Point::default(),
+                size: self.window().viewport_size,
+            },
+        };
+        self.window_mut()
+            .current_frame
+            .content_mask_stack
+            .push(mask);
+        let result = f(self);
+        self.window_mut().current_frame.content_mask_stack.pop();
+        result
     }
 
     /// Update the global element offset relative to the current offset. This is used to implement
@@ -2349,7 +2367,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     where
         V: ManagedView,
     {
-        self.defer(|_, cx| cx.emit(Manager::Dismiss))
+        self.defer(|_, cx| cx.emit(DismissEvent::Dismiss))
     }
 
     pub fn listener<E>(

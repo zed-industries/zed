@@ -5,7 +5,9 @@ use crate::{
     },
     editor_settings::ShowScrollbar,
     git::{diff_hunk_to_display, DisplayDiffHunk},
-    hover_popover::hover_at,
+    hover_popover::{
+        self, hover_at, HOVER_POPOVER_GAP, MIN_POPOVER_CHARACTER_WIDTH, MIN_POPOVER_LINE_HEIGHT,
+    },
     link_go_to_definition::{
         go_to_fetched_definition, go_to_fetched_type_definition, update_go_to_definition_link,
         update_inlay_link_and_hover_points, GoToDefinitionTrigger,
@@ -257,6 +259,7 @@ impl EditorElement {
         // on_action(cx, Editor::open_excerpts); todo!()
         register_action(view, cx, Editor::toggle_soft_wrap);
         register_action(view, cx, Editor::toggle_inlay_hints);
+        register_action(view, cx, hover_popover::hover);
         register_action(view, cx, Editor::reveal_in_finder);
         register_action(view, cx, Editor::copy_path);
         register_action(view, cx, Editor::copy_relative_path);
@@ -1024,8 +1027,8 @@ impl EditorElement {
                     }
                 });
 
-                if let Some((position, mut context_menu)) = layout.context_menu.take() {
-                    cx.with_z_index(1, |cx| {
+                cx.with_z_index(1, |cx| {
+                    if let Some((position, mut context_menu)) = layout.context_menu.take() {
                         let available_space =
                             size(AvailableSpace::MinContent, AvailableSpace::MinContent);
                         let context_menu_size = context_menu.measure(available_space, cx);
@@ -1052,81 +1055,74 @@ impl EditorElement {
                             list_origin.y -= layout.position_map.line_height + list_height;
                         }
 
-                        context_menu.draw(list_origin, available_space, cx);
-                    })
-                }
+                        cx.break_content_mask(|cx| {
+                            context_menu.draw(list_origin, available_space, cx)
+                        });
+                    }
 
-                // if let Some((position, hover_popovers)) = layout.hover_popovers.as_mut() {
-                //     cx.scene().push_stacking_context(None, None);
+                    if let Some((position, mut hover_popovers)) = layout.hover_popovers.take() {
+                        let available_space =
+                            size(AvailableSpace::MinContent, AvailableSpace::MinContent);
 
-                //     // This is safe because we check on layout whether the required row is available
-                //     let hovered_row_layout =
-                //         &layout.position_map.line_layouts[(position.row() - start_row) as usize].line;
+                        // This is safe because we check on layout whether the required row is available
+                        let hovered_row_layout = &layout.position_map.line_layouts
+                            [(position.row() - start_row) as usize]
+                            .line;
 
-                //     // Minimum required size: Take the first popover, and add 1.5 times the minimum popover
-                //     // height. This is the size we will use to decide whether to render popovers above or below
-                //     // the hovered line.
-                //     let first_size = hover_popovers[0].size();
-                //     let height_to_reserve = first_size.y
-                //         + 1.5 * MIN_POPOVER_LINE_HEIGHT as f32 * layout.position_map.line_height;
+                        // Minimum required size: Take the first popover, and add 1.5 times the minimum popover
+                        // height. This is the size we will use to decide whether to render popovers above or below
+                        // the hovered line.
+                        let first_size = hover_popovers[0].measure(available_space, cx);
+                        let height_to_reserve = first_size.height
+                            + 1.5 * MIN_POPOVER_LINE_HEIGHT * layout.position_map.line_height;
 
-                //     // Compute Hovered Point
-                //     let x = hovered_row_layout.x_for_index(position.column() as usize) - scroll_left;
-                //     let y = position.row() as f32 * layout.position_map.line_height - scroll_top;
-                //     let hovered_point = content_origin + point(x, y);
+                        // Compute Hovered Point
+                        let x = hovered_row_layout.x_for_index(position.column() as usize)
+                            - layout.position_map.scroll_position.x;
+                        let y = position.row() as f32 * layout.position_map.line_height
+                            - layout.position_map.scroll_position.y;
+                        let hovered_point = content_origin + point(x, y);
 
-                //     if hovered_point.y - height_to_reserve > 0.0 {
-                //         // There is enough space above. Render popovers above the hovered point
-                //         let mut current_y = hovered_point.y;
-                //         for hover_popover in hover_popovers {
-                //             let size = hover_popover.size();
-                //             let mut popover_origin = point(hovered_point.x, current_y - size.y);
+                        if hovered_point.y - height_to_reserve > Pixels::ZERO {
+                            // There is enough space above. Render popovers above the hovered point
+                            let mut current_y = hovered_point.y;
+                            for mut hover_popover in hover_popovers {
+                                let size = hover_popover.measure(available_space, cx);
+                                let mut popover_origin =
+                                    point(hovered_point.x, current_y - size.height);
 
-                //             let x_out_of_bounds = bounds.max_x - (popover_origin.x + size.x);
-                //             if x_out_of_bounds < 0.0 {
-                //                 popover_origin.set_x(popover_origin.x + x_out_of_bounds);
-                //             }
+                                let x_out_of_bounds =
+                                    text_bounds.upper_right().x - (popover_origin.x + size.width);
+                                if x_out_of_bounds < Pixels::ZERO {
+                                    popover_origin.x = popover_origin.x + x_out_of_bounds;
+                                }
 
-                //             hover_popover.paint(
-                //                 popover_origin,
-                //                 Bounds::<Pixels>::from_points(
-                //                     gpui::Point::<Pixels>::zero(),
-                //                     point(f32::MAX, f32::MAX),
-                //                 ), // Let content bleed outside of editor
-                //                 editor,
-                //                 cx,
-                //             );
+                                cx.break_content_mask(|cx| {
+                                    hover_popover.draw(popover_origin, available_space, cx)
+                                });
 
-                //             current_y = popover_origin.y - HOVER_POPOVER_GAP;
-                //         }
-                //     } else {
-                //         // There is not enough space above. Render popovers below the hovered point
-                //         let mut current_y = hovered_point.y + layout.position_map.line_height;
-                //         for hover_popover in hover_popovers {
-                //             let size = hover_popover.size();
-                //             let mut popover_origin = point(hovered_point.x, current_y);
+                                current_y = popover_origin.y - HOVER_POPOVER_GAP;
+                            }
+                        } else {
+                            // There is not enough space above. Render popovers below the hovered point
+                            let mut current_y = hovered_point.y + layout.position_map.line_height;
+                            for mut hover_popover in hover_popovers {
+                                let size = hover_popover.measure(available_space, cx);
+                                let mut popover_origin = point(hovered_point.x, current_y);
 
-                //             let x_out_of_bounds = bounds.max_x - (popover_origin.x + size.x);
-                //             if x_out_of_bounds < 0.0 {
-                //                 popover_origin.set_x(popover_origin.x + x_out_of_bounds);
-                //             }
+                                let x_out_of_bounds =
+                                    text_bounds.upper_right().x - (popover_origin.x + size.width);
+                                if x_out_of_bounds < Pixels::ZERO {
+                                    popover_origin.x = popover_origin.x + x_out_of_bounds;
+                                }
 
-                //             hover_popover.paint(
-                //                 popover_origin,
-                //                 Bounds::<Pixels>::from_points(
-                //                     gpui::Point::<Pixels>::zero(),
-                //                     point(f32::MAX, f32::MAX),
-                //                 ), // Let content bleed outside of editor
-                //                 editor,
-                //                 cx,
-                //             );
+                                hover_popover.draw(popover_origin, available_space, cx);
 
-                //             current_y = popover_origin.y + size.y + HOVER_POPOVER_GAP;
-                //         }
-                //     }
-
-                //     cx.scene().pop_stacking_context();
-                // }
+                                current_y = popover_origin.y + size.height + HOVER_POPOVER_GAP;
+                            }
+                        }
+                    }
+                })
             },
         )
     }
@@ -1992,15 +1988,23 @@ impl EditorElement {
             }
 
             let visible_rows = start_row..start_row + line_layouts.len() as u32;
-            // todo!("hover")
-            // let mut hover = editor.hover_state.render(
-            //     &snapshot,
-            //     &style,
-            //     visible_rows,
-            //     editor.workspace.as_ref().map(|(w, _)| w.clone()),
-            //     cx,
-            // );
-            // let mode = editor.mode;
+            let max_size = size(
+                (120. * em_width) // Default size
+                    .min(bounds.size.width / 2.) // Shrink to half of the editor width
+                    .max(MIN_POPOVER_CHARACTER_WIDTH * em_width), // Apply minimum width of 20 characters
+                (16. * line_height) // Default size
+                    .min(bounds.size.height / 2.) // Shrink to half of the editor height
+                    .max(MIN_POPOVER_LINE_HEIGHT * line_height), // Apply minimum height of 4 lines
+            );
+
+            let mut hover = editor.hover_state.render(
+                &snapshot,
+                &style,
+                visible_rows,
+                max_size,
+                editor.workspace.as_ref().map(|(w, _)| w.clone()),
+                cx,
+            );
 
             let mut fold_indicators = cx.with_element_id(Some("gutter_fold_indicators"), |cx| {
                 editor.render_fold_indicators(
@@ -2012,27 +2016,6 @@ impl EditorElement {
                     cx,
                 )
             });
-
-            // todo!("hover popovers")
-            // if let Some((_, hover_popovers)) = hover.as_mut() {
-            //     for hover_popover in hover_popovers.iter_mut() {
-            //         hover_popover.layout(
-            //             SizeConstraint {
-            //                 min: gpui::Point::<Pixels>::zero(),
-            //                 max: point(
-            //                     (120. * em_width) // Default size
-            //                         .min(size.x / 2.) // Shrink to half of the editor width
-            //                         .max(MIN_POPOVER_CHARACTER_WIDTH * em_width), // Apply minimum width of 20 characters
-            //                     (16. * line_height) // Default size
-            //                         .min(size.y / 2.) // Shrink to half of the editor height
-            //                         .max(MIN_POPOVER_LINE_HEIGHT * line_height), // Apply minimum height of 4 lines
-            //                 ),
-            //             },
-            //             editor,
-            //             cx,
-            //         );
-            //     }
-            // }
 
             let invisible_symbol_font_size = font_size / 2.;
             let tab_invisible = cx
@@ -2102,7 +2085,7 @@ impl EditorElement {
                 fold_indicators,
                 tab_invisible,
                 space_invisible,
-                // hover_popovers: hover,
+                hover_popovers: hover,
             }
         })
     }
@@ -3287,7 +3270,7 @@ pub struct LayoutState {
     max_row: u32,
     context_menu: Option<(DisplayPoint, AnyElement)>,
     code_actions_indicator: Option<CodeActionsIndicator>,
-    // hover_popovers: Option<(DisplayPoint, Vec<AnyElement>)>,
+    hover_popovers: Option<(DisplayPoint, Vec<AnyElement>)>,
     fold_indicators: Vec<Option<IconButton>>,
     tab_invisible: ShapedLine,
     space_invisible: ShapedLine,

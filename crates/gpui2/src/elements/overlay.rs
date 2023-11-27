@@ -145,9 +145,11 @@ impl Element for Overlay {
         }
 
         cx.with_element_offset(desired.origin - bounds.origin, |cx| {
-            for child in self.children {
-                child.paint(cx);
-            }
+            cx.break_content_mask(|cx| {
+                for child in self.children {
+                    child.paint(cx);
+                }
+            })
         })
     }
 }
