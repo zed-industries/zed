@@ -371,6 +371,12 @@ impl CallHandler for TestCallHandler {
     fn toggle_mute(&self, cx: &mut AppContext) {}
 
     fn toggle_screen_share(&self, cx: &mut AppContext) {}
+
+    fn toggle_deafen(&self, cx: &mut AppContext) {}
+
+    fn is_deafened(&self, cx: &AppContext) -> Option<bool> {
+        None
+    }
 }
 
 impl AppState {
@@ -483,7 +489,9 @@ pub trait CallHandler {
     ) -> Task<Result<()>>;
     fn remote_participants(&self, cx: &AppContext) -> Option<Vec<(Arc<User>, PeerId)>>;
     fn is_muted(&self, cx: &AppContext) -> Option<bool>;
+    fn is_deafened(&self, cx: &AppContext) -> Option<bool>;
     fn toggle_mute(&self, cx: &mut AppContext);
+    fn toggle_deafen(&self, cx: &mut AppContext);
     fn toggle_screen_share(&self, cx: &mut AppContext);
 }
 

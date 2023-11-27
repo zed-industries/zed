@@ -686,6 +686,29 @@ impl CallHandler for Call {
             })
         });
     }
+    fn toggle_deafen(&self, cx: &mut AppContext) {
+        self.active_call.as_ref().map(|call| {
+            call.0.update(cx, |this, cx| {
+                this.room().map(|room| {
+                    room.update(cx, |this, cx| {
+                        this.toggle_deafen(cx).log_err();
+                    })
+                })
+            })
+        });
+    }
+    fn is_deafened(&self, cx: &AppContext) -> Option<bool> {
+        self.active_call
+            .as_ref()
+            .map(|call| {
+                call.0
+                    .read(cx)
+                    .room()
+                    .map(|room| room.read(cx).is_deafened())
+            })
+            .flatten()
+            .flatten()
+    }
 }
 
 #[cfg(test)]

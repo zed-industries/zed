@@ -111,6 +111,17 @@ impl Render for CollabTitlebarItem {
         } else {
             ui::Icon::Mic
         };
+        let speakers_icon = if self
+            .workspace
+            .update(cx, |this, cx| this.call_state().is_deafened(cx))
+            .log_err()
+            .flatten()
+            .unwrap_or_default()
+        {
+            ui::Icon::AudioOff
+        } else {
+            ui::Icon::AudioOn
+        };
         let workspace = self.workspace.clone();
         h_stack()
             .id("titlebar")
@@ -233,7 +244,16 @@ impl Render for CollabTitlebarItem {
                                             .log_err();
                                     }
                                 }))
-                                .child(IconButton::new("mute-sound", ui::Icon::AudioOn))
+                                .child(IconButton::new("mute-sound", speakers_icon).on_click({
+                                    let workspace = workspace.clone();
+                                    move |_, cx| {
+                                        workspace
+                                            .update(cx, |this, cx| {
+                                                this.call_state().toggle_deafen(cx);
+                                            })
+                                            .log_err();
+                                    }
+                                }))
                                 .child(IconButton::new("screen-share", ui::Icon::Screen).on_click(
                                     move |_, cx| {
                                         workspace
