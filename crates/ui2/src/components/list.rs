@@ -5,7 +5,8 @@ use smallvec::SmallVec;
 use std::rc::Rc;
 
 use crate::{
-    disclosure_control, h_stack, v_stack, Avatar, Icon, IconElement, IconSize, Label, Toggle,
+    disclosure_control, h_stack, v_stack, Avatar, Icon, IconButton, IconElement, IconSize, Label,
+    Toggle,
 };
 use crate::{prelude::*, GraphicSlot};
 
@@ -18,8 +19,7 @@ pub enum ListItemVariant {
 }
 
 pub enum ListHeaderMeta {
-    // TODO: These should be IconButtons
-    Tools(Vec<Icon>),
+    Tools(Vec<IconButton>),
     // TODO: This should be a button
     Button(Label),
     Text(Label),
@@ -45,11 +45,7 @@ impl RenderOnce for ListHeader {
                 h_stack()
                     .gap_2()
                     .items_center()
-                    .children(icons.into_iter().map(|i| {
-                        IconElement::new(i)
-                            .color(Color::Muted)
-                            .size(IconSize::Small)
-                    })),
+                    .children(icons.into_iter().map(|i| i.color(Color::Muted))),
             ),
             Some(ListHeaderMeta::Button(label)) => div().child(label),
             Some(ListHeaderMeta::Text(label)) => div().child(label),
@@ -111,6 +107,10 @@ impl ListHeader {
     pub fn left_icon(mut self, left_icon: Option<Icon>) -> Self {
         self.left_icon = left_icon;
         self
+    }
+
+    pub fn right_button(self, button: IconButton) -> Self {
+        self.meta(Some(ListHeaderMeta::Tools(vec![button])))
     }
 
     pub fn meta(mut self, meta: Option<ListHeaderMeta>) -> Self {

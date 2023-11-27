@@ -155,19 +155,19 @@ actions!(
 
 const COLLABORATION_PANEL_KEY: &'static str = "CollaborationPanel";
 
-use std::sync::Arc;
+use std::{iter::once, sync::Arc};
 
 use client::{Client, Contact, UserStore};
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
     actions, div, serde_json, AppContext, AsyncWindowContext, Div, EventEmitter, FocusHandle,
-    Focusable, FocusableView, InteractiveElement, Model, ParentElement, Render, Styled, View,
-    ViewContext, VisualContext, WeakView,
+    Focusable, FocusableView, InteractiveElement, IntoElement, Model, ParentElement, Render,
+    RenderOnce, Styled, View, ViewContext, VisualContext, WeakView,
 };
 use project::Fs;
 use serde_derive::{Deserialize, Serialize};
 use settings::Settings;
-use ui::{h_stack, v_stack, Avatar, Button, Label};
+use ui::{h_stack, v_stack, Avatar, Button, Icon, IconButton, Label, List, ListHeader};
 use util::ResultExt;
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
@@ -309,7 +309,7 @@ pub struct CollabPanel {
     // match_candidates: Vec<StringMatchCandidate>,
     // list_state: ListState<Self>,
     // subscriptions: Vec<Subscription>,
-    // collapsed_sections: Vec<Section>,
+    collapsed_sections: Vec<Section>,
     // collapsed_channels: Vec<ChannelId>,
     // drag_target_channel: ChannelDragTarget,
     workspace: WeakView<Workspace>,
@@ -336,16 +336,16 @@ struct SerializedCollabPanel {
 //     Dismissed,
 // }
 
-// #[derive(Clone, Copy, PartialEq, Eq, Debug, PartialOrd, Ord)]
-// enum Section {
-//     ActiveCall,
-//     Channels,
-//     ChannelInvites,
-//     ContactRequests,
-//     Contacts,
-//     Online,
-//     Offline,
-// }
+#[derive(Clone, Copy, PartialEq, Eq, Debug, PartialOrd, Ord)]
+enum Section {
+    //     ActiveCall,
+    //     Channels,
+    //     ChannelInvites,
+    //     ContactRequests,
+    Contacts,
+    //     Online,
+    Offline,
+}
 
 // #[derive(Clone, Debug)]
 // enum ListEntry {
@@ -603,7 +603,7 @@ impl CollabPanel {
                 //                 project: workspace.project().clone(),
                 //                 subscriptions: Vec::default(),
                 //                 match_candidates: Vec::default(),
-                //                 collapsed_sections: vec![Section::Offline],
+                collapsed_sections: vec![Section::Offline],
                 //                 collapsed_channels: Vec::default(),
                 workspace: workspace.weak_handle(),
                 client: workspace.app_state().client.clone(),
@@ -3269,11 +3269,23 @@ impl CollabPanel {
         )))
     }
 
-    fn render_signed_in(&mut self, cx: &mut ViewContext<Self>) -> Div {
+    fn render_signed_in(&mut self, cx: &mut ViewContext<Self>) -> List {
         let contacts = self.contacts(cx).unwrap_or_default();
         let workspace = self.workspace.clone();
 
-        v_stack().children(contacts.into_iter().map(|contact| {
+        let children = once(
+            ListHeader::new("Contacts")
+                .right_button(
+                    IconButton::new("add-contact", Icon::Plus).on_click(cx.listener(
+                        |this, _, cx| {
+                            todo!();
+                            //this.toggle_contact_finder(cx);
+                        },
+                    )),
+                )
+                .render(cx),
+        )
+        .chain(contacts.into_iter().map(|contact| {
             let id = contact.user.id;
             h_stack()
                 .p_2()
@@ -3298,7 +3310,9 @@ impl CollabPanel {
                             .log_err();
                     }
                 })
-        }))
+        }));
+
+        List::new().children(children)
     }
 }
 
@@ -3354,10 +3368,12 @@ impl Render for CollabPanel {
         div()
             .key_context("CollabPanel")
             .track_focus(&self.focus_handle)
-            .child(if self.user_store.read(cx).current_user().is_none() {
-                self.render_signed_out(cx)
-            } else {
-                self.render_signed_in(cx)
+            .map(|el| {
+                if self.user_store.read(cx).current_user().is_none() {
+                    el.child(self.render_signed_out(cx))
+                } else {
+                    el.child(self.render_signed_in(cx))
+                }
             })
     }
 }
