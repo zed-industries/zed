@@ -9,7 +9,6 @@ pub mod pane_group;
 mod persistence;
 pub mod searchable;
 // todo!()
-// pub mod shared_screen;
 mod modal_layer;
 mod status_bar;
 mod toolbar;
