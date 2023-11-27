@@ -6,13 +6,16 @@ use crate::{
 };
 use futures::FutureExt;
 use gpui::{
-    actions, div, px, AnyElement, AppContext, InteractiveElement, IntoElement, Model, MouseButton,
-    ParentElement, Pixels, Size, StatefulInteractiveElement, Styled, Task, ViewContext, WeakView,
+    actions, div, px, AnyElement, AppContext, CursorStyle, InteractiveElement, IntoElement, Model,
+    MouseButton, ParentElement, Pixels, SharedString, Size, StatefulInteractiveElement, Styled,
+    Task, ViewContext, WeakView,
 };
 use language::{markdown, Bias, DiagnosticEntry, Language, LanguageRegistry, ParsedMarkdown};
+use lsp::DiagnosticSeverity;
 use project::{HoverBlock, HoverBlockKind, InlayHintLabelPart, Project};
 use settings::Settings;
 use std::{ops::Range, sync::Arc, time::Duration};
+use ui::Tooltip;
 use util::TryFutureExt;
 use workspace::Workspace;
 
@@ -507,56 +510,34 @@ impl DiagnosticPopover {
         max_size: Size<Pixels>,
         cx: &mut ViewContext<Editor>,
     ) -> AnyElement {
-        todo!()
-        // enum PrimaryDiagnostic {}
+        let text = match &self.local_diagnostic.diagnostic.source {
+            Some(source) => format!("{source}: {}", self.local_diagnostic.diagnostic.message),
+            None => self.local_diagnostic.diagnostic.message.clone(),
+        };
 
-        // let mut text_style = style.hover_popover.prose.clone();
-        // text_style.font_size = style.text.font_size;
-        // let diagnostic_source_style = style.hover_popover.diagnostic_source_highlight.clone();
+        let container_bg = crate::diagnostic_style(
+            self.local_diagnostic.diagnostic.severity,
+            true,
+            &style.diagnostic_style,
+        );
 
-        // let text = match &self.local_diagnostic.diagnostic.source {
-        //     Some(source) => Text::new(
-        //         format!("{source}: {}", self.local_diagnostic.diagnostic.message),
-        //         text_style,
-        //     )
-        //     .with_highlights(vec![(0..source.len(), diagnostic_source_style)]),
-
-        //     None => Text::new(self.local_diagnostic.diagnostic.message.clone(), text_style),
-        // };
-
-        // let container_style = match self.local_diagnostic.diagnostic.severity {
-        //     DiagnosticSeverity::HINT => style.hover_popover.info_container,
-        //     DiagnosticSeverity::INFORMATION => style.hover_popover.info_container,
-        //     DiagnosticSeverity::WARNING => style.hover_popover.warning_container,
-        //     DiagnosticSeverity::ERROR => style.hover_popover.error_container,
-        //     _ => style.hover_popover.container,
-        // };
-
-        // let tooltip_style = theme::current(cx).tooltip.clone();
-
-        // MouseEventHandler::new::<DiagnosticPopover, _>(0, cx, |_, _| {
-        //     text.with_soft_wrap(true)
-        //         .contained()
-        //         .with_style(container_style)
-        // })
-        // .with_padding(Padding {
-        //     top: HOVER_POPOVER_GAP,
-        //     bottom: HOVER_POPOVER_GAP,
-        //     ..Default::default()
-        // })
-        // .on_move(|_, _, _| {}) // Consume move events so they don't reach regions underneath.
-        // .on_click(MouseButton::Left, |_, this, cx| {
-        //     this.go_to_diagnostic(&Default::default(), cx)
-        // })
-        // .with_cursor_style(CursorStyle::PointingHand)
-        // .with_tooltip::<PrimaryDiagnostic>(
-        //     0,
-        //     "Go To Diagnostic".to_string(),
-        //     Some(Box::new(crate::GoToDiagnostic)),
-        //     tooltip_style,
-        //     cx,
-        // )
-        // .into_any()
+        div()
+            .id("diagnostic")
+            .overflow_y_scroll()
+            .bg(container_bg)
+            .max_w(max_size.width)
+            .max_h(max_size.height)
+            .cursor(CursorStyle::PointingHand)
+            .tooltip(move |cx| Tooltip::for_action("Go To Diagnostic", &crate::GoToDiagnostic, cx))
+            // Prevent a mouse move on the popover from being propagated to the editor,
+            // because that would dismiss the popover.
+            .on_mouse_move(|_, cx| cx.stop_propagation())
+            // Prevent a mouse down on the popover from being propagated to the editor,
+            // because that would move the cursor.
+            .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
+            .on_click(cx.listener(|editor, _, cx| editor.go_to_diagnostic(&Default::default(), cx)))
+            .child(SharedString::from(text))
+            .into_any_element()
     }
 
     pub fn activation_info(&self) -> (usize, Anchor) {
