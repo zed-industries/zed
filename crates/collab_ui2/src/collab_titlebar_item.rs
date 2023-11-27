@@ -233,9 +233,11 @@ impl Render for CollabTitlebarItem {
                                 .child(IconButton::new("leave-call", ui::Icon::Exit).on_click({
                                     let workspace = workspace.clone();
                                     move |_, cx| {
-                                        workspace.update(cx, |this, cx| {
-                                            this.call_state().hang_up(cx).detach();
-                                        });
+                                        workspace
+                                            .update(cx, |this, cx| {
+                                                this.call_state().hang_up(cx).detach();
+                                            })
+                                            .log_err();
                                     }
                                 })),
                         )

@@ -1,8 +1,6 @@
 use gpui::{
-    div, AnyElement, Div, IntoElement as _, ParentElement as _, Render, RenderOnce, Styled,
-    ViewContext, WindowContext,
+    div, AnyElement, Div, IntoElement as _, ParentElement as _, RenderOnce, Styled, WindowContext,
 };
-use ui::Avatar;
 
 #[derive(Default)]
 pub(crate) struct FacePile {

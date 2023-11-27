@@ -3,7 +3,7 @@ pub mod participant;
 pub mod room;
 mod shared_screen;
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use audio::Audio;
 use call_settings::CallSettings;
@@ -14,8 +14,8 @@ use client::{
 use collections::HashSet;
 use futures::{channel::oneshot, future::Shared, Future, FutureExt};
 use gpui::{
-    AppContext, AsyncAppContext, AsyncWindowContext, Context, EventEmitter, Model, ModelContext,
-    Subscription, Task, View, ViewContext, VisualContext, WeakModel, WeakView,
+    AppContext, AsyncAppContext, Context, EventEmitter, Model, ModelContext, Subscription, Task,
+    View, ViewContext, VisualContext, WeakModel, WeakView,
 };
 pub use participant::ParticipantLocation;
 use postage::watch;
@@ -609,7 +609,7 @@ impl CallHandler for Call {
     fn room_id(&self, cx: &AppContext) -> Option<u64> {
         Some(self.active_call.as_ref()?.0.read(cx).room()?.read(cx).id())
     }
-    fn hang_up(&self, mut cx: &mut AppContext) -> Task<Result<()>> {
+    fn hang_up(&self, cx: &mut AppContext) -> Task<Result<()>> {
         let Some((call, _)) = self.active_call.as_ref() else {
             return Task::ready(Err(anyhow!("Cannot exit a call; not in a call")));
         };
