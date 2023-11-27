@@ -580,7 +580,7 @@ impl AppContext {
             .windows
             .iter()
             .filter_map(|(_, window)| {
-                let window = window.as_ref().unwrap();
+                let window = window.as_ref()?;
                 if window.dirty {
                     Some(window.handle.clone())
                 } else {
@@ -1049,7 +1049,9 @@ impl Context for AppContext {
             let root_view = window.root_view.clone().unwrap();
             let result = update(root_view, &mut WindowContext::new(cx, &mut window));
 
-            if !window.removed {
+            if window.removed {
+                cx.windows.remove(handle.id);
+            } else {
                 cx.windows
                     .get_mut(handle.id)
                     .ok_or_else(|| anyhow!("window not found"))?
