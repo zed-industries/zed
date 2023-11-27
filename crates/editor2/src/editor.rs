@@ -530,8 +530,6 @@ pub fn init(cx: &mut AppContext) {
     // cx.register_action_type(Editor::context_menu_next);
     // cx.register_action_type(Editor::context_menu_last);
 
-    hover_popover::init(cx);
-
     workspace::register_project_item::<Editor>(cx);
     workspace::register_followable_item::<Editor>(cx);
     workspace::register_deserializable_item::<Editor>(cx);
