@@ -264,7 +264,7 @@ impl<M: ManagedView> Element for MenuHandle<M> {
 
                 let new_menu = (builder)(cx);
                 let menu2 = menu.clone();
-                cx.subscribe(&new_menu, move |modal, e, cx| match e {
+                cx.subscribe(&new_menu, move |_modal, e, cx| match e {
                     &DismissEvent::Dismiss => {
                         *menu2.borrow_mut() = None;
                         cx.notify();

@@ -138,7 +138,7 @@ impl ListSubHeader {
 impl RenderOnce for ListSubHeader {
     type Rendered = Div;
 
-    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
+    fn render(self, _cx: &mut WindowContext) -> Self::Rendered {
         h_stack().flex_1().w_full().relative().py_1().child(
             div()
                 .h_6()
@@ -168,14 +168,12 @@ impl RenderOnce for ListSubHeader {
 #[derive(IntoElement)]
 pub struct ListItem {
     id: ElementId,
-    disabled: bool,
     selected: bool,
     // TODO: Reintroduce this
     // disclosure_control_style: DisclosureControlVisibility,
     indent_level: usize,
     indent_step_size: Pixels,
     left_slot: Option<GraphicSlot>,
-    overflow: OverflowStyle,
     toggle: Toggle,
     inset: bool,
     on_click: Option<Rc<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
@@ -187,12 +185,10 @@ impl ListItem {
     pub fn new(id: impl Into<ElementId>) -> Self {
         Self {
             id: id.into(),
-            disabled: false,
             selected: false,
             indent_level: 0,
             indent_step_size: px(12.),
             left_slot: None,
-            overflow: OverflowStyle::Hidden,
             toggle: Toggle::NotToggleable,
             inset: false,
             on_click: None,
@@ -365,7 +361,7 @@ pub struct List {
 impl RenderOnce for List {
     type Rendered = Div;
 
-    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
+    fn render(self, _cx: &mut WindowContext) -> Self::Rendered {
         let list_content = match (self.children.is_empty(), self.toggle) {
             (false, _) => div().children(self.children),
             (true, Toggle::Toggled(false)) => div(),

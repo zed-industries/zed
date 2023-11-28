@@ -16,12 +16,6 @@ pub enum IconSide {
     Right,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, EnumIter)]
-pub enum OverflowStyle {
-    Hidden,
-    Wrap,
-}
-
 #[derive(Default, PartialEq, Copy, Clone, EnumIter, strum::Display)]
 pub enum InteractionState {
     /// An element that is enabled and not hovered, active, focused, or disabled.

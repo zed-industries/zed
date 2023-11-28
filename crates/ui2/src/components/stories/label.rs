@@ -9,7 +9,7 @@ pub struct LabelStory;
 impl Render for LabelStory {
     type Element = Div;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
         Story::container()
             .child(Story::title_for::<Label>())
             .child(Story::label("Default"))

@@ -13,7 +13,7 @@ pub struct Tooltip {
 
 impl Tooltip {
     pub fn text(title: impl Into<SharedString>, cx: &mut WindowContext) -> AnyView {
-        cx.build_view(|cx| Self {
+        cx.build_view(|_cx| Self {
             title: title.into(),
             meta: None,
             key_binding: None,
