@@ -231,23 +231,16 @@ impl RenderOnce for ListSubHeader {
     }
 }
 
-#[derive(Default, PartialEq, Copy, Clone)]
-pub enum ListEntrySize {
-    #[default]
-    Small,
-    Medium,
-}
-
 #[derive(IntoElement)]
 pub struct ListItem {
     id: ElementId,
     disabled: bool,
+    selected: bool,
     // TODO: Reintroduce this
     // disclosure_control_style: DisclosureControlVisibility,
     indent_level: u32,
     left_slot: Option<GraphicSlot>,
     overflow: OverflowStyle,
-    size: ListEntrySize,
     toggle: Toggle,
     variant: ListItemVariant,
     on_click: Option<Rc<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
@@ -259,10 +252,10 @@ impl ListItem {
         Self {
             id: id.into(),
             disabled: false,
+            selected: false,
             indent_level: 0,
             left_slot: None,
             overflow: OverflowStyle::Hidden,
-            size: ListEntrySize::default(),
             toggle: Toggle::NotToggleable,
             variant: ListItemVariant::default(),
             on_click: Default::default(),
@@ -290,6 +283,11 @@ impl ListItem {
         self
     }
 
+    pub fn selected(mut self, selected: bool) -> Self {
+        self.selected = selected;
+        self
+    }
+
     pub fn left_content(mut self, left_content: GraphicSlot) -> Self {
         self.left_slot = Some(left_content);
         self
@@ -302,11 +300,6 @@ impl ListItem {
 
     pub fn left_avatar(mut self, left_avatar: impl Into<SharedString>) -> Self {
         self.left_slot = Some(GraphicSlot::Avatar(left_avatar.into()));
-        self
-    }
-
-    pub fn size(mut self, size: ListEntrySize) -> Self {
-        self.size = size;
         self
     }
 }
@@ -328,10 +321,6 @@ impl RenderOnce for ListItem {
             None => None,
         };
 
-        let sized_item = match self.size {
-            ListEntrySize::Small => div().h_6(),
-            ListEntrySize::Medium => div().h_7(),
-        };
         div()
             .id(self.id)
             .relative()
@@ -354,8 +343,11 @@ impl RenderOnce for ListItem {
             // })
             .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
             .active(|style| style.bg(cx.theme().colors().ghost_element_active))
+            .when(self.selected, |this| {
+                this.bg(cx.theme().colors().ghost_element_selected)
+            })
             .child(
-                sized_item
+                div()
                     .when(self.variant == ListItemVariant::Inset, |this| this.px_2())
                     // .ml(rems(0.75 * self.indent_level as f32))
                     .children((0..self.indent_level).map(|_| {
