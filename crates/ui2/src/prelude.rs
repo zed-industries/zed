@@ -5,7 +5,7 @@ pub use gpui::{
 
 pub use crate::StyledExt;
 pub use crate::{ButtonVariant, Color};
-pub use theme2::ActiveTheme;
+pub use theme::ActiveTheme;
 
 use strum::EnumIter;
 
@@ -15,6 +15,7 @@ pub enum IconSide {
     Left,
     Right,
 }
+
 
 #[derive(Default, PartialEq, Copy, Clone, EnumIter, strum::Display)]
 pub enum InteractionState {
