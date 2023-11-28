@@ -3044,7 +3044,7 @@ impl CollabPanel {
         })
         .unwrap_or(false);
 
-        let has_messages_notification = channel.unseen_message_id.is_some() || true;
+        let has_messages_notification = channel.unseen_message_id.is_some();
         let has_notes_notification = channel.unseen_note_version.is_some();
 
         const FACEPILE_LIMIT: usize = 3;
@@ -3092,11 +3092,10 @@ impl CollabPanel {
                                 .child(
                                     div()
                                         .id("channel_chat")
-                                        .bg(gpui::blue())
                                         .when(!has_messages_notification, |el| el.invisible())
                                         .group_hover("", |style| style.visible())
                                         .child(
-                                            IconButton::new("test_chat", Icon::MessageBubbles)
+                                            IconButton::new("channel_chat", Icon::MessageBubbles)
                                                 .color(if has_messages_notification {
                                                     Color::Default
                                                 } else {
@@ -3111,20 +3110,16 @@ impl CollabPanel {
                                         .when(!has_notes_notification, |el| el.invisible())
                                         .group_hover("", |style| style.visible())
                                         .child(
-                                            div().child("Notes").id("test_notes").tooltip(|cx| {
-                                                Tooltip::text("Open channel notes", cx)
-                                            }),
-                                        ), // .child(
-                                           //     IconButton::new("channel_notes", Icon::File)
-                                           //         .color(if has_notes_notification {
-                                           //             Color::Default
-                                           //         } else {
-                                           //             Color::Muted
-                                           //         })
-                                           //         .tooltip(|cx| {
-                                           //             Tooltip::text("Open channel notes", cx)
-                                           //         }),
-                                           // ),
+                                            IconButton::new("channel_notes", Icon::File)
+                                                .color(if has_notes_notification {
+                                                    Color::Default
+                                                } else {
+                                                    Color::Muted
+                                                })
+                                                .tooltip(|cx| {
+                                                    Tooltip::text("Open channel notes", cx)
+                                                }),
+                                        ),
                                 ),
                         ),
                 )
