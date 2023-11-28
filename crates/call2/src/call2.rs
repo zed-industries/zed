@@ -14,8 +14,8 @@ use client::{
 use collections::HashSet;
 use futures::{channel::oneshot, future::Shared, Future, FutureExt};
 use gpui::{
-    AppContext, AsyncAppContext, Context, EventEmitter, Model, ModelContext, Subscription, Task,
-    View, ViewContext, VisualContext, WeakModel, WeakView,
+    AppContext, AsyncAppContext, Context, EventEmitter, Model, ModelContext, PromptLevel,
+    Subscription, Task, View, ViewContext, VisualContext, WeakModel, WeakView, WindowHandle,
 };
 pub use participant::ParticipantLocation;
 use postage::watch;
@@ -334,12 +334,55 @@ impl ActiveCall {
     pub fn join_channel(
         &mut self,
         channel_id: u64,
+        requesting_window: WindowHandle<Workspace>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Option<Model<Room>>>> {
         if let Some(room) = self.room().cloned() {
             if room.read(cx).channel_id() == Some(channel_id) {
-                return Task::ready(Ok(Some(room)));
-            } else {
+                return cx.spawn(|_, _| async move {
+                    todo!();
+                    // let future = room.update(&mut cx, |room, cx| {
+                    //     room.most_active_project(cx).map(|(host, project)| {
+                    //         room.join_project(project, host, app_state.clone(), cx)
+                    //     })
+                    // })
+
+                    // if let Some(future) = future {
+                    //     future.await?;
+                    // }
+
+                    // Ok(Some(room))
+                });
+            }
+
+            let should_prompt = room.update(cx, |room, _| {
+                room.channel_id().is_some()
+                    && room.is_sharing_project()
+                    && room.remote_participants().len() > 0
+            });
+            if should_prompt {
+                return cx.spawn(|this, mut cx| async move {
+                    let answer = requesting_window.update(&mut cx, |_, cx| {
+                        cx.prompt(
+                            PromptLevel::Warning,
+                            "Leaving this call will unshare your current project.\nDo you want to switch channels?",
+                            &["Yes, Join Channel", "Cancel"],
+                        )
+                    })?;
+                    if answer.await? == 1 {
+                        return Ok(None);
+                    }
+
+                    room.update(&mut cx, |room, cx| room.clear_state(cx))?;
+
+                    this.update(&mut cx, |this, cx| {
+                        this.join_channel(channel_id, requesting_window, cx)
+                    })?
+                    .await
+                });
+            }
+
+            if room.read(cx).channel_id().is_some() {
                 room.update(cx, |room, cx| room.clear_state(cx));
             }
         }
