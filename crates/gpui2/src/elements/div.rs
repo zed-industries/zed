@@ -755,6 +755,14 @@ impl Interactivity {
     ) {
         let style = self.compute_style(Some(bounds), element_state, cx);
 
+        if style
+            .background
+            .as_ref()
+            .is_some_and(|fill| fill.color().is_some_and(|color| !color.is_transparent()))
+        {
+            cx.with_z_index(style.z_index.unwrap_or(0), |cx| cx.add_opaque_layer(bounds))
+        }
+
         if let Some(mouse_cursor) = style.mouse_cursor {
             let hovered = bounds.contains_point(&cx.mouse_position());
             if hovered {
@@ -1098,19 +1106,21 @@ impl Interactivity {
                     }
                 }
             }
-            // if self.hover_style.is_some() {
-            if bounds.contains_point(&mouse_position) {
-                // eprintln!("div hovered {bounds:?} {mouse_position:?}");
-                style.refine(&self.hover_style);
-            } else {
-                // eprintln!("div NOT hovered {bounds:?} {mouse_position:?}");
+            if self.hover_style.is_some() {
+                if bounds
+                    .intersect(&cx.content_mask().bounds)
+                    .contains_point(&mouse_position)
+                    && cx.was_top_layer(&mouse_position, cx.stacking_order())
+                {
+                    style.refine(&self.hover_style);
+                }
             }
-            // }
 
             if let Some(drag) = cx.active_drag.take() {
                 for (state_type, group_drag_style) in &self.group_drag_over_styles {
                     if let Some(group_bounds) = GroupBounds::get(&group_drag_style.group, cx) {
                         if *state_type == drag.view.entity_type()
+                        // todo!() needs to handle cx.content_mask() and cx.is_top()
                             && group_bounds.contains_point(&mouse_position)
                         {
                             style.refine(&group_drag_style.style);
@@ -1120,7 +1130,10 @@ impl Interactivity {
 
                 for (state_type, drag_over_style) in &self.drag_over_styles {
                     if *state_type == drag.view.entity_type()
-                        && bounds.contains_point(&mouse_position)
+                        && bounds
+                            .intersect(&cx.content_mask().bounds)
+                            .contains_point(&mouse_position)
+                        && cx.was_top_layer(&mouse_position, cx.stacking_order())
                     {
                         style.refine(drag_over_style);
                     }
