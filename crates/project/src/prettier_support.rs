@@ -671,11 +671,7 @@ impl Project {
                     .map_err(Arc::new)?
                 {
                     ControlFlow::Break(()) => return Ok(()),
-                    ControlFlow::Continue(Some(_non_default_prettier)) => {
-                        save_prettier_server_file(fs.as_ref()).await?;
-                        return Ok(());
-                    }
-                    ControlFlow::Continue(None) => {
+                    ControlFlow::Continue(_) => {
                         let mut needs_install = match previous_installation_task {
                             Some(previous_installation_task) => {
                                 match previous_installation_task.await {
