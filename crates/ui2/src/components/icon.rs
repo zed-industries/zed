@@ -203,17 +203,4 @@ impl IconElement {
         self.size = size;
         self
     }
-
-    fn render(self, cx: &mut WindowContext) -> impl Element {
-        let svg_size = match self.size {
-            IconSize::Small => rems(0.75),
-            IconSize::Medium => rems(0.9375),
-        };
-
-        svg()
-            .size(svg_size)
-            .flex_none()
-            .path(self.path)
-            .text_color(self.color.color(cx))
-    }
 }

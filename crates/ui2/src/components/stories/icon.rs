@@ -10,7 +10,7 @@ pub struct IconStory;
 impl Render for IconStory {
     type Element = Div;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
         let icons = Icon::iter();
 
         Story::container()

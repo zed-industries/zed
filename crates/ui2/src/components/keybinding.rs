@@ -13,7 +13,7 @@ pub struct KeyBinding {
 impl RenderOnce for KeyBinding {
     type Rendered = Div;
 
-    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
+    fn render(self, _cx: &mut WindowContext) -> Self::Rendered {
         h_stack()
             .flex_none()
             .gap_2()

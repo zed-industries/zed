@@ -304,19 +304,16 @@ impl PickerDelegate for CommandPaletteDelegate {
         };
 
         Some(
-            ListItem::new(ix)
-                .variant(ui::ListItemVariant::Inset)
-                .selected(selected)
-                .child(
-                    h_stack()
-                        .w_full()
-                        .justify_between()
-                        .child(HighlightedLabel::new(
-                            command.name.clone(),
-                            r#match.positions.clone(),
-                        ))
-                        .children(KeyBinding::for_action(&*command.action, cx)),
-                ),
+            ListItem::new(ix).inset(true).selected(selected).child(
+                h_stack()
+                    .w_full()
+                    .justify_between()
+                    .child(HighlightedLabel::new(
+                        command.name.clone(),
+                        r#match.positions.clone(),
+                    ))
+                    .children(KeyBinding::for_action(&*command.action, cx)),
+            ),
         )
     }
 }
