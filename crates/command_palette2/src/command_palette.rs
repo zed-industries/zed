@@ -79,7 +79,7 @@ impl Render for CommandPalette {
     type Element = Div;
 
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
-        v_stack().w_96().child(self.picker.clone())
+        v_stack().min_w_96().child(self.picker.clone())
     }
 }
 
@@ -303,6 +303,7 @@ impl PickerDelegate for CommandPaletteDelegate {
         Some(
             ListItem::new(ix).inset(true).selected(selected).child(
                 h_stack()
+                    .w_full()
                     .justify_between()
                     .child(HighlightedLabel::new(
                         command.name.clone(),
