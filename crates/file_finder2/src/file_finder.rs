@@ -719,7 +719,7 @@ impl PickerDelegate for FileFinderDelegate {
             self.labels_for_match(path_match, cx, ix);
 
         Some(
-            ListItem::new(ix).selected(selected).child(
+            ListItem::new(ix).inset(true).selected(selected).child(
                 v_stack()
                     .child(HighlightedLabel::new(file_name, file_name_positions))
                     .child(HighlightedLabel::new(full_path, full_path_positions)),
