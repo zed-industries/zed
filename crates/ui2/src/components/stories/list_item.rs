@@ -22,5 +22,13 @@ impl Render for ListItemStory {
                         println!("Clicked!");
                     }),
             )
+            .child(Story::label("With `on_secondary_mouse_down`"))
+            .child(
+                ListItem::new("with_on_secondary_mouse_down").on_secondary_mouse_down(
+                    |_event, _cx| {
+                        println!("Right mouse down!");
+                    },
+                ),
+            )
     }
 }

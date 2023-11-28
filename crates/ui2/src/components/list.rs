@@ -1,8 +1,10 @@
+use std::rc::Rc;
+
 use gpui::{
-    div, px, AnyElement, ClickEvent, Div, IntoElement, Stateful, StatefulInteractiveElement,
+    div, px, AnyElement, ClickEvent, Div, IntoElement, MouseButton, MouseDownEvent, Pixels,
+    Stateful, StatefulInteractiveElement,
 };
 use smallvec::SmallVec;
-use std::rc::Rc;
 
 use crate::{
     disclosure_control, h_stack, v_stack, Avatar, Icon, IconElement, IconSize, Label, Toggle,
@@ -117,66 +119,6 @@ impl ListHeader {
         self.meta = meta;
         self
     }
-
-    // before_ship!("delete")
-    // fn render<V: 'static>(self,  cx: &mut WindowContext) -> impl Element<V> {
-    //     let disclosure_control = disclosure_control(self.toggle);
-
-    //     let meta = match self.meta {
-    //         Some(ListHeaderMeta::Tools(icons)) => div().child(
-    //             h_stack()
-    //                 .gap_2()
-    //                 .items_center()
-    //                 .children(icons.into_iter().map(|i| {
-    //                     IconElement::new(i)
-    //                         .color(TextColor::Muted)
-    //                         .size(IconSize::Small)
-    //                 })),
-    //         ),
-    //         Some(ListHeaderMeta::Button(label)) => div().child(label),
-    //         Some(ListHeaderMeta::Text(label)) => div().child(label),
-    //         None => div(),
-    //     };
-
-    //     h_stack()
-    //         .w_full()
-    //         .bg(cx.theme().colors().surface_background)
-    //         // TODO: Add focus state
-    //         // .when(self.state == InteractionState::Focused, |this| {
-    //         //     this.border()
-    //         //         .border_color(cx.theme().colors().border_focused)
-    //         // })
-    //         .relative()
-    //         .child(
-    //             div()
-    //                 .h_5()
-    //                 .when(self.variant == ListItemVariant::Inset, |this| this.px_2())
-    //                 .flex()
-    //                 .flex_1()
-    //                 .items_center()
-    //                 .justify_between()
-    //                 .w_full()
-    //                 .gap_1()
-    //                 .child(
-    //                     h_stack()
-    //                         .gap_1()
-    //                         .child(
-    //                             div()
-    //                                 .flex()
-    //                                 .gap_1()
-    //                                 .items_center()
-    //                                 .children(self.left_icon.map(|i| {
-    //                                     IconElement::new(i)
-    //                                         .color(TextColor::Muted)
-    //                                         .size(IconSize::Small)
-    //                                 }))
-    //                                 .child(Label::new(self.label.clone()).color(TextColor::Muted)),
-    //                         )
-    //                         .child(disclosure_control),
-    //                 )
-    //                 .child(meta),
-    //         )
-    // }
 }
 
 #[derive(IntoElement, Clone)]
@@ -238,12 +180,14 @@ pub struct ListItem {
     selected: bool,
     // TODO: Reintroduce this
     // disclosure_control_style: DisclosureControlVisibility,
-    indent_level: u32,
+    indent_level: usize,
+    indent_step_size: Pixels,
     left_slot: Option<GraphicSlot>,
     overflow: OverflowStyle,
     toggle: Toggle,
     variant: ListItemVariant,
     on_click: Option<Rc<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
+    on_secondary_mouse_down: Option<Rc<dyn Fn(&MouseDownEvent, &mut WindowContext) + 'static>>,
     children: SmallVec<[AnyElement; 2]>,
 }
 
@@ -254,11 +198,13 @@ impl ListItem {
             disabled: false,
             selected: false,
             indent_level: 0,
+            indent_step_size: px(12.),
             left_slot: None,
             overflow: OverflowStyle::Hidden,
             toggle: Toggle::NotToggleable,
             variant: ListItemVariant::default(),
-            on_click: Default::default(),
+            on_click: None,
+            on_secondary_mouse_down: None,
             children: SmallVec::new(),
         }
     }
@@ -268,13 +214,26 @@ impl ListItem {
         self
     }
 
+    pub fn on_secondary_mouse_down(
+        mut self,
+        handler: impl Fn(&MouseDownEvent, &mut WindowContext) + 'static,
+    ) -> Self {
+        self.on_secondary_mouse_down = Some(Rc::new(handler));
+        self
+    }
+
     pub fn variant(mut self, variant: ListItemVariant) -> Self {
         self.variant = variant;
         self
     }
 
-    pub fn indent_level(mut self, indent_level: u32) -> Self {
+    pub fn indent_level(mut self, indent_level: usize) -> Self {
         self.indent_level = indent_level;
+        self
+    }
+
+    pub fn indent_step_size(mut self, indent_step_size: Pixels) -> Self {
+        self.indent_step_size = indent_step_size;
         self
     }
 
@@ -328,14 +287,6 @@ impl RenderOnce for ListItem {
                 style.background = Some(cx.theme().colors().editor_background.into());
                 style
             })
-            .on_click({
-                let on_click = self.on_click.clone();
-                move |event, cx| {
-                    if let Some(on_click) = &on_click {
-                        (on_click)(event, cx)
-                    }
-                }
-            })
             // TODO: Add focus state
             // .when(self.state == InteractionState::Focused, |this| {
             //     this.border()
@@ -346,30 +297,45 @@ impl RenderOnce for ListItem {
             .when(self.selected, |this| {
                 this.bg(cx.theme().colors().ghost_element_selected)
             })
+            .when_some(self.on_click.clone(), |this, on_click| {
+                this.on_click(move |event, cx| {
+                    // HACK: GPUI currently fires `on_click` with any mouse button,
+                    // but we only care about the left button.
+                    if event.down.button == MouseButton::Left {
+                        (on_click)(event, cx)
+                    }
+                })
+            })
+            .when_some(self.on_secondary_mouse_down, |this, on_mouse_down| {
+                this.on_mouse_down(MouseButton::Right, move |event, cx| {
+                    (on_mouse_down)(event, cx)
+                })
+            })
             .child(
                 div()
                     .when(self.variant == ListItemVariant::Inset, |this| this.px_2())
-                    // .ml(rems(0.75 * self.indent_level as f32))
-                    .children((0..self.indent_level).map(|_| {
-                        div()
-                            .w(px(4.))
-                            .h_full()
-                            .flex()
-                            .justify_center()
-                            .group_hover("", |style| style.bg(cx.theme().colors().border_focused))
-                            .child(
-                                h_stack()
-                                    .child(div().w_px().h_full())
-                                    .child(div().w_px().h_full().bg(cx.theme().colors().border)),
-                            )
-                    }))
+                    .ml(self.indent_level as f32 * self.indent_step_size)
                     .flex()
                     .gap_1()
                     .items_center()
                     .relative()
                     .child(disclosure_control(self.toggle))
                     .children(left_content)
-                    .children(self.children),
+                    .children(self.children)
+                    // HACK: We need to attach the `on_click` handler to the child element in order to have the click
+                    // event actually fire.
+                    // Once this is fixed in GPUI we can remove this and rely on the `on_click` handler set above on the
+                    // outer `div`.
+                    .id("on_click_hack")
+                    .when_some(self.on_click, |this, on_click| {
+                        this.on_click(move |event, cx| {
+                            // HACK: GPUI currently fires `on_click` with any mouse button,
+                            // but we only care about the left button.
+                            if event.down.button == MouseButton::Left {
+                                (on_click)(event, cx)
+                            }
+                        })
+                    }),
             )
     }
 }
