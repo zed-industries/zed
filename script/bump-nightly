@@ -1,5 +1,7 @@
 #!/bin/bash
 
+set -e
+
 branch=$(git rev-parse --abbrev-ref HEAD)
 if [ "$branch" != "main" ]; then
   echo "You must be on main to run this script"

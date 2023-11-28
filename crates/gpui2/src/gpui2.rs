@@ -78,8 +78,6 @@ use std::{
 };
 use taffy::TaffyLayoutEngine;
 
-type AnyBox = Box<dyn Any>;
-
 pub trait Context {
     type Result<T>;
 
@@ -136,7 +134,7 @@ pub trait VisualContext: Context {
         build_view: impl FnOnce(&mut ViewContext<'_, V>) -> V,
     ) -> Self::Result<View<V>>
     where
-        V: Render;
+        V: 'static + Render;
 
     fn focus_view<V>(&mut self, view: &View<V>) -> Self::Result<()>
     where

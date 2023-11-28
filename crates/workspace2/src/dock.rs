@@ -1,16 +1,14 @@
 use crate::{status_bar::StatusItemView, Axis, Workspace};
 use gpui::{
-    div, px, Action, AnchorCorner, AnyView, AppContext, Component, Div, Entity, EntityId,
-    EventEmitter, FocusHandle, FocusableView, ParentComponent, Render, SharedString, Styled,
+    div, px, Action, AnchorCorner, AnyView, AppContext, Div, Entity, EntityId, EventEmitter,
+    FocusHandle, FocusableView, IntoElement, ParentElement, Render, SharedString, Styled,
     Subscription, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use theme2::ActiveTheme;
-use ui::{
-    h_stack, menu_handle, ContextMenu, IconButton, InteractionState, Label, ListEntry, Tooltip,
-};
+use ui::{h_stack, menu_handle, ContextMenu, IconButton, InteractionState, Tooltip};
 
 pub enum PanelEvent {
     ChangePosition,
@@ -477,7 +475,7 @@ impl Dock {
 }
 
 impl Render for Dock {
-    type Element = Div<Self>;
+    type Element = Div;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         if let Some(entry) = self.visible_entry() {
@@ -663,7 +661,7 @@ impl PanelButtons {
 
 // here be kittens
 impl Render for PanelButtons {
-    type Element = Div<Self>;
+    type Element = Div;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         // todo!()
@@ -688,46 +686,40 @@ impl Render for PanelButtons {
                 let name = entry.panel.persistent_name();
                 let panel = entry.panel.clone();
 
-                let mut button: IconButton<Self> = if i == active_index && is_open {
+                let mut button: IconButton = if i == active_index && is_open {
                     let action = dock.toggle_action();
                     let tooltip: SharedString =
                         format!("Close {} dock", dock.position.to_label()).into();
                     IconButton::new(name, icon)
                         .state(InteractionState::Active)
                         .action(action.boxed_clone())
-                        .tooltip(move |_, cx| Tooltip::for_action(tooltip.clone(), &*action, cx))
+                        .tooltip(move |cx| Tooltip::for_action(tooltip.clone(), &*action, cx))
                 } else {
                     let action = entry.panel.toggle_action(cx);
 
                     IconButton::new(name, icon)
                         .action(action.boxed_clone())
-                        .tooltip(move |_, cx| Tooltip::for_action(name, &*action, cx))
+                        .tooltip(move |cx| Tooltip::for_action(name, &*action, cx))
                 };
 
                 Some(
-                    menu_handle()
-                        .id(name)
-                        .menu(move |_, cx| {
+                    menu_handle(name)
+                        .menu(move |cx| {
                             const POSITIONS: [DockPosition; 3] = [
                                 DockPosition::Left,
                                 DockPosition::Right,
                                 DockPosition::Bottom,
                             ];
+
                             ContextMenu::build(cx, |mut menu, cx| {
                                 for position in POSITIONS {
                                     if position != dock_position
                                         && panel.position_is_valid(position, cx)
                                     {
                                         let panel = panel.clone();
-                                        menu = menu.entry(
-                                            ListEntry::new(Label::new(format!(
-                                                "Dock {}",
-                                                position.to_label()
-                                            ))),
-                                            move |_, cx| {
-                                                panel.set_position(position, cx);
-                                            },
-                                        )
+                                        menu = menu.entry(position.to_label(), move |_, cx| {
+                                            panel.set_position(position, cx);
+                                        })
                                     }
                                 }
                                 menu
@@ -782,7 +774,7 @@ pub mod test {
     }
 
     impl Render for TestPanel {
-        type Element = Div<Self>;
+        type Element = Div;
 
         fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
             div()

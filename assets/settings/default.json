@@ -43,7 +43,7 @@
     "calt": false
   },
   // The default font size for text in the UI
-  "ui_font_size": 14,
+  "ui_font_size": 16,
   // The factor to grow the active pane by. Defaults to 1.0
   // which gives the same size as all other panes.
   "active_pane_magnification": 1.0,

@@ -2,9 +2,8 @@ use collections::HashMap;
 use editor::{scroll::autoscroll::Autoscroll, Bias, Editor};
 use fuzzy::{CharBag, PathMatch, PathMatchCandidate};
 use gpui::{
-    actions, div, AppContext, Component, Div, EventEmitter, FocusHandle, FocusableView,
-    InteractiveComponent, Manager, Model, ParentComponent, Render, Styled, Task, View, ViewContext,
-    VisualContext, WeakView,
+    actions, AppContext, DismissEvent, Div, EventEmitter, FocusHandle, FocusableView, Model,
+    ParentElement, Render, Styled, Task, View, ViewContext, VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};
 use project::{PathMatchCandidateSet, Project, ProjectPath, WorktreeId};
@@ -16,8 +15,7 @@ use std::{
     },
 };
 use text::Point;
-use theme::ActiveTheme;
-use ui::{v_stack, HighlightedLabel, StyledExt};
+use ui::{v_stack, HighlightedLabel, ListItem};
 use util::{paths::PathLikeWithPosition, post_inc, ResultExt};
 use workspace::Workspace;
 
@@ -111,14 +109,14 @@ impl FileFinder {
     }
 }
 
-impl EventEmitter<Manager> for FileFinder {}
+impl EventEmitter<DismissEvent> for FileFinder {}
 impl FocusableView for FileFinder {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
         self.picker.focus_handle(cx)
     }
 }
 impl Render for FileFinder {
-    type Element = Div<Self>;
+    type Element = Div;
 
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
         v_stack().w_96().child(self.picker.clone())
@@ -530,7 +528,7 @@ impl FileFinderDelegate {
 }
 
 impl PickerDelegate for FileFinderDelegate {
-    type ListItem = Div<Picker<Self>>;
+    type ListItem = ListItem;
 
     fn placeholder_text(&self) -> Arc<str> {
         "Search project files...".into()
@@ -690,7 +688,7 @@ impl PickerDelegate for FileFinderDelegate {
                         }
                     }
                     finder
-                        .update(&mut cx, |_, cx| cx.emit(Manager::Dismiss))
+                        .update(&mut cx, |_, cx| cx.emit(DismissEvent::Dismiss))
                         .ok()?;
 
                     Some(())
@@ -702,7 +700,7 @@ impl PickerDelegate for FileFinderDelegate {
 
     fn dismissed(&mut self, cx: &mut ViewContext<Picker<FileFinderDelegate>>) {
         self.file_finder
-            .update(cx, |_, cx| cx.emit(Manager::Dismiss))
+            .update(cx, |_, cx| cx.emit(DismissEvent::Dismiss))
             .log_err();
     }
 
@@ -711,30 +709,22 @@ impl PickerDelegate for FileFinderDelegate {
         ix: usize,
         selected: bool,
         cx: &mut ViewContext<Picker<Self>>,
-    ) -> Self::ListItem {
+    ) -> Option<Self::ListItem> {
         let path_match = self
             .matches
             .get(ix)
             .expect("Invalid matches state: no element for index {ix}");
-        let theme = cx.theme();
-        let colors = theme.colors();
 
         let (file_name, file_name_positions, full_path, full_path_positions) =
             self.labels_for_match(path_match, cx, ix);
 
-        div()
-            .px_1()
-            .text_color(colors.text)
-            .text_ui()
-            .bg(colors.ghost_element_background)
-            .rounded_md()
-            .when(selected, |this| this.bg(colors.ghost_element_selected))
-            .hover(|this| this.bg(colors.ghost_element_hover))
-            .child(
+        Some(
+            ListItem::new(ix).selected(selected).child(
                 v_stack()
                     .child(HighlightedLabel::new(file_name, file_name_positions))
                     .child(HighlightedLabel::new(full_path, full_path_positions)),
-            )
+            ),
+        )
     }
 }
 

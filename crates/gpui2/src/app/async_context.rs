@@ -1,7 +1,7 @@
 use crate::{
-    AnyView, AnyWindowHandle, AppCell, AppContext, BackgroundExecutor, Context, FocusableView,
-    ForegroundExecutor, Manager, Model, ModelContext, Render, Result, Task, View, ViewContext,
-    VisualContext, WindowContext, WindowHandle,
+    AnyView, AnyWindowHandle, AppCell, AppContext, BackgroundExecutor, Context, DismissEvent,
+    FocusableView, ForegroundExecutor, Model, ModelContext, Render, Result, Task, View,
+    ViewContext, VisualContext, WindowContext, WindowHandle,
 };
 use anyhow::{anyhow, Context as _};
 use derive_more::{Deref, DerefMut};
@@ -115,7 +115,7 @@ impl AsyncAppContext {
         build_root_view: impl FnOnce(&mut WindowContext) -> View<V>,
     ) -> Result<WindowHandle<V>>
     where
-        V: Render,
+        V: 'static + Render,
     {
         let app = self
             .app
@@ -306,7 +306,7 @@ impl VisualContext for AsyncWindowContext {
         build_view: impl FnOnce(&mut ViewContext<'_, V>) -> V,
     ) -> Self::Result<View<V>>
     where
-        V: Render,
+        V: 'static + Render,
     {
         self.window
             .update(self, |_, cx| cx.replace_root_view(build_view))
@@ -326,7 +326,7 @@ impl VisualContext for AsyncWindowContext {
         V: crate::ManagedView,
     {
         self.window.update(self, |_, cx| {
-            view.update(cx, |_, cx| cx.emit(Manager::Dismiss))
+            view.update(cx, |_, cx| cx.emit(DismissEvent::Dismiss))
         })
     }
 }

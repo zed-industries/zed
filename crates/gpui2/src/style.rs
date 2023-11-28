@@ -1,9 +1,12 @@
+use std::{iter, mem, ops::Range};
+
 use crate::{
     black, phi, point, rems, AbsoluteLength, BorrowAppContext, BorrowWindow, Bounds, ContentMask,
     Corners, CornersRefinement, CursorStyle, DefiniteLength, Edges, EdgesRefinement, Font,
     FontFeatures, FontStyle, FontWeight, Hsla, Length, Pixels, Point, PointRefinement, Rgba,
-    SharedString, Size, SizeRefinement, Styled, TextRun, ViewContext,
+    SharedString, Size, SizeRefinement, Styled, TextRun, WindowContext,
 };
+use collections::HashSet;
 use refineable::{Cascade, Refineable};
 use smallvec::SmallVec;
 pub use taffy::style::{
@@ -128,6 +131,13 @@ pub struct BoxShadow {
     pub spread_radius: Pixels,
 }
 
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum WhiteSpace {
+    #[default]
+    Normal,
+    Nowrap,
+}
+
 #[derive(Refineable, Clone, Debug)]
 #[refineable(Debug)]
 pub struct TextStyle {
@@ -138,7 +148,9 @@ pub struct TextStyle {
     pub line_height: DefiniteLength,
     pub font_weight: FontWeight,
     pub font_style: FontStyle,
+    pub background_color: Option<Hsla>,
     pub underline: Option<UnderlineStyle>,
+    pub white_space: WhiteSpace,
 }
 
 impl Default for TextStyle {
@@ -151,13 +163,16 @@ impl Default for TextStyle {
             line_height: phi(),
             font_weight: FontWeight::default(),
             font_style: FontStyle::default(),
+            background_color: None,
             underline: None,
+            white_space: WhiteSpace::Normal,
         }
     }
 }
 
 impl TextStyle {
-    pub fn highlight(mut self, style: HighlightStyle) -> Self {
+    pub fn highlight(mut self, style: impl Into<HighlightStyle>) -> Self {
+        let style = style.into();
         if let Some(weight) = style.font_weight {
             self.font_weight = weight;
         }
@@ -171,6 +186,10 @@ impl TextStyle {
 
         if let Some(factor) = style.fade_out {
             self.color.fade_out(factor);
+        }
+
+        if let Some(background_color) = style.background_color {
+            self.background_color = Some(background_color);
         }
 
         if let Some(underline) = style.underline {
@@ -203,7 +222,7 @@ impl TextStyle {
                 style: self.font_style,
             },
             color: self.color,
-            background_color: None,
+            background_color: self.background_color,
             underline: self.underline.clone(),
         }
     }
@@ -214,6 +233,7 @@ pub struct HighlightStyle {
     pub color: Option<Hsla>,
     pub font_weight: Option<FontWeight>,
     pub font_style: Option<FontStyle>,
+    pub background_color: Option<Hsla>,
     pub underline: Option<UnderlineStyle>,
     pub fade_out: Option<f32>,
 }
@@ -313,7 +333,7 @@ impl Style {
     }
 
     /// Paints the background of an element styled with this style.
-    pub fn paint<V: 'static>(&self, bounds: Bounds<Pixels>, cx: &mut ViewContext<V>) {
+    pub fn paint(&self, bounds: Bounds<Pixels>, cx: &mut WindowContext) {
         let rem_size = cx.rem_size();
 
         cx.with_z_index(0, |cx| {
@@ -432,6 +452,7 @@ impl From<&TextStyle> for HighlightStyle {
             color: Some(other.color),
             font_weight: Some(other.font_weight),
             font_style: Some(other.font_style),
+            background_color: other.background_color,
             underline: other.underline.clone(),
             fade_out: None,
         }
@@ -458,6 +479,10 @@ impl HighlightStyle {
             self.font_style = other.font_style;
         }
 
+        if other.background_color.is_some() {
+            self.background_color = other.background_color;
+        }
+
         if other.underline.is_some() {
             self.underline = other.underline;
         }
@@ -481,11 +506,166 @@ impl From<Hsla> for HighlightStyle {
     }
 }
 
+impl From<FontWeight> for HighlightStyle {
+    fn from(font_weight: FontWeight) -> Self {
+        Self {
+            font_weight: Some(font_weight),
+            ..Default::default()
+        }
+    }
+}
+
+impl From<FontStyle> for HighlightStyle {
+    fn from(font_style: FontStyle) -> Self {
+        Self {
+            font_style: Some(font_style),
+            ..Default::default()
+        }
+    }
+}
+
 impl From<Rgba> for HighlightStyle {
     fn from(color: Rgba) -> Self {
         Self {
             color: Some(color.into()),
             ..Default::default()
         }
+    }
+}
+
+pub fn combine_highlights(
+    a: impl IntoIterator<Item = (Range<usize>, HighlightStyle)>,
+    b: impl IntoIterator<Item = (Range<usize>, HighlightStyle)>,
+) -> impl Iterator<Item = (Range<usize>, HighlightStyle)> {
+    let mut endpoints = Vec::new();
+    let mut highlights = Vec::new();
+    for (range, highlight) in a.into_iter().chain(b) {
+        if !range.is_empty() {
+            let highlight_id = highlights.len();
+            endpoints.push((range.start, highlight_id, true));
+            endpoints.push((range.end, highlight_id, false));
+            highlights.push(highlight);
+        }
+    }
+    endpoints.sort_unstable_by_key(|(position, _, _)| *position);
+    let mut endpoints = endpoints.into_iter().peekable();
+
+    let mut active_styles = HashSet::default();
+    let mut ix = 0;
+    iter::from_fn(move || {
+        while let Some((endpoint_ix, highlight_id, is_start)) = endpoints.peek() {
+            let prev_index = mem::replace(&mut ix, *endpoint_ix);
+            if ix > prev_index && !active_styles.is_empty() {
+                let mut current_style = HighlightStyle::default();
+                for highlight_id in &active_styles {
+                    current_style.highlight(highlights[*highlight_id]);
+                }
+                return Some((prev_index..ix, current_style));
+            }
+
+            if *is_start {
+                active_styles.insert(*highlight_id);
+            } else {
+                active_styles.remove(highlight_id);
+            }
+            endpoints.next();
+        }
+        None
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{blue, green, red, yellow};
+
+    use super::*;
+
+    #[test]
+    fn test_combine_highlights() {
+        assert_eq!(
+            combine_highlights(
+                [
+                    (0..5, green().into()),
+                    (4..10, FontWeight::BOLD.into()),
+                    (15..20, yellow().into()),
+                ],
+                [
+                    (2..6, FontStyle::Italic.into()),
+                    (1..3, blue().into()),
+                    (21..23, red().into()),
+                ]
+            )
+            .collect::<Vec<_>>(),
+            [
+                (
+                    0..1,
+                    HighlightStyle {
+                        color: Some(green()),
+                        ..Default::default()
+                    }
+                ),
+                (
+                    1..2,
+                    HighlightStyle {
+                        color: Some(blue()),
+                        ..Default::default()
+                    }
+                ),
+                (
+                    2..3,
+                    HighlightStyle {
+                        color: Some(blue()),
+                        font_style: Some(FontStyle::Italic),
+                        ..Default::default()
+                    }
+                ),
+                (
+                    3..4,
+                    HighlightStyle {
+                        color: Some(green()),
+                        font_style: Some(FontStyle::Italic),
+                        ..Default::default()
+                    }
+                ),
+                (
+                    4..5,
+                    HighlightStyle {
+                        color: Some(green()),
+                        font_weight: Some(FontWeight::BOLD),
+                        font_style: Some(FontStyle::Italic),
+                        ..Default::default()
+                    }
+                ),
+                (
+                    5..6,
+                    HighlightStyle {
+                        font_weight: Some(FontWeight::BOLD),
+                        font_style: Some(FontStyle::Italic),
+                        ..Default::default()
+                    }
+                ),
+                (
+                    6..10,
+                    HighlightStyle {
+                        font_weight: Some(FontWeight::BOLD),
+                        ..Default::default()
+                    }
+                ),
+                (
+                    15..20,
+                    HighlightStyle {
+                        color: Some(yellow()),
+                        ..Default::default()
+                    }
+                ),
+                (
+                    21..23,
+                    HighlightStyle {
+                        color: Some(red()),
+                        ..Default::default()
+                    }
+                )
+            ]
+        );
     }
 }

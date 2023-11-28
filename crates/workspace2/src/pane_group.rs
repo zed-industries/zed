@@ -1,12 +1,13 @@
 use crate::{AppState, FollowerState, Pane, Workspace};
 use anyhow::{anyhow, bail, Result};
-use call2::ActiveCall;
 use collections::HashMap;
 use db2::sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
 };
-use gpui::{point, size, AnyElement, AnyWeakView, Bounds, Model, Pixels, Point, View, ViewContext};
+use gpui::{
+    point, size, AnyWeakView, Bounds, Div, IntoElement, Model, Pixels, Point, View, ViewContext,
+};
 use parking_lot::Mutex;
 use project2::Project;
 use serde::Deserialize;
@@ -125,17 +126,15 @@ impl PaneGroup {
         &self,
         project: &Model<Project>,
         follower_states: &HashMap<View<Pane>, FollowerState>,
-        active_call: Option<&Model<ActiveCall>>,
         active_pane: &View<Pane>,
         zoomed: Option<&AnyWeakView>,
         app_state: &Arc<AppState>,
         cx: &mut ViewContext<Workspace>,
-    ) -> impl Component<Workspace> {
+    ) -> impl IntoElement {
         self.root.render(
             project,
             0,
             follower_states,
-            active_call,
             active_pane,
             zoomed,
             app_state,
@@ -197,12 +196,11 @@ impl Member {
         project: &Model<Project>,
         basis: usize,
         follower_states: &HashMap<View<Pane>, FollowerState>,
-        active_call: Option<&Model<ActiveCall>>,
         active_pane: &View<Pane>,
         zoomed: Option<&AnyWeakView>,
         app_state: &Arc<AppState>,
         cx: &mut ViewContext<Workspace>,
-    ) -> impl Component<Workspace> {
+    ) -> impl IntoElement {
         match self {
             Member::Pane(pane) => {
                 // todo!()
@@ -212,7 +210,7 @@ impl Member {
                 //     Some(pane)
                 // };
 
-                div().size_full().child(pane.clone()).render()
+                div().size_full().child(pane.clone()).into_any()
 
                 //         Stack::new()
                 //             .with_child(pane_element.contained().with_border(leader_border))
@@ -228,16 +226,17 @@ impl Member {
                 //     .bg(cx.theme().colors().editor)
                 //     .children();
             }
-            Member::Axis(axis) => axis.render(
-                project,
-                basis + 1,
-                follower_states,
-                active_call,
-                active_pane,
-                zoomed,
-                app_state,
-                cx,
-            ),
+            Member::Axis(axis) => axis
+                .render(
+                    project,
+                    basis + 1,
+                    follower_states,
+                    active_pane,
+                    zoomed,
+                    app_state,
+                    cx,
+                )
+                .into_any(),
         }
 
         // enum FollowIntoExternalProject {}
@@ -554,12 +553,11 @@ impl PaneAxis {
         project: &Model<Project>,
         basis: usize,
         follower_states: &HashMap<View<Pane>, FollowerState>,
-        active_call: Option<&Model<ActiveCall>>,
         active_pane: &View<Pane>,
         zoomed: Option<&AnyWeakView>,
         app_state: &Arc<AppState>,
         cx: &mut ViewContext<Workspace>,
-    ) -> AnyElement<Workspace> {
+    ) -> Div {
         debug_assert!(self.members.len() == self.flexes.lock().len());
 
         div()
@@ -576,17 +574,15 @@ impl PaneAxis {
                             project,
                             basis,
                             follower_states,
-                            active_call,
                             active_pane,
                             zoomed,
                             app_state,
                             cx,
                         )
-                        .render(),
-                    Member::Pane(pane) => pane.clone().render(),
+                        .into_any_element(),
+                    Member::Pane(pane) => pane.clone().into_any_element(),
                 }
             }))
-            .render()
 
         // let mut pane_axis = PaneAxisElement::new(
         //     self.axis,

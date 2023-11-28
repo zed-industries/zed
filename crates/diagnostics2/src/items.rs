@@ -1,13 +1,13 @@
 use collections::HashSet;
 use editor::{Editor, GoToDiagnostic};
 use gpui::{
-    rems, Div, EventEmitter, InteractiveComponent, ParentComponent, Render, Stateful,
-    StatefulInteractiveComponent, Styled, Subscription, View, ViewContext, WeakView,
+    rems, Div, EventEmitter, InteractiveElement, ParentElement, Render, Stateful,
+    StatefulInteractiveElement, Styled, Subscription, View, ViewContext, WeakView,
 };
 use language::Diagnostic;
 use lsp::LanguageServerId;
 use theme::ActiveTheme;
-use ui::{h_stack, Icon, IconElement, Label, TextColor, Tooltip};
+use ui::{h_stack, Color, Icon, IconElement, Label, Tooltip};
 use workspace::{item::ItemHandle, StatusItemView, ToolbarItemEvent, Workspace};
 
 use crate::ProjectDiagnosticsEditor;
@@ -22,30 +22,30 @@ pub struct DiagnosticIndicator {
 }
 
 impl Render for DiagnosticIndicator {
-    type Element = Stateful<Self, Div<Self>>;
+    type Element = Stateful<Div>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         let diagnostic_indicator = match (self.summary.error_count, self.summary.warning_count) {
-            (0, 0) => h_stack().child(IconElement::new(Icon::Check).color(TextColor::Success)),
+            (0, 0) => h_stack().child(IconElement::new(Icon::Check).color(Color::Success)),
             (0, warning_count) => h_stack()
                 .gap_1()
-                .child(IconElement::new(Icon::ExclamationTriangle).color(TextColor::Warning))
+                .child(IconElement::new(Icon::ExclamationTriangle).color(Color::Warning))
                 .child(Label::new(warning_count.to_string())),
             (error_count, 0) => h_stack()
                 .gap_1()
-                .child(IconElement::new(Icon::XCircle).color(TextColor::Error))
+                .child(IconElement::new(Icon::XCircle).color(Color::Error))
                 .child(Label::new(error_count.to_string())),
             (error_count, warning_count) => h_stack()
                 .gap_1()
-                .child(IconElement::new(Icon::XCircle).color(TextColor::Error))
+                .child(IconElement::new(Icon::XCircle).color(Color::Error))
                 .child(Label::new(error_count.to_string()))
-                .child(IconElement::new(Icon::ExclamationTriangle).color(TextColor::Warning))
+                .child(IconElement::new(Icon::ExclamationTriangle).color(Color::Warning))
                 .child(Label::new(warning_count.to_string())),
         };
 
         h_stack()
-            .id(cx.entity_id())
-            .on_action(Self::go_to_next_diagnostic)
+            .id("diagnostic-indicator")
+            .on_action(cx.listener(Self::go_to_next_diagnostic))
             .rounded_md()
             .flex_none()
             .h(rems(1.375))
@@ -54,14 +54,14 @@ impl Render for DiagnosticIndicator {
             .bg(cx.theme().colors().ghost_element_background)
             .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
             .active(|style| style.bg(cx.theme().colors().ghost_element_active))
-            .tooltip(|_, cx| Tooltip::text("Project Diagnostics", cx))
-            .on_click(|this, _, cx| {
+            .tooltip(|cx| Tooltip::text("Project Diagnostics", cx))
+            .on_click(cx.listener(|this, _, cx| {
                 if let Some(workspace) = this.workspace.upgrade() {
                     workspace.update(cx, |workspace, cx| {
                         ProjectDiagnosticsEditor::deploy(workspace, &Default::default(), cx)
                     })
                 }
-            })
+            }))
             .child(diagnostic_indicator)
     }
 }

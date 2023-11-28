@@ -61,12 +61,14 @@ fn build_bridge(swift_target: &SwiftTarget) {
 
     let swift_package_root = swift_package_root();
     let swift_target_folder = swift_target_folder();
+    let swift_cache_folder = swift_cache_folder();
     if !Command::new("swift")
         .arg("build")
         .arg("--disable-automatic-resolution")
         .args(["--configuration", &env::var("PROFILE").unwrap()])
         .args(["--triple", &swift_target.target.triple])
         .args(["--build-path".into(), swift_target_folder])
+        .args(["--cache-path".into(), swift_cache_folder])
         .current_dir(&swift_package_root)
         .status()
         .unwrap()
@@ -133,9 +135,17 @@ fn swift_package_root() -> PathBuf {
 }
 
 fn swift_target_folder() -> PathBuf {
+    let target = env::var("TARGET").unwrap();
     env::current_dir()
         .unwrap()
-        .join(format!("../../target/{SWIFT_PACKAGE_NAME}"))
+        .join(format!("../../target/{target}/{SWIFT_PACKAGE_NAME}_target"))
+}
+
+fn swift_cache_folder() -> PathBuf {
+    let target = env::var("TARGET").unwrap();
+    env::current_dir()
+        .unwrap()
+        .join(format!("../../target/{target}/{SWIFT_PACKAGE_NAME}_cache"))
 }
 
 fn copy_dir(source: &Path, destination: &Path) {

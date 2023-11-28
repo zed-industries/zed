@@ -1767,16 +1767,13 @@ impl View for ProjectSearchBar {
                 render_option_button_icon("icons/word_search.svg", SearchOptions::WHOLE_WORD, cx)
             });
 
-            let mut include_ignored = is_semantic_disabled.then(|| {
+            let include_ignored = is_semantic_disabled.then(|| {
                 render_option_button_icon(
-                    // TODO proper icon
-                    "icons/case_insensitive.svg",
+                    "icons/file_icons/git.svg",
                     SearchOptions::INCLUDE_IGNORED,
                     cx,
                 )
             });
-            // TODO not implemented yet
-            let _ = include_ignored.take();
 
             let search_button_for_mode = |mode, side, cx: &mut ViewContext<ProjectSearchBar>| {
                 let is_active = if let Some(search) = self.active_project_search.as_ref() {

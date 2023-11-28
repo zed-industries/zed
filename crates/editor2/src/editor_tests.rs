@@ -3048,7 +3048,7 @@ fn test_move_line_up_down_with_blocks(cx: &mut TestAppContext) {
                 position: snapshot.anchor_after(Point::new(2, 0)),
                 disposition: BlockDisposition::Below,
                 height: 1,
-                render: Arc::new(|_| div().render()),
+                render: Arc::new(|_| div().into_any()),
             }],
             Some(Autoscroll::fit()),
             cx,
@@ -6739,75 +6739,6 @@ async fn test_extra_newline_insertion(cx: &mut gpui::TestAppContext) {
 //         leader.update(cx, |editor, cx| editor.text(cx))
 //     );
 // }
-
-#[test]
-fn test_combine_syntax_and_fuzzy_match_highlights() {
-    let string = "abcdefghijklmnop";
-    let syntax_ranges = [
-        (
-            0..3,
-            HighlightStyle {
-                color: Some(Hsla::red()),
-                ..Default::default()
-            },
-        ),
-        (
-            4..8,
-            HighlightStyle {
-                color: Some(Hsla::green()),
-                ..Default::default()
-            },
-        ),
-    ];
-    let match_indices = [4, 6, 7, 8];
-    assert_eq!(
-        combine_syntax_and_fuzzy_match_highlights(
-            string,
-            Default::default(),
-            syntax_ranges.into_iter(),
-            &match_indices,
-        ),
-        &[
-            (
-                0..3,
-                HighlightStyle {
-                    color: Some(Hsla::red()),
-                    ..Default::default()
-                },
-            ),
-            (
-                4..5,
-                HighlightStyle {
-                    color: Some(Hsla::green()),
-                    font_weight: Some(gpui::FontWeight::BOLD),
-                    ..Default::default()
-                },
-            ),
-            (
-                5..6,
-                HighlightStyle {
-                    color: Some(Hsla::green()),
-                    ..Default::default()
-                },
-            ),
-            (
-                6..8,
-                HighlightStyle {
-                    color: Some(Hsla::green()),
-                    font_weight: Some(gpui::FontWeight::BOLD),
-                    ..Default::default()
-                },
-            ),
-            (
-                8..9,
-                HighlightStyle {
-                    font_weight: Some(gpui::FontWeight::BOLD),
-                    ..Default::default()
-                },
-            ),
-        ]
-    );
-}
 
 #[gpui::test]
 async fn go_to_prev_overlapping_diagnostic(

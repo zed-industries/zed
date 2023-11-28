@@ -1,5 +1,5 @@
 use crate::{
-    key_dispatch::DispatchActionListener, px, size, Action, AnyBox, AnyDrag, AnyView, AppContext,
+    key_dispatch::DispatchActionListener, px, size, Action, AnyDrag, AnyView, AppContext,
     AsyncWindowContext, AvailableSpace, Bounds, BoxShadow, Context, Corners, CursorStyle,
     DevicePixels, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity, EntityId,
     EventEmitter, FileDropEvent, Flatten, FocusEvent, FontId, GlobalElementId, GlyphId, Hsla,
@@ -187,17 +187,17 @@ impl Drop for FocusHandle {
 
 /// FocusableView allows users of your view to easily
 /// focus it (using cx.focus_view(view))
-pub trait FocusableView: Render {
+pub trait FocusableView: 'static + Render {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle;
 }
 
 /// ManagedView is a view (like a Modal, Popover, Menu, etc.)
 /// where the lifecycle of the view is handled by another view.
-pub trait ManagedView: FocusableView + EventEmitter<Manager> {}
+pub trait ManagedView: FocusableView + EventEmitter<DismissEvent> {}
 
-impl<M: FocusableView + EventEmitter<Manager>> ManagedView for M {}
+impl<M: FocusableView + EventEmitter<DismissEvent>> ManagedView for M {}
 
-pub enum Manager {
+pub enum DismissEvent {
     Dismiss,
 }
 
@@ -230,9 +230,15 @@ pub struct Window {
     pub(crate) focus: Option<FocusId>,
 }
 
+pub(crate) struct ElementStateBox {
+    inner: Box<dyn Any>,
+    #[cfg(debug_assertions)]
+    type_name: &'static str,
+}
+
 // #[derive(Default)]
 pub(crate) struct Frame {
-    pub(crate) element_states: HashMap<GlobalElementId, AnyBox>,
+    pub(crate) element_states: HashMap<GlobalElementId, ElementStateBox>,
     mouse_listeners: HashMap<TypeId, Vec<(StackingOrder, AnyMouseListener)>>,
     pub(crate) dispatch_tree: DispatchTree,
     pub(crate) focus_listeners: Vec<AnyFocusListener>,
@@ -875,7 +881,7 @@ impl<'a> WindowContext<'a> {
         origin: Point<Pixels>,
         width: Pixels,
         style: &UnderlineStyle,
-    ) -> Result<()> {
+    ) {
         let scale_factor = self.scale_factor();
         let height = if style.wavy {
             style.thickness * 3.
@@ -899,7 +905,6 @@ impl<'a> WindowContext<'a> {
                 wavy: style.wavy,
             },
         );
-        Ok(())
     }
 
     /// Paint a monochrome (non-emoji) glyph into the scene for the current frame at the current z-index.
@@ -1436,6 +1441,89 @@ impl<'a> WindowContext<'a> {
             .dispatch_tree
             .bindings_for_action(action)
     }
+
+    pub fn listener_for<V: Render, E>(
+        &self,
+        view: &View<V>,
+        f: impl Fn(&mut V, &E, &mut ViewContext<V>) + 'static,
+    ) -> impl Fn(&E, &mut WindowContext) + 'static {
+        let view = view.downgrade();
+        move |e: &E, cx: &mut WindowContext| {
+            view.update(cx, |view, cx| f(view, e, cx)).ok();
+        }
+    }
+
+    pub fn constructor_for<V: Render, R>(
+        &self,
+        view: &View<V>,
+        f: impl Fn(&mut V, &mut ViewContext<V>) -> R + 'static,
+    ) -> impl Fn(&mut WindowContext) -> R + 'static {
+        let view = view.clone();
+        move |cx: &mut WindowContext| view.update(cx, |view, cx| f(view, cx))
+    }
+
+    //========== ELEMENT RELATED FUNCTIONS ===========
+    pub fn with_key_dispatch<R>(
+        &mut self,
+        context: KeyContext,
+        focus_handle: Option<FocusHandle>,
+        f: impl FnOnce(Option<FocusHandle>, &mut Self) -> R,
+    ) -> R {
+        let window = &mut self.window;
+        window
+            .current_frame
+            .dispatch_tree
+            .push_node(context.clone());
+        if let Some(focus_handle) = focus_handle.as_ref() {
+            window
+                .current_frame
+                .dispatch_tree
+                .make_focusable(focus_handle.id);
+        }
+        let result = f(focus_handle, self);
+
+        self.window.current_frame.dispatch_tree.pop_node();
+
+        result
+    }
+
+    /// Register a focus listener for the current frame only. It will be cleared
+    /// on the next frame render. You should use this method only from within elements,
+    /// and we may want to enforce that better via a different context type.
+    // todo!() Move this to `FrameContext` to emphasize its individuality?
+    pub fn on_focus_changed(
+        &mut self,
+        listener: impl Fn(&FocusEvent, &mut WindowContext) + 'static,
+    ) {
+        self.window
+            .current_frame
+            .focus_listeners
+            .push(Box::new(move |event, cx| {
+                listener(event, cx);
+            }));
+    }
+
+    /// Set an input handler, such as [ElementInputHandler], which interfaces with the
+    /// platform to receive textual input with proper integration with concerns such
+    /// as IME interactions.
+    pub fn handle_input(
+        &mut self,
+        focus_handle: &FocusHandle,
+        input_handler: impl PlatformInputHandler,
+    ) {
+        if focus_handle.is_focused(self) {
+            self.window
+                .platform_window
+                .set_input_handler(Box::new(input_handler));
+        }
+    }
+
+    pub fn on_window_should_close(&mut self, f: impl Fn(&mut WindowContext) -> bool + 'static) {
+        let mut this = self.to_async();
+        self.window
+            .platform_window
+            .on_should_close(Box::new(move || this.update(|_, cx| f(cx)).unwrap_or(true)))
+    }
 }
 
 impl Context for WindowContext<'_> {
@@ -1559,7 +1647,7 @@ impl VisualContext for WindowContext<'_> {
         build_view: impl FnOnce(&mut ViewContext<'_, V>) -> V,
     ) -> Self::Result<View<V>>
     where
-        V: Render,
+        V: 'static + Render,
     {
         let slot = self.app.entities.reserve();
         let view = View {
@@ -1582,7 +1670,7 @@ impl VisualContext for WindowContext<'_> {
     where
         V: ManagedView,
     {
-        self.update_view(view, |_, cx| cx.emit(Manager::Dismiss))
+        self.update_view(view, |_, cx| cx.emit(DismissEvent::Dismiss))
     }
 }
 
@@ -1615,6 +1703,10 @@ impl<'a> BorrowMut<AppContext> for WindowContext<'a> {
 pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
     fn app_mut(&mut self) -> &mut AppContext {
         self.borrow_mut()
+    }
+
+    fn app(&self) -> &AppContext {
+        self.borrow()
     }
 
     fn window(&self) -> &Window {
@@ -1665,6 +1757,24 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
         } else {
             f(self)
         }
+    }
+
+    /// Invoke the given function with the content mask reset to that
+    /// of the window.
+    fn break_content_mask<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
+        let mask = ContentMask {
+            bounds: Bounds {
+                origin: Point::default(),
+                size: self.window().viewport_size,
+            },
+        };
+        self.window_mut()
+            .current_frame
+            .content_mask_stack
+            .push(mask);
+        let result = f(self);
+        self.window_mut().current_frame.content_mask_stack.pop();
+        result
     }
 
     /// Update the global element offset relative to the current offset. This is used to implement
@@ -1735,10 +1845,37 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
                         .remove(&global_id)
                 })
             {
+                let ElementStateBox {
+                    inner,
+
+                    #[cfg(debug_assertions)]
+                    type_name
+                } = any;
                 // Using the extra inner option to avoid needing to reallocate a new box.
-                let mut state_box = any
+                let mut state_box = inner
                     .downcast::<Option<S>>()
-                    .expect("invalid element state type for id");
+                    .map_err(|_| {
+                        #[cfg(debug_assertions)]
+                        {
+                            anyhow!(
+                                "invalid element state type for id, requested_type {:?}, actual type: {:?}",
+                                std::any::type_name::<S>(),
+                                type_name
+                            )
+                        }
+
+                        #[cfg(not(debug_assertions))]
+                        {
+                            anyhow!(
+                                "invalid element state type for id, requested_type {:?}",
+                                std::any::type_name::<S>(),
+                            )
+                        }
+                    })
+                    .unwrap();
+
+                // Actual: Option<AnyElement> <- View
+                // Requested: () <- AnyElemet
                 let state = state_box
                     .take()
                     .expect("element state is already on the stack");
@@ -1747,14 +1884,27 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
                 cx.window_mut()
                     .current_frame
                     .element_states
-                    .insert(global_id, state_box);
+                    .insert(global_id, ElementStateBox {
+                        inner: state_box,
+
+                        #[cfg(debug_assertions)]
+                        type_name
+                    });
                 result
             } else {
                 let (result, state) = f(None, cx);
                 cx.window_mut()
                     .current_frame
                     .element_states
-                    .insert(global_id, Box::new(Some(state)));
+                    .insert(global_id,
+                        ElementStateBox {
+                            inner: Box::new(Some(state)),
+
+                            #[cfg(debug_assertions)]
+                            type_name: std::any::type_name::<S>()
+                        }
+
+                    );
                 result
             }
         })
@@ -2124,49 +2274,6 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         )
     }
 
-    /// Register a focus listener for the current frame only. It will be cleared
-    /// on the next frame render. You should use this method only from within elements,
-    /// and we may want to enforce that better via a different context type.
-    // todo!() Move this to `FrameContext` to emphasize its individuality?
-    pub fn on_focus_changed(
-        &mut self,
-        listener: impl Fn(&mut V, &FocusEvent, &mut ViewContext<V>) + 'static,
-    ) {
-        let handle = self.view().downgrade();
-        self.window
-            .current_frame
-            .focus_listeners
-            .push(Box::new(move |event, cx| {
-                handle
-                    .update(cx, |view, cx| listener(view, event, cx))
-                    .log_err();
-            }));
-    }
-
-    pub fn with_key_dispatch<R>(
-        &mut self,
-        context: KeyContext,
-        focus_handle: Option<FocusHandle>,
-        f: impl FnOnce(Option<FocusHandle>, &mut Self) -> R,
-    ) -> R {
-        let window = &mut self.window;
-        window
-            .current_frame
-            .dispatch_tree
-            .push_node(context.clone());
-        if let Some(focus_handle) = focus_handle.as_ref() {
-            window
-                .current_frame
-                .dispatch_tree
-                .make_focusable(focus_handle.id);
-        }
-        let result = f(focus_handle, self);
-
-        self.window.current_frame.dispatch_tree.pop_node();
-
-        result
-    }
-
     pub fn spawn<Fut, R>(
         &mut self,
         f: impl FnOnce(WeakView<V>, AsyncWindowContext) -> Fut,
@@ -2243,21 +2350,6 @@ impl<'a, V: 'static> ViewContext<'a, V> {
             });
     }
 
-    /// Set an input handler, such as [ElementInputHandler], which interfaces with the
-    /// platform to receive textual input with proper integration with concerns such
-    /// as IME interactions.
-    pub fn handle_input(
-        &mut self,
-        focus_handle: &FocusHandle,
-        input_handler: impl PlatformInputHandler,
-    ) {
-        if focus_handle.is_focused(self) {
-            self.window
-                .platform_window
-                .set_input_handler(Box::new(input_handler));
-        }
-    }
-
     pub fn emit<Evt>(&mut self, event: Evt)
     where
         Evt: 'static,
@@ -2282,7 +2374,17 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     where
         V: ManagedView,
     {
-        self.defer(|_, cx| cx.emit(Manager::Dismiss))
+        self.defer(|_, cx| cx.emit(DismissEvent::Dismiss))
+    }
+
+    pub fn listener<E>(
+        &self,
+        f: impl Fn(&mut V, &E, &mut ViewContext<V>) + 'static,
+    ) -> impl Fn(&E, &mut WindowContext) + 'static {
+        let view = self.view().downgrade();
+        move |e: &E, cx: &mut WindowContext| {
+            view.update(cx, |view, cx| f(view, e, cx)).ok();
+        }
     }
 }
 
@@ -2355,7 +2457,7 @@ impl<V: 'static> VisualContext for ViewContext<'_, V> {
         build_view: impl FnOnce(&mut ViewContext<'_, W>) -> W,
     ) -> Self::Result<View<W>>
     where
-        W: Render,
+        W: 'static + Render,
     {
         self.window_cx.replace_root_view(build_view)
     }
@@ -2567,6 +2669,12 @@ pub enum ElementId {
     FocusHandle(FocusId),
 }
 
+impl ElementId {
+    pub(crate) fn from_entity_id(entity_id: EntityId) -> Self {
+        ElementId::View(entity_id)
+    }
+}
+
 impl TryInto<SharedString> for ElementId {
     type Error = anyhow::Error;
 
@@ -2576,12 +2684,6 @@ impl TryInto<SharedString> for ElementId {
         } else {
             Err(anyhow!("element id is not string"))
         }
-    }
-}
-
-impl From<EntityId> for ElementId {
-    fn from(id: EntityId) -> Self {
-        ElementId::View(id)
     }
 }
 

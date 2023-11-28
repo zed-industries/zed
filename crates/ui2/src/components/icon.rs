@@ -1,4 +1,4 @@
-use gpui::{rems, svg};
+use gpui::{rems, svg, IntoElement, Svg};
 use strum::EnumIter;
 
 use crate::prelude::*;
@@ -25,6 +25,7 @@ pub enum Icon {
     BellOff,
     BellRing,
     Bolt,
+    CaseSensitive,
     Check,
     ChevronDown,
     ChevronLeft,
@@ -33,6 +34,9 @@ pub enum Icon {
     Close,
     Collab,
     Copilot,
+    CopilotInit,
+    CopilotError,
+    CopilotDisabled,
     Dash,
     Envelope,
     ExclamationTriangle,
@@ -67,6 +71,7 @@ pub enum Icon {
     Split,
     SplitMessage,
     Terminal,
+    WholeWord,
     XCircle,
     Command,
     Control,
@@ -91,6 +96,7 @@ impl Icon {
             Icon::BellOff => "icons/bell-off.svg",
             Icon::BellRing => "icons/bell-ring.svg",
             Icon::Bolt => "icons/bolt.svg",
+            Icon::CaseSensitive => "icons/case_insensitive.svg",
             Icon::Check => "icons/check.svg",
             Icon::ChevronDown => "icons/chevron_down.svg",
             Icon::ChevronLeft => "icons/chevron_left.svg",
@@ -99,6 +105,9 @@ impl Icon {
             Icon::Close => "icons/x.svg",
             Icon::Collab => "icons/user_group_16.svg",
             Icon::Copilot => "icons/copilot.svg",
+            Icon::CopilotInit => "icons/copilot_init.svg",
+            Icon::CopilotError => "icons/copilot_error.svg",
+            Icon::CopilotDisabled => "icons/copilot_disabled.svg",
             Icon::Dash => "icons/dash.svg",
             Icon::Envelope => "icons/feedback.svg",
             Icon::ExclamationTriangle => "icons/warning.svg",
@@ -133,6 +142,7 @@ impl Icon {
             Icon::Split => "icons/split.svg",
             Icon::SplitMessage => "icons/split_message.svg",
             Icon::Terminal => "icons/terminal.svg",
+            Icon::WholeWord => "icons/word_search.svg",
             Icon::XCircle => "icons/error.svg",
             Icon::Command => "icons/command.svg",
             Icon::Control => "icons/control.svg",
@@ -143,41 +153,17 @@ impl Icon {
     }
 }
 
-#[derive(Component)]
+#[derive(IntoElement)]
 pub struct IconElement {
     path: SharedString,
-    color: TextColor,
+    color: Color,
     size: IconSize,
 }
 
-impl IconElement {
-    pub fn new(icon: Icon) -> Self {
-        Self {
-            path: icon.path().into(),
-            color: TextColor::default(),
-            size: IconSize::default(),
-        }
-    }
+impl RenderOnce for IconElement {
+    type Rendered = Svg;
 
-    pub fn from_path(path: impl Into<SharedString>) -> Self {
-        Self {
-            path: path.into(),
-            color: TextColor::default(),
-            size: IconSize::default(),
-        }
-    }
-
-    pub fn color(mut self, color: TextColor) -> Self {
-        self.color = color;
-        self
-    }
-
-    pub fn size(mut self, size: IconSize) -> Self {
-        self.size = size;
-        self
-    }
-
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         let svg_size = match self.size {
             IconSize::Small => rems(14. / 16.),
             IconSize::Medium => rems(16. / 16.),
@@ -191,30 +177,43 @@ impl IconElement {
     }
 }
 
-#[cfg(feature = "stories")]
-pub use stories::*;
-
-#[cfg(feature = "stories")]
-mod stories {
-    use gpui::{Div, Render};
-    use strum::IntoEnumIterator;
-
-    use crate::Story;
-
-    use super::*;
-
-    pub struct IconStory;
-
-    impl Render for IconStory {
-        type Element = Div<Self>;
-
-        fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-            let icons = Icon::iter();
-
-            Story::container(cx)
-                .child(Story::title_for::<_, IconElement>(cx))
-                .child(Story::label(cx, "All Icons"))
-                .child(div().flex().gap_3().children(icons.map(IconElement::new)))
+impl IconElement {
+    pub fn new(icon: Icon) -> Self {
+        Self {
+            path: icon.path().into(),
+            color: Color::default(),
+            size: IconSize::default(),
         }
+    }
+
+    pub fn from_path(path: impl Into<SharedString>) -> Self {
+        Self {
+            path: path.into(),
+            color: Color::default(),
+            size: IconSize::default(),
+        }
+    }
+
+    pub fn color(mut self, color: Color) -> Self {
+        self.color = color;
+        self
+    }
+
+    pub fn size(mut self, size: IconSize) -> Self {
+        self.size = size;
+        self
+    }
+
+    fn render(self, cx: &mut WindowContext) -> impl Element {
+        let svg_size = match self.size {
+            IconSize::Small => rems(0.75),
+            IconSize::Medium => rems(0.9375),
+        };
+
+        svg()
+            .size(svg_size)
+            .flex_none()
+            .path(self.path)
+            .text_color(self.color.color(cx))
     }
 }

@@ -1186,12 +1186,14 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-broadcast",
+ "async-trait",
  "audio2",
  "client2",
  "collections",
  "fs2",
  "futures 0.3.28",
  "gpui2",
+ "image",
  "language2",
  "live_kit_client2",
  "log",
@@ -1203,7 +1205,10 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "settings2",
+ "smallvec",
+ "ui2",
  "util",
+ "workspace2",
 ]
 
 [[package]]
@@ -1398,7 +1403,7 @@ dependencies = [
  "smol",
  "sum_tree",
  "tempfile",
- "text",
+ "text2",
  "thiserror",
  "time",
  "tiny_http",
@@ -1664,7 +1669,7 @@ dependencies = [
 
 [[package]]
 name = "collab"
-version = "0.28.0"
+version = "0.29.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1869,7 +1874,7 @@ dependencies = [
  "editor2",
  "feature_flags2",
  "futures 0.3.28",
- "fuzzy",
+ "fuzzy2",
  "gpui2",
  "language2",
  "lazy_static",
@@ -6763,7 +6768,6 @@ dependencies = [
  "anyhow",
  "client2",
  "collections",
- "context_menu",
  "db2",
  "editor2",
  "futures 0.3.28",
@@ -8033,6 +8037,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "search2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bitflags 1.3.2",
+ "client2",
+ "collections",
+ "editor2",
+ "futures 0.3.28",
+ "gpui2",
+ "language2",
+ "log",
+ "menu2",
+ "postage",
+ "project2",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "settings2",
+ "smallvec",
+ "smol",
+ "theme2",
+ "ui2",
+ "unindent",
+ "util",
+ "workspace2",
+]
+
+[[package]]
 name = "security-framework"
 version = "2.9.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8856,6 +8889,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
+name = "story"
+version = "0.1.0"
+dependencies = [
+ "gpui2",
+]
+
+[[package]]
 name = "storybook2"
 version = "0.1.0"
 dependencies = [
@@ -8876,22 +8916,12 @@ dependencies = [
  "settings2",
  "simplelog",
  "smallvec",
+ "story",
  "strum",
  "theme",
  "theme2",
  "ui2",
  "util",
-]
-
-[[package]]
-name = "storybook3"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "gpui2",
- "settings2",
- "theme2",
- "ui2",
 ]
 
 [[package]]
@@ -9397,6 +9427,7 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "settings2",
+ "story",
  "toml 0.5.11",
  "util",
  "uuid 1.4.1",
@@ -9899,7 +9930,7 @@ dependencies = [
 [[package]]
 name = "tree-sitter"
 version = "0.20.10"
-source = "git+https://github.com/tree-sitter/tree-sitter?rev=35a6052fbcafc5e5fc0f9415b8652be7dcaf7222#35a6052fbcafc5e5fc0f9415b8652be7dcaf7222"
+source = "git+https://github.com/tree-sitter/tree-sitter?rev=3b0159d25559b603af566ade3c83d930bf466db1#3b0159d25559b603af566ade3c83d930bf466db1"
 dependencies = [
  "cc",
  "regex",
@@ -10148,6 +10179,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-uiua"
+version = "0.3.3"
+source = "git+https://github.com/shnarazk/tree-sitter-uiua?rev=9260f11be5900beda4ee6d1a24ab8ddfaf5a19b2#9260f11be5900beda4ee6d1a24ab8ddfaf5a19b2"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
 name = "tree-sitter-vue"
 version = "0.0.1"
 source = "git+https://github.com/zed-industries/tree-sitter-vue?rev=9b6cb221ccb8d0b956fcb17e9a1efac2feefeb58#9b6cb221ccb8d0b956fcb17e9a1efac2feefeb58"
@@ -10240,6 +10280,7 @@ dependencies = [
  "serde",
  "settings2",
  "smallvec",
+ "story",
  "strum",
  "theme2",
 ]
@@ -11354,6 +11395,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-recursion 1.0.5",
+ "async-trait",
  "bincode",
  "call2",
  "client2",
@@ -11466,7 +11508,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.114.0"
+version = "0.115.0"
 dependencies = [
  "activity_indicator",
  "ai",
@@ -11583,6 +11625,7 @@ dependencies = [
  "tree-sitter-svelte",
  "tree-sitter-toml",
  "tree-sitter-typescript",
+ "tree-sitter-uiua",
  "tree-sitter-vue",
  "tree-sitter-yaml",
  "unindent",
@@ -11614,9 +11657,11 @@ dependencies = [
  "async-recursion 0.3.2",
  "async-tar",
  "async-trait",
+ "audio2",
  "auto_update2",
  "backtrace",
  "call2",
+ "channel2",
  "chrono",
  "cli",
  "client2",
@@ -11634,7 +11679,6 @@ dependencies = [
  "fs2",
  "fsevent",
  "futures 0.3.28",
- "fuzzy",
  "go_to_line2",
  "gpui2",
  "ignore",
@@ -11662,6 +11706,7 @@ dependencies = [
  "rsa 0.4.0",
  "rust-embed",
  "schemars",
+ "search2",
  "serde",
  "serde_derive",
  "serde_json",
@@ -11704,6 +11749,7 @@ dependencies = [
  "tree-sitter-svelte",
  "tree-sitter-toml",
  "tree-sitter-typescript",
+ "tree-sitter-uiua",
  "tree-sitter-vue",
  "tree-sitter-yaml",
  "unindent",

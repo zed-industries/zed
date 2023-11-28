@@ -1,8 +1,11 @@
+// #![allow(unused)] // todo!()
+
 // use editor::{Cursor, HighlightedRange, HighlightedRangeLine};
 // use gpui::{
 //     point, transparent_black, AnyElement, AppContext, Bounds, Component, CursorStyle, Element,
-//     FontStyle, FontWeight, HighlightStyle, Hsla, LayoutId, Line, ModelContext, MouseButton,
-//     Overlay, Pixels, Point, Quad, TextStyle, Underline, ViewContext, WeakModel, WindowContext,
+//     ElementId, FontStyle, FontWeight, HighlightStyle, Hsla, IntoElement, IsZero, LayoutId,
+//     ModelContext, Overlay, Pixels, Point, Quad, TextRun, TextStyle, TextSystem, Underline,
+//     ViewContext, WeakModel, WindowContext,
 // };
 // use itertools::Itertools;
 // use language::CursorShape;
@@ -15,15 +18,10 @@
 //         index::Point as AlacPoint,
 //         term::{cell::Flags, TermMode},
 //     },
-//     // mappings::colors::convert_color,
 //     terminal_settings::TerminalSettings,
-//     IndexedCell,
-//     Terminal,
-//     TerminalContent,
-//     TerminalSize,
+//     IndexedCell, Terminal, TerminalContent, TerminalSize,
 // };
 // use theme::ThemeSettings;
-// use workspace::ElementId;
 
 // use std::mem;
 // use std::{fmt::Debug, ops::RangeInclusive};
@@ -40,7 +38,7 @@
 //     size: TerminalSize,
 //     mode: TermMode,
 //     display_offset: usize,
-//     hyperlink_tooltip: Option<AnyElement<TerminalView>>,
+//     hyperlink_tooltip: Option<AnyElement>,
 //     gutter: f32,
 // }
 
@@ -183,9 +181,9 @@
 //         grid: &Vec<IndexedCell>,
 //         text_style: &TextStyle,
 //         terminal_theme: &TerminalStyle,
-//         text_layout_cache: &TextLayoutCache,
-//         font_cache: &FontCache,
+//         text_system: &TextSystem,
 //         hyperlink: Option<(HighlightStyle, &RangeInclusive<AlacPoint>)>,
+//         cx: &mut WindowContext<'_>,
 //     ) -> (Vec<LayoutCell>, Vec<LayoutRect>) {
 //         let mut cells = vec![];
 //         let mut rects = vec![];
@@ -252,15 +250,15 @@
 //                             fg,
 //                             terminal_theme,
 //                             text_style,
-//                             font_cache,
+//                             text_system,
 //                             hyperlink,
 //                         );
 
-//                         let layout_cell = text_layout_cache.layout_str(
+//                         let layout_cell = text_system.layout_line(
 //                             cell_text,
-//                             text_style.font_size,
+//                             text_style.font_size.to_pixels(cx.rem_size()),
 //                             &[(cell_text.len(), cell_style)],
-//                         );
+//                         )?;
 
 //                         cells.push(LayoutCell::new(
 //                             AlacPoint::new(line_index as i32, cell.point.column.0 as i32),
@@ -311,24 +309,27 @@
 //         fg: terminal::alacritty_terminal::ansi::Color,
 //         style: &TerminalStyle,
 //         text_style: &TextStyle,
-//         font_cache: &FontCache,
+//         text_system: &TextSystem,
 //         hyperlink: Option<(HighlightStyle, &RangeInclusive<AlacPoint>)>,
-//     ) -> RunStyle {
+//     ) -> TextRun {
 //         let flags = indexed.cell.flags;
 //         let fg = convert_color(&fg, &style);
 
 //         let mut underline = flags
 //             .intersects(Flags::ALL_UNDERLINES)
 //             .then(|| Underline {
-//                 color: Some(fg),
-//                 squiggly: flags.contains(Flags::UNDERCURL),
-//                 thickness: OrderedFloat(1.),
+//                 color: fg,
+//                 thickness: Pixels::from(1.0).scale(1.0),
+//                 order: todo!(),
+//                 bounds: todo!(),
+//                 content_mask: todo!(),
+//                 wavy: flags.contains(Flags::UNDERCURL),
 //             })
 //             .unwrap_or_default();
 
 //         if indexed.cell.hyperlink().is_some() {
-//             if underline.thickness == OrderedFloat(0.) {
-//                 underline.thickness = OrderedFloat(1.);
+//             if underline.thickness.is_zero() {
+//                 underline.thickness = Pixels::from(1.0).scale(1.0);
 //             }
 //         }
 
@@ -340,11 +341,11 @@
 //             properties = *properties.style(FontStyle::Italic);
 //         }
 
-//         let font_id = font_cache
+//         let font_id = text_system
 //             .select_font(text_style.font_family, &properties)
 //             .unwrap_or(text_style.font_id);
 
-//         let mut result = RunStyle {
+//         let mut result = TextRun {
 //             color: fg,
 //             font_id,
 //             underline,
@@ -353,7 +354,7 @@
 //         if let Some((style, range)) = hyperlink {
 //             if range.contains(&indexed.point) {
 //                 if let Some(underline) = style.underline {
-//                     result.underline = underline;
+//                     result.underline = Some(underline);
 //                 }
 
 //                 if let Some(color) = style.color {
@@ -365,22 +366,23 @@
 //         result
 //     }
 
-//     fn generic_button_handler<E>(
-//         connection: WeakModel<Terminal>,
-//         origin: Point<Pixels>,
-//         f: impl Fn(&mut Terminal, Point<Pixels>, E, &mut ModelContext<Terminal>),
-//     ) -> impl Fn(E, &mut TerminalView, &mut EventContext<TerminalView>) {
-//         move |event, _: &mut TerminalView, cx| {
-//             cx.focus_parent();
-//             if let Some(conn_handle) = connection.upgrade() {
-//                 conn_handle.update(cx, |terminal, cx| {
-//                     f(terminal, origin, event, cx);
+//     // todo!()
+//     // fn generic_button_handler<E>(
+//     //     connection: WeakModel<Terminal>,
+//     //     origin: Point<Pixels>,
+//     //     f: impl Fn(&mut Terminal, Point<Pixels>, E, &mut ModelContext<Terminal>),
+//     // ) -> impl Fn(E, &mut TerminalView, &mut EventContext<TerminalView>) {
+//     //     move |event, _: &mut TerminalView, cx| {
+//     //         cx.focus_parent();
+//     //         if let Some(conn_handle) = connection.upgrade() {
+//     //             conn_handle.update(cx, |terminal, cx| {
+//     //                 f(terminal, origin, event, cx);
 
-//                     cx.notify();
-//                 })
-//             }
-//         }
-//     }
+//     //                 cx.notify();
+//     //             })
+//     //         }
+//     //     }
+//     // }
 
 //     fn attach_mouse_handlers(
 //         &self,
@@ -389,144 +391,144 @@
 //         mode: TermMode,
 //         cx: &mut ViewContext<TerminalView>,
 //     ) {
-//         let connection = self.terminal;
+//         // todo!()
+//         // let connection = self.terminal;
 
-//         let mut region = MouseRegion::new::<Self>(cx.view_id(), 0, visible_bounds);
+//         // let mut region = MouseRegion::new::<Self>(cx.view_id(), 0, visible_bounds);
 
-//         // Terminal Emulator controlled behavior:
-//         region = region
-//             // Start selections
-//             .on_down(MouseButton::Left, move |event, v: &mut TerminalView, cx| {
-//                 let terminal_view = cx.handle();
-//                 cx.focus(&terminal_view);
-//                 v.context_menu.update(cx, |menu, _cx| menu.delay_cancel());
-//                 if let Some(conn_handle) = connection.upgrade() {
-//                     conn_handle.update(cx, |terminal, cx| {
-//                         terminal.mouse_down(&event, origin);
+//         // // Terminal Emulator controlled behavior:
+//         // region = region
+//         //     // Start selections
+//         //     .on_down(MouseButton::Left, move |event, v: &mut TerminalView, cx| {
+//         //         let terminal_view = cx.handle();
+//         //         cx.focus(&terminal_view);
+//         //         v.context_menu.update(cx, |menu, _cx| menu.delay_cancel());
+//         //         if let Some(conn_handle) = connection.upgrade() {
+//         //             conn_handle.update(cx, |terminal, cx| {
+//         //                 terminal.mouse_down(&event, origin);
 
-//                         cx.notify();
-//                     })
-//                 }
-//             })
-//             // Update drag selections
-//             .on_drag(MouseButton::Left, move |event, _: &mut TerminalView, cx| {
-//                 if event.end {
-//                     return;
-//                 }
+//         //                 cx.notify();
+//         //             })
+//         //         }
+//         //     })
+//         //     // Update drag selections
+//         //     .on_drag(MouseButton::Left, move |event, _: &mut TerminalView, cx| {
+//         //         if event.end {
+//         //             return;
+//         //         }
 
-//                 if cx.is_self_focused() {
-//                     if let Some(conn_handle) = connection.upgrade() {
-//                         conn_handle.update(cx, |terminal, cx| {
-//                             terminal.mouse_drag(event, origin);
-//                             cx.notify();
-//                         })
-//                     }
-//                 }
-//             })
-//             // Copy on up behavior
-//             .on_up(
-//                 MouseButton::Left,
-//                 TerminalElement::generic_button_handler(
-//                     connection,
-//                     origin,
-//                     move |terminal, origin, e, cx| {
-//                         terminal.mouse_up(&e, origin, cx);
-//                     },
-//                 ),
-//             )
-//             // Context menu
-//             .on_click(
-//                 MouseButton::Right,
-//                 move |event, view: &mut TerminalView, cx| {
-//                     let mouse_mode = if let Some(conn_handle) = connection.upgrade() {
-//                         conn_handle.update(cx, |terminal, _cx| terminal.mouse_mode(event.shift))
-//                     } else {
-//                         // If we can't get the model handle, probably can't deploy the context menu
-//                         true
-//                     };
-//                     if !mouse_mode {
-//                         view.deploy_context_menu(event.position, cx);
-//                     }
-//                 },
-//             )
-//             .on_move(move |event, _: &mut TerminalView, cx| {
-//                 if cx.is_self_focused() {
-//                     if let Some(conn_handle) = connection.upgrade() {
-//                         conn_handle.update(cx, |terminal, cx| {
-//                             terminal.mouse_move(&event, origin);
-//                             cx.notify();
-//                         })
-//                     }
-//                 }
-//             })
-//             .on_scroll(move |event, _: &mut TerminalView, cx| {
-//                 if let Some(conn_handle) = connection.upgrade() {
-//                     conn_handle.update(cx, |terminal, cx| {
-//                         terminal.scroll_wheel(event, origin);
-//                         cx.notify();
-//                     })
-//                 }
-//             });
+//         //         if cx.is_self_focused() {
+//         //             if let Some(conn_handle) = connection.upgrade() {
+//         //                 conn_handle.update(cx, |terminal, cx| {
+//         //                     terminal.mouse_drag(event, origin);
+//         //                     cx.notify();
+//         //                 })
+//         //             }
+//         //         }
+//         //     })
+//         //     // Copy on up behavior
+//         //     .on_up(
+//         //         MouseButton::Left,
+//         //         TerminalElement::generic_button_handler(
+//         //             connection,
+//         //             origin,
+//         //             move |terminal, origin, e, cx| {
+//         //                 terminal.mouse_up(&e, origin, cx);
+//         //             },
+//         //         ),
+//         //     )
+//         //     // Context menu
+//         //     .on_click(
+//         //         MouseButton::Right,
+//         //         move |event, view: &mut TerminalView, cx| {
+//         //             let mouse_mode = if let Some(conn_handle) = connection.upgrade() {
+//         //                 conn_handle.update(cx, |terminal, _cx| terminal.mouse_mode(event.shift))
+//         //             } else {
+//         //                 // If we can't get the model handle, probably can't deploy the context menu
+//         //                 true
+//         //             };
+//         //             if !mouse_mode {
+//         //                 view.deploy_context_menu(event.position, cx);
+//         //             }
+//         //         },
+//         //     )
+//         //     .on_move(move |event, _: &mut TerminalView, cx| {
+//         //         if cx.is_self_focused() {
+//         //             if let Some(conn_handle) = connection.upgrade() {
+//         //                 conn_handle.update(cx, |terminal, cx| {
+//         //                     terminal.mouse_move(&event, origin);
+//         //                     cx.notify();
+//         //                 })
+//         //             }
+//         //         }
+//         //     })
+//         //     .on_scroll(move |event, _: &mut TerminalView, cx| {
+//         //         if let Some(conn_handle) = connection.upgrade() {
+//         //             conn_handle.update(cx, |terminal, cx| {
+//         //                 terminal.scroll_wheel(event, origin);
+//         //                 cx.notify();
+//         //             })
+//         //         }
+//         //     });
 
-//         // Mouse mode handlers:
-//         // All mouse modes need the extra click handlers
-//         if mode.intersects(TermMode::MOUSE_MODE) {
-//             region = region
-//                 .on_down(
-//                     MouseButton::Right,
-//                     TerminalElement::generic_button_handler(
-//                         connection,
-//                         origin,
-//                         move |terminal, origin, e, _cx| {
-//                             terminal.mouse_down(&e, origin);
-//                         },
-//                     ),
-//                 )
-//                 .on_down(
-//                     MouseButton::Middle,
-//                     TerminalElement::generic_button_handler(
-//                         connection,
-//                         origin,
-//                         move |terminal, origin, e, _cx| {
-//                             terminal.mouse_down(&e, origin);
-//                         },
-//                     ),
-//                 )
-//                 .on_up(
-//                     MouseButton::Right,
-//                     TerminalElement::generic_button_handler(
-//                         connection,
-//                         origin,
-//                         move |terminal, origin, e, cx| {
-//                             terminal.mouse_up(&e, origin, cx);
-//                         },
-//                     ),
-//                 )
-//                 .on_up(
-//                     MouseButton::Middle,
-//                     TerminalElement::generic_button_handler(
-//                         connection,
-//                         origin,
-//                         move |terminal, origin, e, cx| {
-//                             terminal.mouse_up(&e, origin, cx);
-//                         },
-//                     ),
-//                 )
-//         }
+//         // // Mouse mode handlers:
+//         // // All mouse modes need the extra click handlers
+//         // if mode.intersects(TermMode::MOUSE_MODE) {
+//         //     region = region
+//         //         .on_down(
+//         //             MouseButton::Right,
+//         //             TerminalElement::generic_button_handler(
+//         //                 connection,
+//         //                 origin,
+//         //                 move |terminal, origin, e, _cx| {
+//         //                     terminal.mouse_down(&e, origin);
+//         //                 },
+//         //             ),
+//         //         )
+//         //         .on_down(
+//         //             MouseButton::Middle,
+//         //             TerminalElement::generic_button_handler(
+//         //                 connection,
+//         //                 origin,
+//         //                 move |terminal, origin, e, _cx| {
+//         //                     terminal.mouse_down(&e, origin);
+//         //                 },
+//         //             ),
+//         //         )
+//         //         .on_up(
+//         //             MouseButton::Right,
+//         //             TerminalElement::generic_button_handler(
+//         //                 connection,
+//         //                 origin,
+//         //                 move |terminal, origin, e, cx| {
+//         //                     terminal.mouse_up(&e, origin, cx);
+//         //                 },
+//         //             ),
+//         //         )
+//         //         .on_up(
+//         //             MouseButton::Middle,
+//         //             TerminalElement::generic_button_handler(
+//         //                 connection,
+//         //                 origin,
+//         //                 move |terminal, origin, e, cx| {
+//         //                     terminal.mouse_up(&e, origin, cx);
+//         //                 },
+//         //             ),
+//         //         )
+//         // }
 
-//         cx.scene().push_mouse_region(region);
+//         // cx.scene().push_mouse_region(region);
 //     }
 // }
 
-// impl Element<TerminalView> for TerminalElement {
-//     type ElementState = LayoutState;
+// impl Element for TerminalElement {
+//     type State = LayoutState;
 
 //     fn layout(
 //         &mut self,
-//         view_state: &mut TerminalView,
-//         element_state: Option<Self::ElementState>,
-//         cx: &mut ViewContext<TerminalView>,
-//     ) -> (LayoutId, Self::ElementState) {
+//         element_state: Option<Self::State>,
+//         cx: &mut WindowContext<'_>,
+//     ) -> (LayoutId, Self::State) {
 //         let settings = ThemeSettings::get_global(cx);
 //         let terminal_settings = TerminalSettings::get_global(cx);
 
@@ -535,7 +537,7 @@
 //         let link_style = settings.theme.editor.link_definition;
 //         let tooltip_style = settings.theme.tooltip.clone();
 
-//         let font_cache = cx.font_cache();
+//         let text_system = cx.text_system();
 //         let font_size = font_size(&terminal_settings, cx).unwrap_or(settings.buffer_font_size(cx));
 //         let font_family_name = terminal_settings
 //             .font_family
@@ -545,30 +547,37 @@
 //             .font_features
 //             .as_ref()
 //             .unwrap_or(&settings.buffer_font_features);
-//         let family_id = font_cache
+//         let family_id = text_system
 //             .load_family(&[font_family_name], &font_features)
 //             .log_err()
 //             .unwrap_or(settings.buffer_font_family);
-//         let font_id = font_cache
+//         let font_id = text_system
 //             .select_font(family_id, &Default::default())
 //             .unwrap();
 
 //         let text_style = TextStyle {
 //             color: settings.theme.editor.text_color,
 //             font_family_id: family_id,
-//             font_family_name: font_cache.family_name(family_id).unwrap(),
+//             font_family_name: text_system.family_name(family_id).unwrap(),
 //             font_id,
 //             font_size,
 //             font_properties: Default::default(),
 //             underline: Default::default(),
 //             soft_wrap: false,
+//             font_family: todo!(),
+//             font_features: todo!(),
+//             line_height: todo!(),
+//             font_weight: todo!(),
+//             font_style: todo!(),
+//             background_color: todo!(),
+//             white_space: todo!(),
 //         };
 //         let selection_color = settings.theme.editor.selection.selection;
 //         let match_color = settings.theme.search.match_background;
 //         let gutter;
 //         let dimensions = {
 //             let line_height = text_style.font_size * terminal_settings.line_height.value();
-//             let cell_width = font_cache.em_advance(text_style.font_id, text_style.font_size);
+//             let cell_width = text_system.em_advance(text_style.font_id, text_style.font_size);
 //             gutter = cell_width;
 
 //             let size = constraint.max - point(gutter, 0.);
@@ -645,11 +654,11 @@
 //             cells,
 //             &text_style,
 //             &terminal_theme,
-//             cx.text_layout_cache(),
-//             cx.font_cache(),
+//             &cx.text_system(),
 //             last_hovered_word
 //                 .as_ref()
 //                 .map(|last_hovered_word| (link_style, &last_hovered_word.word_match)),
+//             cx,
 //         );
 
 //         //Layout cursor. Rectangle is used for IME, so we should lay it out even
@@ -667,18 +676,18 @@
 //                     terminal_theme.foreground
 //                 };
 
-//                 cx.text_layout_cache().layout_str(
+//                 cx.text_system().layout_line(
 //                     &str_trxt,
 //                     text_style.font_size,
 //                     &[(
 //                         str_trxt.len(),
-//                         RunStyle {
+//                         TextRun {
 //                             font_id: text_style.font_id,
 //                             color,
 //                             underline: Default::default(),
 //                         },
 //                     )],
-//                 )
+//                 )?
 //             };
 
 //             let focused = self.focused;
@@ -709,7 +718,7 @@
 //         //Done!
 //         (
 //             constraint.max,
-//             Self::ElementState {
+//             Self::State {
 //                 cells,
 //                 cursor,
 //                 background_color,
@@ -725,93 +734,89 @@
 //     }
 
 //     fn paint(
-//         &mut self,
+//         self,
 //         bounds: Bounds<Pixels>,
-//         view_state: &mut TerminalView,
-//         element_state: &mut Self::ElementState,
-//         cx: &mut ViewContext<TerminalView>,
+//         element_state: &mut Self::State,
+//         cx: &mut WindowContext<'_>,
 //     ) {
-//         let visible_bounds = bounds.intersection(visible_bounds).unwrap_or_default();
+//         // todo!()
+//         // let visible_bounds = bounds.intersection(visible_bounds).unwrap_or_default();
 
-//         //Setup element stuff
-//         let clip_bounds = Some(visible_bounds);
+//         // //Setup element stuff
+//         // let clip_bounds = Some(visible_bounds);
 
-//         cx.paint_layer(clip_bounds, |cx| {
-//             let origin = bounds.origin + point(element_state.gutter, 0.);
+//         // cx.paint_layer(clip_bounds, |cx| {
+//         //     let origin = bounds.origin + point(element_state.gutter, 0.);
 
-//             // Elements are ephemeral, only at paint time do we know what could be clicked by a mouse
-//             self.attach_mouse_handlers(origin, visible_bounds, element_state.mode, cx);
+//         //     // Elements are ephemeral, only at paint time do we know what could be clicked by a mouse
+//         //     self.attach_mouse_handlers(origin, visible_bounds, element_state.mode, cx);
 
-//             cx.scene().push_cursor_region(gpui::CursorRegion {
-//                 bounds,
-//                 style: if element_state.hyperlink_tooltip.is_some() {
-//                     CursorStyle::AlacPointingHand
-//                 } else {
-//                     CursorStyle::IBeam
-//                 },
-//             });
+//         //     cx.scene().push_cursor_region(gpui::CursorRegion {
+//         //         bounds,
+//         //         style: if element_state.hyperlink_tooltip.is_some() {
+//         //             CursorStyle::AlacPointingHand
+//         //         } else {
+//         //             CursorStyle::IBeam
+//         //         },
+//         //     });
 
-//             cx.paint_layer(clip_bounds, |cx| {
-//                 //Start with a background color
-//                 cx.scene().push_quad(Quad {
-//                     bounds,
-//                     background: Some(element_state.background_color),
-//                     border: Default::default(),
-//                     corner_radii: Default::default(),
-//                 });
+//         //     cx.paint_layer(clip_bounds, |cx| {
+//         //         //Start with a background color
+//         //         cx.scene().push_quad(Quad {
+//         //             bounds,
+//         //             background: Some(element_state.background_color),
+//         //             border: Default::default(),
+//         //             corner_radii: Default::default(),
+//         //         });
 
-//                 for rect in &element_state.rects {
-//                     rect.paint(origin, element_state, view_state, cx);
-//                 }
-//             });
+//         //         for rect in &element_state.rects {
+//         //             rect.paint(origin, element_state, view_state, cx);
+//         //         }
+//         //     });
 
-//             //Draw Highlighted Backgrounds
-//             cx.paint_layer(clip_bounds, |cx| {
-//                 for (relative_highlighted_range, color) in
-//                     element_state.relative_highlighted_ranges.iter()
-//                 {
-//                     if let Some((start_y, highlighted_range_lines)) = to_highlighted_range_lines(
-//                         relative_highlighted_range,
-//                         element_state,
-//                         origin,
-//                     ) {
-//                         let hr = HighlightedRange {
-//                             start_y, //Need to change this
-//                             line_height: element_state.size.line_height,
-//                             lines: highlighted_range_lines,
-//                             color: color.clone(),
-//                             //Copied from editor. TODO: move to theme or something
-//                             corner_radius: 0.15 * element_state.size.line_height,
-//                         };
-//                         hr.paint(bounds, cx);
-//                     }
-//                 }
-//             });
+//         //     //Draw Highlighted Backgrounds
+//         //     cx.paint_layer(clip_bounds, |cx| {
+//         //         for (relative_highlighted_range, color) in
+//         //             element_state.relative_highlighted_ranges.iter()
+//         //         {
+//         //             if let Some((start_y, highlighted_range_lines)) = to_highlighted_range_lines(
+//         //                 relative_highlighted_range,
+//         //                 element_state,
+//         //                 origin,
+//         //             ) {
+//         //                 let hr = HighlightedRange {
+//         //                     start_y, //Need to change this
+//         //                     line_height: element_state.size.line_height,
+//         //                     lines: highlighted_range_lines,
+//         //                     color: color.clone(),
+//         //                     //Copied from editor. TODO: move to theme or something
+//         //                     corner_radius: 0.15 * element_state.size.line_height,
+//         //                 };
+//         //                 hr.paint(bounds, cx);
+//         //             }
+//         //         }
+//         //     });
 
-//             //Draw the text cells
-//             cx.paint_layer(clip_bounds, |cx| {
-//                 for cell in &element_state.cells {
-//                     cell.paint(origin, element_state, visible_bounds, view_state, cx);
-//                 }
-//             });
+//         //     //Draw the text cells
+//         //     cx.paint_layer(clip_bounds, |cx| {
+//         //         for cell in &element_state.cells {
+//         //             cell.paint(origin, element_state, visible_bounds, view_state, cx);
+//         //         }
+//         //     });
 
-//             //Draw cursor
-//             if self.cursor_visible {
-//                 if let Some(cursor) = &element_state.cursor {
-//                     cx.paint_layer(clip_bounds, |cx| {
-//                         cursor.paint(origin, cx);
-//                     })
-//                 }
-//             }
+//         //     //Draw cursor
+//         //     if self.cursor_visible {
+//         //         if let Some(cursor) = &element_state.cursor {
+//         //             cx.paint_layer(clip_bounds, |cx| {
+//         //                 cursor.paint(origin, cx);
+//         //             })
+//         //         }
+//         //     }
 
-//             if let Some(element) = &mut element_state.hyperlink_tooltip {
-//                 element.paint(origin, visible_bounds, view_state, cx)
-//             }
-//         });
-//     }
-
-//     fn element_id(&self) -> Option<ElementId> {
-//         todo!()
+//         //     if let Some(element) = &mut element_state.hyperlink_tooltip {
+//         //         element.paint(origin, visible_bounds, view_state, cx)
+//         //     }
+//         // });
 //     }
 
 //     // todo!() remove?
@@ -822,7 +827,7 @@
 //     // fn debug(
 //     //     &self,
 //     //     _: Bounds<Pixels>,
-//     //     _: &Self::ElementState,
+//     //     _: &Self::State,
 //     //     _: &Self::PaintState,
 //     //     _: &TerminalView,
 //     //     _: &gpui::ViewContext<TerminalView>,
@@ -837,7 +842,7 @@
 //     //     _: Range<usize>,
 //     //     bounds: Bounds<Pixels>,
 //     //     _: Bounds<Pixels>,
-//     //     layout: &Self::ElementState,
+//     //     layout: &Self::State,
 //     //     _: &Self::PaintState,
 //     //     _: &TerminalView,
 //     //     _: &gpui::ViewContext<TerminalView>,
@@ -855,9 +860,15 @@
 //     // }
 // }
 
-// impl Component<TerminalView> for TerminalElement {
-//     fn render(self) -> AnyElement<TerminalView> {
+// impl IntoElement for TerminalElement {
+//     type Element = Self;
+
+//     fn element_id(&self) -> Option<ElementId> {
 //         todo!()
+//     }
+
+//     fn into_element(self) -> Self::Element {
+//         self
 //     }
 // }
 
@@ -951,4 +962,9 @@
 //     terminal_settings
 //         .font_size
 //         .map(|size| theme::adjusted_font_size(size, cx))
+// }
+
+// // mappings::colors::convert_color
+// fn convert_color(fg: &terminal::alacritty_terminal::ansi::Color, style: &TerminalStyle) -> Hsla {
+//     todo!()
 // }

@@ -19,7 +19,7 @@ lazy_static! {
 
 pub struct AppCommitSha(pub String);
 
-#[derive(Copy, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
 pub enum ReleaseChannel {
     #[default]
     Dev,
@@ -59,7 +59,6 @@ impl ReleaseChannel {
     pub fn link_prefix(&self) -> &'static str {
         match self {
             ReleaseChannel::Dev => "https://zed.dev/dev/",
-            // TODO kb need to add server handling
             ReleaseChannel::Nightly => "https://zed.dev/nightly/",
             ReleaseChannel::Preview => "https://zed.dev/preview/",
             ReleaseChannel::Stable => "https://zed.dev/",

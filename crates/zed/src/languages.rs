@@ -17,6 +17,7 @@ mod json;
 #[cfg(feature = "plugin_runtime")]
 mod language_plugin;
 mod lua;
+mod nu;
 mod php;
 mod python;
 mod ruby;
@@ -24,6 +25,7 @@ mod rust;
 mod svelte;
 mod tailwind;
 mod typescript;
+mod uiua;
 mod vue;
 mod yaml;
 
@@ -210,11 +212,20 @@ pub fn init(
     language("elm", tree_sitter_elm::language(), vec![]);
     language("glsl", tree_sitter_glsl::language(), vec![]);
     language("nix", tree_sitter_nix::language(), vec![]);
-    language("nu", tree_sitter_nu::language(), vec![]);
+    language(
+        "nu",
+        tree_sitter_nu::language(),
+        vec![Arc::new(nu::NuLanguageServer {})],
+    );
     language(
         "vue",
         tree_sitter_vue::language(),
         vec![Arc::new(vue::VueLspAdapter::new(node_runtime))],
+    );
+    language(
+        "uiua",
+        tree_sitter_uiua::language(),
+        vec![Arc::new(uiua::UiuaLanguageServer {})],
     );
 }
 

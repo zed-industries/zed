@@ -1,17 +1,15 @@
 use collections::{CommandPaletteFilter, HashMap};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, div, prelude::*, Action, AppContext, Component, Div, EventEmitter, FocusHandle,
-    FocusableView, Keystroke, Manager, ParentComponent, Render, Styled, View, ViewContext,
-    VisualContext, WeakView,
+    actions, Action, AppContext, DismissEvent, Div, EventEmitter, FocusHandle, FocusableView,
+    Keystroke, ParentElement, Render, Styled, View, ViewContext, VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};
 use std::{
     cmp::{self, Reverse},
     sync::Arc,
 };
-use theme::ActiveTheme;
-use ui::{h_stack, v_stack, HighlightedLabel, KeyBinding, StyledExt};
+use ui::{h_stack, v_stack, HighlightedLabel, KeyBinding, ListItem};
 use util::{
     channel::{parse_zed_link, ReleaseChannel, RELEASE_CHANNEL},
     ResultExt,
@@ -69,7 +67,7 @@ impl CommandPalette {
     }
 }
 
-impl EventEmitter<Manager> for CommandPalette {}
+impl EventEmitter<DismissEvent> for CommandPalette {}
 
 impl FocusableView for CommandPalette {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
@@ -78,7 +76,7 @@ impl FocusableView for CommandPalette {
 }
 
 impl Render for CommandPalette {
-    type Element = Div<Self>;
+    type Element = Div;
 
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
         v_stack().w_96().child(self.picker.clone())
@@ -141,7 +139,7 @@ impl CommandPaletteDelegate {
 }
 
 impl PickerDelegate for CommandPaletteDelegate {
-    type ListItem = Div<Picker<Self>>;
+    type ListItem = ListItem;
 
     fn placeholder_text(&self) -> Arc<str> {
         "Execute a command...".into()
@@ -269,7 +267,7 @@ impl PickerDelegate for CommandPaletteDelegate {
 
     fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>) {
         self.command_palette
-            .update(cx, |_, cx| cx.emit(Manager::Dismiss))
+            .update(cx, |_, cx| cx.emit(DismissEvent::Dismiss))
             .log_err();
     }
 
@@ -294,24 +292,16 @@ impl PickerDelegate for CommandPaletteDelegate {
         ix: usize,
         selected: bool,
         cx: &mut ViewContext<Picker<Self>>,
-    ) -> Self::ListItem {
-        let colors = cx.theme().colors();
+    ) -> Option<Self::ListItem> {
         let Some(r#match) = self.matches.get(ix) else {
-            return div();
+            return None;
         };
         let Some(command) = self.commands.get(r#match.candidate_id) else {
-            return div();
+            return None;
         };
 
-        div()
-            .px_1()
-            .text_color(colors.text)
-            .text_ui()
-            .bg(colors.ghost_element_background)
-            .rounded_md()
-            .when(selected, |this| this.bg(colors.ghost_element_selected))
-            .hover(|this| this.bg(colors.ghost_element_hover))
-            .child(
+        Some(
+            ListItem::new(ix).selected(selected).child(
                 h_stack()
                     .justify_between()
                     .child(HighlightedLabel::new(
@@ -319,7 +309,8 @@ impl PickerDelegate for CommandPaletteDelegate {
                         r#match.positions.clone(),
                     ))
                     .children(KeyBinding::for_action(&*command.action, cx)),
-            )
+            ),
+        )
     }
 }
 

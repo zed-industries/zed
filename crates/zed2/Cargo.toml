@@ -16,12 +16,12 @@ path = "src/main.rs"
 
 [dependencies]
 ai = { package = "ai2", path = "../ai2"}
-# audio = { path = "../audio" }
+audio = { package = "audio2", path = "../audio2" }
 # activity_indicator = { path = "../activity_indicator" }
 auto_update = { package = "auto_update2", path = "../auto_update2" }
 # breadcrumbs = { path = "../breadcrumbs" }
 call = { package = "call2", path = "../call2" }
-# channel = { path = "../channel" }
+channel = { package = "channel2", path = "../channel2" }
 cli = { path = "../cli" }
 collab_ui = { package = "collab_ui2", path = "../collab_ui2" }
 collections = { path = "../collections" }
@@ -36,10 +36,9 @@ db = { package = "db2", path = "../db2" }
 editor = { package="editor2", path = "../editor2" }
 # feedback = { path = "../feedback" }
 file_finder = { package="file_finder2", path = "../file_finder2" }
-# search = { path = "../search" }
+search = { package = "search2", path = "../search2" }
 fs = { package = "fs2", path = "../fs2" }
 fsevent = { path = "../fsevent" }
-fuzzy = { path = "../fuzzy" }
 go_to_line = { package = "go_to_line2", path = "../go_to_line2" }
 gpui = { package = "gpui2", path = "../gpui2" }
 install_cli = { package = "install_cli2", path = "../install_cli2" }
@@ -137,6 +136,7 @@ tree-sitter-lua.workspace = true
 tree-sitter-nix.workspace = true
 tree-sitter-nu.workspace = true
 tree-sitter-vue.workspace = true
+tree-sitter-uiua.workspace = true
 
 url = "2.2"
 urlencoding = "2.1.2"

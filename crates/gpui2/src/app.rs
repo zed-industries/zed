@@ -10,11 +10,12 @@ pub use entity_map::*;
 pub use model_context::*;
 use refineable::Refineable;
 use smallvec::SmallVec;
+use smol::future::FutureExt;
 #[cfg(any(test, feature = "test-support"))]
 pub use test_context::*;
 
 use crate::{
-    current_platform, image_cache::ImageCache, Action, ActionRegistry, AnyBox, AnyView,
+    current_platform, image_cache::ImageCache, Action, ActionRegistry, Any, AnyView,
     AnyWindowHandle, AppMetadata, AssetSource, BackgroundExecutor, ClipboardItem, Context,
     DispatchPhase, DisplayId, Entity, EventEmitter, FocusEvent, FocusHandle, FocusId,
     ForegroundExecutor, KeyBinding, Keymap, LayoutId, PathPromptOptions, Pixels, Platform,
@@ -28,7 +29,7 @@ use futures::{channel::oneshot, future::LocalBoxFuture, Future};
 use parking_lot::Mutex;
 use slotmap::SlotMap;
 use std::{
-    any::{type_name, Any, TypeId},
+    any::{type_name, TypeId},
     cell::{Ref, RefCell, RefMut},
     marker::PhantomData,
     mem,
@@ -194,7 +195,7 @@ pub struct AppContext {
     asset_source: Arc<dyn AssetSource>,
     pub(crate) image_cache: ImageCache,
     pub(crate) text_style_stack: Vec<TextStyleRefinement>,
-    pub(crate) globals_by_type: HashMap<TypeId, AnyBox>,
+    pub(crate) globals_by_type: HashMap<TypeId, Box<dyn Any>>,
     pub(crate) entities: EntityMap,
     pub(crate) new_view_observers: SubscriberSet<TypeId, NewViewListener>,
     pub(crate) windows: SlotMap<WindowId, Option<Window>>,
@@ -424,7 +425,7 @@ impl AppContext {
     /// Opens a new window with the given option and the root view returned by the given function.
     /// The function is invoked with a `WindowContext`, which can be used to interact with window-specific
     /// functionality.
-    pub fn open_window<V: Render>(
+    pub fn open_window<V: 'static + Render>(
         &mut self,
         options: crate::WindowOptions,
         build_root_view: impl FnOnce(&mut WindowContext) -> View<V>,
@@ -579,7 +580,7 @@ impl AppContext {
             .windows
             .iter()
             .filter_map(|(_, window)| {
-                let window = window.as_ref().unwrap();
+                let window = window.as_ref()?;
                 if window.dirty {
                     Some(window.handle.clone())
                 } else {
@@ -983,6 +984,22 @@ impl AppContext {
     pub fn all_action_names(&self) -> &[SharedString] {
         self.actions.all_action_names()
     }
+
+    pub fn on_app_quit<Fut>(
+        &mut self,
+        mut on_quit: impl FnMut(&mut AppContext) -> Fut + 'static,
+    ) -> Subscription
+    where
+        Fut: 'static + Future<Output = ()>,
+    {
+        self.quit_observers.insert(
+            (),
+            Box::new(move |cx| {
+                let future = on_quit(cx);
+                async move { future.await }.boxed_local()
+            }),
+        )
+    }
 }
 
 impl Context for AppContext {
@@ -1032,7 +1049,9 @@ impl Context for AppContext {
             let root_view = window.root_view.clone().unwrap();
             let result = update(root_view, &mut WindowContext::new(cx, &mut window));
 
-            if !window.removed {
+            if window.removed {
+                cx.windows.remove(handle.id);
+            } else {
                 cx.windows
                     .get_mut(handle.id)
                     .ok_or_else(|| anyhow!("window not found"))?
@@ -1104,12 +1123,12 @@ pub(crate) enum Effect {
 
 /// Wraps a global variable value during `update_global` while the value has been moved to the stack.
 pub(crate) struct GlobalLease<G: 'static> {
-    global: AnyBox,
+    global: Box<dyn Any>,
     global_type: PhantomData<G>,
 }
 
 impl<G: 'static> GlobalLease<G> {
-    fn new(global: AnyBox) -> Self {
+    fn new(global: Box<dyn Any>) -> Self {
         GlobalLease {
             global,
             global_type: PhantomData,

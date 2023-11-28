@@ -2,7 +2,6 @@
 
 mod assets;
 mod stories;
-mod story;
 mod story_selector;
 
 use std::sync::Arc;
@@ -15,7 +14,6 @@ use gpui::{
 use log::LevelFilter;
 use settings2::{default_settings, Settings, SettingsStore};
 use simplelog::SimpleLogger;
-use story_selector::ComponentStory;
 use theme2::{ThemeRegistry, ThemeSettings};
 use ui::prelude::*;
 
@@ -62,15 +60,13 @@ fn main() {
 
         theme2::init(theme2::LoadThemes::All, cx);
 
-        let selector =
-            story_selector.unwrap_or(StorySelector::Component(ComponentStory::Workspace));
+        let selector = story_selector.unwrap_or(StorySelector::KitchenSink);
 
         let theme_registry = cx.global::<ThemeRegistry>();
         let mut theme_settings = ThemeSettings::get_global(cx).clone();
         theme_settings.active_theme = theme_registry.get(&theme_name).unwrap();
         ThemeSettings::override_global(theme_settings, cx);
 
-        ui::settings::init(cx);
         language::init(cx);
         editor::init(cx);
 
@@ -106,7 +102,7 @@ impl StoryWrapper {
 }
 
 impl Render for StoryWrapper {
-    type Element = Div<Self>;
+    type Element = Div;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         div()

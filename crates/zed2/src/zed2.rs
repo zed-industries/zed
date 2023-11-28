@@ -98,8 +98,8 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                             // todo!()
                             //     let breadcrumbs = cx.add_view(|_| Breadcrumbs::new(workspace));
                             //     toolbar.add_item(breadcrumbs, cx);
-                            //     let buffer_search_bar = cx.add_view(BufferSearchBar::new);
-                            //     toolbar.add_item(buffer_search_bar.clone(), cx);
+                            let buffer_search_bar = cx.build_view(search::BufferSearchBar::new);
+                            toolbar.add_item(buffer_search_bar.clone(), cx);
                             //     let quick_action_bar = cx.add_view(|_| {
                             //         QuickActionBar::new(buffer_search_bar, workspace)
                             //     });
@@ -166,12 +166,17 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
 
         //     vim::observe_keystrokes(cx);
 
-        //     cx.on_window_should_close(|workspace, cx| {
-        //         if let Some(task) = workspace.close(&Default::default(), cx) {
-        //             task.detach_and_log_err(cx);
-        //         }
-        //         false
-        //     });
+        let handle = cx.view().downgrade();
+        cx.on_window_should_close(move |cx| {
+            handle
+                .update(cx, |workspace, cx| {
+                    if let Some(task) = workspace.close(&Default::default(), cx) {
+                        task.detach_and_log_err(cx);
+                    }
+                    false
+                })
+                .unwrap_or(true)
+        });
 
         cx.spawn(|workspace_handle, mut cx| async move {
             let project_panel = ProjectPanel::load(workspace_handle.clone(), cx.clone());

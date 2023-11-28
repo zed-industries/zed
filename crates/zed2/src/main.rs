@@ -8,7 +8,7 @@ use anyhow::{anyhow, Context as _, Result};
 use backtrace::Backtrace;
 use chrono::Utc;
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
-use client::UserStore;
+use client::{Client, UserStore};
 use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
 use fs::RealFs;
@@ -71,7 +71,11 @@ fn main() {
     log::info!("========== starting zed ==========");
     let app = App::production(Arc::new(Assets));
 
-    let installation_id = app.background_executor().block(installation_id()).ok();
+    let (installation_id, existing_installation_id_found) = app
+        .background_executor()
+        .block(installation_id())
+        .ok()
+        .unzip();
     let session_id = Uuid::new_v4().to_string();
     init_panic_hook(&app, installation_id.clone(), session_id.clone());
 
@@ -173,20 +177,29 @@ fn main() {
         // .detach();
 
         client.telemetry().start(installation_id, session_id, cx);
+        let telemetry_settings = *client::TelemetrySettings::get_global(cx);
+        let event_operation = match existing_installation_id_found {
+            Some(false) => "first open",
+            _ => "open",
+        };
+        client
+            .telemetry()
+            .report_app_event(telemetry_settings, event_operation);
 
         let app_state = Arc::new(AppState {
             languages,
             client: client.clone(),
-            user_store,
+            user_store: user_store.clone(),
             fs,
             build_window_options,
+            call_factory: call::Call::new,
             // background_actions: todo!("ask Mikayla"),
             workspace_store,
             node_runtime,
         });
         cx.set_global(Arc::downgrade(&app_state));
 
-        // audio::init(Assets, cx);
+        audio::init(Assets, cx);
         auto_update::init(http.clone(), client::ZED_SERVER_URL.clone(), cx);
 
         workspace::init(app_state.clone(), cx);
@@ -197,9 +210,9 @@ fn main() {
         // outline::init(cx);
         // project_symbols::init(cx);
         project_panel::init(Assets, cx);
-        // channel::init(&client, user_store.clone(), cx);
+        channel::init(&client, user_store.clone(), cx);
         // diagnostics::init(cx);
-        // search::init(cx);
+        search::init(cx);
         // semantic_index::init(fs.clone(), http.clone(), languages.clone(), cx);
         // vim::init(cx);
         terminal_view::init(cx);
@@ -236,7 +249,7 @@ fn main() {
             }
         }
 
-        let mut _triggered_authentication = false;
+        let mut triggered_authentication = false;
 
         fn open_paths_and_log_errs(
             paths: &[PathBuf],
@@ -315,29 +328,29 @@ fn main() {
         })
         .detach();
 
-        // if !triggered_authentication {
-        //     cx.spawn(|cx| async move { authenticate(client, &cx).await })
-        //         .detach_and_log_err(cx);
-        // }
+        if !triggered_authentication {
+            cx.spawn(|cx| async move { authenticate(client, &cx).await })
+                .detach_and_log_err(cx);
+        }
     });
 }
 
-// async fn authenticate(client: Arc<Client>, cx: &AsyncAppContext) -> Result<()> {
-//     if stdout_is_a_pty() {
-//         if client::IMPERSONATE_LOGIN.is_some() {
-//             client.authenticate_and_connect(false, &cx).await?;
-//         }
-//     } else if client.has_keychain_credentials(&cx) {
-//         client.authenticate_and_connect(true, &cx).await?;
-//     }
-//     Ok::<_, anyhow::Error>(())
-// }
+async fn authenticate(client: Arc<Client>, cx: &AsyncAppContext) -> Result<()> {
+    if stdout_is_a_pty() {
+        if client::IMPERSONATE_LOGIN.is_some() {
+            client.authenticate_and_connect(false, &cx).await?;
+        }
+    } else if client.has_keychain_credentials(&cx).await {
+        client.authenticate_and_connect(true, &cx).await?;
+    }
+    Ok::<_, anyhow::Error>(())
+}
 
-async fn installation_id() -> Result<String> {
+async fn installation_id() -> Result<(String, bool)> {
     let legacy_key_name = "device_id";
 
     if let Ok(Some(installation_id)) = KEY_VALUE_STORE.read_kvp(legacy_key_name) {
-        Ok(installation_id)
+        Ok((installation_id, true))
     } else {
         let installation_id = Uuid::new_v4().to_string();
 
@@ -345,7 +358,7 @@ async fn installation_id() -> Result<String> {
             .write_kvp(legacy_key_name.to_string(), installation_id.clone())
             .await?;
 
-        Ok(installation_id)
+        Ok((installation_id, false))
     }
 }
 
@@ -355,7 +368,6 @@ async fn restore_or_create_workspace(app_state: &Arc<AppState>, mut cx: AsyncApp
             cx.update(|cx| workspace::open_paths(location.paths().as_ref(), app_state, None, cx))?
                 .await
                 .log_err();
-        } else if matches!(KEY_VALUE_STORE.read_kvp("******* THIS IS A BAD KEY PLEASE UNCOMMENT BELOW TO FIX THIS VERY LONG LINE *******"), Ok(None)) {
             // todo!(welcome)
             //} else if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
             //todo!()

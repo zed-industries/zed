@@ -1383,7 +1383,7 @@ impl Language {
         let query = Query::new(self.grammar_mut().ts_language, source)?;
 
         let mut override_configs_by_id = HashMap::default();
-        for (ix, name) in query.capture_names().iter().enumerate() {
+        for (ix, name) in query.capture_names().iter().copied().enumerate() {
             if !name.starts_with('_') {
                 let value = self.config.overrides.remove(name).unwrap_or_default();
                 for server_name in &value.opt_into_language_servers {
@@ -1396,7 +1396,7 @@ impl Language {
                     }
                 }
 
-                override_configs_by_id.insert(ix as u32, (name.clone(), value));
+                override_configs_by_id.insert(ix as u32, (name.into(), value));
             }
         }
 

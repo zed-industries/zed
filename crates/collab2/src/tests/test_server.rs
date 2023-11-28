@@ -149,7 +149,7 @@ impl TestServer {
                 .user_id
         };
         let client_name = name.to_string();
-        let mut client = cx.read(|cx| Client::new(http.clone(), cx));
+        let mut client = cx.update(|cx| Client::new(http.clone(), cx));
         let server = self.server.clone();
         let db = self.app_state.db.clone();
         let connection_killers = self.connection_killers.clone();
@@ -221,6 +221,7 @@ impl TestServer {
             fs: fs.clone(),
             build_window_options: |_, _, _| Default::default(),
             node_runtime: FakeNodeRuntime::new(),
+            call_factory: |_, _| Box::new(workspace::TestCallHandler),
         });
 
         cx.update(|cx| {

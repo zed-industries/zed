@@ -1,6 +1,9 @@
 use crate::{Toast, Workspace};
 use collections::HashMap;
-use gpui::{AnyView, AppContext, Entity, EntityId, EventEmitter, Render, View, ViewContext};
+use gpui::{
+    AnyView, AppContext, AsyncWindowContext, DismissEvent, Entity, EntityId, EventEmitter, Render,
+    View, ViewContext, VisualContext,
+};
 use std::{any::TypeId, ops::DerefMut};
 
 pub fn init(cx: &mut AppContext) {
@@ -9,13 +12,9 @@ pub fn init(cx: &mut AppContext) {
     // simple_message_notification::init(cx);
 }
 
-pub enum NotificationEvent {
-    Dismiss,
-}
+pub trait Notification: EventEmitter<DismissEvent> + Render {}
 
-pub trait Notification: EventEmitter<NotificationEvent> + Render {}
-
-impl<V: EventEmitter<NotificationEvent> + Render> Notification for V {}
+impl<V: EventEmitter<DismissEvent> + Render> Notification for V {}
 
 pub trait NotificationHandle: Send {
     fn id(&self) -> EntityId;
@@ -107,8 +106,8 @@ impl Workspace {
             let notification = build_notification(cx);
             cx.subscribe(
                 &notification,
-                move |this, handle, event: &NotificationEvent, cx| match event {
-                    NotificationEvent::Dismiss => {
+                move |this, handle, event: &DismissEvent, cx| match event {
+                    DismissEvent::Dismiss => {
                         this.dismiss_notification_internal(type_id, id, cx);
                     }
                 },
@@ -118,6 +117,17 @@ impl Workspace {
                 .push((type_id, id, Box::new(notification)));
             cx.notify();
         }
+    }
+
+    pub fn show_error<E>(&mut self, err: &E, cx: &mut ViewContext<Self>)
+    where
+        E: std::fmt::Debug,
+    {
+        self.show_notification(0, cx, |cx| {
+            cx.build_view(|_cx| {
+                simple_message_notification::MessageNotification::new(format!("Error: {err:?}"))
+            })
+        });
     }
 
     pub fn dismiss_notification<V: Notification>(&mut self, id: usize, cx: &mut ViewContext<Self>) {
@@ -166,13 +176,14 @@ impl Workspace {
 }
 
 pub mod simple_message_notification {
-    use super::NotificationEvent;
-    use gpui::{AnyElement, AppContext, Div, EventEmitter, Render, TextStyle, ViewContext};
+    use gpui::{
+        div, AnyElement, AppContext, DismissEvent, Div, EventEmitter, InteractiveElement,
+        ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, TextStyle,
+        ViewContext,
+    };
     use serde::Deserialize;
     use std::{borrow::Cow, sync::Arc};
-
-    // todo!()
-    // actions!(message_notifications, [CancelMessageNotification]);
+    use ui::{h_stack, v_stack, Button, Icon, IconElement, Label, StyledExt};
 
     #[derive(Clone, Default, Deserialize, PartialEq)]
     pub struct OsOpen(pub Cow<'static, str>);
@@ -197,22 +208,22 @@ pub mod simple_message_notification {
     //     }
 
     enum NotificationMessage {
-        Text(Cow<'static, str>),
-        Element(fn(TextStyle, &AppContext) -> AnyElement<MessageNotification>),
+        Text(SharedString),
+        Element(fn(TextStyle, &AppContext) -> AnyElement),
     }
 
     pub struct MessageNotification {
         message: NotificationMessage,
         on_click: Option<Arc<dyn Fn(&mut ViewContext<Self>) + Send + Sync>>,
-        click_message: Option<Cow<'static, str>>,
+        click_message: Option<SharedString>,
     }
 
-    impl EventEmitter<NotificationMessage> for MessageNotification {}
+    impl EventEmitter<DismissEvent> for MessageNotification {}
 
     impl MessageNotification {
         pub fn new<S>(message: S) -> MessageNotification
         where
-            S: Into<Cow<'static, str>>,
+            S: Into<SharedString>,
         {
             Self {
                 message: NotificationMessage::Text(message.into()),
@@ -221,19 +232,20 @@ pub mod simple_message_notification {
             }
         }
 
-        pub fn new_element(
-            message: fn(TextStyle, &AppContext) -> AnyElement<MessageNotification>,
-        ) -> MessageNotification {
-            Self {
-                message: NotificationMessage::Element(message),
-                on_click: None,
-                click_message: None,
-            }
-        }
+        // not needed I think (only for the "new panel" toast, which is outdated now)
+        // pub fn new_element(
+        //     message: fn(TextStyle, &AppContext) -> AnyElement,
+        // ) -> MessageNotification {
+        //     Self {
+        //         message: NotificationMessage::Element(message),
+        //         on_click: None,
+        //         click_message: None,
+        //     }
+        // }
 
         pub fn with_click_message<S>(mut self, message: S) -> Self
         where
-            S: Into<Cow<'static, str>>,
+            S: Into<SharedString>,
         {
             self.click_message = Some(message.into());
             self
@@ -247,17 +259,43 @@ pub mod simple_message_notification {
             self
         }
 
-        // todo!()
-        // pub fn dismiss(&mut self, _: &CancelMessageNotification, cx: &mut ViewContext<Self>) {
-        //     cx.emit(MessageNotificationEvent::Dismiss);
-        // }
+        pub fn dismiss(&mut self, cx: &mut ViewContext<Self>) {
+            cx.emit(DismissEvent::Dismiss);
+        }
     }
 
     impl Render for MessageNotification {
-        type Element = Div<Self>;
+        type Element = Div;
 
         fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-            todo!()
+            v_stack()
+                .elevation_3(cx)
+                .p_4()
+                .child(
+                    h_stack()
+                        .justify_between()
+                        .child(div().max_w_80().child(match &self.message {
+                            NotificationMessage::Text(text) => Label::new(text.clone()),
+                            NotificationMessage::Element(element) => {
+                                todo!()
+                            }
+                        }))
+                        .child(
+                            div()
+                                .id("cancel")
+                                .child(IconElement::new(Icon::Close))
+                                .cursor_pointer()
+                                .on_click(cx.listener(|this, event, cx| this.dismiss(cx))),
+                        ),
+                )
+                .children(self.click_message.iter().map(|message| {
+                    Button::new(message.clone()).on_click(cx.listener(|this, _, cx| {
+                        if let Some(on_click) = this.on_click.as_ref() {
+                            (on_click)(cx)
+                        };
+                        this.dismiss(cx)
+                    }))
+                }))
         }
     }
     // todo!()
@@ -359,8 +397,6 @@ pub mod simple_message_notification {
     //                 .into_any()
     //         }
     //     }
-
-    impl EventEmitter<NotificationEvent> for MessageNotification {}
 }
 
 pub trait NotifyResultExt {
@@ -371,6 +407,8 @@ pub trait NotifyResultExt {
         workspace: &mut Workspace,
         cx: &mut ViewContext<Workspace>,
     ) -> Option<Self::Ok>;
+
+    fn notify_async_err(self, cx: &mut AsyncWindowContext) -> Option<Self::Ok>;
 }
 
 impl<T, E> NotifyResultExt for Result<T, E>
@@ -384,14 +422,23 @@ where
             Ok(value) => Some(value),
             Err(err) => {
                 log::error!("TODO {err:?}");
-                // todo!()
-                // workspace.show_notification(0, cx, |cx| {
-                //     cx.add_view(|_cx| {
-                //         simple_message_notification::MessageNotification::new(format!(
-                //             "Error: {err:?}",
-                //         ))
-                //     })
-                // });
+                workspace.show_error(&err, cx);
+                None
+            }
+        }
+    }
+
+    fn notify_async_err(self, cx: &mut AsyncWindowContext) -> Option<T> {
+        match self {
+            Ok(value) => Some(value),
+            Err(err) => {
+                log::error!("TODO {err:?}");
+                cx.update(|view, cx| {
+                    if let Ok(workspace) = view.downcast::<Workspace>() {
+                        workspace.update(cx, |workspace, cx| workspace.show_error(&err, cx))
+                    }
+                })
+                .ok();
                 None
             }
         }

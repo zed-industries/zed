@@ -1,27 +1,25 @@
-use gpui::img;
+use std::sync::Arc;
 
 use crate::prelude::*;
+use gpui::{img, ImageData, ImageSource, Img, IntoElement};
 
-#[derive(Component)]
+#[derive(Debug, Default, PartialEq, Clone)]
+pub enum Shape {
+    #[default]
+    Circle,
+    RoundedRectangle,
+}
+
+#[derive(IntoElement)]
 pub struct Avatar {
-    src: SharedString,
+    src: ImageSource,
     shape: Shape,
 }
 
-impl Avatar {
-    pub fn new(src: impl Into<SharedString>) -> Self {
-        Self {
-            src: src.into(),
-            shape: Shape::Circle,
-        }
-    }
+impl RenderOnce for Avatar {
+    type Rendered = Img;
 
-    pub fn shape(mut self, shape: Shape) -> Self {
-        self.shape = shape;
-        self
-    }
-
-    fn render<V: 'static>(self, _view: &mut V, cx: &mut ViewContext<V>) -> impl Component<V> {
+    fn render(self, _: &mut WindowContext) -> Self::Rendered {
         let mut img = img();
 
         if self.shape == Shape::Circle {
@@ -30,37 +28,35 @@ impl Avatar {
             img = img.rounded_md();
         }
 
-        img.uri(self.src.clone())
+        img.source(self.src.clone())
             .size_4()
             // todo!(Pull the avatar fallback background from the theme.)
             .bg(gpui::red())
     }
 }
 
-#[cfg(feature = "stories")]
-pub use stories::*;
-
-#[cfg(feature = "stories")]
-mod stories {
-    use super::*;
-    use crate::Story;
-    use gpui::{Div, Render};
-
-    pub struct AvatarStory;
-
-    impl Render for AvatarStory {
-        type Element = Div<Self>;
-
-        fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-            Story::container(cx)
-                .child(Story::title_for::<_, Avatar>(cx))
-                .child(Story::label(cx, "Default"))
-                .child(Avatar::new(
-                    "https://avatars.githubusercontent.com/u/1714999?v=4",
-                ))
-                .child(Avatar::new(
-                    "https://avatars.githubusercontent.com/u/326587?v=4",
-                ))
+impl Avatar {
+    pub fn uri(src: impl Into<SharedString>) -> Self {
+        Self {
+            src: src.into().into(),
+            shape: Shape::Circle,
         }
+    }
+    pub fn data(src: Arc<ImageData>) -> Self {
+        Self {
+            src: src.into(),
+            shape: Shape::Circle,
+        }
+    }
+
+    pub fn source(src: ImageSource) -> Self {
+        Self {
+            src,
+            shape: Shape::Circle,
+        }
+    }
+    pub fn shape(mut self, shape: Shape) -> Self {
+        self.shape = shape;
+        self
     }
 }
