@@ -7,7 +7,7 @@ pub struct IconButton {
     icon: Icon,
     color: Color,
     variant: ButtonVariant,
-    state: InteractionState,
+    disabled: bool,
     selected: bool,
     tooltip: Option<Box<dyn Fn(&mut WindowContext) -> AnyView + 'static>>,
     on_mouse_down: Option<Box<dyn Fn(&MouseDownEvent, &mut WindowContext) + 'static>>,
@@ -17,9 +17,9 @@ impl RenderOnce for IconButton {
     type Rendered = Stateful<Div>;
 
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {
-        let icon_color = match (self.state, self.color) {
-            (InteractionState::Disabled, _) => Color::Disabled,
-            (InteractionState::Active, _) => Color::Selected,
+        let icon_color = match (self.disabled, self.selected, self.color) {
+            (true, _, _) => Color::Disabled,
+            (false, true, _) => Color::Selected,
             _ => self.color,
         };
 
@@ -78,8 +78,8 @@ impl IconButton {
             icon,
             color: Color::default(),
             variant: ButtonVariant::default(),
-            state: InteractionState::default(),
             selected: false,
+            disabled: false,
             tooltip: None,
             on_mouse_down: None,
         }
@@ -100,13 +100,13 @@ impl IconButton {
         self
     }
 
-    pub fn state(mut self, state: InteractionState) -> Self {
-        self.state = state;
+    pub fn selected(mut self, selected: bool) -> Self {
+        self.selected = selected;
         self
     }
 
-    pub fn selected(mut self, selected: bool) -> Self {
-        self.selected = selected;
+    pub fn disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
         self
     }
 

@@ -14,13 +14,19 @@
 // TODO: Fix warnings instead of supressing.
 #![allow(dead_code, unused_variables)]
 
+mod clickable;
 mod components;
+mod fixed;
 pub mod prelude;
+mod selectable;
 mod styled_ext;
 mod styles;
 pub mod utils;
 
+pub use clickable::*;
 pub use components::*;
+pub use fixed::*;
 pub use prelude::*;
+pub use selectable::*;
 pub use styled_ext::*;
 pub use styles::*;

@@ -310,7 +310,7 @@ impl Render for CollabTitlebarItem {
                                 .into_any(),
                         ]),
                     )
-                    .on_mouse_down(MouseButton::Left, move |event, cx| {
+                    .on_mouse_down(MouseButton::Left, move |event, _cx| {
                         dbg!(format!("clicked: {:?}", event.position));
                     })
                 }

@@ -1,10 +1,10 @@
 use gpui::{
-    Action, AnyElement, AnyView, ClickEvent, DefiniteLength, Div, IntoElement, MouseButton,
-    MouseDownEvent, Stateful, StatefulInteractiveElement, WindowContext,
+    AnyElement, AnyView, ClickEvent, Div, IntoElement, Stateful, StatefulInteractiveElement,
+    WindowContext,
 };
 use smallvec::SmallVec;
 
-use crate::{h_stack, prelude::*, Icon, IconElement};
+use crate::{h_stack, prelude::*};
 
 // #[derive(Default, PartialEq, Clone, Copy)]
 // pub enum ButtonType2 {
@@ -33,23 +33,13 @@ pub enum ButtonAppearance2 {
 }
 
 impl ButtonAppearance2 {
-    pub fn bg(
-        self,
-        cx: &mut WindowContext,
-        state: InteractionState,
-        selected: bool,
-        disabled: bool,
-    ) -> gpui::Hsla {
+    pub fn bg(self, cx: &mut WindowContext, selected: bool, disabled: bool) -> gpui::Hsla {
         match self {
             ButtonAppearance2::Filled => {
                 if disabled {
                     cx.theme().colors().element_disabled
                 } else if selected {
                     cx.theme().colors().element_selected
-                } else if state == InteractionState::Hovered {
-                    cx.theme().colors().element_hover
-                } else if state == InteractionState::Active {
-                    cx.theme().colors().element_active
                 } else {
                     cx.theme().colors().element_background
                 }
@@ -59,10 +49,6 @@ impl ButtonAppearance2 {
                     cx.theme().colors().ghost_element_disabled
                 } else if selected {
                     cx.theme().colors().ghost_element_selected
-                } else if state == InteractionState::Hovered {
-                    cx.theme().colors().ghost_element_hover
-                } else if state == InteractionState::Active {
-                    cx.theme().colors().ghost_element_active
                 } else {
                     cx.theme().colors().ghost_element_background
                 }
@@ -72,10 +58,6 @@ impl ButtonAppearance2 {
                     gpui::transparent_black()
                 } else if selected {
                     gpui::transparent_black()
-                } else if state == InteractionState::Hovered {
-                    gpui::transparent_black()
-                } else if state == InteractionState::Active {
-                    cx.theme().colors().ghost_element_active
                 } else {
                     gpui::transparent_black()
                 }
@@ -112,30 +94,9 @@ pub enum ButtonSize2 {
 //     children: SmallVec<[AnyElement; 2]>,
 // }
 
-pub trait Clickable {
-    fn on_click(
-        &mut self,
-        handler: impl Fn(&ClickEvent, &mut WindowContext) + 'static,
-    ) -> &mut Self;
-}
-
-pub trait Selectable {
-    fn selected(&mut self, selected: bool) -> &mut Self;
-    fn selected_tooltip(
-        &mut self,
-        tooltip: Box<dyn Fn(&mut WindowContext) -> AnyView + 'static>,
-    ) -> &mut Self;
-}
-
-pub trait FixedWidth {
-    fn width(&mut self, width: DefiniteLength) -> &mut Self;
-    fn full_width(&mut self) -> &mut Self;
-}
-
-pub trait Button: Clickable + Selectable {
+pub trait ButtonCommon: Clickable + Selectable {
     fn id(&self) -> &ElementId;
     fn appearance(&mut self, appearance: ButtonAppearance2) -> &mut Self;
-    fn state(&mut self, state: InteractionState) -> &mut Self;
     fn disabled(&mut self, disabled: bool) -> &mut Self;
     fn size(&mut self, size: ButtonSize2) -> &mut Self;
     fn tooltip(&mut self, tooltip: impl Fn(&mut WindowContext) -> AnyView + 'static) -> &mut Self;
@@ -184,162 +145,12 @@ pub trait Button: Clickable + Selectable {
 //     // ... Define other builder methods specific to Button type...
 // }
 
-#[derive(IntoElement)]
-pub struct IconButton2 {
-    // Base properties
-    id: ElementId,
-    appearance: ButtonAppearance2,
-    state: InteractionState,
-    disabled: bool,
-    size: ButtonSize2,
-    tooltip: Option<Box<dyn Fn(&mut WindowContext) -> AnyView>>,
-    on_click: Option<Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
-    icon: Icon,
-    icon_color: Option<Color>,
-    icon_position: IconPosition2, // Default to .Before
-}
-
-impl IconButton2 {
-    pub fn new(id: impl Into<ElementId>, icon: Icon) -> Self {
-        Self {
-            id: id.into(),
-            appearance: ButtonAppearance2::Filled,
-            state: InteractionState::default(),
-            disabled: false,
-            size: ButtonSize2::Default,
-            tooltip: None,
-            on_click: None,
-            icon: icon,
-            icon_color: None,
-            icon_position: IconPosition2::Before, // default icon position
-        }
-    }
-
-    pub fn icon(mut self, icon: Icon) -> Self {
-        self.icon = icon;
-        self
-    }
-
-    pub fn icon_color(mut self, color: Color) -> Self {
-        self.icon_color = Some(color);
-        self
-    }
-
-    pub fn icon_position(mut self, position: IconPosition2) -> Self {
-        self.icon_position = position;
-        self
-    }
-}
-
-impl Clickable for IconButton2 {
-    fn on_click(
-        &mut self,
-        handler: impl Fn(&ClickEvent, &mut WindowContext) + 'static,
-    ) -> &mut Self {
-        self.on_click = Some(Box::new(handler));
-        self
-    }
-}
-
-impl Selectable for IconButton2 {
-    fn selected(&mut self, selected: bool) -> &mut Self {
-        todo!()
-    }
-
-    fn selected_tooltip(
-        &mut self,
-        tooltip: Box<dyn Fn(&mut WindowContext) -> AnyView + 'static>,
-    ) -> &mut Self {
-        todo!()
-    }
-}
-
-// Implement ButtonCommon for IconButton2
-impl Button for IconButton2 {
-    fn id(&self) -> &ElementId {
-        &self.id
-    }
-
-    fn appearance(&mut self, appearance: ButtonAppearance2) -> &mut Self {
-        self.appearance = appearance;
-        self
-    }
-
-    fn state(&mut self, state: InteractionState) -> &mut Self {
-        self.state = state;
-        self
-    }
-
-    fn disabled(&mut self, disabled: bool) -> &mut Self {
-        self.disabled = disabled;
-        self
-    }
-
-    fn size(&mut self, size: ButtonSize2) -> &mut Self {
-        self.size = size;
-        self
-    }
-
-    fn tooltip(&mut self, tooltip: impl Fn(&mut WindowContext) -> AnyView + 'static) -> &mut Self {
-        self.tooltip = Some(Box::new(tooltip));
-        self
-    }
-}
-
-impl RenderOnce for IconButton2 {
-    type Rendered = Stateful<Div>;
-
-    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
-        let icon_element =
-            IconElement::new(self.icon).color(self.icon_color.unwrap_or(Color::Default));
-
-        let mut button = h_stack()
-            .id(self.id.clone())
-            .justify_center()
-            .rounded_md()
-            .p_1()
-            .bg(self.appearance.bg(cx, self.state, false, self.disabled))
-            .cursor_pointer();
-
-        if self.state != InteractionState::Disabled {
-            button = button
-                .hover(|hover| {
-                    hover.bg(self.appearance.bg(
-                        cx,
-                        InteractionState::Hovered,
-                        false,
-                        self.disabled,
-                    ))
-                })
-                .active(|active| {
-                    active.bg(self.appearance.bg(
-                        cx,
-                        InteractionState::Active,
-                        false,
-                        self.disabled,
-                    ))
-                });
-        }
-
-        if let Some(click_handler) = self.on_click {
-            button = button.on_mouse_down(MouseButton::Left, move |event, cx| {
-                click_handler(event, cx);
-            });
-        }
-
-        if let Some(tooltip) = self.tooltip {
-            button = button.tooltip(move |cx| tooltip(cx));
-        }
-
-        button.child(icon_element)
-    }
-}
+// TODO: Icon Button
 
 #[derive(IntoElement)]
 pub struct ButtonLike {
     id: ElementId,
     appearance: ButtonAppearance2,
-    state: InteractionState,
     disabled: bool,
     size: ButtonSize2,
     tooltip: Option<Box<dyn Fn(&mut WindowContext) -> AnyView>>,
@@ -360,7 +171,6 @@ impl ButtonLike {
         Self {
             id: id.into(),
             appearance: ButtonAppearance2::default(),
-            state: InteractionState::default(),
             disabled: false,
             size: ButtonSize2::Default,
             tooltip: None,
@@ -393,18 +203,13 @@ impl Selectable for ButtonLike {
     }
 }
 
-impl Button for ButtonLike {
+impl ButtonCommon for ButtonLike {
     fn id(&self) -> &ElementId {
         &self.id
     }
 
     fn appearance(&mut self, appearance: ButtonAppearance2) -> &mut Self {
         self.appearance = appearance;
-        self
-    }
-
-    fn state(&mut self, state: InteractionState) -> &mut Self {
-        self.state = state;
         self
     }
 
@@ -434,16 +239,16 @@ impl RenderOnce for ButtonLike {
             .cursor_pointer()
             .gap_1()
             .p_1()
-            .bg(self.appearance.bg(cx, self.state, false, self.disabled))
-            .hover(|hover| {
-                hover.bg(self
-                    .appearance
-                    .bg(cx, InteractionState::Hovered, false, self.disabled))
-            })
-            .active(|active| {
-                active.bg(self
-                    .appearance
-                    .bg(cx, InteractionState::Active, false, self.disabled))
+            .bg(self.appearance.bg(cx, false, self.disabled))
+            .hover(|hover| hover.bg(self.appearance.bg(cx, false, self.disabled)))
+            .active(|active| active.bg(self.appearance.bg(cx, false, self.disabled)))
+            .on_click({
+                let on_click = self.on_click;
+                move |event, cx| {
+                    if let Some(on_click) = &on_click {
+                        (on_click)(event, cx)
+                    }
+                }
             });
 
         for child in self.children.into_iter() {
@@ -452,12 +257,6 @@ impl RenderOnce for ButtonLike {
 
         if let Some(tooltip) = self.tooltip {
             button_like = button_like.tooltip(move |cx| tooltip(cx))
-        }
-
-        if let Some(on_mouse_down) = self.on_click {
-            button_like = button_like.on_mouse_down(MouseButton::Left, move |event, cx| {
-                on_mouse_down(event, cx);
-            })
         }
 
         button_like
