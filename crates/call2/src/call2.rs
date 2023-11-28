@@ -334,7 +334,7 @@ impl ActiveCall {
     pub fn join_channel(
         &mut self,
         channel_id: u64,
-        requesting_window: WindowHandle<Workspace>,
+        requesting_window: Option<WindowHandle<Workspace>>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Option<Model<Room>>>> {
         if let Some(room) = self.room().cloned() {
@@ -360,9 +360,9 @@ impl ActiveCall {
                     && room.is_sharing_project()
                     && room.remote_participants().len() > 0
             });
-            if should_prompt {
+            if should_prompt && requesting_window.is_some() {
                 return cx.spawn(|this, mut cx| async move {
-                    let answer = requesting_window.update(&mut cx, |_, cx| {
+                    let answer = requesting_window.unwrap().update(&mut cx, |_, cx| {
                         cx.prompt(
                             PromptLevel::Warning,
                             "Leaving this call will unshare your current project.\nDo you want to switch channels?",

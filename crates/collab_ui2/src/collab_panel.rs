@@ -2510,11 +2510,16 @@ impl CollabPanel {
             return;
         };
         let active_call = ActiveCall::global(cx);
-        active_call
-            .update(cx, |active_call, cx| {
-                active_call.join_channel(channel_id, handle, cx)
-            })
-            .detach_and_log_err(cx)
+        cx.spawn(|_, mut cx| async move {
+            active_call
+                .update(&mut cx, |active_call, cx| {
+                    active_call.join_channel(channel_id, Some(handle), cx)
+                })
+                .log_err()?
+                .await
+                .notify_async_err(&mut cx)
+        })
+        .detach()
     }
 
     //     fn join_channel_chat(&mut self, action: &JoinChannelChat, cx: &mut ViewContext<Self>) {
