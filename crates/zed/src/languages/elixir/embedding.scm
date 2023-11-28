@@ -18,10 +18,10 @@
                     target: (identifier) @name)
                     operator: "when")
             ])
-        (#match? @name "^(def|defp|defdelegate|defguard|defguardp|defmacro|defmacrop|defn|defnp)$")) @item
+        (#any-match? @name "^(def|defp|defdelegate|defguard|defguardp|defmacro|defmacrop|defn|defnp)$")) @item
         )
 
     (call
         target: (identifier) @name
         (arguments (alias) @name)
-        (#match? @name "^(defmodule|defprotocol)$")) @item
+        (#any-match? @name "^(defmodule|defprotocol)$")) @item

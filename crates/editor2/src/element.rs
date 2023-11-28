@@ -128,6 +128,11 @@ impl EditorElement {
 
     fn register_actions(&self, cx: &mut WindowContext) {
         let view = &self.editor;
+        self.editor.update(cx, |editor, cx| {
+            for action in editor.editor_actions.iter() {
+                (action)(cx)
+            }
+        });
         register_action(view, cx, Editor::move_left);
         register_action(view, cx, Editor::move_right);
         register_action(view, cx, Editor::move_down);
@@ -4068,7 +4073,7 @@ fn scale_horizontal_mouse_autoscroll_delta(delta: Pixels) -> f32 {
 //     }
 // }
 
-fn register_action<T: Action>(
+pub fn register_action<T: Action>(
     view: &View<Editor>,
     cx: &mut WindowContext,
     listener: impl Fn(&mut Editor, &T, &mut ViewContext<Editor>) + 'static,

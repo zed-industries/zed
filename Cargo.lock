@@ -1193,6 +1193,7 @@ dependencies = [
  "fs2",
  "futures 0.3.28",
  "gpui2",
+ "image",
  "language2",
  "live_kit_client2",
  "log",
@@ -1204,6 +1205,8 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "settings2",
+ "smallvec",
+ "ui2",
  "util",
  "workspace2",
 ]
@@ -9927,7 +9930,7 @@ dependencies = [
 [[package]]
 name = "tree-sitter"
 version = "0.20.10"
-source = "git+https://github.com/tree-sitter/tree-sitter?rev=35a6052fbcafc5e5fc0f9415b8652be7dcaf7222#35a6052fbcafc5e5fc0f9415b8652be7dcaf7222"
+source = "git+https://github.com/tree-sitter/tree-sitter?rev=3b0159d25559b603af566ade3c83d930bf466db1#3b0159d25559b603af566ade3c83d930bf466db1"
 dependencies = [
  "cc",
  "regex",
@@ -11644,6 +11647,7 @@ dependencies = [
  "async-recursion 0.3.2",
  "async-tar",
  "async-trait",
+ "audio2",
  "auto_update2",
  "backtrace",
  "call2",

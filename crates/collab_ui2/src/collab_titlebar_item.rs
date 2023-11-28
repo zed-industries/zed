@@ -31,14 +31,17 @@ use std::sync::Arc;
 use call::ActiveCall;
 use client::{Client, UserStore};
 use gpui::{
-    div, px, rems, AppContext, Div, InteractiveElement, IntoElement, Model, ParentElement, Render,
-    Stateful, StatefulInteractiveElement, Styled, Subscription, ViewContext, VisualContext,
-    WeakView, WindowBounds,
+    div, px, rems, AppContext, Div, Element, InteractiveElement, IntoElement, Model, MouseButton,
+    ParentElement, Render, RenderOnce, Stateful, StatefulInteractiveElement, Styled, Subscription,
+    ViewContext, VisualContext, WeakView, WindowBounds,
 };
 use project::Project;
 use theme::ActiveTheme;
-use ui::{h_stack, Button, ButtonVariant, Color, KeyBinding, Label, Tooltip};
+use ui::{h_stack, Avatar, Button, ButtonVariant, Color, IconButton, KeyBinding, Tooltip};
+use util::ResultExt;
 use workspace::Workspace;
+
+use crate::face_pile::FacePile;
 
 // const MAX_PROJECT_NAME_LENGTH: usize = 40;
 // const MAX_BRANCH_NAME_LENGTH: usize = 40;
@@ -85,6 +88,41 @@ impl Render for CollabTitlebarItem {
     type Element = Stateful<Div>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+        let is_in_room = self
+            .workspace
+            .update(cx, |this, cx| this.call_state().is_in_room(cx))
+            .unwrap_or_default();
+        let is_shared = is_in_room && self.project.read(cx).is_shared();
+        let current_user = self.user_store.read(cx).current_user();
+        let client = self.client.clone();
+        let users = self
+            .workspace
+            .update(cx, |this, cx| this.call_state().remote_participants(cx))
+            .log_err()
+            .flatten();
+        let mic_icon = if self
+            .workspace
+            .update(cx, |this, cx| this.call_state().is_muted(cx))
+            .log_err()
+            .flatten()
+            .unwrap_or_default()
+        {
+            ui::Icon::MicMute
+        } else {
+            ui::Icon::Mic
+        };
+        let speakers_icon = if self
+            .workspace
+            .update(cx, |this, cx| this.call_state().is_deafened(cx))
+            .log_err()
+            .flatten()
+            .unwrap_or_default()
+        {
+            ui::Icon::AudioOff
+        } else {
+            ui::Icon::AudioOn
+        };
+        let workspace = self.workspace.clone();
         h_stack()
             .id("titlebar")
             .justify_between()
@@ -155,8 +193,111 @@ impl Render for CollabTitlebarItem {
                                 .into()
                             }),
                     ),
-            ) // self.titlebar_item
-            .child(h_stack().child(Label::new("Right side titlebar item")))
+            )
+            .when_some(
+                users.zip(current_user.clone()),
+                |this, (remote_participants, current_user)| {
+                    let mut pile = FacePile::default();
+                    pile.extend(
+                        current_user
+                            .avatar
+                            .clone()
+                            .map(|avatar| {
+                                div().child(Avatar::data(avatar.clone())).into_any_element()
+                            })
+                            .into_iter()
+                            .chain(remote_participants.into_iter().flat_map(|(user, peer_id)| {
+                                user.avatar.as_ref().map(|avatar| {
+                                    div()
+                                        .child(
+                                            Avatar::data(avatar.clone()).into_element().into_any(),
+                                        )
+                                        .on_mouse_down(MouseButton::Left, {
+                                            let workspace = workspace.clone();
+                                            move |_, cx| {
+                                                workspace
+                                                    .update(cx, |this, cx| {
+                                                        this.open_shared_screen(peer_id, cx);
+                                                    })
+                                                    .log_err();
+                                            }
+                                        })
+                                        .into_any_element()
+                                })
+                            })),
+                    );
+                    this.child(pile.render(cx))
+                },
+            )
+            .child(div().flex_1())
+            .when(is_in_room, |this| {
+                this.child(
+                    h_stack()
+                        .child(
+                            h_stack()
+                                .child(Button::new(if is_shared { "Unshare" } else { "Share" }))
+                                .child(IconButton::new("leave-call", ui::Icon::Exit).on_click({
+                                    let workspace = workspace.clone();
+                                    move |_, cx| {
+                                        workspace
+                                            .update(cx, |this, cx| {
+                                                this.call_state().hang_up(cx).detach();
+                                            })
+                                            .log_err();
+                                    }
+                                })),
+                        )
+                        .child(
+                            h_stack()
+                                .child(IconButton::new("mute-microphone", mic_icon).on_click({
+                                    let workspace = workspace.clone();
+                                    move |_, cx| {
+                                        workspace
+                                            .update(cx, |this, cx| {
+                                                this.call_state().toggle_mute(cx);
+                                            })
+                                            .log_err();
+                                    }
+                                }))
+                                .child(IconButton::new("mute-sound", speakers_icon).on_click({
+                                    let workspace = workspace.clone();
+                                    move |_, cx| {
+                                        workspace
+                                            .update(cx, |this, cx| {
+                                                this.call_state().toggle_deafen(cx);
+                                            })
+                                            .log_err();
+                                    }
+                                }))
+                                .child(IconButton::new("screen-share", ui::Icon::Screen).on_click(
+                                    move |_, cx| {
+                                        workspace
+                                            .update(cx, |this, cx| {
+                                                this.call_state().toggle_screen_share(cx);
+                                            })
+                                            .log_err();
+                                    },
+                                ))
+                                .pl_2(),
+                        ),
+                )
+            })
+            .map(|this| {
+                if let Some(user) = current_user {
+                    this.when_some(user.avatar.clone(), |this, avatar| {
+                        this.child(ui::Avatar::data(avatar))
+                    })
+                } else {
+                    this.child(Button::new("Sign in").on_click(move |_, cx| {
+                        let client = client.clone();
+                        cx.spawn(move |cx| async move {
+                            client.authenticate_and_connect(true, &cx).await?;
+                            Ok::<(), anyhow::Error>(())
+                        })
+                        .detach_and_log_err(cx);
+                    }))
+                }
+            })
     }
 }
 

@@ -551,7 +551,6 @@ impl Client {
         F: 'static + Future<Output = Result<()>>,
     {
         let message_type_id = TypeId::of::<M>();
-
         let mut state = self.state.write();
         state
             .models_by_message_type

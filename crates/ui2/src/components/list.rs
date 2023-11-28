@@ -323,8 +323,8 @@ impl RenderOnce for ListItem {
                         .color(Color::Muted),
                 ),
             ),
-            Some(GraphicSlot::Avatar(src)) => Some(h_stack().child(Avatar::new(src))),
-            Some(GraphicSlot::PublicActor(src)) => Some(h_stack().child(Avatar::new(src))),
+            Some(GraphicSlot::Avatar(src)) => Some(h_stack().child(Avatar::uri(src))),
+            Some(GraphicSlot::PublicActor(src)) => Some(h_stack().child(Avatar::uri(src))),
             None => None,
         };
 
