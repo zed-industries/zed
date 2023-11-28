@@ -170,7 +170,7 @@ impl PickerDelegate for ContactFinderDelegate {
         ix: usize,
         selected: bool,
         cx: &mut ViewContext<Picker<Self>>,
-    ) -> Self::ListItem {
+    ) -> Option<Self::ListItem> {
         let user = &self.potential_contacts[ix];
         let request_status = self.user_store.read(cx).contact_request_status(user);
 
@@ -182,12 +182,14 @@ impl PickerDelegate for ContactFinderDelegate {
             ContactRequestStatus::RequestAccepted => None,
         };
         dbg!(icon_path);
-        div()
-            .flex_1()
-            .justify_between()
-            .children(user.avatar.clone().map(|avatar| img().data(avatar)))
-            .child(Label::new(user.github_login.clone()))
-            .children(icon_path.map(|icon_path| svg().path(icon_path)))
+        Some(
+            div()
+                .flex_1()
+                .justify_between()
+                .children(user.avatar.clone().map(|avatar| img().data(avatar)))
+                .child(Label::new(user.github_login.clone()))
+                .children(icon_path.map(|icon_path| svg().path(icon_path))),
+        )
         // Flex::row()
         //     .with_children(user.avatar.clone().map(|avatar| {
         //         Image::from_data(avatar)

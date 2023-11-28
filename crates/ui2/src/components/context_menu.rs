@@ -4,18 +4,15 @@ use std::rc::Rc;
 use crate::{prelude::*, v_stack, Label, List};
 use crate::{ListItem, ListSeparator, ListSubHeader};
 use gpui::{
-    overlay, px, Action, AnchorCorner, AnyElement, AppContext, Bounds, DismissEvent, DispatchPhase,
-    Div, EventEmitter, FocusHandle, FocusableView, IntoElement, LayoutId, ManagedView, MouseButton,
-    MouseDownEvent, Pixels, Point, Render, View, VisualContext,
+    overlay, px, Action, AnchorCorner, AnyElement, AppContext, Bounds, ClickEvent, DismissEvent,
+    DispatchPhase, Div, EventEmitter, FocusHandle, FocusableView, IntoElement, LayoutId,
+    ManagedView, MouseButton, MouseDownEvent, Pixels, Point, Render, View, VisualContext,
 };
 
 pub enum ContextMenuItem {
     Separator,
     Header(SharedString),
-    Entry(
-        SharedString,
-        Rc<dyn Fn(&MouseDownEvent, &mut WindowContext)>,
-    ),
+    Entry(SharedString, Rc<dyn Fn(&ClickEvent, &mut WindowContext)>),
 }
 
 pub struct ContextMenu {
@@ -61,7 +58,7 @@ impl ContextMenu {
     pub fn entry(
         mut self,
         label: impl Into<SharedString>,
-        on_click: impl Fn(&MouseDownEvent, &mut WindowContext) + 'static,
+        on_click: impl Fn(&ClickEvent, &mut WindowContext) + 'static,
     ) -> Self {
         self.items
             .push(ContextMenuItem::Entry(label.into(), Rc::new(on_click)));

@@ -1,10 +1,12 @@
 use gpui::{
-    div, DismissEvent, Div, EventEmitter, ParentElement, Render, SemanticVersion, ViewContext,
+    div, DismissEvent, Div, EventEmitter, InteractiveElement, ParentElement, Render,
+    SemanticVersion, StatefulInteractiveElement, Styled, ViewContext,
 };
-use menu::Cancel;
+use util::channel::ReleaseChannel;
+use workspace::ui::{h_stack, v_stack, Icon, IconElement, Label, StyledExt};
 
 pub struct UpdateNotification {
-    _version: SemanticVersion,
+    version: SemanticVersion,
 }
 
 impl EventEmitter<DismissEvent> for UpdateNotification {}
@@ -12,77 +14,43 @@ impl EventEmitter<DismissEvent> for UpdateNotification {}
 impl Render for UpdateNotification {
     type Element = Div;
 
-    fn render(&mut self, _cx: &mut gpui::ViewContext<Self>) -> Self::Element {
-        div().child("Updated zed!")
-        // let theme = theme::current(cx).clone();
-        // let theme = &theme.update_notification;
+    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> Self::Element {
+        let app_name = cx.global::<ReleaseChannel>().display_name();
 
-        // let app_name = cx.global::<ReleaseChannel>().display_name();
-
-        // MouseEventHandler::new::<ViewReleaseNotes, _>(0, cx, |state, cx| {
-        //     Flex::column()
-        //         .with_child(
-        //             Flex::row()
-        //                 .with_child(
-        //                     Text::new(
-        //                         format!("Updated to {app_name} {}", self.version),
-        //                         theme.message.text.clone(),
-        //                     )
-        //                     .contained()
-        //                     .with_style(theme.message.container)
-        //                     .aligned()
-        //                     .top()
-        //                     .left()
-        //                     .flex(1., true),
-        //                 )
-        //                 .with_child(
-        //                     MouseEventHandler::new::<Cancel, _>(0, cx, |state, _| {
-        //                         let style = theme.dismiss_button.style_for(state);
-        //                         Svg::new("icons/x.svg")
-        //                             .with_color(style.color)
-        //                             .constrained()
-        //                             .with_width(style.icon_width)
-        //                             .aligned()
-        //                             .contained()
-        //                             .with_style(style.container)
-        //                             .constrained()
-        //                             .with_width(style.button_width)
-        //                             .with_height(style.button_width)
-        //                     })
-        //                     .with_padding(Padding::uniform(5.))
-        //                     .on_click(MouseButton::Left, move |_, this, cx| {
-        //                         this.dismiss(&Default::default(), cx)
-        //                     })
-        //                     .aligned()
-        //                     .constrained()
-        //                     .with_height(cx.font_cache().line_height(theme.message.text.font_size))
-        //                     .aligned()
-        //                     .top()
-        //                     .flex_float(),
-        //                 ),
-        //         )
-        //         .with_child({
-        //             let style = theme.action_message.style_for(state);
-        //             Text::new("View the release notes", style.text.clone())
-        //                 .contained()
-        //                 .with_style(style.container)
-        //         })
-        //         .contained()
-        // })
-        // .with_cursor_style(CursorStyle::PointingHand)
-        // .on_click(MouseButton::Left, |_, _, cx| {
-        //     crate::view_release_notes(&Default::default(), cx)
-        // })
-        // .into_any_named("update notification")
+        v_stack()
+            .elevation_3(cx)
+            .p_4()
+            .child(
+                h_stack()
+                    .justify_between()
+                    .child(Label::new(format!(
+                        "Updated to {app_name} {}",
+                        self.version
+                    )))
+                    .child(
+                        div()
+                            .id("cancel")
+                            .child(IconElement::new(Icon::Close))
+                            .cursor_pointer()
+                            .on_click(cx.listener(|this, _, cx| this.dismiss(cx))),
+                    ),
+            )
+            .child(
+                div()
+                    .id("notes")
+                    .child(Label::new("View the release notes"))
+                    .cursor_pointer()
+                    .on_click(|_, cx| crate::view_release_notes(&Default::default(), cx)),
+            )
     }
 }
 
 impl UpdateNotification {
     pub fn new(version: SemanticVersion) -> Self {
-        Self { _version: version }
+        Self { version }
     }
 
-    pub fn _dismiss(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
+    pub fn dismiss(&mut self, cx: &mut ViewContext<Self>) {
         cx.emit(DismissEvent::Dismiss);
     }
 }
