@@ -1,5 +1,6 @@
 use gpui::{
-    div, px, AnyElement, ClickEvent, Div, IntoElement, Stateful, StatefulInteractiveElement,
+    div, px, AnyElement, ClickEvent, Div, ImageSource, IntoElement, MouseButton, MouseDownEvent,
+    Stateful, StatefulInteractiveElement,
 };
 use smallvec::SmallVec;
 use std::rc::Rc;
@@ -250,7 +251,7 @@ pub struct ListItem {
     size: ListEntrySize,
     toggle: Toggle,
     variant: ListItemVariant,
-    on_click: Option<Rc<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
+    on_click: Option<Rc<dyn Fn(&MouseDownEvent, &mut WindowContext) + 'static>>,
     children: SmallVec<[AnyElement; 2]>,
 }
 
@@ -270,7 +271,10 @@ impl ListItem {
         }
     }
 
-    pub fn on_click(mut self, handler: impl Fn(&ClickEvent, &mut WindowContext) + 'static) -> Self {
+    pub fn on_click(
+        mut self,
+        handler: impl Fn(&MouseDownEvent, &mut WindowContext) + 'static,
+    ) -> Self {
         self.on_click = Some(Rc::new(handler));
         self
     }
@@ -300,7 +304,7 @@ impl ListItem {
         self
     }
 
-    pub fn left_avatar(mut self, left_avatar: impl Into<SharedString>) -> Self {
+    pub fn left_avatar(mut self, left_avatar: impl Into<ImageSource>) -> Self {
         self.left_slot = Some(GraphicSlot::Avatar(left_avatar.into()));
         self
     }
@@ -323,7 +327,7 @@ impl RenderOnce for ListItem {
                         .color(Color::Muted),
                 ),
             ),
-            Some(GraphicSlot::Avatar(src)) => Some(h_stack().child(Avatar::uri(src))),
+            Some(GraphicSlot::Avatar(src)) => Some(h_stack().child(Avatar::source(src))),
             Some(GraphicSlot::PublicActor(src)) => Some(h_stack().child(Avatar::uri(src))),
             None => None,
         };
@@ -335,25 +339,18 @@ impl RenderOnce for ListItem {
         div()
             .id(self.id)
             .relative()
-            .hover(|mut style| {
-                style.background = Some(cx.theme().colors().editor_background.into());
-                style
-            })
-            .on_click({
-                let on_click = self.on_click.clone();
-                move |event, cx| {
-                    if let Some(on_click) = &on_click {
-                        (on_click)(event, cx)
-                    }
-                }
-            })
+            .bg(cx.theme().colors().editor_background.clone())
+            // .hover(|mut style| {
+            //     style.background = Some(cx.theme().colors().editor_background.into());
+            //     style
+            // })
             // TODO: Add focus state
             // .when(self.state == InteractionState::Focused, |this| {
             //     this.border()
             //         .border_color(cx.theme().colors().border_focused)
             // })
-            .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
-            .active(|style| style.bg(cx.theme().colors().ghost_element_active))
+            //.hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
+            //.active(|style| style.bg(cx.theme().colors().ghost_element_active))
             .child(
                 sized_item
                     .when(self.variant == ListItemVariant::Inset, |this| this.px_2())
@@ -377,7 +374,16 @@ impl RenderOnce for ListItem {
                     .relative()
                     .child(disclosure_control(self.toggle))
                     .children(left_content)
-                    .children(self.children),
+                    .children(self.children)
+                    .on_mouse_down(MouseButton::Left, {
+                        let on_click = self.on_click.clone();
+                        move |event, cx| {
+                            dbg!("Clicking!");
+                            if let Some(on_click) = &on_click {
+                                (on_click)(event, cx)
+                            }
+                        }
+                    }),
             )
     }
 }

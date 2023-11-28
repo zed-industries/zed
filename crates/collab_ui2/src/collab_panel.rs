@@ -1,6 +1,6 @@
 #![allow(unused)]
 // mod channel_modal;
-// mod contact_finder;
+mod contact_finder;
 
 // use crate::{
 //     channel_view::{self, ChannelView},
@@ -16,7 +16,7 @@
 //     proto::{self, PeerId},
 //     Client, Contact, User, UserStore,
 // };
-// use contact_finder::ContactFinder;
+use contact_finder::ContactFinder;
 // use context_menu::{ContextMenu, ContextMenuItem};
 // use db::kvp::KEY_VALUE_STORE;
 // use drag_and_drop::{DragAndDrop, Draggable};
@@ -166,7 +166,7 @@ use editor::Editor;
 use feature_flags::{ChannelsAlpha, FeatureFlagAppExt};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
-    actions, div, serde_json, AppContext, AsyncWindowContext, Div, EventEmitter, FocusHandle,
+    actions, div, img, serde_json, AppContext, AsyncWindowContext, Div, EventEmitter, FocusHandle,
     Focusable, FocusableView, InteractiveElement, IntoElement, Model, ParentElement, Render,
     RenderOnce, SharedString, Styled, Subscription, View, ViewContext, VisualContext, WeakView,
 };
@@ -2255,19 +2255,17 @@ impl CollabPanel {
     //             .detach_and_log_err(cx);
     //     }
 
-    //     fn toggle_contact_finder(&mut self, cx: &mut ViewContext<Self>) {
-    //         if let Some(workspace) = self.workspace.upgrade(cx) {
-    //             workspace.update(cx, |workspace, cx| {
-    //                 workspace.toggle_modal(cx, |_, cx| {
-    //                     cx.add_view(|cx| {
-    //                         let mut finder = ContactFinder::new(self.user_store.clone(), cx);
-    //                         finder.set_query(self.filter_editor.read(cx).text(cx), cx);
-    //                         finder
-    //                     })
-    //                 });
-    //             });
-    //         }
-    //     }
+    fn toggle_contact_finder(&mut self, cx: &mut ViewContext<Self>) {
+        if let Some(workspace) = self.workspace.upgrade() {
+            workspace.update(cx, |workspace, cx| {
+                workspace.toggle_modal(cx, |cx| {
+                    let mut finder = ContactFinder::new(self.user_store.clone(), cx);
+                    finder.set_query(self.filter_editor.read(cx).text(cx), cx);
+                    finder
+                });
+            });
+        }
+    }
 
     //     fn new_root_channel(&mut self, cx: &mut ViewContext<Self>) {
     //         self.channel_editing_state = Some(ChannelEditingState::Create {
@@ -2672,10 +2670,7 @@ impl CollabPanel {
             }
             Section::Contacts => Some(
                 IconButton::new("add-contact", Icon::Plus)
-                    .on_click(cx.listener(|this, _, cx| {
-                        todo!()
-                        // this.toggle_contact_finder(cx)
-                    }))
+                    .on_click(cx.listener(|this, _, cx| this.toggle_contact_finder(cx)))
                     .tooltip(|cx| Tooltip::text("Search for new contact", cx)),
             ),
             Section::Channels => {
@@ -2734,13 +2729,20 @@ impl CollabPanel {
         let busy = contact.busy || calling;
         let user_id = contact.user.id;
         let github_login = SharedString::from(contact.user.github_login.clone());
-
-        let item = ListItem::new(github_login.clone())
-            .child(Label::new(github_login.clone()))
-            .on_click(cx.listener(|this, _, cx| {
-                todo!();
-            }));
-
+        let mut item = ListItem::new(github_login.clone())
+            .on_click(cx.listener(move |this, _, cx| {
+                this.workspace
+                    .update(cx, |this, cx| {
+                        this.call_state()
+                            .invite(user_id, None, cx)
+                            .detach_and_log_err(cx)
+                    })
+                    .log_err();
+            }))
+            .child(Label::new(github_login.clone()));
+        if let Some(avatar) = contact.user.avatar.clone() {
+            //item = item.left_avatar(avatar);
+        }
         // let event_handler =
         //     MouseEventHandler::new::<Contact, _>(contact.user.id as usize, cx, |state, cx| {
         //         Flex::row()
@@ -2873,8 +2875,14 @@ impl CollabPanel {
     ) -> impl IntoElement {
         let github_login = SharedString::from(user.github_login.clone());
 
-        let mut row = ListItem::new(github_login.clone()).child(Label::new(github_login.clone()));
-
+        let mut item = ListItem::new(github_login.clone())
+            .child(Label::new(github_login.clone()))
+            .on_click(cx.listener(|this, _, cx| {
+                todo!();
+            }));
+        if let Some(avatar) = user.avatar.clone() {
+            item = item.left_avatar(avatar);
+        }
         // .with_children(user.avatar.clone().map(|avatar| {
         //     Image::from_data(avatar)
         //         .with_style(theme.contact_avatar)
@@ -2963,7 +2971,7 @@ impl CollabPanel {
         //             .style_for(&mut Default::default()),
         //     )
         //     .into_any()
-        row
+        item
     }
 
     fn render_contact_placeholder(

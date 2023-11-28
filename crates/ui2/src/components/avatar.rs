@@ -49,6 +49,12 @@ impl Avatar {
         }
     }
 
+    pub fn source(src: ImageSource) -> Self {
+        Self {
+            src,
+            shape: Shape::Circle,
+        }
+    }
     pub fn shape(mut self, shape: Shape) -> Self {
         self.shape = shape;
         self
