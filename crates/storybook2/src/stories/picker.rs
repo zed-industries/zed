@@ -1,6 +1,7 @@
 use fuzzy::StringMatchCandidate;
 use gpui::{
-    div, prelude::*, Div, KeyBinding, Render, SharedString, Styled, Task, View, WindowContext,
+    div, prelude::*, AnyElement, Div, KeyBinding, Render, SharedString, Styled, Task, View,
+    WindowContext,
 };
 use picker::{Picker, PickerDelegate};
 use std::sync::Arc;
@@ -36,8 +37,6 @@ impl Delegate {
 }
 
 impl PickerDelegate for Delegate {
-    type ListItem = Div;
-
     fn match_count(&self) -> usize {
         self.candidates.len()
     }
@@ -51,10 +50,10 @@ impl PickerDelegate for Delegate {
         ix: usize,
         selected: bool,
         cx: &mut gpui::ViewContext<Picker<Self>>,
-    ) -> Self::ListItem {
+    ) -> AnyElement {
         let colors = cx.theme().colors();
         let Some(candidate_ix) = self.matches.get(ix) else {
-            return div();
+            return div().into_any();
         };
         // TASK: Make StringMatchCandidate::string a SharedString
         let candidate = SharedString::from(self.candidates[*candidate_ix].string.clone());
@@ -70,6 +69,7 @@ impl PickerDelegate for Delegate {
                     .text_color(colors.text_accent)
             })
             .child(candidate)
+            .into_any()
     }
 
     fn selected_index(&self) -> usize {

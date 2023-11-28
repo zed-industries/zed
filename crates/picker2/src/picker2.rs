@@ -1,7 +1,8 @@
 use editor::Editor;
 use gpui::{
-    div, prelude::*, uniform_list, AppContext, Div, FocusHandle, FocusableView, MouseButton,
-    MouseDownEvent, Render, Task, UniformListScrollHandle, View, ViewContext, WindowContext,
+    div, prelude::*, uniform_list, AnyElement, AppContext, Div, FocusHandle, FocusableView,
+    MouseButton, MouseDownEvent, Render, Task, UniformListScrollHandle, View, ViewContext,
+    WindowContext,
 };
 use std::{cmp, sync::Arc};
 use ui::{prelude::*, v_stack, Color, Divider, Label};
@@ -15,8 +16,6 @@ pub struct Picker<D: PickerDelegate> {
 }
 
 pub trait PickerDelegate: Sized + 'static {
-    type ListItem: IntoElement;
-
     fn match_count(&self) -> usize;
     fn selected_index(&self) -> usize;
     fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<Picker<Self>>);
@@ -32,7 +31,7 @@ pub trait PickerDelegate: Sized + 'static {
         ix: usize,
         selected: bool,
         cx: &mut ViewContext<Picker<Self>>,
-    ) -> Self::ListItem;
+    ) -> AnyElement;
 }
 
 impl<D: PickerDelegate> FocusableView for Picker<D> {
@@ -256,4 +255,23 @@ impl<D: PickerDelegate> Render for Picker<D> {
                 )
             })
     }
+}
+
+pub fn simple_picker_match(
+    selected: bool,
+    cx: &mut WindowContext,
+    children: impl FnOnce(&mut WindowContext) -> AnyElement,
+) -> AnyElement {
+    let colors = cx.theme().colors();
+
+    div()
+        .px_1()
+        .text_color(colors.text)
+        .text_ui()
+        .bg(colors.ghost_element_background)
+        .rounded_md()
+        .when(selected, |this| this.bg(colors.ghost_element_selected))
+        .hover(|this| this.bg(colors.ghost_element_hover))
+        .child((children)(cx))
+        .into_any()
 }

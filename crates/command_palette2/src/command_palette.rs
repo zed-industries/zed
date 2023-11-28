@@ -1,17 +1,17 @@
 use collections::{CommandPaletteFilter, HashMap};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, div, prelude::*, Action, AppContext, DismissEvent, Div, EventEmitter, FocusHandle,
-    FocusableView, Keystroke, ParentElement, Render, Styled, View, ViewContext, VisualContext,
-    WeakView,
+    actions, div, prelude::*, Action, AnyElement, AppContext, DismissEvent, Div, EventEmitter,
+    FocusHandle, FocusableView, Keystroke, ParentElement, Render, Styled, View, ViewContext,
+    VisualContext, WeakView,
 };
-use picker::{Picker, PickerDelegate};
+use picker::{simple_picker_match, Picker, PickerDelegate};
 use std::{
     cmp::{self, Reverse},
     sync::Arc,
 };
-use theme::ActiveTheme;
-use ui::{h_stack, v_stack, HighlightedLabel, KeyBinding, StyledExt};
+
+use ui::{h_stack, v_stack, HighlightedLabel, KeyBinding};
 use util::{
     channel::{parse_zed_link, ReleaseChannel, RELEASE_CHANNEL},
     ResultExt,
@@ -141,8 +141,6 @@ impl CommandPaletteDelegate {
 }
 
 impl PickerDelegate for CommandPaletteDelegate {
-    type ListItem = Div;
-
     fn placeholder_text(&self) -> Arc<str> {
         "Execute a command...".into()
     }
@@ -294,32 +292,24 @@ impl PickerDelegate for CommandPaletteDelegate {
         ix: usize,
         selected: bool,
         cx: &mut ViewContext<Picker<Self>>,
-    ) -> Self::ListItem {
-        let colors = cx.theme().colors();
+    ) -> AnyElement {
         let Some(r#match) = self.matches.get(ix) else {
-            return div();
+            return div().into_any();
         };
         let Some(command) = self.commands.get(r#match.candidate_id) else {
-            return div();
+            return div().into_any();
         };
 
-        div()
-            .px_1()
-            .text_color(colors.text)
-            .text_ui()
-            .bg(colors.ghost_element_background)
-            .rounded_md()
-            .when(selected, |this| this.bg(colors.ghost_element_selected))
-            .hover(|this| this.bg(colors.ghost_element_hover))
-            .child(
-                h_stack()
-                    .justify_between()
-                    .child(HighlightedLabel::new(
-                        command.name.clone(),
-                        r#match.positions.clone(),
-                    ))
-                    .children(KeyBinding::for_action(&*command.action, cx)),
-            )
+        simple_picker_match(selected, cx, |cx| {
+            h_stack()
+                .justify_between()
+                .child(HighlightedLabel::new(
+                    command.name.clone(),
+                    r#match.positions.clone(),
+                ))
+                .children(KeyBinding::for_action(&*command.action, cx))
+                .into_any()
+        })
     }
 }
 

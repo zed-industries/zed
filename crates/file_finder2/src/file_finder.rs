@@ -2,9 +2,9 @@ use collections::HashMap;
 use editor::{scroll::autoscroll::Autoscroll, Bias, Editor};
 use fuzzy::{CharBag, PathMatch, PathMatchCandidate};
 use gpui::{
-    actions, div, AppContext, DismissEvent, Div, EventEmitter, FocusHandle, FocusableView,
-    InteractiveElement, IntoElement, Model, ParentElement, Render, Styled, Task, View, ViewContext,
-    VisualContext, WeakView,
+    actions, div, AnyElement, AppContext, DismissEvent, Div, Element, EventEmitter, FocusHandle,
+    FocusableView, InteractiveElement, IntoElement, Model, ParentElement, Render, Styled, Task,
+    View, ViewContext, VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};
 use project::{PathMatchCandidateSet, Project, ProjectPath, WorktreeId};
@@ -530,8 +530,6 @@ impl FileFinderDelegate {
 }
 
 impl PickerDelegate for FileFinderDelegate {
-    type ListItem = Div;
-
     fn placeholder_text(&self) -> Arc<str> {
         "Search project files...".into()
     }
@@ -711,7 +709,7 @@ impl PickerDelegate for FileFinderDelegate {
         ix: usize,
         selected: bool,
         cx: &mut ViewContext<Picker<Self>>,
-    ) -> Self::ListItem {
+    ) -> AnyElement {
         let path_match = self
             .matches
             .get(ix)
@@ -735,6 +733,7 @@ impl PickerDelegate for FileFinderDelegate {
                     .child(HighlightedLabel::new(file_name, file_name_positions))
                     .child(HighlightedLabel::new(full_path, full_path_positions)),
             )
+            .into_any()
     }
 }
 
