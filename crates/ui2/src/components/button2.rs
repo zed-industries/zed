@@ -1,19 +1,20 @@
 use gpui::{
-    Action, AnyElement, AnyView, DefiniteLength, Div, IntoElement, MouseButton, MouseDownEvent,
-    Stateful, StatefulInteractiveElement, WindowContext,
+    Action, AnyElement, AnyView, ClickEvent, DefiniteLength, Div, IntoElement, MouseButton,
+    MouseDownEvent, Stateful, StatefulInteractiveElement, WindowContext,
 };
 use smallvec::SmallVec;
 
 use crate::{h_stack, prelude::*, Icon, IconElement};
 
-#[derive(Default, PartialEq, Clone, Copy)]
-pub enum ButtonType2 {
-    #[default]
-    DefaultButton,
-    ButtonLike,
-    SplitButton,
-    ToggleButton,
-}
+// #[derive(Default, PartialEq, Clone, Copy)]
+// pub enum ButtonType2 {
+//     #[default]
+//     DefaultButton,
+//     IconButton,
+//     ButtonLike,
+//     SplitButton,
+//     ToggleButton,
+// }
 
 #[derive(Default, PartialEq, Clone, Copy)]
 pub enum IconPosition2 {
@@ -111,22 +112,14 @@ pub enum ButtonSize2 {
 //     children: SmallVec<[AnyElement; 2]>,
 // }
 
-pub trait ButtonCommon {
-    fn id(&self) -> &ElementId;
-    fn appearance(&mut self, appearance: ButtonAppearance2) -> &mut Self;
-    fn state(&mut self, state: InteractionState) -> &mut Self;
-    fn disabled(&mut self, disabled: bool) -> &mut Self;
-    fn size(&mut self, size: ButtonSize2) -> &mut Self;
-    fn tooltip(&mut self, tooltip: impl Fn(&mut WindowContext) -> AnyView + 'static) -> &mut Self;
+pub trait Clickable {
     fn on_click(
         &mut self,
-        handler: impl 'static + Fn(&MouseDownEvent, &mut WindowContext),
+        handler: impl Fn(&ClickEvent, &mut WindowContext) + 'static,
     ) -> &mut Self;
-    fn action(&mut self, action: impl Action + 'static) -> &mut Self;
-    // fn width(&mut self, width: DefiniteLength) -> &mut Self;
 }
 
-pub trait SelectableButtonCommon {
+pub trait Selectable {
     fn selected(&mut self, selected: bool) -> &mut Self;
     fn selected_tooltip(
         &mut self,
@@ -134,9 +127,19 @@ pub trait SelectableButtonCommon {
     ) -> &mut Self;
 }
 
-pub trait FixedButtonCommon {
+pub trait FixedWidth {
     fn width(&mut self, width: DefiniteLength) -> &mut Self;
     fn full_width(&mut self) -> &mut Self;
+}
+
+pub trait Button: Clickable + Selectable {
+    fn id(&self) -> &ElementId;
+    fn appearance(&mut self, appearance: ButtonAppearance2) -> &mut Self;
+    fn state(&mut self, state: InteractionState) -> &mut Self;
+    fn disabled(&mut self, disabled: bool) -> &mut Self;
+    fn size(&mut self, size: ButtonSize2) -> &mut Self;
+    fn tooltip(&mut self, tooltip: impl Fn(&mut WindowContext) -> AnyView + 'static) -> &mut Self;
+    // fn width(&mut self, width: DefiniteLength) -> &mut Self;
 }
 
 // pub struct Button {
@@ -190,7 +193,7 @@ pub struct IconButton2 {
     disabled: bool,
     size: ButtonSize2,
     tooltip: Option<Box<dyn Fn(&mut WindowContext) -> AnyView>>,
-    on_mouse_down: Option<Box<dyn Fn(&MouseDownEvent, &mut WindowContext) + 'static>>,
+    on_click: Option<Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
     icon: Icon,
     icon_color: Option<Color>,
     icon_position: IconPosition2, // Default to .Before
@@ -205,7 +208,7 @@ impl IconButton2 {
             disabled: false,
             size: ButtonSize2::Default,
             tooltip: None,
-            on_mouse_down: None,
+            on_click: None,
             icon: icon,
             icon_color: None,
             icon_position: IconPosition2::Before, // default icon position
@@ -228,8 +231,31 @@ impl IconButton2 {
     }
 }
 
+impl Clickable for IconButton2 {
+    fn on_click(
+        &mut self,
+        handler: impl Fn(&ClickEvent, &mut WindowContext) + 'static,
+    ) -> &mut Self {
+        self.on_click = Some(Box::new(handler));
+        self
+    }
+}
+
+impl Selectable for IconButton2 {
+    fn selected(&mut self, selected: bool) -> &mut Self {
+        todo!()
+    }
+
+    fn selected_tooltip(
+        &mut self,
+        tooltip: Box<dyn Fn(&mut WindowContext) -> AnyView + 'static>,
+    ) -> &mut Self {
+        todo!()
+    }
+}
+
 // Implement ButtonCommon for IconButton2
-impl ButtonCommon for IconButton2 {
+impl Button for IconButton2 {
     fn id(&self) -> &ElementId {
         &self.id
     }
@@ -256,22 +282,6 @@ impl ButtonCommon for IconButton2 {
 
     fn tooltip(&mut self, tooltip: impl Fn(&mut WindowContext) -> AnyView + 'static) -> &mut Self {
         self.tooltip = Some(Box::new(tooltip));
-        self
-    }
-
-    fn on_click(
-        &mut self,
-        handler: impl 'static + Fn(&MouseDownEvent, &mut WindowContext),
-    ) -> &mut Self {
-        self.on_mouse_down = Some(Box::new(handler));
-        self
-    }
-
-    fn action(&mut self, action: impl Action + 'static) -> &mut Self {
-        let boxed_action = Box::new(action);
-        self.on_mouse_down = Some(Box::new(move |_, cx| {
-            cx.dispatch_action(boxed_action.boxed_clone());
-        }));
         self
     }
 }
@@ -311,7 +321,7 @@ impl RenderOnce for IconButton2 {
                 });
         }
 
-        if let Some(click_handler) = self.on_mouse_down {
+        if let Some(click_handler) = self.on_click {
             button = button.on_mouse_down(MouseButton::Left, move |event, cx| {
                 click_handler(event, cx);
             });
@@ -333,7 +343,7 @@ pub struct ButtonLike {
     disabled: bool,
     size: ButtonSize2,
     tooltip: Option<Box<dyn Fn(&mut WindowContext) -> AnyView>>,
-    on_mouse_down: Option<Box<dyn Fn(&MouseDownEvent, &mut WindowContext) + 'static>>,
+    on_click: Option<Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
     children: SmallVec<[AnyElement; 2]>,
 }
 
@@ -355,12 +365,35 @@ impl ButtonLike {
             size: ButtonSize2::Default,
             tooltip: None,
             children: SmallVec::new(),
-            on_mouse_down: None,
+            on_click: None,
         }
     }
 }
 
-impl ButtonCommon for ButtonLike {
+impl Clickable for ButtonLike {
+    fn on_click(
+        &mut self,
+        handler: impl Fn(&ClickEvent, &mut WindowContext) + 'static,
+    ) -> &mut Self {
+        self.on_click = Some(Box::new(handler));
+        self
+    }
+}
+
+impl Selectable for ButtonLike {
+    fn selected(&mut self, selected: bool) -> &mut Self {
+        todo!()
+    }
+
+    fn selected_tooltip(
+        &mut self,
+        tooltip: Box<dyn Fn(&mut WindowContext) -> AnyView + 'static>,
+    ) -> &mut Self {
+        todo!()
+    }
+}
+
+impl Button for ButtonLike {
     fn id(&self) -> &ElementId {
         &self.id
     }
@@ -387,22 +420,6 @@ impl ButtonCommon for ButtonLike {
 
     fn tooltip(&mut self, tooltip: impl Fn(&mut WindowContext) -> AnyView + 'static) -> &mut Self {
         self.tooltip = Some(Box::new(tooltip));
-        self
-    }
-
-    fn on_click(
-        &mut self,
-        handler: impl 'static + Fn(&MouseDownEvent, &mut WindowContext),
-    ) -> &mut Self {
-        self.on_mouse_down = Some(Box::new(handler));
-        self
-    }
-
-    fn action(&mut self, action: impl Action + 'static) -> &mut Self {
-        let boxed_action = Box::new(action);
-        self.on_mouse_down = Some(Box::new(move |_, cx| {
-            cx.dispatch_action(boxed_action.boxed_clone());
-        }));
         self
     }
 }
@@ -437,7 +454,7 @@ impl RenderOnce for ButtonLike {
             button_like = button_like.tooltip(move |cx| tooltip(cx))
         }
 
-        if let Some(on_mouse_down) = self.on_mouse_down {
+        if let Some(on_mouse_down) = self.on_click {
             button_like = button_like.on_mouse_down(MouseButton::Left, move |event, cx| {
                 on_mouse_down(event, cx);
             })
