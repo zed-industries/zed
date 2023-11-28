@@ -193,51 +193,53 @@ fn start_default_prettier(
 ) -> Task<anyhow::Result<PrettierTask>> {
     cx.spawn(|project, mut cx| async move {
         loop {
-            let mut install_attempt = 0;
             let installation_process = project.update(&mut cx, |project, _| {
                 match &project.default_prettier.prettier {
                     PrettierInstallation::NotInstalled {
                         installation_process,
-                        attempts
-                    } => {
-                        install_attempt = *attempts;
-                        ControlFlow::Continue(installation_process.clone())},
+                        ..
+                    } => ControlFlow::Continue(installation_process.clone()),
                     PrettierInstallation::Installed(default_prettier) => {
                         ControlFlow::Break(default_prettier.clone())
                     }
                 }
             });
-            install_attempt += 1;
-
             match installation_process {
-                ControlFlow::Continue(installation_process) => {
-                    if let Some(installation_process) = installation_process.clone() {
-                        if let Err(e) = installation_process.await {
-                            anyhow::bail!("Cannot start default prettier due to its installation failure: {e:#}");
-                        }
+                ControlFlow::Continue(None) => {
+                    anyhow::bail!("Default prettier is not installed and cannot be started")
+                }
+                ControlFlow::Continue(Some(installation_process)) => {
+                    if let Err(e) = installation_process.await {
+                        anyhow::bail!(
+                            "Cannot start default prettier due to its installation failure: {e:#}"
+                        );
                     }
                     let new_default_prettier = project.update(&mut cx, |project, cx| {
                         let new_default_prettier =
                             start_prettier(node, DEFAULT_PRETTIER_DIR.clone(), worktree_id, cx);
                         project.default_prettier.prettier =
-                            PrettierInstallation::Installed(PrettierInstance { attempt: install_attempt, prettier: Some(new_default_prettier.clone()) });
+                            PrettierInstallation::Installed(PrettierInstance {
+                                attempt: 0,
+                                prettier: Some(new_default_prettier.clone()),
+                            });
                         new_default_prettier
                     });
                     return Ok(new_default_prettier);
                 }
-                ControlFlow::Break(instance) => {
-                    match instance.prettier {
-                        Some(instance) => return Ok(instance),
-                        None => {
-                            let new_default_prettier = project.update(&mut cx, |project, cx| {
-                                let new_default_prettier =
-                                    start_prettier(node, DEFAULT_PRETTIER_DIR.clone(), worktree_id, cx);
-                                project.default_prettier.prettier =
-                                    PrettierInstallation::Installed(PrettierInstance { attempt: instance.attempt + 1, prettier: Some(new_default_prettier.clone()) });
-                                new_default_prettier
-                            });
-                            return Ok(new_default_prettier);
-                        },
+                ControlFlow::Break(instance) => match instance.prettier {
+                    Some(instance) => return Ok(instance),
+                    None => {
+                        let new_default_prettier = project.update(&mut cx, |project, cx| {
+                            let new_default_prettier =
+                                start_prettier(node, DEFAULT_PRETTIER_DIR.clone(), worktree_id, cx);
+                            project.default_prettier.prettier =
+                                PrettierInstallation::Installed(PrettierInstance {
+                                    attempt: instance.attempt + 1,
+                                    prettier: Some(new_default_prettier.clone()),
+                                });
+                            new_default_prettier
+                        });
+                        return Ok(new_default_prettier);
                     }
                 },
             }
@@ -322,21 +324,6 @@ async fn install_default_prettier(
     node: Arc<dyn NodeRuntime>,
     fs: Arc<dyn Fs>,
 ) -> anyhow::Result<()> {
-    let prettier_wrapper_path = DEFAULT_PRETTIER_DIR.join(prettier::PRETTIER_SERVER_FILE);
-    // method creates parent directory if it doesn't exist
-    fs.save(
-        &prettier_wrapper_path,
-        &text::Rope::from(prettier::PRETTIER_SERVER_JS),
-        text::LineEnding::Unix,
-    )
-    .await
-    .with_context(|| {
-        format!(
-            "writing {} file at {prettier_wrapper_path:?}",
-            prettier::PRETTIER_SERVER_FILE
-        )
-    })?;
-
     let packages_to_versions =
         future::try_join_all(plugins_to_install.iter().chain(Some(&"prettier")).map(
             |package_name| async {
@@ -362,6 +349,23 @@ async fn install_default_prettier(
         .await
         .context("fetching formatter packages")?;
     anyhow::Ok(())
+}
+
+async fn save_prettier_server_file(fs: &dyn Fs) -> Result<(), anyhow::Error> {
+    let prettier_wrapper_path = DEFAULT_PRETTIER_DIR.join(prettier::PRETTIER_SERVER_FILE);
+    fs.save(
+        &prettier_wrapper_path,
+        &text::Rope::from(prettier::PRETTIER_SERVER_JS),
+        text::LineEnding::Unix,
+    )
+    .await
+    .with_context(|| {
+        format!(
+            "writing {} file at {prettier_wrapper_path:?}",
+            prettier::PRETTIER_SERVER_FILE
+        )
+    })?;
+    Ok(())
 }
 
 impl Project {
@@ -662,7 +666,10 @@ impl Project {
                         .map_err(Arc::new)?
                     {
                         ControlFlow::Break(()) => return Ok(()),
-                        ControlFlow::Continue(Some(_non_default_prettier)) => return Ok(()),
+                        ControlFlow::Continue(Some(_non_default_prettier)) => {
+                            save_prettier_server_file(fs.as_ref()).await?;
+                            return Ok(());
+                        }
                         ControlFlow::Continue(None) => {
                             let mut needs_install = match previous_installation_process {
                                 Some(previous_installation_process) => {
@@ -681,6 +688,7 @@ impl Project {
                                 cx.background()
                                     // TODO kb instead of always installing, try to start the existing installation first?
                                     .spawn(async move {
+                                        save_prettier_server_file(fs.as_ref()).await?;
                                         install_default_prettier(plugins_to_install, node, fs).await
                                     })
                                     .await
