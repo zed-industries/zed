@@ -483,9 +483,6 @@ impl InfoPopover {
             // Prevent a mouse move on the popover from being propagated to the editor,
             // because that would dismiss the popover.
             .on_mouse_move(|_, cx| cx.stop_propagation())
-            // Prevent a mouse down on the popover from being propagated to the editor,
-            // because that would move the cursor.
-            .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
             .child(crate::render_parsed_markdown(
                 "content",
                 &self.parsed_content,

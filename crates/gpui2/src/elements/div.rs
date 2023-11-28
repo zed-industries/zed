@@ -723,12 +723,12 @@ pub struct Interactivity {
 
 #[derive(Clone)]
 pub struct InteractiveBounds {
-    bounds: Bounds<Pixels>,
-    stacking_order: StackingOrder,
+    pub bounds: Bounds<Pixels>,
+    pub stacking_order: StackingOrder,
 }
 
 impl InteractiveBounds {
-    fn visibly_contains(&self, point: &Point<Pixels>, cx: &WindowContext) -> bool {
+    pub fn visibly_contains(&self, point: &Point<Pixels>, cx: &WindowContext) -> bool {
         self.bounds.contains_point(point) && cx.was_top_layer(&point, &self.stacking_order)
     }
 }

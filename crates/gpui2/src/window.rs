@@ -12,7 +12,7 @@ use crate::{
     VisualContext, WeakView, WindowBounds, WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::{anyhow, Context as _, Result};
-use collections::{BTreeMap, HashMap};
+use collections::HashMap;
 use derive_more::{Deref, DerefMut};
 use futures::{
     channel::{mpsc, oneshot},
@@ -243,7 +243,7 @@ pub(crate) struct Frame {
     pub(crate) dispatch_tree: DispatchTree,
     pub(crate) focus_listeners: Vec<AnyFocusListener>,
     pub(crate) scene_builder: SceneBuilder,
-    pub(crate) depth_map: BTreeMap<StackingOrder, Bounds<Pixels>>,
+    pub(crate) depth_map: Vec<(StackingOrder, Bounds<Pixels>)>,
     pub(crate) z_index_stack: StackingOrder,
     content_mask_stack: Vec<ContentMask<Pixels>>,
     element_offset_stack: Vec<Point<Pixels>>,
@@ -811,10 +811,10 @@ impl<'a> WindowContext<'a> {
     /// Called during painting to track which z-index is on top at each pixel position
     pub fn add_opaque_layer(&mut self, bounds: Bounds<Pixels>) {
         let stacking_order = self.window.current_frame.z_index_stack.clone();
-        self.window
-            .current_frame
-            .depth_map
-            .insert(stacking_order, bounds);
+        let depth_map = &mut self.window.current_frame.depth_map;
+        match depth_map.binary_search_by(|(level, _)| stacking_order.cmp(&level)) {
+            Ok(i) | Err(i) => depth_map.insert(i, (stacking_order, bounds)),
+        }
     }
 
     /// Returns true if the top-most opaque layer painted over this point was part of the
