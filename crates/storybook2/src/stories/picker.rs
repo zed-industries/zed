@@ -5,6 +5,7 @@ use gpui::{
 use picker::{Picker, PickerDelegate};
 use std::sync::Arc;
 use theme2::ActiveTheme;
+use ui::{Label, ListItem};
 
 pub struct PickerStory {
     picker: View<Picker<Delegate>>,
@@ -36,7 +37,7 @@ impl Delegate {
 }
 
 impl PickerDelegate for Delegate {
-    type ListItem = Div;
+    type ListItem = ListItem;
 
     fn match_count(&self) -> usize {
         self.candidates.len()
@@ -52,7 +53,6 @@ impl PickerDelegate for Delegate {
         selected: bool,
         cx: &mut gpui::ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let colors = cx.theme().colors();
         let Some(candidate_ix) = self.matches.get(ix) else {
             return None;
         };
@@ -60,17 +60,9 @@ impl PickerDelegate for Delegate {
         let candidate = SharedString::from(self.candidates[*candidate_ix].string.clone());
 
         Some(
-            div()
-                .text_color(colors.text)
-                .when(selected, |s| {
-                    s.border_l_10().border_color(colors.terminal_ansi_yellow)
-                })
-                .hover(|style| {
-                    style
-                        .bg(colors.element_active)
-                        .text_color(colors.text_accent)
-                })
-                .child(candidate),
+            ListItem::new(ix)
+                .selected(selected)
+                .child(Label::new(candidate)),
         )
     }
 
