@@ -1343,8 +1343,6 @@ impl ProjectPanel {
     ) -> ListItem {
         let kind = details.kind;
         let settings = ProjectPanelSettings::get_global(cx);
-        const INDENT_SIZE: Pixels = px(16.0);
-        // let padding = INDENT_SIZE + details.depth as f32 * px(settings.indent_size);
         let show_editor = details.is_editing && !details.is_processing;
         let is_selected = self
             .selection
@@ -1362,8 +1360,8 @@ impl ProjectPanel {
             .unwrap_or(theme.status().info);
 
         ListItem::new(entry_id.to_proto() as usize)
-            // TODO: We need to make the indent level respect the project panel settings.
             .indent_level(details.depth)
+            .indent_step_size(px(settings.indent_size))
             .selected(is_selected)
             .child(if let Some(icon) = &details.icon {
                 div().child(IconElement::from_path(icon.to_string()))

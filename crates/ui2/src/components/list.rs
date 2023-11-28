@@ -1,9 +1,10 @@
+use std::rc::Rc;
+
 use gpui::{
-    div, rems, AnyElement, ClickEvent, Div, IntoElement, MouseButton, MouseDownEvent, Stateful,
-    StatefulInteractiveElement,
+    div, px, AnyElement, ClickEvent, Div, IntoElement, MouseButton, MouseDownEvent, Pixels,
+    Stateful, StatefulInteractiveElement,
 };
 use smallvec::SmallVec;
-use std::rc::Rc;
 
 use crate::{
     disclosure_control, h_stack, v_stack, Avatar, Icon, IconElement, IconSize, Label, Toggle,
@@ -180,6 +181,7 @@ pub struct ListItem {
     // TODO: Reintroduce this
     // disclosure_control_style: DisclosureControlVisibility,
     indent_level: usize,
+    indent_step_size: Pixels,
     left_slot: Option<GraphicSlot>,
     overflow: OverflowStyle,
     toggle: Toggle,
@@ -196,6 +198,7 @@ impl ListItem {
             disabled: false,
             selected: false,
             indent_level: 0,
+            indent_step_size: px(12.),
             left_slot: None,
             overflow: OverflowStyle::Hidden,
             toggle: Toggle::NotToggleable,
@@ -226,6 +229,11 @@ impl ListItem {
 
     pub fn indent_level(mut self, indent_level: usize) -> Self {
         self.indent_level = indent_level;
+        self
+    }
+
+    pub fn indent_step_size(mut self, indent_step_size: Pixels) -> Self {
+        self.indent_step_size = indent_step_size;
         self
     }
 
@@ -306,7 +314,7 @@ impl RenderOnce for ListItem {
             .child(
                 div()
                     .when(self.variant == ListItemVariant::Inset, |this| this.px_2())
-                    .ml(rems(0.75 * self.indent_level as f32))
+                    .ml(self.indent_level as f32 * self.indent_step_size)
                     .flex()
                     .gap_1()
                     .items_center()
