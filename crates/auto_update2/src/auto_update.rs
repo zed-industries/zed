@@ -84,8 +84,8 @@ impl Settings for AutoUpdateSetting {
 pub fn init(http_client: Arc<dyn HttpClient>, server_url: String, cx: &mut AppContext) {
     AutoUpdateSetting::register(cx);
 
-    cx.observe_new_views(|wokrspace: &mut Workspace, _cx| {
-        wokrspace
+    cx.observe_new_views(|workspace: &mut Workspace, _cx| {
+        workspace
             .register_action(|_, action: &Check, cx| check(action, cx))
             .register_action(|_, _action: &CheckThatAutoUpdaterWorks, cx| {
                 let prompt = cx.prompt(gpui::PromptLevel::Info, "It does!", &["Ok"]);
@@ -94,6 +94,11 @@ pub fn init(http_client: Arc<dyn HttpClient>, server_url: String, cx: &mut AppCo
                 })
                 .detach();
             });
+
+        // @nate - code to trigger update notification on launch
+        // workspace.show_notification(0, _cx, |cx| {
+        //     cx.build_view(|_| UpdateNotification::new(SemanticVersion::from_str("1.1.1").unwrap()))
+        // });
     })
     .detach();
 
@@ -131,7 +136,7 @@ pub fn check(_: &Check, cx: &mut AppContext) {
     }
 }
 
-fn _view_release_notes(_: &ViewReleaseNotes, cx: &mut AppContext) {
+pub fn view_release_notes(_: &ViewReleaseNotes, cx: &mut AppContext) {
     if let Some(auto_updater) = AutoUpdater::get(cx) {
         let auto_updater = auto_updater.read(cx);
         let server_url = &auto_updater.server_url;
