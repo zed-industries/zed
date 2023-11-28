@@ -32,7 +32,17 @@ pub enum ButtonAppearance2 {
     Transparent,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct ButtonStyle {
+    background: gpui::Hsla,
+    border_color: gpui::Hsla,
+    label_color: gpui::Hsla,
+    icon_color: gpui::Hsla,
+}
+
 impl ButtonAppearance2 {
+    pub fn disabled(self, cx: &mut WindowContext) -> Hsla {}
+
     pub fn bg(self, cx: &mut WindowContext, selected: bool, disabled: bool) -> gpui::Hsla {
         match self {
             ButtonAppearance2::Filled => {
