@@ -4,7 +4,7 @@ use gpui::{
 };
 use smallvec::SmallVec;
 
-use crate::{h_stack, prelude::*};
+use crate::{h_stack, prelude::*, Icon, IconElement};
 
 #[derive(Default, PartialEq, Clone, Copy)]
 pub enum ButtonType2 {
@@ -181,32 +181,149 @@ pub trait FixedButtonCommon {
 //     // ... Define other builder methods specific to Button type...
 // }
 
-// pub struct IconButton {
-//     // Base properties...
-//     id: ElementId,
-//     icon: Icon,
-//     icon_color: Option<Color>,
-//     // More fields as necessary...
-// }
+#[derive(IntoElement)]
+pub struct IconButton2 {
+    // Base properties
+    id: ElementId,
+    appearance: ButtonAppearance2,
+    state: InteractionState,
+    disabled: bool,
+    size: ButtonSize2,
+    tooltip: Option<Box<dyn Fn(&mut WindowContext) -> AnyView>>,
+    on_mouse_down: Option<Box<dyn Fn(&MouseDownEvent, &mut WindowContext) + 'static>>,
+    icon: Icon,
+    icon_color: Option<Color>,
+    icon_position: IconPosition2, // Default to .Before
+}
 
-// impl ButtonCommon for IconButton {
-//     fn id(&self) -> &ElementId {
-//         &self.id
-//     }
-//     // ... Implement other methods from ButtonCommon trait with builder patterns...
-// }
+impl IconButton2 {
+    pub fn new(id: impl Into<ElementId>, icon: Icon) -> Self {
+        Self {
+            id: id.into(),
+            appearance: ButtonAppearance2::Filled,
+            state: InteractionState::default(),
+            disabled: false,
+            size: ButtonSize2::Default,
+            tooltip: None,
+            on_mouse_down: None,
+            icon: icon,
+            icon_color: None,
+            icon_position: IconPosition2::Before, // default icon position
+        }
+    }
 
-// impl IconButton {
-//     pub fn new(id: impl Into<ElementId>, icon: Icon) -> Self {
-//         Self {
-//             id: id.into(),
-//             icon,
-//             // initialize other fields with default values...
-//         }
-//     }
+    pub fn icon(mut self, icon: Icon) -> Self {
+        self.icon = icon;
+        self
+    }
 
-//     // ... Define other builder methods specific to IconButton type...
-// }
+    pub fn icon_color(mut self, color: Color) -> Self {
+        self.icon_color = Some(color);
+        self
+    }
+
+    pub fn icon_position(mut self, position: IconPosition2) -> Self {
+        self.icon_position = position;
+        self
+    }
+}
+
+// Implement ButtonCommon for IconButton2
+impl ButtonCommon for IconButton2 {
+    fn id(&self) -> &ElementId {
+        &self.id
+    }
+
+    fn appearance(&mut self, appearance: ButtonAppearance2) -> &mut Self {
+        self.appearance = appearance;
+        self
+    }
+
+    fn state(&mut self, state: InteractionState) -> &mut Self {
+        self.state = state;
+        self
+    }
+
+    fn disabled(&mut self, disabled: bool) -> &mut Self {
+        self.disabled = disabled;
+        self
+    }
+
+    fn size(&mut self, size: ButtonSize2) -> &mut Self {
+        self.size = size;
+        self
+    }
+
+    fn tooltip(&mut self, tooltip: impl Fn(&mut WindowContext) -> AnyView + 'static) -> &mut Self {
+        self.tooltip = Some(Box::new(tooltip));
+        self
+    }
+
+    fn on_click(
+        &mut self,
+        handler: impl 'static + Fn(&MouseDownEvent, &mut WindowContext),
+    ) -> &mut Self {
+        self.on_mouse_down = Some(Box::new(handler));
+        self
+    }
+
+    fn action(&mut self, action: impl Action + 'static) -> &mut Self {
+        let boxed_action = Box::new(action);
+        self.on_mouse_down = Some(Box::new(move |_, cx| {
+            cx.dispatch_action(boxed_action.boxed_clone());
+        }));
+        self
+    }
+}
+
+impl RenderOnce for IconButton2 {
+    type Rendered = Stateful<Div>;
+
+    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
+        let icon_element =
+            IconElement::new(self.icon).color(self.icon_color.unwrap_or(Color::Default));
+
+        let mut button = h_stack()
+            .id(self.id.clone())
+            .justify_center()
+            .rounded_md()
+            .p_1()
+            .bg(self.appearance.bg(cx, self.state, false, self.disabled))
+            .cursor_pointer();
+
+        if self.state != InteractionState::Disabled {
+            button = button
+                .hover(|hover| {
+                    hover.bg(self.appearance.bg(
+                        cx,
+                        InteractionState::Hovered,
+                        false,
+                        self.disabled,
+                    ))
+                })
+                .active(|active| {
+                    active.bg(self.appearance.bg(
+                        cx,
+                        InteractionState::Active,
+                        false,
+                        self.disabled,
+                    ))
+                });
+        }
+
+        if let Some(click_handler) = self.on_mouse_down {
+            button = button.on_mouse_down(MouseButton::Left, move |event, cx| {
+                click_handler(event, cx);
+            });
+        }
+
+        if let Some(tooltip) = self.tooltip {
+            button = button.tooltip(move |cx| tooltip(cx));
+        }
+
+        button.child(icon_element)
+    }
+}
 
 #[derive(IntoElement)]
 pub struct ButtonLike {
@@ -337,7 +454,7 @@ impl ParentElement for ButtonLike {
 }
 
 // pub struct ToggleButton {
-//     // based on either IconButton or Button, with additional 'selected: bool' property
+//     // based on either IconButton2 or Button, with additional 'selected: bool' property
 // }
 
 // impl ButtonCommon for ToggleButton {
