@@ -65,7 +65,9 @@ impl RenderOnce for IconButton {
             }
         }
 
-        button
+        // todo! this extra wrapping div is to work around a bug
+        // where tooltips otherwise don't show up.
+        div().id(self.id.clone()).child(button)
     }
 }
 

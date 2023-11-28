@@ -17,6 +17,7 @@ mod contact_finder;
 //     Client, Contact, User, UserStore,
 // };
 use contact_finder::ContactFinder;
+use rpc::proto;
 // use context_menu::{ContextMenu, ContextMenuItem};
 // use db::kvp::KEY_VALUE_STORE;
 // use drag_and_drop::{DragAndDrop, Draggable};
@@ -166,15 +167,17 @@ use editor::Editor;
 use feature_flags::{ChannelsAlpha, FeatureFlagAppExt};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
-    actions, div, img, serde_json, AppContext, AsyncWindowContext, Div, EventEmitter, FocusHandle,
-    Focusable, FocusableView, InteractiveElement, IntoElement, Model, ParentElement, Render,
-    RenderOnce, SharedString, Styled, Subscription, View, ViewContext, VisualContext, WeakView,
+    actions, div, img, prelude::*, serde_json, AppContext, AsyncWindowContext, Div, EventEmitter,
+    FocusHandle, Focusable, FocusableView, InteractiveElement, IntoElement, Model, ParentElement,
+    Render, RenderOnce, SharedString, Styled, Subscription, View, ViewContext, VisualContext,
+    WeakView,
 };
 use project::Fs;
 use serde_derive::{Deserialize, Serialize};
 use settings::Settings;
 use ui::{
-    h_stack, v_stack, Avatar, Button, Icon, IconButton, Label, List, ListHeader, ListItem, Tooltip,
+    h_stack, v_stack, Avatar, Button, Color, Icon, IconButton, Label, List, ListHeader, ListItem,
+    Toggle, Tooltip,
 };
 use util::{maybe, ResultExt};
 use workspace::{
@@ -183,7 +186,7 @@ use workspace::{
     Workspace,
 };
 
-use crate::CollaborationPanelSettings;
+use crate::{face_pile::FacePile, CollaborationPanelSettings};
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(|workspace: &mut Workspace, _| {
@@ -309,7 +312,7 @@ pub struct CollabPanel {
     // channel_name_editor: ViewHandle<Editor>,
     channel_editing_state: Option<ChannelEditingState>,
     entries: Vec<ListEntry>,
-    // selection: Option<usize>,
+    selection: Option<usize>,
     channel_store: Model<ChannelStore>,
     user_store: Model<UserStore>,
     client: Arc<Client>,
@@ -600,7 +603,7 @@ impl CollabPanel {
                 filter_editor,
                 entries: Vec::default(),
                 channel_editing_state: None,
-                //                 selection: None,
+                selection: None,
                 channel_store: ChannelStore::global(cx),
                 user_store: workspace.user_store().clone(),
                 //                 project: workspace.project().clone(),
@@ -2357,14 +2360,14 @@ impl CollabPanel {
     //         self.deploy_channel_context_menu(None, &channel.clone(), self.selection.unwrap(), cx);
     //     }
 
-    //     fn selected_channel(&self) -> Option<&Arc<Channel>> {
-    //         self.selection
-    //             .and_then(|ix| self.entries.get(ix))
-    //             .and_then(|entry| match entry {
-    //                 ListEntry::Channel { channel, .. } => Some(channel),
-    //                 _ => None,
-    //             })
-    //     }
+    fn selected_channel(&self) -> Option<&Arc<Channel>> {
+        self.selection
+            .and_then(|ix| self.entries.get(ix))
+            .and_then(|entry| match entry {
+                ListEntry::Channel { channel, .. } => Some(channel),
+                _ => None,
+            })
+    }
 
     //     fn show_channel_modal(
     //         &mut self,
@@ -3019,7 +3022,123 @@ impl CollabPanel {
         cx: &mut ViewContext<Self>,
     ) -> impl IntoElement {
         let channel_id = channel.id;
-        ListItem::new(channel_id as usize).child(Label::new(channel.name.clone()))
+
+        let is_public = self
+            .channel_store
+            .read(cx)
+            .channel_for_id(channel_id)
+            .map(|channel| channel.visibility)
+            == Some(proto::ChannelVisibility::Public);
+        let other_selected = self.selected_channel().map(|channel| channel.id) == Some(channel.id);
+        let disclosed = has_children
+            .then(|| !self.collapsed_channels.binary_search(&channel.id).is_ok())
+            .unwrap_or(false);
+
+        let is_active = maybe!({
+            let call_channel = ActiveCall::global(cx)
+                .read(cx)
+                .room()?
+                .read(cx)
+                .channel_id()?;
+            Some(call_channel == channel_id)
+        })
+        .unwrap_or(false);
+
+        let has_messages_notification = channel.unseen_message_id.is_some() || true;
+        let has_notes_notification = channel.unseen_note_version.is_some();
+
+        const FACEPILE_LIMIT: usize = 3;
+        let participants = self.channel_store.read(cx).channel_participants(channel_id);
+
+        let face_pile = if !participants.is_empty() {
+            let extra_count = participants.len().saturating_sub(FACEPILE_LIMIT);
+
+            let result = FacePile {
+                faces: participants
+                    .iter()
+                    .filter_map(|user| Some(Avatar::data(user.avatar.clone()?).into_any_element()))
+                    .take(FACEPILE_LIMIT)
+                    .chain(if extra_count > 0 {
+                        Some(Label::new(format!("+{}", extra_count)).into_any_element())
+                    } else {
+                        None
+                    })
+                    .collect::<Vec<_>>(),
+            };
+
+            Some(result)
+        } else {
+            None
+        };
+
+        div().group("").child(
+            ListItem::new(channel_id as usize)
+                .indent_level(depth)
+                .left_icon(if is_public { Icon::Public } else { Icon::Hash })
+                .selected(is_selected || is_active)
+                .child(
+                    h_stack()
+                        .w_full()
+                        .justify_between()
+                        .child(
+                            div()
+                                .id(channel_id as usize)
+                                .child(Label::new(channel.name.clone()))
+                                .children(face_pile.map(|face_pile| face_pile.render(cx)))
+                                .tooltip(|cx| Tooltip::text("Join channel", cx)),
+                        )
+                        .child(
+                            h_stack()
+                                .child(
+                                    div()
+                                        .id("channel_chat")
+                                        .bg(gpui::blue())
+                                        .when(!has_messages_notification, |el| el.invisible())
+                                        .group_hover("", |style| style.visible())
+                                        .child(
+                                            IconButton::new("test_chat", Icon::MessageBubbles)
+                                                .color(if has_messages_notification {
+                                                    Color::Default
+                                                } else {
+                                                    Color::Muted
+                                                }),
+                                        )
+                                        .tooltip(|cx| Tooltip::text("Open channel chat", cx)),
+                                )
+                                .child(
+                                    div()
+                                        .id("channel_notes")
+                                        .when(!has_notes_notification, |el| el.invisible())
+                                        .group_hover("", |style| style.visible())
+                                        .child(
+                                            div().child("Notes").id("test_notes").tooltip(|cx| {
+                                                Tooltip::text("Open channel notes", cx)
+                                            }),
+                                        ), // .child(
+                                           //     IconButton::new("channel_notes", Icon::File)
+                                           //         .color(if has_notes_notification {
+                                           //             Color::Default
+                                           //         } else {
+                                           //             Color::Muted
+                                           //         })
+                                           //         .tooltip(|cx| {
+                                           //             Tooltip::text("Open channel notes", cx)
+                                           //         }),
+                                           // ),
+                                ),
+                        ),
+                )
+                .toggle(if has_children {
+                    Toggle::Toggled(disclosed)
+                } else {
+                    Toggle::NotToggleable
+                })
+                .on_click(cx.listener(|this, _, cx| todo!()))
+                .on_secondary_mouse_down(cx.listener(|this, _, cx| {
+                    todo!() // open context menu
+                })),
+        )
+
         // let channel_id = channel.id;
         // let collab_theme = &theme.collab_panel;
         // let is_public = self
@@ -3031,18 +3150,6 @@ impl CollabPanel {
         // let other_selected = self.selected_channel().map(|channel| channel.id) == Some(channel.id);
         // let disclosed =
         //     has_children.then(|| !self.collapsed_channels.binary_search(&channel.id).is_ok());
-
-        // let is_active = maybe!({
-        //     let call_channel = ActiveCall::global(cx)
-        //         .read(cx)
-        //         .room()?
-        //         .read(cx)
-        //         .channel_id()?;
-        //     Some(call_channel == channel_id)
-        // })
-        // .unwrap_or(false);
-
-        // const FACEPILE_LIMIT: usize = 3;
 
         // enum ChannelCall {}
         // enum ChannelNote {}
