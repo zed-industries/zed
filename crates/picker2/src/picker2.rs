@@ -32,7 +32,7 @@ pub trait PickerDelegate: Sized + 'static {
         ix: usize,
         selected: bool,
         cx: &mut ViewContext<Picker<Self>>,
-    ) -> Self::ListItem;
+    ) -> Option<Self::ListItem>;
 }
 
 impl<D: PickerDelegate> FocusableView for Picker<D> {
@@ -230,7 +230,7 @@ impl<D: PickerDelegate> Render for Picker<D> {
                                                             )
                                                         }),
                                                     )
-                                                    .child(picker.delegate.render_match(
+                                                    .children(picker.delegate.render_match(
                                                         ix,
                                                         ix == selected_index,
                                                         cx,
