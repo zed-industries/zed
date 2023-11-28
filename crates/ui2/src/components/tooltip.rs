@@ -1,6 +1,6 @@
 use gpui::{overlay, Action, AnyView, IntoElement, Overlay, Render, VisualContext};
-use settings2::Settings;
-use theme2::{ActiveTheme, ThemeSettings};
+use settings::Settings;
+use theme::ThemeSettings;
 
 use crate::prelude::*;
 use crate::{h_stack, v_stack, Color, KeyBinding, Label, LabelSize, StyledExt};

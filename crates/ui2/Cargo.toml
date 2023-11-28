@@ -15,11 +15,11 @@ gpui = { package = "gpui2", path = "../gpui2" }
 itertools = { version = "0.11.0", optional = true }
 menu = { package = "menu2", path = "../menu2"}
 serde.workspace = true
-settings2 = { path = "../settings2" }
+settings = { package = "settings2", path = "../settings2" }
 smallvec.workspace = true
 story = { path = "../story", optional = true }
 strum = { version = "0.25.0", features = ["derive"] }
-theme2 = { path = "../theme2" }
+theme = { package = "theme2", path = "../theme2" }
 rand = "0.8"
 
 [features]
