@@ -1,7 +1,7 @@
 use collections::{CommandPaletteFilter, HashMap};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, rems, Action, AppContext, DismissEvent, Div, EventEmitter, FocusHandle, FocusableView,
+    actions, Action, AppContext, DismissEvent, Div, EventEmitter, FocusHandle, FocusableView,
     Keystroke, ParentElement, Render, Styled, View, ViewContext, VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};

@@ -115,7 +115,7 @@ pub struct KeyIcon {
 impl RenderOnce for KeyIcon {
     type Rendered = Div;
 
-    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
+    fn render(self, _cx: &mut WindowContext) -> Self::Rendered {
         div()
             .w(rems(14. / 16.))
             .child(IconElement::new(self.icon).size(IconSize::Small))
