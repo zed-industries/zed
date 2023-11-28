@@ -34,7 +34,7 @@ pub struct TestPrettier {
     default: bool,
 }
 
-pub const LAUNCH_THRESHOLD: usize = 5;
+pub const FAIL_THRESHOLD: usize = 4;
 pub const PRETTIER_SERVER_FILE: &str = "prettier_server.js";
 pub const PRETTIER_SERVER_JS: &str = include_str!("./prettier_server.js");
 const PRETTIER_PACKAGE_NAME: &str = "prettier";

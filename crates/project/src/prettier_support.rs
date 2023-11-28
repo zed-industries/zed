@@ -147,7 +147,7 @@ impl PrettierInstance {
         worktree_id: Option<WorktreeId>,
         cx: &mut ModelContext<'_, Project>,
     ) -> Option<Task<anyhow::Result<PrettierTask>>> {
-        if self.attempt > prettier::LAUNCH_THRESHOLD {
+        if self.attempt > prettier::FAIL_THRESHOLD {
             match prettier_dir {
                 Some(prettier_dir) => log::warn!(
                     "Prettier from path {prettier_dir:?} exceeded launch threshold, not starting"
@@ -643,13 +643,20 @@ impl Project {
         new_plugins
             .retain(|plugin| !self.default_prettier.installed_plugins.contains(plugin));
         let mut installation_attempt = 0;
-        let previous_installation_task = match &self.default_prettier.prettier {
+        let previous_installation_task = match &mut self.default_prettier.prettier {
             PrettierInstallation::NotInstalled {
                 installation_task,
                 attempts,
                 not_installed_plugins
             } => {
                 installation_attempt = *attempts;
+                if installation_attempt > prettier::FAIL_THRESHOLD {
+                    *installation_task = None;
+                    log::warn!(
+                        "Default prettier installation had failed {installation_attempt} times, not attempting again",
+                    );
+                    return;
+                }
                 new_plugins.extend(not_installed_plugins.iter());
                 installation_task.clone()
             }
@@ -660,6 +667,7 @@ impl Project {
                 None
             }
         };
+
         let plugins_to_install = new_plugins.clone();
         let fs = Arc::clone(&self.fs);
         let new_installation_task = cx
@@ -677,20 +685,25 @@ impl Project {
                         let mut needs_install = false;
                         if let Some(previous_installation_task) = previous_installation_task {
                             if let Err(e) = previous_installation_task.await {
-                                log::error!("Failed to install default prettier (attempt {installation_attempt}): {e:#}");
+                                log::error!("Failed to install default prettier: {e:#}");
                                 project.update(&mut cx, |project, _| {
                                     if let PrettierInstallation::NotInstalled { attempts, not_installed_plugins, .. } = &mut project.default_prettier.prettier {
                                         *attempts += 1;
                                         new_plugins.extend(not_installed_plugins.iter());
                                         installation_attempt = *attempts;
                                         needs_install = true;
-                                    }
-                                })
+                                    };
+                                });
                             }
                         };
-                        if installation_attempt > prettier::LAUNCH_THRESHOLD {
+                        if installation_attempt > prettier::FAIL_THRESHOLD {
+                            project.update(&mut cx, |project, _| {
+                                if let PrettierInstallation::NotInstalled { installation_task, .. } = &mut project.default_prettier.prettier {
+                                    *installation_task = None;
+                                };
+                            });
                             log::warn!(
-                                "Default prettier installation has failed {installation_attempt} times, not attempting again",
+                                "Default prettier installation had failed {installation_attempt} times, not attempting again",
                             );
                             return Ok(());
                         }
