@@ -39,7 +39,7 @@ impl RenderOnce for KeyBinding {
                     .when(keystroke.modifiers.shift, |el| {
                         el.child(KeyIcon::new(Icon::Shift))
                     })
-                    // .when_some(key_icon, |el, icon| el.child(KeyIcon::new(icon)))
+                    .when_some(key_icon, |el, icon| el.child(KeyIcon::new(icon)))
                     .when(key_icon.is_none(), |el| {
                         el.child(Key::new(keystroke.key.to_uppercase().clone()))
                     })

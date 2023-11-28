@@ -79,10 +79,7 @@ impl Render for CommandPalette {
     type Element = Div;
 
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
-        v_stack()
-            .min_w_96()
-            .max_w(rems(36.))
-            .child(self.picker.clone())
+        v_stack().min_w_96().child(self.picker.clone())
     }
 }
 
