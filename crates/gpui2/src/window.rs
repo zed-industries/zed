@@ -8,8 +8,8 @@ use crate::{
     MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInputHandler,
     PlatformWindow, Point, PolychromeSprite, PromptLevel, Quad, Render, RenderGlyphParams,
     RenderImageParams, RenderSvgParams, ScaledPixels, SceneBuilder, Shadow, SharedString, Size,
-    Style, SubscriberSet, Subscription, TaffyLayoutEngine, Task, Underline, UnderlineStyle, View,
-    VisualContext, WeakView, WindowBounds, WindowOptions, SUBPIXEL_VARIANTS,
+    Style, SubscriberSet, Subscription, Surface, TaffyLayoutEngine, Task, Underline,
+    UnderlineStyle, View, VisualContext, WeakView, WindowBounds, WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::HashMap;
@@ -18,6 +18,7 @@ use futures::{
     channel::{mpsc, oneshot},
     StreamExt,
 };
+use media::core_video::CVImageBuffer;
 use parking_lot::RwLock;
 use slotmap::SlotMap;
 use smallvec::SmallVec;
@@ -1088,6 +1089,23 @@ impl<'a> WindowContext<'a> {
             },
         );
         Ok(())
+    }
+
+    /// Paint a surface into the scene for the current frame at the current z-index.
+    pub fn paint_surface(&mut self, bounds: Bounds<Pixels>, image_buffer: CVImageBuffer) {
+        let scale_factor = self.scale_factor();
+        let bounds = bounds.scale(scale_factor);
+        let content_mask = self.content_mask().scale(scale_factor);
+        let window = &mut *self.window;
+        window.current_frame.scene_builder.insert(
+            &window.current_frame.z_index_stack,
+            Surface {
+                order: 0,
+                bounds,
+                content_mask,
+                image_buffer,
+            },
+        );
     }
 
     /// Draw pixels to the display for this window based on the contents of its scene.

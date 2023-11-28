@@ -5,6 +5,7 @@ use crate::{
     IntoElement, LayoutId, Pixels, SharedString, StyleRefinement, Styled, WindowContext,
 };
 use futures::FutureExt;
+use media::core_video::CVImageBuffer;
 use util::ResultExt;
 
 #[derive(Clone, Debug)]
@@ -12,6 +13,7 @@ pub enum ImageSource {
     /// Image content will be loaded from provided URI at render time.
     Uri(SharedString),
     Data(Arc<ImageData>),
+    Surface(CVImageBuffer),
 }
 
 impl From<SharedString> for ImageSource {
@@ -23,6 +25,12 @@ impl From<SharedString> for ImageSource {
 impl From<Arc<ImageData>> for ImageSource {
     fn from(value: Arc<ImageData>) -> Self {
         Self::Data(value)
+    }
+}
+
+impl From<CVImageBuffer> for ImageSource {
+    fn from(value: CVImageBuffer) -> Self {
+        Self::Surface(value)
     }
 }
 
@@ -45,7 +53,13 @@ impl Img {
         self.source = Some(ImageSource::from(uri.into()));
         self
     }
+
     pub fn data(mut self, data: Arc<ImageData>) -> Self {
+        self.source = Some(ImageSource::from(data));
+        self
+    }
+
+    pub fn surface(mut self, data: CVImageBuffer) -> Self {
         self.source = Some(ImageSource::from(data));
         self
     }
@@ -85,36 +99,41 @@ impl Element for Img {
             element_state,
             cx,
             |style, _scroll_offset, cx| {
-                let corner_radii = style.corner_radii;
-
-                if let Some(source) = self.source {
-                    let image = match source {
-                        ImageSource::Uri(uri) => {
-                            let image_future = cx.image_cache.get(uri.clone());
-                            if let Some(data) = image_future
-                                .clone()
-                                .now_or_never()
-                                .and_then(|result| result.ok())
-                            {
-                                data
-                            } else {
-                                cx.spawn(|mut cx| async move {
-                                    if image_future.await.ok().is_some() {
-                                        cx.on_next_frame(|cx| cx.notify());
-                                    }
-                                })
-                                .detach();
-                                return;
+                let corner_radii = style.corner_radii.to_pixels(bounds.size, cx.rem_size());
+                cx.with_z_index(1, |cx| {
+                    if let Some(source) = self.source {
+                        match source {
+                            ImageSource::Uri(uri) => {
+                                let image_future = cx.image_cache.get(uri.clone());
+                                if let Some(data) = image_future
+                                    .clone()
+                                    .now_or_never()
+                                    .and_then(|result| result.ok())
+                                {
+                                    cx.paint_image(bounds, corner_radii, data, self.grayscale)
+                                        .log_err();
+                                } else {
+                                    cx.spawn(|mut cx| async move {
+                                        if image_future.await.ok().is_some() {
+                                            cx.on_next_frame(|cx| cx.notify());
+                                        }
+                                    })
+                                    .detach();
+                                }
                             }
-                        }
-                        ImageSource::Data(image) => image,
-                    };
-                    let corner_radii = corner_radii.to_pixels(bounds.size, cx.rem_size());
-                    cx.with_z_index(1, |cx| {
-                        cx.paint_image(bounds, corner_radii, image, self.grayscale)
-                            .log_err()
-                    });
-                }
+
+                            ImageSource::Data(image) => {
+                                cx.paint_image(bounds, corner_radii, image, self.grayscale)
+                                    .log_err();
+                            }
+
+                            ImageSource::Surface(surface) => {
+                                // TODO: Add support for corner_radii and grayscale.
+                                cx.paint_surface(bounds, surface);
+                            }
+                        };
+                    }
+                });
             },
         )
     }

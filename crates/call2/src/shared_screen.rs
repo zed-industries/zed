@@ -3,8 +3,8 @@ use anyhow::Result;
 use client::{proto::PeerId, User};
 use futures::StreamExt;
 use gpui::{
-    div, AppContext, Div, Element, EventEmitter, FocusHandle, FocusableView, ParentElement, Render,
-    SharedString, Task, View, ViewContext, VisualContext, WindowContext,
+    div, img, AppContext, Div, Element, EventEmitter, FocusHandle, FocusableView, ParentElement,
+    Render, SharedString, Styled, Task, View, ViewContext, VisualContext, WindowContext,
 };
 use std::sync::{Arc, Weak};
 use workspace::{item::Item, ItemNavHistory, WorkspaceId};
@@ -68,15 +68,11 @@ impl Render for SharedScreen {
     type Element = Div;
     fn render(&mut self, _: &mut ViewContext<Self>) -> Self::Element {
         let frame = self.frame.clone();
-        let frame_id = self.current_frame_id;
-        self.current_frame_id = self.current_frame_id.wrapping_add(1);
-        div().children(frame.map(|_| {
-            ui::Label::new(frame_id.to_string()).color(ui::Color::Error)
-            // img().data(Arc::new(ImageData::new(image::ImageBuffer::new(
-            //     frame.width() as u32,
-            //     frame.height() as u32,
-            // ))))
-        }))
+        // let frame_id = self.current_frame_id;
+        // self.current_frame_id = self.current_frame_id.wrapping_add(1);
+        div()
+            .size_full()
+            .children(frame.map(|frame| img().size_full().surface(frame.image())))
     }
 }
 // impl View for SharedScreen {
