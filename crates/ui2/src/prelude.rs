@@ -16,7 +16,6 @@ pub enum IconSide {
     Right,
 }
 
-
 #[derive(Default, PartialEq, Copy, Clone, EnumIter, strum::Display)]
 pub enum InteractionState {
     /// An element that is enabled and not hovered, active, focused, or disabled.
