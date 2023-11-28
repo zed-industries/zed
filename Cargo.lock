@@ -10179,6 +10179,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-uiua"
+version = "0.3.3"
+source = "git+https://github.com/shnarazk/tree-sitter-uiua?rev=9260f11be5900beda4ee6d1a24ab8ddfaf5a19b2#9260f11be5900beda4ee6d1a24ab8ddfaf5a19b2"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
 name = "tree-sitter-vue"
 version = "0.0.1"
 source = "git+https://github.com/zed-industries/tree-sitter-vue?rev=9b6cb221ccb8d0b956fcb17e9a1efac2feefeb58#9b6cb221ccb8d0b956fcb17e9a1efac2feefeb58"
@@ -11616,6 +11625,7 @@ dependencies = [
  "tree-sitter-svelte",
  "tree-sitter-toml",
  "tree-sitter-typescript",
+ "tree-sitter-uiua",
  "tree-sitter-vue",
  "tree-sitter-yaml",
  "unindent",
@@ -11738,6 +11748,7 @@ dependencies = [
  "tree-sitter-svelte",
  "tree-sitter-toml",
  "tree-sitter-typescript",
+ "tree-sitter-uiua",
  "tree-sitter-vue",
  "tree-sitter-yaml",
  "unindent",
