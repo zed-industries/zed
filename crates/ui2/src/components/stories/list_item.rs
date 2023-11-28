@@ -9,7 +9,7 @@ pub struct ListItemStory;
 impl Render for ListItemStory {
     type Element = Div;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
         Story::container()
             .child(Story::title_for::<ListItem>())
             .child(Story::label("Default"))

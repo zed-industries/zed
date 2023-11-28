@@ -1,6 +1,6 @@
 use crate::prelude::*;
 use crate::styled_ext::StyledExt;
-use gpui::{relative, Div, Hsla, IntoElement, StyledText, TextRun, WindowContext};
+use gpui::{relative, Div, IntoElement, StyledText, TextRun, WindowContext};
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Default)]
 pub enum LabelSize {
@@ -181,10 +181,4 @@ impl HighlightedLabel {
         self.strikethrough = strikethrough;
         self
     }
-}
-
-/// A run of text that receives the same style.
-struct Run {
-    pub text: String,
-    pub color: Hsla,
 }
