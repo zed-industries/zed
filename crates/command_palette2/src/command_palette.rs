@@ -1,7 +1,7 @@
 use collections::{CommandPaletteFilter, HashMap};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, Action, AppContext, DismissEvent, Div, EventEmitter, FocusHandle, FocusableView,
+    actions, rems, Action, AppContext, DismissEvent, Div, EventEmitter, FocusHandle, FocusableView,
     Keystroke, ParentElement, Render, Styled, View, ViewContext, VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};
@@ -79,7 +79,10 @@ impl Render for CommandPalette {
     type Element = Div;
 
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
-        v_stack().w_96().child(self.picker.clone())
+        v_stack()
+            .min_w_96()
+            .max_w(rems(36.))
+            .child(self.picker.clone())
     }
 }
 
@@ -301,15 +304,19 @@ impl PickerDelegate for CommandPaletteDelegate {
         };
 
         Some(
-            ListItem::new(ix).selected(selected).child(
-                h_stack()
-                    .justify_between()
-                    .child(HighlightedLabel::new(
-                        command.name.clone(),
-                        r#match.positions.clone(),
-                    ))
-                    .children(KeyBinding::for_action(&*command.action, cx)),
-            ),
+            ListItem::new(ix)
+                .variant(ui::ListItemVariant::Inset)
+                .selected(selected)
+                .child(
+                    h_stack()
+                        .w_full()
+                        .justify_between()
+                        .child(HighlightedLabel::new(
+                            command.name.clone(),
+                            r#match.positions.clone(),
+                        ))
+                        .children(KeyBinding::for_action(&*command.action, cx)),
+                ),
         )
     }
 }
