@@ -297,6 +297,15 @@ impl RenderOnce for ListItem {
             .when(self.selected, |this| {
                 this.bg(cx.theme().colors().ghost_element_selected)
             })
+            .when_some(self.on_click.clone(), |this, on_click| {
+                this.on_click(move |event, cx| {
+                    // HACK: GPUI currently fires `on_click` with any mouse button,
+                    // but we only care about the left button.
+                    if event.down.button == MouseButton::Left {
+                        (on_click)(event, cx)
+                    }
+                })
+            })
             .when_some(self.on_secondary_mouse_down, |this, on_mouse_down| {
                 this.on_mouse_down(MouseButton::Right, move |event, cx| {
                     (on_mouse_down)(event, cx)
