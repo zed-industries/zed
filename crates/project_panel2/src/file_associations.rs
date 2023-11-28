@@ -41,56 +41,47 @@ impl FileAssociations {
             })
     }
 
-    pub fn get_icon(path: &Path, cx: &AppContext) -> Arc<str> {
+    pub fn get_icon(path: &Path, cx: &AppContext) -> Option<Arc<str>> {
+        let this = cx.has_global::<Self>().then(|| cx.global::<Self>())?;
+
+        // FIXME: Associate a type with the languages and have the file's langauge
+        //        override these associations
         maybe!({
-            let this = cx.has_global::<Self>().then(|| cx.global::<Self>())?;
+            let suffix = path.icon_suffix()?;
 
-            // FIXME: Associate a type with the languages and have the file's langauge
-            //        override these associations
-            maybe!({
-                let suffix = path.icon_suffix()?;
-
-                this.suffixes
-                    .get(suffix)
-                    .and_then(|type_str| this.types.get(type_str))
-                    .map(|type_config| type_config.icon.clone())
-            })
-            .or_else(|| this.types.get("default").map(|config| config.icon.clone()))
-        })
-        .unwrap_or_else(|| Arc::from("".to_string()))
-    }
-
-    pub fn get_folder_icon(expanded: bool, cx: &AppContext) -> Arc<str> {
-        maybe!({
-            let this = cx.has_global::<Self>().then(|| cx.global::<Self>())?;
-
-            let key = if expanded {
-                EXPANDED_DIRECTORY_TYPE
-            } else {
-                COLLAPSED_DIRECTORY_TYPE
-            };
-
-            this.types
-                .get(key)
+            this.suffixes
+                .get(suffix)
+                .and_then(|type_str| this.types.get(type_str))
                 .map(|type_config| type_config.icon.clone())
         })
-        .unwrap_or_else(|| Arc::from("".to_string()))
+        .or_else(|| this.types.get("default").map(|config| config.icon.clone()))
     }
 
-    pub fn get_chevron_icon(expanded: bool, cx: &AppContext) -> Arc<str> {
-        maybe!({
-            let this = cx.has_global::<Self>().then(|| cx.global::<Self>())?;
+    pub fn get_folder_icon(expanded: bool, cx: &AppContext) -> Option<Arc<str>> {
+        let this = cx.has_global::<Self>().then(|| cx.global::<Self>())?;
 
-            let key = if expanded {
-                EXPANDED_CHEVRON_TYPE
-            } else {
-                COLLAPSED_CHEVRON_TYPE
-            };
+        let key = if expanded {
+            EXPANDED_DIRECTORY_TYPE
+        } else {
+            COLLAPSED_DIRECTORY_TYPE
+        };
 
-            this.types
-                .get(key)
-                .map(|type_config| type_config.icon.clone())
-        })
-        .unwrap_or_else(|| Arc::from("".to_string()))
+        this.types
+            .get(key)
+            .map(|type_config| type_config.icon.clone())
+    }
+
+    pub fn get_chevron_icon(expanded: bool, cx: &AppContext) -> Option<Arc<str>> {
+        let this = cx.has_global::<Self>().then(|| cx.global::<Self>())?;
+
+        let key = if expanded {
+            EXPANDED_CHEVRON_TYPE
+        } else {
+            COLLAPSED_CHEVRON_TYPE
+        };
+
+        this.types
+            .get(key)
+            .map(|type_config| type_config.icon.clone())
     }
 }

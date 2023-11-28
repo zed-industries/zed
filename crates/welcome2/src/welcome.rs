@@ -58,6 +58,7 @@ impl Render for WelcomePage {
     type Element = Focusable<Div>;
 
     fn render(&mut self, _cx: &mut gpui::ViewContext<Self>) -> Self::Element {
+        // todo!(welcome_ui)
         // let self_handle = cx.handle();
         // let theme = cx.theme();
         // let width = theme.welcome.page_width;
