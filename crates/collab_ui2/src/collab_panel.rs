@@ -1,3 +1,4 @@
+#![allow(unused)]
 // mod channel_modal;
 // mod contact_finder;
 
@@ -155,20 +156,27 @@ actions!(
 
 const COLLABORATION_PANEL_KEY: &'static str = "CollaborationPanel";
 
-use std::{iter::once, sync::Arc};
+use std::{iter::once, mem, sync::Arc};
 
-use client::{Client, Contact, UserStore};
+use call::ActiveCall;
+use channel::{Channel, ChannelId, ChannelStore};
+use client::{Client, Contact, User, UserStore};
 use db::kvp::KEY_VALUE_STORE;
+use editor::Editor;
+use feature_flags::{ChannelsAlpha, FeatureFlagAppExt};
+use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
     actions, div, serde_json, AppContext, AsyncWindowContext, Div, EventEmitter, FocusHandle,
     Focusable, FocusableView, InteractiveElement, IntoElement, Model, ParentElement, Render,
-    RenderOnce, Styled, View, ViewContext, VisualContext, WeakView,
+    RenderOnce, SharedString, Styled, Subscription, View, ViewContext, VisualContext, WeakView,
 };
 use project::Fs;
 use serde_derive::{Deserialize, Serialize};
 use settings::Settings;
-use ui::{h_stack, v_stack, Avatar, Button, Icon, IconButton, Label, List, ListHeader};
-use util::ResultExt;
+use ui::{
+    h_stack, v_stack, Avatar, Button, Icon, IconButton, Label, List, ListHeader, ListItem, Tooltip,
+};
+use util::{maybe, ResultExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     notifications::NotifyResultExt,
@@ -269,26 +277,26 @@ pub fn init(cx: &mut AppContext) {
     //     );
 }
 
-// #[derive(Debug)]
-// pub enum ChannelEditingState {
-//     Create {
-//         location: Option<ChannelId>,
-//         pending_name: Option<String>,
-//     },
-//     Rename {
-//         location: ChannelId,
-//         pending_name: Option<String>,
-//     },
-// }
+#[derive(Debug)]
+pub enum ChannelEditingState {
+    Create {
+        location: Option<ChannelId>,
+        pending_name: Option<String>,
+    },
+    Rename {
+        location: ChannelId,
+        pending_name: Option<String>,
+    },
+}
 
-// impl ChannelEditingState {
-//     fn pending_name(&self) -> Option<&str> {
-//         match self {
-//             ChannelEditingState::Create { pending_name, .. } => pending_name.as_deref(),
-//             ChannelEditingState::Rename { pending_name, .. } => pending_name.as_deref(),
-//         }
-//     }
-// }
+impl ChannelEditingState {
+    fn pending_name(&self) -> Option<&str> {
+        match self {
+            ChannelEditingState::Create { pending_name, .. } => pending_name.as_deref(),
+            ChannelEditingState::Rename { pending_name, .. } => pending_name.as_deref(),
+        }
+    }
+}
 
 pub struct CollabPanel {
     width: Option<f32>,
@@ -297,20 +305,20 @@ pub struct CollabPanel {
     // channel_clipboard: Option<ChannelMoveClipboard>,
     // pending_serialization: Task<Option<()>>,
     // context_menu: ViewHandle<ContextMenu>,
-    // filter_editor: ViewHandle<Editor>,
+    filter_editor: View<Editor>,
     // channel_name_editor: ViewHandle<Editor>,
-    // channel_editing_state: Option<ChannelEditingState>,
-    // entries: Vec<ListEntry>,
+    channel_editing_state: Option<ChannelEditingState>,
+    entries: Vec<ListEntry>,
     // selection: Option<usize>,
+    channel_store: Model<ChannelStore>,
     user_store: Model<UserStore>,
     client: Arc<Client>,
-    // channel_store: ModelHandle<ChannelStore>,
     // project: ModelHandle<Project>,
-    // match_candidates: Vec<StringMatchCandidate>,
+    match_candidates: Vec<StringMatchCandidate>,
     // list_state: ListState<Self>,
-    // subscriptions: Vec<Subscription>,
+    subscriptions: Vec<Subscription>,
     collapsed_sections: Vec<Section>,
-    // collapsed_channels: Vec<ChannelId>,
+    collapsed_channels: Vec<ChannelId>,
     // drag_target_channel: ChannelDragTarget,
     workspace: WeakView<Workspace>,
     // context_menu_on_selected: bool,
@@ -338,56 +346,56 @@ struct SerializedCollabPanel {
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, PartialOrd, Ord)]
 enum Section {
-    //     ActiveCall,
-    //     Channels,
-    //     ChannelInvites,
-    //     ContactRequests,
+    ActiveCall,
+    Channels,
+    ChannelInvites,
+    ContactRequests,
     Contacts,
-    //     Online,
+    Online,
     Offline,
 }
 
-// #[derive(Clone, Debug)]
-// enum ListEntry {
-//     Header(Section),
-//     CallParticipant {
-//         user: Arc<User>,
-//         peer_id: Option<PeerId>,
-//         is_pending: bool,
-//     },
-//     ParticipantProject {
-//         project_id: u64,
-//         worktree_root_names: Vec<String>,
-//         host_user_id: u64,
-//         is_last: bool,
-//     },
-//     ParticipantScreen {
-//         peer_id: Option<PeerId>,
-//         is_last: bool,
-//     },
-//     IncomingRequest(Arc<User>),
-//     OutgoingRequest(Arc<User>),
-//     ChannelInvite(Arc<Channel>),
-//     Channel {
-//         channel: Arc<Channel>,
-//         depth: usize,
-//         has_children: bool,
-//     },
-//     ChannelNotes {
-//         channel_id: ChannelId,
-//     },
-//     ChannelChat {
-//         channel_id: ChannelId,
-//     },
-//     ChannelEditor {
-//         depth: usize,
-//     },
-//     Contact {
-//         contact: Arc<Contact>,
-//         calling: bool,
-//     },
-//     ContactPlaceholder,
-// }
+#[derive(Clone, Debug)]
+enum ListEntry {
+    Header(Section),
+    //     CallParticipant {
+    //         user: Arc<User>,
+    //         peer_id: Option<PeerId>,
+    //         is_pending: bool,
+    //     },
+    //     ParticipantProject {
+    //         project_id: u64,
+    //         worktree_root_names: Vec<String>,
+    //         host_user_id: u64,
+    //         is_last: bool,
+    //     },
+    //     ParticipantScreen {
+    //         peer_id: Option<PeerId>,
+    //         is_last: bool,
+    //     },
+    IncomingRequest(Arc<User>),
+    OutgoingRequest(Arc<User>),
+    //     ChannelInvite(Arc<Channel>),
+    Channel {
+        channel: Arc<Channel>,
+        depth: usize,
+        has_children: bool,
+    },
+    //     ChannelNotes {
+    //         channel_id: ChannelId,
+    //     },
+    //     ChannelChat {
+    //         channel_id: ChannelId,
+    //     },
+    ChannelEditor {
+        depth: usize,
+    },
+    Contact {
+        contact: Arc<Contact>,
+        calling: bool,
+    },
+    ContactPlaceholder,
+}
 
 // impl Entity for CollabPanel {
 //     type Event = Event;
@@ -398,16 +406,11 @@ impl CollabPanel {
         cx.build_view(|cx| {
             //             let view_id = cx.view_id();
 
-            //             let filter_editor = cx.add_view(|cx| {
-            //                 let mut editor = Editor::single_line(
-            //                     Some(Arc::new(|theme| {
-            //                         theme.collab_panel.user_query_editor.clone()
-            //                     })),
-            //                     cx,
-            //                 );
-            //                 editor.set_placeholder_text("Filter channels, contacts", cx);
-            //                 editor
-            //             });
+            let filter_editor = cx.build_view(|cx| {
+                let mut editor = Editor::single_line(cx);
+                editor.set_placeholder_text("Filter channels, contacts", cx);
+                editor
+            });
 
             //             cx.subscribe(&filter_editor, |this, _, event, cx| {
             //                 if let editor::Event::BufferEdited = event {
@@ -586,7 +589,7 @@ impl CollabPanel {
             //                     }
             //                 });
 
-            let this = Self {
+            let mut this = Self {
                 width: None,
                 focus_handle: cx.focus_handle(),
                 //                 channel_clipboard: None,
@@ -594,17 +597,17 @@ impl CollabPanel {
                 //                 pending_serialization: Task::ready(None),
                 //                 context_menu: cx.add_view(|cx| ContextMenu::new(view_id, cx)),
                 //                 channel_name_editor,
-                //                 filter_editor,
-                //                 entries: Vec::default(),
-                //                 channel_editing_state: None,
+                filter_editor,
+                entries: Vec::default(),
+                channel_editing_state: None,
                 //                 selection: None,
+                channel_store: ChannelStore::global(cx),
                 user_store: workspace.user_store().clone(),
-                //                 channel_store: ChannelStore::global(cx),
                 //                 project: workspace.project().clone(),
-                //                 subscriptions: Vec::default(),
-                //                 match_candidates: Vec::default(),
+                subscriptions: Vec::default(),
+                match_candidates: Vec::default(),
                 collapsed_sections: vec![Section::Offline],
-                //                 collapsed_channels: Vec::default(),
+                collapsed_channels: Vec::default(),
                 workspace: workspace.weak_handle(),
                 client: workspace.app_state().client.clone(),
                 //                 context_menu_on_selected: true,
@@ -612,7 +615,7 @@ impl CollabPanel {
                 //                 list_state,
             };
 
-            //             this.update_entries(false, cx);
+            this.update_entries(false, cx);
 
             //             // Update the dock position when the setting changes.
             //             let mut old_dock_position = this.position(cx);
@@ -629,10 +632,10 @@ impl CollabPanel {
             //                 );
 
             //             let active_call = ActiveCall::global(cx);
-            //             this.subscriptions
-            //                 .push(cx.observe(&this.user_store, |this, _, cx| {
-            //                     this.update_entries(true, cx)
-            //                 }));
+            this.subscriptions
+                .push(cx.observe(&this.user_store, |this, _, cx| {
+                    this.update_entries(true, cx)
+                }));
             //             this.subscriptions
             //                 .push(cx.observe(&this.channel_store, |this, _, cx| {
             //                     this.update_entries(true, cx)
@@ -721,449 +724,449 @@ impl CollabPanel {
     //         );
     //     }
 
-    //     fn update_entries(&mut self, select_same_item: bool, cx: &mut ViewContext<Self>) {
-    //         let channel_store = self.channel_store.read(cx);
-    //         let user_store = self.user_store.read(cx);
-    //         let query = self.filter_editor.read(cx).text(cx);
-    //         let executor = cx.background().clone();
+    fn update_entries(&mut self, select_same_item: bool, cx: &mut ViewContext<Self>) {
+        let channel_store = self.channel_store.read(cx);
+        let user_store = self.user_store.read(cx);
+        let query = self.filter_editor.read(cx).text(cx);
+        let executor = cx.background_executor().clone();
 
-    //         let prev_selected_entry = self.selection.and_then(|ix| self.entries.get(ix).cloned());
-    //         let old_entries = mem::take(&mut self.entries);
-    //         let mut scroll_to_top = false;
+        // let prev_selected_entry = self.selection.and_then(|ix| self.entries.get(ix).cloned());
+        let _old_entries = mem::take(&mut self.entries);
+        //         let mut scroll_to_top = false;
 
-    //         if let Some(room) = ActiveCall::global(cx).read(cx).room() {
-    //             self.entries.push(ListEntry::Header(Section::ActiveCall));
-    //             if !old_entries
-    //                 .iter()
-    //                 .any(|entry| matches!(entry, ListEntry::Header(Section::ActiveCall)))
-    //             {
-    //                 scroll_to_top = true;
-    //             }
+        //         if let Some(room) = ActiveCall::global(cx).read(cx).room() {
+        //             self.entries.push(ListEntry::Header(Section::ActiveCall));
+        //             if !old_entries
+        //                 .iter()
+        //                 .any(|entry| matches!(entry, ListEntry::Header(Section::ActiveCall)))
+        //             {
+        //                 scroll_to_top = true;
+        //             }
 
-    //             if !self.collapsed_sections.contains(&Section::ActiveCall) {
-    //                 let room = room.read(cx);
+        //             if !self.collapsed_sections.contains(&Section::ActiveCall) {
+        //                 let room = room.read(cx);
 
-    //                 if let Some(channel_id) = room.channel_id() {
-    //                     self.entries.push(ListEntry::ChannelNotes { channel_id });
-    //                     self.entries.push(ListEntry::ChannelChat { channel_id })
-    //                 }
+        //                 if let Some(channel_id) = room.channel_id() {
+        //                     self.entries.push(ListEntry::ChannelNotes { channel_id });
+        //                     self.entries.push(ListEntry::ChannelChat { channel_id })
+        //                 }
 
-    //                 // Populate the active user.
-    //                 if let Some(user) = user_store.current_user() {
-    //                     self.match_candidates.clear();
-    //                     self.match_candidates.push(StringMatchCandidate {
-    //                         id: 0,
-    //                         string: user.github_login.clone(),
-    //                         char_bag: user.github_login.chars().collect(),
-    //                     });
-    //                     let matches = executor.block(match_strings(
-    //                         &self.match_candidates,
-    //                         &query,
-    //                         true,
-    //                         usize::MAX,
-    //                         &Default::default(),
-    //                         executor.clone(),
-    //                     ));
-    //                     if !matches.is_empty() {
-    //                         let user_id = user.id;
-    //                         self.entries.push(ListEntry::CallParticipant {
-    //                             user,
-    //                             peer_id: None,
-    //                             is_pending: false,
-    //                         });
-    //                         let mut projects = room.local_participant().projects.iter().peekable();
-    //                         while let Some(project) = projects.next() {
-    //                             self.entries.push(ListEntry::ParticipantProject {
-    //                                 project_id: project.id,
-    //                                 worktree_root_names: project.worktree_root_names.clone(),
-    //                                 host_user_id: user_id,
-    //                                 is_last: projects.peek().is_none() && !room.is_screen_sharing(),
-    //                             });
-    //                         }
-    //                         if room.is_screen_sharing() {
-    //                             self.entries.push(ListEntry::ParticipantScreen {
-    //                                 peer_id: None,
-    //                                 is_last: true,
-    //                             });
-    //                         }
-    //                     }
-    //                 }
+        //                 // Populate the active user.
+        //                 if let Some(user) = user_store.current_user() {
+        //                     self.match_candidates.clear();
+        //                     self.match_candidates.push(StringMatchCandidate {
+        //                         id: 0,
+        //                         string: user.github_login.clone(),
+        //                         char_bag: user.github_login.chars().collect(),
+        //                     });
+        //                     let matches = executor.block(match_strings(
+        //                         &self.match_candidates,
+        //                         &query,
+        //                         true,
+        //                         usize::MAX,
+        //                         &Default::default(),
+        //                         executor.clone(),
+        //                     ));
+        //                     if !matches.is_empty() {
+        //                         let user_id = user.id;
+        //                         self.entries.push(ListEntry::CallParticipant {
+        //                             user,
+        //                             peer_id: None,
+        //                             is_pending: false,
+        //                         });
+        //                         let mut projects = room.local_participant().projects.iter().peekable();
+        //                         while let Some(project) = projects.next() {
+        //                             self.entries.push(ListEntry::ParticipantProject {
+        //                                 project_id: project.id,
+        //                                 worktree_root_names: project.worktree_root_names.clone(),
+        //                                 host_user_id: user_id,
+        //                                 is_last: projects.peek().is_none() && !room.is_screen_sharing(),
+        //                             });
+        //                         }
+        //                         if room.is_screen_sharing() {
+        //                             self.entries.push(ListEntry::ParticipantScreen {
+        //                                 peer_id: None,
+        //                                 is_last: true,
+        //                             });
+        //                         }
+        //                     }
+        //                 }
 
-    //                 // Populate remote participants.
-    //                 self.match_candidates.clear();
-    //                 self.match_candidates
-    //                     .extend(room.remote_participants().iter().map(|(_, participant)| {
-    //                         StringMatchCandidate {
-    //                             id: participant.user.id as usize,
-    //                             string: participant.user.github_login.clone(),
-    //                             char_bag: participant.user.github_login.chars().collect(),
-    //                         }
-    //                     }));
-    //                 let matches = executor.block(match_strings(
-    //                     &self.match_candidates,
-    //                     &query,
-    //                     true,
-    //                     usize::MAX,
-    //                     &Default::default(),
-    //                     executor.clone(),
-    //                 ));
-    //                 for mat in matches {
-    //                     let user_id = mat.candidate_id as u64;
-    //                     let participant = &room.remote_participants()[&user_id];
-    //                     self.entries.push(ListEntry::CallParticipant {
-    //                         user: participant.user.clone(),
-    //                         peer_id: Some(participant.peer_id),
-    //                         is_pending: false,
-    //                     });
-    //                     let mut projects = participant.projects.iter().peekable();
-    //                     while let Some(project) = projects.next() {
-    //                         self.entries.push(ListEntry::ParticipantProject {
-    //                             project_id: project.id,
-    //                             worktree_root_names: project.worktree_root_names.clone(),
-    //                             host_user_id: participant.user.id,
-    //                             is_last: projects.peek().is_none()
-    //                                 && participant.video_tracks.is_empty(),
-    //                         });
-    //                     }
-    //                     if !participant.video_tracks.is_empty() {
-    //                         self.entries.push(ListEntry::ParticipantScreen {
-    //                             peer_id: Some(participant.peer_id),
-    //                             is_last: true,
-    //                         });
-    //                     }
-    //                 }
+        //                 // Populate remote participants.
+        //                 self.match_candidates.clear();
+        //                 self.match_candidates
+        //                     .extend(room.remote_participants().iter().map(|(_, participant)| {
+        //                         StringMatchCandidate {
+        //                             id: participant.user.id as usize,
+        //                             string: participant.user.github_login.clone(),
+        //                             char_bag: participant.user.github_login.chars().collect(),
+        //                         }
+        //                     }));
+        //                 let matches = executor.block(match_strings(
+        //                     &self.match_candidates,
+        //                     &query,
+        //                     true,
+        //                     usize::MAX,
+        //                     &Default::default(),
+        //                     executor.clone(),
+        //                 ));
+        //                 for mat in matches {
+        //                     let user_id = mat.candidate_id as u64;
+        //                     let participant = &room.remote_participants()[&user_id];
+        //                     self.entries.push(ListEntry::CallParticipant {
+        //                         user: participant.user.clone(),
+        //                         peer_id: Some(participant.peer_id),
+        //                         is_pending: false,
+        //                     });
+        //                     let mut projects = participant.projects.iter().peekable();
+        //                     while let Some(project) = projects.next() {
+        //                         self.entries.push(ListEntry::ParticipantProject {
+        //                             project_id: project.id,
+        //                             worktree_root_names: project.worktree_root_names.clone(),
+        //                             host_user_id: participant.user.id,
+        //                             is_last: projects.peek().is_none()
+        //                                 && participant.video_tracks.is_empty(),
+        //                         });
+        //                     }
+        //                     if !participant.video_tracks.is_empty() {
+        //                         self.entries.push(ListEntry::ParticipantScreen {
+        //                             peer_id: Some(participant.peer_id),
+        //                             is_last: true,
+        //                         });
+        //                     }
+        //                 }
 
-    //                 // Populate pending participants.
-    //                 self.match_candidates.clear();
-    //                 self.match_candidates
-    //                     .extend(room.pending_participants().iter().enumerate().map(
-    //                         |(id, participant)| StringMatchCandidate {
-    //                             id,
-    //                             string: participant.github_login.clone(),
-    //                             char_bag: participant.github_login.chars().collect(),
-    //                         },
-    //                     ));
-    //                 let matches = executor.block(match_strings(
-    //                     &self.match_candidates,
-    //                     &query,
-    //                     true,
-    //                     usize::MAX,
-    //                     &Default::default(),
-    //                     executor.clone(),
-    //                 ));
-    //                 self.entries
-    //                     .extend(matches.iter().map(|mat| ListEntry::CallParticipant {
-    //                         user: room.pending_participants()[mat.candidate_id].clone(),
-    //                         peer_id: None,
-    //                         is_pending: true,
-    //                     }));
-    //             }
-    //         }
+        //                 // Populate pending participants.
+        //                 self.match_candidates.clear();
+        //                 self.match_candidates
+        //                     .extend(room.pending_participants().iter().enumerate().map(
+        //                         |(id, participant)| StringMatchCandidate {
+        //                             id,
+        //                             string: participant.github_login.clone(),
+        //                             char_bag: participant.github_login.chars().collect(),
+        //                         },
+        //                     ));
+        //                 let matches = executor.block(match_strings(
+        //                     &self.match_candidates,
+        //                     &query,
+        //                     true,
+        //                     usize::MAX,
+        //                     &Default::default(),
+        //                     executor.clone(),
+        //                 ));
+        //                 self.entries
+        //                     .extend(matches.iter().map(|mat| ListEntry::CallParticipant {
+        //                         user: room.pending_participants()[mat.candidate_id].clone(),
+        //                         peer_id: None,
+        //                         is_pending: true,
+        //                     }));
+        //             }
+        //         }
 
-    //         let mut request_entries = Vec::new();
+        let mut request_entries = Vec::new();
 
-    //         if cx.has_flag::<ChannelsAlpha>() {
-    //             self.entries.push(ListEntry::Header(Section::Channels));
+        if cx.has_flag::<ChannelsAlpha>() {
+            self.entries.push(ListEntry::Header(Section::Channels));
 
-    //             if channel_store.channel_count() > 0 || self.channel_editing_state.is_some() {
-    //                 self.match_candidates.clear();
-    //                 self.match_candidates
-    //                     .extend(channel_store.ordered_channels().enumerate().map(
-    //                         |(ix, (_, channel))| StringMatchCandidate {
-    //                             id: ix,
-    //                             string: channel.name.clone(),
-    //                             char_bag: channel.name.chars().collect(),
-    //                         },
-    //                     ));
-    //                 let matches = executor.block(match_strings(
-    //                     &self.match_candidates,
-    //                     &query,
-    //                     true,
-    //                     usize::MAX,
-    //                     &Default::default(),
-    //                     executor.clone(),
-    //                 ));
-    //                 if let Some(state) = &self.channel_editing_state {
-    //                     if matches!(state, ChannelEditingState::Create { location: None, .. }) {
-    //                         self.entries.push(ListEntry::ChannelEditor { depth: 0 });
-    //                     }
-    //                 }
-    //                 let mut collapse_depth = None;
-    //                 for mat in matches {
-    //                     let channel = channel_store.channel_at_index(mat.candidate_id).unwrap();
-    //                     let depth = channel.parent_path.len();
+            if channel_store.channel_count() > 0 || self.channel_editing_state.is_some() {
+                self.match_candidates.clear();
+                self.match_candidates
+                    .extend(channel_store.ordered_channels().enumerate().map(
+                        |(ix, (_, channel))| StringMatchCandidate {
+                            id: ix,
+                            string: channel.name.clone(),
+                            char_bag: channel.name.chars().collect(),
+                        },
+                    ));
+                let matches = executor.block(match_strings(
+                    &self.match_candidates,
+                    &query,
+                    true,
+                    usize::MAX,
+                    &Default::default(),
+                    executor.clone(),
+                ));
+                if let Some(state) = &self.channel_editing_state {
+                    if matches!(state, ChannelEditingState::Create { location: None, .. }) {
+                        self.entries.push(ListEntry::ChannelEditor { depth: 0 });
+                    }
+                }
+                let mut collapse_depth = None;
+                for mat in matches {
+                    let channel = channel_store.channel_at_index(mat.candidate_id).unwrap();
+                    let depth = channel.parent_path.len();
 
-    //                     if collapse_depth.is_none() && self.is_channel_collapsed(channel.id) {
-    //                         collapse_depth = Some(depth);
-    //                     } else if let Some(collapsed_depth) = collapse_depth {
-    //                         if depth > collapsed_depth {
-    //                             continue;
-    //                         }
-    //                         if self.is_channel_collapsed(channel.id) {
-    //                             collapse_depth = Some(depth);
-    //                         } else {
-    //                             collapse_depth = None;
-    //                         }
-    //                     }
+                    if collapse_depth.is_none() && self.is_channel_collapsed(channel.id) {
+                        collapse_depth = Some(depth);
+                    } else if let Some(collapsed_depth) = collapse_depth {
+                        if depth > collapsed_depth {
+                            continue;
+                        }
+                        if self.is_channel_collapsed(channel.id) {
+                            collapse_depth = Some(depth);
+                        } else {
+                            collapse_depth = None;
+                        }
+                    }
 
-    //                     let has_children = channel_store
-    //                         .channel_at_index(mat.candidate_id + 1)
-    //                         .map_or(false, |next_channel| {
-    //                             next_channel.parent_path.ends_with(&[channel.id])
-    //                         });
+                    let has_children = channel_store
+                        .channel_at_index(mat.candidate_id + 1)
+                        .map_or(false, |next_channel| {
+                            next_channel.parent_path.ends_with(&[channel.id])
+                        });
 
-    //                     match &self.channel_editing_state {
-    //                         Some(ChannelEditingState::Create {
-    //                             location: parent_id,
-    //                             ..
-    //                         }) if *parent_id == Some(channel.id) => {
-    //                             self.entries.push(ListEntry::Channel {
-    //                                 channel: channel.clone(),
-    //                                 depth,
-    //                                 has_children: false,
-    //                             });
-    //                             self.entries
-    //                                 .push(ListEntry::ChannelEditor { depth: depth + 1 });
-    //                         }
-    //                         Some(ChannelEditingState::Rename {
-    //                             location: parent_id,
-    //                             ..
-    //                         }) if parent_id == &channel.id => {
-    //                             self.entries.push(ListEntry::ChannelEditor { depth });
-    //                         }
-    //                         _ => {
-    //                             self.entries.push(ListEntry::Channel {
-    //                                 channel: channel.clone(),
-    //                                 depth,
-    //                                 has_children,
-    //                             });
-    //                         }
-    //                     }
-    //                 }
-    //             }
+                    match &self.channel_editing_state {
+                        Some(ChannelEditingState::Create {
+                            location: parent_id,
+                            ..
+                        }) if *parent_id == Some(channel.id) => {
+                            self.entries.push(ListEntry::Channel {
+                                channel: channel.clone(),
+                                depth,
+                                has_children: false,
+                            });
+                            self.entries
+                                .push(ListEntry::ChannelEditor { depth: depth + 1 });
+                        }
+                        Some(ChannelEditingState::Rename {
+                            location: parent_id,
+                            ..
+                        }) if parent_id == &channel.id => {
+                            self.entries.push(ListEntry::ChannelEditor { depth });
+                        }
+                        _ => {
+                            self.entries.push(ListEntry::Channel {
+                                channel: channel.clone(),
+                                depth,
+                                has_children,
+                            });
+                        }
+                    }
+                }
+            }
 
-    //             let channel_invites = channel_store.channel_invitations();
-    //             if !channel_invites.is_empty() {
-    //                 self.match_candidates.clear();
-    //                 self.match_candidates
-    //                     .extend(channel_invites.iter().enumerate().map(|(ix, channel)| {
-    //                         StringMatchCandidate {
-    //                             id: ix,
-    //                             string: channel.name.clone(),
-    //                             char_bag: channel.name.chars().collect(),
-    //                         }
-    //                     }));
-    //                 let matches = executor.block(match_strings(
-    //                     &self.match_candidates,
-    //                     &query,
-    //                     true,
-    //                     usize::MAX,
-    //                     &Default::default(),
-    //                     executor.clone(),
-    //                 ));
-    //                 request_entries.extend(matches.iter().map(|mat| {
-    //                     ListEntry::ChannelInvite(channel_invites[mat.candidate_id].clone())
-    //                 }));
+            //             let channel_invites = channel_store.channel_invitations();
+            //             if !channel_invites.is_empty() {
+            //                 self.match_candidates.clear();
+            //                 self.match_candidates
+            //                     .extend(channel_invites.iter().enumerate().map(|(ix, channel)| {
+            //                         StringMatchCandidate {
+            //                             id: ix,
+            //                             string: channel.name.clone(),
+            //                             char_bag: channel.name.chars().collect(),
+            //                         }
+            //                     }));
+            //                 let matches = executor.block(match_strings(
+            //                     &self.match_candidates,
+            //                     &query,
+            //                     true,
+            //                     usize::MAX,
+            //                     &Default::default(),
+            //                     executor.clone(),
+            //                 ));
+            //                 request_entries.extend(matches.iter().map(|mat| {
+            //                     ListEntry::ChannelInvite(channel_invites[mat.candidate_id].clone())
+            //                 }));
 
-    //                 if !request_entries.is_empty() {
-    //                     self.entries
-    //                         .push(ListEntry::Header(Section::ChannelInvites));
-    //                     if !self.collapsed_sections.contains(&Section::ChannelInvites) {
-    //                         self.entries.append(&mut request_entries);
-    //                     }
-    //                 }
-    //             }
-    //         }
+            //                 if !request_entries.is_empty() {
+            //                     self.entries
+            //                         .push(ListEntry::Header(Section::ChannelInvites));
+            //                     if !self.collapsed_sections.contains(&Section::ChannelInvites) {
+            //                         self.entries.append(&mut request_entries);
+            //                     }
+            //                 }
+            //             }
+        }
 
-    //         self.entries.push(ListEntry::Header(Section::Contacts));
+        self.entries.push(ListEntry::Header(Section::Contacts));
 
-    //         request_entries.clear();
-    //         let incoming = user_store.incoming_contact_requests();
-    //         if !incoming.is_empty() {
-    //             self.match_candidates.clear();
-    //             self.match_candidates
-    //                 .extend(
-    //                     incoming
-    //                         .iter()
-    //                         .enumerate()
-    //                         .map(|(ix, user)| StringMatchCandidate {
-    //                             id: ix,
-    //                             string: user.github_login.clone(),
-    //                             char_bag: user.github_login.chars().collect(),
-    //                         }),
-    //                 );
-    //             let matches = executor.block(match_strings(
-    //                 &self.match_candidates,
-    //                 &query,
-    //                 true,
-    //                 usize::MAX,
-    //                 &Default::default(),
-    //                 executor.clone(),
-    //             ));
-    //             request_entries.extend(
-    //                 matches
-    //                     .iter()
-    //                     .map(|mat| ListEntry::IncomingRequest(incoming[mat.candidate_id].clone())),
-    //             );
-    //         }
+        request_entries.clear();
+        let incoming = user_store.incoming_contact_requests();
+        if !incoming.is_empty() {
+            self.match_candidates.clear();
+            self.match_candidates
+                .extend(
+                    incoming
+                        .iter()
+                        .enumerate()
+                        .map(|(ix, user)| StringMatchCandidate {
+                            id: ix,
+                            string: user.github_login.clone(),
+                            char_bag: user.github_login.chars().collect(),
+                        }),
+                );
+            let matches = executor.block(match_strings(
+                &self.match_candidates,
+                &query,
+                true,
+                usize::MAX,
+                &Default::default(),
+                executor.clone(),
+            ));
+            request_entries.extend(
+                matches
+                    .iter()
+                    .map(|mat| ListEntry::IncomingRequest(incoming[mat.candidate_id].clone())),
+            );
+        }
 
-    //         let outgoing = user_store.outgoing_contact_requests();
-    //         if !outgoing.is_empty() {
-    //             self.match_candidates.clear();
-    //             self.match_candidates
-    //                 .extend(
-    //                     outgoing
-    //                         .iter()
-    //                         .enumerate()
-    //                         .map(|(ix, user)| StringMatchCandidate {
-    //                             id: ix,
-    //                             string: user.github_login.clone(),
-    //                             char_bag: user.github_login.chars().collect(),
-    //                         }),
-    //                 );
-    //             let matches = executor.block(match_strings(
-    //                 &self.match_candidates,
-    //                 &query,
-    //                 true,
-    //                 usize::MAX,
-    //                 &Default::default(),
-    //                 executor.clone(),
-    //             ));
-    //             request_entries.extend(
-    //                 matches
-    //                     .iter()
-    //                     .map(|mat| ListEntry::OutgoingRequest(outgoing[mat.candidate_id].clone())),
-    //             );
-    //         }
+        let outgoing = user_store.outgoing_contact_requests();
+        if !outgoing.is_empty() {
+            self.match_candidates.clear();
+            self.match_candidates
+                .extend(
+                    outgoing
+                        .iter()
+                        .enumerate()
+                        .map(|(ix, user)| StringMatchCandidate {
+                            id: ix,
+                            string: user.github_login.clone(),
+                            char_bag: user.github_login.chars().collect(),
+                        }),
+                );
+            let matches = executor.block(match_strings(
+                &self.match_candidates,
+                &query,
+                true,
+                usize::MAX,
+                &Default::default(),
+                executor.clone(),
+            ));
+            request_entries.extend(
+                matches
+                    .iter()
+                    .map(|mat| ListEntry::OutgoingRequest(outgoing[mat.candidate_id].clone())),
+            );
+        }
 
-    //         if !request_entries.is_empty() {
-    //             self.entries
-    //                 .push(ListEntry::Header(Section::ContactRequests));
-    //             if !self.collapsed_sections.contains(&Section::ContactRequests) {
-    //                 self.entries.append(&mut request_entries);
-    //             }
-    //         }
+        if !request_entries.is_empty() {
+            self.entries
+                .push(ListEntry::Header(Section::ContactRequests));
+            if !self.collapsed_sections.contains(&Section::ContactRequests) {
+                self.entries.append(&mut request_entries);
+            }
+        }
 
-    //         let contacts = user_store.contacts();
-    //         if !contacts.is_empty() {
-    //             self.match_candidates.clear();
-    //             self.match_candidates
-    //                 .extend(
-    //                     contacts
-    //                         .iter()
-    //                         .enumerate()
-    //                         .map(|(ix, contact)| StringMatchCandidate {
-    //                             id: ix,
-    //                             string: contact.user.github_login.clone(),
-    //                             char_bag: contact.user.github_login.chars().collect(),
-    //                         }),
-    //                 );
+        let contacts = user_store.contacts();
+        if !contacts.is_empty() {
+            self.match_candidates.clear();
+            self.match_candidates
+                .extend(
+                    contacts
+                        .iter()
+                        .enumerate()
+                        .map(|(ix, contact)| StringMatchCandidate {
+                            id: ix,
+                            string: contact.user.github_login.clone(),
+                            char_bag: contact.user.github_login.chars().collect(),
+                        }),
+                );
 
-    //             let matches = executor.block(match_strings(
-    //                 &self.match_candidates,
-    //                 &query,
-    //                 true,
-    //                 usize::MAX,
-    //                 &Default::default(),
-    //                 executor.clone(),
-    //             ));
+            let matches = executor.block(match_strings(
+                &self.match_candidates,
+                &query,
+                true,
+                usize::MAX,
+                &Default::default(),
+                executor.clone(),
+            ));
 
-    //             let (online_contacts, offline_contacts) = matches
-    //                 .iter()
-    //                 .partition::<Vec<_>, _>(|mat| contacts[mat.candidate_id].online);
+            let (online_contacts, offline_contacts) = matches
+                .iter()
+                .partition::<Vec<_>, _>(|mat| contacts[mat.candidate_id].online);
 
-    //             for (matches, section) in [
-    //                 (online_contacts, Section::Online),
-    //                 (offline_contacts, Section::Offline),
-    //             ] {
-    //                 if !matches.is_empty() {
-    //                     self.entries.push(ListEntry::Header(section));
-    //                     if !self.collapsed_sections.contains(&section) {
-    //                         let active_call = &ActiveCall::global(cx).read(cx);
-    //                         for mat in matches {
-    //                             let contact = &contacts[mat.candidate_id];
-    //                             self.entries.push(ListEntry::Contact {
-    //                                 contact: contact.clone(),
-    //                                 calling: active_call.pending_invites().contains(&contact.user.id),
-    //                             });
-    //                         }
-    //                     }
-    //                 }
-    //             }
-    //         }
+            for (matches, section) in [
+                (online_contacts, Section::Online),
+                (offline_contacts, Section::Offline),
+            ] {
+                if !matches.is_empty() {
+                    self.entries.push(ListEntry::Header(section));
+                    if !self.collapsed_sections.contains(&section) {
+                        let active_call = &ActiveCall::global(cx).read(cx);
+                        for mat in matches {
+                            let contact = &contacts[mat.candidate_id];
+                            self.entries.push(ListEntry::Contact {
+                                contact: contact.clone(),
+                                calling: active_call.pending_invites().contains(&contact.user.id),
+                            });
+                        }
+                    }
+                }
+            }
+        }
 
-    //         if incoming.is_empty() && outgoing.is_empty() && contacts.is_empty() {
-    //             self.entries.push(ListEntry::ContactPlaceholder);
-    //         }
+        if incoming.is_empty() && outgoing.is_empty() && contacts.is_empty() {
+            self.entries.push(ListEntry::ContactPlaceholder);
+        }
 
-    //         if select_same_item {
-    //             if let Some(prev_selected_entry) = prev_selected_entry {
-    //                 self.selection.take();
-    //                 for (ix, entry) in self.entries.iter().enumerate() {
-    //                     if *entry == prev_selected_entry {
-    //                         self.selection = Some(ix);
-    //                         break;
-    //                     }
-    //                 }
-    //             }
-    //         } else {
-    //             self.selection = self.selection.and_then(|prev_selection| {
-    //                 if self.entries.is_empty() {
-    //                     None
-    //                 } else {
-    //                     Some(prev_selection.min(self.entries.len() - 1))
-    //                 }
-    //             });
-    //         }
+        //         if select_same_item {
+        //             if let Some(prev_selected_entry) = prev_selected_entry {
+        //                 self.selection.take();
+        //                 for (ix, entry) in self.entries.iter().enumerate() {
+        //                     if *entry == prev_selected_entry {
+        //                         self.selection = Some(ix);
+        //                         break;
+        //                     }
+        //                 }
+        //             }
+        //         } else {
+        //             self.selection = self.selection.and_then(|prev_selection| {
+        //                 if self.entries.is_empty() {
+        //                     None
+        //                 } else {
+        //                     Some(prev_selection.min(self.entries.len() - 1))
+        //                 }
+        //             });
+        //         }
 
-    //         let old_scroll_top = self.list_state.logical_scroll_top();
+        //         let old_scroll_top = self.list_state.logical_scroll_top();
 
-    //         self.list_state.reset(self.entries.len());
+        //         self.list_state.reset(self.entries.len());
 
-    //         if scroll_to_top {
-    //             self.list_state.scroll_to(ListOffset::default());
-    //         } else {
-    //             // Attempt to maintain the same scroll position.
-    //             if let Some(old_top_entry) = old_entries.get(old_scroll_top.item_ix) {
-    //                 let new_scroll_top = self
-    //                     .entries
-    //                     .iter()
-    //                     .position(|entry| entry == old_top_entry)
-    //                     .map(|item_ix| ListOffset {
-    //                         item_ix,
-    //                         offset_in_item: old_scroll_top.offset_in_item,
-    //                     })
-    //                     .or_else(|| {
-    //                         let entry_after_old_top = old_entries.get(old_scroll_top.item_ix + 1)?;
-    //                         let item_ix = self
-    //                             .entries
-    //                             .iter()
-    //                             .position(|entry| entry == entry_after_old_top)?;
-    //                         Some(ListOffset {
-    //                             item_ix,
-    //                             offset_in_item: 0.,
-    //                         })
-    //                     })
-    //                     .or_else(|| {
-    //                         let entry_before_old_top =
-    //                             old_entries.get(old_scroll_top.item_ix.saturating_sub(1))?;
-    //                         let item_ix = self
-    //                             .entries
-    //                             .iter()
-    //                             .position(|entry| entry == entry_before_old_top)?;
-    //                         Some(ListOffset {
-    //                             item_ix,
-    //                             offset_in_item: 0.,
-    //                         })
-    //                     });
+        //         if scroll_to_top {
+        //             self.list_state.scroll_to(ListOffset::default());
+        //         } else {
+        //             // Attempt to maintain the same scroll position.
+        //             if let Some(old_top_entry) = old_entries.get(old_scroll_top.item_ix) {
+        //                 let new_scroll_top = self
+        //                     .entries
+        //                     .iter()
+        //                     .position(|entry| entry == old_top_entry)
+        //                     .map(|item_ix| ListOffset {
+        //                         item_ix,
+        //                         offset_in_item: old_scroll_top.offset_in_item,
+        //                     })
+        //                     .or_else(|| {
+        //                         let entry_after_old_top = old_entries.get(old_scroll_top.item_ix + 1)?;
+        //                         let item_ix = self
+        //                             .entries
+        //                             .iter()
+        //                             .position(|entry| entry == entry_after_old_top)?;
+        //                         Some(ListOffset {
+        //                             item_ix,
+        //                             offset_in_item: 0.,
+        //                         })
+        //                     })
+        //                     .or_else(|| {
+        //                         let entry_before_old_top =
+        //                             old_entries.get(old_scroll_top.item_ix.saturating_sub(1))?;
+        //                         let item_ix = self
+        //                             .entries
+        //                             .iter()
+        //                             .position(|entry| entry == entry_before_old_top)?;
+        //                         Some(ListOffset {
+        //                             item_ix,
+        //                             offset_in_item: 0.,
+        //                         })
+        //                     });
 
-    //                 self.list_state
-    //                     .scroll_to(new_scroll_top.unwrap_or(old_scroll_top));
-    //             }
-    //         }
+        //                 self.list_state
+        //                     .scroll_to(new_scroll_top.unwrap_or(old_scroll_top));
+        //             }
+        //         }
 
-    //         cx.notify();
-    //     }
+        cx.notify();
+    }
 
     //     fn render_call_participant(
     //         user: &User,
@@ -1461,389 +1464,6 @@ impl CollabPanel {
     //         }
     //     }
 
-    //     fn render_header(
-    //         &self,
-    //         section: Section,
-    //         theme: &theme::Theme,
-    //         is_selected: bool,
-    //         is_collapsed: bool,
-    //         cx: &mut ViewContext<Self>,
-    //     ) -> AnyElement<Self> {
-    //         enum Header {}
-    //         enum LeaveCallContactList {}
-    //         enum AddChannel {}
-
-    //         let tooltip_style = &theme.tooltip;
-    //         let mut channel_link = None;
-    //         let mut channel_tooltip_text = None;
-    //         let mut channel_icon = None;
-    //         let mut is_dragged_over = false;
-
-    //         let text = match section {
-    //             Section::ActiveCall => {
-    //                 let channel_name = maybe!({
-    //                     let channel_id = ActiveCall::global(cx).read(cx).channel_id(cx)?;
-
-    //                     let channel = self.channel_store.read(cx).channel_for_id(channel_id)?;
-
-    //                     channel_link = Some(channel.link());
-    //                     (channel_icon, channel_tooltip_text) = match channel.visibility {
-    //                         proto::ChannelVisibility::Public => {
-    //                             (Some("icons/public.svg"), Some("Copy public channel link."))
-    //                         }
-    //                         proto::ChannelVisibility::Members => {
-    //                             (Some("icons/hash.svg"), Some("Copy private channel link."))
-    //                         }
-    //                     };
-
-    //                     Some(channel.name.as_str())
-    //                 });
-
-    //                 if let Some(name) = channel_name {
-    //                     Cow::Owned(format!("{}", name))
-    //                 } else {
-    //                     Cow::Borrowed("Current Call")
-    //                 }
-    //             }
-    //             Section::ContactRequests => Cow::Borrowed("Requests"),
-    //             Section::Contacts => Cow::Borrowed("Contacts"),
-    //             Section::Channels => Cow::Borrowed("Channels"),
-    //             Section::ChannelInvites => Cow::Borrowed("Invites"),
-    //             Section::Online => Cow::Borrowed("Online"),
-    //             Section::Offline => Cow::Borrowed("Offline"),
-    //         };
-
-    //         enum AddContact {}
-    //         let button = match section {
-    //             Section::ActiveCall => channel_link.map(|channel_link| {
-    //                 let channel_link_copy = channel_link.clone();
-    //                 MouseEventHandler::new::<AddContact, _>(0, cx, |state, _| {
-    //                     render_icon_button(
-    //                         theme
-    //                             .collab_panel
-    //                             .leave_call_button
-    //                             .style_for(is_selected, state),
-    //                         "icons/link.svg",
-    //                     )
-    //                 })
-    //                 .with_cursor_style(CursorStyle::PointingHand)
-    //                 .on_click(MouseButton::Left, move |_, _, cx| {
-    //                     let item = ClipboardItem::new(channel_link_copy.clone());
-    //                     cx.write_to_clipboard(item)
-    //                 })
-    //                 .with_tooltip::<AddContact>(
-    //                     0,
-    //                     channel_tooltip_text.unwrap(),
-    //                     None,
-    //                     tooltip_style.clone(),
-    //                     cx,
-    //                 )
-    //             }),
-    //             Section::Contacts => Some(
-    //                 MouseEventHandler::new::<LeaveCallContactList, _>(0, cx, |state, _| {
-    //                     render_icon_button(
-    //                         theme
-    //                             .collab_panel
-    //                             .add_contact_button
-    //                             .style_for(is_selected, state),
-    //                         "icons/plus.svg",
-    //                     )
-    //                 })
-    //                 .with_cursor_style(CursorStyle::PointingHand)
-    //                 .on_click(MouseButton::Left, |_, this, cx| {
-    //                     this.toggle_contact_finder(cx);
-    //                 })
-    //                 .with_tooltip::<LeaveCallContactList>(
-    //                     0,
-    //                     "Search for new contact",
-    //                     None,
-    //                     tooltip_style.clone(),
-    //                     cx,
-    //                 ),
-    //             ),
-    //             Section::Channels => {
-    //                 if cx
-    //                     .global::<DragAndDrop<Workspace>>()
-    //                     .currently_dragged::<Channel>(cx.window())
-    //                     .is_some()
-    //                     && self.drag_target_channel == ChannelDragTarget::Root
-    //                 {
-    //                     is_dragged_over = true;
-    //                 }
-
-    //                 Some(
-    //                     MouseEventHandler::new::<AddChannel, _>(0, cx, |state, _| {
-    //                         render_icon_button(
-    //                             theme
-    //                                 .collab_panel
-    //                                 .add_contact_button
-    //                                 .style_for(is_selected, state),
-    //                             "icons/plus.svg",
-    //                         )
-    //                     })
-    //                     .with_cursor_style(CursorStyle::PointingHand)
-    //                     .on_click(MouseButton::Left, |_, this, cx| this.new_root_channel(cx))
-    //                     .with_tooltip::<AddChannel>(
-    //                         0,
-    //                         "Create a channel",
-    //                         None,
-    //                         tooltip_style.clone(),
-    //                         cx,
-    //                     ),
-    //                 )
-    //             }
-    //             _ => None,
-    //         };
-
-    //         let can_collapse = match section {
-    //             Section::ActiveCall | Section::Channels | Section::Contacts => false,
-    //             Section::ChannelInvites
-    //             | Section::ContactRequests
-    //             | Section::Online
-    //             | Section::Offline => true,
-    //         };
-    //         let icon_size = (&theme.collab_panel).section_icon_size;
-    //         let mut result = MouseEventHandler::new::<Header, _>(section as usize, cx, |state, _| {
-    //             let header_style = if can_collapse {
-    //                 theme
-    //                     .collab_panel
-    //                     .subheader_row
-    //                     .in_state(is_selected)
-    //                     .style_for(state)
-    //             } else {
-    //                 &theme.collab_panel.header_row
-    //             };
-
-    //             Flex::row()
-    //                 .with_children(if can_collapse {
-    //                     Some(
-    //                         Svg::new(if is_collapsed {
-    //                             "icons/chevron_right.svg"
-    //                         } else {
-    //                             "icons/chevron_down.svg"
-    //                         })
-    //                         .with_color(header_style.text.color)
-    //                         .constrained()
-    //                         .with_max_width(icon_size)
-    //                         .with_max_height(icon_size)
-    //                         .aligned()
-    //                         .constrained()
-    //                         .with_width(icon_size)
-    //                         .contained()
-    //                         .with_margin_right(
-    //                             theme.collab_panel.contact_username.container.margin.left,
-    //                         ),
-    //                     )
-    //                 } else if let Some(channel_icon) = channel_icon {
-    //                     Some(
-    //                         Svg::new(channel_icon)
-    //                             .with_color(header_style.text.color)
-    //                             .constrained()
-    //                             .with_max_width(icon_size)
-    //                             .with_max_height(icon_size)
-    //                             .aligned()
-    //                             .constrained()
-    //                             .with_width(icon_size)
-    //                             .contained()
-    //                             .with_margin_right(
-    //                                 theme.collab_panel.contact_username.container.margin.left,
-    //                             ),
-    //                     )
-    //                 } else {
-    //                     None
-    //                 })
-    //                 .with_child(
-    //                     Label::new(text, header_style.text.clone())
-    //                         .aligned()
-    //                         .left()
-    //                         .flex(1., true),
-    //                 )
-    //                 .with_children(button.map(|button| button.aligned().right()))
-    //                 .constrained()
-    //                 .with_height(theme.collab_panel.row_height)
-    //                 .contained()
-    //                 .with_style(if is_dragged_over {
-    //                     theme.collab_panel.dragged_over_header
-    //                 } else {
-    //                     header_style.container
-    //                 })
-    //         });
-
-    //         result = result
-    //             .on_move(move |_, this, cx| {
-    //                 if cx
-    //                     .global::<DragAndDrop<Workspace>>()
-    //                     .currently_dragged::<Channel>(cx.window())
-    //                     .is_some()
-    //                 {
-    //                     this.drag_target_channel = ChannelDragTarget::Root;
-    //                     cx.notify()
-    //                 }
-    //             })
-    //             .on_up(MouseButton::Left, move |_, this, cx| {
-    //                 if let Some((_, dragged_channel)) = cx
-    //                     .global::<DragAndDrop<Workspace>>()
-    //                     .currently_dragged::<Channel>(cx.window())
-    //                 {
-    //                     this.channel_store
-    //                         .update(cx, |channel_store, cx| {
-    //                             channel_store.move_channel(dragged_channel.id, None, cx)
-    //                         })
-    //                         .detach_and_log_err(cx)
-    //                 }
-    //             });
-
-    //         if can_collapse {
-    //             result = result
-    //                 .with_cursor_style(CursorStyle::PointingHand)
-    //                 .on_click(MouseButton::Left, move |_, this, cx| {
-    //                     if can_collapse {
-    //                         this.toggle_section_expanded(section, cx);
-    //                     }
-    //                 })
-    //         }
-
-    //         result.into_any()
-    //     }
-
-    //     fn render_contact(
-    //         contact: &Contact,
-    //         calling: bool,
-    //         project: &ModelHandle<Project>,
-    //         theme: &theme::Theme,
-    //         is_selected: bool,
-    //         cx: &mut ViewContext<Self>,
-    //     ) -> AnyElement<Self> {
-    //         enum ContactTooltip {}
-
-    //         let collab_theme = &theme.collab_panel;
-    //         let online = contact.online;
-    //         let busy = contact.busy || calling;
-    //         let user_id = contact.user.id;
-    //         let github_login = contact.user.github_login.clone();
-    //         let initial_project = project.clone();
-
-    //         let event_handler =
-    //             MouseEventHandler::new::<Contact, _>(contact.user.id as usize, cx, |state, cx| {
-    //                 Flex::row()
-    //                     .with_children(contact.user.avatar.clone().map(|avatar| {
-    //                         let status_badge = if contact.online {
-    //                             Some(
-    //                                 Empty::new()
-    //                                     .collapsed()
-    //                                     .contained()
-    //                                     .with_style(if busy {
-    //                                         collab_theme.contact_status_busy
-    //                                     } else {
-    //                                         collab_theme.contact_status_free
-    //                                     })
-    //                                     .aligned(),
-    //                             )
-    //                         } else {
-    //                             None
-    //                         };
-    //                         Stack::new()
-    //                             .with_child(
-    //                                 Image::from_data(avatar)
-    //                                     .with_style(collab_theme.contact_avatar)
-    //                                     .aligned()
-    //                                     .left(),
-    //                             )
-    //                             .with_children(status_badge)
-    //                     }))
-    //                     .with_child(
-    //                         Label::new(
-    //                             contact.user.github_login.clone(),
-    //                             collab_theme.contact_username.text.clone(),
-    //                         )
-    //                         .contained()
-    //                         .with_style(collab_theme.contact_username.container)
-    //                         .aligned()
-    //                         .left()
-    //                         .flex(1., true),
-    //                     )
-    //                     .with_children(if state.hovered() {
-    //                         Some(
-    //                             MouseEventHandler::new::<Cancel, _>(
-    //                                 contact.user.id as usize,
-    //                                 cx,
-    //                                 |mouse_state, _| {
-    //                                     let button_style =
-    //                                         collab_theme.contact_button.style_for(mouse_state);
-    //                                     render_icon_button(button_style, "icons/x.svg")
-    //                                         .aligned()
-    //                                         .flex_float()
-    //                                 },
-    //                             )
-    //                             .with_padding(Padding::uniform(2.))
-    //                             .with_cursor_style(CursorStyle::PointingHand)
-    //                             .on_click(MouseButton::Left, move |_, this, cx| {
-    //                                 this.remove_contact(user_id, &github_login, cx);
-    //                             })
-    //                             .flex_float(),
-    //                         )
-    //                     } else {
-    //                         None
-    //                     })
-    //                     .with_children(if calling {
-    //                         Some(
-    //                             Label::new("Calling", collab_theme.calling_indicator.text.clone())
-    //                                 .contained()
-    //                                 .with_style(collab_theme.calling_indicator.container)
-    //                                 .aligned(),
-    //                         )
-    //                     } else {
-    //                         None
-    //                     })
-    //                     .constrained()
-    //                     .with_height(collab_theme.row_height)
-    //                     .contained()
-    //                     .with_style(
-    //                         *collab_theme
-    //                             .contact_row
-    //                             .in_state(is_selected)
-    //                             .style_for(state),
-    //                     )
-    //             });
-
-    //         if online && !busy {
-    //             let room = ActiveCall::global(cx).read(cx).room();
-    //             let label = if room.is_some() {
-    //                 format!("Invite {} to join call", contact.user.github_login)
-    //             } else {
-    //                 format!("Call {}", contact.user.github_login)
-    //             };
-
-    //             event_handler
-    //                 .on_click(MouseButton::Left, move |_, this, cx| {
-    //                     this.call(user_id, Some(initial_project.clone()), cx);
-    //                 })
-    //                 .with_cursor_style(CursorStyle::PointingHand)
-    //                 .with_tooltip::<ContactTooltip>(
-    //                     contact.user.id as usize,
-    //                     label,
-    //                     None,
-    //                     theme.tooltip.clone(),
-    //                     cx,
-    //                 )
-    //                 .into_any()
-    //         } else {
-    //             event_handler
-    //                 .with_tooltip::<ContactTooltip>(
-    //                     contact.user.id as usize,
-    //                     format!(
-    //                         "{} is {}",
-    //                         contact.user.github_login,
-    //                         if busy { "on a call" } else { "offline" }
-    //                     ),
-    //                     None,
-    //                     theme.tooltip.clone(),
-    //                     cx,
-    //                 )
-    //                 .into_any()
-    //         }
-    //     }
-
     //     fn render_contact_placeholder(
     //         &self,
     //         theme: &theme::CollabPanel,
@@ -1937,335 +1557,6 @@ impl CollabPanel {
     //                     + theme.collab_panel.channel_indent * depth as f32,
     //             )
     //             .into_any()
-    //     }
-
-    //     fn render_channel(
-    //         &self,
-    //         channel: &Channel,
-    //         depth: usize,
-    //         theme: &theme::Theme,
-    //         is_selected: bool,
-    //         has_children: bool,
-    //         ix: usize,
-    //         cx: &mut ViewContext<Self>,
-    //     ) -> AnyElement<Self> {
-    //         let channel_id = channel.id;
-    //         let collab_theme = &theme.collab_panel;
-    //         let is_public = self
-    //             .channel_store
-    //             .read(cx)
-    //             .channel_for_id(channel_id)
-    //             .map(|channel| channel.visibility)
-    //             == Some(proto::ChannelVisibility::Public);
-    //         let other_selected = self.selected_channel().map(|channel| channel.id) == Some(channel.id);
-    //         let disclosed =
-    //             has_children.then(|| !self.collapsed_channels.binary_search(&channel.id).is_ok());
-
-    //         let is_active = maybe!({
-    //             let call_channel = ActiveCall::global(cx)
-    //                 .read(cx)
-    //                 .room()?
-    //                 .read(cx)
-    //                 .channel_id()?;
-    //             Some(call_channel == channel_id)
-    //         })
-    //         .unwrap_or(false);
-
-    //         const FACEPILE_LIMIT: usize = 3;
-
-    //         enum ChannelCall {}
-    //         enum ChannelNote {}
-    //         enum NotesTooltip {}
-    //         enum ChatTooltip {}
-    //         enum ChannelTooltip {}
-
-    //         let mut is_dragged_over = false;
-    //         if cx
-    //             .global::<DragAndDrop<Workspace>>()
-    //             .currently_dragged::<Channel>(cx.window())
-    //             .is_some()
-    //             && self.drag_target_channel == ChannelDragTarget::Channel(channel_id)
-    //         {
-    //             is_dragged_over = true;
-    //         }
-
-    //         let has_messages_notification = channel.unseen_message_id.is_some();
-
-    //         MouseEventHandler::new::<Channel, _>(ix, cx, |state, cx| {
-    //             let row_hovered = state.hovered();
-
-    //             let mut select_state = |interactive: &Interactive<ContainerStyle>| {
-    //                 if state.clicked() == Some(MouseButton::Left) && interactive.clicked.is_some() {
-    //                     interactive.clicked.as_ref().unwrap().clone()
-    //                 } else if state.hovered() || other_selected {
-    //                     interactive
-    //                         .hovered
-    //                         .as_ref()
-    //                         .unwrap_or(&interactive.default)
-    //                         .clone()
-    //                 } else {
-    //                     interactive.default.clone()
-    //                 }
-    //             };
-
-    //             Flex::<Self>::row()
-    //                 .with_child(
-    //                     Svg::new(if is_public {
-    //                         "icons/public.svg"
-    //                     } else {
-    //                         "icons/hash.svg"
-    //                     })
-    //                     .with_color(collab_theme.channel_hash.color)
-    //                     .constrained()
-    //                     .with_width(collab_theme.channel_hash.width)
-    //                     .aligned()
-    //                     .left(),
-    //                 )
-    //                 .with_child({
-    //                     let style = collab_theme.channel_name.inactive_state();
-    //                     Flex::row()
-    //                         .with_child(
-    //                             Label::new(channel.name.clone(), style.text.clone())
-    //                                 .contained()
-    //                                 .with_style(style.container)
-    //                                 .aligned()
-    //                                 .left()
-    //                                 .with_tooltip::<ChannelTooltip>(
-    //                                     ix,
-    //                                     "Join channel",
-    //                                     None,
-    //                                     theme.tooltip.clone(),
-    //                                     cx,
-    //                                 ),
-    //                         )
-    //                         .with_children({
-    //                             let participants =
-    //                                 self.channel_store.read(cx).channel_participants(channel_id);
-
-    //                             if !participants.is_empty() {
-    //                                 let extra_count = participants.len().saturating_sub(FACEPILE_LIMIT);
-
-    //                                 let result = FacePile::new(collab_theme.face_overlap)
-    //                                     .with_children(
-    //                                         participants
-    //                                             .iter()
-    //                                             .filter_map(|user| {
-    //                                                 Some(
-    //                                                     Image::from_data(user.avatar.clone()?)
-    //                                                         .with_style(collab_theme.channel_avatar),
-    //                                                 )
-    //                                             })
-    //                                             .take(FACEPILE_LIMIT),
-    //                                     )
-    //                                     .with_children((extra_count > 0).then(|| {
-    //                                         Label::new(
-    //                                             format!("+{}", extra_count),
-    //                                             collab_theme.extra_participant_label.text.clone(),
-    //                                         )
-    //                                         .contained()
-    //                                         .with_style(collab_theme.extra_participant_label.container)
-    //                                     }));
-
-    //                                 Some(result)
-    //                             } else {
-    //                                 None
-    //                             }
-    //                         })
-    //                         .with_spacing(8.)
-    //                         .align_children_center()
-    //                         .flex(1., true)
-    //                 })
-    //                 .with_child(
-    //                     MouseEventHandler::new::<ChannelNote, _>(ix, cx, move |mouse_state, _| {
-    //                         let container_style = collab_theme
-    //                             .disclosure
-    //                             .button
-    //                             .style_for(mouse_state)
-    //                             .container;
-
-    //                         if channel.unseen_message_id.is_some() {
-    //                             Svg::new("icons/conversations.svg")
-    //                                 .with_color(collab_theme.channel_note_active_color)
-    //                                 .constrained()
-    //                                 .with_width(collab_theme.channel_hash.width)
-    //                                 .contained()
-    //                                 .with_style(container_style)
-    //                                 .with_uniform_padding(4.)
-    //                                 .into_any()
-    //                         } else if row_hovered {
-    //                             Svg::new("icons/conversations.svg")
-    //                                 .with_color(collab_theme.channel_hash.color)
-    //                                 .constrained()
-    //                                 .with_width(collab_theme.channel_hash.width)
-    //                                 .contained()
-    //                                 .with_style(container_style)
-    //                                 .with_uniform_padding(4.)
-    //                                 .into_any()
-    //                         } else {
-    //                             Empty::new().into_any()
-    //                         }
-    //                     })
-    //                     .on_click(MouseButton::Left, move |_, this, cx| {
-    //                         this.join_channel_chat(&JoinChannelChat { channel_id }, cx);
-    //                     })
-    //                     .with_tooltip::<ChatTooltip>(
-    //                         ix,
-    //                         "Open channel chat",
-    //                         None,
-    //                         theme.tooltip.clone(),
-    //                         cx,
-    //                     )
-    //                     .contained()
-    //                     .with_margin_right(4.),
-    //                 )
-    //                 .with_child(
-    //                     MouseEventHandler::new::<ChannelCall, _>(ix, cx, move |mouse_state, cx| {
-    //                         let container_style = collab_theme
-    //                             .disclosure
-    //                             .button
-    //                             .style_for(mouse_state)
-    //                             .container;
-    //                         if row_hovered || channel.unseen_note_version.is_some() {
-    //                             Svg::new("icons/file.svg")
-    //                                 .with_color(if channel.unseen_note_version.is_some() {
-    //                                     collab_theme.channel_note_active_color
-    //                                 } else {
-    //                                     collab_theme.channel_hash.color
-    //                                 })
-    //                                 .constrained()
-    //                                 .with_width(collab_theme.channel_hash.width)
-    //                                 .contained()
-    //                                 .with_style(container_style)
-    //                                 .with_uniform_padding(4.)
-    //                                 .with_margin_right(collab_theme.channel_hash.container.margin.left)
-    //                                 .with_tooltip::<NotesTooltip>(
-    //                                     ix as usize,
-    //                                     "Open channel notes",
-    //                                     None,
-    //                                     theme.tooltip.clone(),
-    //                                     cx,
-    //                                 )
-    //                                 .into_any()
-    //                         } else if has_messages_notification {
-    //                             Empty::new()
-    //                                 .constrained()
-    //                                 .with_width(collab_theme.channel_hash.width)
-    //                                 .contained()
-    //                                 .with_uniform_padding(4.)
-    //                                 .with_margin_right(collab_theme.channel_hash.container.margin.left)
-    //                                 .into_any()
-    //                         } else {
-    //                             Empty::new().into_any()
-    //                         }
-    //                     })
-    //                     .on_click(MouseButton::Left, move |_, this, cx| {
-    //                         this.open_channel_notes(&OpenChannelNotes { channel_id }, cx);
-    //                     }),
-    //                 )
-    //                 .align_children_center()
-    //                 .styleable_component()
-    //                 .disclosable(
-    //                     disclosed,
-    //                     Box::new(ToggleCollapse {
-    //                         location: channel.id.clone(),
-    //                     }),
-    //                 )
-    //                 .with_id(ix)
-    //                 .with_style(collab_theme.disclosure.clone())
-    //                 .element()
-    //                 .constrained()
-    //                 .with_height(collab_theme.row_height)
-    //                 .contained()
-    //                 .with_style(select_state(
-    //                     collab_theme
-    //                         .channel_row
-    //                         .in_state(is_selected || is_active || is_dragged_over),
-    //                 ))
-    //                 .with_padding_left(
-    //                     collab_theme.channel_row.default_style().padding.left
-    //                         + collab_theme.channel_indent * depth as f32,
-    //                 )
-    //         })
-    //         .on_click(MouseButton::Left, move |_, this, cx| {
-    //             if this.drag_target_channel == ChannelDragTarget::None {
-    //                 if is_active {
-    //                     this.open_channel_notes(&OpenChannelNotes { channel_id }, cx)
-    //                 } else {
-    //                     this.join_channel(channel_id, cx)
-    //                 }
-    //             }
-    //         })
-    //         .on_click(MouseButton::Right, {
-    //             let channel = channel.clone();
-    //             move |e, this, cx| {
-    //                 this.deploy_channel_context_menu(Some(e.position), &channel, ix, cx);
-    //             }
-    //         })
-    //         .on_up(MouseButton::Left, move |_, this, cx| {
-    //             if let Some((_, dragged_channel)) = cx
-    //                 .global::<DragAndDrop<Workspace>>()
-    //                 .currently_dragged::<Channel>(cx.window())
-    //             {
-    //                 this.channel_store
-    //                     .update(cx, |channel_store, cx| {
-    //                         channel_store.move_channel(dragged_channel.id, Some(channel_id), cx)
-    //                     })
-    //                     .detach_and_log_err(cx)
-    //             }
-    //         })
-    //         .on_move({
-    //             let channel = channel.clone();
-    //             move |_, this, cx| {
-    //                 if let Some((_, dragged_channel)) = cx
-    //                     .global::<DragAndDrop<Workspace>>()
-    //                     .currently_dragged::<Channel>(cx.window())
-    //                 {
-    //                     if channel.id != dragged_channel.id {
-    //                         this.drag_target_channel = ChannelDragTarget::Channel(channel.id);
-    //                     }
-    //                     cx.notify()
-    //                 }
-    //             }
-    //         })
-    //         .as_draggable::<_, Channel>(
-    //             channel.clone(),
-    //             move |_, channel, cx: &mut ViewContext<Workspace>| {
-    //                 let theme = &theme::current(cx).collab_panel;
-
-    //                 Flex::<Workspace>::row()
-    //                     .with_child(
-    //                         Svg::new("icons/hash.svg")
-    //                             .with_color(theme.channel_hash.color)
-    //                             .constrained()
-    //                             .with_width(theme.channel_hash.width)
-    //                             .aligned()
-    //                             .left(),
-    //                     )
-    //                     .with_child(
-    //                         Label::new(channel.name.clone(), theme.channel_name.text.clone())
-    //                             .contained()
-    //                             .with_style(theme.channel_name.container)
-    //                             .aligned()
-    //                             .left(),
-    //                     )
-    //                     .align_children_center()
-    //                     .contained()
-    //                     .with_background_color(
-    //                         theme
-    //                             .container
-    //                             .background_color
-    //                             .unwrap_or(gpui::color::Color::transparent_black()),
-    //                     )
-    //                     .contained()
-    //                     .with_padding_left(
-    //                         theme.channel_row.default_style().padding.left
-    //                             + theme.channel_indent * depth as f32,
-    //                     )
-    //                     .into_any()
-    //             },
-    //         )
-    //         .with_cursor_style(CursorStyle::PointingHand)
-    //         .into_any()
     //     }
 
     //     fn render_channel_notes(
@@ -2954,9 +2245,9 @@ impl CollabPanel {
     //         cx.focus_self();
     //     }
 
-    //     fn is_channel_collapsed(&self, channel_id: ChannelId) -> bool {
-    //         self.collapsed_channels.binary_search(&channel_id).is_ok()
-    //     }
+    fn is_channel_collapsed(&self, channel_id: ChannelId) -> bool {
+        self.collapsed_channels.binary_search(&channel_id).is_ok()
+    }
 
     //     fn leave_call(cx: &mut ViewContext<Self>) {
     //         ActiveCall::global(cx)
@@ -3270,49 +2561,774 @@ impl CollabPanel {
     }
 
     fn render_signed_in(&mut self, cx: &mut ViewContext<Self>) -> List {
-        let contacts = self.contacts(cx).unwrap_or_default();
-        let workspace = self.workspace.clone();
+        let is_selected = false; // todo!() this.selection == Some(ix);
 
-        let children = once(
-            ListHeader::new("Contacts")
-                .right_button(
-                    IconButton::new("add-contact", Icon::Plus).on_click(cx.listener(
-                        |this, _, cx| {
-                            todo!();
-                            //this.toggle_contact_finder(cx);
-                        },
-                    )),
-                )
-                .render(cx),
-        )
-        .chain(contacts.into_iter().map(|contact| {
-            let id = contact.user.id;
-            h_stack()
-                .p_2()
-                .gap_2()
-                .children(
-                    contact
-                        .user
-                        .avatar
-                        .as_ref()
-                        .map(|avatar| Avatar::data(avatar.clone())),
-                )
-                .child(Label::new(contact.user.github_login.clone()))
-                .on_mouse_down(gpui::MouseButton::Left, {
-                    let workspace = workspace.clone();
-                    move |_, cx| {
-                        workspace
-                            .update(cx, |this, cx| {
-                                this.call_state()
-                                    .invite(id, None, cx)
-                                    .detach_and_log_err(cx)
-                            })
-                            .log_err();
-                    }
-                })
-        }));
+        List::new().children(self.entries.clone().into_iter().map(|entry| {
+            match entry {
+                ListEntry::Header(section) => {
+                    let is_collapsed = self.collapsed_sections.contains(&section);
+                    self.render_header(section, is_selected, is_collapsed, cx)
+                        .into_any_element()
+                }
+                ListEntry::Contact { contact, calling } => self
+                    .render_contact(&*contact, calling, is_selected, cx)
+                    .into_any_element(),
+                ListEntry::ContactPlaceholder => self
+                    .render_contact_placeholder(is_selected, cx)
+                    .into_any_element(),
+                ListEntry::IncomingRequest(user) => self
+                    .render_contact_request(user, true, is_selected, cx)
+                    .into_any_element(),
+                ListEntry::OutgoingRequest(user) => self
+                    .render_contact_request(user, false, is_selected, cx)
+                    .into_any_element(),
+                ListEntry::Channel {
+                    channel,
+                    depth,
+                    has_children,
+                } => self
+                    .render_channel(&*channel, depth, has_children, is_selected, cx)
+                    .into_any_element(),
+                ListEntry::ChannelEditor { depth } => todo!(),
+            }
+        }))
+    }
 
-        List::new().children(children)
+    fn render_header(
+        &mut self,
+        section: Section,
+        is_selected: bool,
+        is_collapsed: bool,
+        cx: &ViewContext<Self>,
+    ) -> impl IntoElement {
+        // let mut channel_link = None;
+        // let mut channel_tooltip_text = None;
+        // let mut channel_icon = None;
+        // let mut is_dragged_over = false;
+
+        let text = match section {
+            Section::ActiveCall => {
+                // let channel_name = maybe!({
+                //     let channel_id = ActiveCall::global(cx).read(cx).channel_id(cx)?;
+
+                //     let channel = self.channel_store.read(cx).channel_for_id(channel_id)?;
+
+                //     channel_link = Some(channel.link());
+                //     (channel_icon, channel_tooltip_text) = match channel.visibility {
+                //         proto::ChannelVisibility::Public => {
+                //             (Some("icons/public.svg"), Some("Copy public channel link."))
+                //         }
+                //         proto::ChannelVisibility::Members => {
+                //             (Some("icons/hash.svg"), Some("Copy private channel link."))
+                //         }
+                //     };
+
+                //     Some(channel.name.as_str())
+                // });
+
+                // if let Some(name) = channel_name {
+                //     SharedString::from(format!("{}", name))
+                // } else {
+                //     SharedString::from("Current Call")
+                // }
+                todo!()
+            }
+            Section::ContactRequests => SharedString::from("Requests"),
+            Section::Contacts => SharedString::from("Contacts"),
+            Section::Channels => SharedString::from("Channels"),
+            Section::ChannelInvites => SharedString::from("Invites"),
+            Section::Online => SharedString::from("Online"),
+            Section::Offline => SharedString::from("Offline"),
+        };
+
+        let button = match section {
+            Section::ActiveCall =>
+            // channel_link.map(|channel_link| {
+            // let channel_link_copy = channel_link.clone();
+            // MouseEventHandler::new::<AddContact, _>(0, cx, |state, _| {
+            //     render_icon_button(
+            //         theme
+            //             .collab_panel
+            //             .leave_call_button
+            //             .style_for(is_selected, state),
+            //         "icons/link.svg",
+            //     )
+            // })
+            // .with_cursor_style(CursorStyle::PointingHand)
+            // .on_click(MouseButton::Left, move |_, _, cx| {
+            //     let item = ClipboardItem::new(channel_link_copy.clone());
+            //     cx.write_to_clipboard(item)
+            // })
+            // .with_tooltip::<AddContact>(
+            //     0,
+            //     channel_tooltip_text.unwrap(),
+            //     None,
+            //     tooltip_style.clone(),
+            //     cx,
+            // )
+            // }),
+            {
+                todo!()
+            }
+            Section::Contacts => Some(
+                IconButton::new("add-contact", Icon::Plus)
+                    .on_click(cx.listener(|this, _, cx| {
+                        todo!()
+                        // this.toggle_contact_finder(cx)
+                    }))
+                    .tooltip(|cx| Tooltip::text("Search for new contact", cx)),
+            ),
+            Section::Channels => {
+                // todo!()
+                // if cx
+                //     .global::<DragAndDrop<Workspace>>()
+                //     .currently_dragged::<Channel>(cx.window())
+                //     .is_some()
+                //     && self.drag_target_channel == ChannelDragTarget::Root
+                // {
+                //     is_dragged_over = true;
+                // }
+
+                Some(
+                    IconButton::new("add-channel", Icon::Plus)
+                        .on_click(cx.listener(|this, _, cx| {
+                            todo!()
+                            // this.new_root_channel(cx)
+                        }))
+                        .tooltip(|cx| Tooltip::text("Create a channel", cx)),
+                )
+            }
+            _ => None,
+        };
+
+        let can_collapse = match section {
+            Section::ActiveCall | Section::Channels | Section::Contacts => false,
+            Section::ChannelInvites
+            | Section::ContactRequests
+            | Section::Online
+            | Section::Offline => true,
+        };
+
+        let mut header = ListHeader::new(text);
+        if let Some(button) = button {
+            header = header.right_button(button)
+        }
+        // todo!() is selected
+        if can_collapse {
+            // todo!() on click to toggle
+            header = header.toggle(ui::Toggle::Toggled(is_collapsed));
+        }
+
+        header
+    }
+    fn render_contact(
+        &mut self,
+        contact: &Contact,
+        calling: bool,
+        is_selected: bool,
+        cx: &mut ViewContext<Self>,
+    ) -> impl IntoElement {
+        enum ContactTooltip {}
+
+        let online = contact.online;
+        let busy = contact.busy || calling;
+        let user_id = contact.user.id;
+        let github_login = SharedString::from(contact.user.github_login.clone());
+
+        let item = ListItem::new(github_login.clone())
+            .child(Label::new(github_login.clone()))
+            .on_click(cx.listener(|this, _, cx| {
+                todo!();
+            }));
+
+        // let event_handler =
+        //     MouseEventHandler::new::<Contact, _>(contact.user.id as usize, cx, |state, cx| {
+        //         Flex::row()
+        //             .with_children(contact.user.avatar.clone().map(|avatar| {
+        //                 let status_badge = if contact.online {
+        //                     Some(
+        //                         Empty::new()
+        //                             .collapsed()
+        //                             .contained()
+        //                             .with_style(if busy {
+        //                                 collab_theme.contact_status_busy
+        //                             } else {
+        //                                 collab_theme.contact_status_free
+        //                             })
+        //                             .aligned(),
+        //                     )
+        //                 } else {
+        //                     None
+        //                 };
+        //                 Stack::new()
+        //                     .with_child(
+        //                         Image::from_data(avatar)
+        //                             .with_style(collab_theme.contact_avatar)
+        //                             .aligned()
+        //                             .left(),
+        //                     )
+        //                     .with_children(status_badge)
+        //             }))
+        //             .with_child(
+        //                 Label::new(
+        //                     contact.user.github_login.clone(),
+        //                     collab_theme.contact_username.text.clone(),
+        //                 )
+        //                 .contained()
+        //                 .with_style(collab_theme.contact_username.container)
+        //                 .aligned()
+        //                 .left()
+        //                 .flex(1., true),
+        //             )
+        //             .with_children(if state.hovered() {
+        //                 Some(
+        //                     MouseEventHandler::new::<Cancel, _>(
+        //                         contact.user.id as usize,
+        //                         cx,
+        //                         |mouse_state, _| {
+        //                             let button_style =
+        //                                 collab_theme.contact_button.style_for(mouse_state);
+        //                             render_icon_button(button_style, "icons/x.svg")
+        //                                 .aligned()
+        //                                 .flex_float()
+        //                         },
+        //                     )
+        //                     .with_padding(Padding::uniform(2.))
+        //                     .with_cursor_style(CursorStyle::PointingHand)
+        //                     .on_click(MouseButton::Left, move |_, this, cx| {
+        //                         this.remove_contact(user_id, &github_login, cx);
+        //                     })
+        //                     .flex_float(),
+        //                 )
+        //             } else {
+        //                 None
+        //             })
+        //             .with_children(if calling {
+        //                 Some(
+        //                     Label::new("Calling", collab_theme.calling_indicator.text.clone())
+        //                         .contained()
+        //                         .with_style(collab_theme.calling_indicator.container)
+        //                         .aligned(),
+        //                 )
+        //             } else {
+        //                 None
+        //             })
+        //             .constrained()
+        //             .with_height(collab_theme.row_height)
+        //             .contained()
+        //             .with_style(
+        //                 *collab_theme
+        //                     .contact_row
+        //                     .in_state(is_selected)
+        //                     .style_for(state),
+        //             )
+        //     });
+
+        // if online && !busy {
+        //     let room = ActiveCall::global(cx).read(cx).room();
+        //     let label = if room.is_some() {
+        //         format!("Invite {} to join call", contact.user.github_login)
+        //     } else {
+        //         format!("Call {}", contact.user.github_login)
+        //     };
+
+        //     event_handler
+        //         .on_click(MouseButton::Left, move |_, this, cx| {
+        //             this.call(user_id, Some(initial_project.clone()), cx);
+        //         })
+        //         .with_cursor_style(CursorStyle::PointingHand)
+        //         .with_tooltip::<ContactTooltip>(
+        //             contact.user.id as usize,
+        //             label,
+        //             None,
+        //             theme.tooltip.clone(),
+        //             cx,
+        //         )
+        //         .into_any()
+        // } else {
+        //     event_handler
+        //         .with_tooltip::<ContactTooltip>(
+        //             contact.user.id as usize,
+        //             format!(
+        //                 "{} is {}",
+        //                 contact.user.github_login,
+        //                 if busy { "on a call" } else { "offline" }
+        //             ),
+        //             None,
+        //             theme.tooltip.clone(),
+        //             cx,
+        //         )
+        //         .into_any()
+        // };
+
+        item
+    }
+
+    fn render_contact_request(
+        &mut self,
+        user: Arc<User>,
+        is_incoming: bool,
+        is_selected: bool,
+        cx: &mut ViewContext<Self>,
+    ) -> impl IntoElement {
+        let github_login = SharedString::from(user.github_login.clone());
+
+        let mut row = ListItem::new(github_login.clone()).child(Label::new(github_login.clone()));
+
+        // .with_children(user.avatar.clone().map(|avatar| {
+        //     Image::from_data(avatar)
+        //         .with_style(theme.contact_avatar)
+        //         .aligned()
+        //         .left()
+        // }))
+        // .with_child(
+        //     Label::new(
+        //         user.github_login.clone(),
+        //         theme.contact_username.text.clone(),
+        //     )
+        //     .contained()
+        //     .with_style(theme.contact_username.container)
+        //     .aligned()
+        //     .left()
+        //     .flex(1., true),
+        // );
+
+        // let user_id = user.id;
+        // let github_login = user.github_login.clone();
+        // let is_contact_request_pending = user_store.read(cx).is_contact_request_pending(&user);
+        // let button_spacing = theme.contact_button_spacing;
+
+        // if is_incoming {
+        //     row.add_child(
+        //         MouseEventHandler::new::<Decline, _>(user.id as usize, cx, |mouse_state, _| {
+        //             let button_style = if is_contact_request_pending {
+        //                 &theme.disabled_button
+        //             } else {
+        //                 theme.contact_button.style_for(mouse_state)
+        //             };
+        //             render_icon_button(button_style, "icons/x.svg").aligned()
+        //         })
+        //         .with_cursor_style(CursorStyle::PointingHand)
+        //         .on_click(MouseButton::Left, move |_, this, cx| {
+        //             this.respond_to_contact_request(user_id, false, cx);
+        //         })
+        //         .contained()
+        //         .with_margin_right(button_spacing),
+        //     );
+
+        //     row.add_child(
+        //         MouseEventHandler::new::<Accept, _>(user.id as usize, cx, |mouse_state, _| {
+        //             let button_style = if is_contact_request_pending {
+        //                 &theme.disabled_button
+        //             } else {
+        //                 theme.contact_button.style_for(mouse_state)
+        //             };
+        //             render_icon_button(button_style, "icons/check.svg")
+        //                 .aligned()
+        //                 .flex_float()
+        //         })
+        //         .with_cursor_style(CursorStyle::PointingHand)
+        //         .on_click(MouseButton::Left, move |_, this, cx| {
+        //             this.respond_to_contact_request(user_id, true, cx);
+        //         }),
+        //     );
+        // } else {
+        //     row.add_child(
+        //         MouseEventHandler::new::<Cancel, _>(user.id as usize, cx, |mouse_state, _| {
+        //             let button_style = if is_contact_request_pending {
+        //                 &theme.disabled_button
+        //             } else {
+        //                 theme.contact_button.style_for(mouse_state)
+        //             };
+        //             render_icon_button(button_style, "icons/x.svg")
+        //                 .aligned()
+        //                 .flex_float()
+        //         })
+        //         .with_padding(Padding::uniform(2.))
+        //         .with_cursor_style(CursorStyle::PointingHand)
+        //         .on_click(MouseButton::Left, move |_, this, cx| {
+        //             this.remove_contact(user_id, &github_login, cx);
+        //         })
+        //         .flex_float(),
+        //     );
+        // }
+
+        // row.constrained()
+        //     .with_height(theme.row_height)
+        //     .contained()
+        //     .with_style(
+        //         *theme
+        //             .contact_row
+        //             .in_state(is_selected)
+        //             .style_for(&mut Default::default()),
+        //     )
+        //     .into_any()
+        row
+    }
+
+    fn render_contact_placeholder(
+        &self,
+        is_selected: bool,
+        cx: &mut ViewContext<Self>,
+    ) -> impl IntoElement {
+        ListItem::new("contact-placeholder")
+            .child(Label::new("Add a Contact"))
+            .on_click(cx.listener(|this, _, cx| todo!()))
+        // enum AddContacts {}
+        // MouseEventHandler::new::<AddContacts, _>(0, cx, |state, _| {
+        //     let style = theme.list_empty_state.style_for(is_selected, state);
+        //     Flex::row()
+        //         .with_child(
+        //             Svg::new("icons/plus.svg")
+        //                 .with_color(theme.list_empty_icon.color)
+        //                 .constrained()
+        //                 .with_width(theme.list_empty_icon.width)
+        //                 .aligned()
+        //                 .left(),
+        //         )
+        //         .with_child(
+        //             Label::new("Add a contact", style.text.clone())
+        //                 .contained()
+        //                 .with_style(theme.list_empty_label_container),
+        //         )
+        //         .align_children_center()
+        //         .contained()
+        //         .with_style(style.container)
+        //         .into_any()
+        // })
+        // .on_click(MouseButton::Left, |_, this, cx| {
+        //     this.toggle_contact_finder(cx);
+        // })
+        // .into_any()
+    }
+
+    fn render_channel(
+        &self,
+        channel: &Channel,
+        depth: usize,
+        has_children: bool,
+        is_selected: bool,
+        cx: &mut ViewContext<Self>,
+    ) -> impl IntoElement {
+        let channel_id = channel.id;
+        ListItem::new(channel_id as usize).child(Label::new(channel.name.clone()))
+        // let channel_id = channel.id;
+        // let collab_theme = &theme.collab_panel;
+        // let is_public = self
+        //     .channel_store
+        //     .read(cx)
+        //     .channel_for_id(channel_id)
+        //     .map(|channel| channel.visibility)
+        //     == Some(proto::ChannelVisibility::Public);
+        // let other_selected = self.selected_channel().map(|channel| channel.id) == Some(channel.id);
+        // let disclosed =
+        //     has_children.then(|| !self.collapsed_channels.binary_search(&channel.id).is_ok());
+
+        // let is_active = maybe!({
+        //     let call_channel = ActiveCall::global(cx)
+        //         .read(cx)
+        //         .room()?
+        //         .read(cx)
+        //         .channel_id()?;
+        //     Some(call_channel == channel_id)
+        // })
+        // .unwrap_or(false);
+
+        // const FACEPILE_LIMIT: usize = 3;
+
+        // enum ChannelCall {}
+        // enum ChannelNote {}
+        // enum NotesTooltip {}
+        // enum ChatTooltip {}
+        // enum ChannelTooltip {}
+
+        // let mut is_dragged_over = false;
+        // if cx
+        //     .global::<DragAndDrop<Workspace>>()
+        //     .currently_dragged::<Channel>(cx.window())
+        //     .is_some()
+        //     && self.drag_target_channel == ChannelDragTarget::Channel(channel_id)
+        // {
+        //     is_dragged_over = true;
+        // }
+
+        // let has_messages_notification = channel.unseen_message_id.is_some();
+
+        // MouseEventHandler::new::<Channel, _>(ix, cx, |state, cx| {
+        //     let row_hovered = state.hovered();
+
+        //     let mut select_state = |interactive: &Interactive<ContainerStyle>| {
+        //         if state.clicked() == Some(MouseButton::Left) && interactive.clicked.is_some() {
+        //             interactive.clicked.as_ref().unwrap().clone()
+        //         } else if state.hovered() || other_selected {
+        //             interactive
+        //                 .hovered
+        //                 .as_ref()
+        //                 .unwrap_or(&interactive.default)
+        //                 .clone()
+        //         } else {
+        //             interactive.default.clone()
+        //         }
+        //     };
+
+        //     Flex::<Self>::row()
+        //         .with_child(
+        //             Svg::new(if is_public {
+        //                 "icons/public.svg"
+        //             } else {
+        //                 "icons/hash.svg"
+        //             })
+        //             .with_color(collab_theme.channel_hash.color)
+        //             .constrained()
+        //             .with_width(collab_theme.channel_hash.width)
+        //             .aligned()
+        //             .left(),
+        //         )
+        //         .with_child({
+        //             let style = collab_theme.channel_name.inactive_state();
+        //             Flex::row()
+        //                 .with_child(
+        //                     Label::new(channel.name.clone(), style.text.clone())
+        //                         .contained()
+        //                         .with_style(style.container)
+        //                         .aligned()
+        //                         .left()
+        //                         .with_tooltip::<ChannelTooltip>(
+        //                             ix,
+        //                             "Join channel",
+        //                             None,
+        //                             theme.tooltip.clone(),
+        //                             cx,
+        //                         ),
+        //                 )
+        //                 .with_children({
+        //                     let participants =
+        //                         self.channel_store.read(cx).channel_participants(channel_id);
+
+        //                     if !participants.is_empty() {
+        //                         let extra_count = participants.len().saturating_sub(FACEPILE_LIMIT);
+
+        //                         let result = FacePile::new(collab_theme.face_overlap)
+        //                             .with_children(
+        //                                 participants
+        //                                     .iter()
+        //                                     .filter_map(|user| {
+        //                                         Some(
+        //                                             Image::from_data(user.avatar.clone()?)
+        //                                                 .with_style(collab_theme.channel_avatar),
+        //                                         )
+        //                                     })
+        //                                     .take(FACEPILE_LIMIT),
+        //                             )
+        //                             .with_children((extra_count > 0).then(|| {
+        //                                 Label::new(
+        //                                     format!("+{}", extra_count),
+        //                                     collab_theme.extra_participant_label.text.clone(),
+        //                                 )
+        //                                 .contained()
+        //                                 .with_style(collab_theme.extra_participant_label.container)
+        //                             }));
+
+        //                         Some(result)
+        //                     } else {
+        //                         None
+        //                     }
+        //                 })
+        //                 .with_spacing(8.)
+        //                 .align_children_center()
+        //                 .flex(1., true)
+        //         })
+        //         .with_child(
+        //             MouseEventHandler::new::<ChannelNote, _>(ix, cx, move |mouse_state, _| {
+        //                 let container_style = collab_theme
+        //                     .disclosure
+        //                     .button
+        //                     .style_for(mouse_state)
+        //                     .container;
+
+        //                 if channel.unseen_message_id.is_some() {
+        //                     Svg::new("icons/conversations.svg")
+        //                         .with_color(collab_theme.channel_note_active_color)
+        //                         .constrained()
+        //                         .with_width(collab_theme.channel_hash.width)
+        //                         .contained()
+        //                         .with_style(container_style)
+        //                         .with_uniform_padding(4.)
+        //                         .into_any()
+        //                 } else if row_hovered {
+        //                     Svg::new("icons/conversations.svg")
+        //                         .with_color(collab_theme.channel_hash.color)
+        //                         .constrained()
+        //                         .with_width(collab_theme.channel_hash.width)
+        //                         .contained()
+        //                         .with_style(container_style)
+        //                         .with_uniform_padding(4.)
+        //                         .into_any()
+        //                 } else {
+        //                     Empty::new().into_any()
+        //                 }
+        //             })
+        //             .on_click(MouseButton::Left, move |_, this, cx| {
+        //                 this.join_channel_chat(&JoinChannelChat { channel_id }, cx);
+        //             })
+        //             .with_tooltip::<ChatTooltip>(
+        //                 ix,
+        //                 "Open channel chat",
+        //                 None,
+        //                 theme.tooltip.clone(),
+        //                 cx,
+        //             )
+        //             .contained()
+        //             .with_margin_right(4.),
+        //         )
+        //         .with_child(
+        //             MouseEventHandler::new::<ChannelCall, _>(ix, cx, move |mouse_state, cx| {
+        //                 let container_style = collab_theme
+        //                     .disclosure
+        //                     .button
+        //                     .style_for(mouse_state)
+        //                     .container;
+        //                 if row_hovered || channel.unseen_note_version.is_some() {
+        //                     Svg::new("icons/file.svg")
+        //                         .with_color(if channel.unseen_note_version.is_some() {
+        //                             collab_theme.channel_note_active_color
+        //                         } else {
+        //                             collab_theme.channel_hash.color
+        //                         })
+        //                         .constrained()
+        //                         .with_width(collab_theme.channel_hash.width)
+        //                         .contained()
+        //                         .with_style(container_style)
+        //                         .with_uniform_padding(4.)
+        //                         .with_margin_right(collab_theme.channel_hash.container.margin.left)
+        //                         .with_tooltip::<NotesTooltip>(
+        //                             ix as usize,
+        //                             "Open channel notes",
+        //                             None,
+        //                             theme.tooltip.clone(),
+        //                             cx,
+        //                         )
+        //                         .into_any()
+        //                 } else if has_messages_notification {
+        //                     Empty::new()
+        //                         .constrained()
+        //                         .with_width(collab_theme.channel_hash.width)
+        //                         .contained()
+        //                         .with_uniform_padding(4.)
+        //                         .with_margin_right(collab_theme.channel_hash.container.margin.left)
+        //                         .into_any()
+        //                 } else {
+        //                     Empty::new().into_any()
+        //                 }
+        //             })
+        //             .on_click(MouseButton::Left, move |_, this, cx| {
+        //                 this.open_channel_notes(&OpenChannelNotes { channel_id }, cx);
+        //             }),
+        //         )
+        //         .align_children_center()
+        //         .styleable_component()
+        //         .disclosable(
+        //             disclosed,
+        //             Box::new(ToggleCollapse {
+        //                 location: channel.id.clone(),
+        //             }),
+        //         )
+        //         .with_id(ix)
+        //         .with_style(collab_theme.disclosure.clone())
+        //         .element()
+        //         .constrained()
+        //         .with_height(collab_theme.row_height)
+        //         .contained()
+        //         .with_style(select_state(
+        //             collab_theme
+        //                 .channel_row
+        //                 .in_state(is_selected || is_active || is_dragged_over),
+        //         ))
+        //         .with_padding_left(
+        //             collab_theme.channel_row.default_style().padding.left
+        //                 + collab_theme.channel_indent * depth as f32,
+        //         )
+        // })
+        // .on_click(MouseButton::Left, move |_, this, cx| {
+        //     if this.drag_target_channel == ChannelDragTarget::None {
+        //         if is_active {
+        //             this.open_channel_notes(&OpenChannelNotes { channel_id }, cx)
+        //         } else {
+        //             this.join_channel(channel_id, cx)
+        //         }
+        //     }
+        // })
+        // .on_click(MouseButton::Right, {
+        //     let channel = channel.clone();
+        //     move |e, this, cx| {
+        //         this.deploy_channel_context_menu(Some(e.position), &channel, ix, cx);
+        //     }
+        // })
+        // .on_up(MouseButton::Left, move |_, this, cx| {
+        //     if let Some((_, dragged_channel)) = cx
+        //         .global::<DragAndDrop<Workspace>>()
+        //         .currently_dragged::<Channel>(cx.window())
+        //     {
+        //         this.channel_store
+        //             .update(cx, |channel_store, cx| {
+        //                 channel_store.move_channel(dragged_channel.id, Some(channel_id), cx)
+        //             })
+        //             .detach_and_log_err(cx)
+        //     }
+        // })
+        // .on_move({
+        //     let channel = channel.clone();
+        //     move |_, this, cx| {
+        //         if let Some((_, dragged_channel)) = cx
+        //             .global::<DragAndDrop<Workspace>>()
+        //             .currently_dragged::<Channel>(cx.window())
+        //         {
+        //             if channel.id != dragged_channel.id {
+        //                 this.drag_target_channel = ChannelDragTarget::Channel(channel.id);
+        //             }
+        //             cx.notify()
+        //         }
+        //     }
+        // })
+        // .as_draggable::<_, Channel>(
+        //     channel.clone(),
+        //     move |_, channel, cx: &mut ViewContext<Workspace>| {
+        //         let theme = &theme::current(cx).collab_panel;
+
+        //         Flex::<Workspace>::row()
+        //             .with_child(
+        //                 Svg::new("icons/hash.svg")
+        //                     .with_color(theme.channel_hash.color)
+        //                     .constrained()
+        //                     .with_width(theme.channel_hash.width)
+        //                     .aligned()
+        //                     .left(),
+        //             )
+        //             .with_child(
+        //                 Label::new(channel.name.clone(), theme.channel_name.text.clone())
+        //                     .contained()
+        //                     .with_style(theme.channel_name.container)
+        //                     .aligned()
+        //                     .left(),
+        //             )
+        //             .align_children_center()
+        //             .contained()
+        //             .with_background_color(
+        //                 theme
+        //                     .container
+        //                     .background_color
+        //                     .unwrap_or(gpui::color::Color::transparent_black()),
+        //             )
+        //             .contained()
+        //             .with_padding_left(
+        //                 theme.channel_row.default_style().padding.left
+        //                     + theme.channel_indent * depth as f32,
+        //             )
+        //             .into_any()
+        //     },
+        // )
+        // .with_cursor_style(CursorStyle::PointingHand)
+        // .into_any()
     }
 }
 
