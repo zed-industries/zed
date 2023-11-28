@@ -301,7 +301,7 @@ impl PickerDelegate for CommandPaletteDelegate {
         };
 
         Some(
-            ListItem::new(ix).selected(selected).child(
+            ListItem::new(ix).inset(true).selected(selected).child(
                 h_stack()
                     .justify_between()
                     .child(HighlightedLabel::new(

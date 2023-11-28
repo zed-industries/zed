@@ -61,6 +61,7 @@ impl PickerDelegate for Delegate {
 
         Some(
             ListItem::new(ix)
+                .inset(true)
                 .selected(selected)
                 .child(Label::new(candidate)),
         )
