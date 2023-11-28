@@ -711,7 +711,7 @@ impl PickerDelegate for FileFinderDelegate {
         ix: usize,
         selected: bool,
         cx: &mut ViewContext<Picker<Self>>,
-    ) -> Self::ListItem {
+    ) -> Option<Self::ListItem> {
         let path_match = self
             .matches
             .get(ix)
@@ -722,19 +722,21 @@ impl PickerDelegate for FileFinderDelegate {
         let (file_name, file_name_positions, full_path, full_path_positions) =
             self.labels_for_match(path_match, cx, ix);
 
-        div()
-            .px_1()
-            .text_color(colors.text)
-            .text_ui()
-            .bg(colors.ghost_element_background)
-            .rounded_md()
-            .when(selected, |this| this.bg(colors.ghost_element_selected))
-            .hover(|this| this.bg(colors.ghost_element_hover))
-            .child(
-                v_stack()
-                    .child(HighlightedLabel::new(file_name, file_name_positions))
-                    .child(HighlightedLabel::new(full_path, full_path_positions)),
-            )
+        Some(
+            div()
+                .px_1()
+                .text_color(colors.text)
+                .text_ui()
+                .bg(colors.ghost_element_background)
+                .rounded_md()
+                .when(selected, |this| this.bg(colors.ghost_element_selected))
+                .hover(|this| this.bg(colors.ghost_element_hover))
+                .child(
+                    v_stack()
+                        .child(HighlightedLabel::new(file_name, file_name_positions))
+                        .child(HighlightedLabel::new(full_path, full_path_positions)),
+                ),
+        )
     }
 }
 

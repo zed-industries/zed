@@ -51,25 +51,27 @@ impl PickerDelegate for Delegate {
         ix: usize,
         selected: bool,
         cx: &mut gpui::ViewContext<Picker<Self>>,
-    ) -> Self::ListItem {
+    ) -> Option<Self::ListItem> {
         let colors = cx.theme().colors();
         let Some(candidate_ix) = self.matches.get(ix) else {
-            return div();
+            return None;
         };
         // TASK: Make StringMatchCandidate::string a SharedString
         let candidate = SharedString::from(self.candidates[*candidate_ix].string.clone());
 
-        div()
-            .text_color(colors.text)
-            .when(selected, |s| {
-                s.border_l_10().border_color(colors.terminal_ansi_yellow)
-            })
-            .hover(|style| {
-                style
-                    .bg(colors.element_active)
-                    .text_color(colors.text_accent)
-            })
-            .child(candidate)
+        Some(
+            div()
+                .text_color(colors.text)
+                .when(selected, |s| {
+                    s.border_l_10().border_color(colors.terminal_ansi_yellow)
+                })
+                .hover(|style| {
+                    style
+                        .bg(colors.element_active)
+                        .text_color(colors.text_accent)
+                })
+                .child(candidate),
+        )
     }
 
     fn selected_index(&self) -> usize {

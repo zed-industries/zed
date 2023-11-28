@@ -294,32 +294,34 @@ impl PickerDelegate for CommandPaletteDelegate {
         ix: usize,
         selected: bool,
         cx: &mut ViewContext<Picker<Self>>,
-    ) -> Self::ListItem {
+    ) -> Option<Self::ListItem> {
         let colors = cx.theme().colors();
         let Some(r#match) = self.matches.get(ix) else {
-            return div();
+            return None;
         };
         let Some(command) = self.commands.get(r#match.candidate_id) else {
-            return div();
+            return None;
         };
 
-        div()
-            .px_1()
-            .text_color(colors.text)
-            .text_ui()
-            .bg(colors.ghost_element_background)
-            .rounded_md()
-            .when(selected, |this| this.bg(colors.ghost_element_selected))
-            .hover(|this| this.bg(colors.ghost_element_hover))
-            .child(
-                h_stack()
-                    .justify_between()
-                    .child(HighlightedLabel::new(
-                        command.name.clone(),
-                        r#match.positions.clone(),
-                    ))
-                    .children(KeyBinding::for_action(&*command.action, cx)),
-            )
+        Some(
+            div()
+                .px_1()
+                .text_color(colors.text)
+                .text_ui()
+                .bg(colors.ghost_element_background)
+                .rounded_md()
+                .when(selected, |this| this.bg(colors.ghost_element_selected))
+                .hover(|this| this.bg(colors.ghost_element_hover))
+                .child(
+                    h_stack()
+                        .justify_between()
+                        .child(HighlightedLabel::new(
+                            command.name.clone(),
+                            r#match.positions.clone(),
+                        ))
+                        .children(KeyBinding::for_action(&*command.action, cx)),
+                ),
+        )
     }
 }
 
