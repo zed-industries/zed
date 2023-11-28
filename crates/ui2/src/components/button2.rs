@@ -1,6 +1,6 @@
 use gpui::{
-    AnyElement, AnyView, DefiniteLength, Div, IntoElement, MouseDownEvent, Stateful,
-    StatefulInteractiveElement, WindowContext,
+    Action, AnyElement, AnyView, DefiniteLength, DispatchPhase, Div, IntoElement, MouseButton,
+    MouseDownEvent, Stateful, StatefulInteractiveElement, WindowContext,
 };
 use smallvec::SmallVec;
 
@@ -117,14 +117,12 @@ pub trait ButtonCommon {
     fn state(&mut self, state: InteractionState) -> &mut Self;
     fn disabled(&mut self, disabled: bool) -> &mut Self;
     fn size(&mut self, size: ButtonSize2) -> &mut Self;
-    fn tooltip(
+    fn tooltip(&mut self, tooltip: impl Fn(&mut WindowContext) -> AnyView + 'static) -> &mut Self;
+    fn on_click(
         &mut self,
-        tooltip: Box<dyn Fn(&mut WindowContext) -> AnyView + 'static>,
+        handler: impl 'static + Fn(&MouseDownEvent, &mut WindowContext),
     ) -> &mut Self;
-    fn primary_action(
-        &mut self,
-        handler: Box<dyn Fn(&MouseDownEvent, &mut WindowContext) + 'static>,
-    ) -> &mut Self;
+    fn action(&mut self, action: impl Action + 'static) -> &mut Self;
     // fn width(&mut self, width: DefiniteLength) -> &mut Self;
 }
 
@@ -139,6 +137,17 @@ pub trait SelectableButtonCommon {
 pub trait FixedButtonCommon {
     fn width(&mut self, width: DefiniteLength) -> &mut Self;
     fn full_width(&mut self) -> &mut Self;
+}
+
+fn button_action<E: InteractiveElement>(
+    mut this: E,
+    click_handler: impl Fn(&MouseDownEvent, &mut WindowContext) + 'static,
+) -> E {
+    this.on_mouse_down(MouseButton::Left, move |event, cx| {
+        cx.stop_propagation();
+        click_handler(event, cx);
+    });
+    this
 }
 
 // pub struct Button {
@@ -218,7 +227,7 @@ pub struct ButtonLike {
     disabled: bool,
     size: ButtonSize2,
     tooltip: Option<Box<dyn Fn(&mut WindowContext) -> AnyView>>,
-    primary_action: Option<Box<dyn Fn(&MouseDownEvent, &mut WindowContext) + 'static>>,
+    on_mouse_down: Option<Box<dyn Fn(&MouseDownEvent, &mut WindowContext) + 'static>>,
     children: SmallVec<[AnyElement; 2]>,
 }
 
@@ -232,7 +241,7 @@ impl ButtonLike {
             size: ButtonSize2::Default,
             tooltip: None,
             children,
-            primary_action: None,
+            on_mouse_down: None,
         }
     }
 }
@@ -270,12 +279,12 @@ impl ButtonCommon for ButtonLike {
         self
     }
 
-    fn primary_action(
-        &mut self,
-        handler: Box<dyn Fn(&MouseDownEvent, &mut WindowContext) + 'static>,
-    ) -> &mut Self {
-        self.primary_action = Some(handler);
+    fn on_click(mut self, handler: impl 'static + Fn(&MouseDownEvent, &mut WindowContext)) -> Self {
+        self.on_mouse_down = Some(Box::new(handler));
         self
+    }
+    fn action(self, action: Box<dyn Action>) -> Self {
+        self.on_click(move |this, cx| cx.dispatch_action(action.boxed_clone()))
     }
 }
 
@@ -286,11 +295,14 @@ impl RenderOnce for ButtonLike {
         let background =
             ButtonAppearance2::bg(self.appearance, cx, self.state, false, self.disabled);
 
-        h_stack()
+        let mut button_like = h_stack()
             .id(self.id.clone())
             .rounded_md()
             .cursor_pointer()
             .gap_1()
+            .p_1();
+
+        button_like
             .bg(ButtonAppearance2::bg(
                 self.appearance,
                 cx,
@@ -307,8 +319,30 @@ impl RenderOnce for ButtonLike {
                     self.disabled,
                 ))
             })
-            .p_1()
-            .children(self.children)
+            .active(|active| {
+                active.bg(ButtonAppearance2::bg(
+                    self.appearance,
+                    cx,
+                    InteractionState::Active,
+                    false,
+                    self.disabled,
+                ))
+            });
+
+        if let Some(click_handler) = self.on_mouse_down {
+            button_like = button_like.on_mouse_down(MouseButton::Left, move |event, cx| {
+                cx.stop_propagation();
+                click_handler(event, cx);
+            })
+        }
+
+        if let Some(tooltip) = self.tooltip {
+            button_like = button_like.tooltip(move |cx| tooltip(cx))
+        }
+
+        button_like.children(self.children);
+
+        button_like
     }
 }
 
