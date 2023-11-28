@@ -905,6 +905,12 @@ impl From<Pixels> for usize {
     }
 }
 
+impl From<usize> for Pixels {
+    fn from(pixels: usize) -> Self {
+        Pixels(pixels as f32)
+    }
+}
+
 #[derive(
     Add, AddAssign, Clone, Copy, Default, Div, Eq, Hash, Ord, PartialEq, PartialOrd, Sub, SubAssign,
 )]

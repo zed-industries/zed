@@ -72,7 +72,7 @@ impl Render for SharedScreen {
         // self.current_frame_id = self.current_frame_id.wrapping_add(1);
         div()
             .size_full()
-            .children(frame.map(|frame| img().size_full().surface(frame.image())))
+            .children(frame.map(|frame| img(frame.image()).w_full()))
     }
 }
 // impl View for SharedScreen {
