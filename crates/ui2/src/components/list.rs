@@ -63,7 +63,7 @@ impl RenderOnce for ListHeader {
     type Rendered = Div;
 
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {
-        let disclosure_control = disclosure_control(self.toggle);
+        let disclosure_control = disclosure_control(self.toggle, None);
 
         let meta = match self.meta {
             Some(ListHeaderMeta::Tools(icons)) => div().child(
@@ -177,6 +177,7 @@ pub struct ListItem {
     toggle: Toggle,
     inset: bool,
     on_click: Option<Rc<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
+    on_toggle: Option<Rc<dyn Fn(&MouseDownEvent, &mut WindowContext) + 'static>>,
     on_secondary_mouse_down: Option<Rc<dyn Fn(&MouseDownEvent, &mut WindowContext) + 'static>>,
     children: SmallVec<[AnyElement; 2]>,
 }
@@ -193,6 +194,7 @@ impl ListItem {
             inset: false,
             on_click: None,
             on_secondary_mouse_down: None,
+            on_toggle: None,
             children: SmallVec::new(),
         }
     }
@@ -227,6 +229,14 @@ impl ListItem {
 
     pub fn toggle(mut self, toggle: Toggle) -> Self {
         self.toggle = toggle;
+        self
+    }
+
+    pub fn on_toggle(
+        mut self,
+        on_toggle: impl Fn(&MouseDownEvent, &mut WindowContext) + 'static,
+    ) -> Self {
+        self.on_toggle = Some(Rc::new(on_toggle));
         self
     }
 
@@ -283,7 +293,7 @@ impl RenderOnce for ListItem {
                 this.bg(cx.theme().colors().ghost_element_selected)
             })
             .when_some(self.on_click.clone(), |this, on_click| {
-                this.on_click(move |event, cx| {
+                this.cursor_pointer().on_click(move |event, cx| {
                     // HACK: GPUI currently fires `on_click` with any mouse button,
                     // but we only care about the left button.
                     if event.down.button == MouseButton::Left {
@@ -304,7 +314,7 @@ impl RenderOnce for ListItem {
                     .gap_1()
                     .items_center()
                     .relative()
-                    .child(disclosure_control(self.toggle))
+                    .child(disclosure_control(self.toggle, self.on_toggle))
                     .children(left_content)
                     .children(self.children)
                     // HACK: We need to attach the `on_click` handler to the child element in order to have the click

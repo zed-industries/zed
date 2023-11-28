@@ -2233,20 +2233,20 @@ impl CollabPanel {
     //         self.toggle_channel_collapsed(action.location, cx);
     //     }
 
-    //     fn toggle_channel_collapsed<'a>(&mut self, channel_id: ChannelId, cx: &mut ViewContext<Self>) {
-    //         match self.collapsed_channels.binary_search(&channel_id) {
-    //             Ok(ix) => {
-    //                 self.collapsed_channels.remove(ix);
-    //             }
-    //             Err(ix) => {
-    //                 self.collapsed_channels.insert(ix, channel_id);
-    //             }
-    //         };
-    //         self.serialize(cx);
-    //         self.update_entries(true, cx);
-    //         cx.notify();
-    //         cx.focus_self();
-    //     }
+    fn toggle_channel_collapsed<'a>(&mut self, channel_id: ChannelId, cx: &mut ViewContext<Self>) {
+        match self.collapsed_channels.binary_search(&channel_id) {
+            Ok(ix) => {
+                self.collapsed_channels.remove(ix);
+            }
+            Err(ix) => {
+                self.collapsed_channels.insert(ix, channel_id);
+            }
+        };
+        // self.serialize(cx); todo!()
+        self.update_entries(true, cx);
+        cx.notify();
+        cx.focus_self();
+    }
 
     fn is_channel_collapsed(&self, channel_id: ChannelId) -> bool {
         self.collapsed_channels.binary_search(&channel_id).is_ok()
@@ -3129,6 +3129,9 @@ impl CollabPanel {
                 } else {
                     Toggle::NotToggleable
                 })
+                .on_toggle(
+                    cx.listener(move |this, _, cx| this.toggle_channel_collapsed(channel_id, cx)),
+                )
                 .on_click(cx.listener(move |this, _, cx| {
                     if this.drag_target_channel == ChannelDragTarget::None {
                         if is_active {
