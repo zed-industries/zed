@@ -1,7 +1,7 @@
 use gpui::{hsla, point, px, BoxShadow};
 use smallvec::{smallvec, SmallVec};
 
-#[doc = include_str!("elevation.md")]
+#[doc = include_str!("docs/elevation.md")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Elevation {
     ElevationIndex(ElevationIndex),
@@ -25,8 +25,8 @@ impl ElevationIndex {
             ElevationIndex::Background => 0,
             ElevationIndex::Surface => 100,
             ElevationIndex::ElevatedSurface => 200,
-            ElevationIndex::Wash => 300,
-            ElevationIndex::ModalSurface => 400,
+            ElevationIndex::Wash => 250,
+            ElevationIndex::ModalSurface => 300,
             ElevationIndex::DraggedElement => 900,
         }
     }
@@ -50,7 +50,7 @@ impl ElevationIndex {
                     spread_radius: px(0.),
                 },
                 BoxShadow {
-                    color: hsla(0., 0., 0., 0.16),
+                    color: hsla(0., 0., 0., 0.20),
                     offset: point(px(3.), px(1.)),
                     blur_radius: px(12.),
                     spread_radius: px(0.),

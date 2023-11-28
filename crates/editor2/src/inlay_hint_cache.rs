@@ -861,7 +861,7 @@ async fn fetch_and_update_hints(
     let inlay_hints_fetch_task = editor
         .update(&mut cx, |editor, cx| {
             if got_throttled {
-                let query_not_around_visible_range = match editor.excerpt_visible_offsets(None, cx).remove(&query.excerpt_id) {
+                let query_not_around_visible_range = match editor.excerpts_for_inlay_hints_query(None, cx).remove(&query.excerpt_id) {
                     Some((_, _, current_visible_range)) => {
                         let visible_offset_length = current_visible_range.len();
                         let double_visible_range = current_visible_range
@@ -2201,7 +2201,9 @@ pub mod tests {
             cx: &mut gpui::TestAppContext,
         ) -> Range<Point> {
             let ranges = editor
-                .update(cx, |editor, cx| editor.excerpt_visible_offsets(None, cx))
+                .update(cx, |editor, cx| {
+                    editor.excerpts_for_inlay_hints_query(None, cx)
+                })
                 .unwrap();
             assert_eq!(
                 ranges.len(),

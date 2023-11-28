@@ -2,8 +2,8 @@ use smallvec::SmallVec;
 use taffy::style::{Display, Position};
 
 use crate::{
-    point, AnyElement, BorrowWindow, Bounds, Element, LayoutId, ParentElement, Pixels, Point,
-    RenderOnce, Size, Style, WindowContext,
+    point, AnyElement, BorrowWindow, Bounds, Element, IntoElement, LayoutId, ParentElement, Pixels,
+    Point, Size, Style, WindowContext,
 };
 
 pub struct OverlayState {
@@ -144,21 +144,23 @@ impl Element for Overlay {
         }
 
         cx.with_element_offset(desired.origin - bounds.origin, |cx| {
-            for child in self.children {
-                child.paint(cx);
-            }
+            cx.break_content_mask(|cx| {
+                for child in self.children {
+                    child.paint(cx);
+                }
+            })
         })
     }
 }
 
-impl RenderOnce for Overlay {
+impl IntoElement for Overlay {
     type Element = Self;
 
     fn element_id(&self) -> Option<crate::ElementId> {
         None
     }
 
-    fn render_once(self) -> Self::Element {
+    fn into_element(self) -> Self::Element {
         self
     }
 }

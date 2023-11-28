@@ -1,13 +1,22 @@
-use crate::prelude::*;
-use gpui::{img, Img, RenderOnce};
+use std::sync::Arc;
 
-#[derive(RenderOnce)]
+use crate::prelude::*;
+use gpui::{img, ImageData, ImageSource, Img, IntoElement};
+
+#[derive(Debug, Default, PartialEq, Clone)]
+pub enum Shape {
+    #[default]
+    Circle,
+    RoundedRectangle,
+}
+
+#[derive(IntoElement)]
 pub struct Avatar {
-    src: SharedString,
+    src: ImageSource,
     shape: Shape,
 }
 
-impl Component for Avatar {
+impl RenderOnce for Avatar {
     type Rendered = Img;
 
     fn render(self, _: &mut WindowContext) -> Self::Rendered {
@@ -19,7 +28,7 @@ impl Component for Avatar {
             img = img.rounded_md();
         }
 
-        img.uri(self.src.clone())
+        img.source(self.src.clone())
             .size_4()
             // todo!(Pull the avatar fallback background from the theme.)
             .bg(gpui::red())
@@ -27,7 +36,13 @@ impl Component for Avatar {
 }
 
 impl Avatar {
-    pub fn new(src: impl Into<SharedString>) -> Self {
+    pub fn uri(src: impl Into<SharedString>) -> Self {
+        Self {
+            src: src.into().into(),
+            shape: Shape::Circle,
+        }
+    }
+    pub fn data(src: Arc<ImageData>) -> Self {
         Self {
             src: src.into(),
             shape: Shape::Circle,
@@ -37,33 +52,5 @@ impl Avatar {
     pub fn shape(mut self, shape: Shape) -> Self {
         self.shape = shape;
         self
-    }
-}
-
-#[cfg(feature = "stories")]
-pub use stories::*;
-
-#[cfg(feature = "stories")]
-mod stories {
-    use super::*;
-    use crate::Story;
-    use gpui::{Div, Render};
-
-    pub struct AvatarStory;
-
-    impl Render for AvatarStory {
-        type Element = Div;
-
-        fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-            Story::container(cx)
-                .child(Story::title_for::<Avatar>(cx))
-                .child(Story::label(cx, "Default"))
-                .child(Avatar::new(
-                    "https://avatars.githubusercontent.com/u/1714999?v=4",
-                ))
-                .child(Avatar::new(
-                    "https://avatars.githubusercontent.com/u/326587?v=4",
-                ))
-        }
     }
 }

@@ -46,6 +46,7 @@ impl ModalLayer {
             previous_focus_handle: cx.focused(),
             focus_handle: cx.focus_handle(),
         });
+        dbg!("focusing");
         cx.focus_view(&new_modal);
         cx.notify();
     }

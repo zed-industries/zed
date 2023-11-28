@@ -2,11 +2,11 @@ use std::any::TypeId;
 
 use crate::{ItemHandle, Pane};
 use gpui::{
-    div, AnyView, Div, ParentElement, Render, RenderOnce, Styled, Subscription, View, ViewContext,
+    div, AnyView, Div, IntoElement, ParentElement, Render, Styled, Subscription, View, ViewContext,
     WindowContext,
 };
 use theme2::ActiveTheme;
-use ui::h_stack;
+use ui::{h_stack, Button, Icon, IconButton};
 use util::ResultExt;
 
 pub trait StatusItemView: Render {
@@ -47,20 +47,101 @@ impl Render for StatusBar {
             .w_full()
             .h_8()
             .bg(cx.theme().colors().status_bar_background)
-            .child(self.render_left_tools(cx))
-            .child(self.render_right_tools(cx))
+            // Nate: I know this isn't how we render status bar tools
+            // We can move these to the correct place once we port their tools
+            .child(
+                h_stack().gap_1().child(self.render_left_tools(cx)).child(
+                    h_stack().gap_4().child(
+                        // TODO: Language Server status
+                        div()
+                            .border()
+                            .border_color(gpui::red())
+                            .child("Checking..."),
+                    ),
+                ),
+            )
+            .child(
+                h_stack()
+                    .gap_4()
+                    .child(
+                        h_stack()
+                            .gap_1()
+                            .child(
+                                // TODO: Line / column numbers
+                                div()
+                                    .border()
+                                    .border_color(gpui::red())
+                                    .child(Button::new("15:22")),
+                            )
+                            .child(
+                                // TODO: Language picker
+                                div()
+                                    .border()
+                                    .border_color(gpui::red())
+                                    .child(Button::new("Rust")),
+                            ),
+                    )
+                    .child(
+                        h_stack()
+                            .gap_1()
+                            .child(
+                                // Github tool
+                                div()
+                                    .border()
+                                    .border_color(gpui::red())
+                                    .child(IconButton::new("status-copilot", Icon::Copilot)),
+                            )
+                            .child(
+                                // Feedback Tool
+                                div()
+                                    .border()
+                                    .border_color(gpui::red())
+                                    .child(IconButton::new("status-feedback", Icon::Envelope)),
+                            ),
+                    )
+                    .child(
+                        // Bottom Dock
+                        h_stack().gap_1().child(
+                            // Terminal
+                            div()
+                                .border()
+                                .border_color(gpui::red())
+                                .child(IconButton::new("status-terminal", Icon::Terminal)),
+                        ),
+                    )
+                    .child(
+                        // Right Dock
+                        h_stack()
+                            .gap_1()
+                            .child(
+                                // Terminal
+                                div()
+                                    .border()
+                                    .border_color(gpui::red())
+                                    .child(IconButton::new("status-assistant", Icon::Ai)),
+                            )
+                            .child(
+                                // Terminal
+                                div()
+                                    .border()
+                                    .border_color(gpui::red())
+                                    .child(IconButton::new("status-chat", Icon::MessageBubbles)),
+                            ),
+                    )
+                    .child(self.render_right_tools(cx)),
+            )
     }
 }
 
 impl StatusBar {
-    fn render_left_tools(&self, cx: &mut ViewContext<Self>) -> impl RenderOnce {
+    fn render_left_tools(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         h_stack()
             .items_center()
             .gap_2()
             .children(self.left_items.iter().map(|item| item.to_any()))
     }
 
-    fn render_right_tools(&self, cx: &mut ViewContext<Self>) -> impl RenderOnce {
+    fn render_right_tools(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         h_stack()
             .items_center()
             .gap_2()

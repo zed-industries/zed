@@ -10,8 +10,8 @@ use anyhow::{anyhow, Result};
 use gpui::{
     actions, div, px, uniform_list, Action, AppContext, AssetSource, AsyncWindowContext,
     ClipboardItem, Div, EventEmitter, FocusHandle, Focusable, FocusableView, InteractiveElement,
-    Model, MouseButton, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render,
-    RenderOnce, Stateful, StatefulInteractiveElement, Styled, Task, UniformListScrollHandle, View,
+    IntoElement, Model, MouseButton, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel,
+    Render, Stateful, StatefulInteractiveElement, Styled, Task, UniformListScrollHandle, View,
     ViewContext, VisualContext as _, WeakView, WindowContext,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
@@ -371,7 +371,7 @@ impl ProjectPanel {
         _entry_id: ProjectEntryId,
         _cx: &mut ViewContext<Self>,
     ) {
-        todo!()
+        // todo!()
         //     let project = self.project.read(cx);
 
         //     let worktree_id = if let Some(id) = project.worktree_id_for_entry(entry_id, cx) {
@@ -644,6 +644,7 @@ impl ProjectPanel {
     }
 
     fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
+        dbg!("odd");
         self.edit_state = None;
         self.update_visible_entries(None, cx);
         cx.focus(&self.focus_handle);

@@ -16,7 +16,7 @@ path = "src/main.rs"
 
 [dependencies]
 ai = { package = "ai2", path = "../ai2"}
-# audio = { path = "../audio" }
+audio = { package = "audio2", path = "../audio2" }
 # activity_indicator = { path = "../activity_indicator" }
 auto_update = { package = "auto_update2", path = "../auto_update2" }
 # breadcrumbs = { path = "../breadcrumbs" }

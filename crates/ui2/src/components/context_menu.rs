@@ -1,18 +1,18 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::{prelude::*, v_stack, List};
+use crate::{prelude::*, v_stack, Label, List};
 use crate::{ListItem, ListSeparator, ListSubHeader};
 use gpui::{
-    overlay, px, Action, AnchorCorner, AnyElement, AppContext, Bounds, ClickEvent, DispatchPhase,
-    Div, EventEmitter, FocusHandle, FocusableView, LayoutId, ManagedView, Manager, MouseButton,
-    MouseDownEvent, Pixels, Point, Render, RenderOnce, View, VisualContext,
+    overlay, px, Action, AnchorCorner, AnyElement, AppContext, Bounds, ClickEvent, DismissEvent,
+    DispatchPhase, Div, EventEmitter, FocusHandle, FocusableView, IntoElement, LayoutId,
+    ManagedView, MouseButton, MouseDownEvent, Pixels, Point, Render, View, VisualContext,
 };
 
 pub enum ContextMenuItem {
-    Separator(ListSeparator),
-    Header(ListSubHeader),
-    Entry(ListItem, Rc<dyn Fn(&ClickEvent, &mut WindowContext)>),
+    Separator,
+    Header(SharedString),
+    Entry(SharedString, Rc<dyn Fn(&ClickEvent, &mut WindowContext)>),
 }
 
 pub struct ContextMenu {
@@ -26,7 +26,7 @@ impl FocusableView for ContextMenu {
     }
 }
 
-impl EventEmitter<Manager> for ContextMenu {}
+impl EventEmitter<DismissEvent> for ContextMenu {}
 
 impl ContextMenu {
     pub fn build(
@@ -46,38 +46,39 @@ impl ContextMenu {
     }
 
     pub fn header(mut self, title: impl Into<SharedString>) -> Self {
-        self.items
-            .push(ContextMenuItem::Header(ListSubHeader::new(title)));
+        self.items.push(ContextMenuItem::Header(title.into()));
         self
     }
 
     pub fn separator(mut self) -> Self {
-        self.items.push(ContextMenuItem::Separator(ListSeparator));
+        self.items.push(ContextMenuItem::Separator);
         self
     }
 
     pub fn entry(
         mut self,
-        view: ListItem,
+        label: impl Into<SharedString>,
         on_click: impl Fn(&ClickEvent, &mut WindowContext) + 'static,
     ) -> Self {
         self.items
-            .push(ContextMenuItem::Entry(view, Rc::new(on_click)));
+            .push(ContextMenuItem::Entry(label.into(), Rc::new(on_click)));
         self
     }
 
-    pub fn action(self, view: ListItem, action: Box<dyn Action>) -> Self {
+    pub fn action(self, label: impl Into<SharedString>, action: Box<dyn Action>) -> Self {
         // todo: add the keybindings to the list entry
-        self.entry(view, move |_, cx| cx.dispatch_action(action.boxed_clone()))
+        self.entry(label.into(), move |_, cx| {
+            cx.dispatch_action(action.boxed_clone())
+        })
     }
 
     pub fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
         // todo!()
-        cx.emit(Manager::Dismiss);
+        cx.emit(DismissEvent::Dismiss);
     }
 
     pub fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
-        cx.emit(Manager::Dismiss);
+        cx.emit(DismissEvent::Dismiss);
     }
 }
 
@@ -104,21 +105,21 @@ impl Render for ContextMenu {
                 // .border_color(cx.theme().colors().border)
                 .child(
                     List::new().children(self.items.iter().map(|item| match item {
-                        ContextMenuItem::Separator(separator) => {
-                            separator.clone().render_into_any()
+                        ContextMenuItem::Separator => ListSeparator::new().into_any_element(),
+                        ContextMenuItem::Header(header) => {
+                            ListSubHeader::new(header.clone()).into_any_element()
                         }
-                        ContextMenuItem::Header(header) => header.clone().render_into_any(),
                         ContextMenuItem::Entry(entry, callback) => {
                             let callback = callback.clone();
-                            let dismiss = cx.listener(|_, _, cx| cx.emit(Manager::Dismiss));
+                            let dismiss = cx.listener(|_, _, cx| cx.emit(DismissEvent::Dismiss));
 
-                            entry
-                                .clone()
+                            ListItem::new(entry.clone())
+                                .child(Label::new(entry.clone()))
                                 .on_click(move |event, cx| {
                                     callback(event, cx);
                                     dismiss(event, cx)
                                 })
-                                .render_into_any()
+                                .into_any_element()
                         }
                     })),
                 ),
@@ -140,8 +141,8 @@ impl<M: ManagedView> MenuHandle<M> {
         self
     }
 
-    pub fn child<R: RenderOnce>(mut self, f: impl FnOnce(bool) -> R + 'static) -> Self {
-        self.child_builder = Some(Box::new(|b| f(b).render_once().into_any()));
+    pub fn child<R: IntoElement>(mut self, f: impl FnOnce(bool) -> R + 'static) -> Self {
+        self.child_builder = Some(Box::new(|b| f(b).into_element().into_any()));
         self
     }
 
@@ -264,7 +265,7 @@ impl<M: ManagedView> Element for MenuHandle<M> {
                 let new_menu = (builder)(cx);
                 let menu2 = menu.clone();
                 cx.subscribe(&new_menu, move |modal, e, cx| match e {
-                    &Manager::Dismiss => {
+                    &DismissEvent::Dismiss => {
                         *menu2.borrow_mut() = None;
                         cx.notify();
                     }
@@ -286,127 +287,14 @@ impl<M: ManagedView> Element for MenuHandle<M> {
     }
 }
 
-impl<M: ManagedView> RenderOnce for MenuHandle<M> {
+impl<M: ManagedView> IntoElement for MenuHandle<M> {
     type Element = Self;
 
     fn element_id(&self) -> Option<gpui::ElementId> {
         Some(self.id.clone())
     }
 
-    fn render_once(self) -> Self::Element {
+    fn into_element(self) -> Self::Element {
         self
-    }
-}
-
-#[cfg(feature = "stories")]
-pub use stories::*;
-
-#[cfg(feature = "stories")]
-mod stories {
-    use super::*;
-    use crate::{story::Story, Label};
-    use gpui::{actions, Div, Render};
-
-    actions!(PrintCurrentDate, PrintBestFood);
-
-    fn build_menu(cx: &mut WindowContext, header: impl Into<SharedString>) -> View<ContextMenu> {
-        ContextMenu::build(cx, |menu, _| {
-            menu.header(header)
-                .separator()
-                .entry(
-                    ListItem::new("Print current time", Label::new("Print current time")),
-                    |v, cx| {
-                        println!("dispatching PrintCurrentTime action");
-                        cx.dispatch_action(PrintCurrentDate.boxed_clone())
-                    },
-                )
-                .entry(
-                    ListItem::new("Print best food", Label::new("Print best food")),
-                    |v, cx| cx.dispatch_action(PrintBestFood.boxed_clone()),
-                )
-        })
-    }
-
-    pub struct ContextMenuStory;
-
-    impl Render for ContextMenuStory {
-        type Element = Div;
-
-        fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-            Story::container(cx)
-                .on_action(|_: &PrintCurrentDate, _| {
-                    println!("printing unix time!");
-                    if let Ok(unix_time) = std::time::UNIX_EPOCH.elapsed() {
-                        println!("Current Unix time is {:?}", unix_time.as_secs());
-                    }
-                })
-                .on_action(|_: &PrintBestFood, _| {
-                    println!("burrito");
-                })
-                .flex()
-                .flex_row()
-                .justify_between()
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .justify_between()
-                        .child(
-                            menu_handle("test2")
-                                .child(|is_open| {
-                                    Label::new(if is_open {
-                                        "TOP LEFT"
-                                    } else {
-                                        "RIGHT CLICK ME"
-                                    })
-                                })
-                                .menu(move |cx| build_menu(cx, "top left")),
-                        )
-                        .child(
-                            menu_handle("test1")
-                                .child(|is_open| {
-                                    Label::new(if is_open {
-                                        "BOTTOM LEFT"
-                                    } else {
-                                        "RIGHT CLICK ME"
-                                    })
-                                })
-                                .anchor(AnchorCorner::BottomLeft)
-                                .attach(AnchorCorner::TopLeft)
-                                .menu(move |cx| build_menu(cx, "bottom left")),
-                        ),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .justify_between()
-                        .child(
-                            menu_handle("test3")
-                                .child(|is_open| {
-                                    Label::new(if is_open {
-                                        "TOP RIGHT"
-                                    } else {
-                                        "RIGHT CLICK ME"
-                                    })
-                                })
-                                .anchor(AnchorCorner::TopRight)
-                                .menu(move |cx| build_menu(cx, "top right")),
-                        )
-                        .child(
-                            menu_handle("test4")
-                                .child(|is_open| {
-                                    Label::new(if is_open {
-                                        "BOTTOM RIGHT"
-                                    } else {
-                                        "RIGHT CLICK ME"
-                                    })
-                                })
-                                .anchor(AnchorCorner::BottomRight)
-                                .attach(AnchorCorner::TopRight)
-                                .menu(move |cx| build_menu(cx, "bottom right")),
-                        ),
-                )
-        }
     }
 }

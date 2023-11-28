@@ -1,11 +1,11 @@
 use crate::{h_stack, prelude::*, Icon, IconElement};
 use gpui::{prelude::*, Action, AnyView, Div, MouseButton, MouseDownEvent, Stateful};
 
-#[derive(RenderOnce)]
+#[derive(IntoElement)]
 pub struct IconButton {
     id: ElementId,
     icon: Icon,
-    color: TextColor,
+    color: Color,
     variant: ButtonVariant,
     state: InteractionState,
     selected: bool,
@@ -13,13 +13,13 @@ pub struct IconButton {
     on_mouse_down: Option<Box<dyn Fn(&MouseDownEvent, &mut WindowContext) + 'static>>,
 }
 
-impl Component for IconButton {
+impl RenderOnce for IconButton {
     type Rendered = Stateful<Div>;
 
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         let icon_color = match (self.state, self.color) {
-            (InteractionState::Disabled, _) => TextColor::Disabled,
-            (InteractionState::Active, _) => TextColor::Selected,
+            (InteractionState::Disabled, _) => Color::Disabled,
+            (InteractionState::Active, _) => Color::Selected,
             _ => self.color,
         };
 
@@ -37,7 +37,7 @@ impl Component for IconButton {
         };
 
         if self.selected {
-            bg_color = bg_hover_color;
+            bg_color = cx.theme().colors().element_selected;
         }
 
         let mut button = h_stack()
@@ -76,7 +76,7 @@ impl IconButton {
         Self {
             id: id.into(),
             icon,
-            color: TextColor::default(),
+            color: Color::default(),
             variant: ButtonVariant::default(),
             state: InteractionState::default(),
             selected: false,
@@ -90,7 +90,7 @@ impl IconButton {
         self
     }
 
-    pub fn color(mut self, color: TextColor) -> Self {
+    pub fn color(mut self, color: Color) -> Self {
         self.color = color;
         self
     }

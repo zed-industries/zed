@@ -25,6 +25,7 @@ serde.workspace = true
 settings2 = { path = "../settings2" }
 simplelog = "0.9"
 smallvec.workspace = true
+story = { path = "../story" }
 strum = { version = "0.25.0", features = ["derive"] }
 theme = { path = "../theme" }
 theme2 = { path = "../theme2" }

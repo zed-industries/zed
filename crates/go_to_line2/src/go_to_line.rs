@@ -1,13 +1,13 @@
 use editor::{display_map::ToDisplayPoint, scroll::autoscroll::Autoscroll, Editor};
 use gpui::{
-    actions, div, prelude::*, AppContext, Div, EventEmitter, FocusHandle, FocusableView, Manager,
-    Render, SharedString, Styled, Subscription, View, ViewContext, VisualContext, WindowContext,
+    actions, div, prelude::*, AppContext, DismissEvent, Div, EventEmitter, FocusHandle,
+    FocusableView, Render, SharedString, Styled, Subscription, View, ViewContext, VisualContext,
+    WindowContext,
 };
 use text::{Bias, Point};
 use theme::ActiveTheme;
-use ui::{h_stack, v_stack, Label, StyledExt, TextColor};
+use ui::{h_stack, v_stack, Color, Label, StyledExt};
 use util::paths::FILE_ROW_COLUMN_DELIMITER;
-use workspace::Workspace;
 
 actions!(Toggle);
 
@@ -25,22 +25,24 @@ pub struct GoToLine {
 
 impl FocusableView for GoToLine {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
-        self.active_editor.focus_handle(cx)
+        self.line_editor.focus_handle(cx)
     }
 }
-impl EventEmitter<Manager> for GoToLine {}
+impl EventEmitter<DismissEvent> for GoToLine {}
 
 impl GoToLine {
-    fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
-        workspace.register_action(|workspace, _: &Toggle, cx| {
-            let Some(editor) = workspace
-                .active_item(cx)
-                .and_then(|active_item| active_item.downcast::<Editor>())
-            else {
+    fn register(editor: &mut Editor, cx: &mut ViewContext<Editor>) {
+        let handle = cx.view().downgrade();
+        editor.register_action(move |_: &Toggle, cx| {
+            let Some(editor) = handle.upgrade() else {
                 return;
             };
-
-            workspace.toggle_modal(cx, move |cx| GoToLine::new(editor, cx));
+            let Some(workspace) = editor.read(cx).workspace() else {
+                return;
+            };
+            workspace.update(cx, |workspace, cx| {
+                workspace.toggle_modal(cx, move |cx| GoToLine::new(editor, cx));
+            })
         });
     }
 
@@ -88,7 +90,7 @@ impl GoToLine {
     ) {
         match event {
             // todo!() this isn't working...
-            editor::EditorEvent::Blurred => cx.emit(Manager::Dismiss),
+            editor::EditorEvent::Blurred => cx.emit(DismissEvent::Dismiss),
             editor::EditorEvent::BufferEdited { .. } => self.highlight_current_line(cx),
             _ => {}
         }
@@ -123,7 +125,7 @@ impl GoToLine {
     }
 
     fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
-        cx.emit(Manager::Dismiss);
+        cx.emit(DismissEvent::Dismiss);
     }
 
     fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
@@ -140,7 +142,7 @@ impl GoToLine {
             self.prev_scroll_position.take();
         }
 
-        cx.emit(Manager::Dismiss);
+        cx.emit(DismissEvent::Dismiss);
     }
 }
 
@@ -176,7 +178,7 @@ impl Render for GoToLine {
                             .justify_between()
                             .px_2()
                             .py_1()
-                            .child(Label::new(self.current_text.clone()).color(TextColor::Muted)),
+                            .child(Label::new(self.current_text.clone()).color(Color::Muted)),
                     ),
             )
     }

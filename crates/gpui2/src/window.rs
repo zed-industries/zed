@@ -193,11 +193,11 @@ pub trait FocusableView: 'static + Render {
 
 /// ManagedView is a view (like a Modal, Popover, Menu, etc.)
 /// where the lifecycle of the view is handled by another view.
-pub trait ManagedView: FocusableView + EventEmitter<Manager> {}
+pub trait ManagedView: FocusableView + EventEmitter<DismissEvent> {}
 
-impl<M: FocusableView + EventEmitter<Manager>> ManagedView for M {}
+impl<M: FocusableView + EventEmitter<DismissEvent>> ManagedView for M {}
 
-pub enum Manager {
+pub enum DismissEvent {
     Dismiss,
 }
 
@@ -230,9 +230,15 @@ pub struct Window {
     pub(crate) focus: Option<FocusId>,
 }
 
+pub(crate) struct ElementStateBox {
+    inner: Box<dyn Any>,
+    #[cfg(debug_assertions)]
+    type_name: &'static str,
+}
+
 // #[derive(Default)]
 pub(crate) struct Frame {
-    pub(crate) element_states: HashMap<GlobalElementId, Box<dyn Any>>,
+    pub(crate) element_states: HashMap<GlobalElementId, ElementStateBox>,
     mouse_listeners: HashMap<TypeId, Vec<(StackingOrder, AnyMouseListener)>>,
     pub(crate) dispatch_tree: DispatchTree,
     pub(crate) focus_listeners: Vec<AnyFocusListener>,
@@ -875,7 +881,7 @@ impl<'a> WindowContext<'a> {
         origin: Point<Pixels>,
         width: Pixels,
         style: &UnderlineStyle,
-    ) -> Result<()> {
+    ) {
         let scale_factor = self.scale_factor();
         let height = if style.wavy {
             style.thickness * 3.
@@ -899,7 +905,6 @@ impl<'a> WindowContext<'a> {
                 wavy: style.wavy,
             },
         );
-        Ok(())
     }
 
     /// Paint a monochrome (non-emoji) glyph into the scene for the current frame at the current z-index.
@@ -1512,6 +1517,13 @@ impl<'a> WindowContext<'a> {
                 .set_input_handler(Box::new(input_handler));
         }
     }
+
+    pub fn on_window_should_close(&mut self, f: impl Fn(&mut WindowContext) -> bool + 'static) {
+        let mut this = self.to_async();
+        self.window
+            .platform_window
+            .on_should_close(Box::new(move || this.update(|_, cx| f(cx)).unwrap_or(true)))
+    }
 }
 
 impl Context for WindowContext<'_> {
@@ -1658,7 +1670,7 @@ impl VisualContext for WindowContext<'_> {
     where
         V: ManagedView,
     {
-        self.update_view(view, |_, cx| cx.emit(Manager::Dismiss))
+        self.update_view(view, |_, cx| cx.emit(DismissEvent::Dismiss))
     }
 }
 
@@ -1747,6 +1759,24 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
         }
     }
 
+    /// Invoke the given function with the content mask reset to that
+    /// of the window.
+    fn break_content_mask<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
+        let mask = ContentMask {
+            bounds: Bounds {
+                origin: Point::default(),
+                size: self.window().viewport_size,
+            },
+        };
+        self.window_mut()
+            .current_frame
+            .content_mask_stack
+            .push(mask);
+        let result = f(self);
+        self.window_mut().current_frame.content_mask_stack.pop();
+        result
+    }
+
     /// Update the global element offset relative to the current offset. This is used to implement
     /// scrolling.
     fn with_element_offset<R>(
@@ -1815,10 +1845,37 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
                         .remove(&global_id)
                 })
             {
+                let ElementStateBox {
+                    inner,
+
+                    #[cfg(debug_assertions)]
+                    type_name
+                } = any;
                 // Using the extra inner option to avoid needing to reallocate a new box.
-                let mut state_box = any
+                let mut state_box = inner
                     .downcast::<Option<S>>()
-                    .expect("invalid element state type for id");
+                    .map_err(|_| {
+                        #[cfg(debug_assertions)]
+                        {
+                            anyhow!(
+                                "invalid element state type for id, requested_type {:?}, actual type: {:?}",
+                                std::any::type_name::<S>(),
+                                type_name
+                            )
+                        }
+
+                        #[cfg(not(debug_assertions))]
+                        {
+                            anyhow!(
+                                "invalid element state type for id, requested_type {:?}",
+                                std::any::type_name::<S>(),
+                            )
+                        }
+                    })
+                    .unwrap();
+
+                // Actual: Option<AnyElement> <- View
+                // Requested: () <- AnyElemet
                 let state = state_box
                     .take()
                     .expect("element state is already on the stack");
@@ -1827,14 +1884,27 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
                 cx.window_mut()
                     .current_frame
                     .element_states
-                    .insert(global_id, state_box);
+                    .insert(global_id, ElementStateBox {
+                        inner: state_box,
+
+                        #[cfg(debug_assertions)]
+                        type_name
+                    });
                 result
             } else {
                 let (result, state) = f(None, cx);
                 cx.window_mut()
                     .current_frame
                     .element_states
-                    .insert(global_id, Box::new(Some(state)));
+                    .insert(global_id,
+                        ElementStateBox {
+                            inner: Box::new(Some(state)),
+
+                            #[cfg(debug_assertions)]
+                            type_name: std::any::type_name::<S>()
+                        }
+
+                    );
                 result
             }
         })
@@ -2304,7 +2374,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     where
         V: ManagedView,
     {
-        self.defer(|_, cx| cx.emit(Manager::Dismiss))
+        self.defer(|_, cx| cx.emit(DismissEvent::Dismiss))
     }
 
     pub fn listener<E>(
@@ -2599,6 +2669,12 @@ pub enum ElementId {
     FocusHandle(FocusId),
 }
 
+impl ElementId {
+    pub(crate) fn from_entity_id(entity_id: EntityId) -> Self {
+        ElementId::View(entity_id)
+    }
+}
+
 impl TryInto<SharedString> for ElementId {
     type Error = anyhow::Error;
 
@@ -2608,12 +2684,6 @@ impl TryInto<SharedString> for ElementId {
         } else {
             Err(anyhow!("element id is not string"))
         }
-    }
-}
-
-impl From<EntityId> for ElementId {
-    fn from(id: EntityId) -> Self {
-        ElementId::View(id)
     }
 }
 

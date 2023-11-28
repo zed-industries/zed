@@ -4,7 +4,7 @@ use gpui::{
     MouseDownEvent, Render, Task, UniformListScrollHandle, View, ViewContext, WindowContext,
 };
 use std::{cmp, sync::Arc};
-use ui::{prelude::*, v_stack, Divider, Label, TextColor};
+use ui::{prelude::*, v_stack, Color, Divider, Label};
 
 pub struct Picker<D: PickerDelegate> {
     pub delegate: D,
@@ -15,7 +15,7 @@ pub struct Picker<D: PickerDelegate> {
 }
 
 pub trait PickerDelegate: Sized + 'static {
-    type ListItem: RenderOnce;
+    type ListItem: IntoElement;
 
     fn match_count(&self) -> usize;
     fn selected_index(&self) -> usize;
@@ -114,6 +114,7 @@ impl<D: PickerDelegate> Picker<D> {
     }
 
     fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
+        dbg!("canceling!");
         self.delegate.dismissed(cx);
     }
 
@@ -250,7 +251,7 @@ impl<D: PickerDelegate> Render for Picker<D> {
                     v_stack().p_1().grow().child(
                         div()
                             .px_1()
-                            .child(Label::new("No matches").color(TextColor::Muted)),
+                            .child(Label::new("No matches").color(Color::Muted)),
                     ),
                 )
             })

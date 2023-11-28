@@ -14,8 +14,8 @@ use editor::{
 use futures::future::try_join_all;
 use gpui::{
     actions, div, AnyElement, AnyView, AppContext, Context, Div, EventEmitter, FocusEvent,
-    FocusHandle, Focusable, FocusableElement, FocusableView, InteractiveElement, Model,
-    ParentElement, Render, RenderOnce, SharedString, Styled, Subscription, Task, View, ViewContext,
+    FocusHandle, Focusable, FocusableElement, FocusableView, InteractiveElement, IntoElement,
+    Model, ParentElement, Render, SharedString, Styled, Subscription, Task, View, ViewContext,
     VisualContext, WeakView, WindowContext,
 };
 use language::{
@@ -36,7 +36,7 @@ use std::{
 };
 use theme::ActiveTheme;
 pub use toolbar_controls::ToolbarControls;
-use ui::{h_stack, HighlightedLabel, Icon, IconElement, Label, TextColor};
+use ui::{h_stack, Color, HighlightedLabel, Icon, IconElement, Label};
 use util::TryFutureExt;
 use workspace::{
     item::{BreadcrumbText, Item, ItemEvent, ItemHandle},
@@ -778,28 +778,28 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
             .bg(gpui::red())
             .map(|stack| {
                 let icon = if diagnostic.severity == DiagnosticSeverity::ERROR {
-                    IconElement::new(Icon::XCircle).color(TextColor::Error)
+                    IconElement::new(Icon::XCircle).color(Color::Error)
                 } else {
-                    IconElement::new(Icon::ExclamationTriangle).color(TextColor::Warning)
+                    IconElement::new(Icon::ExclamationTriangle).color(Color::Warning)
                 };
 
                 stack.child(div().pl_8().child(icon))
             })
             .when_some(diagnostic.source.as_ref(), |stack, source| {
-                stack.child(Label::new(format!("{source}:")).color(TextColor::Accent))
+                stack.child(Label::new(format!("{source}:")).color(Color::Accent))
             })
             .child(HighlightedLabel::new(message.clone(), highlights.clone()))
             .when_some(diagnostic.code.as_ref(), |stack, code| {
                 stack.child(Label::new(code.clone()))
             })
-            .render_into_any()
+            .into_any_element()
     })
 }
 
 pub(crate) fn render_summary(summary: &DiagnosticSummary) -> AnyElement {
     if summary.error_count == 0 && summary.warning_count == 0 {
         let label = Label::new("No problems");
-        label.render_into_any()
+        label.into_any_element()
     } else {
         h_stack()
             .bg(gpui::red())
@@ -807,7 +807,7 @@ pub(crate) fn render_summary(summary: &DiagnosticSummary) -> AnyElement {
             .child(Label::new(summary.error_count.to_string()))
             .child(IconElement::new(Icon::ExclamationTriangle))
             .child(Label::new(summary.warning_count.to_string()))
-            .render_into_any()
+            .into_any_element()
     }
 }
 
@@ -1550,7 +1550,7 @@ mod tests {
                                 block_id: ix,
                                 editor_style: &editor::EditorStyle::default(),
                             })
-                            .element_id()?
+                            .inner_id()?
                             .try_into()
                             .ok()?,
 

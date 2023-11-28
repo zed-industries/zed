@@ -1,7 +1,7 @@
 use crate::{
     self as gpui, hsla, point, px, relative, rems, AbsoluteLength, AlignItems, CursorStyle,
     DefiniteLength, Display, Fill, FlexDirection, Hsla, JustifyContent, Length, Position,
-    SharedString, StyleRefinement, Visibility,
+    SharedString, StyleRefinement, Visibility, WhiteSpace,
 };
 use crate::{BoxShadow, TextStyleRefinement};
 use smallvec::{smallvec, SmallVec};
@@ -98,6 +98,24 @@ pub trait Styled: Sized {
     /// [Docs](https://tailwindcss.com/docs/cursor)
     fn cursor_pointer(mut self) -> Self {
         self.style().mouse_cursor = Some(CursorStyle::PointingHand);
+        self
+    }
+
+    /// Sets the whitespace of the element to `normal`.
+    /// [Docs](https://tailwindcss.com/docs/whitespace#normal)
+    fn whitespace_normal(mut self) -> Self {
+        self.text_style()
+            .get_or_insert_with(Default::default)
+            .white_space = Some(WhiteSpace::Normal);
+        self
+    }
+
+    /// Sets the whitespace of the element to `nowrap`.
+    /// [Docs](https://tailwindcss.com/docs/whitespace#nowrap)
+    fn whitespace_nowrap(mut self) -> Self {
+        self.text_style()
+            .get_or_insert_with(Default::default)
+            .white_space = Some(WhiteSpace::Nowrap);
         self
     }
 
@@ -340,6 +358,13 @@ pub trait Styled: Sized {
 
     fn text_color(mut self, color: impl Into<Hsla>) -> Self {
         self.text_style().get_or_insert_with(Default::default).color = Some(color.into());
+        self
+    }
+
+    fn text_bg(mut self, bg: impl Into<Hsla>) -> Self {
+        self.text_style()
+            .get_or_insert_with(Default::default)
+            .background_color = Some(bg.into());
         self
     }
 

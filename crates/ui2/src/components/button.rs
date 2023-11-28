@@ -1,12 +1,12 @@
 use std::rc::Rc;
 
 use gpui::{
-    DefiniteLength, Div, Hsla, MouseButton, MouseDownEvent, RenderOnce, StatefulInteractiveElement,
-    WindowContext,
+    DefiniteLength, Div, Hsla, IntoElement, MouseButton, MouseDownEvent,
+    StatefulInteractiveElement, WindowContext,
 };
 
 use crate::prelude::*;
-use crate::{h_stack, Icon, IconButton, IconElement, Label, LineHeightStyle, TextColor};
+use crate::{h_stack, Color, Icon, IconButton, IconElement, Label, LineHeightStyle};
 
 /// Provides the flexibility to use either a standard
 /// button or an icon button in a given context.
@@ -64,7 +64,7 @@ impl ButtonVariant {
     }
 }
 
-#[derive(RenderOnce)]
+#[derive(IntoElement)]
 pub struct Button {
     disabled: bool,
     click_handler: Option<Rc<dyn Fn(&MouseDownEvent, &mut WindowContext)>>,
@@ -73,17 +73,17 @@ pub struct Button {
     label: SharedString,
     variant: ButtonVariant,
     width: Option<DefiniteLength>,
-    color: Option<TextColor>,
+    color: Option<Color>,
 }
 
-impl Component for Button {
+impl RenderOnce for Button {
     type Rendered = gpui::Stateful<Div>;
 
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         let (icon_color, label_color) = match (self.disabled, self.color) {
-            (true, _) => (TextColor::Disabled, TextColor::Disabled),
-            (_, None) => (TextColor::Default, TextColor::Default),
-            (_, Some(color)) => (TextColor::from(color), color),
+            (true, _) => (Color::Disabled, Color::Disabled),
+            (_, None) => (Color::Default, Color::Default),
+            (_, Some(color)) => (Color::from(color), color),
         };
 
         let mut button = h_stack()
@@ -181,14 +181,14 @@ impl Button {
         self
     }
 
-    pub fn color(mut self, color: Option<TextColor>) -> Self {
+    pub fn color(mut self, color: Option<Color>) -> Self {
         self.color = color;
         self
     }
 
-    pub fn label_color(&self, color: Option<TextColor>) -> TextColor {
+    pub fn label_color(&self, color: Option<Color>) -> Color {
         if self.disabled {
-            TextColor::Disabled
+            Color::Disabled
         } else if let Some(color) = color {
             color
         } else {
@@ -196,23 +196,23 @@ impl Button {
         }
     }
 
-    fn render_label(&self, color: TextColor) -> Label {
+    fn render_label(&self, color: Color) -> Label {
         Label::new(self.label.clone())
             .color(color)
             .line_height_style(LineHeightStyle::UILabel)
     }
 
-    fn render_icon(&self, icon_color: TextColor) -> Option<IconElement> {
+    fn render_icon(&self, icon_color: Color) -> Option<IconElement> {
         self.icon.map(|i| IconElement::new(i).color(icon_color))
     }
 }
 
-#[derive(RenderOnce)]
+#[derive(IntoElement)]
 pub struct ButtonGroup {
     buttons: Vec<Button>,
 }
 
-impl Component for ButtonGroup {
+impl RenderOnce for ButtonGroup {
     type Rendered = Div;
 
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {
@@ -229,173 +229,5 @@ impl Component for ButtonGroup {
 impl ButtonGroup {
     pub fn new(buttons: Vec<Button>) -> Self {
         Self { buttons }
-    }
-}
-
-#[cfg(feature = "stories")]
-pub use stories::*;
-
-#[cfg(feature = "stories")]
-mod stories {
-    use super::*;
-    use crate::{h_stack, v_stack, Story, TextColor};
-    use gpui::{rems, Div, Render};
-    use strum::IntoEnumIterator;
-
-    pub struct ButtonStory;
-
-    impl Render for ButtonStory {
-        type Element = Div;
-
-        fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-            let states = InteractionState::iter();
-
-            Story::container(cx)
-                .child(Story::title_for::<Button>(cx))
-                .child(
-                    div()
-                        .flex()
-                        .gap_8()
-                        .child(
-                            div()
-                                .child(Story::label(cx, "Ghost (Default)"))
-                                .child(h_stack().gap_2().children(states.clone().map(|state| {
-                                    v_stack()
-                                        .gap_1()
-                                        .child(
-                                            Label::new(state.to_string()).color(TextColor::Muted),
-                                        )
-                                        .child(
-                                            Button::new("Label").variant(ButtonVariant::Ghost), // .state(state),
-                                        )
-                                })))
-                                .child(Story::label(cx, "Ghost – Left Icon"))
-                                .child(h_stack().gap_2().children(states.clone().map(|state| {
-                                    v_stack()
-                                        .gap_1()
-                                        .child(
-                                            Label::new(state.to_string()).color(TextColor::Muted),
-                                        )
-                                        .child(
-                                            Button::new("Label")
-                                                .variant(ButtonVariant::Ghost)
-                                                .icon(Icon::Plus)
-                                                .icon_position(IconPosition::Left), // .state(state),
-                                        )
-                                })))
-                                .child(Story::label(cx, "Ghost – Right Icon"))
-                                .child(h_stack().gap_2().children(states.clone().map(|state| {
-                                    v_stack()
-                                        .gap_1()
-                                        .child(
-                                            Label::new(state.to_string()).color(TextColor::Muted),
-                                        )
-                                        .child(
-                                            Button::new("Label")
-                                                .variant(ButtonVariant::Ghost)
-                                                .icon(Icon::Plus)
-                                                .icon_position(IconPosition::Right), // .state(state),
-                                        )
-                                }))),
-                        )
-                        .child(
-                            div()
-                                .child(Story::label(cx, "Filled"))
-                                .child(h_stack().gap_2().children(states.clone().map(|state| {
-                                    v_stack()
-                                        .gap_1()
-                                        .child(
-                                            Label::new(state.to_string()).color(TextColor::Muted),
-                                        )
-                                        .child(
-                                            Button::new("Label").variant(ButtonVariant::Filled), // .state(state),
-                                        )
-                                })))
-                                .child(Story::label(cx, "Filled – Left Button"))
-                                .child(h_stack().gap_2().children(states.clone().map(|state| {
-                                    v_stack()
-                                        .gap_1()
-                                        .child(
-                                            Label::new(state.to_string()).color(TextColor::Muted),
-                                        )
-                                        .child(
-                                            Button::new("Label")
-                                                .variant(ButtonVariant::Filled)
-                                                .icon(Icon::Plus)
-                                                .icon_position(IconPosition::Left), // .state(state),
-                                        )
-                                })))
-                                .child(Story::label(cx, "Filled – Right Button"))
-                                .child(h_stack().gap_2().children(states.clone().map(|state| {
-                                    v_stack()
-                                        .gap_1()
-                                        .child(
-                                            Label::new(state.to_string()).color(TextColor::Muted),
-                                        )
-                                        .child(
-                                            Button::new("Label")
-                                                .variant(ButtonVariant::Filled)
-                                                .icon(Icon::Plus)
-                                                .icon_position(IconPosition::Right), // .state(state),
-                                        )
-                                }))),
-                        )
-                        .child(
-                            div()
-                                .child(Story::label(cx, "Fixed With"))
-                                .child(h_stack().gap_2().children(states.clone().map(|state| {
-                                    v_stack()
-                                        .gap_1()
-                                        .child(
-                                            Label::new(state.to_string()).color(TextColor::Muted),
-                                        )
-                                        .child(
-                                            Button::new("Label")
-                                                .variant(ButtonVariant::Filled)
-                                                // .state(state)
-                                                .width(Some(rems(6.).into())),
-                                        )
-                                })))
-                                .child(Story::label(cx, "Fixed With – Left Icon"))
-                                .child(h_stack().gap_2().children(states.clone().map(|state| {
-                                    v_stack()
-                                        .gap_1()
-                                        .child(
-                                            Label::new(state.to_string()).color(TextColor::Muted),
-                                        )
-                                        .child(
-                                            Button::new("Label")
-                                                .variant(ButtonVariant::Filled)
-                                                // .state(state)
-                                                .icon(Icon::Plus)
-                                                .icon_position(IconPosition::Left)
-                                                .width(Some(rems(6.).into())),
-                                        )
-                                })))
-                                .child(Story::label(cx, "Fixed With – Right Icon"))
-                                .child(h_stack().gap_2().children(states.clone().map(|state| {
-                                    v_stack()
-                                        .gap_1()
-                                        .child(
-                                            Label::new(state.to_string()).color(TextColor::Muted),
-                                        )
-                                        .child(
-                                            Button::new("Label")
-                                                .variant(ButtonVariant::Filled)
-                                                // .state(state)
-                                                .icon(Icon::Plus)
-                                                .icon_position(IconPosition::Right)
-                                                .width(Some(rems(6.).into())),
-                                        )
-                                }))),
-                        ),
-                )
-                .child(Story::label(cx, "Button with `on_click`"))
-                .child(
-                    Button::new("Label")
-                        .variant(ButtonVariant::Ghost)
-                        .on_click(|_, cx| println!("Button clicked.")),
-                )
-        }
     }
 }

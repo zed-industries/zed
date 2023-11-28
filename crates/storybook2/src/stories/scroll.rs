@@ -10,8 +10,8 @@ impl ScrollStory {
     }
 }
 
-impl Render<Self> for ScrollStory {
-    type Element = Stateful<Self, Div<Self>>;
+impl Render for ScrollStory {
+    type Element = Stateful<Div>;
 
     fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> Self::Element {
         let theme = cx.theme();
@@ -38,7 +38,7 @@ impl Render<Self> for ScrollStory {
                         };
                         div()
                             .id(id)
-                            .tooltip(move |_, cx| Tooltip::text(format!("{}, {}", row, column), cx))
+                            .tooltip(move |cx| Tooltip::text(format!("{}, {}", row, column), cx))
                             .bg(bg)
                             .size(px(100. as f32))
                             .when(row >= 5 && column >= 5, |d| {

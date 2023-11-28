@@ -123,7 +123,6 @@ CARGO_TARGET_DIR="$TARGET_DIR" cargo doc --workspace --no-deps --open \
 --exclude snippet \
 --exclude sqlez \
 --exclude sqlez_macros \
---exclude storybook3 \
 --exclude sum_tree \
 --exclude terminal \
 --exclude terminal_view \

@@ -196,7 +196,10 @@ impl TextSystem {
         let mut decoration_runs = SmallVec::<[DecorationRun; 32]>::new();
         for run in runs {
             if let Some(last_run) = decoration_runs.last_mut() {
-                if last_run.color == run.color && last_run.underline == run.underline {
+                if last_run.color == run.color
+                    && last_run.underline == run.underline
+                    && last_run.background_color == run.background_color
+                {
                     last_run.len += run.len as u32;
                     continue;
                 }
@@ -204,6 +207,7 @@ impl TextSystem {
             decoration_runs.push(DecorationRun {
                 len: run.len as u32,
                 color: run.color,
+                background_color: run.background_color,
                 underline: run.underline.clone(),
             });
         }
@@ -254,13 +258,16 @@ impl TextSystem {
                 }
 
                 if decoration_runs.last().map_or(false, |last_run| {
-                    last_run.color == run.color && last_run.underline == run.underline
+                    last_run.color == run.color
+                        && last_run.underline == run.underline
+                        && last_run.background_color == run.background_color
                 }) {
                     decoration_runs.last_mut().unwrap().len += run_len_within_line as u32;
                 } else {
                     decoration_runs.push(DecorationRun {
                         len: run_len_within_line as u32,
                         color: run.color,
+                        background_color: run.background_color,
                         underline: run.underline.clone(),
                     });
                 }
@@ -283,7 +290,15 @@ impl TextSystem {
                 text: SharedString::from(line_text),
             });
 
-            line_start = line_end + 1; // Skip `\n` character.
+            // Skip `\n` character.
+            line_start = line_end + 1;
+            if let Some(run) = runs.peek_mut() {
+                run.len = run.len.saturating_sub(1);
+                if run.len == 0 {
+                    runs.next();
+                }
+            }
+
             font_runs.clear();
         }
 

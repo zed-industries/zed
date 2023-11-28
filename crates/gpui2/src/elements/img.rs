@@ -1,30 +1,59 @@
+use std::sync::Arc;
+
 use crate::{
-    Bounds, Element, InteractiveElement, InteractiveElementState, Interactivity, LayoutId, Pixels,
-    RenderOnce, SharedString, StyleRefinement, Styled, WindowContext,
+    Bounds, Element, ImageData, InteractiveElement, InteractiveElementState, Interactivity,
+    IntoElement, LayoutId, Pixels, SharedString, StyleRefinement, Styled, WindowContext,
 };
 use futures::FutureExt;
 use util::ResultExt;
 
+#[derive(Clone, Debug)]
+pub enum ImageSource {
+    /// Image content will be loaded from provided URI at render time.
+    Uri(SharedString),
+    Data(Arc<ImageData>),
+}
+
+impl From<SharedString> for ImageSource {
+    fn from(value: SharedString) -> Self {
+        Self::Uri(value)
+    }
+}
+
+impl From<Arc<ImageData>> for ImageSource {
+    fn from(value: Arc<ImageData>) -> Self {
+        Self::Data(value)
+    }
+}
+
 pub struct Img {
     interactivity: Interactivity,
-    uri: Option<SharedString>,
+    source: Option<ImageSource>,
     grayscale: bool,
 }
 
 pub fn img() -> Img {
     Img {
         interactivity: Interactivity::default(),
-        uri: None,
+        source: None,
         grayscale: false,
     }
 }
 
 impl Img {
     pub fn uri(mut self, uri: impl Into<SharedString>) -> Self {
-        self.uri = Some(uri.into());
+        self.source = Some(ImageSource::from(uri.into()));
+        self
+    }
+    pub fn data(mut self, data: Arc<ImageData>) -> Self {
+        self.source = Some(ImageSource::from(data));
         self
     }
 
+    pub fn source(mut self, source: impl Into<ImageSource>) -> Self {
+        self.source = Some(source.into());
+        self
+    }
     pub fn grayscale(mut self, grayscale: bool) -> Self {
         self.grayscale = grayscale;
         self
@@ -58,42 +87,47 @@ impl Element for Img {
             |style, _scroll_offset, cx| {
                 let corner_radii = style.corner_radii;
 
-                if let Some(uri) = self.uri.clone() {
-                    // eprintln!(">>> image_cache.get({uri}");
-                    let image_future = cx.image_cache.get(uri.clone());
-                    // eprintln!("<<< image_cache.get({uri}");
-                    if let Some(data) = image_future
-                        .clone()
-                        .now_or_never()
-                        .and_then(|result| result.ok())
-                    {
-                        let corner_radii = corner_radii.to_pixels(bounds.size, cx.rem_size());
-                        cx.with_z_index(1, |cx| {
-                            cx.paint_image(bounds, corner_radii, data, self.grayscale)
-                                .log_err()
-                        });
-                    } else {
-                        cx.spawn(|mut cx| async move {
-                            if image_future.await.ok().is_some() {
-                                cx.on_next_frame(|cx| cx.notify());
+                if let Some(source) = self.source {
+                    let image = match source {
+                        ImageSource::Uri(uri) => {
+                            let image_future = cx.image_cache.get(uri.clone());
+                            if let Some(data) = image_future
+                                .clone()
+                                .now_or_never()
+                                .and_then(|result| result.ok())
+                            {
+                                data
+                            } else {
+                                cx.spawn(|mut cx| async move {
+                                    if image_future.await.ok().is_some() {
+                                        cx.on_next_frame(|cx| cx.notify());
+                                    }
+                                })
+                                .detach();
+                                return;
                             }
-                        })
-                        .detach()
-                    }
+                        }
+                        ImageSource::Data(image) => image,
+                    };
+                    let corner_radii = corner_radii.to_pixels(bounds.size, cx.rem_size());
+                    cx.with_z_index(1, |cx| {
+                        cx.paint_image(bounds, corner_radii, image, self.grayscale)
+                            .log_err()
+                    });
                 }
             },
         )
     }
 }
 
-impl RenderOnce for Img {
+impl IntoElement for Img {
     type Element = Self;
 
     fn element_id(&self) -> Option<crate::ElementId> {
         self.interactivity.element_id.clone()
     }
 
-    fn render_once(self) -> Self::Element {
+    fn into_element(self) -> Self::Element {
         self
     }
 }

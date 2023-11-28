@@ -1,160 +1,19 @@
-use gpui::rems;
-use gpui::Rems;
 pub use gpui::{
-    div, Component, Element, ElementId, InteractiveElement, ParentElement, SharedString, Styled,
+    div, Element, ElementId, InteractiveElement, ParentElement, RenderOnce, SharedString, Styled,
     ViewContext, WindowContext,
 };
 
-pub use crate::elevation::*;
 pub use crate::StyledExt;
-pub use crate::{ButtonVariant, TextColor};
+pub use crate::{ButtonVariant, Color};
 pub use theme2::ActiveTheme;
 
-use gpui::Hsla;
 use strum::EnumIter;
-
-#[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, EnumIter)]
-pub enum UITextSize {
-    /// The default size for UI text.
-    ///
-    /// `0.825rem` or `14px` at the default scale of `1rem` = `16px`.
-    ///
-    /// Note: The absolute size of this text will change based on a user's `ui_scale` setting.
-    #[default]
-    Default,
-    /// The small size for UI text.
-    ///
-    /// `0.75rem` or `12px` at the default scale of `1rem` = `16px`.
-    ///
-    /// Note: The absolute size of this text will change based on a user's `ui_scale` setting.
-    Small,
-}
-
-impl UITextSize {
-    pub fn rems(self) -> Rems {
-        match self {
-            Self::Default => rems(0.875),
-            Self::Small => rems(0.75),
-        }
-    }
-}
-
-#[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, EnumIter)]
-pub enum FileSystemStatus {
-    #[default]
-    None,
-    Conflict,
-    Deleted,
-}
-
-impl std::fmt::Display for FileSystemStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                Self::None => "None",
-                Self::Conflict => "Conflict",
-                Self::Deleted => "Deleted",
-            }
-        )
-    }
-}
-
-#[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, EnumIter)]
-pub enum GitStatus {
-    #[default]
-    None,
-    Created,
-    Modified,
-    Deleted,
-    Conflict,
-    Renamed,
-}
-
-impl GitStatus {
-    pub fn hsla(&self, cx: &WindowContext) -> Hsla {
-        match self {
-            Self::None => cx.theme().system().transparent,
-            Self::Created => cx.theme().status().created,
-            Self::Modified => cx.theme().status().modified,
-            Self::Deleted => cx.theme().status().deleted,
-            Self::Conflict => cx.theme().status().conflict,
-            Self::Renamed => cx.theme().status().renamed,
-        }
-    }
-}
-
-impl std::fmt::Display for GitStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                Self::None => "None",
-                Self::Created => "Created",
-                Self::Modified => "Modified",
-                Self::Deleted => "Deleted",
-                Self::Conflict => "Conflict",
-                Self::Renamed => "Renamed",
-            }
-        )
-    }
-}
-
-#[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, EnumIter)]
-pub enum DiagnosticStatus {
-    #[default]
-    None,
-    Error,
-    Warning,
-    Info,
-}
 
 #[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, EnumIter)]
 pub enum IconSide {
     #[default]
     Left,
     Right,
-}
-
-#[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, EnumIter)]
-pub enum OrderMethod {
-    #[default]
-    Ascending,
-    Descending,
-    MostRecent,
-}
-
-#[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, EnumIter)]
-pub enum Shape {
-    #[default]
-    Circle,
-    RoundedRectangle,
-}
-
-#[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, EnumIter)]
-pub enum DisclosureControlVisibility {
-    #[default]
-    OnHover,
-    Always,
-}
-
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, EnumIter)]
-pub enum DisclosureControlStyle {
-    /// Shows the disclosure control only when hovered where possible.
-    ///
-    /// More compact, but not available everywhere.
-    ChevronOnHover,
-    /// Shows an icon where possible, otherwise shows a chevron.
-    ///
-    /// For example, in a file tree a folder or file icon is shown
-    /// instead of a chevron
-    Icon,
-    /// Always shows a chevron.
-    Chevron,
-    /// Completely hides the disclosure control where possible.
-    None,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, EnumIter)]
@@ -165,12 +24,22 @@ pub enum OverflowStyle {
 
 #[derive(Default, PartialEq, Copy, Clone, EnumIter, strum::Display)]
 pub enum InteractionState {
+    /// An element that is enabled and not hovered, active, focused, or disabled.
+    ///
+    /// This is often referred to as the "default" state.
     #[default]
     Enabled,
+    /// An element that is hovered.
     Hovered,
+    /// An element has an active mouse down or touch start event on it.
     Active,
+    /// An element that is focused using the keyboard.
     Focused,
+    /// An element that is disabled.
     Disabled,
+    /// A toggleable element that is selected, like the active button in a
+    /// button toggle group.
+    Selected,
 }
 
 impl InteractionState {

@@ -1,54 +1,48 @@
-// use std::ops::Range;
+use gpui::{
+    div, AnyElement, Div, IntoElement as _, ParentElement as _, RenderOnce, Styled, WindowContext,
+};
 
-// use gpui::{
-//     geometry::{
-//         rect::RectF,
-//         vector::{vec2f, Vector2F},
-//     },
-//     json::ToJson,
-//     serde_json::{self, json},
-//     AnyElement, Axis, Element, View, ViewContext,
-// };
+#[derive(Default)]
+pub(crate) struct FacePile {
+    faces: Vec<AnyElement>,
+}
 
-// pub(crate) struct FacePile<V: View> {
-//     overlap: f32,
-//     faces: Vec<AnyElement<V>>,
-// }
+impl RenderOnce for FacePile {
+    type Rendered = Div;
 
-// impl<V: View> FacePile<V> {
-//     pub fn new(overlap: f32) -> Self {
-//         Self {
-//             overlap,
-//             faces: Vec::new(),
-//         }
-//     }
-// }
+    fn render(self, _: &mut WindowContext) -> Self::Rendered {
+        let player_count = self.faces.len();
+        let player_list = self.faces.into_iter().enumerate().map(|(ix, player)| {
+            let isnt_last = ix < player_count - 1;
 
-// impl<V: View> Element<V> for FacePile<V> {
-//     type LayoutState = ();
-//     type PaintState = ();
+            div().when(isnt_last, |div| div.neg_mr_1()).child(player)
+        });
+        div().p_1().flex().items_center().children(player_list)
+    }
+}
 
+// impl Element for FacePile {
+//     type State = ();
 //     fn layout(
 //         &mut self,
-//         constraint: gpui::SizeConstraint,
-//         view: &mut V,
-//         cx: &mut ViewContext<V>,
-//     ) -> (Vector2F, Self::LayoutState) {
-//         debug_assert!(constraint.max_along(Axis::Horizontal) == f32::INFINITY);
-
+//         state: Option<Self::State>,
+//         cx: &mut WindowContext,
+//     ) -> (LayoutId, Self::State) {
 //         let mut width = 0.;
 //         let mut max_height = 0.;
+//         let mut faces = Vec::with_capacity(self.faces.len());
 //         for face in &mut self.faces {
-//             let layout = face.layout(constraint, view, cx);
+//             let layout = face.layout(cx);
 //             width += layout.x();
 //             max_height = f32::max(max_height, layout.y());
+//             faces.push(layout);
 //         }
 //         width -= self.overlap * self.faces.len().saturating_sub(1) as f32;
-
-//         (
-//             Vector2F::new(width, max_height.clamp(1., constraint.max.y())),
-//             (),
-//         )
+//         (cx.request_layout(&Style::default(), faces), ())
+//         // (
+//         //     Vector2F::new(width, max_height.clamp(1., constraint.max.y())),
+//         //     (),
+//         // ))
 //     }
 
 //     fn paint(
@@ -77,37 +71,10 @@
 
 //         ()
 //     }
-
-//     fn rect_for_text_range(
-//         &self,
-//         _: Range<usize>,
-//         _: RectF,
-//         _: RectF,
-//         _: &Self::LayoutState,
-//         _: &Self::PaintState,
-//         _: &V,
-//         _: &ViewContext<V>,
-//     ) -> Option<RectF> {
-//         None
-//     }
-
-//     fn debug(
-//         &self,
-//         bounds: RectF,
-//         _: &Self::LayoutState,
-//         _: &Self::PaintState,
-//         _: &V,
-//         _: &ViewContext<V>,
-//     ) -> serde_json::Value {
-//         json!({
-//             "type": "FacePile",
-//             "bounds": bounds.to_json()
-//         })
-//     }
 // }
 
-// impl<V: View> Extend<AnyElement<V>> for FacePile<V> {
-//     fn extend<T: IntoIterator<Item = AnyElement<V>>>(&mut self, children: T) {
-//         self.faces.extend(children);
-//     }
-// }
+impl Extend<AnyElement> for FacePile {
+    fn extend<T: IntoIterator<Item = AnyElement>>(&mut self, children: T) {
+        self.faces.extend(children);
+    }
+}

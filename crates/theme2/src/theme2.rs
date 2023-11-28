@@ -134,6 +134,12 @@ impl Theme {
             ignored: self.status().ignored,
         }
     }
+
+    /// Returns the [`Appearance`] for the theme.
+    #[inline(always)]
+    pub fn appearance(&self) -> Appearance {
+        self.appearance
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -144,8 +150,3 @@ pub struct DiagnosticStyle {
     pub hint: Hsla,
     pub ignored: Hsla,
 }
-
-#[cfg(feature = "stories")]
-mod story;
-#[cfg(feature = "stories")]
-pub use story::*;

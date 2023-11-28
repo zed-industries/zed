@@ -1,11 +1,11 @@
 use crate::{
-    Bounds, Element, ElementId, LayoutId, Pixels, RenderOnce, SharedString, Size, TextRun,
-    WindowContext, WrappedLine,
+    Bounds, DispatchPhase, Element, ElementId, IntoElement, LayoutId, MouseDownEvent, MouseUpEvent,
+    Pixels, Point, SharedString, Size, TextRun, WhiteSpace, WindowContext, WrappedLine,
 };
 use anyhow::anyhow;
 use parking_lot::{Mutex, MutexGuard};
 use smallvec::SmallVec;
-use std::{cell::Cell, rc::Rc, sync::Arc};
+use std::{cell::Cell, ops::Range, rc::Rc, sync::Arc};
 use util::ResultExt;
 
 impl Element for &'static str {
@@ -26,14 +26,14 @@ impl Element for &'static str {
     }
 }
 
-impl RenderOnce for &'static str {
+impl IntoElement for &'static str {
     type Element = Self;
 
     fn element_id(&self) -> Option<ElementId> {
         None
     }
 
-    fn render_once(self) -> Self::Element {
+    fn into_element(self) -> Self::Element {
         self
     }
 }
@@ -57,34 +57,39 @@ impl Element for SharedString {
     }
 }
 
-impl RenderOnce for SharedString {
+impl IntoElement for SharedString {
     type Element = Self;
 
     fn element_id(&self) -> Option<ElementId> {
         None
     }
 
-    fn render_once(self) -> Self::Element {
+    fn into_element(self) -> Self::Element {
         self
     }
 }
 
+/// Renders text with runs of different styles.
+///
+/// Callers are responsible for setting the correct style for each run.
+/// For text with a uniform style, you can usually avoid calling this constructor
+/// and just pass text directly.
 pub struct StyledText {
     text: SharedString,
     runs: Option<Vec<TextRun>>,
 }
 
 impl StyledText {
-    /// Renders text with runs of different styles.
-    ///
-    /// Callers are responsible for setting the correct style for each run.
-    /// For text with a uniform style, you can usually avoid calling this constructor
-    /// and just pass text directly.
-    pub fn new(text: SharedString, runs: Vec<TextRun>) -> Self {
+    pub fn new(text: impl Into<SharedString>) -> Self {
         StyledText {
-            text,
-            runs: Some(runs),
+            text: text.into(),
+            runs: None,
         }
+    }
+
+    pub fn with_runs(mut self, runs: Vec<TextRun>) -> Self {
+        self.runs = Some(runs);
+        self
     }
 }
 
@@ -106,14 +111,14 @@ impl Element for StyledText {
     }
 }
 
-impl RenderOnce for StyledText {
+impl IntoElement for StyledText {
     type Element = Self;
 
     fn element_id(&self) -> Option<crate::ElementId> {
         None
     }
 
-    fn render_once(self) -> Self::Element {
+    fn into_element(self) -> Self::Element {
         self
     }
 }
@@ -159,10 +164,14 @@ impl TextState {
             let element_state = self.clone();
 
             move |known_dimensions, available_space| {
-                let wrap_width = known_dimensions.width.or(match available_space.width {
-                    crate::AvailableSpace::Definite(x) => Some(x),
-                    _ => None,
-                });
+                let wrap_width = if text_style.white_space == WhiteSpace::Normal {
+                    known_dimensions.width.or(match available_space.width {
+                        crate::AvailableSpace::Definite(x) => Some(x),
+                        _ => None,
+                    })
+                } else {
+                    None
+                };
 
                 if let Some(text_state) = element_state.0.lock().as_ref() {
                     if text_state.size.is_some()
@@ -174,10 +183,7 @@ impl TextState {
 
                 let Some(lines) = text_system
                     .shape_text(
-                        &text,
-                        font_size,
-                        &runs[..],
-                        wrap_width, // Wrap if we know the width.
+                        &text, font_size, &runs, wrap_width, // Wrap if we know the width.
                     )
                     .log_err()
                 else {
@@ -194,7 +200,7 @@ impl TextState {
                 for line in &lines {
                     let line_size = line.size(line_height);
                     size.height += line_size.height;
-                    size.width = size.width.max(line_size.width);
+                    size.width = size.width.max(line_size.width).ceil();
                 }
 
                 element_state.lock().replace(TextStateInner {
@@ -225,16 +231,77 @@ impl TextState {
             line_origin.y += line.size(line_height).height;
         }
     }
+
+    fn index_for_position(&self, bounds: Bounds<Pixels>, position: Point<Pixels>) -> Option<usize> {
+        if !bounds.contains_point(&position) {
+            return None;
+        }
+
+        let element_state = self.lock();
+        let element_state = element_state
+            .as_ref()
+            .expect("measurement has not been performed");
+
+        let line_height = element_state.line_height;
+        let mut line_origin = bounds.origin;
+        let mut line_start_ix = 0;
+        for line in &element_state.lines {
+            let line_bottom = line_origin.y + line.size(line_height).height;
+            if position.y > line_bottom {
+                line_origin.y = line_bottom;
+                line_start_ix += line.len() + 1;
+            } else {
+                let position_within_line = position - line_origin;
+                let index_within_line =
+                    line.index_for_position(position_within_line, line_height)?;
+                return Some(line_start_ix + index_within_line);
+            }
+        }
+
+        None
+    }
 }
 
-struct InteractiveText {
+pub struct InteractiveText {
     element_id: ElementId,
     text: StyledText,
+    click_listener: Option<Box<dyn Fn(InteractiveTextClickEvent, &mut WindowContext<'_>)>>,
 }
 
-struct InteractiveTextState {
+struct InteractiveTextClickEvent {
+    mouse_down_index: usize,
+    mouse_up_index: usize,
+}
+
+pub struct InteractiveTextState {
     text_state: TextState,
-    clicked_range_ixs: Rc<Cell<SmallVec<[usize; 1]>>>,
+    mouse_down_index: Rc<Cell<Option<usize>>>,
+}
+
+impl InteractiveText {
+    pub fn new(id: impl Into<ElementId>, text: StyledText) -> Self {
+        Self {
+            element_id: id.into(),
+            text,
+            click_listener: None,
+        }
+    }
+
+    pub fn on_click(
+        mut self,
+        ranges: Vec<Range<usize>>,
+        listener: impl Fn(usize, &mut WindowContext<'_>) + 'static,
+    ) -> Self {
+        self.click_listener = Some(Box::new(move |event, cx| {
+            for (range_ix, range) in ranges.iter().enumerate() {
+                if range.contains(&event.mouse_down_index) && range.contains(&event.mouse_up_index)
+                {
+                    listener(range_ix, cx);
+                }
+            }
+        }));
+        self
+    }
 }
 
 impl Element for InteractiveText {
@@ -246,39 +313,74 @@ impl Element for InteractiveText {
         cx: &mut WindowContext,
     ) -> (LayoutId, Self::State) {
         if let Some(InteractiveTextState {
-            text_state,
-            clicked_range_ixs,
+            mouse_down_index, ..
         }) = state
         {
-            let (layout_id, text_state) = self.text.layout(Some(text_state), cx);
+            let (layout_id, text_state) = self.text.layout(None, cx);
             let element_state = InteractiveTextState {
                 text_state,
-                clicked_range_ixs,
+                mouse_down_index,
             };
             (layout_id, element_state)
         } else {
             let (layout_id, text_state) = self.text.layout(None, cx);
             let element_state = InteractiveTextState {
                 text_state,
-                clicked_range_ixs: Rc::default(),
+                mouse_down_index: Rc::default(),
             };
             (layout_id, element_state)
         }
     }
 
     fn paint(self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut WindowContext) {
+        if let Some(click_listener) = self.click_listener {
+            let text_state = state.text_state.clone();
+            let mouse_down = state.mouse_down_index.clone();
+            if let Some(mouse_down_index) = mouse_down.get() {
+                cx.on_mouse_event(move |event: &MouseUpEvent, phase, cx| {
+                    if phase == DispatchPhase::Bubble {
+                        if let Some(mouse_up_index) =
+                            text_state.index_for_position(bounds, event.position)
+                        {
+                            click_listener(
+                                InteractiveTextClickEvent {
+                                    mouse_down_index,
+                                    mouse_up_index,
+                                },
+                                cx,
+                            )
+                        }
+
+                        mouse_down.take();
+                        cx.notify();
+                    }
+                });
+            } else {
+                cx.on_mouse_event(move |event: &MouseDownEvent, phase, cx| {
+                    if phase == DispatchPhase::Bubble {
+                        if let Some(mouse_down_index) =
+                            text_state.index_for_position(bounds, event.position)
+                        {
+                            mouse_down.set(Some(mouse_down_index));
+                            cx.notify();
+                        }
+                    }
+                });
+            }
+        }
+
         self.text.paint(bounds, &mut state.text_state, cx)
     }
 }
 
-impl RenderOnce for InteractiveText {
+impl IntoElement for InteractiveText {
     type Element = Self;
 
     fn element_id(&self) -> Option<ElementId> {
         Some(self.element_id.clone())
     }
 
-    fn render_once(self) -> Self::Element {
+    fn into_element(self) -> Self::Element {
         self
     }
 }

@@ -26,7 +26,7 @@ use std::{
 };
 
 use ui::v_stack;
-use ui::{prelude::*, Icon, IconButton, IconElement, TextColor, Tooltip};
+use ui::{prelude::*, Color, Icon, IconButton, IconElement, Tooltip};
 use util::truncate_and_remove_front;
 
 #[derive(PartialEq, Clone, Copy, Deserialize, Debug)]
@@ -1344,13 +1344,13 @@ impl Pane {
         item: &Box<dyn ItemHandle>,
         detail: usize,
         cx: &mut ViewContext<'_, Pane>,
-    ) -> impl RenderOnce {
+    ) -> impl IntoElement {
         let label = item.tab_content(Some(detail), cx);
         let close_icon = || {
             let id = item.item_id();
 
             div()
-                .id(item.item_id())
+                .id(ix)
                 .invisible()
                 .group_hover("", |style| style.visible())
                 .child(
@@ -1379,10 +1379,11 @@ impl Pane {
         };
 
         let close_right = ItemSettings::get_global(cx).close_position.right();
+        let is_active = ix == self.active_item_index;
 
         div()
             .group("")
-            .id(item.item_id())
+            .id(ix)
             .cursor_pointer()
             .when_some(item.tab_tooltip_text(cx), |div, text| {
                 div.tooltip(move |cx| cx.build_view(|cx| Tooltip::new(text.clone())).into())
@@ -1407,10 +1408,24 @@ impl Pane {
             .py_1()
             .bg(tab_bg)
             .border_color(cx.theme().colors().border)
-            .map(|this| match ix.cmp(&self.active_item_index) {
-                cmp::Ordering::Less => this.border_l(),
-                cmp::Ordering::Equal => this.border_r(),
-                cmp::Ordering::Greater => this.border_l().border_r(),
+            .text_color(if is_active {
+                cx.theme().colors().text
+            } else {
+                cx.theme().colors().text_muted
+            })
+            .map(|this| {
+                let is_last_item = ix == self.items.len() - 1;
+                match ix.cmp(&self.active_item_index) {
+                    cmp::Ordering::Less => this.border_l().mr_px(),
+                    cmp::Ordering::Greater => {
+                        if is_last_item {
+                            this.mr_px().ml_px()
+                        } else {
+                            this.border_r().ml_px()
+                        }
+                    }
+                    cmp::Ordering::Equal => this.border_l().border_r(),
+                }
             })
             // .hover(|h| h.bg(tab_hover_bg))
             // .active(|a| a.bg(tab_active_bg))
@@ -1423,14 +1438,18 @@ impl Pane {
                     .children(
                         item.has_conflict(cx)
                             .then(|| {
-                                IconElement::new(Icon::ExclamationTriangle)
-                                    .size(ui::IconSize::Small)
-                                    .color(TextColor::Warning)
+                                div().border().border_color(gpui::red()).child(
+                                    IconElement::new(Icon::ExclamationTriangle)
+                                        .size(ui::IconSize::Small)
+                                        .color(Color::Warning),
+                                )
                             })
                             .or(item.is_dirty(cx).then(|| {
-                                IconElement::new(Icon::ExclamationTriangle)
-                                    .size(ui::IconSize::Small)
-                                    .color(TextColor::Info)
+                                div().border().border_color(gpui::red()).child(
+                                    IconElement::new(Icon::ExclamationTriangle)
+                                        .size(ui::IconSize::Small)
+                                        .color(Color::Info),
+                                )
                             })),
                     )
                     .children((!close_right).then(|| close_icon()))
@@ -1439,7 +1458,7 @@ impl Pane {
             )
     }
 
-    fn render_tab_bar(&mut self, cx: &mut ViewContext<'_, Pane>) -> impl RenderOnce {
+    fn render_tab_bar(&mut self, cx: &mut ViewContext<'_, Pane>) -> impl IntoElement {
         div()
             .group("tab_bar")
             .id("tab_bar")
@@ -1461,12 +1480,22 @@ impl Pane {
                             .flex()
                             .items_center()
                             .gap_px()
-                            .child(IconButton::new("navigate_backward", Icon::ArrowLeft).state(
-                                InteractionState::Enabled.if_enabled(self.can_navigate_backward()),
-                            ))
-                            .child(IconButton::new("navigate_forward", Icon::ArrowRight).state(
-                                InteractionState::Enabled.if_enabled(self.can_navigate_forward()),
-                            )),
+                            .child(
+                                div().border().border_color(gpui::red()).child(
+                                    IconButton::new("navigate_backward", Icon::ArrowLeft).state(
+                                        InteractionState::Enabled
+                                            .if_enabled(self.can_navigate_backward()),
+                                    ),
+                                ),
+                            )
+                            .child(
+                                div().border().border_color(gpui::red()).child(
+                                    IconButton::new("navigate_forward", Icon::ArrowRight).state(
+                                        InteractionState::Enabled
+                                            .if_enabled(self.can_navigate_forward()),
+                                    ),
+                                ),
+                            ),
                     ),
             )
             .child(
@@ -1493,8 +1522,18 @@ impl Pane {
                             .flex()
                             .items_center()
                             .gap_px()
-                            .child(IconButton::new("plus", Icon::Plus))
-                            .child(IconButton::new("split", Icon::Split)),
+                            .child(
+                                div()
+                                    .border()
+                                    .border_color(gpui::red())
+                                    .child(IconButton::new("plus", Icon::Plus)),
+                            )
+                            .child(
+                                div()
+                                    .border()
+                                    .border_color(gpui::red())
+                                    .child(IconButton::new("split", Icon::Split)),
+                            ),
                     ),
             )
     }

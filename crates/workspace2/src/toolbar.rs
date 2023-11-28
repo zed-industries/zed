@@ -1,10 +1,10 @@
 use crate::ItemHandle;
 use gpui::{
-    AnyView, Div, Entity, EntityId, EventEmitter, ParentElement as _, Render, Styled, View,
+    div, AnyView, Div, Entity, EntityId, EventEmitter, ParentElement as _, Render, Styled, View,
     ViewContext, WindowContext,
 };
 use theme2::ActiveTheme;
-use ui::{h_stack, v_stack, Button, Icon, IconButton, Label, TextColor};
+use ui::{h_stack, v_stack, Button, Color, Icon, IconButton, Label};
 
 pub enum ToolbarItemEvent {
     ChangeLocation(ToolbarItemLocation),
@@ -83,24 +83,37 @@ impl Render for Toolbar {
         //dbg!(&self.items.len());
         v_stack()
             .border_b()
-            .border_color(cx.theme().colors().border)
+            .border_color(cx.theme().colors().border_variant)
+            .bg(cx.theme().colors().toolbar_background)
             .child(
                 h_stack()
                     .justify_between()
                     .child(
                         // Toolbar left side
                         h_stack()
+                            .border()
+                            .border_color(gpui::red())
                             .p_1()
                             .child(Button::new("crates"))
-                            .child(Label::new("/").color(TextColor::Muted))
+                            .child(Label::new("/").color(Color::Muted))
                             .child(Button::new("workspace2")),
                     )
                     // Toolbar right side
                     .child(
                         h_stack()
                             .p_1()
-                            .child(IconButton::new("buffer-search", Icon::MagnifyingGlass))
-                            .child(IconButton::new("inline-assist", Icon::MagicWand)),
+                            .child(
+                                div()
+                                    .border()
+                                    .border_color(gpui::red())
+                                    .child(IconButton::new("buffer-search", Icon::MagnifyingGlass)),
+                            )
+                            .child(
+                                div()
+                                    .border()
+                                    .border_color(gpui::red())
+                                    .child(IconButton::new("inline-assist", Icon::MagicWand)),
+                            ),
                     ),
             )
             .children(self.items.iter().map(|(child, _)| child.to_any()))

@@ -1,5 +1,5 @@
 use gpui::{
-    div, px, AnyElement, ClickEvent, Div, RenderOnce, Stateful, StatefulInteractiveElement,
+    div, px, AnyElement, ClickEvent, Div, IntoElement, Stateful, StatefulInteractiveElement,
 };
 use smallvec::SmallVec;
 use std::rc::Rc;
@@ -25,7 +25,7 @@ pub enum ListHeaderMeta {
     Text(Label),
 }
 
-#[derive(RenderOnce)]
+#[derive(IntoElement)]
 pub struct ListHeader {
     label: SharedString,
     left_icon: Option<Icon>,
@@ -34,7 +34,7 @@ pub struct ListHeader {
     toggle: Toggle,
 }
 
-impl Component for ListHeader {
+impl RenderOnce for ListHeader {
     type Rendered = Div;
 
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {
@@ -47,7 +47,7 @@ impl Component for ListHeader {
                     .items_center()
                     .children(icons.into_iter().map(|i| {
                         IconElement::new(i)
-                            .color(TextColor::Muted)
+                            .color(Color::Muted)
                             .size(IconSize::Small)
                     })),
             ),
@@ -80,10 +80,10 @@ impl Component for ListHeader {
                                     .items_center()
                                     .children(self.left_icon.map(|i| {
                                         IconElement::new(i)
-                                            .color(TextColor::Muted)
+                                            .color(Color::Muted)
                                             .size(IconSize::Small)
                                     }))
-                                    .child(Label::new(self.label.clone()).color(TextColor::Muted)),
+                                    .child(Label::new(self.label.clone()).color(Color::Muted)),
                             )
                             .child(disclosure_control),
                     )
@@ -179,7 +179,7 @@ impl ListHeader {
     // }
 }
 
-#[derive(RenderOnce, Clone)]
+#[derive(IntoElement, Clone)]
 pub struct ListSubHeader {
     label: SharedString,
     left_icon: Option<Icon>,
@@ -201,7 +201,7 @@ impl ListSubHeader {
     }
 }
 
-impl Component for ListSubHeader {
+impl RenderOnce for ListSubHeader {
     type Rendered = Div;
 
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {
@@ -222,10 +222,10 @@ impl Component for ListSubHeader {
                         .items_center()
                         .children(self.left_icon.map(|i| {
                             IconElement::new(i)
-                                .color(TextColor::Muted)
+                                .color(Color::Muted)
                                 .size(IconSize::Small)
                         }))
-                        .child(Label::new(self.label.clone()).color(TextColor::Muted)),
+                        .child(Label::new(self.label.clone()).color(Color::Muted)),
                 ),
         )
     }
@@ -238,52 +238,35 @@ pub enum ListEntrySize {
     Medium,
 }
 
-#[derive(RenderOnce)]
+#[derive(IntoElement)]
 pub struct ListItem {
     id: ElementId,
     disabled: bool,
     // TODO: Reintroduce this
     // disclosure_control_style: DisclosureControlVisibility,
     indent_level: u32,
-    label: Label,
     left_slot: Option<GraphicSlot>,
     overflow: OverflowStyle,
     size: ListEntrySize,
     toggle: Toggle,
     variant: ListItemVariant,
     on_click: Option<Rc<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
-}
-
-impl Clone for ListItem {
-    fn clone(&self) -> Self {
-        Self {
-            id: self.id.clone(),
-            disabled: self.disabled,
-            indent_level: self.indent_level,
-            label: self.label.clone(),
-            left_slot: self.left_slot.clone(),
-            overflow: self.overflow,
-            size: self.size,
-            toggle: self.toggle,
-            variant: self.variant,
-            on_click: self.on_click.clone(),
-        }
-    }
+    children: SmallVec<[AnyElement; 2]>,
 }
 
 impl ListItem {
-    pub fn new(id: impl Into<ElementId>, label: Label) -> Self {
+    pub fn new(id: impl Into<ElementId>) -> Self {
         Self {
             id: id.into(),
             disabled: false,
             indent_level: 0,
-            label,
             left_slot: None,
             overflow: OverflowStyle::Hidden,
             size: ListEntrySize::default(),
             toggle: Toggle::NotToggleable,
             variant: ListItemVariant::default(),
             on_click: Default::default(),
+            children: SmallVec::new(),
         }
     }
 
@@ -328,7 +311,7 @@ impl ListItem {
     }
 }
 
-impl Component for ListItem {
+impl RenderOnce for ListItem {
     type Rendered = Stateful<Div>;
 
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {
@@ -337,11 +320,11 @@ impl Component for ListItem {
                 h_stack().child(
                     IconElement::new(i)
                         .size(IconSize::Small)
-                        .color(TextColor::Muted),
+                        .color(Color::Muted),
                 ),
             ),
-            Some(GraphicSlot::Avatar(src)) => Some(h_stack().child(Avatar::new(src))),
-            Some(GraphicSlot::PublicActor(src)) => Some(h_stack().child(Avatar::new(src))),
+            Some(GraphicSlot::Avatar(src)) => Some(h_stack().child(Avatar::uri(src))),
+            Some(GraphicSlot::PublicActor(src)) => Some(h_stack().child(Avatar::uri(src))),
             None => None,
         };
 
@@ -364,12 +347,13 @@ impl Component for ListItem {
                     }
                 }
             })
-            .bg(cx.theme().colors().surface_background)
             // TODO: Add focus state
             // .when(self.state == InteractionState::Focused, |this| {
             //     this.border()
             //         .border_color(cx.theme().colors().border_focused)
             // })
+            .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
+            .active(|style| style.bg(cx.theme().colors().ghost_element_active))
             .child(
                 sized_item
                     .when(self.variant == ListItemVariant::Inset, |this| this.px_2())
@@ -393,12 +377,18 @@ impl Component for ListItem {
                     .relative()
                     .child(disclosure_control(self.toggle))
                     .children(left_content)
-                    .child(self.label),
+                    .children(self.children),
             )
     }
 }
 
-#[derive(RenderOnce, Clone)]
+impl ParentElement for ListItem {
+    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement; 2]> {
+        &mut self.children
+    }
+}
+
+#[derive(IntoElement, Clone)]
 pub struct ListSeparator;
 
 impl ListSeparator {
@@ -407,7 +397,7 @@ impl ListSeparator {
     }
 }
 
-impl Component for ListSeparator {
+impl RenderOnce for ListSeparator {
     type Rendered = Div;
 
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {
@@ -415,7 +405,7 @@ impl Component for ListSeparator {
     }
 }
 
-#[derive(RenderOnce)]
+#[derive(IntoElement)]
 pub struct List {
     /// Message to display when the list is empty
     /// Defaults to "No items"
@@ -425,16 +415,14 @@ pub struct List {
     children: SmallVec<[AnyElement; 2]>,
 }
 
-impl Component for List {
+impl RenderOnce for List {
     type Rendered = Div;
 
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         let list_content = match (self.children.is_empty(), self.toggle) {
             (false, _) => div().children(self.children),
             (true, Toggle::Toggled(false)) => div(),
-            (true, _) => {
-                div().child(Label::new(self.empty_message.clone()).color(TextColor::Muted))
-            }
+            (true, _) => div().child(Label::new(self.empty_message.clone()).color(Color::Muted)),
         };
 
         v_stack()

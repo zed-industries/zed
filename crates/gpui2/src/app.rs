@@ -10,6 +10,7 @@ pub use entity_map::*;
 pub use model_context::*;
 use refineable::Refineable;
 use smallvec::SmallVec;
+use smol::future::FutureExt;
 #[cfg(any(test, feature = "test-support"))]
 pub use test_context::*;
 
@@ -579,7 +580,7 @@ impl AppContext {
             .windows
             .iter()
             .filter_map(|(_, window)| {
-                let window = window.as_ref().unwrap();
+                let window = window.as_ref()?;
                 if window.dirty {
                     Some(window.handle.clone())
                 } else {
@@ -983,6 +984,22 @@ impl AppContext {
     pub fn all_action_names(&self) -> &[SharedString] {
         self.actions.all_action_names()
     }
+
+    pub fn on_app_quit<Fut>(
+        &mut self,
+        mut on_quit: impl FnMut(&mut AppContext) -> Fut + 'static,
+    ) -> Subscription
+    where
+        Fut: 'static + Future<Output = ()>,
+    {
+        self.quit_observers.insert(
+            (),
+            Box::new(move |cx| {
+                let future = on_quit(cx);
+                async move { future.await }.boxed_local()
+            }),
+        )
+    }
 }
 
 impl Context for AppContext {
@@ -1032,7 +1049,9 @@ impl Context for AppContext {
             let root_view = window.root_view.clone().unwrap();
             let result = update(root_view, &mut WindowContext::new(cx, &mut window));
 
-            if !window.removed {
+            if window.removed {
+                cx.windows.remove(handle.id);
+            } else {
                 cx.windows
                     .get_mut(handle.id)
                     .ok_or_else(|| anyhow!("window not found"))?

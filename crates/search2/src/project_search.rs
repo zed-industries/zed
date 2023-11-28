@@ -85,6 +85,7 @@ pub fn init(cx: &mut AppContext) {
     cx.capture_action(ProjectSearchView::replace_next);
     add_toggle_option_action::<ToggleCaseSensitive>(SearchOptions::CASE_SENSITIVE, cx);
     add_toggle_option_action::<ToggleWholeWord>(SearchOptions::WHOLE_WORD, cx);
+    add_toggle_option_action::<ToggleIncludeIgnored>(SearchOptions::INCLUDE_IGNORED, cx);
     add_toggle_filters_action::<ToggleFilters>(cx);
 }
 
@@ -1192,6 +1193,7 @@ impl ProjectSearchView {
                     text,
                     self.search_options.contains(SearchOptions::WHOLE_WORD),
                     self.search_options.contains(SearchOptions::CASE_SENSITIVE),
+                    self.search_options.contains(SearchOptions::INCLUDE_IGNORED),
                     included_files,
                     excluded_files,
                 ) {
@@ -1210,6 +1212,7 @@ impl ProjectSearchView {
                 text,
                 self.search_options.contains(SearchOptions::WHOLE_WORD),
                 self.search_options.contains(SearchOptions::CASE_SENSITIVE),
+                self.search_options.contains(SearchOptions::INCLUDE_IGNORED),
                 included_files,
                 excluded_files,
             ) {
@@ -1764,6 +1767,14 @@ impl View for ProjectSearchBar {
                 render_option_button_icon("icons/word_search.svg", SearchOptions::WHOLE_WORD, cx)
             });
 
+            let include_ignored = is_semantic_disabled.then(|| {
+                render_option_button_icon(
+                    "icons/file_icons/git.svg",
+                    SearchOptions::INCLUDE_IGNORED,
+                    cx,
+                )
+            });
+
             let search_button_for_mode = |mode, side, cx: &mut ViewContext<ProjectSearchBar>| {
                 let is_active = if let Some(search) = self.active_project_search.as_ref() {
                     let search = search.read(cx);
@@ -1879,7 +1890,15 @@ impl View for ProjectSearchBar {
                 .with_children(search.filters_enabled.then(|| {
                     Flex::row()
                         .with_child(
-                            ChildView::new(&search.included_files_editor, cx)
+                            Flex::row()
+                                .with_child(
+                                    ChildView::new(&search.included_files_editor, cx)
+                                        .contained()
+                                        .constrained()
+                                        .with_height(theme.search.search_bar_row_height)
+                                        .flex(1., true),
+                                )
+                                .with_children(include_ignored)
                                 .contained()
                                 .with_style(include_container_style)
                                 .constrained()
