@@ -26,7 +26,6 @@
 // use vcs_menu::{build_branch_list, BranchList, OpenRecent as ToggleVcsMenu};
 // use workspace::{FollowNextCollaborator, Workspace, WORKSPACE_DB};
 
-use smallvec::smallvec;
 use std::sync::Arc;
 
 use call::ActiveCall;
@@ -300,9 +299,8 @@ impl Render for CollabTitlebarItem {
                         })
                         .detach_and_log_err(cx);
                     }))
-                    .child(ButtonLike::new(
-                        "test-button",
-                        smallvec![
+                    .child(
+                        ButtonLike::new("test-button").children([
                             Avatar::uri("https://avatars.githubusercontent.com/u/1714999?v=4")
                                 .into_element()
                                 .into_any(),
@@ -310,8 +308,11 @@ impl Render for CollabTitlebarItem {
                                 .size(IconSize::Small)
                                 .into_element()
                                 .into_any(),
-                        ],
-                    ))
+                        ]),
+                    )
+                    .on_mouse_down(MouseButton::Left, move |event, cx| {
+                        dbg!(format!("clicked: {:?}", event.position));
+                    })
                 }
             })
     }

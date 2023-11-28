@@ -29,11 +29,11 @@ use futures::{
 };
 use gpui::{
     actions, div, point, size, Action, AnyModel, AnyView, AnyWeakView, AppContext, AsyncAppContext,
-    AsyncWindowContext, Bounds, Context, Div, Element, Entity, EntityId, EventEmitter, FocusHandle,
-    FocusableView, GlobalPixels, InteractiveElement, IntoElement, KeyContext, ManagedView, Model,
-    ModelContext, ParentElement, PathPromptOptions, Point, PromptLevel, Render, Size, Styled,
-    Subscription, Task, View, ViewContext, VisualContext, WeakModel, WeakView, WindowBounds,
-    WindowContext, WindowHandle, WindowOptions,
+    AsyncWindowContext, Bounds, Context, Div, Entity, EntityId, EventEmitter, FocusHandle,
+    FocusableView, GlobalPixels, InteractiveElement, KeyContext, ManagedView, Model, ModelContext,
+    ParentElement, PathPromptOptions, Point, PromptLevel, Render, Size, Styled, Subscription, Task,
+    View, ViewContext, VisualContext, WeakModel, WeakView, WindowBounds, WindowContext,
+    WindowHandle, WindowOptions,
 };
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, ProjectItem};
 use itertools::Itertools;
@@ -52,7 +52,6 @@ use postage::stream::Stream;
 use project2::{Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
 use serde::Deserialize;
 use settings2::Settings;
-use smallvec::smallvec;
 use status_bar::StatusBar;
 pub use status_bar::StatusItemView;
 use std::{
@@ -66,7 +65,6 @@ use std::{
 use theme2::{ActiveTheme, ThemeSettings};
 pub use toolbar::{ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 pub use ui;
-use ui::{Avatar, ButtonLike};
 use util::ResultExt;
 use uuid::Uuid;
 pub use workspace_settings::{AutosaveSetting, WorkspaceSettings};

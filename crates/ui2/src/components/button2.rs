@@ -1,6 +1,6 @@
 use gpui::{
-    Action, AnyElement, AnyView, DefiniteLength, DispatchPhase, Div, IntoElement, MouseButton,
-    MouseDownEvent, Stateful, StatefulInteractiveElement, WindowContext,
+    Action, AnyElement, AnyView, DefiniteLength, Div, IntoElement, MouseButton, MouseDownEvent,
+    Stateful, StatefulInteractiveElement, WindowContext,
 };
 use smallvec::SmallVec;
 
@@ -139,17 +139,6 @@ pub trait FixedButtonCommon {
     fn full_width(&mut self) -> &mut Self;
 }
 
-fn button_action<E: InteractiveElement>(
-    mut this: E,
-    click_handler: impl Fn(&MouseDownEvent, &mut WindowContext) + 'static,
-) -> E {
-    this.on_mouse_down(MouseButton::Left, move |event, cx| {
-        cx.stop_propagation();
-        click_handler(event, cx);
-    });
-    this
-}
-
 // pub struct Button {
 //     // Base properties...
 //     id: ElementId,
@@ -232,7 +221,15 @@ pub struct ButtonLike {
 }
 
 impl ButtonLike {
-    pub fn new(id: impl Into<ElementId>, children: SmallVec<[AnyElement; 2]>) -> Self {
+    pub fn children(
+        &mut self,
+        children: impl IntoIterator<Item = impl Into<AnyElement>>,
+    ) -> &mut Self {
+        self.children = children.into_iter().map(Into::into).collect();
+        self
+    }
+
+    pub fn new(id: impl Into<ElementId>) -> Self {
         Self {
             id: id.into(),
             appearance: ButtonAppearance2::default(),
@@ -240,7 +237,7 @@ impl ButtonLike {
             disabled: false,
             size: ButtonSize2::Default,
             tooltip: None,
-            children,
+            children: SmallVec::new(),
             on_mouse_down: None,
         }
     }
@@ -271,20 +268,25 @@ impl ButtonCommon for ButtonLike {
         self
     }
 
-    fn tooltip(
-        &mut self,
-        tooltip: Box<dyn Fn(&mut WindowContext) -> AnyView + 'static>,
-    ) -> &mut Self {
-        self.tooltip = Some(tooltip);
+    fn tooltip(&mut self, tooltip: impl Fn(&mut WindowContext) -> AnyView + 'static) -> &mut Self {
+        self.tooltip = Some(Box::new(tooltip));
         self
     }
 
-    fn on_click(mut self, handler: impl 'static + Fn(&MouseDownEvent, &mut WindowContext)) -> Self {
+    fn on_click(
+        &mut self,
+        handler: impl 'static + Fn(&MouseDownEvent, &mut WindowContext),
+    ) -> &mut Self {
         self.on_mouse_down = Some(Box::new(handler));
         self
     }
-    fn action(self, action: Box<dyn Action>) -> Self {
-        self.on_click(move |this, cx| cx.dispatch_action(action.boxed_clone()))
+
+    fn action(&mut self, action: impl Action + 'static) -> &mut Self {
+        let boxed_action = Box::new(action);
+        self.on_mouse_down = Some(Box::new(move |_, cx| {
+            cx.dispatch_action(boxed_action.boxed_clone());
+        }));
+        self
     }
 }
 
@@ -292,55 +294,37 @@ impl RenderOnce for ButtonLike {
     type Rendered = Stateful<Div>;
 
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {
-        let background =
-            ButtonAppearance2::bg(self.appearance, cx, self.state, false, self.disabled);
-
         let mut button_like = h_stack()
             .id(self.id.clone())
             .rounded_md()
             .cursor_pointer()
             .gap_1()
-            .p_1();
-
-        button_like
-            .bg(ButtonAppearance2::bg(
-                self.appearance,
-                cx,
-                self.state,
-                false,
-                self.disabled,
-            ))
+            .p_1()
+            .bg(self.appearance.bg(cx, self.state, false, self.disabled))
             .hover(|hover| {
-                hover.bg(ButtonAppearance2::bg(
-                    self.appearance,
-                    cx,
-                    InteractionState::Hovered,
-                    false,
-                    self.disabled,
-                ))
+                hover.bg(self
+                    .appearance
+                    .bg(cx, InteractionState::Hovered, false, self.disabled))
             })
             .active(|active| {
-                active.bg(ButtonAppearance2::bg(
-                    self.appearance,
-                    cx,
-                    InteractionState::Active,
-                    false,
-                    self.disabled,
-                ))
+                active.bg(self
+                    .appearance
+                    .bg(cx, InteractionState::Active, false, self.disabled))
             });
 
-        if let Some(click_handler) = self.on_mouse_down {
-            button_like = button_like.on_mouse_down(MouseButton::Left, move |event, cx| {
-                cx.stop_propagation();
-                click_handler(event, cx);
-            })
+        for child in self.children.into_iter() {
+            button_like = button_like.child(child);
         }
 
         if let Some(tooltip) = self.tooltip {
             button_like = button_like.tooltip(move |cx| tooltip(cx))
         }
 
-        button_like.children(self.children);
+        if let Some(on_mouse_down) = self.on_mouse_down {
+            button_like = button_like.on_mouse_down(MouseButton::Left, move |event, cx| {
+                on_mouse_down(event, cx);
+            })
+        }
 
         button_like
     }
