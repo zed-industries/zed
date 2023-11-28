@@ -1,6 +1,5 @@
 use gpui::{
-    div, px, AnyElement, ClickEvent, Div, ImageSource, IntoElement, MouseButton, MouseDownEvent,
-    Stateful, StatefulInteractiveElement,
+    div, px, AnyElement, Div, ImageSource, IntoElement, MouseButton, MouseDownEvent, Stateful,
 };
 use smallvec::SmallVec;
 use std::rc::Rc;
@@ -378,7 +377,6 @@ impl RenderOnce for ListItem {
                     .on_mouse_down(MouseButton::Left, {
                         let on_click = self.on_click.clone();
                         move |event, cx| {
-                            dbg!("Clicking!");
                             if let Some(on_click) = &on_click {
                                 (on_click)(event, cx)
                             }
