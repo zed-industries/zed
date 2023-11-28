@@ -10,9 +10,8 @@ use anyhow::{anyhow, Result};
 use gpui::{
     actions, div, px, uniform_list, Action, AppContext, AssetSource, AsyncWindowContext,
     ClipboardItem, Div, EventEmitter, FocusHandle, Focusable, FocusableView, InteractiveElement,
-    IntoElement, Model, MouseButton, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel,
-    Render, Stateful, StatefulInteractiveElement, Styled, Task, UniformListScrollHandle, View,
-    ViewContext, VisualContext as _, WeakView, WindowContext,
+    Model, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, Stateful, Styled,
+    Task, UniformListScrollHandle, View, ViewContext, VisualContext as _, WeakView, WindowContext,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
 use project::{
@@ -30,7 +29,7 @@ use std::{
     sync::Arc,
 };
 use theme::ActiveTheme as _;
-use ui::{h_stack, v_stack, IconElement, Label};
+use ui::{v_stack, IconElement, Label, ListItem};
 use unicase::UniCase;
 use util::{maybe, ResultExt, TryFutureExt};
 use workspace::{
@@ -1335,13 +1334,19 @@ impl ProjectPanel {
         }
     }
 
-    fn render_entry_visual_element(
-        details: &EntryDetails,
-        editor: Option<&View<Editor>>,
-        padding: Pixels,
+    fn render_entry(
+        &self,
+        entry_id: ProjectEntryId,
+        details: EntryDetails,
+        // dragged_entry_destination: &mut Option<Arc<Path>>,
         cx: &mut ViewContext<Self>,
-    ) -> Div {
+    ) -> ListItem {
+        let kind = details.kind;
+        let settings = ProjectPanelSettings::get_global(cx);
         let show_editor = details.is_editing && !details.is_processing;
+        let is_selected = self
+            .selection
+            .map_or(false, |selection| selection.entry_id == entry_id);
 
         let theme = cx.theme();
         let filename_text_color = details
@@ -1354,14 +1359,17 @@ impl ProjectPanel {
             })
             .unwrap_or(theme.status().info);
 
-        h_stack()
+        ListItem::new(entry_id.to_proto() as usize)
+            .indent_level(details.depth)
+            .indent_step_size(px(settings.indent_size))
+            .selected(is_selected)
             .child(if let Some(icon) = &details.icon {
                 div().child(IconElement::from_path(icon.to_string()))
             } else {
                 div()
             })
             .child(
-                if let (Some(editor), true) = (editor, show_editor) {
+                if let (Some(editor), true) = (Some(&self.filename_editor), show_editor) {
                     div().w_full().child(editor.clone())
                 } else {
                     div()
@@ -1370,33 +1378,6 @@ impl ProjectPanel {
                 }
                 .ml_1(),
             )
-            .pl(padding)
-    }
-
-    fn render_entry(
-        &self,
-        entry_id: ProjectEntryId,
-        details: EntryDetails,
-        // dragged_entry_destination: &mut Option<Arc<Path>>,
-        cx: &mut ViewContext<Self>,
-    ) -> Stateful<Div> {
-        let kind = details.kind;
-        let settings = ProjectPanelSettings::get_global(cx);
-        const INDENT_SIZE: Pixels = px(16.0);
-        let padding = INDENT_SIZE + details.depth as f32 * px(settings.indent_size);
-        let show_editor = details.is_editing && !details.is_processing;
-        let is_selected = self
-            .selection
-            .map_or(false, |selection| selection.entry_id == entry_id);
-
-        Self::render_entry_visual_element(&details, Some(&self.filename_editor), padding, cx)
-            .id(entry_id.to_proto() as usize)
-            .w_full()
-            .cursor_pointer()
-            .when(is_selected, |this| {
-                this.bg(cx.theme().colors().element_selected)
-            })
-            .hover(|style| style.bg(cx.theme().colors().element_hover))
             .on_click(cx.listener(move |this, event: &gpui::ClickEvent, cx| {
                 if !show_editor {
                     if kind.is_dir() {
@@ -1410,12 +1391,9 @@ impl ProjectPanel {
                     }
                 }
             }))
-            .on_mouse_down(
-                MouseButton::Right,
-                cx.listener(move |this, event: &MouseDownEvent, cx| {
-                    this.deploy_context_menu(event.position, entry_id, cx);
-                }),
-            )
+            .on_secondary_mouse_down(cx.listener(move |this, event: &MouseDownEvent, cx| {
+                this.deploy_context_menu(event.position, entry_id, cx);
+            }))
         // .on_drop::<ProjectEntryId>(|this, event, cx| {
         //     this.move_entry(
         //         *dragged_entry,

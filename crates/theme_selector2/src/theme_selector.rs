@@ -2,19 +2,16 @@ use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, div, AnyElement, AppContext, DismissEvent, Element, EventEmitter, FocusableView,
-    InteractiveElement, IntoElement, ParentElement, Render, SharedString, Styled, View,
-    ViewContext, VisualContext, WeakView,
+    actions, AppContext, DismissEvent, EventEmitter, FocusableView, ParentElement, Render,
+    SharedString, View, ViewContext, VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};
 use settings::{update_settings_file, SettingsStore};
 use std::sync::Arc;
 use theme::{ActiveTheme, Theme, ThemeRegistry, ThemeSettings};
+use ui::ListItem;
 use util::ResultExt;
-use workspace::{
-    ui::{HighlightedLabel, StyledExt},
-    Workspace,
-};
+use workspace::{ui::HighlightedLabel, Workspace};
 
 actions!(Toggle, Reload);
 
@@ -160,6 +157,8 @@ impl ThemeSelectorDelegate {
 }
 
 impl PickerDelegate for ThemeSelectorDelegate {
+    type ListItem = ui::ListItem;
+
     fn placeholder_text(&self) -> Arc<str> {
         "Select Theme...".into()
     }
@@ -260,24 +259,18 @@ impl PickerDelegate for ThemeSelectorDelegate {
         &self,
         ix: usize,
         selected: bool,
-        cx: &mut ViewContext<Picker<Self>>,
-    ) -> AnyElement {
-        let theme = cx.theme();
-        let colors = theme.colors();
-
+        _cx: &mut ViewContext<Picker<Self>>,
+    ) -> Option<Self::ListItem> {
         let theme_match = &self.matches[ix];
-        div()
-            .px_1()
-            .text_color(colors.text)
-            .text_ui()
-            .bg(colors.ghost_element_background)
-            .rounded_md()
-            .when(selected, |this| this.bg(colors.ghost_element_selected))
-            .hover(|this| this.bg(colors.ghost_element_hover))
-            .child(HighlightedLabel::new(
-                theme_match.string.clone(),
-                theme_match.positions.clone(),
-            ))
-            .into_any()
+
+        Some(
+            ListItem::new(ix)
+                .inset(true)
+                .selected(selected)
+                .child(HighlightedLabel::new(
+                    theme_match.string.clone(),
+                    theme_match.positions.clone(),
+                )),
+        )
     }
 }

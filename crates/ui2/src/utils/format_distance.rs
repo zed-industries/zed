@@ -16,55 +16,54 @@ fn distance_in_seconds(date: NaiveDateTime, base_date: NaiveDateTime) -> i64 {
 fn distance_string(distance: i64, include_seconds: bool, add_suffix: bool) -> String {
     let suffix = if distance < 0 { " from now" } else { " ago" };
 
-    let d = distance.abs();
+    let distance = distance.abs();
 
-    let minutes = d / 60;
-    let hours = d / 3600;
-    let days = d / 86400;
-    let months = d / 2592000;
-    let years = d / 31536000;
+    let minutes = distance / 60;
+    let hours = distance / 3_600;
+    let days = distance / 86_400;
+    let months = distance / 2_592_000;
 
-    let string = if d < 5 && include_seconds {
+    let string = if distance < 5 && include_seconds {
         "less than 5 seconds".to_string()
-    } else if d < 10 && include_seconds {
+    } else if distance < 10 && include_seconds {
         "less than 10 seconds".to_string()
-    } else if d < 20 && include_seconds {
+    } else if distance < 20 && include_seconds {
         "less than 20 seconds".to_string()
-    } else if d < 40 && include_seconds {
+    } else if distance < 40 && include_seconds {
         "half a minute".to_string()
-    } else if d < 60 && include_seconds {
+    } else if distance < 60 && include_seconds {
         "less than a minute".to_string()
-    } else if d < 90 && include_seconds {
+    } else if distance < 90 && include_seconds {
         "1 minute".to_string()
-    } else if d < 30 {
+    } else if distance < 30 {
         "less than a minute".to_string()
-    } else if d < 90 {
+    } else if distance < 90 {
         "1 minute".to_string()
-    } else if d < 2700 {
+    } else if distance < 2_700 {
         format!("{} minutes", minutes)
-    } else if d < 5400 {
+    } else if distance < 5_400 {
         "about 1 hour".to_string()
-    } else if d < 86400 {
+    } else if distance < 86_400 {
         format!("about {} hours", hours)
-    } else if d < 172800 {
+    } else if distance < 172_800 {
         "1 day".to_string()
-    } else if d < 2592000 {
+    } else if distance < 2_592_000 {
         format!("{} days", days)
-    } else if d < 5184000 {
+    } else if distance < 5_184_000 {
         "about 1 month".to_string()
-    } else if d < 7776000 {
+    } else if distance < 7_776_000 {
         "about 2 months".to_string()
-    } else if d < 31540000 {
+    } else if distance < 31_540_000 {
         format!("{} months", months)
-    } else if d < 39425000 {
+    } else if distance < 39_425_000 {
         "about 1 year".to_string()
-    } else if d < 55195000 {
+    } else if distance < 55_195_000 {
         "over 1 year".to_string()
-    } else if d < 63080000 {
+    } else if distance < 63_080_000 {
         "almost 2 years".to_string()
     } else {
-        let years = d / 31536000;
-        let remaining_months = (d % 31536000) / 2592000;
+        let years = distance / 31_536_000;
+        let remaining_months = (distance % 31_536_000) / 2_592_000;
 
         if remaining_months < 3 {
             format!("about {} years", years)
@@ -76,7 +75,7 @@ fn distance_string(distance: i64, include_seconds: bool, add_suffix: bool) -> St
     };
 
     if add_suffix {
-        return format!("{}{}", string, suffix);
+        format!("{}{}", string, suffix)
     } else {
         string
     }

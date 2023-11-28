@@ -197,6 +197,7 @@ tree-sitter-lua = "0.0.14"
 tree-sitter-nix = { git = "https://github.com/nix-community/tree-sitter-nix", rev = "66e3e9ce9180ae08fc57372061006ef83f0abde7" }
 tree-sitter-nu = { git = "https://github.com/nushell/tree-sitter-nu", rev = "786689b0562b9799ce53e824cb45a1a2a04dc673"}
 tree-sitter-vue = {git = "https://github.com/zed-industries/tree-sitter-vue", rev = "9b6cb221ccb8d0b956fcb17e9a1efac2feefeb58"}
+tree-sitter-uiua = {git = "https://github.com/shnarazk/tree-sitter-uiua", rev = "9260f11be5900beda4ee6d1a24ab8ddfaf5a19b2"}
 
 [patch.crates-io]
 tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "3b0159d25559b603af566ade3c83d930bf466db1" }

@@ -13,6 +13,7 @@ editor = { package = "editor2", path = "../editor2" }
 fuzzy = { package = "fuzzy2", path = "../fuzzy2" }
 fs = { package = "fs2", path = "../fs2" }
 gpui = { package = "gpui2", path = "../gpui2" }
+ui = { package = "ui2", path = "../ui2" }
 picker = { package = "picker2", path = "../picker2" }
 theme = { package = "theme2", path = "../theme2" }
 settings = { package = "settings2", path = "../settings2" }

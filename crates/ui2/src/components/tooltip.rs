@@ -1,6 +1,6 @@
 use gpui::{overlay, Action, AnyView, IntoElement, Overlay, Render, VisualContext};
-use settings2::Settings;
-use theme2::{ActiveTheme, ThemeSettings};
+use settings::Settings;
+use theme::ThemeSettings;
 
 use crate::prelude::*;
 use crate::{h_stack, v_stack, Color, KeyBinding, Label, LabelSize, StyledExt};
@@ -13,7 +13,7 @@ pub struct Tooltip {
 
 impl Tooltip {
     pub fn text(title: impl Into<SharedString>, cx: &mut WindowContext) -> AnyView {
-        cx.build_view(|cx| Self {
+        cx.build_view(|_cx| Self {
             title: title.into(),
             meta: None,
             key_binding: None,

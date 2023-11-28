@@ -2640,12 +2640,11 @@ impl Workspace {
                     .flex_col()
                     .justify_end()
                     .gap_2()
-                    .children(self.notifications.iter().map(|(_, _, notification)| {
-                        div()
-                            .on_any_mouse_down(|_, cx| cx.stop_propagation())
-                            .on_any_mouse_up(|_, cx| cx.stop_propagation())
-                            .child(notification.to_any())
-                    })),
+                    .children(
+                        self.notifications
+                            .iter()
+                            .map(|(_, _, notification)| notification.to_any()),
+                    ),
             )
         }
     }

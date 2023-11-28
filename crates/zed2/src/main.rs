@@ -188,7 +188,7 @@ fn main() {
         let app_state = Arc::new(AppState {
             languages,
             client: client.clone(),
-            user_store,
+            user_store: user_store.clone(),
             fs,
             build_window_options,
             call_factory: call::Call::new,
@@ -208,7 +208,7 @@ fn main() {
         // outline::init(cx);
         // project_symbols::init(cx);
         project_panel::init(Assets, cx);
-        // channel::init(&client, user_store.clone(), cx);
+        channel::init(&client, user_store.clone(), cx);
         // diagnostics::init(cx);
         search::init(cx);
         // semantic_index::init(fs.clone(), http.clone(), languages.clone(), cx);

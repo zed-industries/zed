@@ -1,5 +1,5 @@
-use crate::prelude::*;
-use gpui::{Action, Div, IntoElement};
+use crate::{h_stack, prelude::*, Icon, IconElement, IconSize};
+use gpui::{relative, rems, Action, Div, IntoElement, Keystroke};
 
 #[derive(IntoElement, Clone)]
 pub struct KeyBinding {
@@ -14,19 +14,35 @@ impl RenderOnce for KeyBinding {
     type Rendered = Div;
 
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {
-        div()
-            .flex()
+        h_stack()
+            .flex_none()
             .gap_2()
             .children(self.key_binding.keystrokes().iter().map(|keystroke| {
-                div()
-                    .flex()
-                    .gap_1()
+                let key_icon = Self::icon_for_key(&keystroke);
+
+                h_stack()
+                    .flex_none()
+                    .gap_0p5()
+                    .bg(cx.theme().colors().element_background)
+                    .p_0p5()
+                    .rounded_sm()
                     .when(keystroke.modifiers.function, |el| el.child(Key::new("fn")))
-                    .when(keystroke.modifiers.control, |el| el.child(Key::new("^")))
-                    .when(keystroke.modifiers.alt, |el| el.child(Key::new("⌥")))
-                    .when(keystroke.modifiers.command, |el| el.child(Key::new("⌘")))
-                    .when(keystroke.modifiers.shift, |el| el.child(Key::new("⇧")))
-                    .child(Key::new(keystroke.key.clone()))
+                    .when(keystroke.modifiers.control, |el| {
+                        el.child(KeyIcon::new(Icon::Control))
+                    })
+                    .when(keystroke.modifiers.alt, |el| {
+                        el.child(KeyIcon::new(Icon::Option))
+                    })
+                    .when(keystroke.modifiers.command, |el| {
+                        el.child(KeyIcon::new(Icon::Command))
+                    })
+                    .when(keystroke.modifiers.shift, |el| {
+                        el.child(KeyIcon::new(Icon::Shift))
+                    })
+                    .when_some(key_icon, |el, icon| el.child(KeyIcon::new(icon)))
+                    .when(key_icon.is_none(), |el| {
+                        el.child(Key::new(keystroke.key.to_uppercase().clone()))
+                    })
             }))
     }
 }
@@ -37,6 +53,22 @@ impl KeyBinding {
         // and vim over normal (in vim mode), etc.
         let key_binding = cx.bindings_for_action(action).last().cloned()?;
         Some(Self::new(key_binding))
+    }
+
+    fn icon_for_key(keystroke: &Keystroke) -> Option<Icon> {
+        let mut icon: Option<Icon> = None;
+
+        if keystroke.key == "left".to_string() {
+            icon = Some(Icon::ArrowLeft);
+        } else if keystroke.key == "right".to_string() {
+            icon = Some(Icon::ArrowRight);
+        } else if keystroke.key == "up".to_string() {
+            icon = Some(Icon::ArrowUp);
+        } else if keystroke.key == "down".to_string() {
+            icon = Some(Icon::ArrowDown);
+        }
+
+        icon
     }
 
     pub fn new(key_binding: gpui::KeyBinding) -> Self {
@@ -53,13 +85,18 @@ impl RenderOnce for Key {
     type Rendered = Div;
 
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {
+        let single_char = self.key.len() == 1;
+
         div()
-            .px_2()
             .py_0()
-            .rounded_md()
-            .text_ui_sm()
+            .when(single_char, |el| {
+                el.w(rems(14. / 16.)).flex().flex_none().justify_center()
+            })
+            .when(!single_char, |el| el.px_0p5())
+            .h(rems(14. / 16.))
+            .text_ui()
+            .line_height(relative(1.))
             .text_color(cx.theme().colors().text)
-            .bg(cx.theme().colors().element_background)
             .child(self.key.clone())
     }
 }
@@ -67,5 +104,26 @@ impl RenderOnce for Key {
 impl Key {
     pub fn new(key: impl Into<SharedString>) -> Self {
         Self { key: key.into() }
+    }
+}
+
+#[derive(IntoElement)]
+pub struct KeyIcon {
+    icon: Icon,
+}
+
+impl RenderOnce for KeyIcon {
+    type Rendered = Div;
+
+    fn render(self, _cx: &mut WindowContext) -> Self::Rendered {
+        div()
+            .w(rems(14. / 16.))
+            .child(IconElement::new(self.icon).size(IconSize::Small))
+    }
+}
+
+impl KeyIcon {
+    pub fn new(icon: Icon) -> Self {
+        Self { icon }
     }
 }

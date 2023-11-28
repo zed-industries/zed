@@ -16,6 +16,7 @@ pub struct Picker<D: PickerDelegate> {
 }
 
 pub trait PickerDelegate: Sized + 'static {
+    type ListItem: IntoElement;
     fn match_count(&self) -> usize;
     fn selected_index(&self) -> usize;
     fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<Picker<Self>>);
@@ -31,7 +32,7 @@ pub trait PickerDelegate: Sized + 'static {
         ix: usize,
         selected: bool,
         cx: &mut ViewContext<Picker<Self>>,
-    ) -> AnyElement;
+    ) -> Option<Self::ListItem>;
 }
 
 impl<D: PickerDelegate> FocusableView for Picker<D> {
@@ -113,7 +114,6 @@ impl<D: PickerDelegate> Picker<D> {
     }
 
     fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
-        dbg!("canceling!");
         self.delegate.dismissed(cx);
     }
 
@@ -229,7 +229,7 @@ impl<D: PickerDelegate> Render for Picker<D> {
                                                             )
                                                         }),
                                                     )
-                                                    .child(picker.delegate.render_match(
+                                                    .children(picker.delegate.render_match(
                                                         ix,
                                                         ix == selected_index,
                                                         cx,

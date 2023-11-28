@@ -23,15 +23,13 @@ impl RenderOnce for IconButton {
             _ => self.color,
         };
 
-        let (mut bg_color, bg_hover_color, bg_active_color) = match self.variant {
+        let (mut bg_color, bg_active_color) = match self.variant {
             ButtonVariant::Filled => (
                 cx.theme().colors().element_background,
-                cx.theme().colors().element_hover,
                 cx.theme().colors().element_active,
             ),
             ButtonVariant::Ghost => (
                 cx.theme().colors().ghost_element_background,
-                cx.theme().colors().ghost_element_hover,
                 cx.theme().colors().ghost_element_active,
             ),
         };
@@ -67,7 +65,8 @@ impl RenderOnce for IconButton {
             }
         }
 
-        button
+        // HACK: Add an additional identified element wrapper to fix tooltips not showing up.
+        div().id(self.id.clone()).child(button)
     }
 }
 
@@ -124,6 +123,6 @@ impl IconButton {
     }
 
     pub fn action(self, action: Box<dyn Action>) -> Self {
-        self.on_click(move |this, cx| cx.dispatch_action(action.boxed_clone()))
+        self.on_click(move |_event, cx| cx.dispatch_action(action.boxed_clone()))
     }
 }

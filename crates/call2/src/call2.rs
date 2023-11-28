@@ -660,9 +660,12 @@ impl CallHandler for Call {
         self.active_call.as_ref().map(|call| {
             call.0.update(cx, |this, cx| {
                 this.room().map(|room| {
-                    room.update(cx, |this, cx| {
-                        this.toggle_mute(cx).log_err();
+                    let room = room.clone();
+                    cx.spawn(|_, mut cx| async move {
+                        room.update(&mut cx, |this, cx| this.toggle_mute(cx))??
+                            .await
                     })
+                    .detach_and_log_err(cx);
                 })
             })
         });

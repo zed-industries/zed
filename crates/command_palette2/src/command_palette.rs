@@ -1,17 +1,17 @@
-use collections::{CommandPaletteFilter, HashMap};
-use fuzzy::{StringMatch, StringMatchCandidate};
-use gpui::{
-    actions, div, prelude::*, Action, AnyElement, AppContext, DismissEvent, Div, EventEmitter,
-    FocusHandle, FocusableView, Keystroke, ParentElement, Render, Styled, View, ViewContext,
-    VisualContext, WeakView,
-};
-use picker::{simple_picker_match, Picker, PickerDelegate};
 use std::{
     cmp::{self, Reverse},
     sync::Arc,
 };
 
-use ui::{h_stack, v_stack, HighlightedLabel, KeyBinding};
+use collections::{CommandPaletteFilter, HashMap};
+use fuzzy::{StringMatch, StringMatchCandidate};
+use gpui::{
+    actions, Action, AppContext, DismissEvent, Div, EventEmitter, FocusHandle, FocusableView,
+    Keystroke, ParentElement, Render, Styled, View, ViewContext, VisualContext, WeakView,
+};
+use picker::{Picker, PickerDelegate};
+
+use ui::{h_stack, v_stack, HighlightedLabel, KeyBinding, ListItem};
 use util::{
     channel::{parse_zed_link, ReleaseChannel, RELEASE_CHANNEL},
     ResultExt,
@@ -81,7 +81,7 @@ impl Render for CommandPalette {
     type Element = Div;
 
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
-        v_stack().w_96().child(self.picker.clone())
+        v_stack().min_w_96().child(self.picker.clone())
     }
 }
 
@@ -141,6 +141,8 @@ impl CommandPaletteDelegate {
 }
 
 impl PickerDelegate for CommandPaletteDelegate {
+    type ListItem = ListItem;
+
     fn placeholder_text(&self) -> Arc<str> {
         "Execute a command...".into()
     }
@@ -292,24 +294,26 @@ impl PickerDelegate for CommandPaletteDelegate {
         ix: usize,
         selected: bool,
         cx: &mut ViewContext<Picker<Self>>,
-    ) -> AnyElement {
+    ) -> Option<Self::ListItem> {
         let Some(r#match) = self.matches.get(ix) else {
-            return div().into_any();
+            return None;
         };
         let Some(command) = self.commands.get(r#match.candidate_id) else {
-            return div().into_any();
+            return None;
         };
 
-        simple_picker_match(selected, cx, |cx| {
-            h_stack()
-                .justify_between()
-                .child(HighlightedLabel::new(
-                    command.name.clone(),
-                    r#match.positions.clone(),
-                ))
-                .children(KeyBinding::for_action(&*command.action, cx))
-                .into_any()
-        })
+        Some(
+            ListItem::new(ix).inset(true).selected(selected).child(
+                h_stack()
+                    .w_full()
+                    .justify_between()
+                    .child(HighlightedLabel::new(
+                        command.name.clone(),
+                        r#match.positions.clone(),
+                    ))
+                    .children(KeyBinding::for_action(&*command.action, cx)),
+            ),
+        )
     }
 }
 

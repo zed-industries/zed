@@ -10,11 +10,11 @@ fn build_menu(cx: &mut WindowContext, header: impl Into<SharedString>) -> View<C
     ContextMenu::build(cx, |menu, _| {
         menu.header(header)
             .separator()
-            .entry("Print current time", |v, cx| {
+            .entry("Print current time", |_event, cx| {
                 println!("dispatching PrintCurrentTime action");
                 cx.dispatch_action(PrintCurrentDate.boxed_clone())
             })
-            .entry("Print best foot", |v, cx| {
+            .entry("Print best foot", |_event, cx| {
                 cx.dispatch_action(PrintBestFood.boxed_clone())
             })
     })
@@ -25,7 +25,7 @@ pub struct ContextMenuStory;
 impl Render for ContextMenuStory {
     type Element = Div;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
         Story::container()
             .on_action(|_: &PrintCurrentDate, _| {
                 println!("printing unix time!");

@@ -21,7 +21,7 @@ audio = { package = "audio2", path = "../audio2" }
 auto_update = { package = "auto_update2", path = "../auto_update2" }
 # breadcrumbs = { path = "../breadcrumbs" }
 call = { package = "call2", path = "../call2" }
-# channel = { path = "../channel" }
+channel = { package = "channel2", path = "../channel2" }
 cli = { path = "../cli" }
 collab_ui = { package = "collab_ui2", path = "../collab_ui2" }
 collections = { path = "../collections" }
@@ -136,6 +136,7 @@ tree-sitter-lua.workspace = true
 tree-sitter-nix.workspace = true
 tree-sitter-nu.workspace = true
 tree-sitter-vue.workspace = true
+tree-sitter-uiua.workspace = true
 
 url = "2.2"
 urlencoding = "2.1.2"

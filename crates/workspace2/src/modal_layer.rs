@@ -95,10 +95,6 @@ impl Render for ModalLayer {
                     .track_focus(&active_modal.focus_handle)
                     .child(
                         h_stack()
-                            // needed to prevent mouse events leaking to the
-                            // UI below. // todo! for gpui3.
-                            .on_any_mouse_down(|_, cx| cx.stop_propagation())
-                            .on_any_mouse_up(|_, cx| cx.stop_propagation())
                             .on_mouse_down_out(cx.listener(|this, _, cx| {
                                 this.hide_modal(cx);
                             }))

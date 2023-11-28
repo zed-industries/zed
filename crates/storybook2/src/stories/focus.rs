@@ -33,7 +33,6 @@ impl Render for FocusStory {
         let theme = cx.theme();
         let color_1 = theme.status().created;
         let color_2 = theme.status().modified;
-        let color_3 = theme.status().deleted;
         let color_4 = theme.status().conflict;
         let color_5 = theme.status().ignored;
         let color_6 = theme.status().renamed;
@@ -42,10 +41,10 @@ impl Render for FocusStory {
             .id("parent")
             .focusable()
             .key_context("parent")
-            .on_action(cx.listener(|_, action: &ActionA, cx| {
+            .on_action(cx.listener(|_, _action: &ActionA, _cx| {
                 println!("Action A dispatched on parent");
             }))
-            .on_action(cx.listener(|_, action: &ActionB, cx| {
+            .on_action(cx.listener(|_, _action: &ActionB, _cx| {
                 println!("Action B dispatched on parent");
             }))
             .on_focus(cx.listener(|_, _, _| println!("Parent focused")))
@@ -61,7 +60,7 @@ impl Render for FocusStory {
                 div()
                     .track_focus(&self.child_1_focus)
                     .key_context("child-1")
-                    .on_action(cx.listener(|_, action: &ActionB, cx| {
+                    .on_action(cx.listener(|_, _action: &ActionB, _cx| {
                         println!("Action B dispatched on child 1 during");
                     }))
                     .w_full()
@@ -83,7 +82,7 @@ impl Render for FocusStory {
                 div()
                     .track_focus(&self.child_2_focus)
                     .key_context("child-2")
-                    .on_action(cx.listener(|_, action: &ActionC, cx| {
+                    .on_action(cx.listener(|_, _action: &ActionC, _cx| {
                         println!("Action C dispatched on child 2");
                     }))
                     .w_full()

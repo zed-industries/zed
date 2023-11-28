@@ -14,6 +14,8 @@ pub enum IconSize {
 pub enum Icon {
     Ai,
     ArrowLeft,
+    ArrowUp,
+    ArrowDown,
     ArrowRight,
     ArrowUpRight,
     AtSign,
@@ -61,6 +63,7 @@ pub enum Icon {
     Mic,
     MicMute,
     Plus,
+    Public,
     Quote,
     Replace,
     ReplaceAll,
@@ -71,6 +74,11 @@ pub enum Icon {
     Terminal,
     WholeWord,
     XCircle,
+    Command,
+    Control,
+    Shift,
+    Option,
+    Return,
 }
 
 impl Icon {
@@ -79,6 +87,8 @@ impl Icon {
             Icon::Ai => "icons/ai.svg",
             Icon::ArrowLeft => "icons/arrow_left.svg",
             Icon::ArrowRight => "icons/arrow_right.svg",
+            Icon::ArrowUp => "icons/arrow_up.svg",
+            Icon::ArrowDown => "icons/arrow_down.svg",
             Icon::ArrowUpRight => "icons/arrow_up_right.svg",
             Icon::AtSign => "icons/at-sign.svg",
             Icon::AudioOff => "icons/speaker-off.svg",
@@ -125,6 +135,7 @@ impl Icon {
             Icon::Mic => "icons/mic.svg",
             Icon::MicMute => "icons/mic-mute.svg",
             Icon::Plus => "icons/plus.svg",
+            Icon::Public => "icons/public.svg",
             Icon::Quote => "icons/quote.svg",
             Icon::Replace => "icons/replace.svg",
             Icon::ReplaceAll => "icons/replace_all.svg",
@@ -135,6 +146,11 @@ impl Icon {
             Icon::Terminal => "icons/terminal.svg",
             Icon::WholeWord => "icons/word_search.svg",
             Icon::XCircle => "icons/error.svg",
+            Icon::Command => "icons/command.svg",
+            Icon::Control => "icons/control.svg",
+            Icon::Shift => "icons/shift.svg",
+            Icon::Option => "icons/option.svg",
+            Icon::Return => "icons/return.svg",
         }
     }
 }
@@ -151,8 +167,8 @@ impl RenderOnce for IconElement {
 
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         let svg_size = match self.size {
-            IconSize::Small => rems(0.75),
-            IconSize::Medium => rems(0.9375),
+            IconSize::Small => rems(14. / 16.),
+            IconSize::Medium => rems(16. / 16.),
         };
 
         svg()
@@ -188,18 +204,5 @@ impl IconElement {
     pub fn size(mut self, size: IconSize) -> Self {
         self.size = size;
         self
-    }
-
-    fn render(self, cx: &mut WindowContext) -> impl Element {
-        let svg_size = match self.size {
-            IconSize::Small => rems(0.75),
-            IconSize::Medium => rems(0.9375),
-        };
-
-        svg()
-            .size(svg_size)
-            .flex_none()
-            .path(self.path)
-            .text_color(self.color.color(cx))
     }
 }

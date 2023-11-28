@@ -1,12 +1,12 @@
-use gpui::{Styled, WindowContext};
-use theme2::ActiveTheme;
+use gpui::{px, Styled, WindowContext};
 
+use crate::prelude::*;
 use crate::{ElevationIndex, UITextSize};
 
 fn elevated<E: Styled>(this: E, cx: &mut WindowContext, index: ElevationIndex) -> E {
     this.bg(cx.theme().colors().elevated_surface_background)
         .z_index(index.z_index())
-        .rounded_lg()
+        .rounded(px(8.))
         .border()
         .border_color(cx.theme().colors().border_variant)
         .shadow(index.shadow())

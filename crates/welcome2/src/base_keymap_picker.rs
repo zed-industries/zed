@@ -1,13 +1,14 @@
 use super::base_keymap_setting::BaseKeymap;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, AppContext, DismissEvent, EventEmitter, FocusableView, IntoElement, Render, Task,
+    actions, AppContext, DismissEvent, EventEmitter, FocusableView, ParentElement, Render, Task,
     View, ViewContext, VisualContext, WeakView,
 };
-use picker::{simple_picker_match, Picker, PickerDelegate};
+use picker::{Picker, PickerDelegate};
 use project::Fs;
 use settings::{update_settings_file, Settings};
 use std::sync::Arc;
+use ui::ListItem;
 use util::ResultExt;
 use workspace::{ui::HighlightedLabel, Workspace};
 
@@ -97,6 +98,8 @@ impl BaseKeymapSelectorDelegate {
 }
 
 impl PickerDelegate for BaseKeymapSelectorDelegate {
+    type ListItem = ui::ListItem;
+
     fn placeholder_text(&self) -> Arc<str> {
         "Select a base keymap...".into()
     }
@@ -188,13 +191,18 @@ impl PickerDelegate for BaseKeymapSelectorDelegate {
         &self,
         ix: usize,
         selected: bool,
-        cx: &mut gpui::ViewContext<Picker<Self>>,
-    ) -> gpui::AnyElement {
+        _cx: &mut gpui::ViewContext<Picker<Self>>,
+    ) -> Option<Self::ListItem> {
         let keymap_match = &self.matches[ix];
 
-        simple_picker_match(selected, cx, |_cx| {
-            HighlightedLabel::new(keymap_match.string.clone(), keymap_match.positions.clone())
-                .into_any_element()
-        })
+        Some(
+            ListItem::new(ix)
+                .selected(selected)
+                .inset(true)
+                .child(HighlightedLabel::new(
+                    keymap_match.string.clone(),
+                    keymap_match.positions.clone(),
+                )),
+        )
     }
 }

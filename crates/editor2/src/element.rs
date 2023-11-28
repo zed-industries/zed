@@ -22,10 +22,11 @@ use collections::{BTreeMap, HashMap};
 use gpui::{
     div, point, px, relative, size, transparent_black, Action, AnyElement, AvailableSpace,
     BorrowWindow, Bounds, ContentMask, Corners, DispatchPhase, Edges, Element, ElementId,
-    ElementInputHandler, Entity, EntityId, Hsla, InteractiveElement, IntoElement, LineLayout,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, RenderOnce,
-    ScrollWheelEvent, ShapedLine, SharedString, Size, StatefulInteractiveElement, Style, Styled,
-    TextRun, TextStyle, View, ViewContext, WeakView, WindowContext, WrappedLine,
+    ElementInputHandler, Entity, EntityId, Hsla, InteractiveBounds, InteractiveElement,
+    IntoElement, LineLayout, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    ParentElement, Pixels, RenderOnce, ScrollWheelEvent, ShapedLine, SharedString, Size,
+    StackingOrder, StatefulInteractiveElement, Style, Styled, TextRun, TextStyle, View,
+    ViewContext, WeakView, WindowContext, WrappedLine,
 };
 use itertools::Itertools;
 use language::language_settings::ShowWhitespaceSetting;
@@ -316,6 +317,7 @@ impl EditorElement {
         position_map: &PositionMap,
         text_bounds: Bounds<Pixels>,
         gutter_bounds: Bounds<Pixels>,
+        stacking_order: &StackingOrder,
         cx: &mut ViewContext<Editor>,
     ) -> bool {
         let mut click_count = event.click_count;
@@ -324,6 +326,9 @@ impl EditorElement {
         if gutter_bounds.contains_point(&event.position) {
             click_count = 3; // Simulate triple-click when clicking the gutter to select lines
         } else if !text_bounds.contains_point(&event.position) {
+            return false;
+        }
+        if !cx.was_top_layer(&event.position, stacking_order) {
             return false;
         }
 
@@ -384,6 +389,7 @@ impl EditorElement {
         event: &MouseUpEvent,
         position_map: &PositionMap,
         text_bounds: Bounds<Pixels>,
+        stacking_order: &StackingOrder,
         cx: &mut ViewContext<Editor>,
     ) -> bool {
         let end_selection = editor.has_pending_selection();
@@ -396,6 +402,7 @@ impl EditorElement {
         if !pending_nonempty_selections
             && event.modifiers.command
             && text_bounds.contains_point(&event.position)
+            && cx.was_top_layer(&event.position, stacking_order)
         {
             let point = position_map.point_for_position(text_bounds, event.position);
             let could_be_inlay = point.as_valid().is_none();
@@ -418,6 +425,7 @@ impl EditorElement {
         position_map: &PositionMap,
         text_bounds: Bounds<Pixels>,
         gutter_bounds: Bounds<Pixels>,
+        stacking_order: &StackingOrder,
         cx: &mut ViewContext<Editor>,
     ) -> bool {
         let modifiers = event.modifiers;
@@ -457,10 +465,12 @@ impl EditorElement {
 
         let text_hovered = text_bounds.contains_point(&event.position);
         let gutter_hovered = gutter_bounds.contains_point(&event.position);
+        let was_top = cx.was_top_layer(&event.position, stacking_order);
+
         editor.set_gutter_hovered(gutter_hovered, cx);
 
         // Don't trigger hover popover if mouse is hovering over context menu
-        if text_hovered {
+        if text_hovered && was_top {
             let point_for_position = position_map.point_for_position(text_bounds, event.position);
 
             match point_for_position.as_valid() {
@@ -490,7 +500,7 @@ impl EditorElement {
         } else {
             update_go_to_definition_link(editor, None, modifiers.command, modifiers.shift, cx);
             hover_at(editor, None, cx);
-            gutter_hovered
+            gutter_hovered && was_top
         }
     }
 
@@ -498,10 +508,10 @@ impl EditorElement {
         editor: &mut Editor,
         event: &ScrollWheelEvent,
         position_map: &PositionMap,
-        bounds: Bounds<Pixels>,
+        bounds: &InteractiveBounds,
         cx: &mut ViewContext<Editor>,
     ) -> bool {
-        if !bounds.contains_point(&event.position) {
+        if !bounds.visibly_contains(&event.position, cx) {
             return false;
         }
 
@@ -2282,10 +2292,15 @@ impl EditorElement {
         cx: &mut WindowContext,
     ) {
         let content_origin = text_bounds.origin + point(layout.gutter_margin, Pixels::ZERO);
+        let interactive_bounds = InteractiveBounds {
+            bounds: bounds.intersect(&cx.content_mask().bounds),
+            stacking_order: cx.stacking_order().clone(),
+        };
 
         cx.on_mouse_event({
             let position_map = layout.position_map.clone();
             let editor = self.editor.clone();
+            let interactive_bounds = interactive_bounds.clone();
 
             move |event: &ScrollWheelEvent, phase, cx| {
                 if phase != DispatchPhase::Bubble {
@@ -2293,7 +2308,7 @@ impl EditorElement {
                 }
 
                 let should_cancel = editor.update(cx, |editor, cx| {
-                    Self::scroll(editor, event, &position_map, bounds, cx)
+                    Self::scroll(editor, event, &position_map, &interactive_bounds, cx)
                 });
                 if should_cancel {
                     cx.stop_propagation();
@@ -2304,6 +2319,7 @@ impl EditorElement {
         cx.on_mouse_event({
             let position_map = layout.position_map.clone();
             let editor = self.editor.clone();
+            let stacking_order = cx.stacking_order().clone();
 
             move |event: &MouseDownEvent, phase, cx| {
                 if phase != DispatchPhase::Bubble {
@@ -2311,7 +2327,15 @@ impl EditorElement {
                 }
 
                 let should_cancel = editor.update(cx, |editor, cx| {
-                    Self::mouse_down(editor, event, &position_map, text_bounds, gutter_bounds, cx)
+                    Self::mouse_down(
+                        editor,
+                        event,
+                        &position_map,
+                        text_bounds,
+                        gutter_bounds,
+                        &stacking_order,
+                        cx,
+                    )
                 });
 
                 if should_cancel {
@@ -2323,9 +2347,18 @@ impl EditorElement {
         cx.on_mouse_event({
             let position_map = layout.position_map.clone();
             let editor = self.editor.clone();
+            let stacking_order = cx.stacking_order().clone();
+
             move |event: &MouseUpEvent, phase, cx| {
                 let should_cancel = editor.update(cx, |editor, cx| {
-                    Self::mouse_up(editor, event, &position_map, text_bounds, cx)
+                    Self::mouse_up(
+                        editor,
+                        event,
+                        &position_map,
+                        text_bounds,
+                        &stacking_order,
+                        cx,
+                    )
                 });
 
                 if should_cancel {
@@ -2351,13 +2384,23 @@ impl EditorElement {
         cx.on_mouse_event({
             let position_map = layout.position_map.clone();
             let editor = self.editor.clone();
+            let stacking_order = cx.stacking_order().clone();
+
             move |event: &MouseMoveEvent, phase, cx| {
                 if phase != DispatchPhase::Bubble {
                     return;
                 }
 
                 let stop_propogating = editor.update(cx, |editor, cx| {
-                    Self::mouse_moved(editor, event, &position_map, text_bounds, gutter_bounds, cx)
+                    Self::mouse_moved(
+                        editor,
+                        event,
+                        &position_map,
+                        text_bounds,
+                        gutter_bounds,
+                        &stacking_order,
+                        cx,
+                    )
                 });
 
                 if stop_propogating {
@@ -2617,9 +2660,11 @@ impl Element for EditorElement {
             // We call with_z_index to establish a new stacking context.
             cx.with_z_index(0, |cx| {
                 cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
-                    // Paint mouse listeners first, so any elements we paint on top of the editor
+                    // Paint mouse listeners at z-index 0 so any elements we paint on top of the editor
                     // take precedence.
-                    self.paint_mouse_listeners(bounds, gutter_bounds, text_bounds, &layout, cx);
+                    cx.with_z_index(0, |cx| {
+                        self.paint_mouse_listeners(bounds, gutter_bounds, text_bounds, &layout, cx);
+                    });
                     let input_handler = ElementInputHandler::new(bounds, self.editor.clone(), cx);
                     cx.handle_input(&focus_handle, input_handler);
 

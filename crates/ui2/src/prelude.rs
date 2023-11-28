@@ -5,7 +5,7 @@ pub use gpui::{
 
 pub use crate::StyledExt;
 pub use crate::{ButtonVariant, Color};
-pub use theme2::ActiveTheme;
+pub use theme::ActiveTheme;
 
 use strum::EnumIter;
 
@@ -14,12 +14,6 @@ pub enum IconSide {
     #[default]
     Left,
     Right,
-}
-
-#[derive(Debug, PartialEq, Eq, Clone, Copy, EnumIter)]
-pub enum OverflowStyle {
-    Hidden,
-    Wrap,
 }
 
 #[derive(Default, PartialEq, Copy, Clone, EnumIter, strum::Display)]

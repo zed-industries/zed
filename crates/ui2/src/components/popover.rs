@@ -1,10 +1,11 @@
 use gpui::{
-    AnyElement, Div, Element, ElementId, IntoElement, ParentElement, RenderOnce, Styled,
+    div, AnyElement, Div, Element, ElementId, IntoElement, ParentElement, RenderOnce, Styled,
     WindowContext,
 };
 use smallvec::SmallVec;
 
-use crate::{v_stack, StyledExt};
+use crate::prelude::*;
+use crate::v_stack;
 
 /// A popover is used to display a menu or show some options.
 ///
@@ -43,22 +44,16 @@ impl RenderOnce for Popover {
     type Rendered = Div;
 
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {
-        v_stack()
-            .relative()
-            .elevation_2(cx)
-            .p_1()
-            .children(self.children)
+        div()
+            .flex()
+            .gap_1()
+            .child(v_stack().elevation_2(cx).px_1().children(self.children))
             .when_some(self.aside, |this, aside| {
-                // TODO: This will statically position the aside to the top right of the popover.
-                // We should update this to use gpui2::overlay avoid collisions with the window edges.
                 this.child(
                     v_stack()
-                        .top_0()
-                        .left_full()
-                        .ml_1()
-                        .absolute()
                         .elevation_2(cx)
-                        .p_1()
+                        .bg(cx.theme().colors().surface_background)
+                        .px_1()
                         .child(aside),
                 )
             })
