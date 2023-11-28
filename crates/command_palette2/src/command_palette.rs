@@ -1,17 +1,15 @@
 use collections::{CommandPaletteFilter, HashMap};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, div, prelude::*, Action, AppContext, DismissEvent, Div, EventEmitter, FocusHandle,
-    FocusableView, Keystroke, ParentElement, Render, Styled, View, ViewContext, VisualContext,
-    WeakView,
+    actions, Action, AppContext, DismissEvent, Div, EventEmitter, FocusHandle, FocusableView,
+    Keystroke, ParentElement, Render, Styled, View, ViewContext, VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};
 use std::{
     cmp::{self, Reverse},
     sync::Arc,
 };
-use theme::ActiveTheme;
-use ui::{h_stack, v_stack, HighlightedLabel, KeyBinding, StyledExt};
+use ui::{h_stack, v_stack, HighlightedLabel, KeyBinding, ListItem};
 use util::{
     channel::{parse_zed_link, ReleaseChannel, RELEASE_CHANNEL},
     ResultExt,
@@ -141,7 +139,7 @@ impl CommandPaletteDelegate {
 }
 
 impl PickerDelegate for CommandPaletteDelegate {
-    type ListItem = Div;
+    type ListItem = ListItem;
 
     fn placeholder_text(&self) -> Arc<str> {
         "Execute a command...".into()
@@ -295,7 +293,6 @@ impl PickerDelegate for CommandPaletteDelegate {
         selected: bool,
         cx: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let colors = cx.theme().colors();
         let Some(r#match) = self.matches.get(ix) else {
             return None;
         };
@@ -304,23 +301,15 @@ impl PickerDelegate for CommandPaletteDelegate {
         };
 
         Some(
-            div()
-                .px_1()
-                .text_color(colors.text)
-                .text_ui()
-                .bg(colors.ghost_element_background)
-                .rounded_md()
-                .when(selected, |this| this.bg(colors.ghost_element_selected))
-                .hover(|this| this.bg(colors.ghost_element_hover))
-                .child(
-                    h_stack()
-                        .justify_between()
-                        .child(HighlightedLabel::new(
-                            command.name.clone(),
-                            r#match.positions.clone(),
-                        ))
-                        .children(KeyBinding::for_action(&*command.action, cx)),
-                ),
+            ListItem::new(ix).selected(selected).child(
+                h_stack()
+                    .justify_between()
+                    .child(HighlightedLabel::new(
+                        command.name.clone(),
+                        r#match.positions.clone(),
+                    ))
+                    .children(KeyBinding::for_action(&*command.action, cx)),
+            ),
         )
     }
 }
