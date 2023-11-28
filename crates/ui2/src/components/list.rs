@@ -1,5 +1,6 @@
 use gpui::{
-    div, rems, AnyElement, ClickEvent, Div, IntoElement, Stateful, StatefulInteractiveElement,
+    div, rems, AnyElement, ClickEvent, Div, IntoElement, MouseButton, MouseDownEvent, Stateful,
+    StatefulInteractiveElement,
 };
 use smallvec::SmallVec;
 use std::rc::Rc;
@@ -184,6 +185,7 @@ pub struct ListItem {
     toggle: Toggle,
     variant: ListItemVariant,
     on_click: Option<Rc<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
+    on_secondary_mouse_down: Option<Rc<dyn Fn(&MouseDownEvent, &mut WindowContext) + 'static>>,
     children: SmallVec<[AnyElement; 2]>,
 }
 
@@ -198,13 +200,22 @@ impl ListItem {
             overflow: OverflowStyle::Hidden,
             toggle: Toggle::NotToggleable,
             variant: ListItemVariant::default(),
-            on_click: Default::default(),
+            on_click: None,
+            on_secondary_mouse_down: None,
             children: SmallVec::new(),
         }
     }
 
     pub fn on_click(mut self, handler: impl Fn(&ClickEvent, &mut WindowContext) + 'static) -> Self {
         self.on_click = Some(Rc::new(handler));
+        self
+    }
+
+    pub fn on_secondary_mouse_down(
+        mut self,
+        handler: impl Fn(&MouseDownEvent, &mut WindowContext) + 'static,
+    ) -> Self {
+        self.on_secondary_mouse_down = Some(Rc::new(handler));
         self
     }
 
@@ -268,9 +279,6 @@ impl RenderOnce for ListItem {
                 style.background = Some(cx.theme().colors().editor_background.into());
                 style
             })
-            .when_some(self.on_click.clone(), |this, on_click| {
-                this.on_click(move |event, cx| (on_click)(event, cx))
-            })
             // TODO: Add focus state
             // .when(self.state == InteractionState::Focused, |this| {
             //     this.border()
@@ -280,6 +288,14 @@ impl RenderOnce for ListItem {
             .active(|style| style.bg(cx.theme().colors().ghost_element_active))
             .when(self.selected, |this| {
                 this.bg(cx.theme().colors().ghost_element_selected)
+            })
+            .when_some(self.on_click.clone(), |this, on_click| {
+                this.on_click(move |event, cx| (on_click)(event, cx))
+            })
+            .when_some(self.on_secondary_mouse_down, |this, on_mouse_down| {
+                this.on_mouse_down(MouseButton::Right, move |event, cx| {
+                    (on_mouse_down)(event, cx)
+                })
             })
             .child(
                 div()

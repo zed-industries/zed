@@ -10,8 +10,8 @@ use anyhow::{anyhow, Result};
 use gpui::{
     actions, div, px, uniform_list, Action, AppContext, AssetSource, AsyncWindowContext,
     ClipboardItem, Div, EventEmitter, FocusHandle, Focusable, FocusableView, InteractiveElement,
-    Model, ParentElement, Pixels, Point, PromptLevel, Render, Stateful, Styled, Task,
-    UniformListScrollHandle, View, ViewContext, VisualContext as _, WeakView, WindowContext,
+    Model, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, Stateful, Styled,
+    Task, UniformListScrollHandle, View, ViewContext, VisualContext as _, WeakView, WindowContext,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
 use project::{
@@ -1393,12 +1393,9 @@ impl ProjectPanel {
                     }
                 }
             }))
-        // .on_mouse_down(
-        //     MouseButton::Right,
-        //     cx.listener(move |this, event: &MouseDownEvent, cx| {
-        //         this.deploy_context_menu(event.position, entry_id, cx);
-        //     }),
-        // )
+            .on_secondary_mouse_down(cx.listener(move |this, event: &MouseDownEvent, cx| {
+                this.deploy_context_menu(event.position, entry_id, cx);
+            }))
         // .on_drop::<ProjectEntryId>(|this, event, cx| {
         //     this.move_entry(
         //         *dragged_entry,
