@@ -1,4 +1,4 @@
-use gpui::SharedString;
+use gpui::{ImageSource, SharedString};
 
 use crate::Icon;
 
@@ -9,6 +9,6 @@ use crate::Icon;
 /// Can be filled with a []
 pub enum GraphicSlot {
     Icon(Icon),
-    Avatar(SharedString),
+    Avatar(ImageSource),
     PublicActor(SharedString),
 }

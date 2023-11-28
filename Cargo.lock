@@ -11661,6 +11661,7 @@ dependencies = [
  "auto_update2",
  "backtrace",
  "call2",
+ "channel2",
  "chrono",
  "cli",
  "client2",

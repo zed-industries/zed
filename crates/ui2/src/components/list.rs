@@ -1,13 +1,14 @@
 use std::rc::Rc;
 
 use gpui::{
-    div, px, AnyElement, ClickEvent, Div, IntoElement, MouseButton, MouseDownEvent, Pixels,
-    Stateful, StatefulInteractiveElement,
+    div, px, AnyElement, ClickEvent, Div, ImageSource, IntoElement, MouseButton, MouseDownEvent,
+    Pixels, Stateful, StatefulInteractiveElement,
 };
 use smallvec::SmallVec;
 
 use crate::{
-    disclosure_control, h_stack, v_stack, Avatar, Icon, IconElement, IconSize, Label, Toggle,
+    disclosure_control, h_stack, v_stack, Avatar, Icon, IconButton, IconElement, IconSize, Label,
+    Toggle,
 };
 use crate::{prelude::*, GraphicSlot};
 
@@ -20,8 +21,7 @@ pub enum ListItemVariant {
 }
 
 pub enum ListHeaderMeta {
-    // TODO: These should be IconButtons
-    Tools(Vec<Icon>),
+    Tools(Vec<IconButton>),
     // TODO: This should be a button
     Button(Label),
     Text(Label),
@@ -47,11 +47,7 @@ impl RenderOnce for ListHeader {
                 h_stack()
                     .gap_2()
                     .items_center()
-                    .children(icons.into_iter().map(|i| {
-                        IconElement::new(i)
-                            .color(Color::Muted)
-                            .size(IconSize::Small)
-                    })),
+                    .children(icons.into_iter().map(|i| i.color(Color::Muted))),
             ),
             Some(ListHeaderMeta::Button(label)) => div().child(label),
             Some(ListHeaderMeta::Text(label)) => div().child(label),
@@ -113,6 +109,10 @@ impl ListHeader {
     pub fn left_icon(mut self, left_icon: Option<Icon>) -> Self {
         self.left_icon = left_icon;
         self
+    }
+
+    pub fn right_button(self, button: IconButton) -> Self {
+        self.meta(Some(ListHeaderMeta::Tools(vec![button])))
     }
 
     pub fn meta(mut self, meta: Option<ListHeaderMeta>) -> Self {
@@ -257,7 +257,7 @@ impl ListItem {
         self
     }
 
-    pub fn left_avatar(mut self, left_avatar: impl Into<SharedString>) -> Self {
+    pub fn left_avatar(mut self, left_avatar: impl Into<ImageSource>) -> Self {
         self.left_slot = Some(GraphicSlot::Avatar(left_avatar.into()));
         self
     }
@@ -275,7 +275,7 @@ impl RenderOnce for ListItem {
                         .color(Color::Muted),
                 ),
             ),
-            Some(GraphicSlot::Avatar(src)) => Some(h_stack().child(Avatar::uri(src))),
+            Some(GraphicSlot::Avatar(src)) => Some(h_stack().child(Avatar::source(src))),
             Some(GraphicSlot::PublicActor(src)) => Some(h_stack().child(Avatar::uri(src))),
             None => None,
         };
@@ -296,15 +296,6 @@ impl RenderOnce for ListItem {
             .active(|style| style.bg(cx.theme().colors().ghost_element_active))
             .when(self.selected, |this| {
                 this.bg(cx.theme().colors().ghost_element_selected)
-            })
-            .when_some(self.on_click.clone(), |this, on_click| {
-                this.on_click(move |event, cx| {
-                    // HACK: GPUI currently fires `on_click` with any mouse button,
-                    // but we only care about the left button.
-                    if event.down.button == MouseButton::Left {
-                        (on_click)(event, cx)
-                    }
-                })
             })
             .when_some(self.on_secondary_mouse_down, |this, on_mouse_down| {
                 this.on_mouse_down(MouseButton::Right, move |event, cx| {
