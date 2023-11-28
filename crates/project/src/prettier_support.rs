@@ -210,10 +210,12 @@ fn start_default_prettier(
                     if let Err(e) = installation_task.await {
                         project.update(&mut cx, |project, _| {
                             if let PrettierInstallation::NotInstalled {
-                                installation_task, ..
+                                installation_task,
+                                attempts,
                             } = &mut project.default_prettier.prettier
                             {
                                 *installation_task = None;
+                                *attempts += 1;
                             }
                         });
                         anyhow::bail!(
@@ -654,17 +656,9 @@ impl Project {
                 None
             }
         };
-
-        if installation_attempts > prettier::LAUNCH_THRESHOLD {
-            log::warn!(
-                "Default prettier installation has failed {installation_attempts} times, not attempting again",
-            );
-            return;
-        }
-
         let fs = Arc::clone(&self.fs);
         let new_installation_task = cx
-            .spawn(|this, mut cx| async move {
+            .spawn(|project, mut cx| async move {
                 match locate_prettier_installation
                     .await
                     .context("locate prettier installation")
@@ -677,6 +671,18 @@ impl Project {
                                 match previous_installation_task.await {
                                     Ok(()) => false,
                                     Err(e) => {
+                                        project.update(&mut cx, |project, _| {
+                                            if let PrettierInstallation::NotInstalled {
+                                                attempts,
+                                                ..
+                                            } = &mut project.default_prettier.prettier
+                                            {
+                                                *attempts += 1;
+                                                installation_attempts = *attempts;
+                                            } else {
+                                                installation_attempts += 1;
+                                            }
+                                        });
                                         log::error!("Failed to install default prettier: {e:#}");
                                         true
                                     }
@@ -684,9 +690,17 @@ impl Project {
                             }
                             None => true,
                         };
-                        this.update(&mut cx, |this, _| {
+
+                        if installation_attempts > prettier::LAUNCH_THRESHOLD {
+                            log::warn!(
+                                "Default prettier installation has failed {installation_attempts} times, not attempting again",
+                            );
+                            return Ok(());
+                        }
+
+                        project.update(&mut cx, |project, _| {
                             plugins_to_install.retain(|plugin| {
-                                !this.default_prettier.installed_plugins.contains(plugin)
+                                !project.default_prettier.installed_plugins.contains(plugin)
                             });
                             needs_install |= !plugins_to_install.is_empty();
                         });
@@ -700,13 +714,13 @@ impl Project {
                                 .await
                                 .context("prettier & plugins install")
                                 .map_err(Arc::new)?;
-                            this.update(&mut cx, |this, _| {
-                                this.default_prettier.prettier =
+                            project.update(&mut cx, |project, _| {
+                                project.default_prettier.prettier =
                                     PrettierInstallation::Installed(PrettierInstance {
                                         attempt: 0,
                                         prettier: None,
                                     });
-                                this.default_prettier
+                                project.default_prettier
                                     .installed_plugins
                                     .extend(installed_plugins);
                             });
@@ -717,7 +731,7 @@ impl Project {
             })
             .shared();
         self.default_prettier.prettier = PrettierInstallation::NotInstalled {
-            attempts: installation_attempts + 1,
+            attempts: installation_attempts,
             installation_task: Some(new_installation_task),
         };
     }
