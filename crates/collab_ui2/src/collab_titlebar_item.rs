@@ -26,6 +26,7 @@
 // use vcs_menu::{build_branch_list, BranchList, OpenRecent as ToggleVcsMenu};
 // use workspace::{FollowNextCollaborator, Workspace, WORKSPACE_DB};
 
+use smallvec::smallvec;
 use std::sync::Arc;
 
 use call::ActiveCall;
@@ -37,7 +38,10 @@ use gpui::{
 };
 use project::Project;
 use theme::ActiveTheme;
-use ui::{h_stack, Avatar, Button, ButtonVariant, Color, IconButton, KeyBinding, Tooltip};
+use ui::{
+    h_stack, Avatar, Button, ButtonLike, ButtonVariant, Color, IconButton, IconElement, IconSize,
+    KeyBinding, Tooltip,
+};
 use util::ResultExt;
 use workspace::Workspace;
 
@@ -296,6 +300,18 @@ impl Render for CollabTitlebarItem {
                         })
                         .detach_and_log_err(cx);
                     }))
+                    .child(ButtonLike::new(
+                        "test-button",
+                        smallvec![
+                            Avatar::uri("https://avatars.githubusercontent.com/u/1714999?v=4")
+                                .into_element()
+                                .into_any(),
+                            IconElement::new(ui::Icon::ChevronDown)
+                                .size(IconSize::Small)
+                                .into_element()
+                                .into_any(),
+                        ],
+                    ))
                 }
             })
     }
