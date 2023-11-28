@@ -25,6 +25,26 @@ use crate::{
     Event, File, FormatOperation, PathChange, Project, ProjectEntryId, Worktree, WorktreeId,
 };
 
+pub fn prettier_plugins_for_language(language: &Language, language_settings: &LanguageSettings) -> Option<HashSet<&'static str>> {
+    match &language_settings.formatter {
+        Formatter::Prettier { .. } | Formatter::Auto => {}
+        Formatter::LanguageServer | Formatter::External { .. } => return None,
+    };
+    let mut prettier_plugins = None;
+    if language.prettier_parser_name().is_some() {
+        prettier_plugins
+            .get_or_insert_with(|| HashSet::default())
+            .extend(
+                language
+                    .lsp_adapters()
+                    .iter()
+                    .flat_map(|adapter| adapter.prettier_plugins()),
+            )
+    }
+
+    prettier_plugins
+}
+
 pub(super) async fn format_with_prettier(
     project: &ModelHandle<Project>,
     buffer: &ModelHandle<Buffer>,
@@ -578,15 +598,10 @@ impl Project {
     pub fn install_default_prettier(
         &mut self,
         _worktree: Option<WorktreeId>,
-        _new_language: &Language,
-        language_settings: &LanguageSettings,
+        _plugins: HashSet<&'static str>,
         _cx: &mut ModelContext<Self>,
     ) {
         // suppress unused code warnings
-        match &language_settings.formatter {
-            Formatter::Prettier { .. } | Formatter::Auto => {}
-            Formatter::LanguageServer | Formatter::External { .. } => return,
-        };
         let _ = &self.default_prettier.installed_plugins;
     }
 
@@ -594,33 +609,12 @@ impl Project {
     pub fn install_default_prettier(
         &mut self,
         worktree: Option<WorktreeId>,
-        new_language: &Language,
-        language_settings: &LanguageSettings,
+        mut new_plugins: HashSet<&'static str>,
         cx: &mut ModelContext<Self>,
     ) {
-        match &language_settings.formatter {
-            Formatter::Prettier { .. } | Formatter::Auto => {}
-            Formatter::LanguageServer | Formatter::External { .. } => return,
-        };
         let Some(node) = self.node.as_ref().cloned() else {
             return;
         };
-
-        let mut prettier_plugins = None;
-        if new_language.prettier_parser_name().is_some() {
-            prettier_plugins
-                .get_or_insert_with(|| HashSet::<&'static str>::default())
-                .extend(
-                    new_language
-                        .lsp_adapters()
-                        .iter()
-                        .flat_map(|adapter| adapter.prettier_plugins()),
-                )
-        }
-        let Some(prettier_plugins) = prettier_plugins else {
-            return;
-        };
-
         let fs = Arc::clone(&self.fs);
         let locate_prettier_installation = match worktree.and_then(|worktree_id| {
             self.worktree_for_id(worktree_id, cx)
@@ -637,9 +631,8 @@ impl Project {
                     .await
                 })
             }
-            None => Task::ready(Ok(ControlFlow::Break(()))),
+            None => Task::ready(Ok(ControlFlow::Continue(None))),
         };
-        let mut new_plugins = prettier_plugins;
         new_plugins
             .retain(|plugin| !self.default_prettier.installed_plugins.contains(plugin));
         let mut installation_attempt = 0;
