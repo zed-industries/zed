@@ -1,24 +1,28 @@
 use gpui::AnyView;
 
 use crate::prelude::*;
-use crate::{ButtonCommon, ButtonLike, ButtonSize2, ButtonStyle2, Label, LineHeightStyle};
+use crate::{ButtonCommon, ButtonLike, ButtonSize2, ButtonStyle2, Icon, IconElement, IconSize};
 
 #[derive(IntoElement)]
-pub struct Button {
+pub struct IconButton {
     base: ButtonLike,
-    label: SharedString,
+    icon: Icon,
+    icon_size: IconSize,
+    icon_color: Color,
 }
 
-impl Button {
-    pub fn new(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Self {
+impl IconButton {
+    pub fn new(id: impl Into<ElementId>, icon: Icon) -> Self {
         Self {
             base: ButtonLike::new(id),
-            label: label.into(),
+            icon,
+            icon_size: IconSize::default(),
+            icon_color: Color::Default,
         }
     }
 }
 
-impl Clickable for Button {
+impl Clickable for IconButton {
     fn on_click(
         mut self,
         handler: impl Fn(&gpui::ClickEvent, &mut WindowContext) + 'static,
@@ -28,14 +32,14 @@ impl Clickable for Button {
     }
 }
 
-impl Disableable for Button {
+impl Disableable for IconButton {
     fn disabled(mut self, disabled: bool) -> Self {
         self.base = self.base.disabled(disabled);
         self
     }
 }
 
-impl ButtonCommon for Button {
+impl ButtonCommon for IconButton {
     fn id(&self) -> &ElementId {
         self.base.id()
     }
@@ -56,20 +60,20 @@ impl ButtonCommon for Button {
     }
 }
 
-impl RenderOnce for Button {
+impl RenderOnce for IconButton {
     type Rendered = ButtonLike;
 
     fn render(self, _cx: &mut WindowContext) -> Self::Rendered {
-        let label_color = if self.base.disabled {
+        let icon_color = if self.base.disabled {
             Color::Disabled
         } else {
-            Color::Default
+            self.icon_color
         };
 
         self.base.child(
-            Label::new(self.label)
-                .color(label_color)
-                .line_height_style(LineHeightStyle::UILabel),
+            IconElement::new(self.icon)
+                .size(self.icon_size)
+                .color(icon_color),
         )
     }
 }

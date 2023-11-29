@@ -1,5 +1,6 @@
 mod button;
 mod button_like;
+mod icon_button;
 
 use std::rc::Rc;
 
@@ -8,10 +9,11 @@ use gpui::{
 };
 
 use crate::prelude::*;
-use crate::{h_stack, Color, Icon, OldIconButton, IconElement, Label, LineHeightStyle};
+use crate::{h_stack, Color, Icon, IconElement, Label, LineHeightStyle, OldIconButton};
 
 pub use button::*;
 pub use button_like::*;
+pub use icon_button::*;
 
 /// Provides the flexibility to use either a standard
 /// button or an icon button in a given context.
