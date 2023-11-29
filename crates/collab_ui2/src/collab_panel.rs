@@ -2484,18 +2484,26 @@ impl CollabPanel {
             | Section::Offline => true,
         };
 
-        let header = ListHeader::new(text)
-            .when_some(button, |el, button| el.right_button(button))
-            .selected(is_selected)
-            .when(can_collapse, |el| {
-                el.toggle(Some(is_collapsed)).on_toggle(
-                    cx.listener(move |this, _, cx| this.toggle_section_expanded(section, cx)),
-                )
-            });
-
-        h_stack()
+        div()
             .w_full()
-            .child(header)
+            .map(|el| {
+                if can_collapse {
+                    el.child(
+                        ListItem::new(text.clone())
+                            .child(div().w_full().child(Label::new(text)))
+                            .toggle(Some(!is_collapsed))
+                            .on_click(cx.listener(move |this, _, cx| {
+                                this.toggle_section_expanded(section, cx)
+                            })),
+                    )
+                } else {
+                    el.child(
+                        ListHeader::new(text)
+                            .when_some(button, |el, button| el.right_button(button))
+                            .selected(is_selected),
+                    )
+                }
+            })
             .when(section == Section::Channels, |el| {
                 el.drag_over::<DraggedChannelView>(|style| {
                     style.bg(cx.theme().colors().ghost_element_hover)
