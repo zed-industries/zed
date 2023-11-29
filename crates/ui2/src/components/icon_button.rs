@@ -59,6 +59,7 @@ impl RenderOnce for IconButton {
 
         if let Some(click_handler) = self.on_click {
             button = button.on_click(move |event, cx| {
+                cx.stop_propagation();
                 click_handler(event, cx);
             })
         }
