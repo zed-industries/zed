@@ -352,7 +352,7 @@ impl CallHub for TestCallHandler {
     }
 
     fn decline_incoming(&self, cx: &mut AppContext) -> Result<()> {
-        anyhow!("Cannot decline in a test call hub")
+        Err(anyhow!("Cannot decline in a test call hub"))
     }
 
     fn pending_invites<'a>(&self, cx: &'a AppContext) -> &'a HashSet<u64> {
