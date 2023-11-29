@@ -478,6 +478,26 @@ impl<'a> WindowContext<'a> {
         });
     }
 
+    pub fn observe<V, E>(
+        &mut self,
+        entity: &E,
+        mut on_notify: impl FnMut(E, &mut WindowContext<'_>) + 'static,
+    ) -> Subscription
+    where
+        V: 'static,
+        E: Entity<V>,
+    {
+        let window_handle = self.window.handle;
+        self.app_mut().observe_internal(entity, move |e, cx| {
+            window_handle
+                .update(cx, |_, cx| {
+                    on_notify(e, cx);
+                    true
+                })
+                .unwrap_or(false)
+        })
+    }
+
     pub fn subscribe<Emitter, E, Evt>(
         &mut self,
         entity: &E,
