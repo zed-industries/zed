@@ -13,7 +13,6 @@ mod list;
 mod popover;
 mod slot;
 mod stack;
-mod toggle;
 mod tooltip;
 
 #[cfg(feature = "stories")]
@@ -34,7 +33,6 @@ pub use list::*;
 pub use popover::*;
 pub use slot::*;
 pub use stack::*;
-pub use toggle::*;
 pub use tooltip::*;
 
 #[cfg(feature = "stories")]

@@ -179,8 +179,8 @@ use project::Fs;
 use serde_derive::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use ui::{
-    h_stack, v_stack, Avatar, Button, Color, ContextMenu, Icon, IconButton, IconElement, IconSize,
-    Label, List, ListHeader, ListItem, Toggle, Tooltip,
+    h_stack, v_stack, Avatar, Button, Color, ContextMenu, Icon, IconButton, IconElement, IconSize, Label, List,
+    ListHeader, ListItem, Toggle, Tooltip,
 };
 use util::{maybe, ResultExt, TryFutureExt};
 use workspace::{
