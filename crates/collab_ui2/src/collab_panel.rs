@@ -180,8 +180,8 @@ use serde_derive::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use ui::prelude::*;
 use ui::{
-    h_stack, v_stack, Avatar, Color, ContextMenu, Icon, IconButton, IconElement, IconSize, Label,
-    List, ListHeader, ListItem, OldButton, Tooltip,
+    h_stack, v_stack, Avatar, Button, Color, ContextMenu, Icon, IconButton, IconElement, IconSize,
+    Label, List, ListHeader, ListItem, Tooltip,
 };
 use util::{maybe, ResultExt, TryFutureExt};
 use workspace::{
@@ -2340,16 +2340,18 @@ impl CollabPanel {
 
     fn render_signed_out(&mut self, cx: &mut ViewContext<Self>) -> Div {
         v_stack().child(
-            OldButton::new("Sign in to collaborate").on_click(cx.listener(|this, _, cx| {
-                let client = this.client.clone();
-                cx.spawn(|_, mut cx| async move {
-                    client
-                        .authenticate_and_connect(true, &cx)
-                        .await
-                        .notify_async_err(&mut cx);
-                })
-                .detach()
-            })),
+            Button::new("sign_in", "Sign in to collaborate").on_click(cx.listener(
+                |this, _, cx| {
+                    let client = this.client.clone();
+                    cx.spawn(|_, mut cx| async move {
+                        client
+                            .authenticate_and_connect(true, &cx)
+                            .await
+                            .notify_async_err(&mut cx);
+                    })
+                    .detach()
+                },
+            )),
         )
     }
 

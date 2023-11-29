@@ -7,6 +7,8 @@ use crate::{ButtonCommon, ButtonLike, ButtonSize2, ButtonStyle2, Label, LineHeig
 pub struct Button {
     base: ButtonLike,
     label: SharedString,
+    label_color: Option<Color>,
+    selected: bool,
 }
 
 impl Button {
@@ -14,7 +16,19 @@ impl Button {
         Self {
             base: ButtonLike::new(id),
             label: label.into(),
+            label_color: None,
+            selected: false,
         }
+    }
+
+    pub fn selected(mut self, selected: bool) -> Self {
+        self.selected = selected;
+        self
+    }
+
+    pub fn color(mut self, label_color: impl Into<Option<Color>>) -> Self {
+        self.label_color = label_color.into();
+        self
     }
 }
 

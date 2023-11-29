@@ -2,11 +2,12 @@ use crate::notification_window_options;
 use call::{ActiveCall, IncomingCall};
 use futures::StreamExt;
 use gpui::{
-    div, green, px, red, AppContext, Div, Element, ParentElement, Render, RenderOnce,
-    StatefulInteractiveElement, Styled, ViewContext, VisualContext as _, WindowHandle,
+    div, px, red, AppContext, Div, Element, ParentElement, Render, RenderOnce, Styled, ViewContext,
+    VisualContext as _, WindowHandle,
 };
 use std::sync::{Arc, Weak};
-use ui::{h_stack, v_stack, Avatar, OldButton, Label};
+use ui::prelude::*;
+use ui::{h_stack, v_stack, Avatar, Button, Label};
 use util::ResultExt;
 use workspace::AppState;
 
@@ -199,14 +200,24 @@ impl IncomingCallNotification {
 
     fn render_buttons(&self, cx: &mut ViewContext<Self>) -> impl Element {
         h_stack()
-            .child(OldButton::new("Accept").render(cx).bg(green()).on_click({
-                let state = self.state.clone();
-                move |_, cx| state.respond(true, cx)
-            }))
-            .child(OldButton::new("Decline").render(cx).bg(red()).on_click({
-                let state = self.state.clone();
-                move |_, cx| state.respond(false, cx)
-            }))
+            .child(
+                Button::new("accept", "Accept")
+                    .render(cx)
+                    // .bg(green())
+                    .on_click({
+                        let state = self.state.clone();
+                        move |_, cx| state.respond(true, cx)
+                    }),
+            )
+            .child(
+                Button::new("decline", "Decline")
+                    .render(cx)
+                    // .bg(red())
+                    .on_click({
+                        let state = self.state.clone();
+                        move |_, cx| state.respond(false, cx)
+                    }),
+            )
 
         // enum Accept {}
         // enum Decline {}
