@@ -208,6 +208,7 @@ impl NodeRuntime for RealNodeRuntime {
                     "5000",
                     "--fetch-timeout",
                     "5000",
+                    "--prefer-offline",
                 ],
             )
             .await?;
@@ -237,6 +238,7 @@ impl NodeRuntime for RealNodeRuntime {
             "5000",
             "--fetch-timeout",
             "5000",
+            "--prefer-offline",
         ]);
 
         self.run_npm_subcommand(Some(directory), "install", &arguments)
