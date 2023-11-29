@@ -14,12 +14,12 @@ pub use button_like::*;
 /// Provides the flexibility to use either a standard
 /// button or an icon button in a given context.
 pub enum ButtonOrIconButton {
-    Button(Button),
+    Button(OldButton),
     IconButton(IconButton),
 }
 
-impl From<Button> for ButtonOrIconButton {
-    fn from(value: Button) -> Self {
+impl From<OldButton> for ButtonOrIconButton {
+    fn from(value: OldButton) -> Self {
         Self::Button(value)
     }
 }
@@ -68,7 +68,7 @@ impl ButtonVariant {
 }
 
 #[derive(IntoElement)]
-pub struct Button {
+pub struct OldButton {
     disabled: bool,
     click_handler: Option<Rc<dyn Fn(&ClickEvent, &mut WindowContext)>>,
     icon: Option<Icon>,
@@ -79,7 +79,7 @@ pub struct Button {
     color: Option<Color>,
 }
 
-impl RenderOnce for Button {
+impl RenderOnce for OldButton {
     type Rendered = gpui::Stateful<Div>;
 
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {
@@ -130,7 +130,7 @@ impl RenderOnce for Button {
     }
 }
 
-impl Button {
+impl OldButton {
     pub fn new(label: impl Into<SharedString>) -> Self {
         Self {
             disabled: false,
@@ -209,7 +209,7 @@ impl Button {
 
 #[derive(IntoElement)]
 pub struct ButtonGroup {
-    buttons: Vec<Button>,
+    buttons: Vec<OldButton>,
 }
 
 impl RenderOnce for ButtonGroup {
@@ -227,7 +227,7 @@ impl RenderOnce for ButtonGroup {
 }
 
 impl ButtonGroup {
-    pub fn new(buttons: Vec<Button>) -> Self {
+    pub fn new(buttons: Vec<OldButton>) -> Self {
         Self { buttons }
     }
 }

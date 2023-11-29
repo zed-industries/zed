@@ -6,7 +6,7 @@ use gpui::{
     WindowContext,
 };
 use ui::prelude::*;
-use ui::{h_stack, Button, Icon, IconButton};
+use ui::{h_stack, OldButton, Icon, IconButton};
 use util::ResultExt;
 
 pub trait StatusItemView: Render {
@@ -71,14 +71,14 @@ impl Render for StatusBar {
                                 div()
                                     .border()
                                     .border_color(gpui::red())
-                                    .child(Button::new("15:22")),
+                                    .child(OldButton::new("15:22")),
                             )
                             .child(
                                 // TODO: Language picker
                                 div()
                                     .border()
                                     .border_color(gpui::red())
-                                    .child(Button::new("Rust")),
+                                    .child(OldButton::new("Rust")),
                             ),
                     )
                     .child(

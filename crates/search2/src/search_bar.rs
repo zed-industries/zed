@@ -1,5 +1,5 @@
 use gpui::{ClickEvent, IntoElement, WindowContext};
-use ui::{Button, ButtonVariant, IconButton};
+use ui::{OldButton, ButtonVariant, IconButton};
 
 use crate::mode::SearchMode;
 
@@ -22,14 +22,14 @@ pub(crate) fn render_search_mode_button(
     mode: SearchMode,
     is_active: bool,
     on_click: impl Fn(&ClickEvent, &mut WindowContext) + 'static,
-) -> Button {
+) -> OldButton {
     let button_variant = if is_active {
         ButtonVariant::Filled
     } else {
         ButtonVariant::Ghost
     };
 
-    Button::new(mode.label())
+    OldButton::new(mode.label())
         .on_click(on_click)
         .variant(button_variant)
 }

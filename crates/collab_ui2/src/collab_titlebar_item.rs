@@ -38,7 +38,7 @@ use gpui::{
 use project::Project;
 use theme::ActiveTheme;
 use ui::{
-    h_stack, Avatar, Button, ButtonCommon, ButtonLike, ButtonVariant, Clickable, Color, IconButton,
+    h_stack, Avatar, OldButton, ButtonCommon, ButtonLike, ButtonVariant, Clickable, Color, IconButton,
     IconElement, IconSize, KeyBinding, Tooltip,
 };
 use util::ResultExt;
@@ -156,7 +156,7 @@ impl Render for CollabTitlebarItem {
                             .border_color(gpui::red())
                             .id("project_owner_indicator")
                             .child(
-                                Button::new("player")
+                                OldButton::new("player")
                                     .variant(ButtonVariant::Ghost)
                                     .color(Some(Color::Player(0))),
                             )
@@ -168,7 +168,7 @@ impl Render for CollabTitlebarItem {
                             .border()
                             .border_color(gpui::red())
                             .id("titlebar_project_menu_button")
-                            .child(Button::new("project_name").variant(ButtonVariant::Ghost))
+                            .child(OldButton::new("project_name").variant(ButtonVariant::Ghost))
                             .tooltip(move |cx| Tooltip::text("Recent Projects", cx)),
                     )
                     // TODO - Add git menu
@@ -178,7 +178,7 @@ impl Render for CollabTitlebarItem {
                             .border_color(gpui::red())
                             .id("titlebar_git_menu_button")
                             .child(
-                                Button::new("branch_name")
+                                OldButton::new("branch_name")
                                     .variant(ButtonVariant::Ghost)
                                     .color(Some(Color::Muted)),
                             )
@@ -238,7 +238,7 @@ impl Render for CollabTitlebarItem {
                     h_stack()
                         .child(
                             h_stack()
-                                .child(Button::new(if is_shared { "Unshare" } else { "Share" }))
+                                .child(OldButton::new(if is_shared { "Unshare" } else { "Share" }))
                                 .child(IconButton::new("leave-call", ui::Icon::Exit).on_click({
                                     let workspace = workspace.clone();
                                     move |_, cx| {
@@ -291,7 +291,7 @@ impl Render for CollabTitlebarItem {
                         this.child(ui::Avatar::data(avatar))
                     })
                 } else {
-                    this.child(Button::new("Sign in").on_click(move |_, cx| {
+                    this.child(OldButton::new("Sign in").on_click(move |_, cx| {
                         let client = client.clone();
                         cx.spawn(move |mut cx| async move {
                             client
