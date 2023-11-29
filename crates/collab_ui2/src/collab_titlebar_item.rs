@@ -28,7 +28,6 @@
 
 use std::sync::Arc;
 
-use call::ActiveCall;
 use client::{Client, UserStore};
 use gpui::{
     div, px, rems, AppContext, Div, Element, InteractiveElement, IntoElement, Model, MouseButton,
