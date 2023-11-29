@@ -18,7 +18,7 @@ use project::search::SearchQuery;
 use serde::Deserialize;
 use std::{any::Any, sync::Arc};
 
-use ui::{h_stack, ButtonGroup, Icon, IconButton, IconElement};
+use ui::{h_stack, Icon, IconButton, IconElement};
 use util::ResultExt;
 use workspace::{
     item::ItemHandle,
@@ -214,10 +214,11 @@ impl Render for BufferSearchBar {
             .child(
                 h_stack()
                     .flex_none()
-                    .child(ButtonGroup::new(vec![
-                        search_button_for_mode(SearchMode::Text),
-                        search_button_for_mode(SearchMode::Regex),
-                    ]))
+                    .child(
+                        h_stack()
+                            .child(search_button_for_mode(SearchMode::Text))
+                            .child(search_button_for_mode(SearchMode::Regex)),
+                    )
                     .when(supported_options.replacement, |this| {
                         this.child(super::toggle_replace_button(self.replace_enabled))
                     }),
@@ -586,8 +587,7 @@ impl BufferSearchBar {
 
         // let style = theme.search.action_button.clone();
 
-        IconButton::new(0, ui::Icon::SelectAll)
-            .on_click(|_, cx| cx.dispatch_action(Box::new(SelectAllMatches)))
+        IconButton::new(0, ui::Icon::SelectAll).action(Box::new(SelectAllMatches))
     }
 
     pub fn activate_search_mode(&mut self, mode: SearchMode, cx: &mut ViewContext<Self>) {

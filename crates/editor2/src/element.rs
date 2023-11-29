@@ -48,6 +48,7 @@ use std::{
 };
 use sum_tree::Bias;
 use theme::{ActiveTheme, PlayerColor};
+use ui::prelude::*;
 use ui::{h_stack, IconButton, Tooltip};
 use util::ResultExt;
 use workspace::item::Item;

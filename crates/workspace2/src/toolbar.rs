@@ -94,9 +94,9 @@ impl Render for Toolbar {
                             .border()
                             .border_color(gpui::red())
                             .p_1()
-                            .child(Button::new("crates"))
+                            .child(Button::new("breadcrumb_crates", "crates"))
                             .child(Label::new("/").color(Color::Muted))
-                            .child(Button::new("workspace2")),
+                            .child(Button::new("breadcrumb_workspace2", "workspace2")),
                     )
                     // Toolbar right side
                     .child(

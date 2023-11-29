@@ -99,7 +99,8 @@ use text::{OffsetUtf16, Rope};
 use theme::{
     ActiveTheme, DiagnosticStyle, PlayerColor, SyntaxTheme, Theme, ThemeColors, ThemeSettings,
 };
-use ui::{h_stack, v_stack, HighlightedLabel, IconButton, Popover, StyledExt, Tooltip};
+use ui::prelude::*;
+use ui::{h_stack, v_stack, HighlightedLabel, IconButton, Popover, Tooltip};
 use util::{post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::{
     item::{ItemEvent, ItemHandle},
@@ -4391,7 +4392,7 @@ impl Editor {
                                         editor.fold_at(&FoldAt { buffer_row }, cx);
                                     }
                                 }))
-                                .color(ui::Color::Muted)
+                                .icon_color(ui::Color::Muted)
                         })
                     })
                     .flatten()

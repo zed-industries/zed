@@ -37,10 +37,7 @@ use gpui::{
 };
 use project::Project;
 use theme::ActiveTheme;
-use ui::{
-    h_stack, Avatar, Button, ButtonCommon, ButtonLike, ButtonVariant, Clickable, Color, IconButton,
-    IconElement, IconSize, KeyBinding, Tooltip,
-};
+use ui::{h_stack, prelude::*, Avatar, Button, ButtonStyle2, IconButton, KeyBinding, Tooltip};
 use util::ResultExt;
 use workspace::{notifications::NotifyResultExt, Workspace};
 
@@ -156,8 +153,8 @@ impl Render for CollabTitlebarItem {
                             .border_color(gpui::red())
                             .id("project_owner_indicator")
                             .child(
-                                Button::new("player")
-                                    .variant(ButtonVariant::Ghost)
+                                Button::new("player", "player")
+                                    .style(ButtonStyle2::Subtle)
                                     .color(Some(Color::Player(0))),
                             )
                             .tooltip(move |cx| Tooltip::text("Toggle following", cx)),
@@ -168,7 +165,10 @@ impl Render for CollabTitlebarItem {
                             .border()
                             .border_color(gpui::red())
                             .id("titlebar_project_menu_button")
-                            .child(Button::new("project_name").variant(ButtonVariant::Ghost))
+                            .child(
+                                Button::new("project_name", "project_name")
+                                    .style(ButtonStyle2::Subtle),
+                            )
                             .tooltip(move |cx| Tooltip::text("Recent Projects", cx)),
                     )
                     // TODO - Add git menu
@@ -178,8 +178,8 @@ impl Render for CollabTitlebarItem {
                             .border_color(gpui::red())
                             .id("titlebar_git_menu_button")
                             .child(
-                                Button::new("branch_name")
-                                    .variant(ButtonVariant::Ghost)
+                                Button::new("branch_name", "branch_name")
+                                    .style(ButtonStyle2::Subtle)
                                     .color(Some(Color::Muted)),
                             )
                             .tooltip(move |cx| {
@@ -238,7 +238,10 @@ impl Render for CollabTitlebarItem {
                     h_stack()
                         .child(
                             h_stack()
-                                .child(Button::new(if is_shared { "Unshare" } else { "Share" }))
+                                .child(Button::new(
+                                    "toggle_sharing",
+                                    if is_shared { "Unshare" } else { "Share" },
+                                ))
                                 .child(IconButton::new("leave-call", ui::Icon::Exit).on_click({
                                     let workspace = workspace.clone();
                                     move |_, cx| {
@@ -291,7 +294,7 @@ impl Render for CollabTitlebarItem {
                         this.child(ui::Avatar::data(avatar))
                     })
                 } else {
-                    this.child(Button::new("Sign in").on_click(move |_, cx| {
+                    this.child(Button::new("sign_in", "Sign in").on_click(move |_, cx| {
                         let client = client.clone();
                         cx.spawn(move |mut cx| async move {
                             client
@@ -301,27 +304,6 @@ impl Render for CollabTitlebarItem {
                         })
                         .detach();
                     }))
-                    // Temporary, will be removed when the last part of button2 is merged
-                    .child(
-                        div().border().border_color(gpui::blue()).child(
-                            ButtonLike::new("test-button")
-                                .children([
-                                    Avatar::uri(
-                                        "https://avatars.githubusercontent.com/u/1714999?v=4",
-                                    )
-                                    .into_element()
-                                    .into_any(),
-                                    IconElement::new(ui::Icon::ChevronDown)
-                                        .size(IconSize::Small)
-                                        .into_element()
-                                        .into_any(),
-                                ])
-                                .on_click(move |event, _cx| {
-                                    dbg!(format!("clicked: {:?}", event.down.position));
-                                })
-                                .tooltip(|cx| Tooltip::text("Test tooltip", cx)),
-                        ),
-                    )
                 }
             })
     }
