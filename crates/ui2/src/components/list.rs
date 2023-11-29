@@ -94,42 +94,38 @@ impl RenderOnce for ListHeader {
             None => div(),
         };
 
-        h_stack()
-            .w_full()
-            .bg(cx.theme().colors().surface_background)
-            .relative()
-            .child(
-                div()
-                    .h_5()
-                    .when(self.inset, |this| this.px_2())
-                    .when(self.selected, |this| {
-                        this.bg(cx.theme().colors().ghost_element_selected)
-                    })
-                    .flex()
-                    .flex_1()
-                    .items_center()
-                    .justify_between()
-                    .w_full()
-                    .gap_1()
-                    .child(
-                        h_stack()
-                            .gap_1()
-                            .child(
-                                div()
-                                    .flex()
-                                    .gap_1()
-                                    .items_center()
-                                    .children(self.left_icon.map(|i| {
-                                        IconElement::new(i)
-                                            .color(Color::Muted)
-                                            .size(IconSize::Small)
-                                    }))
-                                    .child(Label::new(self.label.clone()).color(Color::Muted)),
-                            )
-                            .child(disclosure_control),
-                    )
-                    .child(meta),
-            )
+        h_stack().w_full().relative().child(
+            div()
+                .h_5()
+                .when(self.inset, |this| this.px_2())
+                .when(self.selected, |this| {
+                    this.bg(cx.theme().colors().ghost_element_selected)
+                })
+                .flex()
+                .flex_1()
+                .items_center()
+                .justify_between()
+                .w_full()
+                .gap_1()
+                .child(
+                    h_stack()
+                        .gap_1()
+                        .child(
+                            div()
+                                .flex()
+                                .gap_1()
+                                .items_center()
+                                .children(self.left_icon.map(|i| {
+                                    IconElement::new(i)
+                                        .color(Color::Muted)
+                                        .size(IconSize::Small)
+                                }))
+                                .child(Label::new(self.label.clone()).color(Color::Muted)),
+                        )
+                        .child(disclosure_control),
+                )
+                .child(meta),
+        )
     }
 }
 
