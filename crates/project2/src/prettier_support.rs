@@ -615,13 +615,18 @@ impl Project {
     pub fn install_default_prettier(
         &mut self,
         _worktree: Option<WorktreeId>,
-        _plugins: HashSet<&'static str>,
+        plugins: HashSet<&'static str>,
         _cx: &mut ModelContext<Self>,
     ) {
         // suppress unused code warnings
-        let _ = &self.default_prettier.installed_plugins;
         let _ = install_prettier_packages;
         let _ = save_prettier_server_file;
+
+        self.default_prettier.installed_plugins.extend(plugins);
+        self.default_prettier.prettier = PrettierInstallation::Installed(PrettierInstance {
+            attempt: 0,
+            prettier: None,
+        });
     }
 
     #[cfg(not(any(test, feature = "test-support")))]
