@@ -172,6 +172,7 @@ pub struct ButtonLike {
     id: ElementId,
     pub(super) style: ButtonStyle2,
     pub(super) disabled: bool,
+    pub(super) selected: bool,
     size: ButtonSize2,
     tooltip: Option<Box<dyn Fn(&mut WindowContext) -> AnyView>>,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
@@ -184,6 +185,7 @@ impl ButtonLike {
             id: id.into(),
             style: ButtonStyle2::default(),
             disabled: false,
+            selected: false,
             size: ButtonSize2::Default,
             tooltip: None,
             children: SmallVec::new(),
@@ -199,25 +201,19 @@ impl Disableable for ButtonLike {
     }
 }
 
+impl Selectable for ButtonLike {
+    fn selected(mut self, selected: bool) -> Self {
+        self.selected = selected;
+        self
+    }
+}
+
 impl Clickable for ButtonLike {
     fn on_click(mut self, handler: impl Fn(&ClickEvent, &mut WindowContext) + 'static) -> Self {
         self.on_click = Some(Box::new(handler));
         self
     }
 }
-
-// impl Selectable for ButtonLike {
-//     fn selected(&mut self, selected: bool) -> &mut Self {
-//         todo!()
-//     }
-
-//     fn selected_tooltip(
-//         &mut self,
-//         tooltip: Box<dyn Fn(&mut WindowContext) -> AnyView + 'static>,
-//     ) -> &mut Self {
-//         todo!()
-//     }
-// }
 
 impl ButtonCommon for ButtonLike {
     fn id(&self) -> &ElementId {

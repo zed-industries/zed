@@ -20,6 +20,12 @@ impl Render for IconButtonStory {
                     .w_8()
                     .child(IconButton::new("icon_a", Icon::Hash).selected(true)),
             )
+            .child(Story::label("Disabled"))
+            .child(
+                div()
+                    .w_8()
+                    .child(IconButton::new("icon_a", Icon::Hash).disabled(true)),
+            )
             .child(Story::label("With `on_click`"))
             .child(
                 div()

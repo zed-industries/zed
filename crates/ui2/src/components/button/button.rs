@@ -8,7 +8,6 @@ pub struct Button {
     base: ButtonLike,
     label: SharedString,
     label_color: Option<Color>,
-    selected: bool,
 }
 
 impl Button {
@@ -17,17 +16,25 @@ impl Button {
             base: ButtonLike::new(id),
             label: label.into(),
             label_color: None,
-            selected: false,
         }
-    }
-
-    pub fn selected(mut self, selected: bool) -> Self {
-        self.selected = selected;
-        self
     }
 
     pub fn color(mut self, label_color: impl Into<Option<Color>>) -> Self {
         self.label_color = label_color.into();
+        self
+    }
+}
+
+impl Selectable for Button {
+    fn selected(mut self, selected: bool) -> Self {
+        self.base = self.base.selected(selected);
+        self
+    }
+}
+
+impl Disableable for Button {
+    fn disabled(mut self, disabled: bool) -> Self {
+        self.base = self.base.disabled(disabled);
         self
     }
 }
@@ -38,13 +45,6 @@ impl Clickable for Button {
         handler: impl Fn(&gpui::ClickEvent, &mut WindowContext) + 'static,
     ) -> Self {
         self.base = self.base.on_click(handler);
-        self
-    }
-}
-
-impl Disableable for Button {
-    fn disabled(mut self, disabled: bool) -> Self {
-        self.base = self.base.disabled(disabled);
         self
     }
 }
@@ -76,7 +76,7 @@ impl RenderOnce for Button {
     fn render(self, _cx: &mut WindowContext) -> Self::Rendered {
         let label_color = if self.base.disabled {
             Color::Disabled
-        } else if self.selected {
+        } else if self.base.selected {
             Color::Selected
         } else {
             Color::Default
