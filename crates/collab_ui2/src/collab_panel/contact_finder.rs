@@ -181,7 +181,6 @@ impl PickerDelegate for ContactFinderDelegate {
             ContactRequestStatus::RequestSent => Some("icons/x.svg"),
             ContactRequestStatus::RequestAccepted => None,
         };
-        dbg!(icon_path);
         Some(
             div()
                 .flex_1()

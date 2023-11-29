@@ -1283,16 +1283,16 @@ impl ProjectPanel {
                     let icon = match entry.kind {
                         EntryKind::File(_) => {
                             if show_file_icons {
-                                Some(FileAssociations::get_icon(&entry.path, cx))
+                                FileAssociations::get_icon(&entry.path, cx)
                             } else {
                                 None
                             }
                         }
                         _ => {
                             if show_folder_icons {
-                                Some(FileAssociations::get_folder_icon(is_expanded, cx))
+                                FileAssociations::get_folder_icon(is_expanded, cx)
                             } else {
-                                Some(FileAssociations::get_chevron_icon(is_expanded, cx))
+                                FileAssociations::get_chevron_icon(is_expanded, cx)
                             }
                         }
                     };

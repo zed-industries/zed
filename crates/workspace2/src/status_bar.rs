@@ -5,7 +5,7 @@ use gpui::{
     div, AnyView, Div, IntoElement, ParentElement, Render, Styled, Subscription, View, ViewContext,
     WindowContext,
 };
-use theme2::ActiveTheme;
+use ui::prelude::*;
 use ui::{h_stack, Button, Icon, IconButton};
 use util::ResultExt;
 

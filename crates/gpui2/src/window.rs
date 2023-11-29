@@ -1939,23 +1939,6 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
         })
     }
 
-    /// Like `with_element_state`, but for situations where the element_id is optional. If the
-    /// id is `None`, no state will be retrieved or stored.
-    fn with_optional_element_state<S, R>(
-        &mut self,
-        element_id: Option<ElementId>,
-        f: impl FnOnce(Option<S>, &mut Self) -> (R, S),
-    ) -> R
-    where
-        S: 'static,
-    {
-        if let Some(element_id) = element_id {
-            self.with_element_state(element_id, f)
-        } else {
-            f(None, self).0
-        }
-    }
-
     /// Obtain the current content mask.
     fn content_mask(&self) -> ContentMask<Pixels> {
         self.window()

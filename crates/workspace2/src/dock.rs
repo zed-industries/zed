@@ -7,8 +7,8 @@ use gpui::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use theme2::ActiveTheme;
-use ui::{h_stack, menu_handle, ContextMenu, IconButton, InteractionState, Tooltip};
+use ui::prelude::*;
+use ui::{h_stack, menu_handle, ContextMenu, IconButton, Tooltip};
 
 pub enum PanelEvent {
     ChangePosition,
@@ -686,21 +686,25 @@ impl Render for PanelButtons {
                 let name = entry.panel.persistent_name();
                 let panel = entry.panel.clone();
 
-                let mut button: IconButton = if i == active_index && is_open {
+                let is_active_button = i == active_index && is_open;
+
+                let (action, tooltip) = if is_active_button {
                     let action = dock.toggle_action();
+
                     let tooltip: SharedString =
                         format!("Close {} dock", dock.position.to_label()).into();
-                    IconButton::new(name, icon)
-                        .state(InteractionState::Active)
-                        .action(action.boxed_clone())
-                        .tooltip(move |cx| Tooltip::for_action(tooltip.clone(), &*action, cx))
+
+                    (action, tooltip)
                 } else {
                     let action = entry.panel.toggle_action(cx);
 
-                    IconButton::new(name, icon)
-                        .action(action.boxed_clone())
-                        .tooltip(move |cx| Tooltip::for_action(name, &*action, cx))
+                    (action, name.into())
                 };
+
+                let button = IconButton::new(name, icon)
+                    .selected(is_active_button)
+                    .action(action.boxed_clone())
+                    .tooltip(move |cx| Tooltip::for_action(tooltip.clone(), &*action, cx));
 
                 Some(
                     menu_handle(name)

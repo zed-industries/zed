@@ -25,7 +25,9 @@ pub struct ListHeader {
     left_icon: Option<Icon>,
     meta: Option<ListHeaderMeta>,
     toggle: Toggle,
+    on_toggle: Option<Rc<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
     inset: bool,
+    selected: bool,
 }
 
 impl ListHeader {
@@ -36,11 +38,21 @@ impl ListHeader {
             meta: None,
             inset: false,
             toggle: Toggle::NotToggleable,
+            on_toggle: None,
+            selected: false,
         }
     }
 
     pub fn toggle(mut self, toggle: Toggle) -> Self {
         self.toggle = toggle;
+        self
+    }
+
+    pub fn on_toggle(
+        mut self,
+        on_toggle: impl Fn(&ClickEvent, &mut WindowContext) + 'static,
+    ) -> Self {
+        self.on_toggle = Some(Rc::new(on_toggle));
         self
     }
 
@@ -57,13 +69,18 @@ impl ListHeader {
         self.meta = meta;
         self
     }
+
+    pub fn selected(mut self, selected: bool) -> Self {
+        self.selected = selected;
+        self
+    }
 }
 
 impl RenderOnce for ListHeader {
     type Rendered = Div;
 
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {
-        let disclosure_control = disclosure_control(self.toggle);
+        let disclosure_control = disclosure_control(self.toggle, self.on_toggle);
 
         let meta = match self.meta {
             Some(ListHeaderMeta::Tools(icons)) => div().child(
@@ -85,6 +102,9 @@ impl RenderOnce for ListHeader {
                 div()
                     .h_5()
                     .when(self.inset, |this| this.px_2())
+                    .when(self.selected, |this| {
+                        this.bg(cx.theme().colors().ghost_element_selected)
+                    })
                     .flex()
                     .flex_1()
                     .items_center()
@@ -177,6 +197,7 @@ pub struct ListItem {
     toggle: Toggle,
     inset: bool,
     on_click: Option<Rc<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
+    on_toggle: Option<Rc<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
     on_secondary_mouse_down: Option<Rc<dyn Fn(&MouseDownEvent, &mut WindowContext) + 'static>>,
     children: SmallVec<[AnyElement; 2]>,
 }
@@ -193,6 +214,7 @@ impl ListItem {
             inset: false,
             on_click: None,
             on_secondary_mouse_down: None,
+            on_toggle: None,
             children: SmallVec::new(),
         }
     }
@@ -230,6 +252,14 @@ impl ListItem {
         self
     }
 
+    pub fn on_toggle(
+        mut self,
+        on_toggle: impl Fn(&ClickEvent, &mut WindowContext) + 'static,
+    ) -> Self {
+        self.on_toggle = Some(Rc::new(on_toggle));
+        self
+    }
+
     pub fn selected(mut self, selected: bool) -> Self {
         self.selected = selected;
         self
@@ -255,19 +285,6 @@ impl RenderOnce for ListItem {
     type Rendered = Stateful<Div>;
 
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {
-        let left_content = match self.left_slot.clone() {
-            Some(GraphicSlot::Icon(i)) => Some(
-                h_stack().child(
-                    IconElement::new(i)
-                        .size(IconSize::Small)
-                        .color(Color::Muted),
-                ),
-            ),
-            Some(GraphicSlot::Avatar(src)) => Some(h_stack().child(Avatar::source(src))),
-            Some(GraphicSlot::PublicActor(src)) => Some(h_stack().child(Avatar::uri(src))),
-            None => None,
-        };
-
         div()
             .id(self.id)
             .relative()
@@ -282,8 +299,8 @@ impl RenderOnce for ListItem {
             .when(self.selected, |this| {
                 this.bg(cx.theme().colors().ghost_element_selected)
             })
-            .when_some(self.on_click.clone(), |this, on_click| {
-                this.on_click(move |event, cx| {
+            .when_some(self.on_click, |this, on_click| {
+                this.cursor_pointer().on_click(move |event, cx| {
                     // HACK: GPUI currently fires `on_click` with any mouse button,
                     // but we only care about the left button.
                     if event.down.button == MouseButton::Left {
@@ -304,23 +321,18 @@ impl RenderOnce for ListItem {
                     .gap_1()
                     .items_center()
                     .relative()
-                    .child(disclosure_control(self.toggle))
-                    .children(left_content)
-                    .children(self.children)
-                    // HACK: We need to attach the `on_click` handler to the child element in order to have the click
-                    // event actually fire.
-                    // Once this is fixed in GPUI we can remove this and rely on the `on_click` handler set above on the
-                    // outer `div`.
-                    .id("on_click_hack")
-                    .when_some(self.on_click, |this, on_click| {
-                        this.on_click(move |event, cx| {
-                            // HACK: GPUI currently fires `on_click` with any mouse button,
-                            // but we only care about the left button.
-                            if event.down.button == MouseButton::Left {
-                                (on_click)(event, cx)
-                            }
-                        })
-                    }),
+                    .child(disclosure_control(self.toggle, self.on_toggle))
+                    .map(|this| match self.left_slot {
+                        Some(GraphicSlot::Icon(i)) => this.child(
+                            IconElement::new(i)
+                                .size(IconSize::Small)
+                                .color(Color::Muted),
+                        ),
+                        Some(GraphicSlot::Avatar(src)) => this.child(Avatar::source(src)),
+                        Some(GraphicSlot::PublicActor(src)) => this.child(Avatar::uri(src)),
+                        None => this,
+                    })
+                    .children(self.children),
             )
     }
 }

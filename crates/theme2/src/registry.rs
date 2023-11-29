@@ -86,6 +86,10 @@ impl ThemeRegistry {
         }));
     }
 
+    pub fn clear(&mut self) {
+        self.themes.clear();
+    }
+
     pub fn list_names(&self, _staff: bool) -> impl Iterator<Item = SharedString> + '_ {
         self.themes.keys().cloned()
     }

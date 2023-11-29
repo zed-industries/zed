@@ -1,25 +1,26 @@
-use crate::{h_stack, prelude::*, Icon, IconElement};
-use gpui::{prelude::*, Action, AnyView, Div, MouseButton, MouseDownEvent, Stateful};
+use crate::{h_stack, prelude::*, Icon, IconElement, IconSize};
+use gpui::{prelude::*, Action, AnyView, ClickEvent, Div, Stateful};
 
 #[derive(IntoElement)]
 pub struct IconButton {
     id: ElementId,
     icon: Icon,
     color: Color,
+    size: IconSize,
     variant: ButtonVariant,
-    state: InteractionState,
+    disabled: bool,
     selected: bool,
     tooltip: Option<Box<dyn Fn(&mut WindowContext) -> AnyView + 'static>>,
-    on_mouse_down: Option<Box<dyn Fn(&MouseDownEvent, &mut WindowContext) + 'static>>,
+    on_click: Option<Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
 }
 
 impl RenderOnce for IconButton {
     type Rendered = Stateful<Div>;
 
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {
-        let icon_color = match (self.state, self.color) {
-            (InteractionState::Disabled, _) => Color::Disabled,
-            (InteractionState::Active, _) => Color::Selected,
+        let icon_color = match (self.disabled, self.selected, self.color) {
+            (true, _, _) => Color::Disabled,
+            (false, true, _) => Color::Selected,
             _ => self.color,
         };
 
@@ -50,10 +51,14 @@ impl RenderOnce for IconButton {
             // place we use an icon button.
             // .hover(|style| style.bg(bg_hover_color))
             .active(|style| style.bg(bg_active_color))
-            .child(IconElement::new(self.icon).color(icon_color));
+            .child(
+                IconElement::new(self.icon)
+                    .size(self.size)
+                    .color(icon_color),
+            );
 
-        if let Some(click_handler) = self.on_mouse_down {
-            button = button.on_mouse_down(MouseButton::Left, move |event, cx| {
+        if let Some(click_handler) = self.on_click {
+            button = button.on_click(move |event, cx| {
                 cx.stop_propagation();
                 click_handler(event, cx);
             })
@@ -65,8 +70,7 @@ impl RenderOnce for IconButton {
             }
         }
 
-        // HACK: Add an additional identified element wrapper to fix tooltips not showing up.
-        div().id(self.id.clone()).child(button)
+        button
     }
 }
 
@@ -76,11 +80,12 @@ impl IconButton {
             id: id.into(),
             icon,
             color: Color::default(),
+            size: Default::default(),
             variant: ButtonVariant::default(),
-            state: InteractionState::default(),
             selected: false,
+            disabled: false,
             tooltip: None,
-            on_mouse_down: None,
+            on_click: None,
         }
     }
 
@@ -94,13 +99,13 @@ impl IconButton {
         self
     }
 
-    pub fn variant(mut self, variant: ButtonVariant) -> Self {
-        self.variant = variant;
+    pub fn size(mut self, size: IconSize) -> Self {
+        self.size = size;
         self
     }
 
-    pub fn state(mut self, state: InteractionState) -> Self {
-        self.state = state;
+    pub fn variant(mut self, variant: ButtonVariant) -> Self {
+        self.variant = variant;
         self
     }
 
@@ -109,16 +114,18 @@ impl IconButton {
         self
     }
 
+    pub fn disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
+        self
+    }
+
     pub fn tooltip(mut self, tooltip: impl Fn(&mut WindowContext) -> AnyView + 'static) -> Self {
         self.tooltip = Some(Box::new(tooltip));
         self
     }
 
-    pub fn on_click(
-        mut self,
-        handler: impl 'static + Fn(&MouseDownEvent, &mut WindowContext),
-    ) -> Self {
-        self.on_mouse_down = Some(Box::new(handler));
+    pub fn on_click(mut self, handler: impl 'static + Fn(&ClickEvent, &mut WindowContext)) -> Self {
+        self.on_click = Some(Box::new(handler));
         self
     }
 

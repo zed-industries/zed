@@ -13,7 +13,7 @@ use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
 use fs::RealFs;
 use futures::StreamExt;
-use gpui::{Action, App, AppContext, AsyncAppContext, Context, SemanticVersion, Task};
+use gpui::{App, AppContext, AsyncAppContext, Context, SemanticVersion, Task};
 use isahc::{prelude::Configurable, Request};
 use language::LanguageRegistry;
 use log::LevelFilter;
@@ -36,7 +36,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicU32, Ordering},
-        Arc,
+        Arc, Weak,
     },
     thread,
 };
@@ -48,6 +48,7 @@ use util::{
     paths, ResultExt,
 };
 use uuid::Uuid;
+use welcome::{show_welcome_experience, FIRST_OPEN};
 use workspace::{AppState, WorkspaceStore};
 use zed2::{
     build_window_options, ensure_only_instance, handle_cli_connection, initialize_workspace,
@@ -103,16 +104,15 @@ fn main() {
     let listener = Arc::new(listener);
     let open_listener = listener.clone();
     app.on_open_urls(move |urls, _| open_listener.open_urls(&urls));
-    app.on_reopen(move |_cx| {
-        // todo!("workspace")
-        // if cx.has_global::<Weak<AppState>>() {
-        // if let Some(app_state) = cx.global::<Weak<AppState>>().upgrade() {
-        // workspace::open_new(&app_state, cx, |workspace, cx| {
-        //     Editor::new_file(workspace, &Default::default(), cx)
-        // })
-        // .detach();
-        // }
-        // }
+    app.on_reopen(move |cx| {
+        if cx.has_global::<Weak<AppState>>() {
+            if let Some(app_state) = cx.global::<Weak<AppState>>().upgrade() {
+                workspace::open_new(&app_state, cx, |workspace, cx| {
+                    Editor::new_file(workspace, &Default::default(), cx)
+                })
+                .detach();
+            }
+        }
     });
 
     app.run(move |cx| {
@@ -164,17 +164,16 @@ fn main() {
         // assistant::init(cx);
         // component_test::init(cx);
 
-        // cx.spawn(|cx| watch_themes(fs.clone(), cx)).detach();
         // cx.spawn(|_| watch_languages(fs.clone(), languages.clone()))
         //     .detach();
-        // watch_file_types(fs.clone(), cx);
+        watch_file_types(fs.clone(), cx);
 
         languages.set_theme(cx.theme().clone());
-        // cx.observe_global::<SettingsStore, _>({
-        //     let languages = languages.clone();
-        //     move |cx| languages.set_theme(theme::current(cx).clone())
-        // })
-        // .detach();
+        cx.observe_global::<SettingsStore>({
+            let languages = languages.clone();
+            move |cx| languages.set_theme(cx.theme().clone())
+        })
+        .detach();
 
         client.telemetry().start(installation_id, session_id, cx);
         let telemetry_settings = *client::TelemetrySettings::get_global(cx);
@@ -193,7 +192,6 @@ fn main() {
             fs,
             build_window_options,
             call_factory: call::Call::new,
-            // background_actions: todo!("ask Mikayla"),
             workspace_store,
             node_runtime,
         });
@@ -219,14 +217,13 @@ fn main() {
 
         // journal2::init(app_state.clone(), cx);
         // language_selector::init(cx);
-        // theme_selector::init(cx);
+        theme_selector::init(cx);
         // activity_indicator::init(cx);
         // language_tools::init(cx);
         call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         collab_ui::init(&app_state, cx);
         // feedback::init(cx);
-        // welcome::init(cx);
-        // zed::init(&app_state, cx);
+        welcome::init(cx);
 
         // cx.set_menus(menus::menus());
         initialize_workspace(app_state.clone(), cx);
@@ -279,17 +276,18 @@ fn main() {
                     .detach();
             }
             Ok(Some(OpenRequest::JoinChannel { channel_id: _ })) => {
-                todo!()
-                // triggered_authentication = true;
-                // let app_state = app_state.clone();
-                // let client = client.clone();
-                // cx.spawn(|mut cx| async move {
-                //     // ignore errors here, we'll show a generic "not signed in"
-                //     let _ = authenticate(client, &cx).await;
-                //     cx.update(|cx| workspace::join_channel(channel_id, app_state, None, cx))
-                //         .await
-                // })
-                // .detach_and_log_err(cx)
+                triggered_authentication = true;
+                let app_state = app_state.clone();
+                let client = client.clone();
+                cx.spawn(|mut cx| async move {
+                    // ignore errors here, we'll show a generic "not signed in"
+                    let _ = authenticate(client, &cx).await;
+                    //todo!()
+                    // cx.update(|cx| workspace::join_channel(channel_id, app_state, None, cx))
+                    // .await
+                    anyhow::Ok(())
+                })
+                .detach_and_log_err(cx)
             }
             Ok(Some(OpenRequest::OpenChannelNotes { channel_id: _ })) => {
                 todo!()
@@ -340,7 +338,7 @@ async fn authenticate(client: Arc<Client>, cx: &AsyncAppContext) -> Result<()> {
         if client::IMPERSONATE_LOGIN.is_some() {
             client.authenticate_and_connect(false, &cx).await?;
         }
-    } else if client.has_keychain_credentials(&cx).await {
+    } else if client.has_keychain_credentials(&cx) {
         client.authenticate_and_connect(true, &cx).await?;
     }
     Ok::<_, anyhow::Error>(())
@@ -368,10 +366,9 @@ async fn restore_or_create_workspace(app_state: &Arc<AppState>, mut cx: AsyncApp
             cx.update(|cx| workspace::open_paths(location.paths().as_ref(), app_state, None, cx))?
                 .await
                 .log_err();
-            // todo!(welcome)
-            //} else if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
-            //todo!()
-            // cx.update(|cx| show_welcome_experience(app_state, cx));
+        } else if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
+            cx.update(|cx| show_welcome_experience(app_state, cx))
+                .log_err();
         } else {
             cx.update(|cx| {
                 workspace::open_new(app_state, cx, |workspace, cx| {
@@ -709,84 +706,49 @@ fn load_embedded_fonts(cx: &AppContext) {
         .unwrap();
 }
 
-// #[cfg(debug_assertions)]
-// async fn watch_themes(fs: Arc<dyn Fs>, mut cx: AsyncAppContext) -> Option<()> {
-//     let mut events = fs
-//         .watch("styles/src".as_ref(), Duration::from_millis(100))
-//         .await;
-//     while (events.next().await).is_some() {
-//         let output = Command::new("npm")
-//             .current_dir("styles")
-//             .args(["run", "build"])
-//             .output()
-//             .await
-//             .log_err()?;
-//         if output.status.success() {
-//             cx.update(|cx| theme_selector::reload(cx))
-//         } else {
-//             eprintln!(
-//                 "build script failed {}",
-//                 String::from_utf8_lossy(&output.stderr)
-//             );
-//         }
-//     }
-//     Some(())
-// }
+#[cfg(debug_assertions)]
+async fn watch_languages(fs: Arc<dyn fs::Fs>, languages: Arc<LanguageRegistry>) -> Option<()> {
+    use std::time::Duration;
 
-// #[cfg(debug_assertions)]
-// async fn watch_languages(fs: Arc<dyn Fs>, languages: Arc<LanguageRegistry>) -> Option<()> {
-//     let mut events = fs
-//         .watch(
-//             "crates/zed/src/languages".as_ref(),
-//             Duration::from_millis(100),
-//         )
-//         .await;
-//     while (events.next().await).is_some() {
-//         languages.reload();
-//     }
-//     Some(())
-// }
-
-// #[cfg(debug_assertions)]
-// fn watch_file_types(fs: Arc<dyn Fs>, cx: &mut AppContext) {
-//     cx.spawn(|mut cx| async move {
-//         let mut events = fs
-//             .watch(
-//                 "assets/icons/file_icons/file_types.json".as_ref(),
-//                 Duration::from_millis(100),
-//             )
-//             .await;
-//         while (events.next().await).is_some() {
-//             cx.update(|cx| {
-//                 cx.update_global(|file_types, _| {
-//                     *file_types = project_panel::file_associations::FileAssociations::new(Assets);
-//                 });
-//             })
-//         }
-//     })
-//     .detach()
-// }
-
-// #[cfg(not(debug_assertions))]
-// async fn watch_themes(_fs: Arc<dyn Fs>, _cx: AsyncAppContext) -> Option<()> {
-//     None
-// }
-
-// #[cfg(not(debug_assertions))]
-// async fn watch_languages(_: Arc<dyn Fs>, _: Arc<LanguageRegistry>) -> Option<()> {
-//     None
-//
-
-// #[cfg(not(debug_assertions))]
-// fn watch_file_types(_fs: Arc<dyn Fs>, _cx: &mut AppContext) {}
-
-pub fn background_actions() -> &'static [(&'static str, &'static dyn Action)] {
-    // &[
-    //     ("Go to file", &file_finder::Toggle),
-    //     ("Open command palette", &command_palette::Toggle),
-    //     ("Open recent projects", &recent_projects::OpenRecent),
-    //     ("Change your settings", &zed_actions::OpenSettings),
-    // ]
-    // todo!()
-    &[]
+    let mut events = fs
+        .watch(
+            "crates/zed2/src/languages".as_ref(),
+            Duration::from_millis(100),
+        )
+        .await;
+    while (events.next().await).is_some() {
+        languages.reload();
+    }
+    Some(())
 }
+
+#[cfg(debug_assertions)]
+fn watch_file_types(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
+    use std::time::Duration;
+
+    cx.spawn(|mut cx| async move {
+        let mut events = fs
+            .watch(
+                "assets/icons/file_icons/file_types.json".as_ref(),
+                Duration::from_millis(100),
+            )
+            .await;
+        while (events.next().await).is_some() {
+            cx.update(|cx| {
+                cx.update_global(|file_types, _| {
+                    *file_types = project_panel::file_associations::FileAssociations::new(Assets);
+                });
+            })
+            .ok();
+        }
+    })
+    .detach()
+}
+
+#[cfg(not(debug_assertions))]
+async fn watch_languages(_: Arc<dyn Fs>, _: Arc<LanguageRegistry>) -> Option<()> {
+    None
+}
+
+#[cfg(not(debug_assertions))]
+fn watch_file_types(_fs: Arc<dyn Fs>, _cx: &mut AppContext) {}
