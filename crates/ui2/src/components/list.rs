@@ -285,19 +285,6 @@ impl RenderOnce for ListItem {
     type Rendered = Stateful<Div>;
 
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {
-        let left_content = match self.left_slot.clone() {
-            Some(GraphicSlot::Icon(i)) => Some(
-                h_stack().child(
-                    IconElement::new(i)
-                        .size(IconSize::Small)
-                        .color(Color::Muted),
-                ),
-            ),
-            Some(GraphicSlot::Avatar(src)) => Some(h_stack().child(Avatar::source(src))),
-            Some(GraphicSlot::PublicActor(src)) => Some(h_stack().child(Avatar::uri(src))),
-            None => None,
-        };
-
         div()
             .id(self.id)
             .relative()
@@ -312,7 +299,7 @@ impl RenderOnce for ListItem {
             .when(self.selected, |this| {
                 this.bg(cx.theme().colors().ghost_element_selected)
             })
-            .when_some(self.on_click.clone(), |this, on_click| {
+            .when_some(self.on_click, |this, on_click| {
                 this.cursor_pointer().on_click(move |event, cx| {
                     // HACK: GPUI currently fires `on_click` with any mouse button,
                     // but we only care about the left button.
@@ -335,7 +322,16 @@ impl RenderOnce for ListItem {
                     .items_center()
                     .relative()
                     .child(disclosure_control(self.toggle, self.on_toggle))
-                    .children(left_content)
+                    .map(|this| match self.left_slot {
+                        Some(GraphicSlot::Icon(i)) => this.child(
+                            IconElement::new(i)
+                                .size(IconSize::Small)
+                                .color(Color::Muted),
+                        ),
+                        Some(GraphicSlot::Avatar(src)) => this.child(Avatar::source(src)),
+                        Some(GraphicSlot::PublicActor(src)) => this.child(Avatar::uri(src)),
+                        None => this,
+                    })
                     .children(self.children),
             )
     }
