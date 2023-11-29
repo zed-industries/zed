@@ -177,7 +177,7 @@ pub struct ListItem {
     toggle: Toggle,
     inset: bool,
     on_click: Option<Rc<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
-    on_toggle: Option<Rc<dyn Fn(&MouseDownEvent, &mut WindowContext) + 'static>>,
+    on_toggle: Option<Rc<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
     on_secondary_mouse_down: Option<Rc<dyn Fn(&MouseDownEvent, &mut WindowContext) + 'static>>,
     children: SmallVec<[AnyElement; 2]>,
 }
@@ -234,7 +234,7 @@ impl ListItem {
 
     pub fn on_toggle(
         mut self,
-        on_toggle: impl Fn(&MouseDownEvent, &mut WindowContext) + 'static,
+        on_toggle: impl Fn(&ClickEvent, &mut WindowContext) + 'static,
     ) -> Self {
         self.on_toggle = Some(Rc::new(on_toggle));
         self
