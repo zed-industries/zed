@@ -170,8 +170,8 @@ impl ButtonSize2 {
 #[derive(IntoElement)]
 pub struct ButtonLike {
     id: ElementId,
-    style: ButtonStyle2,
-    disabled: bool,
+    pub(super) style: ButtonStyle2,
+    pub(super) disabled: bool,
     size: ButtonSize2,
     tooltip: Option<Box<dyn Fn(&mut WindowContext) -> AnyView>>,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,

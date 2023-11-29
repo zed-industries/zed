@@ -1,3 +1,4 @@
+mod button;
 mod button_like;
 
 use std::rc::Rc;
@@ -9,6 +10,7 @@ use gpui::{
 use crate::prelude::*;
 use crate::{h_stack, Color, Icon, IconButton, IconElement, Label, LineHeightStyle};
 
+pub use button::*;
 pub use button_like::*;
 
 /// Provides the flexibility to use either a standard

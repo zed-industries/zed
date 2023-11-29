@@ -8,6 +8,5 @@ pub use crate::clickable::*;
 pub use crate::disableable::*;
 pub use crate::fixed::*;
 pub use crate::selectable::*;
-pub use crate::StyledExt;
-pub use crate::{ButtonVariant, Color};
+pub use crate::{ButtonCommon, ButtonVariant, Color, StyledExt};
 pub use theme::ActiveTheme;
