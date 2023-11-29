@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
 use crate::{
-    size, Bounds, Element, ImageData, InteractiveElement, InteractiveElementState, Interactivity,
-    IntoElement, LayoutId, Pixels, SharedString, Size, StyleRefinement, Styled, WindowContext,
+    point, size, Bounds, DevicePixels, Element, ImageData, InteractiveElement,
+    InteractiveElementState, Interactivity, IntoElement, LayoutId, Pixels, SharedString, Size,
+    StyleRefinement, Styled, WindowContext,
 };
 use futures::FutureExt;
 use media::core_video::CVImageBuffer;
@@ -63,54 +64,8 @@ impl Element for Img {
         element_state: Option<Self::State>,
         cx: &mut WindowContext,
     ) -> (LayoutId, Self::State) {
-        self.interactivity.layout(element_state, cx, |style, cx| {
-            let image_size = match &self.source {
-                ImageSource::Uri(uri) => {
-                    let image_future = cx.image_cache.get(uri.clone());
-                    if let Some(data) = image_future
-                        .clone()
-                        .now_or_never()
-                        .and_then(|result| result.ok())
-                    {
-                        data.size().map(|pixels| Pixels::from(u32::from(pixels)))
-                    } else {
-                        Size::default()
-                    }
-                }
-
-                ImageSource::Data(data) => {
-                    data.size().map(|pixels| Pixels::from(u32::from(pixels)))
-                }
-
-                ImageSource::Surface(surface) => {
-                    size(surface.width().into(), surface.height().into())
-                }
-            };
-            dbg!(image_size);
-
-            cx.request_measured_layout(
-                style,
-                cx.rem_size(),
-                move |known_dimensions, available_space| match dbg!(
-                    known_dimensions.width,
-                    known_dimensions.height,
-                ) {
-                    (None, None) => image_size,
-
-                    (None, Some(height)) => {
-                        let aspect_ratio = height / image_size.height;
-                        size(image_size.width * aspect_ratio, height)
-                    }
-
-                    (Some(width), None) => {
-                        let aspect_ratio = width / image_size.width;
-                        size(width, image_size.height * aspect_ratio)
-                    }
-
-                    (Some(width), Some(height)) => size(width, height),
-                },
-            )
-        })
+        self.interactivity
+            .layout(element_state, cx, |style, cx| cx.request_layout(&style, []))
     }
 
     fn paint(
@@ -135,7 +90,8 @@ impl Element for Img {
                                 .now_or_never()
                                 .and_then(|result| result.ok())
                             {
-                                cx.paint_image(bounds, corner_radii, data, self.grayscale)
+                                let new_bounds = preserve_aspect_ratio(bounds, data.size());
+                                cx.paint_image(new_bounds, corner_radii, data, self.grayscale)
                                     .log_err();
                             } else {
                                 cx.spawn(|mut cx| async move {
@@ -147,14 +103,17 @@ impl Element for Img {
                             }
                         }
 
-                        ImageSource::Data(image) => {
-                            cx.paint_image(bounds, corner_radii, image, self.grayscale)
+                        ImageSource::Data(data) => {
+                            let new_bounds = preserve_aspect_ratio(bounds, data.size());
+                            cx.paint_image(new_bounds, corner_radii, data, self.grayscale)
                                 .log_err();
                         }
 
                         ImageSource::Surface(surface) => {
+                            let size = size(surface.width().into(), surface.height().into());
+                            let new_bounds = preserve_aspect_ratio(bounds, size);
                             // TODO: Add support for corner_radii and grayscale.
-                            cx.paint_surface(bounds, surface);
+                            cx.paint_surface(new_bounds, surface);
                         }
                     };
                 });
@@ -184,5 +143,23 @@ impl Styled for Img {
 impl InteractiveElement for Img {
     fn interactivity(&mut self) -> &mut Interactivity {
         &mut self.interactivity
+    }
+}
+
+fn preserve_aspect_ratio(bounds: Bounds<Pixels>, image_size: Size<DevicePixels>) -> Bounds<Pixels> {
+    let new_size = if bounds.size.width > bounds.size.height {
+        let ratio = u32::from(image_size.height) as f32 / u32::from(image_size.width) as f32;
+        size(bounds.size.width, bounds.size.width * ratio)
+    } else {
+        let ratio = u32::from(image_size.width) as f32 / u32::from(image_size.height) as f32;
+        size(bounds.size.width * ratio, bounds.size.height)
+    };
+
+    Bounds {
+        origin: point(
+            bounds.origin.x + (bounds.size.width - new_size.width) / 2.0,
+            bounds.origin.y + (bounds.size.height - new_size.height) / 2.0,
+        ),
+        size: new_size,
     }
 }

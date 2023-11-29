@@ -965,6 +965,18 @@ impl From<u64> for DevicePixels {
     }
 }
 
+impl From<DevicePixels> for usize {
+    fn from(device_pixels: DevicePixels) -> Self {
+        device_pixels.0 as usize
+    }
+}
+
+impl From<usize> for DevicePixels {
+    fn from(device_pixels: usize) -> Self {
+        DevicePixels(device_pixels as i32)
+    }
+}
+
 #[derive(Clone, Copy, Default, Add, AddAssign, Sub, SubAssign, Div, PartialEq, PartialOrd)]
 #[repr(transparent)]
 pub struct ScaledPixels(pub(crate) f32);
