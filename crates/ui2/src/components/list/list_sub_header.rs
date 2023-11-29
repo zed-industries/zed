@@ -3,7 +3,7 @@ use gpui::Div;
 use crate::prelude::*;
 use crate::{h_stack, Icon, IconElement, IconSize, Label};
 
-#[derive(IntoElement, Clone)]
+#[derive(IntoElement)]
 pub struct ListSubHeader {
     label: SharedString,
     left_icon: Option<Icon>,

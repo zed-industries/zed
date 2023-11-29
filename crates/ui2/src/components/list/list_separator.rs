@@ -2,14 +2,8 @@ use gpui::Div;
 
 use crate::prelude::*;
 
-#[derive(IntoElement, Clone)]
+#[derive(IntoElement)]
 pub struct ListSeparator;
-
-impl ListSeparator {
-    pub fn new() -> Self {
-        Self
-    }
-}
 
 impl RenderOnce for ListSeparator {
     type Rendered = Div;
