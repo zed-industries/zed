@@ -398,6 +398,7 @@ impl ProjectPanel {
                     menu = menu.action(
                         "Add Folder to Project",
                         Box::new(workspace::AddFolderToProject),
+                        cx,
                     );
                     if is_root {
                         menu = menu.entry(
@@ -412,35 +413,35 @@ impl ProjectPanel {
                 }
 
                 menu = menu
-                    .action("New File", Box::new(NewFile))
-                    .action("New Folder", Box::new(NewDirectory))
+                    .action("New File", Box::new(NewFile), cx)
+                    .action("New Folder", Box::new(NewDirectory), cx)
                     .separator()
-                    .action("Cut", Box::new(Cut))
-                    .action("Copy", Box::new(Copy));
+                    .action("Cut", Box::new(Cut), cx)
+                    .action("Copy", Box::new(Copy), cx);
 
                 if let Some(clipboard_entry) = self.clipboard_entry {
                     if clipboard_entry.worktree_id() == worktree_id {
-                        menu = menu.action("Paste", Box::new(Paste));
+                        menu = menu.action("Paste", Box::new(Paste), cx);
                     }
                 }
 
                 menu = menu
                     .separator()
-                    .action("Copy Path", Box::new(CopyPath))
-                    .action("Copy Relative Path", Box::new(CopyRelativePath))
+                    .action("Copy Path", Box::new(CopyPath), cx)
+                    .action("Copy Relative Path", Box::new(CopyRelativePath), cx)
                     .separator()
-                    .action("Reveal in Finder", Box::new(RevealInFinder));
+                    .action("Reveal in Finder", Box::new(RevealInFinder), cx);
 
                 if is_dir {
                     menu = menu
-                        .action("Open in Terminal", Box::new(OpenInTerminal))
-                        .action("Search Inside", Box::new(NewSearchInDirectory))
+                        .action("Open in Terminal", Box::new(OpenInTerminal), cx)
+                        .action("Search Inside", Box::new(NewSearchInDirectory), cx)
                 }
 
-                menu = menu.separator().action("Rename", Box::new(Rename));
+                menu = menu.separator().action("Rename", Box::new(Rename), cx);
 
                 if !is_root {
-                    menu = menu.action("Delete", Box::new(Delete));
+                    menu = menu.action("Delete", Box::new(Delete), cx);
                 }
 
                 menu
@@ -658,7 +659,6 @@ impl ProjectPanel {
     }
 
     fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
-        dbg!("odd");
         self.edit_state = None;
         self.update_visible_entries(None, cx);
         cx.focus(&self.focus_handle);
@@ -1385,7 +1385,7 @@ impl ProjectPanel {
             })
             .child(
                 if let (Some(editor), true) = (Some(&self.filename_editor), show_editor) {
-                    div().w_full().child(editor.clone())
+                    div().h_full().w_full().child(editor.clone())
                 } else {
                     div()
                         .text_color(filename_text_color)
