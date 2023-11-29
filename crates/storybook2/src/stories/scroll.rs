@@ -1,5 +1,5 @@
 use gpui::{div, prelude::*, px, Div, Render, SharedString, Stateful, Styled, View, WindowContext};
-use theme::ActiveTheme;
+use ui::prelude::*;
 use ui::Tooltip;
 
 pub struct ScrollStory;

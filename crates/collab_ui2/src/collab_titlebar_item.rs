@@ -38,8 +38,8 @@ use gpui::{
 use project::Project;
 use theme::ActiveTheme;
 use ui::{
-    h_stack, Avatar, Button, ButtonLike, ButtonVariant, Color, IconButton, IconElement, IconSize,
-    KeyBinding, Tooltip,
+    h_stack, Avatar, Button, ButtonLike, ButtonVariant, Clickable, Color, IconButton, IconElement,
+    IconSize, KeyBinding, Tooltip,
 };
 use util::ResultExt;
 use workspace::{notifications::NotifyResultExt, Workspace};
@@ -301,20 +301,26 @@ impl Render for CollabTitlebarItem {
                         })
                         .detach();
                     }))
+                    // Temporary, will be removed when the last part of button2 is merged
                     .child(
-                        ButtonLike::new("test-button").children([
-                            Avatar::uri("https://avatars.githubusercontent.com/u/1714999?v=4")
-                                .into_element()
-                                .into_any(),
-                            IconElement::new(ui::Icon::ChevronDown)
-                                .size(IconSize::Small)
-                                .into_element()
-                                .into_any(),
-                        ]),
+                        div().border().border_color(gpui::blue()).child(
+                            ButtonLike::new("test-button")
+                                .children([
+                                    Avatar::uri(
+                                        "https://avatars.githubusercontent.com/u/1714999?v=4",
+                                    )
+                                    .into_element()
+                                    .into_any(),
+                                    IconElement::new(ui::Icon::ChevronDown)
+                                        .size(IconSize::Small)
+                                        .into_element()
+                                        .into_any(),
+                                ])
+                                .on_click(move |event, _cx| {
+                                    dbg!(format!("clicked: {:?}", event.down.position));
+                                }),
+                        ),
                     )
-                    .on_mouse_down(MouseButton::Left, move |event, _cx| {
-                        dbg!(format!("clicked: {:?}", event.position));
-                    })
                 }
             })
     }

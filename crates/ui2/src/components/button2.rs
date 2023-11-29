@@ -1,6 +1,6 @@
 use gpui::{
-    AnyElement, AnyView, ClickEvent, Div, Hsla, IntoElement, Stateful, StatefulInteractiveElement,
-    WindowContext,
+    rems, AnyElement, AnyView, ClickEvent, Div, Hsla, IntoElement, Rems, Stateful,
+    StatefulInteractiveElement, WindowContext,
 };
 use smallvec::SmallVec;
 
@@ -171,6 +171,16 @@ pub enum ButtonSize2 {
     None,
 }
 
+impl ButtonSize2 {
+    fn height(self) -> Rems {
+        match self {
+            ButtonSize2::Default => rems(22. / 16.),
+            ButtonSize2::Compact => rems(18. / 16.),
+            ButtonSize2::None => rems(16. / 16.),
+        }
+    }
+}
+
 // pub struct Button {
 //     id: ElementId,
 //     icon: Option<Icon>,
@@ -278,10 +288,7 @@ impl ButtonLike {
 }
 
 impl Clickable for ButtonLike {
-    fn on_click(
-        &mut self,
-        handler: impl Fn(&ClickEvent, &mut WindowContext) + 'static,
-    ) -> &mut Self {
+    fn on_click(mut self, handler: impl Fn(&ClickEvent, &mut WindowContext) + 'static) -> Self {
         self.on_click = Some(Box::new(handler));
         self
     }
@@ -332,10 +339,11 @@ impl RenderOnce for ButtonLike {
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         let mut button_like = h_stack()
             .id(self.id.clone())
+            .h(self.size.height())
             .rounded_md()
             .cursor_pointer()
             .gap_1()
-            .p_1()
+            .px_1()
             .bg(self.style.enabled(cx).background)
             .hover(|hover| hover.bg(self.style.hovered(cx).background))
             .active(|active| active.bg(self.style.active(cx).background))

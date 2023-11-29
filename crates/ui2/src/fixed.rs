@@ -1,6 +1,6 @@
 use gpui::DefiniteLength;
 
 pub trait FixedWidth {
-    fn width(&mut self, width: DefiniteLength) -> &mut Self;
-    fn full_width(&mut self) -> &mut Self;
+    fn width(self, width: DefiniteLength) -> Self;
+    fn full_width(self) -> Self;
 }

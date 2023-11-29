@@ -1,11 +1,11 @@
 use gpui::{AnyView, WindowContext};
 
 pub trait Selectable {
-    fn selected(&mut self, selected: bool) -> &mut Self;
+    fn selected(self, selected: bool) -> Self;
     fn selected_tooltip(
-        &mut self,
+        self,
         tooltip: Box<dyn Fn(&mut WindowContext) -> AnyView + 'static>,
-    ) -> &mut Self;
+    ) -> Self;
 }
 
 #[derive(Debug, Default, PartialEq, Eq, Hash, Clone, Copy)]
