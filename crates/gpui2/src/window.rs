@@ -197,9 +197,7 @@ pub trait ManagedView: FocusableView + EventEmitter<DismissEvent> {}
 
 impl<M: FocusableView + EventEmitter<DismissEvent>> ManagedView for M {}
 
-pub enum DismissEvent {
-    Dismiss,
-}
+pub struct DismissEvent;
 
 // Holds the state for a specific window.
 pub struct Window {
@@ -1701,7 +1699,7 @@ impl VisualContext for WindowContext<'_> {
     where
         V: ManagedView,
     {
-        self.update_view(view, |_, cx| cx.emit(DismissEvent::Dismiss))
+        self.update_view(view, |_, cx| cx.emit(DismissEvent))
     }
 }
 
@@ -2405,7 +2403,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     where
         V: ManagedView,
     {
-        self.defer(|_, cx| cx.emit(DismissEvent::Dismiss))
+        self.defer(|_, cx| cx.emit(DismissEvent))
     }
 
     pub fn listener<E>(

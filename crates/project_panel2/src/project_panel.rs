@@ -448,11 +448,9 @@ impl ProjectPanel {
             });
 
             cx.focus_view(&context_menu);
-            let subscription = cx.subscribe(&context_menu, |this, _, event, cx| match event {
-                DismissEvent::Dismiss => {
-                    this.context_menu.take();
-                    cx.notify();
-                }
+            let subscription = cx.subscribe(&context_menu, |this, _, _: &DismissEvent, cx| {
+                this.context_menu.take();
+                cx.notify();
             });
             self.context_menu = Some((context_menu, position, subscription));
         }

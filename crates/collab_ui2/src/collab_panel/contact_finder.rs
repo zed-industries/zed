@@ -161,7 +161,7 @@ impl PickerDelegate for ContactFinderDelegate {
     fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>) {
         //cx.emit(PickerEvent::Dismiss);
         self.parent
-            .update(cx, |_, cx| cx.emit(DismissEvent::Dismiss))
+            .update(cx, |_, cx| cx.emit(DismissEvent))
             .log_err();
     }
 

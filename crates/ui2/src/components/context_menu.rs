@@ -94,11 +94,11 @@ impl ContextMenu {
         {
             (handler)(cx)
         }
-        cx.emit(DismissEvent::Dismiss);
+        cx.emit(DismissEvent);
     }
 
     pub fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
-        cx.emit(DismissEvent::Dismiss);
+        cx.emit(DismissEvent);
     }
 
     fn select_first(&mut self, _: &SelectFirst, cx: &mut ViewContext<Self>) {
@@ -181,8 +181,7 @@ impl Render for ContextMenu {
                                 key_binding,
                             } => {
                                 let callback = callback.clone();
-                                let dismiss =
-                                    cx.listener(|_, _, cx| cx.emit(DismissEvent::Dismiss));
+                                let dismiss = cx.listener(|_, _, cx| cx.emit(DismissEvent));
 
                                 ListItem::new(entry.clone())
                                     .child(
@@ -348,11 +347,9 @@ impl<M: ManagedView> Element for MenuHandle<M> {
 
                 let new_menu = (builder)(cx);
                 let menu2 = menu.clone();
-                cx.subscribe(&new_menu, move |_modal, e, cx| match e {
-                    &DismissEvent::Dismiss => {
-                        *menu2.borrow_mut() = None;
-                        cx.notify();
-                    }
+                cx.subscribe(&new_menu, move |_modal, _: &DismissEvent, cx| {
+                    *menu2.borrow_mut() = None;
+                    cx.notify();
                 })
                 .detach();
                 cx.focus_view(&new_menu);

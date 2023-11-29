@@ -106,10 +106,8 @@ impl Workspace {
             let notification = build_notification(cx);
             cx.subscribe(
                 &notification,
-                move |this, handle, event: &DismissEvent, cx| match event {
-                    DismissEvent::Dismiss => {
-                        this.dismiss_notification_internal(type_id, id, cx);
-                    }
+                move |this, handle, event: &DismissEvent, cx| {
+                    this.dismiss_notification_internal(type_id, id, cx);
                 },
             )
             .detach();
@@ -260,7 +258,7 @@ pub mod simple_message_notification {
         }
 
         pub fn dismiss(&mut self, cx: &mut ViewContext<Self>) {
-            cx.emit(DismissEvent::Dismiss);
+            cx.emit(DismissEvent);
         }
     }
 
