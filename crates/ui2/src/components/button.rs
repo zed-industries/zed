@@ -1,10 +1,15 @@
+mod button_like;
+
+use std::rc::Rc;
+
 use gpui::{
     ClickEvent, DefiniteLength, Div, Hsla, IntoElement, StatefulInteractiveElement, WindowContext,
 };
-use std::rc::Rc;
 
 use crate::prelude::*;
 use crate::{h_stack, Color, Icon, IconButton, IconElement, Label, LineHeightStyle};
+
+pub use button_like::*;
 
 /// Provides the flexibility to use either a standard
 /// button or an icon button in a given context.
