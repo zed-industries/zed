@@ -1,21 +1,28 @@
 use std::rc::Rc;
 
-use gpui::{ClickEvent, Div};
+use gpui::ClickEvent;
 
 use crate::prelude::*;
-use crate::{Color, Icon, IconButton, IconSize, Toggle};
+use crate::{Color, Icon, IconButton, IconSize, ToggleState, Toggleable};
 
 #[derive(IntoElement)]
 pub struct Disclosure {
-    toggle: Toggle,
+    state: ToggleState,
     on_toggle: Option<Rc<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
 }
 
 impl Disclosure {
-    pub fn new(toggle: Toggle) -> Self {
+    pub fn new(state: ToggleState) -> Self {
         Self {
-            toggle,
+            state,
             on_toggle: None,
+        }
+    }
+
+    pub fn from_toggleable(toggleable: Toggleable) -> Option<Self> {
+        match toggleable {
+            Toggleable::Toggleable(state) => Some(Self::new(state)),
+            Toggleable::NotToggleable => None,
         }
     }
 
@@ -29,27 +36,20 @@ impl Disclosure {
 }
 
 impl RenderOnce for Disclosure {
-    type Rendered = Div;
+    type Rendered = IconButton;
 
     fn render(self, _cx: &mut WindowContext) -> Self::Rendered {
-        if !self.toggle.is_toggleable() {
-            return div();
-        }
-
-        div().child(
-            IconButton::new(
-                "toggle",
-                if self.toggle.is_toggled() {
-                    Icon::ChevronDown
-                } else {
-                    Icon::ChevronRight
-                },
-            )
-            .color(Color::Muted)
-            .size(IconSize::Small)
-            .when_some(self.on_toggle, move |this, on_toggle| {
-                this.on_click(move |event, cx| on_toggle(event, cx))
-            }),
+        IconButton::new(
+            "toggle",
+            match self.state {
+                ToggleState::Toggled => Icon::ChevronDown,
+                ToggleState::NotToggled => Icon::ChevronRight,
+            },
         )
+        .color(Color::Muted)
+        .size(IconSize::Small)
+        .when_some(self.on_toggle, move |this, on_toggle| {
+            this.on_click(move |event, cx| on_toggle(event, cx))
+        })
     }
 }

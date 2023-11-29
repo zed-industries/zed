@@ -3,7 +3,7 @@ use std::rc::Rc;
 use gpui::{ClickEvent, Div};
 
 use crate::prelude::*;
-use crate::{h_stack, Disclosure, Icon, IconButton, IconElement, IconSize, Label, Toggle};
+use crate::{h_stack, Disclosure, Icon, IconButton, IconElement, IconSize, Label, Toggleable};
 
 pub enum ListHeaderMeta {
     Tools(Vec<IconButton>),
@@ -17,7 +17,7 @@ pub struct ListHeader {
     label: SharedString,
     left_icon: Option<Icon>,
     meta: Option<ListHeaderMeta>,
-    toggle: Toggle,
+    toggle: Toggleable,
     on_toggle: Option<Rc<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
     inset: bool,
     selected: bool,
@@ -30,13 +30,13 @@ impl ListHeader {
             left_icon: None,
             meta: None,
             inset: false,
-            toggle: Toggle::NotToggleable,
+            toggle: Toggleable::NotToggleable,
             on_toggle: None,
             selected: false,
         }
     }
 
-    pub fn toggle(mut self, toggle: Toggle) -> Self {
+    pub fn toggle(mut self, toggle: Toggleable) -> Self {
         self.toggle = toggle;
         self
     }
@@ -113,7 +113,10 @@ impl RenderOnce for ListHeader {
                                 }))
                                 .child(Label::new(self.label.clone()).color(Color::Muted)),
                         )
-                        .child(Disclosure::new(self.toggle).on_toggle(self.on_toggle)),
+                        .children(
+                            Disclosure::from_toggleable(self.toggle)
+                                .map(|disclosure| disclosure.on_toggle(self.on_toggle)),
+                        ),
                 )
                 .child(meta),
         )

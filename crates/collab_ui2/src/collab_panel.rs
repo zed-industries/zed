@@ -178,7 +178,7 @@ use serde_derive::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use ui::{
     h_stack, v_stack, Avatar, Button, Color, Icon, IconButton, IconElement, Label, List,
-    ListHeader, ListItem, Toggle, Tooltip,
+    ListHeader, ListItem, Toggleable, Tooltip,
 };
 use util::{maybe, ResultExt, TryFutureExt};
 use workspace::{
@@ -2534,9 +2534,10 @@ impl CollabPanel {
             .when_some(button, |el, button| el.right_button(button))
             .selected(is_selected)
             .when(can_collapse, |el| {
-                el.toggle(ui::Toggle::Toggled(is_collapsed)).on_toggle(
-                    cx.listener(move |this, _, cx| this.toggle_section_expanded(section, cx)),
-                )
+                el.toggle(Toggleable::Toggleable(is_collapsed.into()))
+                    .on_toggle(
+                        cx.listener(move |this, _, cx| this.toggle_section_expanded(section, cx)),
+                    )
             })
     }
 
@@ -2853,9 +2854,9 @@ impl CollabPanel {
                         ),
                 )
                 .toggle(if has_children {
-                    Toggle::Toggled(disclosed)
+                    Toggleable::Toggleable(disclosed.into())
                 } else {
-                    Toggle::NotToggleable
+                    Toggleable::NotToggleable
                 })
                 .on_toggle(
                     cx.listener(move |this, _, cx| this.toggle_channel_collapsed(channel_id, cx)),
