@@ -17,6 +17,7 @@ mod contact_finder;
 //     Client, Contact, User, UserStore,
 // };
 use contact_finder::ContactFinder;
+use menu::Confirm;
 use rpc::proto;
 // use context_menu::{ContextMenu, ContextMenuItem};
 // use db::kvp::KEY_VALUE_STORE;
@@ -160,26 +161,26 @@ const COLLABORATION_PANEL_KEY: &'static str = "CollaborationPanel";
 use std::{iter::once, mem, sync::Arc};
 
 use call::ActiveCall;
-use channel::{Channel, ChannelId, ChannelStore};
+use channel::{Channel, ChannelEvent, ChannelId, ChannelStore};
 use client::{Client, Contact, User, UserStore};
 use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
-use feature_flags::{ChannelsAlpha, FeatureFlagAppExt};
+use feature_flags::{ChannelsAlpha, FeatureFlagAppExt, FeatureFlagViewExt};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
     actions, div, img, prelude::*, serde_json, Action, AppContext, AsyncWindowContext, Div,
     EventEmitter, FocusHandle, Focusable, FocusableView, InteractiveElement, IntoElement, Model,
-    ParentElement, Render, RenderOnce, SharedString, Styled, Subscription, View, ViewContext,
-    VisualContext, WeakView,
+    ParentElement, PromptLevel, Render, RenderOnce, SharedString, Styled, Subscription, Task, View,
+    ViewContext, VisualContext, WeakView,
 };
 use project::Fs;
 use serde_derive::{Deserialize, Serialize};
-use settings::Settings;
+use settings::{Settings, SettingsStore};
 use ui::{
-    h_stack, v_stack, Avatar, Button, Color, Icon, IconButton, Label, List, ListHeader, ListItem,
-    Toggle, Tooltip,
+    h_stack, v_stack, Avatar, Button, Color, Icon, IconButton, IconElement, Label, List,
+    ListHeader, ListItem, Toggle, Tooltip,
 };
-use util::{maybe, ResultExt};
+use util::{maybe, ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     notifications::NotifyResultExt,
@@ -293,10 +294,10 @@ pub enum ChannelEditingState {
 }
 
 impl ChannelEditingState {
-    fn pending_name(&self) -> Option<&str> {
+    fn pending_name(&self) -> Option<String> {
         match self {
-            ChannelEditingState::Create { pending_name, .. } => pending_name.as_deref(),
-            ChannelEditingState::Rename { pending_name, .. } => pending_name.as_deref(),
+            ChannelEditingState::Create { pending_name, .. } => pending_name.clone(),
+            ChannelEditingState::Rename { pending_name, .. } => pending_name.clone(),
         }
     }
 }
@@ -306,10 +307,10 @@ pub struct CollabPanel {
     fs: Arc<dyn Fs>,
     focus_handle: FocusHandle,
     // channel_clipboard: Option<ChannelMoveClipboard>,
-    // pending_serialization: Task<Option<()>>,
+    pending_serialization: Task<Option<()>>,
     // context_menu: ViewHandle<ContextMenu>,
     filter_editor: View<Editor>,
-    // channel_name_editor: ViewHandle<Editor>,
+    channel_name_editor: View<Editor>,
     channel_editing_state: Option<ChannelEditingState>,
     entries: Vec<ListEntry>,
     selection: Option<usize>,
@@ -438,28 +439,21 @@ impl CollabPanel {
             //             })
             //             .detach();
 
-            //             let channel_name_editor = cx.add_view(|cx| {
-            //                 Editor::single_line(
-            //                     Some(Arc::new(|theme| {
-            //                         theme.collab_panel.user_query_editor.clone()
-            //                     })),
-            //                     cx,
-            //                 )
-            //             });
+            let channel_name_editor = cx.build_view(|cx| Editor::single_line(cx));
 
-            //             cx.subscribe(&channel_name_editor, |this, _, event, cx| {
-            //                 if let editor::Event::Blurred = event {
-            //                     if let Some(state) = &this.channel_editing_state {
-            //                         if state.pending_name().is_some() {
-            //                             return;
-            //                         }
-            //                     }
-            //                     this.take_editing_state(cx);
-            //                     this.update_entries(false, cx);
-            //                     cx.notify();
-            //                 }
-            //             })
-            //             .detach();
+            cx.subscribe(&channel_name_editor, |this: &mut Self, _, event, cx| {
+                if let editor::EditorEvent::Blurred = event {
+                    if let Some(state) = &this.channel_editing_state {
+                        if state.pending_name().is_some() {
+                            return;
+                        }
+                    }
+                    this.take_editing_state(cx);
+                    this.update_entries(false, cx);
+                    cx.notify();
+                }
+            })
+            .detach();
 
             //             let list_state =
             //                 ListState::<Self>::new(0, Orientation::Top, 1000., move |this, ix, cx| {
@@ -597,9 +591,9 @@ impl CollabPanel {
                 focus_handle: cx.focus_handle(),
                 //                 channel_clipboard: None,
                 fs: workspace.app_state().fs.clone(),
-                //                 pending_serialization: Task::ready(None),
+                pending_serialization: Task::ready(None),
                 //                 context_menu: cx.add_view(|cx| ContextMenu::new(view_id, cx)),
-                //                 channel_name_editor,
+                channel_name_editor,
                 filter_editor,
                 entries: Vec::default(),
                 channel_editing_state: None,
@@ -620,53 +614,52 @@ impl CollabPanel {
 
             this.update_entries(false, cx);
 
-            //             // Update the dock position when the setting changes.
-            //             let mut old_dock_position = this.position(cx);
-            //             this.subscriptions
-            //                 .push(
-            //                     cx.observe_global::<SettingsStore, _>(move |this: &mut Self, cx| {
-            //                         let new_dock_position = this.position(cx);
-            //                         if new_dock_position != old_dock_position {
-            //                             old_dock_position = new_dock_position;
-            //                             cx.emit(Event::DockPositionChanged);
-            //                         }
-            //                         cx.notify();
-            //                     }),
-            //                 );
+            // Update the dock position when the setting changes.
+            let mut old_dock_position = this.position(cx);
+            this.subscriptions.push(cx.observe_global::<SettingsStore>(
+                move |this: &mut Self, cx| {
+                    let new_dock_position = this.position(cx);
+                    if new_dock_position != old_dock_position {
+                        old_dock_position = new_dock_position;
+                        cx.emit(PanelEvent::ChangePosition);
+                    }
+                    cx.notify();
+                },
+            ));
 
-            //             let active_call = ActiveCall::global(cx);
+            let active_call = ActiveCall::global(cx);
             this.subscriptions
                 .push(cx.observe(&this.user_store, |this, _, cx| {
                     this.update_entries(true, cx)
                 }));
-            //             this.subscriptions
-            //                 .push(cx.observe(&this.channel_store, |this, _, cx| {
-            //                     this.update_entries(true, cx)
-            //                 }));
-            //             this.subscriptions
-            //                 .push(cx.observe(&active_call, |this, _, cx| this.update_entries(true, cx)));
-            //             this.subscriptions
-            //                 .push(cx.observe_flag::<ChannelsAlpha, _>(move |_, this, cx| {
-            //                     this.update_entries(true, cx)
-            //                 }));
-            //             this.subscriptions.push(cx.subscribe(
-            //                 &this.channel_store,
-            //                 |this, _channel_store, e, cx| match e {
-            //                     ChannelEvent::ChannelCreated(channel_id)
-            //                     | ChannelEvent::ChannelRenamed(channel_id) => {
-            //                         if this.take_editing_state(cx) {
-            //                             this.update_entries(false, cx);
-            //                             this.selection = this.entries.iter().position(|entry| {
-            //                                 if let ListEntry::Channel { channel, .. } = entry {
-            //                                     channel.id == *channel_id
-            //                                 } else {
-            //                                     false
-            //                                 }
-            //                             });
-            //                         }
-            //                     }
-            //                 },
-            //             ));
+            this.subscriptions
+                .push(cx.observe(&this.channel_store, |this, _, cx| {
+                    this.update_entries(true, cx)
+                }));
+            this.subscriptions
+                .push(cx.observe(&active_call, |this, _, cx| this.update_entries(true, cx)));
+            this.subscriptions
+                .push(cx.observe_flag::<ChannelsAlpha, _>(move |_, this, cx| {
+                    this.update_entries(true, cx)
+                }));
+            this.subscriptions.push(cx.subscribe(
+                &this.channel_store,
+                |this, _channel_store, e, cx| match e {
+                    ChannelEvent::ChannelCreated(channel_id)
+                    | ChannelEvent::ChannelRenamed(channel_id) => {
+                        if this.take_editing_state(cx) {
+                            this.update_entries(false, cx);
+                            this.selection = this.entries.iter().position(|entry| {
+                                if let ListEntry::Channel { channel, .. } = entry {
+                                    channel.id == *channel_id
+                                } else {
+                                    false
+                                }
+                            });
+                        }
+                    }
+                },
+            ));
 
             this
         })
@@ -696,10 +689,9 @@ impl CollabPanel {
             if let Some(serialized_panel) = serialized_panel {
                 panel.update(cx, |panel, cx| {
                     panel.width = serialized_panel.width;
-                    //todo!(collapsed_channels)
-                    // panel.collapsed_channels = serialized_panel
-                    //     .collapsed_channels
-                    //     .unwrap_or_else(|| Vec::new());
+                    panel.collapsed_channels = serialized_panel
+                        .collapsed_channels
+                        .unwrap_or_else(|| Vec::new());
                     cx.notify();
                 });
             }
@@ -707,25 +699,25 @@ impl CollabPanel {
         })
     }
 
-    //     fn serialize(&mut self, cx: &mut ViewContext<Self>) {
-    //         let width = self.width;
-    //         let collapsed_channels = self.collapsed_channels.clone();
-    //         self.pending_serialization = cx.background().spawn(
-    //             async move {
-    //                 KEY_VALUE_STORE
-    //                     .write_kvp(
-    //                         COLLABORATION_PANEL_KEY.into(),
-    //                         serde_json::to_string(&SerializedCollabPanel {
-    //                             width,
-    //                             collapsed_channels: Some(collapsed_channels),
-    //                         })?,
-    //                     )
-    //                     .await?;
-    //                 anyhow::Ok(())
-    //             }
-    //             .log_err(),
-    //         );
-    //     }
+    fn serialize(&mut self, cx: &mut ViewContext<Self>) {
+        let width = self.width;
+        let collapsed_channels = self.collapsed_channels.clone();
+        self.pending_serialization = cx.background_executor().spawn(
+            async move {
+                KEY_VALUE_STORE
+                    .write_kvp(
+                        COLLABORATION_PANEL_KEY.into(),
+                        serde_json::to_string(&SerializedCollabPanel {
+                            width,
+                            collapsed_channels: Some(collapsed_channels),
+                        })?,
+                    )
+                    .await?;
+                anyhow::Ok(())
+            }
+            .log_err(),
+        );
+    }
 
     fn update_entries(&mut self, select_same_item: bool, cx: &mut ViewContext<Self>) {
         let channel_store = self.channel_store.read(cx);
@@ -1456,16 +1448,16 @@ impl CollabPanel {
     //             .into_any()
     //     }
 
-    //     fn take_editing_state(&mut self, cx: &mut ViewContext<Self>) -> bool {
-    //         if let Some(_) = self.channel_editing_state.take() {
-    //             self.channel_name_editor.update(cx, |editor, cx| {
-    //                 editor.set_text("", cx);
-    //             });
-    //             true
-    //         } else {
-    //             false
-    //         }
-    //     }
+    fn take_editing_state(&mut self, cx: &mut ViewContext<Self>) -> bool {
+        if let Some(_) = self.channel_editing_state.take() {
+            self.channel_name_editor.update(cx, |editor, cx| {
+                editor.set_text("", cx);
+            });
+            true
+        } else {
+            false
+        }
+    }
 
     //     fn render_contact_placeholder(
     //         &self,
@@ -1499,67 +1491,6 @@ impl CollabPanel {
     //             this.toggle_contact_finder(cx);
     //         })
     //         .into_any()
-    //     }
-
-    //     fn render_channel_editor(
-    //         &self,
-    //         theme: &theme::Theme,
-    //         depth: usize,
-    //         cx: &AppContext,
-    //     ) -> AnyElement<Self> {
-    //         Flex::row()
-    //             .with_child(
-    //                 Empty::new()
-    //                     .constrained()
-    //                     .with_width(theme.collab_panel.disclosure.button_space()),
-    //             )
-    //             .with_child(
-    //                 Svg::new("icons/hash.svg")
-    //                     .with_color(theme.collab_panel.channel_hash.color)
-    //                     .constrained()
-    //                     .with_width(theme.collab_panel.channel_hash.width)
-    //                     .aligned()
-    //                     .left(),
-    //             )
-    //             .with_child(
-    //                 if let Some(pending_name) = self
-    //                     .channel_editing_state
-    //                     .as_ref()
-    //                     .and_then(|state| state.pending_name())
-    //                 {
-    //                     Label::new(
-    //                         pending_name.to_string(),
-    //                         theme.collab_panel.contact_username.text.clone(),
-    //                     )
-    //                     .contained()
-    //                     .with_style(theme.collab_panel.contact_username.container)
-    //                     .aligned()
-    //                     .left()
-    //                     .flex(1., true)
-    //                     .into_any()
-    //                 } else {
-    //                     ChildView::new(&self.channel_name_editor, cx)
-    //                         .aligned()
-    //                         .left()
-    //                         .contained()
-    //                         .with_style(theme.collab_panel.channel_editor)
-    //                         .flex(1.0, true)
-    //                         .into_any()
-    //                 },
-    //             )
-    //             .align_children_center()
-    //             .constrained()
-    //             .with_height(theme.collab_panel.row_height)
-    //             .contained()
-    //             .with_style(ContainerStyle {
-    //                 background_color: Some(theme.editor.background),
-    //                 ..*theme.collab_panel.contact_row.default_style()
-    //             })
-    //             .with_padding_left(
-    //                 theme.collab_panel.contact_row.default_style().padding.left
-    //                     + theme.collab_panel.channel_indent * depth as f32,
-    //             )
-    //             .into_any()
     //     }
 
     //     fn render_channel_notes(
@@ -1750,109 +1681,6 @@ impl CollabPanel {
     //             )
     //             .with_padding_left(
     //                 theme.contact_row.default_style().padding.left + theme.channel_indent,
-    //             )
-    //             .into_any()
-    //     }
-
-    //     fn render_contact_request(
-    //         user: Arc<User>,
-    //         user_store: ModelHandle<UserStore>,
-    //         theme: &theme::CollabPanel,
-    //         is_incoming: bool,
-    //         is_selected: bool,
-    //         cx: &mut ViewContext<Self>,
-    //     ) -> AnyElement<Self> {
-    //         enum Decline {}
-    //         enum Accept {}
-    //         enum Cancel {}
-
-    //         let mut row = Flex::row()
-    //             .with_children(user.avatar.clone().map(|avatar| {
-    //                 Image::from_data(avatar)
-    //                     .with_style(theme.contact_avatar)
-    //                     .aligned()
-    //                     .left()
-    //             }))
-    //             .with_child(
-    //                 Label::new(
-    //                     user.github_login.clone(),
-    //                     theme.contact_username.text.clone(),
-    //                 )
-    //                 .contained()
-    //                 .with_style(theme.contact_username.container)
-    //                 .aligned()
-    //                 .left()
-    //                 .flex(1., true),
-    //             );
-
-    //         let user_id = user.id;
-    //         let github_login = user.github_login.clone();
-    //         let is_contact_request_pending = user_store.read(cx).is_contact_request_pending(&user);
-    //         let button_spacing = theme.contact_button_spacing;
-
-    //         if is_incoming {
-    //             row.add_child(
-    //                 MouseEventHandler::new::<Decline, _>(user.id as usize, cx, |mouse_state, _| {
-    //                     let button_style = if is_contact_request_pending {
-    //                         &theme.disabled_button
-    //                     } else {
-    //                         theme.contact_button.style_for(mouse_state)
-    //                     };
-    //                     render_icon_button(button_style, "icons/x.svg").aligned()
-    //                 })
-    //                 .with_cursor_style(CursorStyle::PointingHand)
-    //                 .on_click(MouseButton::Left, move |_, this, cx| {
-    //                     this.respond_to_contact_request(user_id, false, cx);
-    //                 })
-    //                 .contained()
-    //                 .with_margin_right(button_spacing),
-    //             );
-
-    //             row.add_child(
-    //                 MouseEventHandler::new::<Accept, _>(user.id as usize, cx, |mouse_state, _| {
-    //                     let button_style = if is_contact_request_pending {
-    //                         &theme.disabled_button
-    //                     } else {
-    //                         theme.contact_button.style_for(mouse_state)
-    //                     };
-    //                     render_icon_button(button_style, "icons/check.svg")
-    //                         .aligned()
-    //                         .flex_float()
-    //                 })
-    //                 .with_cursor_style(CursorStyle::PointingHand)
-    //                 .on_click(MouseButton::Left, move |_, this, cx| {
-    //                     this.respond_to_contact_request(user_id, true, cx);
-    //                 }),
-    //             );
-    //         } else {
-    //             row.add_child(
-    //                 MouseEventHandler::new::<Cancel, _>(user.id as usize, cx, |mouse_state, _| {
-    //                     let button_style = if is_contact_request_pending {
-    //                         &theme.disabled_button
-    //                     } else {
-    //                         theme.contact_button.style_for(mouse_state)
-    //                     };
-    //                     render_icon_button(button_style, "icons/x.svg")
-    //                         .aligned()
-    //                         .flex_float()
-    //                 })
-    //                 .with_padding(Padding::uniform(2.))
-    //                 .with_cursor_style(CursorStyle::PointingHand)
-    //                 .on_click(MouseButton::Left, move |_, this, cx| {
-    //                     this.remove_contact(user_id, &github_login, cx);
-    //                 })
-    //                 .flex_float(),
-    //             );
-    //         }
-
-    //         row.constrained()
-    //             .with_height(theme.row_height)
-    //             .contained()
-    //             .with_style(
-    //                 *theme
-    //                     .contact_row
-    //                     .in_state(is_selected)
-    //                     .style_for(&mut Default::default()),
     //             )
     //             .into_any()
     //     }
@@ -2054,148 +1882,148 @@ impl CollabPanel {
     //         cx.notify();
     //     }
 
-    //     fn confirm(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
-    //         if self.confirm_channel_edit(cx) {
-    //             return;
-    //         }
+    fn confirm(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
+        if self.confirm_channel_edit(cx) {
+            return;
+        }
 
-    //         if let Some(selection) = self.selection {
-    //             if let Some(entry) = self.entries.get(selection) {
-    //                 match entry {
-    //                     ListEntry::Header(section) => match section {
-    //                         Section::ActiveCall => Self::leave_call(cx),
-    //                         Section::Channels => self.new_root_channel(cx),
-    //                         Section::Contacts => self.toggle_contact_finder(cx),
-    //                         Section::ContactRequests
-    //                         | Section::Online
-    //                         | Section::Offline
-    //                         | Section::ChannelInvites => {
-    //                             self.toggle_section_expanded(*section, cx);
-    //                         }
-    //                     },
-    //                     ListEntry::Contact { contact, calling } => {
-    //                         if contact.online && !contact.busy && !calling {
-    //                             self.call(contact.user.id, Some(self.project.clone()), cx);
-    //                         }
-    //                     }
-    //                     ListEntry::ParticipantProject {
-    //                         project_id,
-    //                         host_user_id,
-    //                         ..
-    //                     } => {
-    //                         if let Some(workspace) = self.workspace.upgrade(cx) {
-    //                             let app_state = workspace.read(cx).app_state().clone();
-    //                             workspace::join_remote_project(
-    //                                 *project_id,
-    //                                 *host_user_id,
-    //                                 app_state,
-    //                                 cx,
-    //                             )
-    //                             .detach_and_log_err(cx);
-    //                         }
-    //                     }
-    //                     ListEntry::ParticipantScreen { peer_id, .. } => {
-    //                         let Some(peer_id) = peer_id else {
-    //                             return;
-    //                         };
-    //                         if let Some(workspace) = self.workspace.upgrade(cx) {
-    //                             workspace.update(cx, |workspace, cx| {
-    //                                 workspace.open_shared_screen(*peer_id, cx)
-    //                             });
-    //                         }
-    //                     }
-    //                     ListEntry::Channel { channel, .. } => {
-    //                         let is_active = maybe!({
-    //                             let call_channel = ActiveCall::global(cx)
-    //                                 .read(cx)
-    //                                 .room()?
-    //                                 .read(cx)
-    //                                 .channel_id()?;
+        // if let Some(selection) = self.selection {
+        //     if let Some(entry) = self.entries.get(selection) {
+        //         match entry {
+        //             ListEntry::Header(section) => match section {
+        //                 Section::ActiveCall => Self::leave_call(cx),
+        //                 Section::Channels => self.new_root_channel(cx),
+        //                 Section::Contacts => self.toggle_contact_finder(cx),
+        //                 Section::ContactRequests
+        //                 | Section::Online
+        //                 | Section::Offline
+        //                 | Section::ChannelInvites => {
+        //                     self.toggle_section_expanded(*section, cx);
+        //                 }
+        //             },
+        //             ListEntry::Contact { contact, calling } => {
+        //                 if contact.online && !contact.busy && !calling {
+        //                     self.call(contact.user.id, Some(self.project.clone()), cx);
+        //                 }
+        //             }
+        //             ListEntry::ParticipantProject {
+        //                 project_id,
+        //                 host_user_id,
+        //                 ..
+        //             } => {
+        //                 if let Some(workspace) = self.workspace.upgrade(cx) {
+        //                     let app_state = workspace.read(cx).app_state().clone();
+        //                     workspace::join_remote_project(
+        //                         *project_id,
+        //                         *host_user_id,
+        //                         app_state,
+        //                         cx,
+        //                     )
+        //                     .detach_and_log_err(cx);
+        //                 }
+        //             }
+        //             ListEntry::ParticipantScreen { peer_id, .. } => {
+        //                 let Some(peer_id) = peer_id else {
+        //                     return;
+        //                 };
+        //                 if let Some(workspace) = self.workspace.upgrade(cx) {
+        //                     workspace.update(cx, |workspace, cx| {
+        //                         workspace.open_shared_screen(*peer_id, cx)
+        //                     });
+        //                 }
+        //             }
+        //             ListEntry::Channel { channel, .. } => {
+        //                 let is_active = maybe!({
+        //                     let call_channel = ActiveCall::global(cx)
+        //                         .read(cx)
+        //                         .room()?
+        //                         .read(cx)
+        //                         .channel_id()?;
 
-    //                             Some(call_channel == channel.id)
-    //                         })
-    //                         .unwrap_or(false);
-    //                         if is_active {
-    //                             self.open_channel_notes(
-    //                                 &OpenChannelNotes {
-    //                                     channel_id: channel.id,
-    //                                 },
-    //                                 cx,
-    //                             )
-    //                         } else {
-    //                             self.join_channel(channel.id, cx)
-    //                         }
-    //                     }
-    //                     ListEntry::ContactPlaceholder => self.toggle_contact_finder(cx),
-    //                     _ => {}
-    //                 }
-    //             }
-    //         }
-    //     }
+        //                     Some(call_channel == channel.id)
+        //                 })
+        //                 .unwrap_or(false);
+        //                 if is_active {
+        //                     self.open_channel_notes(
+        //                         &OpenChannelNotes {
+        //                             channel_id: channel.id,
+        //                         },
+        //                         cx,
+        //                     )
+        //                 } else {
+        //                     self.join_channel(channel.id, cx)
+        //                 }
+        //             }
+        //             ListEntry::ContactPlaceholder => self.toggle_contact_finder(cx),
+        //             _ => {}
+        //         }
+        //     }
+        // }
+    }
 
-    //     fn insert_space(&mut self, _: &InsertSpace, cx: &mut ViewContext<Self>) {
-    //         if self.channel_editing_state.is_some() {
-    //             self.channel_name_editor.update(cx, |editor, cx| {
-    //                 editor.insert(" ", cx);
-    //             });
-    //         }
-    //     }
+    fn insert_space(&mut self, _: &InsertSpace, cx: &mut ViewContext<Self>) {
+        if self.channel_editing_state.is_some() {
+            self.channel_name_editor.update(cx, |editor, cx| {
+                editor.insert(" ", cx);
+            });
+        }
+    }
 
-    //     fn confirm_channel_edit(&mut self, cx: &mut ViewContext<CollabPanel>) -> bool {
-    //         if let Some(editing_state) = &mut self.channel_editing_state {
-    //             match editing_state {
-    //                 ChannelEditingState::Create {
-    //                     location,
-    //                     pending_name,
-    //                     ..
-    //                 } => {
-    //                     if pending_name.is_some() {
-    //                         return false;
-    //                     }
-    //                     let channel_name = self.channel_name_editor.read(cx).text(cx);
+    fn confirm_channel_edit(&mut self, cx: &mut ViewContext<CollabPanel>) -> bool {
+        if let Some(editing_state) = &mut self.channel_editing_state {
+            match editing_state {
+                ChannelEditingState::Create {
+                    location,
+                    pending_name,
+                    ..
+                } => {
+                    if pending_name.is_some() {
+                        return false;
+                    }
+                    let channel_name = self.channel_name_editor.read(cx).text(cx);
 
-    //                     *pending_name = Some(channel_name.clone());
+                    *pending_name = Some(channel_name.clone());
 
-    //                     self.channel_store
-    //                         .update(cx, |channel_store, cx| {
-    //                             channel_store.create_channel(&channel_name, *location, cx)
-    //                         })
-    //                         .detach();
-    //                     cx.notify();
-    //                 }
-    //                 ChannelEditingState::Rename {
-    //                     location,
-    //                     pending_name,
-    //                 } => {
-    //                     if pending_name.is_some() {
-    //                         return false;
-    //                     }
-    //                     let channel_name = self.channel_name_editor.read(cx).text(cx);
-    //                     *pending_name = Some(channel_name.clone());
+                    self.channel_store
+                        .update(cx, |channel_store, cx| {
+                            channel_store.create_channel(&channel_name, *location, cx)
+                        })
+                        .detach();
+                    cx.notify();
+                }
+                ChannelEditingState::Rename {
+                    location,
+                    pending_name,
+                } => {
+                    if pending_name.is_some() {
+                        return false;
+                    }
+                    let channel_name = self.channel_name_editor.read(cx).text(cx);
+                    *pending_name = Some(channel_name.clone());
 
-    //                     self.channel_store
-    //                         .update(cx, |channel_store, cx| {
-    //                             channel_store.rename(*location, &channel_name, cx)
-    //                         })
-    //                         .detach();
-    //                     cx.notify();
-    //                 }
-    //             }
-    //             cx.focus_self();
-    //             true
-    //         } else {
-    //             false
-    //         }
-    //     }
+                    self.channel_store
+                        .update(cx, |channel_store, cx| {
+                            channel_store.rename(*location, &channel_name, cx)
+                        })
+                        .detach();
+                    cx.notify();
+                }
+            }
+            cx.focus_self();
+            true
+        } else {
+            false
+        }
+    }
 
-    //     fn toggle_section_expanded(&mut self, section: Section, cx: &mut ViewContext<Self>) {
-    //         if let Some(ix) = self.collapsed_sections.iter().position(|s| *s == section) {
-    //             self.collapsed_sections.remove(ix);
-    //         } else {
-    //             self.collapsed_sections.push(section);
-    //         }
-    //         self.update_entries(false, cx);
-    //     }
+    fn toggle_section_expanded(&mut self, section: Section, cx: &mut ViewContext<Self>) {
+        if let Some(ix) = self.collapsed_sections.iter().position(|s| *s == section) {
+            self.collapsed_sections.remove(ix);
+        } else {
+            self.collapsed_sections.push(section);
+        }
+        self.update_entries(false, cx);
+    }
 
     //     fn collapse_selected_channel(
     //         &mut self,
@@ -2242,7 +2070,7 @@ impl CollabPanel {
                 self.collapsed_channels.insert(ix, channel_id);
             }
         };
-        // self.serialize(cx); todo!()
+        self.serialize(cx);
         self.update_entries(true, cx);
         cx.notify();
         cx.focus_self();
@@ -2270,23 +2098,23 @@ impl CollabPanel {
         }
     }
 
-    //     fn new_root_channel(&mut self, cx: &mut ViewContext<Self>) {
-    //         self.channel_editing_state = Some(ChannelEditingState::Create {
-    //             location: None,
-    //             pending_name: None,
-    //         });
-    //         self.update_entries(false, cx);
-    //         self.select_channel_editor();
-    //         cx.focus(self.channel_name_editor.as_any());
-    //         cx.notify();
-    //     }
+    fn new_root_channel(&mut self, cx: &mut ViewContext<Self>) {
+        self.channel_editing_state = Some(ChannelEditingState::Create {
+            location: None,
+            pending_name: None,
+        });
+        self.update_entries(false, cx);
+        self.select_channel_editor();
+        cx.focus_view(&self.channel_name_editor);
+        cx.notify();
+    }
 
-    //     fn select_channel_editor(&mut self) {
-    //         self.selection = self.entries.iter().position(|entry| match entry {
-    //             ListEntry::ChannelEditor { .. } => true,
-    //             _ => false,
-    //         });
-    //     }
+    fn select_channel_editor(&mut self) {
+        self.selection = self.entries.iter().position(|entry| match entry {
+            ListEntry::ChannelEditor { .. } => true,
+            _ => false,
+        });
+    }
 
     //     fn new_subchannel(&mut self, action: &NewChannel, cx: &mut ViewContext<Self>) {
     //         self.collapsed_channels
@@ -2440,44 +2268,38 @@ impl CollabPanel {
     //     // Should move to the filter editor if clicking on it
     //     // Should move selection to the channel editor if activating it
 
-    //     fn remove_contact(&mut self, user_id: u64, github_login: &str, cx: &mut ViewContext<Self>) {
-    //         let user_store = self.user_store.clone();
-    //         let prompt_message = format!(
-    //             "Are you sure you want to remove \"{}\" from your contacts?",
-    //             github_login
-    //         );
-    //         let mut answer = cx.prompt(PromptLevel::Warning, &prompt_message, &["Remove", "Cancel"]);
-    //         let window = cx.window();
-    //         cx.spawn(|_, mut cx| async move {
-    //             if answer.next().await == Some(0) {
-    //                 if let Err(e) = user_store
-    //                     .update(&mut cx, |store, cx| store.remove_contact(user_id, cx))
-    //                     .await
-    //                 {
-    //                     window.prompt(
-    //                         PromptLevel::Info,
-    //                         &format!("Failed to remove contact: {}", e),
-    //                         &["Ok"],
-    //                         &mut cx,
-    //                     );
-    //                 }
-    //             }
-    //         })
-    //         .detach();
-    //     }
+    fn remove_contact(&mut self, user_id: u64, github_login: &str, cx: &mut ViewContext<Self>) {
+        let user_store = self.user_store.clone();
+        let prompt_message = format!(
+            "Are you sure you want to remove \"{}\" from your contacts?",
+            github_login
+        );
+        let mut answer = cx.prompt(PromptLevel::Warning, &prompt_message, &["Remove", "Cancel"]);
+        let window = cx.window();
+        cx.spawn(|_, mut cx| async move {
+            if answer.await? == 0 {
+                user_store
+                    .update(&mut cx, |store, cx| store.remove_contact(user_id, cx))?
+                    .await
+                    .notify_async_err(&mut cx);
+            }
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+    }
 
-    //     fn respond_to_contact_request(
-    //         &mut self,
-    //         user_id: u64,
-    //         accept: bool,
-    //         cx: &mut ViewContext<Self>,
-    //     ) {
-    //         self.user_store
-    //             .update(cx, |store, cx| {
-    //                 store.respond_to_contact_request(user_id, accept, cx)
-    //             })
-    //             .detach();
-    //     }
+    fn respond_to_contact_request(
+        &mut self,
+        user_id: u64,
+        accept: bool,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.user_store
+            .update(cx, |store, cx| {
+                store.respond_to_contact_request(user_id, accept, cx)
+            })
+            .detach_and_log_err(cx);
+    }
 
     //     fn respond_to_channel_invite(
     //         &mut self,
@@ -2592,7 +2414,9 @@ impl CollabPanel {
                 } => self
                     .render_channel(&*channel, depth, has_children, is_selected, cx)
                     .into_any_element(),
-                ListEntry::ChannelEditor { depth } => todo!(),
+                ListEntry::ChannelEditor { depth } => {
+                    self.render_channel_editor(depth, cx).into_any_element()
+                }
             }
         }))
     }
@@ -2691,10 +2515,7 @@ impl CollabPanel {
 
                 Some(
                     IconButton::new("add-channel", Icon::Plus)
-                        .on_click(cx.listener(|this, _, cx| {
-                            todo!()
-                            // this.new_root_channel(cx)
-                        }))
+                        .on_click(cx.listener(|this, _, cx| this.new_root_channel(cx)))
                         .tooltip(|cx| Tooltip::text("Create a channel", cx)),
                 )
             }
@@ -2709,18 +2530,16 @@ impl CollabPanel {
             | Section::Offline => true,
         };
 
-        let mut header = ListHeader::new(text);
-        if let Some(button) = button {
-            header = header.right_button(button)
-        }
-        // todo!() is selected
-        if can_collapse {
-            // todo!() on click to toggle
-            header = header.toggle(ui::Toggle::Toggled(is_collapsed));
-        }
-
-        header
+        ListHeader::new(text)
+            .when_some(button, |el, button| el.right_button(button))
+            .selected(is_selected)
+            .when(can_collapse, |el| {
+                el.toggle(ui::Toggle::Toggled(is_collapsed)).on_toggle(
+                    cx.listener(move |this, _, cx| this.toggle_section_expanded(section, cx)),
+                )
+            })
     }
+
     fn render_contact(
         &mut self,
         contact: &Contact,
@@ -2744,10 +2563,32 @@ impl CollabPanel {
                     })
                     .log_err();
             }))
-            .child(Label::new(github_login.clone()));
+            .child(
+                h_stack()
+                    .w_full()
+                    .justify_between()
+                    .child(Label::new(github_login.clone()))
+                    .child(
+                        div()
+                            .id("remove_contact")
+                            .invisible()
+                            .group_hover("", |style| style.visible())
+                            .child(
+                                IconButton::new("remove_contact", Icon::Close)
+                                    .color(Color::Muted)
+                                    .tooltip(|cx| Tooltip::text("Remove Contact", cx))
+                                    .on_click(cx.listener(move |this, _, cx| {
+                                        this.remove_contact(user_id, &github_login, cx);
+                                    })),
+                            ),
+                    ),
+            );
+
         if let Some(avatar) = contact.user.avatar.clone() {
-            //item = item.left_avatar(avatar);
+            item = item.left_avatar(avatar);
         }
+
+        div().group("").child(item)
         // let event_handler =
         //     MouseEventHandler::new::<Contact, _>(contact.user.id as usize, cx, |state, cx| {
         //         Flex::row()
@@ -2776,40 +2617,7 @@ impl CollabPanel {
         //                     )
         //                     .with_children(status_badge)
         //             }))
-        //             .with_child(
-        //                 Label::new(
-        //                     contact.user.github_login.clone(),
-        //                     collab_theme.contact_username.text.clone(),
-        //                 )
-        //                 .contained()
-        //                 .with_style(collab_theme.contact_username.container)
-        //                 .aligned()
-        //                 .left()
-        //                 .flex(1., true),
-        //             )
-        //             .with_children(if state.hovered() {
-        //                 Some(
-        //                     MouseEventHandler::new::<Cancel, _>(
-        //                         contact.user.id as usize,
-        //                         cx,
-        //                         |mouse_state, _| {
-        //                             let button_style =
-        //                                 collab_theme.contact_button.style_for(mouse_state);
-        //                             render_icon_button(button_style, "icons/x.svg")
-        //                                 .aligned()
-        //                                 .flex_float()
-        //                         },
-        //                     )
-        //                     .with_padding(Padding::uniform(2.))
-        //                     .with_cursor_style(CursorStyle::PointingHand)
-        //                     .on_click(MouseButton::Left, move |_, this, cx| {
-        //                         this.remove_contact(user_id, &github_login, cx);
-        //                     })
-        //                     .flex_float(),
-        //                 )
-        //             } else {
-        //                 None
-        //             })
+
         //             .with_children(if calling {
         //                 Some(
         //                     Label::new("Calling", collab_theme.calling_indicator.text.clone())
@@ -2867,8 +2675,6 @@ impl CollabPanel {
         //         )
         //         .into_any()
         // };
-
-        item
     }
 
     fn render_contact_request(
@@ -2879,104 +2685,48 @@ impl CollabPanel {
         cx: &mut ViewContext<Self>,
     ) -> impl IntoElement {
         let github_login = SharedString::from(user.github_login.clone());
+        let user_id = user.id;
+        let is_contact_request_pending = self.user_store.read(cx).is_contact_request_pending(&user);
+        let color = if is_contact_request_pending {
+            Color::Muted
+        } else {
+            Color::Default
+        };
 
-        let mut item = ListItem::new(github_login.clone())
-            .child(Label::new(github_login.clone()))
-            .on_click(cx.listener(|this, _, cx| {
-                todo!();
-            }));
-        if let Some(avatar) = user.avatar.clone() {
-            item = item.left_avatar(avatar);
-        }
-        // .with_children(user.avatar.clone().map(|avatar| {
-        //     Image::from_data(avatar)
-        //         .with_style(theme.contact_avatar)
-        //         .aligned()
-        //         .left()
-        // }))
-        // .with_child(
-        //     Label::new(
-        //         user.github_login.clone(),
-        //         theme.contact_username.text.clone(),
-        //     )
-        //     .contained()
-        //     .with_style(theme.contact_username.container)
-        //     .aligned()
-        //     .left()
-        //     .flex(1., true),
-        // );
+        let controls = if is_incoming {
+            vec![
+                IconButton::new("remove_contact", Icon::Close)
+                    .on_click(cx.listener(move |this, _, cx| {
+                        this.respond_to_contact_request(user_id, false, cx);
+                    }))
+                    .color(color)
+                    .tooltip(|cx| Tooltip::text("Decline invite", cx)),
+                IconButton::new("remove_contact", Icon::Check)
+                    .on_click(cx.listener(move |this, _, cx| {
+                        this.respond_to_contact_request(user_id, true, cx);
+                    }))
+                    .color(color)
+                    .tooltip(|cx| Tooltip::text("Accept invite", cx)),
+            ]
+        } else {
+            let github_login = github_login.clone();
+            vec![IconButton::new("remove_contact", Icon::Close)
+                .on_click(cx.listener(move |this, _, cx| {
+                    this.remove_contact(user_id, &github_login, cx);
+                }))
+                .color(color)
+                .tooltip(|cx| Tooltip::text("Cancel invite", cx))]
+        };
 
-        // let user_id = user.id;
-        // let github_login = user.github_login.clone();
-        // let is_contact_request_pending = user_store.read(cx).is_contact_request_pending(&user);
-        // let button_spacing = theme.contact_button_spacing;
-
-        // if is_incoming {
-        //     row.add_child(
-        //         MouseEventHandler::new::<Decline, _>(user.id as usize, cx, |mouse_state, _| {
-        //             let button_style = if is_contact_request_pending {
-        //                 &theme.disabled_button
-        //             } else {
-        //                 theme.contact_button.style_for(mouse_state)
-        //             };
-        //             render_icon_button(button_style, "icons/x.svg").aligned()
-        //         })
-        //         .with_cursor_style(CursorStyle::PointingHand)
-        //         .on_click(MouseButton::Left, move |_, this, cx| {
-        //             this.respond_to_contact_request(user_id, false, cx);
-        //         })
-        //         .contained()
-        //         .with_margin_right(button_spacing),
-        //     );
-
-        //     row.add_child(
-        //         MouseEventHandler::new::<Accept, _>(user.id as usize, cx, |mouse_state, _| {
-        //             let button_style = if is_contact_request_pending {
-        //                 &theme.disabled_button
-        //             } else {
-        //                 theme.contact_button.style_for(mouse_state)
-        //             };
-        //             render_icon_button(button_style, "icons/check.svg")
-        //                 .aligned()
-        //                 .flex_float()
-        //         })
-        //         .with_cursor_style(CursorStyle::PointingHand)
-        //         .on_click(MouseButton::Left, move |_, this, cx| {
-        //             this.respond_to_contact_request(user_id, true, cx);
-        //         }),
-        //     );
-        // } else {
-        //     row.add_child(
-        //         MouseEventHandler::new::<Cancel, _>(user.id as usize, cx, |mouse_state, _| {
-        //             let button_style = if is_contact_request_pending {
-        //                 &theme.disabled_button
-        //             } else {
-        //                 theme.contact_button.style_for(mouse_state)
-        //             };
-        //             render_icon_button(button_style, "icons/x.svg")
-        //                 .aligned()
-        //                 .flex_float()
-        //         })
-        //         .with_padding(Padding::uniform(2.))
-        //         .with_cursor_style(CursorStyle::PointingHand)
-        //         .on_click(MouseButton::Left, move |_, this, cx| {
-        //             this.remove_contact(user_id, &github_login, cx);
-        //         })
-        //         .flex_float(),
-        //     );
-        // }
-
-        // row.constrained()
-        //     .with_height(theme.row_height)
-        //     .contained()
-        //     .with_style(
-        //         *theme
-        //             .contact_row
-        //             .in_state(is_selected)
-        //             .style_for(&mut Default::default()),
-        //     )
-        //     .into_any()
-        item
+        ListItem::new(github_login.clone())
+            .child(
+                h_stack()
+                    .w_full()
+                    .justify_between()
+                    .child(Label::new(github_login.clone()))
+                    .child(h_stack().children(controls)),
+            )
+            .when_some(user.avatar.clone(), |el, avatar| el.left_avatar(avatar))
     }
 
     fn render_contact_placeholder(
@@ -2984,33 +2734,11 @@ impl CollabPanel {
         is_selected: bool,
         cx: &mut ViewContext<Self>,
     ) -> impl IntoElement {
-        ListItem::new("contact-placeholder").child(Label::new("Add a Contact"))
-        // enum AddContacts {}
-        // MouseEventHandler::new::<AddContacts, _>(0, cx, |state, _| {
-        //     let style = theme.list_empty_state.style_for(is_selected, state);
-        //     Flex::row()
-        //         .with_child(
-        //             Svg::new("icons/plus.svg")
-        //                 .with_color(theme.list_empty_icon.color)
-        //                 .constrained()
-        //                 .with_width(theme.list_empty_icon.width)
-        //                 .aligned()
-        //                 .left(),
-        //         )
-        //         .with_child(
-        //             Label::new("Add a contact", style.text.clone())
-        //                 .contained()
-        //                 .with_style(theme.list_empty_label_container),
-        //         )
-        //         .align_children_center()
-        //         .contained()
-        //         .with_style(style.container)
-        //         .into_any()
-        // })
-        // .on_click(MouseButton::Left, |_, this, cx| {
-        //     this.toggle_contact_finder(cx);
-        // })
-        // .into_any()
+        ListItem::new("contact-placeholder")
+            .child(IconElement::new(Icon::Plus))
+            .child(Label::new("Add a Contact"))
+            .selected(is_selected)
+            .on_click(cx.listener(|this, _, cx| this.toggle_contact_finder(cx)))
     }
 
     fn render_channel(
@@ -3452,6 +3180,32 @@ impl CollabPanel {
         // .with_cursor_style(CursorStyle::PointingHand)
         // .into_any()
     }
+
+    fn render_channel_editor(
+        &mut self,
+        depth: usize,
+        cx: &mut ViewContext<Self>,
+    ) -> impl IntoElement {
+        let item = ListItem::new("channel-editor")
+            .inset(false)
+            .indent_level(depth)
+            .left_icon(Icon::Hash);
+
+        if let Some(pending_name) = self
+            .channel_editing_state
+            .as_ref()
+            .and_then(|state| state.pending_name())
+        {
+            item.child(Label::new(pending_name))
+        } else {
+            item.child(
+                div()
+                    .w_full()
+                    .py_1() // todo!() @nate this is a px off at the default font size.
+                    .child(self.channel_name_editor.clone()),
+            )
+        }
+    }
 }
 
 // fn render_tree_branch(
@@ -3506,6 +3260,8 @@ impl Render for CollabPanel {
         div()
             .key_context("CollabPanel")
             .track_focus(&self.focus_handle)
+            .on_action(cx.listener(Self::confirm))
+            .on_action(cx.listener(Self::insert_space))
             .map(|el| {
                 if self.user_store.read(cx).current_user().is_none() {
                     el.child(self.render_signed_out(cx))

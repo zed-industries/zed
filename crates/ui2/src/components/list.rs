@@ -25,7 +25,9 @@ pub struct ListHeader {
     left_icon: Option<Icon>,
     meta: Option<ListHeaderMeta>,
     toggle: Toggle,
+    on_toggle: Option<Rc<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
     inset: bool,
+    selected: bool,
 }
 
 impl ListHeader {
@@ -36,11 +38,21 @@ impl ListHeader {
             meta: None,
             inset: false,
             toggle: Toggle::NotToggleable,
+            on_toggle: None,
+            selected: false,
         }
     }
 
     pub fn toggle(mut self, toggle: Toggle) -> Self {
         self.toggle = toggle;
+        self
+    }
+
+    pub fn on_toggle(
+        mut self,
+        on_toggle: impl Fn(&ClickEvent, &mut WindowContext) + 'static,
+    ) -> Self {
+        self.on_toggle = Some(Rc::new(on_toggle));
         self
     }
 
@@ -57,13 +69,18 @@ impl ListHeader {
         self.meta = meta;
         self
     }
+
+    pub fn selected(mut self, selected: bool) -> Self {
+        self.selected = selected;
+        self
+    }
 }
 
 impl RenderOnce for ListHeader {
     type Rendered = Div;
 
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {
-        let disclosure_control = disclosure_control(self.toggle, None);
+        let disclosure_control = disclosure_control(self.toggle, self.on_toggle);
 
         let meta = match self.meta {
             Some(ListHeaderMeta::Tools(icons)) => div().child(
@@ -85,6 +102,9 @@ impl RenderOnce for ListHeader {
                 div()
                     .h_5()
                     .when(self.inset, |this| this.px_2())
+                    .when(self.selected, |this| {
+                        this.bg(cx.theme().colors().ghost_element_selected)
+                    })
                     .flex()
                     .flex_1()
                     .items_center()
