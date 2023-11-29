@@ -1,4 +1,6 @@
-use crate::{prelude::*, v_stack, KeyBinding, Label, List, ListItem, ListSeparator, ListSubHeader};
+use crate::{
+    h_stack, prelude::*, v_stack, KeyBinding, Label, List, ListItem, ListSeparator, ListSubHeader,
+};
 use gpui::{
     overlay, px, Action, AnchorCorner, AnyElement, AppContext, Bounds, ClickEvent, DismissEvent,
     DispatchPhase, Div, EventEmitter, FocusHandle, FocusableView, IntoElement, LayoutId,
@@ -129,8 +131,17 @@ impl Render for ContextMenu {
                             let dismiss = cx.listener(|_, _, cx| cx.emit(DismissEvent::Dismiss));
 
                             ListItem::new(entry.clone())
-                                .child(Label::new(entry.clone()))
-                                .children(key_binding.clone())
+                                .child(
+                                    h_stack()
+                                        .w_full()
+                                        .justify_between()
+                                        .child(Label::new(entry.clone()))
+                                        .children(
+                                            key_binding
+                                                .clone()
+                                                .map(|binding| div().ml_1().child(binding)),
+                                        ),
+                                )
                                 .on_click(move |event, cx| {
                                     callback(event, cx);
                                     dismiss(event, cx)

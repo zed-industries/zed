@@ -362,17 +362,15 @@ impl RenderOnce for List {
     type Rendered = Div;
 
     fn render(self, _cx: &mut WindowContext) -> Self::Rendered {
-        let list_content = match (self.children.is_empty(), self.toggle) {
-            (false, _) => div().children(self.children),
-            (true, Toggle::Toggled(false)) => div(),
-            (true, _) => div().child(Label::new(self.empty_message.clone()).color(Color::Muted)),
-        };
-
         v_stack()
             .w_full()
             .py_1()
             .children(self.header.map(|header| header))
-            .child(list_content)
+            .map(|this| match (self.children.is_empty(), self.toggle) {
+                (false, _) => this.children(self.children),
+                (true, Toggle::Toggled(false)) => this,
+                (true, _) => this.child(Label::new(self.empty_message.clone()).color(Color::Muted)),
+            })
     }
 }
 
