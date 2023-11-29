@@ -205,7 +205,6 @@ impl<D: PickerDelegate> Render for Picker<D> {
             .when(self.delegate.match_count() > 0, |el| {
                 el.child(
                     v_stack()
-                        .p_1()
                         .grow()
                         .child(
                             uniform_list(
@@ -239,7 +238,8 @@ impl<D: PickerDelegate> Render for Picker<D> {
                                     }
                                 },
                             )
-                            .track_scroll(self.scroll_handle.clone()),
+                            .track_scroll(self.scroll_handle.clone())
+                            .p_1()
                         )
                         .max_h_72()
                         .overflow_hidden(),
