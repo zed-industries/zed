@@ -701,11 +701,6 @@ impl Render for PanelButtons {
                     (action, name.into())
                 };
 
-                let button = IconButton::new(name, icon)
-                    .selected(is_active_button)
-                    .action(action.boxed_clone())
-                    .tooltip(move |cx| Tooltip::for_action(tooltip.clone(), &*action, cx));
-
                 Some(
                     menu_handle(name)
                         .menu(move |cx| {
@@ -731,7 +726,14 @@ impl Render for PanelButtons {
                         })
                         .anchor(menu_anchor)
                         .attach(menu_attach)
-                        .child(|is_open| button.selected(is_open)),
+                        .child(move |_is_open| {
+                            IconButton::new(name, icon)
+                                .selected(is_active_button)
+                                .action(action.boxed_clone())
+                                .tooltip(move |cx| {
+                                    Tooltip::for_action(tooltip.clone(), &*action, cx)
+                                })
+                        }),
                 )
             });
 
