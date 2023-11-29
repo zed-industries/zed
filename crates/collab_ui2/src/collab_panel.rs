@@ -3211,12 +3211,15 @@ impl CollabPanel {
 // }
 
 impl Render for CollabPanel {
-    type Element = Focusable<Div>;
+    type Element = Focusable<Stateful<Div>>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         div()
+            .id("collab-panel")
             .key_context("CollabPanel")
             .track_focus(&self.focus_handle)
+            .size_full()
+            .overflow_scroll()
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::insert_space))
             .map(|el| {
