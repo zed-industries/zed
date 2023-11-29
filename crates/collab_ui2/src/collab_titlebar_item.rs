@@ -209,7 +209,7 @@ impl Render for CollabTitlebarItem {
                 },
             )
             .child(div().flex_1())
-            .when(is_in_room, |this| {
+            .when_some(room, |this, room| {
                 this.child(
                     h_stack()
                         .child(
@@ -220,19 +220,15 @@ impl Render for CollabTitlebarItem {
                                             let room = room.clone();
                                             let project = self.project.clone();
                                             move |_, cx| {
-                                                if let Some(room) = room.as_ref() {
-                                                    room.share_project(project.clone(), cx)
-                                                        .detach_and_log_err(cx);
-                                                }
+                                                room.share_project(project.clone(), cx)
+                                                    .detach_and_log_err(cx);
                                             }
                                         }),
                                 )
                                 .child(IconButton::new("leave-call", ui::Icon::Exit).on_click({
                                     let room = room.clone();
                                     move |_, cx| {
-                                        if let Some(room) = room.as_ref() {
-                                            room.hang_up(cx).detach();
-                                        }
+                                        room.hang_up(cx).detach();
                                     }
                                 })),
                         )
@@ -241,24 +237,18 @@ impl Render for CollabTitlebarItem {
                                 .child(IconButton::new("mute-microphone", mic_icon).on_click({
                                     let room = room.clone();
                                     move |_, cx| {
-                                        if let Some(room) = room.as_ref() {
-                                            room.toggle_mute(cx);
-                                        }
+                                        room.toggle_mute(cx);
                                     }
                                 }))
                                 .child(IconButton::new("mute-sound", speakers_icon).on_click({
                                     let room = room.clone();
                                     move |_, cx| {
-                                        if let Some(room) = room.as_ref() {
-                                            room.toggle_deafen(cx);
-                                        }
+                                        room.toggle_deafen(cx);
                                     }
                                 }))
                                 .child(IconButton::new("screen-share", ui::Icon::Screen).on_click(
                                     move |_, cx| {
-                                        if let Some(room) = room.as_ref() {
-                                            room.toggle_screen_share(cx);
-                                        }
+                                        room.toggle_screen_share(cx);
                                     },
                                 ))
                                 .pl_2(),
