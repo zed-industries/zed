@@ -10,11 +10,11 @@ fn build_menu(cx: &mut WindowContext, header: impl Into<SharedString>) -> View<C
     ContextMenu::build(cx, |menu, _| {
         menu.header(header)
             .separator()
-            .entry("Print current time", |_event, cx| {
+            .entry("Print current time", |cx| {
                 println!("dispatching PrintCurrentTime action");
                 cx.dispatch_action(PrintCurrentDate.boxed_clone())
             })
-            .entry("Print best foot", |_event, cx| {
+            .entry("Print best foot", |cx| {
                 cx.dispatch_action(PrintBestFood.boxed_clone())
             })
     })

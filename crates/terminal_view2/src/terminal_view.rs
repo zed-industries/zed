@@ -298,9 +298,12 @@ impl TerminalView {
         position: gpui::Point<Pixels>,
         cx: &mut ViewContext<Self>,
     ) {
-        self.context_menu = Some(ContextMenu::build(cx, |menu, _| {
-            menu.action("Clear", Box::new(Clear))
-                .action("Close", Box::new(CloseActiveItem { save_intent: None }))
+        self.context_menu = Some(ContextMenu::build(cx, |menu, cx| {
+            menu.action("Clear", Box::new(Clear), cx).action(
+                "Close",
+                Box::new(CloseActiveItem { save_intent: None }),
+                cx,
+            )
         }));
         dbg!(&position);
         // todo!()

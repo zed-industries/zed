@@ -51,6 +51,6 @@ impl UpdateNotification {
     }
 
     pub fn dismiss(&mut self, cx: &mut ViewContext<Self>) {
-        cx.emit(DismissEvent::Dismiss);
+        cx.emit(DismissEvent);
     }
 }

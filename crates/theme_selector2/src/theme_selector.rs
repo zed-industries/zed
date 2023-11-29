@@ -177,7 +177,7 @@ impl PickerDelegate for ThemeSelectorDelegate {
 
         self.view
             .update(cx, |_, cx| {
-                cx.emit(DismissEvent::Dismiss);
+                cx.emit(DismissEvent);
             })
             .ok();
     }

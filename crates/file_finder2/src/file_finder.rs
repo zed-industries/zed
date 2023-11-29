@@ -687,9 +687,7 @@ impl PickerDelegate for FileFinderDelegate {
                                 .log_err();
                         }
                     }
-                    finder
-                        .update(&mut cx, |_, cx| cx.emit(DismissEvent::Dismiss))
-                        .ok()?;
+                    finder.update(&mut cx, |_, cx| cx.emit(DismissEvent)).ok()?;
 
                     Some(())
                 })
@@ -700,7 +698,7 @@ impl PickerDelegate for FileFinderDelegate {
 
     fn dismissed(&mut self, cx: &mut ViewContext<Picker<FileFinderDelegate>>) {
         self.file_finder
-            .update(cx, |_, cx| cx.emit(DismissEvent::Dismiss))
+            .update(cx, |_, cx| cx.emit(DismissEvent))
             .log_err();
     }
 
