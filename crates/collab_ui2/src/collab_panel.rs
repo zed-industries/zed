@@ -178,6 +178,7 @@ use gpui::{
 use project::{Fs, Project};
 use serde_derive::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
+use ui::prelude::*;
 use ui::{
     h_stack, v_stack, Avatar, Button, Color, ContextMenu, Icon, IconButton, IconElement, IconSize,
     Label, List, ListHeader, ListItem, Tooltip,
@@ -2333,18 +2334,20 @@ impl CollabPanel {
     }
 
     fn render_signed_out(&mut self, cx: &mut ViewContext<Self>) -> Div {
-        v_stack().child(Button::new("Sign in to collaborate").on_click(cx.listener(
-            |this, _, cx| {
-                let client = this.client.clone();
-                cx.spawn(|_, mut cx| async move {
-                    client
-                        .authenticate_and_connect(true, &cx)
-                        .await
-                        .notify_async_err(&mut cx);
-                })
-                .detach()
-            },
-        )))
+        v_stack().child(
+            Button::new("sign_in", "Sign in to collaborate").on_click(cx.listener(
+                |this, _, cx| {
+                    let client = this.client.clone();
+                    cx.spawn(|_, mut cx| async move {
+                        client
+                            .authenticate_and_connect(true, &cx)
+                            .await
+                            .notify_async_err(&mut cx);
+                    })
+                    .detach()
+                },
+            )),
+        )
     }
 
     fn render_signed_in(&mut self, cx: &mut ViewContext<Self>) -> List {
@@ -2559,7 +2562,7 @@ impl CollabPanel {
                                 .group_hover("", |style| style.visible())
                                 .child(
                                     IconButton::new("remove_contact", Icon::Close)
-                                        .color(Color::Muted)
+                                        .icon_color(Color::Muted)
                                         .tooltip(|cx| Tooltip::text("Remove Contact", cx))
                                         .on_click(cx.listener({
                                             let github_login = github_login.clone();
@@ -2623,13 +2626,13 @@ impl CollabPanel {
                     .on_click(cx.listener(move |this, _, cx| {
                         this.respond_to_contact_request(user_id, false, cx);
                     }))
-                    .color(color)
+                    .icon_color(color)
                     .tooltip(|cx| Tooltip::text("Decline invite", cx)),
                 IconButton::new("remove_contact", Icon::Check)
                     .on_click(cx.listener(move |this, _, cx| {
                         this.respond_to_contact_request(user_id, true, cx);
                     }))
-                    .color(color)
+                    .icon_color(color)
                     .tooltip(|cx| Tooltip::text("Accept invite", cx)),
             ]
         } else {
@@ -2638,7 +2641,7 @@ impl CollabPanel {
                 .on_click(cx.listener(move |this, _, cx| {
                     this.remove_contact(user_id, &github_login, cx);
                 }))
-                .color(color)
+                .icon_color(color)
                 .tooltip(|cx| Tooltip::text("Cancel invite", cx))]
         };
 
@@ -2780,7 +2783,7 @@ impl CollabPanel {
                                                     "channel_chat",
                                                     Icon::MessageBubbles,
                                                 )
-                                                .color(if has_messages_notification {
+                                                .icon_color(if has_messages_notification {
                                                     Color::Default
                                                 } else {
                                                     Color::Muted
@@ -2795,7 +2798,7 @@ impl CollabPanel {
                                             .group_hover("", |style| style.visible())
                                             .child(
                                                 IconButton::new("channel_notes", Icon::File)
-                                                    .color(if has_notes_notification {
+                                                    .icon_color(if has_notes_notification {
                                                         Color::Default
                                                     } else {
                                                         Color::Muted

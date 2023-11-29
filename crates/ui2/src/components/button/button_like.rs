@@ -1,31 +1,17 @@
-use gpui::{
-    rems, AnyElement, AnyView, ClickEvent, Div, Hsla, IntoElement, Rems, Stateful,
-    StatefulInteractiveElement, WindowContext,
-};
+use gpui::{rems, AnyElement, AnyView, ClickEvent, Div, Hsla, Rems, Stateful};
 use smallvec::SmallVec;
 
-use crate::{h_stack, prelude::*};
+use crate::h_stack;
+use crate::prelude::*;
 
-// 🚧 Heavily WIP 🚧
-
-// #[derive(Default, PartialEq, Clone, Copy)]
-// pub enum ButtonType2 {
-//     #[default]
-//     DefaultButton,
-//     IconButton,
-//     ButtonLike,
-//     SplitButton,
-//     ToggleButton,
-// }
-
-#[derive(Default, PartialEq, Clone, Copy)]
-pub enum IconPosition2 {
-    #[default]
-    Before,
-    After,
+pub trait ButtonCommon: Clickable + Disableable {
+    fn id(&self) -> &ElementId;
+    fn style(self, style: ButtonStyle2) -> Self;
+    fn size(self, size: ButtonSize2) -> Self;
+    fn tooltip(self, tooltip: impl Fn(&mut WindowContext) -> AnyView + 'static) -> Self;
 }
 
-#[derive(Default, PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Default)]
 pub enum ButtonStyle2 {
     #[default]
     Filled,
@@ -34,7 +20,7 @@ pub enum ButtonStyle2 {
     Transparent,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct ButtonStyle {
     pub background: Hsla,
     pub border_color: Hsla,
@@ -181,82 +167,11 @@ impl ButtonSize2 {
     }
 }
 
-// pub struct Button {
-//     id: ElementId,
-//     icon: Option<Icon>,
-//     icon_color: Option<Color>,
-//     icon_position: Option<IconPosition2>,
-//     label: Option<Label>,
-//     label_color: Option<Color>,
-//     appearance: ButtonAppearance2,
-//     state: InteractionState,
-//     selected: bool,
-//     disabled: bool,
-//     tooltip: Option<Box<dyn Fn(&mut WindowContext) -> AnyView>>,
-//     width: Option<DefiniteLength>,
-//     action: Option<Box<dyn Fn(&MouseDownEvent, &mut WindowContext) + 'static>>,
-//     secondary_action: Option<Box<dyn Fn(&MouseDownEvent, &mut WindowContext) + 'static>>,
-//     /// Used to pass down some content to the button
-//     /// to enable creating custom buttons.
-//     children: SmallVec<[AnyElement; 2]>,
-// }
-
-pub trait ButtonCommon: Clickable + Disableable {
-    fn id(&self) -> &ElementId;
-    fn style(self, style: ButtonStyle2) -> Self;
-    fn size(self, size: ButtonSize2) -> Self;
-    fn tooltip(self, tooltip: impl Fn(&mut WindowContext) -> AnyView + 'static) -> Self;
-}
-
-// pub struct LabelButton {
-//     // Base properties...
-//     id: ElementId,
-//     appearance: ButtonAppearance,
-//     state: InteractionState,
-//     disabled: bool,
-//     size: ButtonSize,
-//     tooltip: Option<Box<dyn Fn(&mut WindowContext) -> AnyView>>,
-//     width: Option<DefiniteLength>,
-//     // Button-specific properties...
-//     label: Option<SharedString>,
-//     label_color: Option<Color>,
-//     icon: Option<Icon>,
-//     icon_color: Option<Color>,
-//     icon_position: Option<IconPosition>,
-//     // Define more fields for additional properties as needed
-// }
-
-// impl ButtonCommon for LabelButton {
-//     fn id(&self) -> &ElementId {
-//         &self.id
-//     }
-
-//     fn appearance(&mut self, appearance: ButtonAppearance) -> &mut Self {
-//         self.style= style;
-//         self
-//     }
-//     // implement methods from ButtonCommon trait...
-// }
-
-// impl LabelButton {
-//     pub fn new(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Self {
-//         Self {
-//             id: id.into(),
-//             label: Some(label.into()),
-//             // initialize other fields with default values...
-//         }
-//     }
-
-//     // ... Define other builder methods specific to Button type...
-// }
-
-// TODO: Icon Button
-
 #[derive(IntoElement)]
 pub struct ButtonLike {
     id: ElementId,
-    style: ButtonStyle2,
-    disabled: bool,
+    pub(super) style: ButtonStyle2,
+    pub(super) disabled: bool,
     size: ButtonSize2,
     tooltip: Option<Box<dyn Fn(&mut WindowContext) -> AnyView>>,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
@@ -325,6 +240,12 @@ impl ButtonCommon for ButtonLike {
     }
 }
 
+impl ParentElement for ButtonLike {
+    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement; 2]> {
+        &mut self.children
+    }
+}
+
 impl RenderOnce for ButtonLike {
     type Rendered = Stateful<Div>;
 
@@ -349,57 +270,3 @@ impl RenderOnce for ButtonLike {
             .children(self.children)
     }
 }
-
-impl ParentElement for ButtonLike {
-    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement; 2]> {
-        &mut self.children
-    }
-}
-
-// pub struct ToggleButton {
-//     // based on either IconButton2 or Button, with additional 'selected: bool' property
-// }
-
-// impl ButtonCommon for ToggleButton {
-//     fn id(&self) -> &ElementId {
-//         &self.id
-//     }
-//     // ... Implement other methods from ButtonCommon trait with builder patterns...
-// }
-
-// impl ToggleButton {
-//     pub fn new() -> Self {
-//         // Initialize with default values
-//         Self {
-//             // ... initialize fields, possibly with defaults or required parameters...
-//         }
-//     }
-
-//     // ... Define other builder methods specific to ToggleButton type...
-// }
-
-// pub struct SplitButton {
-//     // Base properties...
-//     id: ElementId,
-//     // Button-specific properties, possibly including a DefaultButton
-//     secondary_action: Option<Box<dyn Fn(&MouseDownEvent, &mut WindowContext)>>,
-//     // More fields as necessary...
-// }
-
-// impl ButtonCommon for SplitButton {
-//     fn id(&self) -> &ElementId {
-//         &self.id
-//     }
-//     // ... Implement other methods from ButtonCommon trait with builder patterns...
-// }
-
-// impl SplitButton {
-//     pub fn new(id: impl Into<ElementId>) -> Self {
-//         Self {
-//             id: id.into(),
-//             // ... initialize other fields with default values...
-//         }
-//     }
-
-//     // ... Define other builder methods specific to SplitButton type...
-// }

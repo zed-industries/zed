@@ -1,5 +1,6 @@
 use crate::ProjectDiagnosticsEditor;
 use gpui::{div, Div, EventEmitter, ParentElement, Render, ViewContext, WeakView};
+use ui::prelude::*;
 use ui::{Icon, IconButton, Tooltip};
 use workspace::{item::ItemHandle, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 

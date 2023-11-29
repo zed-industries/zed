@@ -71,14 +71,14 @@ impl Render for StatusBar {
                                 div()
                                     .border()
                                     .border_color(gpui::red())
-                                    .child(Button::new("15:22")),
+                                    .child(Button::new("status_line_column_numbers", "15:22")),
                             )
                             .child(
                                 // TODO: Language picker
                                 div()
                                     .border()
                                     .border_color(gpui::red())
-                                    .child(Button::new("Rust")),
+                                    .child(Button::new("status_buffer_language", "Rust")),
                             ),
                     )
                     .child(
