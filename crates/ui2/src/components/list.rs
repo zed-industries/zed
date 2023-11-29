@@ -279,7 +279,7 @@ impl RenderOnce for ListItem {
             .when(self.selected, |this| {
                 this.bg(cx.theme().colors().ghost_element_selected)
             })
-            .when_some(self.on_click.clone(), |this, on_click| {
+            .when_some(self.on_click, |this, on_click| {
                 this.cursor_pointer().on_click(move |event, cx| {
                     // HACK: GPUI currently fires `on_click` with any mouse button,
                     // but we only care about the left button.
@@ -302,7 +302,7 @@ impl RenderOnce for ListItem {
                     .items_center()
                     .relative()
                     .child(disclosure_control(self.toggle, self.on_toggle))
-                    .map(|this| match self.left_slot.clone() {
+                    .map(|this| match self.left_slot {
                         Some(GraphicSlot::Icon(i)) => this.child(
                             IconElement::new(i)
                                 .size(IconSize::Small)
