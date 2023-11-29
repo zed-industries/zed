@@ -11,7 +11,6 @@ mod keybinding;
 mod label;
 mod list;
 mod popover;
-mod slot;
 mod stack;
 mod tooltip;
 
@@ -31,7 +30,6 @@ pub use keybinding::*;
 pub use label::*;
 pub use list::*;
 pub use popover::*;
-pub use slot::*;
 pub use stack::*;
 pub use tooltip::*;
 

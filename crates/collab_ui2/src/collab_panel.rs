@@ -2484,7 +2484,7 @@ impl CollabPanel {
             | Section::Offline => true,
         };
 
-        div()
+        h_stack()
             .w_full()
             .map(|el| {
                 if can_collapse {

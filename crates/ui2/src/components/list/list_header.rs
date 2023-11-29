@@ -36,8 +36,8 @@ impl ListHeader {
         }
     }
 
-    pub fn toggle(mut self, toggle: Option<bool>) -> Self {
-        self.toggle = toggle;
+    pub fn toggle(mut self, toggle: impl Into<Option<bool>>) -> Self {
+        self.toggle = toggle.into();
         self
     }
 
