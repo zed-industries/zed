@@ -179,8 +179,8 @@ use project::Fs;
 use serde_derive::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use ui::{
-    h_stack, v_stack, Avatar, Button, Color, ContextMenu, Icon, IconButton, IconElement, IconSize, Label, List,
-    ListHeader, ListItem, Toggle, Tooltip,
+    h_stack, v_stack, Avatar, Button, Color, ContextMenu, Icon, IconButton, IconElement, IconSize,
+    Label, List, ListHeader, ListItem, Tooltip,
 };
 use util::{maybe, ResultExt, TryFutureExt};
 use workspace::{
@@ -2505,7 +2505,7 @@ impl CollabPanel {
             .when_some(button, |el, button| el.right_button(button))
             .selected(is_selected)
             .when(can_collapse, |el| {
-                el.toggle(ui::Toggle::Toggled(is_collapsed)).on_toggle(
+                el.toggle(Some(is_collapsed)).on_toggle(
                     cx.listener(move |this, _, cx| this.toggle_section_expanded(section, cx)),
                 )
             });
@@ -2757,9 +2757,8 @@ impl CollabPanel {
             .map(|channel| channel.visibility)
             == Some(proto::ChannelVisibility::Public);
         let other_selected = self.selected_channel().map(|channel| channel.id) == Some(channel.id);
-        let disclosed = has_children
-            .then(|| !self.collapsed_channels.binary_search(&channel.id).is_ok())
-            .unwrap_or(false);
+        let disclosed =
+            has_children.then(|| !self.collapsed_channels.binary_search(&channel.id).is_ok());
 
         let has_messages_notification = channel.unseen_message_id.is_some();
         let has_notes_notification = channel.unseen_note_version.is_some();
@@ -2874,11 +2873,7 @@ impl CollabPanel {
                                     ),
                             ),
                     )
-                    .toggle(if has_children {
-                        Toggle::Toggled(disclosed)
-                    } else {
-                        Toggle::NotToggleable
-                    })
+                    .toggle(disclosed)
                     .on_toggle(
                         cx.listener(move |this, _, cx| {
                             this.toggle_channel_collapsed(channel_id, cx)

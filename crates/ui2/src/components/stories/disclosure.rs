@@ -2,7 +2,7 @@ use gpui::{Div, Render};
 use story::Story;
 
 use crate::prelude::*;
-use crate::{Disclosure, ToggleState};
+use crate::Disclosure;
 
 pub struct DisclosureStory;
 
@@ -13,8 +13,8 @@ impl Render for DisclosureStory {
         Story::container()
             .child(Story::title_for::<Disclosure>())
             .child(Story::label("Toggled"))
-            .child(Disclosure::new(ToggleState::Toggled))
+            .child(Disclosure::new(true))
             .child(Story::label("Not Toggled"))
-            .child(Disclosure::new(ToggleState::NotToggled))
+            .child(Disclosure::new(false))
     }
 }

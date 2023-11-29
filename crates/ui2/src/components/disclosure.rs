@@ -3,26 +3,19 @@ use std::rc::Rc;
 use gpui::ClickEvent;
 
 use crate::prelude::*;
-use crate::{Color, Icon, IconButton, IconSize, ToggleState, Toggleable};
+use crate::{Color, Icon, IconButton, IconSize};
 
 #[derive(IntoElement)]
 pub struct Disclosure {
-    state: ToggleState,
+    is_open: bool,
     on_toggle: Option<Rc<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
 }
 
 impl Disclosure {
-    pub fn new(state: ToggleState) -> Self {
+    pub fn new(is_open: bool) -> Self {
         Self {
-            state,
+            is_open,
             on_toggle: None,
-        }
-    }
-
-    pub fn from_toggleable(toggleable: Toggleable) -> Option<Self> {
-        match toggleable {
-            Toggleable::Toggleable(state) => Some(Self::new(state)),
-            Toggleable::NotToggleable => None,
         }
     }
 
@@ -41,9 +34,10 @@ impl RenderOnce for Disclosure {
     fn render(self, _cx: &mut WindowContext) -> Self::Rendered {
         IconButton::new(
             "toggle",
-            match self.state {
-                ToggleState::Toggled => Icon::ChevronDown,
-                ToggleState::NotToggled => Icon::ChevronRight,
+            if self.is_open {
+                Icon::ChevronDown
+            } else {
+                Icon::ChevronRight
             },
         )
         .color(Color::Muted)
