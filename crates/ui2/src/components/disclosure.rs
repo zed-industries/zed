@@ -1,12 +1,12 @@
 use std::rc::Rc;
 
-use gpui::{div, Element, IntoElement, MouseDownEvent, ParentElement, WindowContext};
+use gpui::{div, ClickEvent, Element, IntoElement, ParentElement, WindowContext};
 
 use crate::{Color, Icon, IconButton, IconSize, Toggle};
 
 pub fn disclosure_control(
     toggle: Toggle,
-    on_toggle: Option<Rc<dyn Fn(&MouseDownEvent, &mut WindowContext) + 'static>>,
+    on_toggle: Option<Rc<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
 ) -> impl Element {
     match (toggle.is_toggleable(), toggle.is_toggled()) {
         (false, _) => div(),

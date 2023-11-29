@@ -1,5 +1,5 @@
 use crate::{h_stack, prelude::*, Icon, IconElement, IconSize};
-use gpui::{prelude::*, Action, AnyView, Div, MouseButton, MouseDownEvent, Stateful};
+use gpui::{prelude::*, Action, AnyView, ClickEvent, Div, Stateful};
 
 #[derive(IntoElement)]
 pub struct IconButton {
@@ -11,7 +11,7 @@ pub struct IconButton {
     state: InteractionState,
     selected: bool,
     tooltip: Option<Box<dyn Fn(&mut WindowContext) -> AnyView + 'static>>,
-    on_mouse_down: Option<Box<dyn Fn(&MouseDownEvent, &mut WindowContext) + 'static>>,
+    on_click: Option<Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
 }
 
 impl RenderOnce for IconButton {
@@ -57,9 +57,8 @@ impl RenderOnce for IconButton {
                     .color(icon_color),
             );
 
-        if let Some(click_handler) = self.on_mouse_down {
-            button = button.on_mouse_down(MouseButton::Left, move |event, cx| {
-                cx.stop_propagation();
+        if let Some(click_handler) = self.on_click {
+            button = button.on_click(move |event, cx| {
                 click_handler(event, cx);
             })
         }
@@ -85,7 +84,7 @@ impl IconButton {
             state: InteractionState::default(),
             selected: false,
             tooltip: None,
-            on_mouse_down: None,
+            on_click: None,
         }
     }
 
@@ -124,11 +123,8 @@ impl IconButton {
         self
     }
 
-    pub fn on_click(
-        mut self,
-        handler: impl 'static + Fn(&MouseDownEvent, &mut WindowContext),
-    ) -> Self {
-        self.on_mouse_down = Some(Box::new(handler));
+    pub fn on_click(mut self, handler: impl 'static + Fn(&ClickEvent, &mut WindowContext)) -> Self {
+        self.on_click = Some(Box::new(handler));
         self
     }
 

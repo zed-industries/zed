@@ -1,9 +1,7 @@
-use std::rc::Rc;
-
 use gpui::{
-    DefiniteLength, Div, Hsla, IntoElement, MouseButton, MouseDownEvent,
-    StatefulInteractiveElement, WindowContext,
+    ClickEvent, DefiniteLength, Div, Hsla, IntoElement, StatefulInteractiveElement, WindowContext,
 };
+use std::rc::Rc;
 
 use crate::prelude::*;
 use crate::{h_stack, Color, Icon, IconButton, IconElement, Label, LineHeightStyle};
@@ -67,7 +65,7 @@ impl ButtonVariant {
 #[derive(IntoElement)]
 pub struct Button {
     disabled: bool,
-    click_handler: Option<Rc<dyn Fn(&MouseDownEvent, &mut WindowContext)>>,
+    click_handler: Option<Rc<dyn Fn(&ClickEvent, &mut WindowContext)>>,
     icon: Option<Icon>,
     icon_position: Option<IconPosition>,
     label: SharedString,
@@ -118,7 +116,7 @@ impl RenderOnce for Button {
         }
 
         if let Some(click_handler) = self.click_handler.clone() {
-            button = button.on_mouse_down(MouseButton::Left, move |event, cx| {
+            button = button.on_click(move |event, cx| {
                 click_handler(event, cx);
             });
         }
@@ -168,10 +166,7 @@ impl Button {
         self
     }
 
-    pub fn on_click(
-        mut self,
-        handler: impl Fn(&MouseDownEvent, &mut WindowContext) + 'static,
-    ) -> Self {
+    pub fn on_click(mut self, handler: impl Fn(&ClickEvent, &mut WindowContext) + 'static) -> Self {
         self.click_handler = Some(Rc::new(handler));
         self
     }
