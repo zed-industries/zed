@@ -11,7 +11,7 @@ use fs::Fs;
 use futures::{channel::oneshot, future::Shared, Future, FutureExt};
 use gpui::{
     AppContext, AsyncAppContext, Context, EventEmitter, Model, ModelContext, PromptLevel,
-    Subscription, Task, ViewContext, WeakModel, WindowContext, WindowHandle,
+    Subscription, Task, WeakModel, WindowContext, WindowHandle,
 };
 use language::LanguageRegistry;
 pub use participant::ParticipantLocation;

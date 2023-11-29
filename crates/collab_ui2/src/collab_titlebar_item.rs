@@ -381,7 +381,8 @@ impl CollabTitlebarItem {
                 move |cx| {
                     this.update(cx, |this, cx| {
                         this.active_call_changed(cx);
-                    });
+                    })
+                    .log_err();
                 }
             }),
             cx,
