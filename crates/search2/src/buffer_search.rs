@@ -18,7 +18,7 @@ use project::search::SearchQuery;
 use serde::Deserialize;
 use std::{any::Any, sync::Arc};
 
-use ui::{h_stack, ButtonGroup, Icon, OldIconButton, IconElement};
+use ui::{h_stack, ButtonGroup, Icon, IconButton, IconElement};
 use util::ResultExt;
 use workspace::{
     item::ItemHandle,
@@ -586,8 +586,7 @@ impl BufferSearchBar {
 
         // let style = theme.search.action_button.clone();
 
-        OldIconButton::new(0, ui::Icon::SelectAll)
-            .on_click(|_, cx| cx.dispatch_action(Box::new(SelectAllMatches)))
+        IconButton::new(0, ui::Icon::SelectAll).action(Box::new(SelectAllMatches))
     }
 
     pub fn activate_search_mode(&mut self, mode: SearchMode, cx: &mut ViewContext<Self>) {

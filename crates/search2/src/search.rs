@@ -3,7 +3,8 @@ pub use buffer_search::BufferSearchBar;
 use gpui::{actions, Action, AppContext, IntoElement};
 pub use mode::SearchMode;
 use project::search::SearchQuery;
-use ui::ButtonVariant;
+use ui::prelude::*;
+use ui::{ButtonStyle2, Icon, IconButton};
 //pub use project_search::{ProjectSearchBar, ProjectSearchView};
 // use theme::components::{
 //     action_button::Button, svg::Svg, ComponentExt, IconButtonStyle, ToggleIconButtonStyle,
@@ -83,35 +84,35 @@ impl SearchOptions {
     }
 
     pub fn as_button(&self, active: bool) -> impl IntoElement {
-        ui::OldIconButton::new(0, self.icon())
+        IconButton::new(0, self.icon())
             .on_click({
                 let action = self.to_toggle_action();
                 move |_, cx| {
                     cx.dispatch_action(action.boxed_clone());
                 }
             })
-            .variant(ui::ButtonVariant::Ghost)
-            .when(active, |button| button.variant(ButtonVariant::Filled))
+            .style(ButtonStyle2::Subtle)
+            .when(active, |button| button.style(ButtonStyle2::Filled))
     }
 }
 
 fn toggle_replace_button(active: bool) -> impl IntoElement {
     // todo: add toggle_replace button
-    ui::OldIconButton::new(0, ui::Icon::Replace)
+    IconButton::new(0, Icon::Replace)
         .on_click(|_, cx| {
             cx.dispatch_action(Box::new(ToggleReplace));
             cx.notify();
         })
-        .variant(ui::ButtonVariant::Ghost)
-        .when(active, |button| button.variant(ButtonVariant::Filled))
+        .style(ButtonStyle2::Subtle)
+        .when(active, |button| button.style(ButtonStyle2::Filled))
 }
 
 fn render_replace_button(
     action: impl Action + 'static + Send + Sync,
-    icon: ui::Icon,
+    icon: Icon,
 ) -> impl IntoElement {
     // todo: add tooltip
-    ui::OldIconButton::new(0, icon).on_click(move |_, cx| {
+    IconButton::new(0, icon).on_click(move |_, cx| {
         cx.dispatch_action(action.boxed_clone());
     })
 }

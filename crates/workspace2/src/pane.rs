@@ -26,7 +26,7 @@ use std::{
 };
 
 use ui::v_stack;
-use ui::{prelude::*, Color, Icon, OldIconButton, IconElement, Tooltip};
+use ui::{prelude::*, Color, Icon, IconButton, IconElement, Tooltip};
 use util::truncate_and_remove_front;
 
 #[derive(PartialEq, Clone, Copy, Deserialize, Debug)]
@@ -1354,7 +1354,7 @@ impl Pane {
                 .invisible()
                 .group_hover("", |style| style.visible())
                 .child(
-                    OldIconButton::new("close_tab", Icon::Close).on_click(cx.listener(
+                    IconButton::new("close_tab", Icon::Close).on_click(cx.listener(
                         move |pane, _, cx| {
                             pane.close_item_by_id(id, SaveIntent::Close, cx)
                                 .detach_and_log_err(cx);
@@ -1482,13 +1482,13 @@ impl Pane {
                             .gap_px()
                             .child(
                                 div().border().border_color(gpui::red()).child(
-                                    OldIconButton::new("navigate_backward", Icon::ArrowLeft)
+                                    IconButton::new("navigate_backward", Icon::ArrowLeft)
                                         .disabled(!self.can_navigate_backward()),
                                 ),
                             )
                             .child(
                                 div().border().border_color(gpui::red()).child(
-                                    OldIconButton::new("navigate_forward", Icon::ArrowRight)
+                                    IconButton::new("navigate_forward", Icon::ArrowRight)
                                         .disabled(!self.can_navigate_forward()),
                                 ),
                             ),
@@ -1522,13 +1522,13 @@ impl Pane {
                                 div()
                                     .border()
                                     .border_color(gpui::red())
-                                    .child(OldIconButton::new("plus", Icon::Plus)),
+                                    .child(IconButton::new("plus", Icon::Plus)),
                             )
                             .child(
                                 div()
                                     .border()
                                     .border_color(gpui::red())
-                                    .child(OldIconButton::new("split", Icon::Split)),
+                                    .child(IconButton::new("split", Icon::Split)),
                             ),
                     ),
             )

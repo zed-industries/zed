@@ -37,10 +37,8 @@ use gpui::{
 };
 use project::Project;
 use theme::ActiveTheme;
-use ui::{
-    h_stack, Avatar, OldButton, ButtonCommon, ButtonLike, ButtonVariant, Clickable, Color, OldIconButton,
-    IconElement, IconSize, KeyBinding, Tooltip,
-};
+use ui::prelude::*;
+use ui::{h_stack, Avatar, ButtonVariant, IconButton, KeyBinding, OldButton, Tooltip};
 use util::ResultExt;
 use workspace::{notifications::NotifyResultExt, Workspace};
 
@@ -239,7 +237,7 @@ impl Render for CollabTitlebarItem {
                         .child(
                             h_stack()
                                 .child(OldButton::new(if is_shared { "Unshare" } else { "Share" }))
-                                .child(OldIconButton::new("leave-call", ui::Icon::Exit).on_click({
+                                .child(IconButton::new("leave-call", ui::Icon::Exit).on_click({
                                     let workspace = workspace.clone();
                                     move |_, cx| {
                                         workspace
@@ -252,7 +250,7 @@ impl Render for CollabTitlebarItem {
                         )
                         .child(
                             h_stack()
-                                .child(OldIconButton::new("mute-microphone", mic_icon).on_click({
+                                .child(IconButton::new("mute-microphone", mic_icon).on_click({
                                     let workspace = workspace.clone();
                                     move |_, cx| {
                                         workspace
@@ -262,7 +260,7 @@ impl Render for CollabTitlebarItem {
                                             .log_err();
                                     }
                                 }))
-                                .child(OldIconButton::new("mute-sound", speakers_icon).on_click({
+                                .child(IconButton::new("mute-sound", speakers_icon).on_click({
                                     let workspace = workspace.clone();
                                     move |_, cx| {
                                         workspace
@@ -272,7 +270,7 @@ impl Render for CollabTitlebarItem {
                                             .log_err();
                                     }
                                 }))
-                                .child(OldIconButton::new("screen-share", ui::Icon::Screen).on_click(
+                                .child(IconButton::new("screen-share", ui::Icon::Screen).on_click(
                                     move |_, cx| {
                                         workspace
                                             .update(cx, |this, cx| {
@@ -301,27 +299,6 @@ impl Render for CollabTitlebarItem {
                         })
                         .detach();
                     }))
-                    // Temporary, will be removed when the last part of button2 is merged
-                    .child(
-                        div().border().border_color(gpui::blue()).child(
-                            ButtonLike::new("test-button")
-                                .children([
-                                    Avatar::uri(
-                                        "https://avatars.githubusercontent.com/u/1714999?v=4",
-                                    )
-                                    .into_element()
-                                    .into_any(),
-                                    IconElement::new(ui::Icon::ChevronDown)
-                                        .size(IconSize::Small)
-                                        .into_element()
-                                        .into_any(),
-                                ])
-                                .on_click(move |event, _cx| {
-                                    dbg!(format!("clicked: {:?}", event.down.position));
-                                })
-                                .tooltip(|cx| Tooltip::text("Test tooltip", cx)),
-                        ),
-                    )
                 }
             })
     }

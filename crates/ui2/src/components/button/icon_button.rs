@@ -1,4 +1,4 @@
-use gpui::AnyView;
+use gpui::{Action, AnyView};
 
 use crate::prelude::*;
 use crate::{ButtonCommon, ButtonLike, ButtonSize2, ButtonStyle2, Icon, IconElement, IconSize};
@@ -9,6 +9,7 @@ pub struct IconButton {
     icon: Icon,
     icon_size: IconSize,
     icon_color: Color,
+    selected: bool,
 }
 
 impl IconButton {
@@ -18,7 +19,28 @@ impl IconButton {
             icon,
             icon_size: IconSize::default(),
             icon_color: Color::Default,
+            selected: false,
         }
+    }
+
+    pub fn selected(mut self, selected: bool) -> Self {
+        self.selected = selected;
+        self
+    }
+
+    pub fn icon_size(mut self, icon_size: IconSize) -> Self {
+        self.icon_size = icon_size;
+        self
+    }
+
+    // TODO: Rename to `icon_color`.
+    pub fn color(mut self, icon_color: Color) -> Self {
+        self.icon_color = icon_color;
+        self
+    }
+
+    pub fn action(self, action: Box<dyn Action>) -> Self {
+        self.on_click(move |_event, cx| cx.dispatch_action(action.boxed_clone()))
     }
 }
 
@@ -66,6 +88,8 @@ impl RenderOnce for IconButton {
     fn render(self, _cx: &mut WindowContext) -> Self::Rendered {
         let icon_color = if self.base.disabled {
             Color::Disabled
+        } else if self.selected {
+            Color::Selected
         } else {
             self.icon_color
         };

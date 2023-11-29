@@ -99,7 +99,8 @@ use text::{OffsetUtf16, Rope};
 use theme::{
     ActiveTheme, DiagnosticStyle, PlayerColor, SyntaxTheme, Theme, ThemeColors, ThemeSettings,
 };
-use ui::{h_stack, v_stack, HighlightedLabel, OldIconButton, Popover, StyledExt, Tooltip};
+use ui::prelude::*;
+use ui::{h_stack, v_stack, HighlightedLabel, IconButton, Popover, Tooltip};
 use util::{post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::{
     item::{ItemEvent, ItemHandle},
@@ -4343,10 +4344,10 @@ impl Editor {
         style: &EditorStyle,
         is_active: bool,
         cx: &mut ViewContext<Self>,
-    ) -> Option<OldIconButton> {
+    ) -> Option<IconButton> {
         if self.available_code_actions.is_some() {
             Some(
-                OldIconButton::new("code_actions_indicator", ui::Icon::Bolt).on_click(cx.listener(
+                IconButton::new("code_actions_indicator", ui::Icon::Bolt).on_click(cx.listener(
                     |editor, e, cx| {
                         editor.toggle_code_actions(
                             &ToggleCodeActions {
@@ -4370,7 +4371,7 @@ impl Editor {
         line_height: Pixels,
         gutter_margin: Pixels,
         cx: &mut ViewContext<Self>,
-    ) -> Vec<Option<OldIconButton>> {
+    ) -> Vec<Option<IconButton>> {
         fold_data
             .iter()
             .enumerate()
@@ -4382,7 +4383,7 @@ impl Editor {
                                 FoldStatus::Folded => ui::Icon::ChevronRight,
                                 FoldStatus::Foldable => ui::Icon::ChevronDown,
                             };
-                            OldIconButton::new(ix as usize, icon)
+                            IconButton::new(ix as usize, icon)
                                 .on_click(cx.listener(move |editor, e, cx| match fold_status {
                                     FoldStatus::Folded => {
                                         editor.unfold_at(&UnfoldAt { buffer_row }, cx);

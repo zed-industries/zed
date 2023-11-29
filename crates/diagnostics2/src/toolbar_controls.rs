@@ -1,6 +1,7 @@
 use crate::ProjectDiagnosticsEditor;
 use gpui::{div, Div, EventEmitter, ParentElement, Render, ViewContext, WeakView};
-use ui::{Icon, OldIconButton, Tooltip};
+use ui::prelude::*;
+use ui::{Icon, IconButton, Tooltip};
 use workspace::{item::ItemHandle, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 
 pub struct ToolbarControls {
@@ -25,7 +26,7 @@ impl Render for ToolbarControls {
         };
 
         div().child(
-            OldIconButton::new("toggle-warnings", Icon::ExclamationTriangle)
+            IconButton::new("toggle-warnings", Icon::ExclamationTriangle)
                 .tooltip(move |cx| Tooltip::text(tooltip, cx))
                 .on_click(cx.listener(|this, _, cx| {
                     if let Some(editor) = this.editor.as_ref().and_then(|editor| editor.upgrade()) {

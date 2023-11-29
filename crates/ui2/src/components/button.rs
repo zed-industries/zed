@@ -9,30 +9,11 @@ use gpui::{
 };
 
 use crate::prelude::*;
-use crate::{h_stack, Color, Icon, IconElement, Label, LineHeightStyle, OldIconButton};
+use crate::{h_stack, Color, Icon, IconElement, Label, LineHeightStyle};
 
 pub use button::*;
 pub use button_like::*;
 pub use icon_button::*;
-
-/// Provides the flexibility to use either a standard
-/// button or an icon button in a given context.
-pub enum ButtonOrIconButton {
-    Button(OldButton),
-    IconButton(OldIconButton),
-}
-
-impl From<OldButton> for ButtonOrIconButton {
-    fn from(value: OldButton) -> Self {
-        Self::Button(value)
-    }
-}
-
-impl From<OldIconButton> for ButtonOrIconButton {
-    fn from(value: OldIconButton) -> Self {
-        Self::IconButton(value)
-    }
-}
 
 #[derive(Default, PartialEq, Clone, Copy)]
 pub enum IconPosition {

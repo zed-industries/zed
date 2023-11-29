@@ -178,9 +178,10 @@ use gpui::{
 use project::Fs;
 use serde_derive::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
+use ui::prelude::*;
 use ui::{
-    h_stack, v_stack, Avatar, OldButton, Color, ContextMenu, Icon, OldIconButton, IconElement, IconSize,
-    Label, List, ListHeader, ListItem, Tooltip,
+    h_stack, v_stack, Avatar, Color, ContextMenu, Icon, IconButton, IconElement, IconSize, Label,
+    List, ListHeader, ListItem, OldButton, Tooltip,
 };
 use util::{maybe, ResultExt, TryFutureExt};
 use workspace::{
@@ -2338,8 +2339,8 @@ impl CollabPanel {
     }
 
     fn render_signed_out(&mut self, cx: &mut ViewContext<Self>) -> Div {
-        v_stack().child(OldButton::new("Sign in to collaborate").on_click(cx.listener(
-            |this, _, cx| {
+        v_stack().child(
+            OldButton::new("Sign in to collaborate").on_click(cx.listener(|this, _, cx| {
                 let client = this.client.clone();
                 cx.spawn(|_, mut cx| async move {
                     client
@@ -2348,8 +2349,8 @@ impl CollabPanel {
                         .notify_async_err(&mut cx);
                 })
                 .detach()
-            },
-        )))
+            })),
+        )
     }
 
     fn render_signed_in(&mut self, cx: &mut ViewContext<Self>) -> List {
@@ -2469,7 +2470,7 @@ impl CollabPanel {
                 todo!()
             }
             Section::Contacts => Some(
-                OldIconButton::new("add-contact", Icon::Plus)
+                IconButton::new("add-contact", Icon::Plus)
                     .on_click(cx.listener(|this, _, cx| this.toggle_contact_finder(cx)))
                     .tooltip(|cx| Tooltip::text("Search for new contact", cx)),
             ),
@@ -2485,7 +2486,7 @@ impl CollabPanel {
                 // }
 
                 Some(
-                    OldIconButton::new("add-channel", Icon::Plus)
+                    IconButton::new("add-channel", Icon::Plus)
                         .on_click(cx.listener(|this, _, cx| this.new_root_channel(cx)))
                         .tooltip(|cx| Tooltip::text("Create a channel", cx)),
                 )
@@ -2563,7 +2564,7 @@ impl CollabPanel {
                             .invisible()
                             .group_hover("", |style| style.visible())
                             .child(
-                                OldIconButton::new("remove_contact", Icon::Close)
+                                IconButton::new("remove_contact", Icon::Close)
                                     .color(Color::Muted)
                                     .tooltip(|cx| Tooltip::text("Remove Contact", cx))
                                     .on_click(cx.listener(move |this, _, cx| {
@@ -2684,13 +2685,13 @@ impl CollabPanel {
 
         let controls = if is_incoming {
             vec![
-                OldIconButton::new("remove_contact", Icon::Close)
+                IconButton::new("remove_contact", Icon::Close)
                     .on_click(cx.listener(move |this, _, cx| {
                         this.respond_to_contact_request(user_id, false, cx);
                     }))
                     .color(color)
                     .tooltip(|cx| Tooltip::text("Decline invite", cx)),
-                OldIconButton::new("remove_contact", Icon::Check)
+                IconButton::new("remove_contact", Icon::Check)
                     .on_click(cx.listener(move |this, _, cx| {
                         this.respond_to_contact_request(user_id, true, cx);
                     }))
@@ -2699,7 +2700,7 @@ impl CollabPanel {
             ]
         } else {
             let github_login = github_login.clone();
-            vec![OldIconButton::new("remove_contact", Icon::Close)
+            vec![IconButton::new("remove_contact", Icon::Close)
                 .on_click(cx.listener(move |this, _, cx| {
                     this.remove_contact(user_id, &github_login, cx);
                 }))
@@ -2842,7 +2843,7 @@ impl CollabPanel {
                                             .when(!has_messages_notification, |el| el.invisible())
                                             .group_hover("", |style| style.visible())
                                             .child(
-                                                OldIconButton::new(
+                                                IconButton::new(
                                                     "channel_chat",
                                                     Icon::MessageBubbles,
                                                 )
@@ -2860,7 +2861,7 @@ impl CollabPanel {
                                             .when(!has_notes_notification, |el| el.invisible())
                                             .group_hover("", |style| style.visible())
                                             .child(
-                                                OldIconButton::new("channel_notes", Icon::File)
+                                                IconButton::new("channel_notes", Icon::File)
                                                     .color(if has_notes_notification {
                                                         Color::Default
                                                     } else {

@@ -6,7 +6,7 @@ use gpui::{
     WindowContext,
 };
 use ui::prelude::*;
-use ui::{h_stack, OldButton, Icon, OldIconButton};
+use ui::{h_stack, Icon, IconButton, OldButton};
 use util::ResultExt;
 
 pub trait StatusItemView: Render {
@@ -89,14 +89,14 @@ impl Render for StatusBar {
                                 div()
                                     .border()
                                     .border_color(gpui::red())
-                                    .child(OldIconButton::new("status-copilot", Icon::Copilot)),
+                                    .child(IconButton::new("status-copilot", Icon::Copilot)),
                             )
                             .child(
                                 // Feedback Tool
                                 div()
                                     .border()
                                     .border_color(gpui::red())
-                                    .child(OldIconButton::new("status-feedback", Icon::Envelope)),
+                                    .child(IconButton::new("status-feedback", Icon::Envelope)),
                             ),
                     )
                     .child(
@@ -106,7 +106,7 @@ impl Render for StatusBar {
                             div()
                                 .border()
                                 .border_color(gpui::red())
-                                .child(OldIconButton::new("status-terminal", Icon::Terminal)),
+                                .child(IconButton::new("status-terminal", Icon::Terminal)),
                         ),
                     )
                     .child(
@@ -118,14 +118,14 @@ impl Render for StatusBar {
                                 div()
                                     .border()
                                     .border_color(gpui::red())
-                                    .child(OldIconButton::new("status-assistant", Icon::Ai)),
+                                    .child(IconButton::new("status-assistant", Icon::Ai)),
                             )
                             .child(
                                 // Terminal
                                 div()
                                     .border()
                                     .border_color(gpui::red())
-                                    .child(OldIconButton::new("status-chat", Icon::MessageBubbles)),
+                                    .child(IconButton::new("status-chat", Icon::MessageBubbles)),
                             ),
                     )
                     .child(self.render_right_tools(cx)),
