@@ -171,7 +171,7 @@ impl Render for ContextMenu {
                 .child(
                     List::new().children(self.items.iter().enumerate().map(
                         |(ix, item)| match item {
-                            ContextMenuItem::Separator => ListSeparator::new().into_any_element(),
+                            ContextMenuItem::Separator => ListSeparator.into_any_element(),
                             ContextMenuItem::Header(header) => {
                                 ListSubHeader::new(header.clone()).into_any_element()
                             }
