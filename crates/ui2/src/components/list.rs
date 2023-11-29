@@ -316,21 +316,7 @@ impl RenderOnce for ListItem {
                     .relative()
                     .child(disclosure_control(self.toggle, self.on_toggle))
                     .children(left_content)
-                    .children(self.children)
-                    // HACK: We need to attach the `on_click` handler to the child element in order to have the click
-                    // event actually fire.
-                    // Once this is fixed in GPUI we can remove this and rely on the `on_click` handler set above on the
-                    // outer `div`.
-                    .id("on_click_hack")
-                    .when_some(self.on_click, |this, on_click| {
-                        this.on_click(move |event, cx| {
-                            // HACK: GPUI currently fires `on_click` with any mouse button,
-                            // but we only care about the left button.
-                            if event.down.button == MouseButton::Left {
-                                (on_click)(event, cx)
-                            }
-                        })
-                    }),
+                    .children(self.children),
             )
     }
 }
