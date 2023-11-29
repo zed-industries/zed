@@ -6,7 +6,7 @@ use gpui::{
 use smallvec::SmallVec;
 
 use crate::prelude::*;
-use crate::{Avatar, Disclosure, GraphicSlot, Icon, IconElement, IconSize};
+use crate::{Avatar, Disclosure, Icon, IconElement, IconSize};
 
 #[derive(IntoElement)]
 pub struct ListItem {
@@ -16,7 +16,7 @@ pub struct ListItem {
     // disclosure_control_style: DisclosureControlVisibility,
     indent_level: usize,
     indent_step_size: Pixels,
-    left_slot: Option<GraphicSlot>,
+    left_slot: Option<AnyElement>,
     toggle: Option<bool>,
     inset: bool,
     on_click: Option<Rc<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
@@ -88,18 +88,23 @@ impl ListItem {
         self
     }
 
-    pub fn left_content(mut self, left_content: GraphicSlot) -> Self {
-        self.left_slot = Some(left_content);
+    pub fn left_content(mut self, left_content: impl IntoElement) -> Self {
+        self.left_slot = Some(left_content.into_any_element());
         self
     }
 
     pub fn left_icon(mut self, left_icon: Icon) -> Self {
-        self.left_slot = Some(GraphicSlot::Icon(left_icon));
+        self.left_slot = Some(
+            IconElement::new(left_icon)
+                .size(IconSize::Small)
+                .color(Color::Muted)
+                .into_any_element(),
+        );
         self
     }
 
     pub fn left_avatar(mut self, left_avatar: impl Into<ImageSource>) -> Self {
-        self.left_slot = Some(GraphicSlot::Avatar(left_avatar.into()));
+        self.left_slot = Some(Avatar::source(left_avatar.into()).into_any_element());
         self
     }
 }
@@ -154,16 +159,7 @@ impl RenderOnce for ListItem {
                         self.toggle
                             .map(|is_open| Disclosure::new(is_open).on_toggle(self.on_toggle)),
                     )
-                    .map(|this| match self.left_slot {
-                        Some(GraphicSlot::Icon(i)) => this.child(
-                            IconElement::new(i)
-                                .size(IconSize::Small)
-                                .color(Color::Muted),
-                        ),
-                        Some(GraphicSlot::Avatar(src)) => this.child(Avatar::source(src)),
-                        Some(GraphicSlot::PublicActor(src)) => this.child(Avatar::uri(src)),
-                        None => this,
-                    })
+                    .children(self.left_slot)
                     .children(self.children),
             )
     }
