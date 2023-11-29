@@ -11,7 +11,7 @@ use fs::Fs;
 use futures::{channel::oneshot, future::Shared, Future, FutureExt};
 use gpui::{
     AppContext, AsyncAppContext, Context, EventEmitter, Model, ModelContext, PromptLevel,
-    Subscription, Task, WeakModel, WindowHandle,
+    Subscription, Task, ViewContext, WeakModel, WindowContext, WindowHandle,
 };
 use language::LanguageRegistry;
 pub use participant::ParticipantLocation;
@@ -644,6 +644,13 @@ impl CallHub for ActiveCallWrapper {
 
     fn incoming(&self, cx: &AppContext) -> postage::watch::Receiver<Option<IncomingCall>> {
         self.0.read(cx).incoming()
+    }
+
+    fn observe(&self, on_event: Box<dyn Fn(&mut WindowContext<'_>)>, cx: &mut WindowContext<'_>) {
+        cx.observe(&self.0, move |_, cx| {
+            on_event(cx);
+        })
+        .detach();
     }
 }
 

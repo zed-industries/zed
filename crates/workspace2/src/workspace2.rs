@@ -519,6 +519,7 @@ pub trait CallHub {
         cx: &mut AppContext,
     ) -> Task<Result<()>>;
     fn incoming(&self, cx: &AppContext) -> postage::watch::Receiver<Option<IncomingCall>>;
+    fn observe(&self, on_event: Box<dyn Fn(&mut WindowContext<'_>)>, cx: &mut WindowContext<'_>);
 }
 
 pub struct Workspace {

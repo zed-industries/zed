@@ -367,6 +367,7 @@ impl CollabTitlebarItem {
         let project = workspace.project().clone();
         let user_store = workspace.app_state().user_store.clone();
         let client = workspace.app_state().client.clone();
+        let call = workspace::call_hub(cx);
         let mut subscriptions = Vec::new();
         subscriptions.push(
             cx.observe(&workspace.weak_handle().upgrade().unwrap(), |_, _, cx| {
@@ -374,8 +375,17 @@ impl CollabTitlebarItem {
             }),
         );
         subscriptions.push(cx.observe(&project, |_, _, cx| cx.notify()));
-        // todo!() bring this back.
-        // subscriptions.push(cx.observe(&active_call, |this, _, cx| this.active_call_changed(cx)));
+        call.observe(
+            Box::new({
+                let this = cx.view().downgrade();
+                move |cx| {
+                    this.update(cx, |this, cx| {
+                        this.active_call_changed(cx);
+                    });
+                }
+            }),
+            cx,
+        );
         subscriptions.push(cx.observe_window_activation(Self::window_activation_changed));
         subscriptions.push(cx.observe(&user_store, |_, _, cx| cx.notify()));
 
@@ -569,9 +579,9 @@ impl CollabTitlebarItem {
         workspace::call_hub(cx).set_location(project, cx);
     }
 
-    // fn active_call_changed(&mut self, cx: &mut ViewContext<Self>) {
-    //     cx.notify();
-    // }
+    fn active_call_changed(&mut self, cx: &mut ViewContext<Self>) {
+        cx.notify();
+    }
 
     // fn share_project(&mut self, _: &ShareProject, cx: &mut ViewContext<Self>) {
     //     let Some(room) = workspace::call_hub(cx).room(cx) else {
