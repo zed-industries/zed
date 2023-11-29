@@ -1482,13 +1482,15 @@ impl<'a> WindowContext<'a> {
         }
     }
 
-    pub fn constructor_for<V: Render, R>(
+    pub fn handler_for<V: Render>(
         &self,
         view: &View<V>,
-        f: impl Fn(&mut V, &mut ViewContext<V>) -> R + 'static,
-    ) -> impl Fn(&mut WindowContext) -> R + 'static {
-        let view = view.clone();
-        move |cx: &mut WindowContext| view.update(cx, |view, cx| f(view, cx))
+        f: impl Fn(&mut V, &mut ViewContext<V>) + 'static,
+    ) -> impl Fn(&mut WindowContext) {
+        let view = view.downgrade();
+        move |cx: &mut WindowContext| {
+            view.update(cx, |view, cx| f(view, cx)).ok();
+        }
     }
 
     //========== ELEMENT RELATED FUNCTIONS ===========

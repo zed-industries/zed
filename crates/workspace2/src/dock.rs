@@ -717,7 +717,7 @@ impl Render for PanelButtons {
                                         && panel.position_is_valid(position, cx)
                                     {
                                         let panel = panel.clone();
-                                        menu = menu.entry(position.to_label(), move |_, cx| {
+                                        menu = menu.entry(position.to_label(), move |cx| {
                                             panel.set_position(position, cx);
                                         })
                                     }

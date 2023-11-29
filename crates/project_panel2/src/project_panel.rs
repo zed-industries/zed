@@ -9,10 +9,10 @@ use file_associations::FileAssociations;
 use anyhow::{anyhow, Result};
 use gpui::{
     actions, div, overlay, px, uniform_list, Action, AppContext, AssetSource, AsyncWindowContext,
-    ClipboardItem, Div, EventEmitter, FocusHandle, Focusable, FocusableView, InteractiveElement,
-    Model, MouseButton, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render,
-    Stateful, Styled, Subscription, Task, UniformListScrollHandle, View, ViewContext,
-    VisualContext as _, WeakView, WindowContext,
+    ClipboardItem, DismissEvent, Div, EventEmitter, FocusHandle, Focusable, FocusableView,
+    InteractiveElement, Model, MouseButton, MouseDownEvent, ParentElement, Pixels, Point,
+    PromptLevel, Render, Stateful, Styled, Subscription, Task, UniformListScrollHandle, View,
+    ViewContext, VisualContext as _, WeakView, WindowContext,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
 use project::{
@@ -403,7 +403,7 @@ impl ProjectPanel {
                     if is_root {
                         menu = menu.entry(
                             "Remove from Project",
-                            cx.listener_for(&this, move |this, _, cx| {
+                            cx.handler_for(&this, move |this, cx| {
                                 this.project.update(cx, |project, cx| {
                                     project.remove_worktree(worktree_id, cx)
                                 });
@@ -448,9 +448,11 @@ impl ProjectPanel {
             });
 
             cx.focus_view(&context_menu);
-            let subscription = cx.on_blur(&context_menu.focus_handle(cx), |this, cx| {
-                this.context_menu.take();
-                cx.notify();
+            let subscription = cx.subscribe(&context_menu, |this, _, event, cx| match event {
+                DismissEvent::Dismiss => {
+                    this.context_menu.take();
+                    cx.notify();
+                }
             });
             self.context_menu = Some((context_menu, position, subscription));
         }
