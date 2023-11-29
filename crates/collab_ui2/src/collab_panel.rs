@@ -168,17 +168,17 @@ use editor::Editor;
 use feature_flags::{ChannelsAlpha, FeatureFlagAppExt, FeatureFlagViewExt};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
-    actions, div, img, prelude::*, serde_json, Action, AppContext, AsyncWindowContext, Div,
-    EventEmitter, FocusHandle, Focusable, FocusableView, InteractiveElement, IntoElement, Model,
-    ParentElement, PromptLevel, Render, RenderOnce, SharedString, Styled, Subscription, Task, View,
-    ViewContext, VisualContext, WeakView,
+    actions, div, img, prelude::*, serde_json, Action, AppContext, AsyncWindowContext,
+    ClipboardItem, Div, EventEmitter, FocusHandle, Focusable, FocusableView, InteractiveElement,
+    IntoElement, Model, ParentElement, Pixels, Point, PromptLevel, Render, RenderOnce,
+    SharedString, Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView,
 };
 use project::Fs;
 use serde_derive::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use ui::{
-    h_stack, v_stack, Avatar, Button, Color, Icon, IconButton, IconElement, Label, List,
-    ListHeader, ListItem, Toggle, Tooltip,
+    h_stack, v_stack, Avatar, Button, Color, ContextMenu, Icon, IconButton, IconElement, Label,
+    List, ListHeader, ListItem, Toggle, Tooltip,
 };
 use util::{maybe, ResultExt, TryFutureExt};
 use workspace::{
@@ -227,26 +227,6 @@ pub fn init(cx: &mut AppContext) {
     //             }
 
     //             cx.notify();
-    //         },
-    //     );
-
-    //     cx.add_action(
-    //         |panel: &mut CollabPanel,
-    //          action: &StartMoveChannelFor,
-    //          _: &mut ViewContext<CollabPanel>| {
-    //             panel.channel_clipboard = Some(ChannelMoveClipboard {
-    //                 channel_id: action.channel_id,
-    //             });
-    //         },
-    //     );
-
-    //     cx.add_action(
-    //         |panel: &mut CollabPanel, _: &StartMoveChannel, _: &mut ViewContext<CollabPanel>| {
-    //             if let Some(channel) = panel.selected_channel() {
-    //                 panel.channel_clipboard = Some(ChannelMoveClipboard {
-    //                     channel_id: channel.id,
-    //                 })
-    //             }
     //         },
     //     );
 
@@ -308,7 +288,7 @@ pub struct CollabPanel {
     focus_handle: FocusHandle,
     // channel_clipboard: Option<ChannelMoveClipboard>,
     pending_serialization: Task<Option<()>>,
-    // context_menu: ViewHandle<ContextMenu>,
+    context_menu: Option<(View<ContextMenu>, Point<Pixels>, Subscription)>,
     filter_editor: View<Editor>,
     channel_name_editor: View<Editor>,
     channel_editing_state: Option<ChannelEditingState>,
@@ -592,7 +572,7 @@ impl CollabPanel {
                 //                 channel_clipboard: None,
                 fs: workspace.app_state().fs.clone(),
                 pending_serialization: Task::ready(None),
-                //                 context_menu: cx.add_view(|cx| ContextMenu::new(view_id, cx)),
+                context_menu: None,
                 channel_name_editor,
                 filter_editor,
                 entries: Vec::default(),
@@ -1695,146 +1675,120 @@ impl CollabPanel {
     //         })
     //     }
 
-    //     fn deploy_channel_context_menu(
-    //         &mut self,
-    //         position: Option<Vector2F>,
-    //         channel: &Channel,
-    //         ix: usize,
-    //         cx: &mut ViewContext<Self>,
-    //     ) {
-    //         self.context_menu_on_selected = position.is_none();
+    fn deploy_channel_context_menu(
+        &mut self,
+        position: Point<Pixels>,
+        channel: &Channel,
+        ix: usize,
+        cx: &mut ViewContext<Self>,
+    ) {
+        // self.context_menu_on_selected = position.is_none();
 
-    //         let clipboard_channel_name = self.channel_clipboard.as_ref().and_then(|clipboard| {
-    //             self.channel_store
-    //                 .read(cx)
-    //                 .channel_for_id(clipboard.channel_id)
-    //                 .map(|channel| channel.name.clone())
-    //         });
+        // let clipboard_channel_name = self.channel_clipboard.as_ref().and_then(|clipboard| {
+        //     self.channel_store
+        //         .read(cx)
+        //         .channel_for_id(clipboard.channel_id)
+        //         .map(|channel| channel.name.clone())
+        // });
+        let this = cx.view();
+        let has_subchannels = self.has_subchannels(ix);
+        let is_channel_collapsed = self.is_channel_collapsed(channel_id);
 
-    //         self.context_menu.update(cx, |context_menu, cx| {
-    //             context_menu.set_position_mode(if self.context_menu_on_selected {
-    //                 OverlayPositionMode::Local
-    //             } else {
-    //                 OverlayPositionMode::Window
-    //             });
+        let menu = ContextMenu::build(cx, |context_menu, cx| {
+            if has_subchannels {
+                let expand_action_name = if is_channel_collapsed {
+                    "Expand Subchannels"
+                } else {
+                    "Collapse Subchannels"
+                };
+                context_menu = context_menu.entry(
+                    expand_action_name,
+                    cx.handler_for(&this, |this, cx| {
+                        this.toggle_channel_collapsed(channel.id, cx)
+                    }),
+                );
+            }
 
-    //             let mut items = Vec::new();
+            context_menu = context_menu
+                .entry(
+                    "Open Notes",
+                    cx.handler_for(&this, |this, cx| this.open_channel_notes(channel.id, cx)),
+                )
+                .entry(
+                    "Open Chat",
+                    cx.handler_for(&this, |this, cx| this.join_channel_chat(channel.id, cx)),
+                )
+                .entry(
+                    "Copy Channel Link",
+                    cx.handler_for(&this, |this, cx| this.copy_channel_link(channel.id, cx)),
+                );
 
-    //             let select_action_name = if self.selection == Some(ix) {
-    //                 "Unselect"
-    //             } else {
-    //                 "Select"
-    //             };
+            if self.channel_store.read(cx).is_channel_admin(channel.id) {
+                context_menu = context_menu
+                    .separator()
+                    .entry(
+                        "New Subchannel",
+                        cx.handler_for(&this, |this, cx| this.new_subchannel(channel.id, cx)),
+                    )
+                    .entry(
+                        "Rename",
+                        cx.handler_for(&this, |this, cx| this.rename_channel(channel.id, cx)),
+                    )
+                    .entry(
+                        "Move this channel",
+                        cx.handler_for(&this, |this, cx| this.start_move_channel(channel.id, cx)),
+                    );
 
-    //             items.push(ContextMenuItem::action(
-    //                 select_action_name,
-    //                 ToggleSelectedIx { ix },
-    //             ));
+                // if let Some(channel_name) = clipboard_channel_name {
+                //     items.push(ContextMenuItem::Separator);
+                //     items.push(ContextMenuItem::action(
+                //         format!("Move '#{}' here", channel_name),
+                //         MoveChannel { to: channel.id },
+                //     ));
+                // }
 
-    //             if self.has_subchannels(ix) {
-    //                 let expand_action_name = if self.is_channel_collapsed(channel.id) {
-    //                     "Expand Subchannels"
-    //                 } else {
-    //                     "Collapse Subchannels"
-    //                 };
-    //                 items.push(ContextMenuItem::action(
-    //                     expand_action_name,
-    //                     ToggleCollapse {
-    //                         location: channel.id,
-    //                     },
-    //                 ));
-    //             }
+                // items.extend([
+                //     ContextMenuItem::Separator,
+                //     ContextMenuItem::action(
+                //         "Invite Members",
+                //         InviteMembers {
+                //             channel_id: channel.id,
+                //         },
+                //     ),
+                //     ContextMenuItem::action(
+                //         "Manage Members",
+                //         ManageMembers {
+                //             channel_id: channel.id,
+                //         },
+                //     ),
+                //     ContextMenuItem::Separator,
+                //     ContextMenuItem::action(
+                //         "Delete",
+                //         RemoveChannel {
+                //             channel_id: channel.id,
+                //         },
+                //     ),
+                // ]);
+            }
 
-    //             items.push(ContextMenuItem::action(
-    //                 "Open Notes",
-    //                 OpenChannelNotes {
-    //                     channel_id: channel.id,
-    //                 },
-    //             ));
+            // context_menu.show(
+            //     position.unwrap_or_default(),
+            //     if self.context_menu_on_selected {
+            //         gpui::elements::AnchorCorner::TopRight
+            //     } else {
+            //         gpui::elements::AnchorCorner::BottomLeft
+            //     },
+            //     items,
+            //     cx,
+            // );
 
-    //             items.push(ContextMenuItem::action(
-    //                 "Open Chat",
-    //                 JoinChannelChat {
-    //                     channel_id: channel.id,
-    //                 },
-    //             ));
+            context_menu
+        });
 
-    //             items.push(ContextMenuItem::action(
-    //                 "Copy Channel Link",
-    //                 CopyChannelLink {
-    //                     channel_id: channel.id,
-    //                 },
-    //             ));
+        self.context_menu = Some((menu, (), ()));
 
-    //             if self.channel_store.read(cx).is_channel_admin(channel.id) {
-    //                 items.extend([
-    //                     ContextMenuItem::Separator,
-    //                     ContextMenuItem::action(
-    //                         "New Subchannel",
-    //                         NewChannel {
-    //                             location: channel.id,
-    //                         },
-    //                     ),
-    //                     ContextMenuItem::action(
-    //                         "Rename",
-    //                         RenameChannel {
-    //                             channel_id: channel.id,
-    //                         },
-    //                     ),
-    //                     ContextMenuItem::action(
-    //                         "Move this channel",
-    //                         StartMoveChannelFor {
-    //                             channel_id: channel.id,
-    //                         },
-    //                     ),
-    //                 ]);
-
-    //                 if let Some(channel_name) = clipboard_channel_name {
-    //                     items.push(ContextMenuItem::Separator);
-    //                     items.push(ContextMenuItem::action(
-    //                         format!("Move '#{}' here", channel_name),
-    //                         MoveChannel { to: channel.id },
-    //                     ));
-    //                 }
-
-    //                 items.extend([
-    //                     ContextMenuItem::Separator,
-    //                     ContextMenuItem::action(
-    //                         "Invite Members",
-    //                         InviteMembers {
-    //                             channel_id: channel.id,
-    //                         },
-    //                     ),
-    //                     ContextMenuItem::action(
-    //                         "Manage Members",
-    //                         ManageMembers {
-    //                             channel_id: channel.id,
-    //                         },
-    //                     ),
-    //                     ContextMenuItem::Separator,
-    //                     ContextMenuItem::action(
-    //                         "Delete",
-    //                         RemoveChannel {
-    //                             channel_id: channel.id,
-    //                         },
-    //                     ),
-    //                 ]);
-    //             }
-
-    //             context_menu.show(
-    //                 position.unwrap_or_default(),
-    //                 if self.context_menu_on_selected {
-    //                     gpui::elements::AnchorCorner::TopRight
-    //                 } else {
-    //                     gpui::elements::AnchorCorner::BottomLeft
-    //                 },
-    //                 items,
-    //                 cx,
-    //             );
-    //         });
-
-    //         cx.notify();
-    //     }
+        cx.notify();
+    }
 
     //     fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
     //         if self.take_editing_state(cx) {
@@ -2116,18 +2070,18 @@ impl CollabPanel {
         });
     }
 
-    //     fn new_subchannel(&mut self, action: &NewChannel, cx: &mut ViewContext<Self>) {
-    //         self.collapsed_channels
-    //             .retain(|channel| *channel != action.location);
-    //         self.channel_editing_state = Some(ChannelEditingState::Create {
-    //             location: Some(action.location.to_owned()),
-    //             pending_name: None,
-    //         });
-    //         self.update_entries(false, cx);
-    //         self.select_channel_editor();
-    //         cx.focus(self.channel_name_editor.as_any());
-    //         cx.notify();
-    //     }
+    fn new_subchannel(&mut self, channel_id: ChannelId, cx: &mut ViewContext<Self>) {
+        self.collapsed_channels
+            .retain(|channel| *channel != channel_id);
+        self.channel_editing_state = Some(ChannelEditingState::Create {
+            location: Some(action.location.to_owned()),
+            pending_name: None,
+        });
+        self.update_entries(false, cx);
+        self.select_channel_editor();
+        cx.focus(self.channel_name_editor.as_any());
+        cx.notify();
+    }
 
     //     fn invite_members(&mut self, action: &InviteMembers, cx: &mut ViewContext<Self>) {
     //         self.show_channel_modal(action.channel_id, channel_modal::Mode::InviteMembers, cx);
@@ -2154,25 +2108,37 @@ impl CollabPanel {
     //         }
     //     }
 
-    //     fn rename_channel(&mut self, action: &RenameChannel, cx: &mut ViewContext<Self>) {
-    //         let channel_store = self.channel_store.read(cx);
-    //         if !channel_store.is_channel_admin(action.channel_id) {
-    //             return;
-    //         }
-    //         if let Some(channel) = channel_store.channel_for_id(action.channel_id).cloned() {
-    //             self.channel_editing_state = Some(ChannelEditingState::Rename {
-    //                 location: action.channel_id.to_owned(),
-    //                 pending_name: None,
-    //             });
-    //             self.channel_name_editor.update(cx, |editor, cx| {
-    //                 editor.set_text(channel.name.clone(), cx);
-    //                 editor.select_all(&Default::default(), cx);
-    //             });
-    //             cx.focus(self.channel_name_editor.as_any());
-    //             self.update_entries(false, cx);
-    //             self.select_channel_editor();
-    //         }
-    //     }
+    fn rename_channel(&mut self, action: &RenameChannel, cx: &mut ViewContext<Self>) {
+        let channel_store = self.channel_store.read(cx);
+        if !channel_store.is_channel_admin(action.channel_id) {
+            return;
+        }
+        if let Some(channel) = channel_store.channel_for_id(action.channel_id).cloned() {
+            self.channel_editing_state = Some(ChannelEditingState::Rename {
+                location: action.channel_id.to_owned(),
+                pending_name: None,
+            });
+            self.channel_name_editor.update(cx, |editor, cx| {
+                editor.set_text(channel.name.clone(), cx);
+                editor.select_all(&Default::default(), cx);
+            });
+            cx.focus(self.channel_name_editor.as_any());
+            self.update_entries(false, cx);
+            self.select_channel_editor();
+        }
+    }
+
+    fn start_move_channel(&mut self, channel_id: ChannelId, cx: &mut ViewContext<Self>) {
+        self.channel_clipboard = Some(ChannelMoveClipboard { channel_id });
+    }
+
+    fn start_move_selected_channel(&mut self, channel_id: ChannelId, cx: &mut ViewContext<Self>) {
+        if let Some(channel) = self.selected_channel() {
+            self.channel_clipboard = Some(ChannelMoveClipboard {
+                channel_id: channel.id,
+            })
+        }
+    }
 
     fn open_channel_notes(&mut self, action: &OpenChannelNotes, cx: &mut ViewContext<Self>) {
         if let Some(workspace) = self.workspace.upgrade() {
@@ -2344,31 +2310,31 @@ impl CollabPanel {
         .detach()
     }
 
-    //     fn join_channel_chat(&mut self, action: &JoinChannelChat, cx: &mut ViewContext<Self>) {
-    //         let channel_id = action.channel_id;
-    //         if let Some(workspace) = self.workspace.upgrade(cx) {
-    //             cx.app_context().defer(move |cx| {
-    //                 workspace.update(cx, |workspace, cx| {
-    //                     if let Some(panel) = workspace.focus_panel::<ChatPanel>(cx) {
-    //                         panel.update(cx, |panel, cx| {
-    //                             panel
-    //                                 .select_channel(channel_id, None, cx)
-    //                                 .detach_and_log_err(cx);
-    //                         });
-    //                     }
-    //                 });
-    //             });
-    //         }
-    //     }
+    fn join_channel_chat(&mut self, channel_id: ChannelId, cx: &mut ViewContext<Self>) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+        cx.defer(move |cx| {
+            workspace.update(cx, |workspace, cx| {
+                if let Some(panel) = workspace.focus_panel::<ChatPanel>(cx) {
+                    panel.update(cx, |panel, cx| {
+                        panel
+                            .select_channel(channel_id, None, cx)
+                            .detach_and_log_err(cx);
+                    });
+                }
+            });
+        });
+    }
 
-    //     fn copy_channel_link(&mut self, action: &CopyChannelLink, cx: &mut ViewContext<Self>) {
-    //         let channel_store = self.channel_store.read(cx);
-    //         let Some(channel) = channel_store.channel_for_id(action.channel_id) else {
-    //             return;
-    //         };
-    //         let item = ClipboardItem::new(channel.link());
-    //         cx.write_to_clipboard(item)
-    //     }
+    fn copy_channel_link(&mut self, channel_id: ChannelId, cx: &mut ViewContext<Self>) {
+        let channel_store = self.channel_store.read(cx);
+        let Some(channel) = channel_store.channel_for_id(channel_id) else {
+            return;
+        };
+        let item = ClipboardItem::new(channel.link());
+        cx.write_to_clipboard(item)
+    }
 
     fn render_signed_out(&mut self, cx: &mut ViewContext<Self>) -> Div {
         v_stack().child(Button::new("Sign in to collaborate").on_click(cx.listener(
