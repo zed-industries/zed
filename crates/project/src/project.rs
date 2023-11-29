@@ -927,8 +927,13 @@ impl Project {
 
         let mut prettier_plugins_by_worktree = HashMap::default();
         for (worktree, language, settings) in language_formatters_to_check {
-            if let Some(plugins) = prettier_support::prettier_plugins_for_language(&language, &settings) {
-                prettier_plugins_by_worktree.entry(worktree).or_insert_with(|| HashSet::default()).extend(plugins);
+            if let Some(plugins) =
+                prettier_support::prettier_plugins_for_language(&language, &settings)
+            {
+                prettier_plugins_by_worktree
+                    .entry(worktree)
+                    .or_insert_with(|| HashSet::default())
+                    .extend(plugins);
             }
         }
         for (worktree, prettier_plugins) in prettier_plugins_by_worktree {
@@ -2688,7 +2693,9 @@ impl Project {
         let settings = language_settings(Some(&new_language), buffer_file.as_ref(), cx).clone();
         let buffer_file = File::from_dyn(buffer_file.as_ref());
         let worktree = buffer_file.as_ref().map(|f| f.worktree_id(cx));
-        if let Some(prettier_plugins) = prettier_support::prettier_plugins_for_language(&new_language, &settings) {
+        if let Some(prettier_plugins) =
+            prettier_support::prettier_plugins_for_language(&new_language, &settings)
+        {
             self.install_default_prettier(worktree, prettier_plugins, cx);
         };
         if let Some(file) = buffer_file {
@@ -4077,8 +4084,6 @@ impl Project {
 
                     let remove_trailing_whitespace = settings.remove_trailing_whitespace_on_save;
                     let ensure_final_newline = settings.ensure_final_newline_on_save;
-                    let format_on_save = settings.format_on_save.clone();
-                    let formatter = settings.formatter.clone();
                     let tab_size = settings.tab_size;
 
                     // First, format buffer's whitespace according to the settings.
@@ -4106,7 +4111,7 @@ impl Project {
                     // Apply language-specific formatting using either a language server
                     // or external command.
                     let mut format_operation = None;
-                    match (formatter, format_on_save) {
+                    match (&settings.formatter, &settings.format_on_save) {
                         (_, FormatOnSave::Off) if trigger == FormatTrigger::Save => {}
 
                         (Formatter::LanguageServer, FormatOnSave::On | FormatOnSave::Off)
@@ -4173,7 +4178,7 @@ impl Project {
                                 ));
                             }
                         }
-                        (Formatter::Prettier { .. }, FormatOnSave::On | FormatOnSave::Off) => {
+                        (Formatter::Prettier, FormatOnSave::On | FormatOnSave::Off) => {
                             if let Some(new_operation) =
                                 prettier_support::format_with_prettier(&project, buffer, &mut cx)
                                     .await

@@ -25,7 +25,10 @@ use crate::{
     Event, File, FormatOperation, PathChange, Project, ProjectEntryId, Worktree, WorktreeId,
 };
 
-pub fn prettier_plugins_for_language(language: &Language, language_settings: &LanguageSettings) -> Option<HashSet<&'static str>> {
+pub fn prettier_plugins_for_language(
+    language: &Language,
+    language_settings: &LanguageSettings,
+) -> Option<HashSet<&'static str>> {
     match &language_settings.formatter {
         Formatter::Prettier { .. } | Formatter::Auto => {}
         Formatter::LanguageServer | Formatter::External { .. } => return None,
@@ -603,6 +606,8 @@ impl Project {
     ) {
         // suppress unused code warnings
         let _ = &self.default_prettier.installed_plugins;
+        let _ = install_prettier_packages;
+        let _ = save_prettier_server_file;
     }
 
     #[cfg(not(any(test, feature = "test-support")))]
@@ -633,14 +638,13 @@ impl Project {
             }
             None => Task::ready(Ok(ControlFlow::Continue(None))),
         };
-        new_plugins
-            .retain(|plugin| !self.default_prettier.installed_plugins.contains(plugin));
+        new_plugins.retain(|plugin| !self.default_prettier.installed_plugins.contains(plugin));
         let mut installation_attempt = 0;
         let previous_installation_task = match &mut self.default_prettier.prettier {
             PrettierInstallation::NotInstalled {
                 installation_task,
                 attempts,
-                not_installed_plugins
+                not_installed_plugins,
             } => {
                 installation_attempt = *attempts;
                 if installation_attempt > prettier::FAIL_THRESHOLD {
