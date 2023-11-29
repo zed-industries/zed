@@ -38,8 +38,8 @@ use gpui::{
 use project::Project;
 use theme::ActiveTheme;
 use ui::{
-    h_stack, Avatar, Button, ButtonLike, ButtonVariant, Clickable, Color, IconButton, IconElement,
-    IconSize, KeyBinding, Tooltip,
+    h_stack, Avatar, Button, ButtonCommon, ButtonLike, ButtonVariant, Clickable, Color, IconButton,
+    IconElement, IconSize, KeyBinding, Tooltip,
 };
 use util::ResultExt;
 use workspace::{notifications::NotifyResultExt, Workspace};
@@ -318,7 +318,8 @@ impl Render for CollabTitlebarItem {
                                 ])
                                 .on_click(move |event, _cx| {
                                     dbg!(format!("clicked: {:?}", event.down.position));
-                                }),
+                                })
+                                .tooltip(|cx| Tooltip::text("Test tooltip", cx)),
                         ),
                     )
                 }

@@ -203,10 +203,10 @@ impl ButtonSize2 {
 
 pub trait ButtonCommon: Clickable {
     fn id(&self) -> &ElementId;
-    fn style(&mut self, style: ButtonStyle2) -> &mut Self;
-    fn disabled(&mut self, disabled: bool) -> &mut Self;
-    fn size(&mut self, size: ButtonSize2) -> &mut Self;
-    fn tooltip(&mut self, tooltip: impl Fn(&mut WindowContext) -> AnyView + 'static) -> &mut Self;
+    fn style(self, style: ButtonStyle2) -> Self;
+    fn disabled(self, disabled: bool) -> Self;
+    fn size(self, size: ButtonSize2) -> Self;
+    fn tooltip(self, tooltip: impl Fn(&mut WindowContext) -> AnyView + 'static) -> Self;
     // fn width(&mut self, width: DefiniteLength) -> &mut Self;
 }
 
@@ -312,22 +312,22 @@ impl ButtonCommon for ButtonLike {
         &self.id
     }
 
-    fn style(&mut self, style: ButtonStyle2) -> &mut Self {
+    fn style(mut self, style: ButtonStyle2) -> Self {
         self.style = style;
         self
     }
 
-    fn disabled(&mut self, disabled: bool) -> &mut Self {
+    fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
         self
     }
 
-    fn size(&mut self, size: ButtonSize2) -> &mut Self {
+    fn size(mut self, size: ButtonSize2) -> Self {
         self.size = size;
         self
     }
 
-    fn tooltip(&mut self, tooltip: impl Fn(&mut WindowContext) -> AnyView + 'static) -> &mut Self {
+    fn tooltip(mut self, tooltip: impl Fn(&mut WindowContext) -> AnyView + 'static) -> Self {
         self.tooltip = Some(Box::new(tooltip));
         self
     }
@@ -337,7 +337,7 @@ impl RenderOnce for ButtonLike {
     type Rendered = Stateful<Div>;
 
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {
-        let mut button_like = h_stack()
+        h_stack()
             .id(self.id.clone())
             .h(self.size.height())
             .rounded_md()
@@ -347,24 +347,14 @@ impl RenderOnce for ButtonLike {
             .bg(self.style.enabled(cx).background)
             .hover(|hover| hover.bg(self.style.hovered(cx).background))
             .active(|active| active.bg(self.style.active(cx).background))
-            .on_click({
-                let on_click = self.on_click;
-                move |event, cx| {
-                    if let Some(on_click) = &on_click {
-                        (on_click)(event, cx)
-                    }
-                }
-            });
-
-        for child in self.children.into_iter() {
-            button_like = button_like.child(child);
-        }
-
-        if let Some(tooltip) = self.tooltip {
-            button_like = button_like.tooltip(move |cx| tooltip(cx))
-        }
-
-        button_like
+            .when_some(
+                self.on_click.filter(|_| !self.disabled),
+                |this, on_click| this.on_click(move |event, cx| (on_click)(event, cx)),
+            )
+            .when_some(self.tooltip, |this, tooltip| {
+                this.tooltip(move |cx| tooltip(cx))
+            })
+            .children(self.children)
     }
 }
 
