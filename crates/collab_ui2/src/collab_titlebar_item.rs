@@ -30,9 +30,9 @@ use std::sync::Arc;
 
 use client::{Client, UserStore};
 use gpui::{
-    div, px, rems, AppContext, Div, Element, InteractiveElement, IntoElement, Model, MouseButton,
-    ParentElement, Render, RenderOnce, Stateful, StatefulInteractiveElement, Styled, Subscription,
-    ViewContext, VisualContext, WeakView, WindowBounds,
+    actions, div, px, rems, AppContext, Div, Element, InteractiveElement, IntoElement, Model,
+    MouseButton, ParentElement, Render, RenderOnce, Stateful, StatefulInteractiveElement, Styled,
+    Subscription, ViewContext, VisualContext, WeakView, WindowBounds,
 };
 use project::Project;
 use theme::ActiveTheme;
@@ -46,14 +46,11 @@ use crate::face_pile::FacePile;
 // const MAX_BRANCH_NAME_LENGTH: usize = 40;
 
 // actions!(
-//     collab,
-//     [
-//         ToggleUserMenu,
-//         ToggleProjectMenu,
-//         SwitchBranch,
-//         ShareProject,
-//         UnshareProject,
-//     ]
+//     ToggleUserMenu,
+//     ToggleProjectMenu,
+//     SwitchBranch,
+//     ShareProject,
+//     UnshareProject,
 // );
 
 pub fn init(cx: &mut AppContext) {
@@ -217,7 +214,19 @@ impl Render for CollabTitlebarItem {
                     h_stack()
                         .child(
                             h_stack()
-                                .child(Button::new(if is_shared { "Unshare" } else { "Share" }))
+                                .child(
+                                    Button::new(if is_shared { "Unshare" } else { "Share" })
+                                        .on_click({
+                                            let room = room.clone();
+                                            let project = self.project.clone();
+                                            move |_, cx| {
+                                                if let Some(room) = room.as_ref() {
+                                                    room.share_project(project.clone(), cx)
+                                                        .detach_and_log_err(cx);
+                                                }
+                                            }
+                                        }),
+                                )
                                 .child(IconButton::new("leave-call", ui::Icon::Exit).on_click({
                                     let room = room.clone();
                                     move |_, cx| {
@@ -570,11 +579,11 @@ impl CollabTitlebarItem {
     // }
 
     // fn share_project(&mut self, _: &ShareProject, cx: &mut ViewContext<Self>) {
-    //     let active_call = ActiveCall::global(cx);
+    //     let Some(room) = workspace::call_hub(cx).room(cx) else {
+    //         return;
+    //     };
     //     let project = self.project.clone();
-    //     active_call
-    //         .update(cx, |call, cx| call.share_project(project, cx))
-    //         .detach_and_log_err(cx);
+    //     room.share_project(project, cx).detach_and_log_err(cx);
     // }
 
     // fn unshare_project(&mut self, _: &UnshareProject, cx: &mut ViewContext<Self>) {

@@ -483,6 +483,7 @@ pub trait Room {
     fn toggle_mute(&self, cx: &mut AppContext);
     fn toggle_deafen(&self, cx: &mut AppContext);
     fn toggle_screen_share(&self, cx: &mut AppContext);
+    fn share_project(&self, project: Model<Project>, cx: &mut AppContext) -> Task<Result<u64>>;
 }
 
 #[derive(Clone)]

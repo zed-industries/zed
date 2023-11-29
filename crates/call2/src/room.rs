@@ -1530,6 +1530,10 @@ impl workspace::Room for RoomWrapper {
         self.0.read(cx).id
     }
 
+    fn channel_id(&self, cx: &AppContext) -> Option<u64> {
+        self.0.read(cx).channel_id()
+    }
+
     fn peer_state(
         &self,
         current_project_id: Option<u64>,
@@ -1629,8 +1633,9 @@ impl workspace::Room for RoomWrapper {
         })
     }
 
-    fn channel_id(&self, cx: &AppContext) -> Option<u64> {
-        self.0.read(cx).channel_id()
+    fn share_project(&self, project: Model<Project>, cx: &mut AppContext) -> Task<Result<u64>> {
+        self.0
+            .update(cx, |this, cx| this.share_project(project, cx))
     }
 }
 struct LiveKitRoom {
