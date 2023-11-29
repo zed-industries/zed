@@ -824,7 +824,6 @@ impl Interactivity {
             .and_then(|group_hover| GroupBounds::get(&group_hover.group, cx));
 
         if let Some(group_bounds) = hover_group_bounds {
-            // todo!() needs cx.was_top_layer
             let hovered = group_bounds.contains_point(&cx.mouse_position());
             cx.on_mouse_event(move |event: &MouseMoveEvent, phase, cx| {
                 if phase == DispatchPhase::Capture {
@@ -836,13 +835,13 @@ impl Interactivity {
         }
 
         if self.hover_style.is_some()
-            || (cx.active_drag.is_some() && !self.drag_over_styles.is_empty())
+            || cx.active_drag.is_some() && !self.drag_over_styles.is_empty()
         {
-            let interactive_bounds = interactive_bounds.clone();
-            let hovered = interactive_bounds.visibly_contains(&cx.mouse_position(), cx);
+            let bounds = bounds.intersect(&cx.content_mask().bounds);
+            let hovered = bounds.contains_point(&cx.mouse_position());
             cx.on_mouse_event(move |event: &MouseMoveEvent, phase, cx| {
                 if phase == DispatchPhase::Capture {
-                    if interactive_bounds.visibly_contains(&event.position, cx) != hovered {
+                    if bounds.contains_point(&event.position) != hovered {
                         cx.notify();
                     }
                 }
@@ -1143,7 +1142,9 @@ impl Interactivity {
             let mouse_position = cx.mouse_position();
             if let Some(group_hover) = self.group_hover_style.as_ref() {
                 if let Some(group_bounds) = GroupBounds::get(&group_hover.group, cx) {
-                    if group_bounds.contains_point(&mouse_position) {
+                    if group_bounds.contains_point(&mouse_position)
+                        && cx.was_top_layer(&mouse_position, cx.stacking_order())
+                    {
                         style.refine(&group_hover.style);
                     }
                 }
@@ -1162,7 +1163,6 @@ impl Interactivity {
                 for (state_type, group_drag_style) in &self.group_drag_over_styles {
                     if let Some(group_bounds) = GroupBounds::get(&group_drag_style.group, cx) {
                         if *state_type == drag.view.entity_type()
-                        // todo!() needs to handle cx.content_mask() and cx.is_top()
                             && group_bounds.contains_point(&mouse_position)
                         {
                             style.refine(&group_drag_style.style);
@@ -1175,7 +1175,6 @@ impl Interactivity {
                         && bounds
                             .intersect(&cx.content_mask().bounds)
                             .contains_point(&mouse_position)
-                        && cx.was_top_layer(&mouse_position, cx.stacking_order())
                     {
                         style.refine(drag_over_style);
                     }

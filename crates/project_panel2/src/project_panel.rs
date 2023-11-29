@@ -1480,7 +1480,7 @@ impl Render for ProjectPanel {
                 .children(self.context_menu.as_ref().map(|(menu, position, _)| {
                     overlay()
                         .position(*position)
-                        .anchor(gpui::AnchorCorner::BottomLeft)
+                        .anchor(gpui::AnchorCorner::TopLeft)
                         .child(menu.clone())
                 }))
         } else {

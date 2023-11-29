@@ -7,7 +7,7 @@ use gpui::{AnyElement, Div};
 use smallvec::SmallVec;
 
 use crate::prelude::*;
-use crate::{v_stack, Label, ToggleState, Toggleable};
+use crate::{v_stack, Label};
 
 pub use list_header::*;
 pub use list_item::*;
@@ -20,7 +20,7 @@ pub struct List {
     /// Defaults to "No items"
     empty_message: SharedString,
     header: Option<ListHeader>,
-    toggle: Toggleable,
+    toggle: Option<bool>,
     children: SmallVec<[AnyElement; 2]>,
 }
 
@@ -29,7 +29,7 @@ impl List {
         Self {
             empty_message: "No items".into(),
             header: None,
-            toggle: Toggleable::NotToggleable,
+            toggle: None,
             children: SmallVec::new(),
         }
     }
@@ -44,7 +44,7 @@ impl List {
         self
     }
 
-    pub fn toggle(mut self, toggle: Toggleable) -> Self {
+    pub fn toggle(mut self, toggle: Option<bool>) -> Self {
         self.toggle = toggle;
         self
     }
@@ -66,7 +66,7 @@ impl RenderOnce for List {
             .children(self.header.map(|header| header))
             .map(|this| match (self.children.is_empty(), self.toggle) {
                 (false, _) => this.children(self.children),
-                (true, Toggleable::Toggleable(ToggleState::NotToggled)) => this,
+                (true, Some(false)) => this,
                 (true, _) => this.child(Label::new(self.empty_message.clone()).color(Color::Muted)),
             })
     }

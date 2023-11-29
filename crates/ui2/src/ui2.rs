@@ -21,7 +21,6 @@ mod selectable;
 mod slot;
 mod styled_ext;
 mod styles;
-mod toggleable;
 pub mod utils;
 
 pub use clickable::*;
@@ -33,4 +32,3 @@ pub use selectable::*;
 pub use slot::*;
 pub use styled_ext::*;
 pub use styles::*;
-pub use toggleable::*;
