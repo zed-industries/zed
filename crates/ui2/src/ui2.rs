@@ -20,6 +20,7 @@ pub mod prelude;
 mod selectable;
 mod styled_ext;
 mod styles;
+mod toggleable;
 pub mod utils;
 
 pub use clickable::*;
@@ -30,3 +31,4 @@ pub use prelude::*;
 pub use selectable::*;
 pub use styled_ext::*;
 pub use styles::*;
+pub use toggleable::*;

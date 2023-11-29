@@ -6,7 +6,7 @@ use gpui::{
 use smallvec::SmallVec;
 
 use crate::prelude::*;
-use crate::{disclosure_control, Avatar, GraphicSlot, Icon, IconElement, IconSize, Toggle};
+use crate::{Avatar, Disclosure, GraphicSlot, Icon, IconElement, IconSize, Toggleable};
 
 #[derive(IntoElement)]
 pub struct ListItem {
@@ -17,7 +17,7 @@ pub struct ListItem {
     indent_level: usize,
     indent_step_size: Pixels,
     left_slot: Option<GraphicSlot>,
-    toggle: Toggle,
+    toggle: Toggleable,
     inset: bool,
     on_click: Option<Rc<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
     on_toggle: Option<Rc<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
@@ -33,7 +33,7 @@ impl ListItem {
             indent_level: 0,
             indent_step_size: px(12.),
             left_slot: None,
-            toggle: Toggle::NotToggleable,
+            toggle: Toggleable::NotToggleable,
             inset: false,
             on_click: None,
             on_secondary_mouse_down: None,
@@ -70,7 +70,7 @@ impl ListItem {
         self
     }
 
-    pub fn toggle(mut self, toggle: Toggle) -> Self {
+    pub fn toggle(mut self, toggle: Toggleable) -> Self {
         self.toggle = toggle;
         self
     }
@@ -150,7 +150,10 @@ impl RenderOnce for ListItem {
                     .gap_1()
                     .items_center()
                     .relative()
-                    .child(disclosure_control(self.toggle, self.on_toggle))
+                    .children(
+                        Disclosure::from_toggleable(self.toggle)
+                            .map(|disclosure| disclosure.on_toggle(self.on_toggle)),
+                    )
                     .map(|this| match self.left_slot {
                         Some(GraphicSlot::Icon(i)) => this.child(
                             IconElement::new(i)
