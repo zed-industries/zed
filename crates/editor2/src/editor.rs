@@ -154,7 +154,6 @@ pub fn render_parsed_markdown(
     );
     let runs = text_runs_for_highlights(&parsed.text, &editor_style.text, highlights);
 
-    // todo!("add the ability to change cursor style for link ranges")
     let mut links = Vec::new();
     let mut link_ranges = Vec::new();
     for (range, region) in parsed.region_ranges.iter().zip(&parsed.regions) {
