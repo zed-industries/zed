@@ -175,7 +175,7 @@ use gpui::{
     Point, PromptLevel, Render, RenderOnce, SharedString, Stateful, Styled, Subscription, Task,
     View, ViewContext, VisualContext, WeakView,
 };
-use project::Fs;
+use project::{Fs, Project};
 use serde_derive::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use ui::{
@@ -299,7 +299,7 @@ pub struct CollabPanel {
     channel_store: Model<ChannelStore>,
     user_store: Model<UserStore>,
     client: Arc<Client>,
-    // project: ModelHandle<Project>,
+    project: Model<Project>,
     match_candidates: Vec<StringMatchCandidate>,
     // list_state: ListState<Self>,
     subscriptions: Vec<Subscription>,
@@ -582,7 +582,7 @@ impl CollabPanel {
                 selection: None,
                 channel_store: ChannelStore::global(cx),
                 user_store: workspace.user_store().clone(),
-                //                 project: workspace.project().clone(),
+                project: workspace.project().clone(),
                 subscriptions: Vec::default(),
                 match_candidates: Vec::default(),
                 collapsed_sections: vec![Section::Offline],
@@ -2280,18 +2280,13 @@ impl CollabPanel {
     //             .detach();
     //     }
 
-    //     fn call(
-    //         &mut self,
-    //         recipient_user_id: u64,
-    //         initial_project: Option<ModelHandle<Project>>,
-    //         cx: &mut ViewContext<Self>,
-    //     ) {
-    //         ActiveCall::global(cx)
-    //             .update(cx, |call, cx| {
-    //                 call.invite(recipient_user_id, initial_project, cx)
-    //             })
-    //             .detach_and_log_err(cx);
-    //     }
+    fn call(&mut self, recipient_user_id: u64, cx: &mut ViewContext<Self>) {
+        ActiveCall::global(cx)
+            .update(cx, |call, cx| {
+                call.invite(recipient_user_id, Some(self.project.clone()), cx)
+            })
+            .detach_and_log_err(cx);
+    }
 
     fn join_channel(&self, channel_id: u64, cx: &mut ViewContext<Self>) {
         let Some(handle) = cx.window_handle().downcast::<Workspace>() else {
@@ -2473,23 +2468,11 @@ impl CollabPanel {
                     .on_click(cx.listener(|this, _, cx| this.toggle_contact_finder(cx)))
                     .tooltip(|cx| Tooltip::text("Search for new contact", cx)),
             ),
-            Section::Channels => {
-                // todo!()
-                // if cx
-                //     .global::<DragAndDrop<Workspace>>()
-                //     .currently_dragged::<Channel>(cx.window())
-                //     .is_some()
-                //     && self.drag_target_channel == ChannelDragTarget::Root
-                // {
-                //     is_dragged_over = true;
-                // }
-
-                Some(
-                    IconButton::new("add-channel", Icon::Plus)
-                        .on_click(cx.listener(|this, _, cx| this.new_root_channel(cx)))
-                        .tooltip(|cx| Tooltip::text("Create a channel", cx)),
-                )
-            }
+            Section::Channels => Some(
+                IconButton::new("add-channel", Icon::Plus)
+                    .on_click(cx.listener(|this, _, cx| this.new_root_channel(cx)))
+                    .tooltip(|cx| Tooltip::text("Create a channel", cx)),
+            ),
             _ => None,
         };
 
@@ -2557,113 +2540,57 @@ impl CollabPanel {
                     .w_full()
                     .justify_between()
                     .child(Label::new(github_login.clone()))
-                    .child(
-                        div()
-                            .id("remove_contact")
-                            .invisible()
-                            .group_hover("", |style| style.visible())
-                            .child(
-                                IconButton::new("remove_contact", Icon::Close)
-                                    .color(Color::Muted)
-                                    .tooltip(|cx| Tooltip::text("Remove Contact", cx))
-                                    .on_click(cx.listener(move |this, _, cx| {
-                                        this.remove_contact(user_id, &github_login, cx);
-                                    })),
-                            ),
-                    ),
-            );
+                    .when(calling, |el| {
+                        el.child(Label::new("Calling").color(Color::Muted))
+                    })
+                    .when(!calling, |el| {
+                        el.child(
+                            div()
+                                .id("remove_contact")
+                                .invisible()
+                                .group_hover("", |style| style.visible())
+                                .child(
+                                    IconButton::new("remove_contact", Icon::Close)
+                                        .color(Color::Muted)
+                                        .tooltip(|cx| Tooltip::text("Remove Contact", cx))
+                                        .on_click(cx.listener({
+                                            let github_login = github_login.clone();
+                                            move |this, _, cx| {
+                                                this.remove_contact(user_id, &github_login, cx);
+                                            }
+                                        })),
+                                ),
+                        )
+                    }),
+            )
+            .left_child(
+                // todo!() handle contacts with no avatar
+                Avatar::data(contact.user.avatar.clone().unwrap())
+                    .availability_indicator(if online { Some(!busy) } else { None }),
+            )
+            .when(online && !busy, |el| {
+                el.on_click(cx.listener(move |this, _, cx| this.call(user_id, cx)))
+            });
 
-        if let Some(avatar) = contact.user.avatar.clone() {
-            item = item.left_avatar(avatar);
-        }
-
-        div().group("").child(item)
-        // let event_handler =
-        //     MouseEventHandler::new::<Contact, _>(contact.user.id as usize, cx, |state, cx| {
-        //         Flex::row()
-        //             .with_children(contact.user.avatar.clone().map(|avatar| {
-        //                 let status_badge = if contact.online {
-        //                     Some(
-        //                         Empty::new()
-        //                             .collapsed()
-        //                             .contained()
-        //                             .with_style(if busy {
-        //                                 collab_theme.contact_status_busy
-        //                             } else {
-        //                                 collab_theme.contact_status_free
-        //                             })
-        //                             .aligned(),
-        //                     )
-        //                 } else {
-        //                     None
-        //                 };
-        //                 Stack::new()
-        //                     .with_child(
-        //                         Image::from_data(avatar)
-        //                             .with_style(collab_theme.contact_avatar)
-        //                             .aligned()
-        //                             .left(),
-        //                     )
-        //                     .with_children(status_badge)
-        //             }))
-
-        //             .with_children(if calling {
-        //                 Some(
-        //                     Label::new("Calling", collab_theme.calling_indicator.text.clone())
-        //                         .contained()
-        //                         .with_style(collab_theme.calling_indicator.container)
-        //                         .aligned(),
-        //                 )
-        //             } else {
-        //                 None
-        //             })
-        //             .constrained()
-        //             .with_height(collab_theme.row_height)
-        //             .contained()
-        //             .with_style(
-        //                 *collab_theme
-        //                     .contact_row
-        //                     .in_state(is_selected)
-        //                     .style_for(state),
-        //             )
-        //     });
-
-        // if online && !busy {
-        //     let room = ActiveCall::global(cx).read(cx).room();
-        //     let label = if room.is_some() {
-        //         format!("Invite {} to join call", contact.user.github_login)
-        //     } else {
-        //         format!("Call {}", contact.user.github_login)
-        //     };
-
-        //     event_handler
-        //         .on_click(MouseButton::Left, move |_, this, cx| {
-        //             this.call(user_id, Some(initial_project.clone()), cx);
-        //         })
-        //         .with_cursor_style(CursorStyle::PointingHand)
-        //         .with_tooltip::<ContactTooltip>(
-        //             contact.user.id as usize,
-        //             label,
-        //             None,
-        //             theme.tooltip.clone(),
-        //             cx,
-        //         )
-        //         .into_any()
-        // } else {
-        //     event_handler
-        //         .with_tooltip::<ContactTooltip>(
-        //             contact.user.id as usize,
-        //             format!(
-        //                 "{} is {}",
-        //                 contact.user.github_login,
-        //                 if busy { "on a call" } else { "offline" }
-        //             ),
-        //             None,
-        //             theme.tooltip.clone(),
-        //             cx,
-        //         )
-        //         .into_any()
-        // };
+        div()
+            .id(github_login.clone())
+            .group("")
+            .child(item)
+            .tooltip(move |cx| {
+                let text = if !online {
+                    format!(" {} is offline", &github_login)
+                } else if busy {
+                    format!(" {} is on a call", &github_login)
+                } else {
+                    let room = ActiveCall::global(cx).read(cx).room();
+                    if room.is_some() {
+                        format!("Invite {} to join call", &github_login)
+                    } else {
+                        format!("Call {}", &github_login)
+                    }
+                };
+                Tooltip::text(text, cx)
+            })
     }
 
     fn render_contact_request(
@@ -2831,8 +2758,7 @@ impl CollabPanel {
                                 h_stack()
                                     .id(channel_id as usize)
                                     .child(Label::new(channel.name.clone()))
-                                    .children(face_pile.map(|face_pile| face_pile.render(cx)))
-                                    .tooltip(|cx| Tooltip::text("Join channel", cx)),
+                                    .children(face_pile.map(|face_pile| face_pile.render(cx))),
                             )
                             .child(
                                 h_stack()
@@ -2894,6 +2820,7 @@ impl CollabPanel {
                         },
                     )),
             )
+            .tooltip(|cx| Tooltip::text("Join channel", cx))
 
         // let channel_id = channel.id;
         // let collab_theme = &theme.collab_panel;

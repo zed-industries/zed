@@ -88,7 +88,7 @@ impl ListItem {
         self
     }
 
-    pub fn left_content(mut self, left_content: impl IntoElement) -> Self {
+    pub fn left_child(mut self, left_content: impl IntoElement) -> Self {
         self.left_slot = Some(left_content.into_any_element());
         self
     }
