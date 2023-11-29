@@ -88,36 +88,19 @@ impl Render for CollabTitlebarItem {
     type Element = Stateful<Div>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-        let is_in_room = self
-            .workspace
-            .update(cx, |this, cx| this.call_state().is_in_room(cx))
-            .unwrap_or_default();
+        let call = workspace::call_hub(cx);
+        let room = call.room(cx);
+        let is_in_room = call.is_in_room(cx);
         let is_shared = is_in_room && self.project.read(cx).is_shared();
         let current_user = self.user_store.read(cx).current_user();
         let client = self.client.clone();
-        let users = self
-            .workspace
-            .update(cx, |this, cx| this.call_state().remote_participants(cx))
-            .log_err()
-            .flatten();
-        let mic_icon = if self
-            .workspace
-            .update(cx, |this, cx| this.call_state().is_muted(cx))
-            .log_err()
-            .flatten()
-            .unwrap_or_default()
-        {
+        let users = room.as_ref().map(|room| room.remote_participants(cx));
+        let mic_icon = if room.as_ref().is_some_and(|room| room.is_muted(cx)) {
             ui::Icon::MicMute
         } else {
             ui::Icon::Mic
         };
-        let speakers_icon = if self
-            .workspace
-            .update(cx, |this, cx| this.call_state().is_deafened(cx))
-            .log_err()
-            .flatten()
-            .unwrap_or_default()
-        {
+        let speakers_icon = if room.as_ref().is_some_and(|room| room.is_deafened(cx)) {
             ui::Icon::AudioOff
         } else {
             ui::Icon::AudioOn
@@ -237,45 +220,37 @@ impl Render for CollabTitlebarItem {
                             h_stack()
                                 .child(Button::new(if is_shared { "Unshare" } else { "Share" }))
                                 .child(IconButton::new("leave-call", ui::Icon::Exit).on_click({
-                                    let workspace = workspace.clone();
+                                    let room = room.clone();
                                     move |_, cx| {
-                                        workspace
-                                            .update(cx, |this, cx| {
-                                                this.call_state().hang_up(cx).detach();
-                                            })
-                                            .log_err();
+                                        if let Some(room) = room.as_ref() {
+                                            room.hang_up(cx).detach();
+                                        }
                                     }
                                 })),
                         )
                         .child(
                             h_stack()
                                 .child(IconButton::new("mute-microphone", mic_icon).on_click({
-                                    let workspace = workspace.clone();
+                                    let room = room.clone();
                                     move |_, cx| {
-                                        workspace
-                                            .update(cx, |this, cx| {
-                                                this.call_state().toggle_mute(cx);
-                                            })
-                                            .log_err();
+                                        if let Some(room) = room.as_ref() {
+                                            room.toggle_mute(cx);
+                                        }
                                     }
                                 }))
                                 .child(IconButton::new("mute-sound", speakers_icon).on_click({
-                                    let workspace = workspace.clone();
+                                    let room = room.clone();
                                     move |_, cx| {
-                                        workspace
-                                            .update(cx, |this, cx| {
-                                                this.call_state().toggle_deafen(cx);
-                                            })
-                                            .log_err();
+                                        if let Some(room) = room.as_ref() {
+                                            room.toggle_deafen(cx);
+                                        }
                                     }
                                 }))
                                 .child(IconButton::new("screen-share", ui::Icon::Screen).on_click(
                                     move |_, cx| {
-                                        workspace
-                                            .update(cx, |this, cx| {
-                                                this.call_state().toggle_screen_share(cx);
-                                            })
-                                            .log_err();
+                                        if let Some(room) = room.as_ref() {
+                                            room.toggle_screen_share(cx);
+                                        }
                                     },
                                 ))
                                 .pl_2(),
@@ -389,7 +364,7 @@ impl CollabTitlebarItem {
         let project = workspace.project().clone();
         let user_store = workspace.app_state().user_store.clone();
         let client = workspace.app_state().client.clone();
-        let active_call = ActiveCall::global(cx);
+        let active_call = workspace::call_hub(cx);
         let mut subscriptions = Vec::new();
         subscriptions.push(
             cx.observe(&workspace.weak_handle().upgrade().unwrap(), |_, _, cx| {
@@ -397,7 +372,8 @@ impl CollabTitlebarItem {
             }),
         );
         subscriptions.push(cx.observe(&project, |_, _, cx| cx.notify()));
-        subscriptions.push(cx.observe(&active_call, |this, _, cx| this.active_call_changed(cx)));
+        // todo!() bring this back.
+        // subscriptions.push(cx.observe(&active_call, |this, _, cx| this.active_call_changed(cx)));
         subscriptions.push(cx.observe_window_activation(Self::window_activation_changed));
         subscriptions.push(cx.observe(&user_store, |_, _, cx| cx.notify()));
 
@@ -588,9 +564,7 @@ impl CollabTitlebarItem {
         } else {
             None
         };
-        ActiveCall::global(cx)
-            .update(cx, |call, cx| call.set_location(project.as_ref(), cx))
-            .detach_and_log_err(cx);
+        workspace::call_hub(cx).set_location(project, cx);
     }
 
     fn active_call_changed(&mut self, cx: &mut ViewContext<Self>) {

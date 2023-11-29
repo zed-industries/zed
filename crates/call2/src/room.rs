@@ -1,6 +1,8 @@
 use crate::{
     call_settings::CallSettings,
     participant::{LocalParticipant, ParticipantLocation, RemoteParticipant},
+    report_call_event_for_room,
+    shared_screen::SharedScreen,
 };
 use anyhow::{anyhow, Result};
 use audio::{Audio, Sound};
@@ -12,7 +14,8 @@ use collections::{BTreeMap, HashMap, HashSet};
 use fs::Fs;
 use futures::{FutureExt, StreamExt};
 use gpui::{
-    AppContext, AsyncAppContext, Context, EventEmitter, Model, ModelContext, Task, WeakModel,
+    AppContext, AsyncAppContext, Context, EventEmitter, Model, ModelContext, Task, ViewContext,
+    VisualContext, WeakModel,
 };
 use language::LanguageRegistry;
 use live_kit_client::{
@@ -24,6 +27,7 @@ use project::Project;
 use settings::Settings as _;
 use std::{future::Future, mem, sync::Arc, time::Duration};
 use util::{post_inc, ResultExt, TryFutureExt};
+use workspace::Workspace;
 
 pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -236,13 +240,19 @@ impl Room {
         }
     }
 
+    pub fn hang_up(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+        report_call_event_for_room("hang up", self.id(), self.channel_id(), &self.client, cx);
+        Audio::end_call(cx);
+        self.leave(cx)
+    }
+
     pub(crate) fn create(
         called_user_id: u64,
         initial_project: Option<Model<Project>>,
         client: Arc<Client>,
         user_store: Model<UserStore>,
         cx: &mut AppContext,
-    ) -> Task<Result<Model<Self>>> {
+    ) -> Task<Result<Model<Room>>> {
         cx.spawn(move |mut cx| async move {
             let response = client.request(proto::CreateRoom {}).await?;
             let room_proto = response.room.ok_or_else(|| anyhow!("invalid room"))?;
@@ -1230,8 +1240,11 @@ impl Room {
             .map_or(false, |live_kit| live_kit.speaking)
     }
 
-    pub fn is_deafened(&self) -> Option<bool> {
-        self.live_kit.as_ref().map(|live_kit| live_kit.deafened)
+    pub fn is_deafened(&self) -> bool {
+        self.live_kit
+            .as_ref()
+            .map(|live_kit| live_kit.deafened)
+            .unwrap_or_default()
     }
 
     #[track_caller]
@@ -1504,6 +1517,122 @@ impl Room {
     }
 }
 
+#[derive(Clone)]
+pub(crate) struct RoomWrapper(Model<Room>);
+
+impl RoomWrapper {
+    pub(crate) fn new(room: Model<Room>) -> Self {
+        Self(room)
+    }
+}
+impl workspace::Room for RoomWrapper {
+    fn id(&self, cx: &AppContext) -> u64 {
+        self.0.read(cx).id
+    }
+
+    fn peer_state(
+        &self,
+        current_project_id: Option<u64>,
+        leader_id: PeerId,
+        cx: &AppContext,
+    ) -> Option<(bool, bool)> {
+        let participant = self.0.read(cx).remote_participant_for_peer_id(leader_id)?;
+
+        let leader_in_this_app;
+        let leader_in_this_project;
+        match participant.location {
+            ParticipantLocation::SharedProject { project_id } => {
+                leader_in_this_app = true;
+                leader_in_this_project = Some(project_id) == current_project_id
+            }
+            ParticipantLocation::UnsharedProject => {
+                leader_in_this_app = true;
+                leader_in_this_project = false;
+            }
+            ParticipantLocation::External => {
+                leader_in_this_app = false;
+                leader_in_this_project = false;
+            }
+        };
+
+        Some((leader_in_this_project, leader_in_this_app))
+    }
+
+    fn shared_screen_for_peer(
+        &self,
+        peer_id: PeerId,
+        pane: &gpui::View<workspace::Pane>,
+        cx: &mut ViewContext<Workspace>,
+    ) -> Option<Box<dyn workspace::item::ItemHandle>> {
+        let participant = self.0.read(cx).remote_participant_for_peer_id(peer_id)?;
+        let track = participant.video_tracks.values().next()?.clone();
+        let user = participant.user.clone();
+        for item in pane.read(cx).items_of_type::<SharedScreen>() {
+            if item.read(cx).peer_id == peer_id {
+                return Some(Box::new(item));
+            }
+        }
+
+        Some(Box::new(cx.build_view(|cx| {
+            SharedScreen::new(&track, peer_id, user.clone(), cx)
+        })))
+    }
+
+    fn hang_up(&self, cx: &mut AppContext) -> Task<Result<()>> {
+        self.0.update(cx, |this, cx| this.hang_up(cx))
+    }
+
+    fn remote_participants(&self, cx: &AppContext) -> Vec<(Arc<User>, PeerId)> {
+        self.0
+            .read(cx)
+            .remote_participants()
+            .iter()
+            .map(|participant| (participant.1.user.clone(), participant.1.peer_id.clone()))
+            .collect()
+    }
+
+    fn is_muted(&self, cx: &AppContext) -> bool {
+        self.0.read(cx).is_muted(cx)
+    }
+
+    fn is_deafened(&self, cx: &AppContext) -> bool {
+        self.0.read(cx).is_deafened()
+    }
+
+    fn toggle_mute(&self, cx: &mut AppContext) {
+        self.0.update(cx, |this, cx| {
+            this.toggle_mute(cx)
+                .log_err()
+                .map(|task| task.detach_and_log_err(cx))
+        });
+    }
+
+    fn toggle_deafen(&self, cx: &mut AppContext) {
+        self.0.update(cx, |this, cx| {
+            this.toggle_deafen(cx)
+                .log_err()
+                .map(|task| task.detach_and_log_err(cx))
+        });
+    }
+
+    fn toggle_screen_share(&self, cx: &mut AppContext) {
+        self.0.update(cx, |this, cx| {
+            if this.is_screen_sharing() {
+                this.unshare_screen(cx).log_err();
+            } else {
+                let t = this.share_screen(cx);
+                cx.spawn(move |_, _| async move {
+                    t.await.log_err();
+                })
+                .detach();
+            }
+        })
+    }
+
+    fn channel_id(&self, cx: &AppContext) -> Option<u64> {
+        self.0.read(cx).channel_id()
+    }
+}
 struct LiveKitRoom {
     room: Arc<live_kit_client::Room>,
     screen_track: LocalTrack,

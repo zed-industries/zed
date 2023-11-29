@@ -1,5 +1,4 @@
 use crate::notification_window_options;
-use call::{ActiveCall, IncomingCall};
 use futures::StreamExt;
 use gpui::{
     div, green, px, red, AppContext, Div, Element, ParentElement, Render, RenderOnce,
@@ -8,11 +7,11 @@ use gpui::{
 use std::sync::{Arc, Weak};
 use ui::{h_stack, v_stack, Avatar, Button, Label};
 use util::ResultExt;
-use workspace::AppState;
+use workspace::{AppState, IncomingCall};
 
 pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
     let app_state = Arc::downgrade(app_state);
-    let mut incoming_call = ActiveCall::global(cx).read(cx).incoming();
+    let mut incoming_call = workspace::call_hub(cx).incoming(cx);
     cx.spawn(|mut cx| async move {
         let mut notification_windows: Vec<WindowHandle<IncomingCallNotification>> = Vec::new();
         while let Some(incoming_call) = incoming_call.next().await {
@@ -80,9 +79,9 @@ impl IncomingCallNotificationState {
     }
 
     fn respond(&self, accept: bool, cx: &mut AppContext) {
-        let active_call = ActiveCall::global(cx);
+        let active_call = workspace::call_hub(cx);
         if accept {
-            let join = active_call.update(cx, |active_call, cx| active_call.accept_incoming(cx));
+            let join = active_call.accept_incoming(cx);
             let initial_project_id = self.call.initial_project.as_ref().map(|project| project.id);
             let app_state = self.app_state.clone();
             let cx: &mut AppContext = cx;
@@ -106,9 +105,7 @@ impl IncomingCallNotificationState {
             })
             .detach_and_log_err(cx);
         } else {
-            active_call.update(cx, |active_call, cx| {
-                active_call.decline_incoming(cx).log_err();
-            });
+            active_call.decline_incoming(cx).log_err();
         }
     }
 }

@@ -1186,7 +1186,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-broadcast",
- "async-trait",
  "audio2",
  "client2",
  "collections",
@@ -11441,7 +11440,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-recursion 1.0.5",
- "async-trait",
  "bincode",
  "call2",
  "client2",

@@ -4,7 +4,6 @@ pub mod room;
 mod shared_screen;
 
 use anyhow::{anyhow, Result};
-use async_trait::async_trait;
 use audio::Audio;
 use call_settings::CallSettings;
 use client::{
@@ -20,19 +19,19 @@ use gpui::{
 pub use participant::ParticipantLocation;
 use postage::watch;
 use project::Project;
-use room::Event;
 pub use room::Room;
+use room::{Event, RoomWrapper};
 use settings::Settings;
 use shared_screen::SharedScreen;
 use std::sync::Arc;
 use util::ResultExt;
-use workspace::{item::ItemHandle, CallHandler, Pane, Workspace};
+use workspace::{item::ItemHandle, CallHub, IncomingCall, Pane, Workspace};
 
 pub fn init(client: Arc<Client>, user_store: Model<UserStore>, cx: &mut AppContext) {
     CallSettings::register(cx);
 
-    let active_call = cx.build_model(|cx| ActiveCall::new(client, user_store, cx));
-    cx.set_global(active_call);
+    let hub = create_call_hub(client, user_store, cx);
+    cx.set_global(hub);
 }
 
 pub struct OneAtATime {
@@ -66,14 +65,6 @@ impl OneAtATime {
     }
 }
 
-#[derive(Clone)]
-pub struct IncomingCall {
-    pub room_id: u64,
-    pub calling_user: Arc<User>,
-    pub participants: Vec<Arc<User>>,
-    pub initial_project: Option<proto::ParticipantProject>,
-}
-
 /// Singleton global maintaining the user's participation in a room across workspaces.
 pub struct ActiveCall {
     room: Option<(Model<Room>, Vec<Subscription>)>,
@@ -91,6 +82,15 @@ pub struct ActiveCall {
 }
 
 impl EventEmitter<Event> for ActiveCall {}
+
+pub fn create_call_hub(
+    client: Arc<Client>,
+    user_store: Model<UserStore>,
+    cx: &mut AppContext,
+) -> Arc<dyn CallHub> {
+    let active_call = cx.build_model(|cx| ActiveCall::new(client, user_store, cx));
+    Arc::new(ActiveCallWrapper(active_call))
+}
 
 impl ActiveCall {
     fn new(client: Arc<Client>, user_store: Model<UserStore>, cx: &mut ModelContext<Self>) -> Self {
@@ -158,10 +158,6 @@ impl ActiveCall {
             }
         })?;
         Ok(())
-    }
-
-    pub fn global(cx: &AppContext) -> Model<Self> {
-        cx.global::<Model<Self>>().clone()
     }
 
     pub fn invite(
@@ -408,18 +404,6 @@ impl ActiveCall {
         })
     }
 
-    pub fn hang_up(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
-        cx.notify();
-        self.report_call_event("hang up", cx);
-
-        Audio::end_call(cx);
-        if let Some((room, _)) = self.room.take() {
-            room.update(cx, |room, cx| room.leave(cx))
-        } else {
-            Task::ready(Ok(()))
-        }
-    }
-
     pub fn share_project(
         &mut self,
         project: Model<Project>,
@@ -541,7 +525,7 @@ pub fn report_call_event_for_channel(
     client: &Arc<Client>,
     cx: &AppContext,
 ) {
-    let room = ActiveCall::global(cx).read(cx).room();
+    let room = workspace::call_hub(cx).room(cx);
 
     let telemetry = client.telemetry();
 
@@ -550,210 +534,106 @@ pub fn report_call_event_for_channel(
     telemetry.report_call_event(
         telemetry_settings,
         operation,
-        room.map(|r| r.read(cx).id()),
+        room.map(|r| r.id(cx)),
         Some(channel_id),
     )
 }
 
-pub struct Call {
-    active_call: Option<(Model<ActiveCall>, Vec<Subscription>)>,
-    parent_workspace: WeakView<Workspace>,
-}
-
-impl Call {
-    pub fn new(
-        parent_workspace: WeakView<Workspace>,
-        cx: &mut ViewContext<'_, Workspace>,
-    ) -> Box<dyn CallHandler> {
-        let mut active_call = None;
-        if cx.has_global::<Model<ActiveCall>>() {
-            let call = cx.global::<Model<ActiveCall>>().clone();
-            let subscriptions = vec![cx.subscribe(&call, Self::on_active_call_event)];
-            active_call = Some((call, subscriptions));
+// pub fn new(
+//     parent_workspace: WeakView<Workspace>,
+//     cx: &mut ViewContext<'_, Workspace>,
+// ) -> Box<dyn CallHandler> {
+//     let mut active_call = None;
+//     if cx.has_global::<Model<ActiveCall>>() {
+//         let call = cx.global::<Model<ActiveCall>>().clone();
+//         let subscriptions = vec![cx.subscribe(&call, Self::on_active_call_event)];
+//         active_call = Some((call, subscriptions));
+//     }
+//     Box::new(Self {
+//         active_call,
+//         parent_workspace,
+//     })
+// }
+fn on_active_call_event(
+    workspace: &mut Workspace,
+    _: Model<ActiveCall>,
+    event: &room::Event,
+    cx: &mut ViewContext<Workspace>,
+) {
+    match event {
+        room::Event::ParticipantLocationChanged { participant_id }
+        | room::Event::RemoteVideoTracksChanged { participant_id } => {
+            workspace.leader_updated(*participant_id, cx);
         }
-        Box::new(Self {
-            active_call,
-            parent_workspace,
-        })
-    }
-    fn on_active_call_event(
-        workspace: &mut Workspace,
-        _: Model<ActiveCall>,
-        event: &room::Event,
-        cx: &mut ViewContext<Workspace>,
-    ) {
-        match event {
-            room::Event::ParticipantLocationChanged { participant_id }
-            | room::Event::RemoteVideoTracksChanged { participant_id } => {
-                workspace.leader_updated(*participant_id, cx);
-            }
-            _ => {}
-        }
+        _ => {}
     }
 }
+#[derive(Clone)]
+struct ActiveCallWrapper(Model<ActiveCall>);
 
-#[async_trait(?Send)]
-impl CallHandler for Call {
-    fn peer_state(
-        &mut self,
-        leader_id: PeerId,
-        cx: &mut ViewContext<Workspace>,
-    ) -> Option<(bool, bool)> {
-        let (call, _) = self.active_call.as_ref()?;
-        let room = call.read(cx).room()?.read(cx);
-        let participant = room.remote_participant_for_peer_id(leader_id)?;
-
-        let leader_in_this_app;
-        let leader_in_this_project;
-        match participant.location {
-            ParticipantLocation::SharedProject { project_id } => {
-                leader_in_this_app = true;
-                leader_in_this_project = Some(project_id)
-                    == self
-                        .parent_workspace
-                        .update(cx, |this, cx| this.project().read(cx).remote_id())
-                        .log_err()
-                        .flatten();
-            }
-            ParticipantLocation::UnsharedProject => {
-                leader_in_this_app = true;
-                leader_in_this_project = false;
-            }
-            ParticipantLocation::External => {
-                leader_in_this_app = false;
-                leader_in_this_project = false;
-            }
-        };
-
-        Some((leader_in_this_project, leader_in_this_app))
+impl CallHub for ActiveCallWrapper {
+    fn room(&self, cx: &AppContext) -> Option<Arc<dyn workspace::Room>> {
+        self.0
+            .read(cx)
+            .room
+            .as_ref()
+            .map(|(room, _)| Arc::new(RoomWrapper::new(room.clone())) as Arc<dyn workspace::Room>)
     }
 
-    fn shared_screen_for_peer(
-        &self,
-        peer_id: PeerId,
-        pane: &View<Pane>,
-        cx: &mut ViewContext<Workspace>,
-    ) -> Option<Box<dyn ItemHandle>> {
-        let (call, _) = self.active_call.as_ref()?;
-        let room = call.read(cx).room()?.read(cx);
-        let participant = room.remote_participant_for_peer_id(peer_id)?;
-        let track = participant.video_tracks.values().next()?.clone();
-        let user = participant.user.clone();
-        for item in pane.read(cx).items_of_type::<SharedScreen>() {
-            if item.read(cx).peer_id == peer_id {
-                return Some(Box::new(item));
-            }
-        }
-
-        Some(Box::new(cx.build_view(|cx| {
-            SharedScreen::new(&track, peer_id, user.clone(), cx)
-        })))
-    }
-    fn room_id(&self, cx: &AppContext) -> Option<u64> {
-        Some(self.active_call.as_ref()?.0.read(cx).room()?.read(cx).id())
-    }
-    fn hang_up(&self, cx: &mut AppContext) -> Task<Result<()>> {
-        let Some((call, _)) = self.active_call.as_ref() else {
-            return Task::ready(Err(anyhow!("Cannot exit a call; not in a call")));
-        };
-
-        call.update(cx, |this, cx| this.hang_up(cx))
-    }
     fn active_project(&self, cx: &AppContext) -> Option<WeakModel<Project>> {
-        ActiveCall::global(cx).read(cx).location().cloned()
+        self.0.read(cx).location().cloned()
     }
     fn invite(
-        &mut self,
+        &self,
         called_user_id: u64,
         initial_project: Option<Model<Project>>,
         cx: &mut AppContext,
     ) -> Task<Result<()>> {
-        ActiveCall::global(cx).update(cx, |this, cx| {
+        self.0.update(cx, |this, cx| {
             this.invite(called_user_id, initial_project, cx)
         })
     }
-    fn remote_participants(&self, cx: &AppContext) -> Option<Vec<(Arc<User>, PeerId)>> {
-        self.active_call
-            .as_ref()
-            .map(|call| {
-                call.0.read(cx).room().map(|room| {
-                    room.read(cx)
-                        .remote_participants()
-                        .iter()
-                        .map(|participant| {
-                            (participant.1.user.clone(), participant.1.peer_id.clone())
-                        })
-                        .collect()
-                })
-            })
-            .flatten()
+
+    fn accept_incoming(&self, cx: &mut AppContext) -> Task<Result<()>> {
+        self.0.update(cx, |this, cx| this.accept_incoming(cx))
     }
-    fn is_muted(&self, cx: &AppContext) -> Option<bool> {
-        self.active_call
-            .as_ref()
-            .map(|call| {
-                call.0
-                    .read(cx)
-                    .room()
-                    .map(|room| room.read(cx).is_muted(cx))
-            })
-            .flatten()
+
+    fn decline_incoming(&self, cx: &mut AppContext) -> Result<()> {
+        self.0.update(cx, |this, cx| this.decline_incoming(cx))
     }
-    fn toggle_mute(&self, cx: &mut AppContext) {
-        self.active_call.as_ref().map(|call| {
-            call.0.update(cx, |this, cx| {
-                this.room().map(|room| {
-                    let room = room.clone();
-                    cx.spawn(|_, mut cx| async move {
-                        room.update(&mut cx, |this, cx| this.toggle_mute(cx))??
-                            .await
-                    })
-                    .detach_and_log_err(cx);
-                })
-            })
-        });
+
+    fn pending_invites<'a>(&self, cx: &'a AppContext) -> &'a HashSet<u64> {
+        &self.0.read(cx).pending_invites
     }
-    fn toggle_screen_share(&self, cx: &mut AppContext) {
-        self.active_call.as_ref().map(|call| {
-            call.0.update(cx, |this, cx| {
-                this.room().map(|room| {
-                    room.update(cx, |this, cx| {
-                        if this.is_screen_sharing() {
-                            this.unshare_screen(cx).log_err();
-                        } else {
-                            let t = this.share_screen(cx);
-                            cx.spawn(move |_, _| async move {
-                                t.await.log_err();
-                            })
-                            .detach();
-                        }
-                    })
-                })
-            })
-        });
+
+    fn set_location(&self, project: Option<Model<Project>>, cx: &mut AppContext) {
+        self.0
+            .update(cx, |this, cx| this.set_location(project.as_ref(), cx))
+            .detach_and_log_err(cx)
     }
-    fn toggle_deafen(&self, cx: &mut AppContext) {
-        self.active_call.as_ref().map(|call| {
-            call.0.update(cx, |this, cx| {
-                this.room().map(|room| {
-                    room.update(cx, |this, cx| {
-                        this.toggle_deafen(cx).log_err();
-                    })
-                })
+
+    fn join_channel(
+        &self,
+        channel_id: u64,
+        requesting_window: Option<WindowHandle<Workspace>>,
+        cx: &mut AppContext,
+    ) -> Task<Result<()>> {
+        self.0.update(cx, |this, cx| {
+            cx.spawn(|this, mut cx| async move {
+                let this = this
+                    .upgrade()
+                    .ok_or_else(|| anyhow!("Could not upgrade a model handle"))?;
+                this.update(&mut cx, |this, cx| {
+                    this.join_channel(channel_id, requesting_window, cx)
+                })?
+                .await?;
+                Ok(())
             })
-        });
+        })
     }
-    fn is_deafened(&self, cx: &AppContext) -> Option<bool> {
-        self.active_call
-            .as_ref()
-            .map(|call| {
-                call.0
-                    .read(cx)
-                    .room()
-                    .map(|room| room.read(cx).is_deafened())
-            })
-            .flatten()
-            .flatten()
+
+    fn incoming(&self, cx: &AppContext) -> postage::watch::Receiver<Option<IncomingCall>> {
+        self.0.read(cx).incoming()
     }
 }
 

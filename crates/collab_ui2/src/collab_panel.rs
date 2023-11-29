@@ -1085,12 +1085,12 @@ impl CollabPanel {
                 if !matches.is_empty() {
                     self.entries.push(ListEntry::Header(section));
                     if !self.collapsed_sections.contains(&section) {
-                        let active_call = &ActiveCall::global(cx).read(cx);
+                        let active_call = workspace::call_hub(cx);
                         for mat in matches {
                             let contact = &contacts[mat.candidate_id];
                             self.entries.push(ListEntry::Contact {
                                 contact: contact.clone(),
-                                calling: active_call.pending_invites().contains(&contact.user.id),
+                                calling: active_call.pending_invites(cx).contains(&contact.user.id),
                             });
                         }
                     }
@@ -2509,15 +2509,12 @@ impl CollabPanel {
         let Some(handle) = cx.window_handle().downcast::<Workspace>() else {
             return;
         };
-        let active_call = ActiveCall::global(cx);
+        let active_call = workspace::call_hub(cx);
         cx.spawn(|_, mut cx| async move {
-            active_call
-                .update(&mut cx, |active_call, cx| {
-                    active_call.join_channel(channel_id, Some(handle), cx)
-                })
-                .log_err()?
-                .await
-                .notify_async_err(&mut cx)
+            let task = cx.update(|_, cx| active_call.join_channel(channel_id, Some(handle), cx))?;
+
+            task.await.notify_async_err(&mut cx);
+            Result::<(), anyhow::Error>::Ok(())
         })
         .detach()
     }
@@ -2736,13 +2733,9 @@ impl CollabPanel {
         let github_login = SharedString::from(contact.user.github_login.clone());
         let mut item = ListItem::new(github_login.clone())
             .on_click(cx.listener(move |this, _, cx| {
-                this.workspace
-                    .update(cx, |this, cx| {
-                        this.call_state()
-                            .invite(user_id, None, cx)
-                            .detach_and_log_err(cx)
-                    })
-                    .log_err();
+                workspace::call_hub(cx)
+                    .invite(user_id, None, cx)
+                    .detach_and_log_err(cx);
             }))
             .child(Label::new(github_login.clone()));
         if let Some(avatar) = contact.user.avatar.clone() {
@@ -3024,11 +3017,7 @@ impl CollabPanel {
         let channel_id = channel.id;
 
         let is_active = maybe!({
-            let call_channel = ActiveCall::global(cx)
-                .read(cx)
-                .room()?
-                .read(cx)
-                .channel_id()?;
+            let call_channel = workspace::call_hub(cx).room(cx)?.channel_id(cx)?;
             Some(call_channel == channel_id)
         })
         .unwrap_or(false);
