@@ -4,17 +4,13 @@ pub mod room;
 mod shared_screen;
 
 use anyhow::{anyhow, Result};
-use audio::Audio;
 use call_settings::CallSettings;
-use client::{
-    proto::{self, PeerId},
-    Client, TelemetrySettings, TypedEnvelope, User, UserStore, ZED_ALWAYS_ACTIVE,
-};
+use client::{proto, Client, TelemetrySettings, TypedEnvelope, UserStore, ZED_ALWAYS_ACTIVE};
 use collections::HashSet;
 use futures::{channel::oneshot, future::Shared, Future, FutureExt};
 use gpui::{
     AppContext, AsyncAppContext, Context, EventEmitter, Model, ModelContext, PromptLevel,
-    Subscription, Task, View, ViewContext, VisualContext, WeakModel, WeakView, WindowHandle,
+    Subscription, Task, WeakModel, WindowHandle,
 };
 pub use participant::ParticipantLocation;
 use postage::watch;
@@ -22,10 +18,8 @@ use project::Project;
 pub use room::Room;
 use room::{Event, RoomWrapper};
 use settings::Settings;
-use shared_screen::SharedScreen;
 use std::sync::Arc;
-use util::ResultExt;
-use workspace::{item::ItemHandle, CallHub, IncomingCall, Pane, Workspace};
+use workspace::{CallHub, IncomingCall, Workspace};
 
 pub fn init(client: Arc<Client>, user_store: Model<UserStore>, cx: &mut AppContext) {
     CallSettings::register(cx);
@@ -335,20 +329,20 @@ impl ActiveCall {
     ) -> Task<Result<Option<Model<Room>>>> {
         if let Some(room) = self.room().cloned() {
             if room.read(cx).channel_id() == Some(channel_id) {
-                return cx.spawn(|_, _| async move {
-                    todo!();
-                    // let future = room.update(&mut cx, |room, cx| {
-                    //     room.most_active_project(cx).map(|(host, project)| {
-                    //         room.join_project(project, host, app_state.clone(), cx)
-                    //     })
-                    // })
+                todo!()
+                // return cx.spawn(|_, cx| async move {
+                //     let future = room.update(&mut cx, |room, cx| {
+                //         room.most_active_project(cx).map(|(host, project)| {
+                //             room.join_project(project, host, app_state.clone(), cx)
+                //         })
+                //     })?;
 
-                    // if let Some(future) = future {
-                    //     future.await?;
-                    // }
+                //     if let Some(future) = future {
+                //         future.await?;
+                //     }
 
-                    // Ok(Some(room))
-                });
+                //     Ok(Some(room))
+                // });
             }
 
             let should_prompt = room.update(cx, |room, _| {
@@ -554,20 +548,20 @@ pub fn report_call_event_for_channel(
 //         parent_workspace,
 //     })
 // }
-fn on_active_call_event(
-    workspace: &mut Workspace,
-    _: Model<ActiveCall>,
-    event: &room::Event,
-    cx: &mut ViewContext<Workspace>,
-) {
-    match event {
-        room::Event::ParticipantLocationChanged { participant_id }
-        | room::Event::RemoteVideoTracksChanged { participant_id } => {
-            workspace.leader_updated(*participant_id, cx);
-        }
-        _ => {}
-    }
-}
+// fn on_active_call_event(
+//     workspace: &mut Workspace,
+//     _: Model<ActiveCall>,
+//     event: &room::Event,
+//     cx: &mut ViewContext<Workspace>,
+// ) {
+//     match event {
+//         room::Event::ParticipantLocationChanged { participant_id }
+//         | room::Event::RemoteVideoTracksChanged { participant_id } => {
+//             workspace.leader_updated(*participant_id, cx);
+//         }
+//         _ => {}
+//     }
+// }
 #[derive(Clone)]
 struct ActiveCallWrapper(Model<ActiveCall>);
 
@@ -618,7 +612,7 @@ impl CallHub for ActiveCallWrapper {
         requesting_window: Option<WindowHandle<Workspace>>,
         cx: &mut AppContext,
     ) -> Task<Result<()>> {
-        self.0.update(cx, |this, cx| {
+        self.0.update(cx, |_, cx| {
             cx.spawn(|this, mut cx| async move {
                 let this = this
                     .upgrade()

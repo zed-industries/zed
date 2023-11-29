@@ -364,7 +364,6 @@ impl CollabTitlebarItem {
         let project = workspace.project().clone();
         let user_store = workspace.app_state().user_store.clone();
         let client = workspace.app_state().client.clone();
-        let active_call = workspace::call_hub(cx);
         let mut subscriptions = Vec::new();
         subscriptions.push(
             cx.observe(&workspace.weak_handle().upgrade().unwrap(), |_, _, cx| {
@@ -567,9 +566,9 @@ impl CollabTitlebarItem {
         workspace::call_hub(cx).set_location(project, cx);
     }
 
-    fn active_call_changed(&mut self, cx: &mut ViewContext<Self>) {
-        cx.notify();
-    }
+    // fn active_call_changed(&mut self, cx: &mut ViewContext<Self>) {
+    //     cx.notify();
+    // }
 
     // fn share_project(&mut self, _: &ShareProject, cx: &mut ViewContext<Self>) {
     //     let active_call = ActiveCall::global(cx);
