@@ -4,7 +4,7 @@ use gpui::{
 };
 use picker::{Picker, PickerDelegate};
 use std::sync::Arc;
-use theme2::ActiveTheme;
+use theme::ActiveTheme;
 use ui::{Label, ListItem};
 
 pub struct PickerStory {

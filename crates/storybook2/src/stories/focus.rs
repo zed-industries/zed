@@ -2,7 +2,7 @@ use gpui::{
     actions, div, prelude::*, Div, FocusHandle, Focusable, KeyBinding, Render, Stateful, View,
     WindowContext,
 };
-use theme2::ActiveTheme;
+use theme::ActiveTheme;
 
 actions!(ActionA, ActionB, ActionC);
 

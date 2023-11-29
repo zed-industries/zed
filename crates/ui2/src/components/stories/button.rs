@@ -10,8 +10,6 @@ impl Render for ButtonStory {
     type Element = Div;
 
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
-        let states = InteractionState::iter();
-
         Story::container()
             .child(Story::title_for::<Button>())
             .child(

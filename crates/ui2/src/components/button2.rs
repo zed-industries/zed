@@ -6,6 +6,8 @@ use smallvec::SmallVec;
 
 use crate::{h_stack, prelude::*};
 
+// 🚧 Heavily WIP 🚧
+
 // #[derive(Default, PartialEq, Clone, Copy)]
 // pub enum ButtonType2 {
 //     #[default]
@@ -189,7 +191,7 @@ pub enum ButtonSize2 {
 //     children: SmallVec<[AnyElement; 2]>,
 // }
 
-pub trait ButtonCommon: Clickable + Selectable {
+pub trait ButtonCommon: Clickable {
     fn id(&self) -> &ElementId;
     fn style(&mut self, style: ButtonStyle2) -> &mut Self;
     fn disabled(&mut self, disabled: bool) -> &mut Self;
@@ -198,7 +200,7 @@ pub trait ButtonCommon: Clickable + Selectable {
     // fn width(&mut self, width: DefiniteLength) -> &mut Self;
 }
 
-// pub struct Button {
+// pub struct LabelButton {
 //     // Base properties...
 //     id: ElementId,
 //     appearance: ButtonAppearance,
@@ -216,7 +218,7 @@ pub trait ButtonCommon: Clickable + Selectable {
 //     // Define more fields for additional properties as needed
 // }
 
-// impl ButtonCommon for Button {
+// impl ButtonCommon for LabelButton {
 //     fn id(&self) -> &ElementId {
 //         &self.id
 //     }
@@ -228,7 +230,7 @@ pub trait ButtonCommon: Clickable + Selectable {
 //     // implement methods from ButtonCommon trait...
 // }
 
-// impl Button {
+// impl LabelButton {
 //     pub fn new(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Self {
 //         Self {
 //             id: id.into(),
@@ -285,18 +287,18 @@ impl Clickable for ButtonLike {
     }
 }
 
-impl Selectable for ButtonLike {
-    fn selected(&mut self, selected: bool) -> &mut Self {
-        todo!()
-    }
+// impl Selectable for ButtonLike {
+//     fn selected(&mut self, selected: bool) -> &mut Self {
+//         todo!()
+//     }
 
-    fn selected_tooltip(
-        &mut self,
-        tooltip: Box<dyn Fn(&mut WindowContext) -> AnyView + 'static>,
-    ) -> &mut Self {
-        todo!()
-    }
-}
+//     fn selected_tooltip(
+//         &mut self,
+//         tooltip: Box<dyn Fn(&mut WindowContext) -> AnyView + 'static>,
+//     ) -> &mut Self {
+//         todo!()
+//     }
+// }
 
 impl ButtonCommon for ButtonLike {
     fn id(&self) -> &ElementId {

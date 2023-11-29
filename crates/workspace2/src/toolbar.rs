@@ -3,7 +3,7 @@ use gpui::{
     div, AnyView, Div, Entity, EntityId, EventEmitter, ParentElement as _, Render, Styled, View,
     ViewContext, WindowContext,
 };
-use theme2::ActiveTheme;
+use ui::prelude::*;
 use ui::{h_stack, v_stack, Button, Color, Icon, IconButton, Label};
 
 pub enum ToolbarItemEvent {

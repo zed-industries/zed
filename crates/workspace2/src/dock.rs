@@ -7,7 +7,7 @@ use gpui::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use theme2::ActiveTheme;
+use ui::prelude::*;
 use ui::{h_stack, menu_handle, ContextMenu, IconButton, Tooltip};
 
 pub enum PanelEvent {
