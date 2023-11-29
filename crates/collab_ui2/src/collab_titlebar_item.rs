@@ -30,9 +30,9 @@ use std::sync::Arc;
 
 use client::{Client, UserStore};
 use gpui::{
-    actions, div, px, rems, AppContext, Div, Element, InteractiveElement, IntoElement, Model,
-    MouseButton, ParentElement, Render, RenderOnce, Stateful, StatefulInteractiveElement, Styled,
-    Subscription, ViewContext, VisualContext, WeakView, WindowBounds,
+    div, px, rems, AppContext, Div, Element, InteractiveElement, IntoElement, Model, MouseButton,
+    ParentElement, Render, RenderOnce, Stateful, StatefulInteractiveElement, Styled, Subscription,
+    ViewContext, VisualContext, WeakView, WindowBounds,
 };
 use project::Project;
 use theme::ActiveTheme;
@@ -220,8 +220,13 @@ impl Render for CollabTitlebarItem {
                                             let room = room.clone();
                                             let project = self.project.clone();
                                             move |_, cx| {
-                                                room.share_project(project.clone(), cx)
-                                                    .detach_and_log_err(cx);
+                                                if is_shared {
+                                                    room.unshare_project(project.clone(), cx)
+                                                        .log_err();
+                                                } else {
+                                                    room.share_project(project.clone(), cx)
+                                                        .detach_and_log_err(cx);
+                                                }
                                             }
                                         }),
                                 )

@@ -1637,6 +1637,11 @@ impl workspace::Room for RoomWrapper {
         self.0
             .update(cx, |this, cx| this.share_project(project, cx))
     }
+
+    fn unshare_project(&self, project: Model<Project>, cx: &mut AppContext) -> Result<()> {
+        self.0
+            .update(cx, |this, cx| this.unshare_project(project, cx))
+    }
 }
 struct LiveKitRoom {
     room: Arc<live_kit_client::Room>,
