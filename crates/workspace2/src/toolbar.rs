@@ -4,7 +4,7 @@ use gpui::{
     ViewContext, WindowContext,
 };
 use ui::prelude::*;
-use ui::{h_stack, v_stack, Button, Color, Icon, IconButton, Label};
+use ui::{h_stack, v_stack, ButtonLike, Color, Icon, IconButton, Label};
 
 pub enum ToolbarItemEvent {
     ChangeLocation(ToolbarItemLocation),
@@ -90,13 +90,14 @@ impl Render for Toolbar {
                     .justify_between()
                     .child(
                         // Toolbar left side
-                        h_stack()
-                            .border()
-                            .border_color(gpui::red())
-                            .p_1()
-                            .child(Button::new("breadcrumb_crates", "crates"))
-                            .child(Label::new("/").color(Color::Muted))
-                            .child(Button::new("breadcrumb_workspace2", "workspace2")),
+                        h_stack().border().border_color(gpui::red()).p_1().child(
+                            ButtonLike::new("breadcrumb")
+                                .child(Label::new("crates/workspace2/src/toolbar.rs"))
+                                .child(Label::new("›").color(Color::Muted))
+                                .child(Label::new("impl Render for Toolbar"))
+                                .child(Label::new("›").color(Color::Muted))
+                                .child(Label::new("fn render")),
+                        ),
                     )
                     // Toolbar right side
                     .child(
