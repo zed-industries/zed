@@ -179,7 +179,7 @@ use project::Fs;
 use serde_derive::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use ui::{
-    h_stack, v_stack, Avatar, OldButton, Color, ContextMenu, Icon, IconButton, IconElement, IconSize,
+    h_stack, v_stack, Avatar, OldButton, Color, ContextMenu, Icon, OldIconButton, IconElement, IconSize,
     Label, List, ListHeader, ListItem, Tooltip,
 };
 use util::{maybe, ResultExt, TryFutureExt};
@@ -2469,7 +2469,7 @@ impl CollabPanel {
                 todo!()
             }
             Section::Contacts => Some(
-                IconButton::new("add-contact", Icon::Plus)
+                OldIconButton::new("add-contact", Icon::Plus)
                     .on_click(cx.listener(|this, _, cx| this.toggle_contact_finder(cx)))
                     .tooltip(|cx| Tooltip::text("Search for new contact", cx)),
             ),
@@ -2485,7 +2485,7 @@ impl CollabPanel {
                 // }
 
                 Some(
-                    IconButton::new("add-channel", Icon::Plus)
+                    OldIconButton::new("add-channel", Icon::Plus)
                         .on_click(cx.listener(|this, _, cx| this.new_root_channel(cx)))
                         .tooltip(|cx| Tooltip::text("Create a channel", cx)),
                 )
@@ -2563,7 +2563,7 @@ impl CollabPanel {
                             .invisible()
                             .group_hover("", |style| style.visible())
                             .child(
-                                IconButton::new("remove_contact", Icon::Close)
+                                OldIconButton::new("remove_contact", Icon::Close)
                                     .color(Color::Muted)
                                     .tooltip(|cx| Tooltip::text("Remove Contact", cx))
                                     .on_click(cx.listener(move |this, _, cx| {
@@ -2684,13 +2684,13 @@ impl CollabPanel {
 
         let controls = if is_incoming {
             vec![
-                IconButton::new("remove_contact", Icon::Close)
+                OldIconButton::new("remove_contact", Icon::Close)
                     .on_click(cx.listener(move |this, _, cx| {
                         this.respond_to_contact_request(user_id, false, cx);
                     }))
                     .color(color)
                     .tooltip(|cx| Tooltip::text("Decline invite", cx)),
-                IconButton::new("remove_contact", Icon::Check)
+                OldIconButton::new("remove_contact", Icon::Check)
                     .on_click(cx.listener(move |this, _, cx| {
                         this.respond_to_contact_request(user_id, true, cx);
                     }))
@@ -2699,7 +2699,7 @@ impl CollabPanel {
             ]
         } else {
             let github_login = github_login.clone();
-            vec![IconButton::new("remove_contact", Icon::Close)
+            vec![OldIconButton::new("remove_contact", Icon::Close)
                 .on_click(cx.listener(move |this, _, cx| {
                     this.remove_contact(user_id, &github_login, cx);
                 }))
@@ -2842,7 +2842,7 @@ impl CollabPanel {
                                             .when(!has_messages_notification, |el| el.invisible())
                                             .group_hover("", |style| style.visible())
                                             .child(
-                                                IconButton::new(
+                                                OldIconButton::new(
                                                     "channel_chat",
                                                     Icon::MessageBubbles,
                                                 )
@@ -2860,7 +2860,7 @@ impl CollabPanel {
                                             .when(!has_notes_notification, |el| el.invisible())
                                             .group_hover("", |style| style.visible())
                                             .child(
-                                                IconButton::new("channel_notes", Icon::File)
+                                                OldIconButton::new("channel_notes", Icon::File)
                                                     .color(if has_notes_notification {
                                                         Color::Default
                                                     } else {

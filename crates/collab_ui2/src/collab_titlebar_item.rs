@@ -38,7 +38,7 @@ use gpui::{
 use project::Project;
 use theme::ActiveTheme;
 use ui::{
-    h_stack, Avatar, OldButton, ButtonCommon, ButtonLike, ButtonVariant, Clickable, Color, IconButton,
+    h_stack, Avatar, OldButton, ButtonCommon, ButtonLike, ButtonVariant, Clickable, Color, OldIconButton,
     IconElement, IconSize, KeyBinding, Tooltip,
 };
 use util::ResultExt;
@@ -239,7 +239,7 @@ impl Render for CollabTitlebarItem {
                         .child(
                             h_stack()
                                 .child(OldButton::new(if is_shared { "Unshare" } else { "Share" }))
-                                .child(IconButton::new("leave-call", ui::Icon::Exit).on_click({
+                                .child(OldIconButton::new("leave-call", ui::Icon::Exit).on_click({
                                     let workspace = workspace.clone();
                                     move |_, cx| {
                                         workspace
@@ -252,7 +252,7 @@ impl Render for CollabTitlebarItem {
                         )
                         .child(
                             h_stack()
-                                .child(IconButton::new("mute-microphone", mic_icon).on_click({
+                                .child(OldIconButton::new("mute-microphone", mic_icon).on_click({
                                     let workspace = workspace.clone();
                                     move |_, cx| {
                                         workspace
@@ -262,7 +262,7 @@ impl Render for CollabTitlebarItem {
                                             .log_err();
                                     }
                                 }))
-                                .child(IconButton::new("mute-sound", speakers_icon).on_click({
+                                .child(OldIconButton::new("mute-sound", speakers_icon).on_click({
                                     let workspace = workspace.clone();
                                     move |_, cx| {
                                         workspace
@@ -272,7 +272,7 @@ impl Render for CollabTitlebarItem {
                                             .log_err();
                                     }
                                 }))
-                                .child(IconButton::new("screen-share", ui::Icon::Screen).on_click(
+                                .child(OldIconButton::new("screen-share", ui::Icon::Screen).on_click(
                                     move |_, cx| {
                                         workspace
                                             .update(cx, |this, cx| {

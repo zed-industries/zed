@@ -2,7 +2,7 @@ use crate::{h_stack, prelude::*, Icon, IconElement, IconSize};
 use gpui::{prelude::*, Action, AnyView, ClickEvent, Div, Stateful};
 
 #[derive(IntoElement)]
-pub struct IconButton {
+pub struct OldIconButton {
     id: ElementId,
     icon: Icon,
     color: Color,
@@ -14,7 +14,7 @@ pub struct IconButton {
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
 }
 
-impl RenderOnce for IconButton {
+impl RenderOnce for OldIconButton {
     type Rendered = Stateful<Div>;
 
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {
@@ -74,7 +74,7 @@ impl RenderOnce for IconButton {
     }
 }
 
-impl IconButton {
+impl OldIconButton {
     pub fn new(id: impl Into<ElementId>, icon: Icon) -> Self {
         Self {
             id: id.into(),

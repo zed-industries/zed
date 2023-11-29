@@ -8,7 +8,7 @@ use gpui::{
 };
 
 use crate::prelude::*;
-use crate::{h_stack, Color, Icon, IconButton, IconElement, Label, LineHeightStyle};
+use crate::{h_stack, Color, Icon, OldIconButton, IconElement, Label, LineHeightStyle};
 
 pub use button::*;
 pub use button_like::*;
@@ -17,7 +17,7 @@ pub use button_like::*;
 /// button or an icon button in a given context.
 pub enum ButtonOrIconButton {
     Button(OldButton),
-    IconButton(IconButton),
+    IconButton(OldIconButton),
 }
 
 impl From<OldButton> for ButtonOrIconButton {
@@ -26,8 +26,8 @@ impl From<OldButton> for ButtonOrIconButton {
     }
 }
 
-impl From<IconButton> for ButtonOrIconButton {
-    fn from(value: IconButton) -> Self {
+impl From<OldIconButton> for ButtonOrIconButton {
+    fn from(value: OldIconButton) -> Self {
         Self::IconButton(value)
     }
 }

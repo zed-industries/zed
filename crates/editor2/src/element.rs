@@ -48,7 +48,7 @@ use std::{
 };
 use sum_tree::Bias;
 use theme::{ActiveTheme, PlayerColor};
-use ui::{h_stack, IconButton, Tooltip};
+use ui::{h_stack, OldIconButton, Tooltip};
 use util::ResultExt;
 use workspace::item::Item;
 
@@ -2187,7 +2187,7 @@ impl EditorElement {
                             .map_or(range.context.start, |primary| primary.start);
                         let jump_position = language::ToPoint::to_point(&jump_anchor, buffer);
 
-                        IconButton::new(block_id, ui::Icon::ArrowUpRight)
+                        OldIconButton::new(block_id, ui::Icon::ArrowUpRight)
                             .on_click(cx.listener_for(&self.editor, move |editor, e, cx| {
                                 editor.jump(jump_path.clone(), jump_position, jump_anchor, cx);
                             }))
@@ -3321,14 +3321,14 @@ pub struct LayoutState {
     context_menu: Option<(DisplayPoint, AnyElement)>,
     code_actions_indicator: Option<CodeActionsIndicator>,
     hover_popovers: Option<(DisplayPoint, Vec<AnyElement>)>,
-    fold_indicators: Vec<Option<IconButton>>,
+    fold_indicators: Vec<Option<OldIconButton>>,
     tab_invisible: ShapedLine,
     space_invisible: ShapedLine,
 }
 
 struct CodeActionsIndicator {
     row: u32,
-    button: IconButton,
+    button: OldIconButton,
 }
 
 struct PositionMap {

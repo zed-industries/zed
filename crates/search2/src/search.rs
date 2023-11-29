@@ -83,7 +83,7 @@ impl SearchOptions {
     }
 
     pub fn as_button(&self, active: bool) -> impl IntoElement {
-        ui::IconButton::new(0, self.icon())
+        ui::OldIconButton::new(0, self.icon())
             .on_click({
                 let action = self.to_toggle_action();
                 move |_, cx| {
@@ -97,7 +97,7 @@ impl SearchOptions {
 
 fn toggle_replace_button(active: bool) -> impl IntoElement {
     // todo: add toggle_replace button
-    ui::IconButton::new(0, ui::Icon::Replace)
+    ui::OldIconButton::new(0, ui::Icon::Replace)
         .on_click(|_, cx| {
             cx.dispatch_action(Box::new(ToggleReplace));
             cx.notify();
@@ -111,7 +111,7 @@ fn render_replace_button(
     icon: ui::Icon,
 ) -> impl IntoElement {
     // todo: add tooltip
-    ui::IconButton::new(0, icon).on_click(move |_, cx| {
+    ui::OldIconButton::new(0, icon).on_click(move |_, cx| {
         cx.dispatch_action(action.boxed_clone());
     })
 }

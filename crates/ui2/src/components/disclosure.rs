@@ -3,7 +3,7 @@ use std::rc::Rc;
 use gpui::ClickEvent;
 
 use crate::prelude::*;
-use crate::{Color, Icon, IconButton, IconSize};
+use crate::{Color, Icon, OldIconButton, IconSize};
 
 #[derive(IntoElement)]
 pub struct Disclosure {
@@ -29,10 +29,10 @@ impl Disclosure {
 }
 
 impl RenderOnce for Disclosure {
-    type Rendered = IconButton;
+    type Rendered = OldIconButton;
 
     fn render(self, _cx: &mut WindowContext) -> Self::Rendered {
-        IconButton::new(
+        OldIconButton::new(
             "toggle",
             if self.is_open {
                 Icon::ChevronDown

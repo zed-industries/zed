@@ -18,7 +18,7 @@ use project::search::SearchQuery;
 use serde::Deserialize;
 use std::{any::Any, sync::Arc};
 
-use ui::{h_stack, ButtonGroup, Icon, IconButton, IconElement};
+use ui::{h_stack, ButtonGroup, Icon, OldIconButton, IconElement};
 use util::ResultExt;
 use workspace::{
     item::ItemHandle,
@@ -586,7 +586,7 @@ impl BufferSearchBar {
 
         // let style = theme.search.action_button.clone();
 
-        IconButton::new(0, ui::Icon::SelectAll)
+        OldIconButton::new(0, ui::Icon::SelectAll)
             .on_click(|_, cx| cx.dispatch_action(Box::new(SelectAllMatches)))
     }
 

@@ -3,10 +3,10 @@ use std::rc::Rc;
 use gpui::{ClickEvent, Div};
 
 use crate::prelude::*;
-use crate::{h_stack, Disclosure, Icon, IconButton, IconElement, IconSize, Label};
+use crate::{h_stack, Disclosure, Icon, OldIconButton, IconElement, IconSize, Label};
 
 pub enum ListHeaderMeta {
-    Tools(Vec<IconButton>),
+    Tools(Vec<OldIconButton>),
     // TODO: This should be a button
     Button(Label),
     Text(Label),
@@ -54,7 +54,7 @@ impl ListHeader {
         self
     }
 
-    pub fn right_button(self, button: IconButton) -> Self {
+    pub fn right_button(self, button: OldIconButton) -> Self {
         self.meta(Some(ListHeaderMeta::Tools(vec![button])))
     }
 

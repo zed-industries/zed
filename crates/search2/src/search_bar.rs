@@ -1,5 +1,5 @@
 use gpui::{ClickEvent, IntoElement, WindowContext};
-use ui::{OldButton, ButtonVariant, IconButton};
+use ui::{OldButton, ButtonVariant, OldIconButton};
 
 use crate::mode::SearchMode;
 
@@ -15,7 +15,7 @@ pub(super) fn render_nav_button(
     //     CursorStyle::default()
     // };
     // enum NavButton {}
-    IconButton::new("search-nav-button", icon).on_click(on_click)
+    OldIconButton::new("search-nav-button", icon).on_click(on_click)
 }
 
 pub(crate) fn render_search_mode_button(

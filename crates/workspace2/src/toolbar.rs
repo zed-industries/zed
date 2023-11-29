@@ -4,7 +4,7 @@ use gpui::{
     ViewContext, WindowContext,
 };
 use ui::prelude::*;
-use ui::{h_stack, v_stack, OldButton, Color, Icon, IconButton, Label};
+use ui::{h_stack, v_stack, OldButton, Color, Icon, OldIconButton, Label};
 
 pub enum ToolbarItemEvent {
     ChangeLocation(ToolbarItemLocation),
@@ -106,13 +106,13 @@ impl Render for Toolbar {
                                 div()
                                     .border()
                                     .border_color(gpui::red())
-                                    .child(IconButton::new("buffer-search", Icon::MagnifyingGlass)),
+                                    .child(OldIconButton::new("buffer-search", Icon::MagnifyingGlass)),
                             )
                             .child(
                                 div()
                                     .border()
                                     .border_color(gpui::red())
-                                    .child(IconButton::new("inline-assist", Icon::MagicWand)),
+                                    .child(OldIconButton::new("inline-assist", Icon::MagicWand)),
                             ),
                     ),
             )

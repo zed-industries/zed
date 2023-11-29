@@ -8,7 +8,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use ui::prelude::*;
-use ui::{h_stack, menu_handle, ContextMenu, IconButton, Tooltip};
+use ui::{h_stack, menu_handle, ContextMenu, OldIconButton, Tooltip};
 
 pub enum PanelEvent {
     ChangePosition,
@@ -701,7 +701,7 @@ impl Render for PanelButtons {
                     (action, name.into())
                 };
 
-                let button = IconButton::new(name, icon)
+                let button = OldIconButton::new(name, icon)
                     .selected(is_active_button)
                     .action(action.boxed_clone())
                     .tooltip(move |cx| Tooltip::for_action(tooltip.clone(), &*action, cx));
