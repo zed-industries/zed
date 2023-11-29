@@ -75,6 +75,8 @@ pub(crate) fn one_dark() -> Theme {
                 tab_bar_background: bg,
                 tab_inactive_background: bg,
                 tab_active_background: editor,
+                search_match_background: bg, // todo!(this was inserted by Mikayla)
+
                 editor_background: editor,
                 editor_gutter_background: editor,
                 editor_subheader_background: bg,
@@ -92,6 +94,7 @@ pub(crate) fn one_dark() -> Theme {
                     0.2,
                 ),
                 editor_document_highlight_write_background: gpui::red(),
+
                 terminal_background: bg,
                 // todo!("Use one colors for terminal")
                 terminal_ansi_black: crate::black().dark().step_12(),
