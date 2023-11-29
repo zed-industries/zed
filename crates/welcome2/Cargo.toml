@@ -1,0 +1,37 @@
+[package]
+name = "welcome2"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+path = "src/welcome.rs"
+
+[features]
+test-support = []
+
+[dependencies]
+client = { package = "client2", path = "../client2" }
+editor = { package = "editor2", path = "../editor2" }
+fs = { package = "fs2", path = "../fs2" }
+fuzzy = { package = "fuzzy2", path = "../fuzzy2" }
+gpui = { package = "gpui2", path = "../gpui2" }
+ui = { package = "ui2", path = "../ui2" }
+db = { package = "db2", path = "../db2" }
+install_cli = { package = "install_cli2", path = "../install_cli2" }
+project = { package = "project2", path = "../project2" }
+settings = { package = "settings2", path = "../settings2" }
+theme = { package = "theme2", path = "../theme2" }
+theme_selector = { package = "theme_selector2", path = "../theme_selector2" }
+util = { path = "../util" }
+picker = { package = "picker2", path = "../picker2" }
+workspace = { package = "workspace2", path = "../workspace2" }
+# vim = { package = "vim2", path = "../vim2" }
+
+anyhow.workspace = true
+log.workspace = true
+schemars.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+editor = { package = "editor2", path = "../editor2", features = ["test-support"] }

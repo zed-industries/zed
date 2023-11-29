@@ -1,3 +1,8 @@
+use std::{
+    cmp::{self, Reverse},
+    sync::Arc,
+};
+
 use collections::{CommandPaletteFilter, HashMap};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
@@ -5,10 +10,7 @@ use gpui::{
     Keystroke, ParentElement, Render, Styled, View, ViewContext, VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};
-use std::{
-    cmp::{self, Reverse},
-    sync::Arc,
-};
+
 use ui::{h_stack, v_stack, HighlightedLabel, KeyBinding, ListItem};
 use util::{
     channel::{parse_zed_link, ReleaseChannel, RELEASE_CHANNEL},
