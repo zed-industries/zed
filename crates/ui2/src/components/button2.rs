@@ -11,12 +11,24 @@ use crate::{h_stack, prelude::*};
 // #[derive(Default, PartialEq, Clone, Copy)]
 // pub enum ButtonType2 {
 //     #[default]
-//     DefaultButton,
-//     IconButton,
-//     ButtonLike,
-//     SplitButton,
-//     ToggleButton,
+//     Button
+//     ButtonLike, // if this can  be in button we can remove it
+//     SplitButton, // Should just be it's own file/component
+//     ToggleButton, // not it's own type, just implements Selectable
 // }
+
+// LabelButton:
+// Button::label()
+//
+// IconButton:
+// Button::icon()
+//
+// ButtonLike/CustomButton:
+// Button::custom()
+
+// About disabled:
+// - [x] Disabled buttons should not be clickable
+// - [ ] When disabled, button style should be clobbered with the disabled style (same a selected)
 
 #[derive(Default, PartialEq, Clone, Copy)]
 pub enum IconPosition2 {
@@ -34,7 +46,7 @@ pub enum ButtonStyle2 {
     Transparent,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct ButtonStyle {
     pub background: Hsla,
     pub border_color: Hsla,
