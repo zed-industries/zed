@@ -625,6 +625,7 @@ impl Project {
         let Some(node) = self.node.as_ref().cloned() else {
             return;
         };
+        log::info!("Initializing default prettier with plugins {new_plugins:?}");
         let fs = Arc::clone(&self.fs);
         let locate_prettier_installation = match worktree.and_then(|worktree_id| {
             self.worktree_for_id(worktree_id, cx)
@@ -731,6 +732,7 @@ impl Project {
                                 .await
                                 .context("prettier & plugins install")
                                 .map_err(Arc::new)?;
+                            log::info!("Initialized prettier with plugins: {installed_plugins:?}");
                             project.update(&mut cx, |project, _| {
                                 project.default_prettier.prettier =
                                     PrettierInstallation::Installed(PrettierInstance {
