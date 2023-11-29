@@ -14,6 +14,7 @@
 
 mod clickable;
 mod components;
+mod disableable;
 mod fixed;
 pub mod prelude;
 mod selectable;
@@ -23,6 +24,7 @@ pub mod utils;
 
 pub use clickable::*;
 pub use components::*;
+pub use disableable::*;
 pub use fixed::*;
 pub use prelude::*;
 pub use selectable::*;

@@ -201,13 +201,11 @@ impl ButtonSize2 {
 //     children: SmallVec<[AnyElement; 2]>,
 // }
 
-pub trait ButtonCommon: Clickable {
+pub trait ButtonCommon: Clickable + Disableable {
     fn id(&self) -> &ElementId;
     fn style(self, style: ButtonStyle2) -> Self;
-    fn disabled(self, disabled: bool) -> Self;
     fn size(self, size: ButtonSize2) -> Self;
     fn tooltip(self, tooltip: impl Fn(&mut WindowContext) -> AnyView + 'static) -> Self;
-    // fn width(&mut self, width: DefiniteLength) -> &mut Self;
 }
 
 // pub struct LabelButton {
@@ -266,14 +264,6 @@ pub struct ButtonLike {
 }
 
 impl ButtonLike {
-    pub fn children(
-        &mut self,
-        children: impl IntoIterator<Item = impl Into<AnyElement>>,
-    ) -> &mut Self {
-        self.children = children.into_iter().map(Into::into).collect();
-        self
-    }
-
     pub fn new(id: impl Into<ElementId>) -> Self {
         Self {
             id: id.into(),
@@ -284,6 +274,13 @@ impl ButtonLike {
             children: SmallVec::new(),
             on_click: None,
         }
+    }
+}
+
+impl Disableable for ButtonLike {
+    fn disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
+        self
     }
 }
 
@@ -314,11 +311,6 @@ impl ButtonCommon for ButtonLike {
 
     fn style(mut self, style: ButtonStyle2) -> Self {
         self.style = style;
-        self
-    }
-
-    fn disabled(mut self, disabled: bool) -> Self {
-        self.disabled = disabled;
         self
     }
 
