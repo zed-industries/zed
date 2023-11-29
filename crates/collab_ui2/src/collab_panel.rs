@@ -2505,7 +2505,7 @@ impl CollabPanel {
             .when_some(button, |el, button| el.right_button(button))
             .selected(is_selected)
             .when(can_collapse, |el| {
-                el.toggle(Some(is_collapsed)).on_toggle(
+                el.toggle(is_collapsed).on_toggle(
                     cx.listener(move |this, _, cx| this.toggle_section_expanded(section, cx)),
                 )
             });

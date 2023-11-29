@@ -34,10 +34,9 @@ impl RenderOnce for Disclosure {
     fn render(self, _cx: &mut WindowContext) -> Self::Rendered {
         IconButton::new(
             "toggle",
-            if self.is_open {
-                Icon::ChevronDown
-            } else {
-                Icon::ChevronRight
+            match self.is_open {
+                true => Icon::ChevronDown,
+                false => Icon::ChevronRight,
             },
         )
         .color(Color::Muted)
