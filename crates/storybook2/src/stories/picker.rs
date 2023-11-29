@@ -51,7 +51,7 @@ impl PickerDelegate for Delegate {
         &self,
         ix: usize,
         selected: bool,
-        cx: &mut gpui::ViewContext<Picker<Self>>,
+        _cx: &mut gpui::ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let Some(candidate_ix) = self.matches.get(ix) else {
             return None;
@@ -61,6 +61,7 @@ impl PickerDelegate for Delegate {
 
         Some(
             ListItem::new(ix)
+                .inset(true)
                 .selected(selected)
                 .child(Label::new(candidate)),
         )
@@ -75,7 +76,7 @@ impl PickerDelegate for Delegate {
         cx.notify();
     }
 
-    fn confirm(&mut self, secondary: bool, cx: &mut gpui::ViewContext<Picker<Self>>) {
+    fn confirm(&mut self, secondary: bool, _cx: &mut gpui::ViewContext<Picker<Self>>) {
         let candidate_ix = self.matches[self.selected_ix];
         let candidate = self.candidates[candidate_ix].string.clone();
 

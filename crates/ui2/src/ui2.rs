@@ -11,8 +11,6 @@
 #![doc = include_str!("../docs/hello-world.md")]
 #![doc = include_str!("../docs/building-ui.md")]
 #![doc = include_str!("../docs/todo.md")]
-// TODO: Fix warnings instead of supressing.
-#![allow(dead_code, unused_variables)]
 
 mod clickable;
 mod components;

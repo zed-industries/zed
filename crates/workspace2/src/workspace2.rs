@@ -1808,22 +1808,22 @@ impl Workspace {
         pane
     }
 
-    //     pub fn add_item_to_center(
-    //         &mut self,
-    //         item: Box<dyn ItemHandle>,
-    //         cx: &mut ViewContext<Self>,
-    //     ) -> bool {
-    //         if let Some(center_pane) = self.last_active_center_pane.clone() {
-    //             if let Some(center_pane) = center_pane.upgrade(cx) {
-    //                 center_pane.update(cx, |pane, cx| pane.add_item(item, true, true, None, cx));
-    //                 true
-    //             } else {
-    //                 false
-    //             }
-    //         } else {
-    //             false
-    //         }
-    //     }
+    pub fn add_item_to_center(
+        &mut self,
+        item: Box<dyn ItemHandle>,
+        cx: &mut ViewContext<Self>,
+    ) -> bool {
+        if let Some(center_pane) = self.last_active_center_pane.clone() {
+            if let Some(center_pane) = center_pane.upgrade() {
+                center_pane.update(cx, |pane, cx| pane.add_item(item, true, true, None, cx));
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        }
+    }
 
     pub fn add_item(&mut self, item: Box<dyn ItemHandle>, cx: &mut ViewContext<Self>) {
         self.active_pane
@@ -2640,12 +2640,11 @@ impl Workspace {
                     .flex_col()
                     .justify_end()
                     .gap_2()
-                    .children(self.notifications.iter().map(|(_, _, notification)| {
-                        div()
-                            .on_any_mouse_down(|_, cx| cx.stop_propagation())
-                            .on_any_mouse_up(|_, cx| cx.stop_propagation())
-                            .child(notification.to_any())
-                    })),
+                    .children(
+                        self.notifications
+                            .iter()
+                            .map(|(_, _, notification)| notification.to_any()),
+                    ),
             )
         }
     }

@@ -9,7 +9,9 @@ pub struct ButtonStory;
 impl Render for ButtonStory {
     type Element = Div;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
+        let states = InteractionState::iter();
+
         Story::container()
             .child(Story::title_for::<Button>())
             .child(
@@ -71,7 +73,7 @@ impl Render for ButtonStory {
             .child(
                 Button::new("Label")
                     .variant(ButtonVariant::Ghost)
-                    .on_click(|_, cx| println!("Button clicked.")),
+                    .on_click(|_, _cx| println!("Button clicked.")),
             )
     }
 }

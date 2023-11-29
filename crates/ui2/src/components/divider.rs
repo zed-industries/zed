@@ -49,17 +49,4 @@ impl Divider {
         self.inset = true;
         self
     }
-
-    fn render(self, cx: &mut WindowContext) -> impl Element {
-        div()
-            .map(|this| match self.direction {
-                DividerDirection::Horizontal => {
-                    this.h_px().w_full().when(self.inset, |this| this.mx_1p5())
-                }
-                DividerDirection::Vertical => {
-                    this.w_px().h_full().when(self.inset, |this| this.my_1p5())
-                }
-            })
-            .bg(cx.theme().colors().border_variant)
-    }
 }

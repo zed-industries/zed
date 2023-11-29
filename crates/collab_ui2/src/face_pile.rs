@@ -3,8 +3,8 @@ use gpui::{
 };
 
 #[derive(Default)]
-pub(crate) struct FacePile {
-    faces: Vec<AnyElement>,
+pub struct FacePile {
+    pub faces: Vec<AnyElement>,
 }
 
 impl RenderOnce for FacePile {

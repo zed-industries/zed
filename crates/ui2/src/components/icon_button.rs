@@ -1,16 +1,17 @@
-use crate::{h_stack, prelude::*, Icon, IconElement};
-use gpui::{prelude::*, Action, AnyView, Div, MouseButton, MouseDownEvent, Stateful};
+use crate::{h_stack, prelude::*, Icon, IconElement, IconSize};
+use gpui::{prelude::*, Action, AnyView, ClickEvent, Div, Stateful};
 
 #[derive(IntoElement)]
 pub struct IconButton {
     id: ElementId,
     icon: Icon,
     color: Color,
+    size: IconSize,
     variant: ButtonVariant,
     disabled: bool,
     selected: bool,
     tooltip: Option<Box<dyn Fn(&mut WindowContext) -> AnyView + 'static>>,
-    on_mouse_down: Option<Box<dyn Fn(&MouseDownEvent, &mut WindowContext) + 'static>>,
+    on_click: Option<Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
 }
 
 impl RenderOnce for IconButton {
@@ -23,15 +24,13 @@ impl RenderOnce for IconButton {
             _ => self.color,
         };
 
-        let (mut bg_color, bg_hover_color, bg_active_color) = match self.variant {
+        let (mut bg_color, bg_active_color) = match self.variant {
             ButtonVariant::Filled => (
                 cx.theme().colors().element_background,
-                cx.theme().colors().element_hover,
                 cx.theme().colors().element_active,
             ),
             ButtonVariant::Ghost => (
                 cx.theme().colors().ghost_element_background,
-                cx.theme().colors().ghost_element_hover,
                 cx.theme().colors().ghost_element_active,
             ),
         };
@@ -52,11 +51,14 @@ impl RenderOnce for IconButton {
             // place we use an icon button.
             // .hover(|style| style.bg(bg_hover_color))
             .active(|style| style.bg(bg_active_color))
-            .child(IconElement::new(self.icon).color(icon_color));
+            .child(
+                IconElement::new(self.icon)
+                    .size(self.size)
+                    .color(icon_color),
+            );
 
-        if let Some(click_handler) = self.on_mouse_down {
-            button = button.on_mouse_down(MouseButton::Left, move |event, cx| {
-                cx.stop_propagation();
+        if let Some(click_handler) = self.on_click {
+            button = button.on_click(move |event, cx| {
                 click_handler(event, cx);
             })
         }
@@ -77,11 +79,12 @@ impl IconButton {
             id: id.into(),
             icon,
             color: Color::default(),
+            size: Default::default(),
             variant: ButtonVariant::default(),
             selected: false,
             disabled: false,
             tooltip: None,
-            on_mouse_down: None,
+            on_click: None,
         }
     }
 
@@ -92,6 +95,11 @@ impl IconButton {
 
     pub fn color(mut self, color: Color) -> Self {
         self.color = color;
+        self
+    }
+
+    pub fn size(mut self, size: IconSize) -> Self {
+        self.size = size;
         self
     }
 
@@ -115,15 +123,12 @@ impl IconButton {
         self
     }
 
-    pub fn on_click(
-        mut self,
-        handler: impl 'static + Fn(&MouseDownEvent, &mut WindowContext),
-    ) -> Self {
-        self.on_mouse_down = Some(Box::new(handler));
+    pub fn on_click(mut self, handler: impl 'static + Fn(&ClickEvent, &mut WindowContext)) -> Self {
+        self.on_click = Some(Box::new(handler));
         self
     }
 
     pub fn action(self, action: Box<dyn Action>) -> Self {
-        self.on_click(move |this, cx| cx.dispatch_action(action.boxed_clone()))
+        self.on_click(move |_event, cx| cx.dispatch_action(action.boxed_clone()))
     }
 }

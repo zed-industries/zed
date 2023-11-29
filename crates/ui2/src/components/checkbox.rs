@@ -1,7 +1,6 @@
 use gpui::{div, prelude::*, Div, Element, ElementId, IntoElement, Styled, WindowContext};
 
-use theme2::ActiveTheme;
-
+use crate::prelude::*;
 use crate::{Color, Icon, IconElement, Selection};
 
 pub type CheckHandler = Box<dyn Fn(&Selection, &mut WindowContext) + 'static>;
