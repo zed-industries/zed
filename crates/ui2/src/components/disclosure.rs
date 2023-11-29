@@ -40,7 +40,7 @@ impl RenderOnce for Disclosure {
                 Icon::ChevronRight
             },
         )
-        .color(Color::Muted)
+        .icon_color(Color::Muted)
         .icon_size(IconSize::Small)
         .when_some(self.on_toggle, move |this, on_toggle| {
             this.on_click(move |event, cx| on_toggle(event, cx))

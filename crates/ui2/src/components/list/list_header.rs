@@ -78,7 +78,7 @@ impl RenderOnce for ListHeader {
                 h_stack()
                     .gap_2()
                     .items_center()
-                    .children(icons.into_iter().map(|i| i.color(Color::Muted))),
+                    .children(icons.into_iter().map(|i| i.icon_color(Color::Muted))),
             ),
             Some(ListHeaderMeta::Button(label)) => div().child(label),
             Some(ListHeaderMeta::Text(label)) => div().child(label),

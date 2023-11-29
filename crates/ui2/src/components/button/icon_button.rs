@@ -33,8 +33,7 @@ impl IconButton {
         self
     }
 
-    // TODO: Rename to `icon_color`.
-    pub fn color(mut self, icon_color: Color) -> Self {
+    pub fn icon_color(mut self, icon_color: Color) -> Self {
         self.icon_color = icon_color;
         self
     }

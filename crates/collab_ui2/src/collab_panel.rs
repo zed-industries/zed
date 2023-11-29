@@ -2567,7 +2567,7 @@ impl CollabPanel {
                             .group_hover("", |style| style.visible())
                             .child(
                                 IconButton::new("remove_contact", Icon::Close)
-                                    .color(Color::Muted)
+                                    .icon_color(Color::Muted)
                                     .tooltip(|cx| Tooltip::text("Remove Contact", cx))
                                     .on_click(cx.listener(move |this, _, cx| {
                                         this.remove_contact(user_id, &github_login, cx);
@@ -2691,13 +2691,13 @@ impl CollabPanel {
                     .on_click(cx.listener(move |this, _, cx| {
                         this.respond_to_contact_request(user_id, false, cx);
                     }))
-                    .color(color)
+                    .icon_color(color)
                     .tooltip(|cx| Tooltip::text("Decline invite", cx)),
                 IconButton::new("remove_contact", Icon::Check)
                     .on_click(cx.listener(move |this, _, cx| {
                         this.respond_to_contact_request(user_id, true, cx);
                     }))
-                    .color(color)
+                    .icon_color(color)
                     .tooltip(|cx| Tooltip::text("Accept invite", cx)),
             ]
         } else {
@@ -2706,7 +2706,7 @@ impl CollabPanel {
                 .on_click(cx.listener(move |this, _, cx| {
                     this.remove_contact(user_id, &github_login, cx);
                 }))
-                .color(color)
+                .icon_color(color)
                 .tooltip(|cx| Tooltip::text("Cancel invite", cx))]
         };
 
@@ -2849,7 +2849,7 @@ impl CollabPanel {
                                                     "channel_chat",
                                                     Icon::MessageBubbles,
                                                 )
-                                                .color(if has_messages_notification {
+                                                .icon_color(if has_messages_notification {
                                                     Color::Default
                                                 } else {
                                                     Color::Muted
@@ -2864,7 +2864,7 @@ impl CollabPanel {
                                             .group_hover("", |style| style.visible())
                                             .child(
                                                 IconButton::new("channel_notes", Icon::File)
-                                                    .color(if has_notes_notification {
+                                                    .icon_color(if has_notes_notification {
                                                         Color::Default
                                                     } else {
                                                         Color::Muted
