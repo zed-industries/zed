@@ -1,7 +1,7 @@
 use gpui::{Hsla, WindowContext};
 use theme::ActiveTheme;
 
-#[derive(Default, PartialEq, Copy, Clone)]
+#[derive(Debug, Default, PartialEq, Copy, Clone)]
 pub enum Color {
     #[default]
     Default,

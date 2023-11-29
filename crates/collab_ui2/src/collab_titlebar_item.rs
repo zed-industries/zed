@@ -37,7 +37,10 @@ use gpui::{
 };
 use project::Project;
 use theme::ActiveTheme;
-use ui::{h_stack, Avatar, Button, ButtonVariant, Color, IconButton, KeyBinding, Tooltip};
+use ui::{
+    h_stack, Avatar, Button, ButtonCommon, ButtonLike, ButtonVariant, Clickable, Color, IconButton,
+    IconElement, IconSize, KeyBinding, Tooltip,
+};
 use util::ResultExt;
 use workspace::{notifications::NotifyResultExt, Workspace};
 
@@ -298,6 +301,27 @@ impl Render for CollabTitlebarItem {
                         })
                         .detach();
                     }))
+                    // Temporary, will be removed when the last part of button2 is merged
+                    .child(
+                        div().border().border_color(gpui::blue()).child(
+                            ButtonLike::new("test-button")
+                                .children([
+                                    Avatar::uri(
+                                        "https://avatars.githubusercontent.com/u/1714999?v=4",
+                                    )
+                                    .into_element()
+                                    .into_any(),
+                                    IconElement::new(ui::Icon::ChevronDown)
+                                        .size(IconSize::Small)
+                                        .into_element()
+                                        .into_any(),
+                                ])
+                                .on_click(move |event, _cx| {
+                                    dbg!(format!("clicked: {:?}", event.down.position));
+                                })
+                                .tooltip(|cx| Tooltip::text("Test tooltip", cx)),
+                        ),
+                    )
                 }
             })
     }
