@@ -1034,7 +1034,7 @@ impl sqlez::bindable::Bind for GlobalPixels {
 }
 
 #[derive(Clone, Copy, Default, Add, Sub, Mul, Div, Neg)]
-pub struct Rems(f32);
+pub struct Rems(pub f32);
 
 impl Mul<Pixels> for Rems {
     type Output = Pixels;
