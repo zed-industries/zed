@@ -9,7 +9,6 @@ pub struct IconButton {
     icon: Icon,
     icon_size: IconSize,
     icon_color: Color,
-    selected: bool,
 }
 
 impl IconButton {
@@ -19,13 +18,7 @@ impl IconButton {
             icon,
             icon_size: IconSize::default(),
             icon_color: Color::Default,
-            selected: false,
         }
-    }
-
-    pub fn selected(mut self, selected: bool) -> Self {
-        self.selected = selected;
-        self
     }
 
     pub fn icon_size(mut self, icon_size: IconSize) -> Self {
@@ -43,19 +36,26 @@ impl IconButton {
     }
 }
 
+impl Disableable for IconButton {
+    fn disabled(mut self, disabled: bool) -> Self {
+        self.base = self.base.disabled(disabled);
+        self
+    }
+}
+
+impl Selectable for IconButton {
+    fn selected(mut self, selected: bool) -> Self {
+        self.base = self.base.selected(selected);
+        self
+    }
+}
+
 impl Clickable for IconButton {
     fn on_click(
         mut self,
         handler: impl Fn(&gpui::ClickEvent, &mut WindowContext) + 'static,
     ) -> Self {
         self.base = self.base.on_click(handler);
-        self
-    }
-}
-
-impl Disableable for IconButton {
-    fn disabled(mut self, disabled: bool) -> Self {
-        self.base = self.base.disabled(disabled);
         self
     }
 }
@@ -87,7 +87,7 @@ impl RenderOnce for IconButton {
     fn render(self, _cx: &mut WindowContext) -> Self::Rendered {
         let icon_color = if self.base.disabled {
             Color::Disabled
-        } else if self.selected {
+        } else if self.base.selected {
             Color::Selected
         } else {
             self.icon_color
