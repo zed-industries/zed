@@ -90,10 +90,10 @@ use rpc::proto;
 //     channel_id: ChannelId,
 // }
 
-// #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-// pub struct OpenChannelNotes {
-//     pub channel_id: ChannelId,
-// }
+#[derive(Action, PartialEq, Debug, Clone, Serialize, Deserialize)]
+pub struct OpenChannelNotes {
+    pub channel_id: ChannelId,
+}
 
 // #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 // pub struct JoinChannelCall {
@@ -167,10 +167,10 @@ use editor::Editor;
 use feature_flags::{ChannelsAlpha, FeatureFlagAppExt};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
-    actions, div, img, prelude::*, serde_json, AppContext, AsyncWindowContext, Div, EventEmitter,
-    FocusHandle, Focusable, FocusableView, InteractiveElement, IntoElement, Model, ParentElement,
-    Render, RenderOnce, SharedString, Styled, Subscription, View, ViewContext, VisualContext,
-    WeakView,
+    actions, div, img, prelude::*, serde_json, Action, AppContext, AsyncWindowContext, Div,
+    EventEmitter, FocusHandle, Focusable, FocusableView, InteractiveElement, IntoElement, Model,
+    ParentElement, Render, RenderOnce, SharedString, Styled, Subscription, View, ViewContext,
+    VisualContext, WeakView,
 };
 use project::Fs;
 use serde_derive::{Deserialize, Serialize};
@@ -322,17 +322,17 @@ pub struct CollabPanel {
     subscriptions: Vec<Subscription>,
     collapsed_sections: Vec<Section>,
     collapsed_channels: Vec<ChannelId>,
-    // drag_target_channel: ChannelDragTarget,
+    drag_target_channel: ChannelDragTarget,
     workspace: WeakView<Workspace>,
     // context_menu_on_selected: bool,
 }
 
-// #[derive(PartialEq, Eq)]
-// enum ChannelDragTarget {
-//     None,
-//     Root,
-//     Channel(ChannelId),
-// }
+#[derive(PartialEq, Eq)]
+enum ChannelDragTarget {
+    None,
+    Root,
+    Channel(ChannelId),
+}
 
 #[derive(Serialize, Deserialize)]
 struct SerializedCollabPanel {
@@ -614,7 +614,7 @@ impl CollabPanel {
                 workspace: workspace.weak_handle(),
                 client: workspace.app_state().client.clone(),
                 //                 context_menu_on_selected: true,
-                //                 drag_target_channel: ChannelDragTarget::None,
+                drag_target_channel: ChannelDragTarget::None,
                 //                 list_state,
             };
 
@@ -2233,20 +2233,20 @@ impl CollabPanel {
     //         self.toggle_channel_collapsed(action.location, cx);
     //     }
 
-    //     fn toggle_channel_collapsed<'a>(&mut self, channel_id: ChannelId, cx: &mut ViewContext<Self>) {
-    //         match self.collapsed_channels.binary_search(&channel_id) {
-    //             Ok(ix) => {
-    //                 self.collapsed_channels.remove(ix);
-    //             }
-    //             Err(ix) => {
-    //                 self.collapsed_channels.insert(ix, channel_id);
-    //             }
-    //         };
-    //         self.serialize(cx);
-    //         self.update_entries(true, cx);
-    //         cx.notify();
-    //         cx.focus_self();
-    //     }
+    fn toggle_channel_collapsed<'a>(&mut self, channel_id: ChannelId, cx: &mut ViewContext<Self>) {
+        match self.collapsed_channels.binary_search(&channel_id) {
+            Ok(ix) => {
+                self.collapsed_channels.remove(ix);
+            }
+            Err(ix) => {
+                self.collapsed_channels.insert(ix, channel_id);
+            }
+        };
+        // self.serialize(cx); todo!()
+        self.update_entries(true, cx);
+        cx.notify();
+        cx.focus_self();
+    }
 
     fn is_channel_collapsed(&self, channel_id: ChannelId) -> bool {
         self.collapsed_channels.binary_search(&channel_id).is_ok()
@@ -2346,11 +2346,12 @@ impl CollabPanel {
     //         }
     //     }
 
-    //     fn open_channel_notes(&mut self, action: &OpenChannelNotes, cx: &mut ViewContext<Self>) {
-    //         if let Some(workspace) = self.workspace.upgrade(cx) {
-    //             ChannelView::open(action.channel_id, workspace, cx).detach();
-    //         }
-    //     }
+    fn open_channel_notes(&mut self, action: &OpenChannelNotes, cx: &mut ViewContext<Self>) {
+        if let Some(workspace) = self.workspace.upgrade() {
+            todo!();
+            // ChannelView::open(action.channel_id, workspace, cx).detach();
+        }
+    }
 
     //     fn show_inline_context_menu(&mut self, _: &menu::ShowContextMenu, cx: &mut ViewContext<Self>) {
     //         let Some(channel) = self.selected_channel() else {
@@ -2504,21 +2505,22 @@ impl CollabPanel {
     //             .detach_and_log_err(cx);
     //     }
 
-    //     fn join_channel(&self, channel_id: u64, cx: &mut ViewContext<Self>) {
-    //         let Some(workspace) = self.workspace.upgrade(cx) else {
-    //             return;
-    //         };
-    //         let Some(handle) = cx.window().downcast::<Workspace>() else {
-    //             return;
-    //         };
-    //         workspace::join_channel(
-    //             channel_id,
-    //             workspace.read(cx).app_state().clone(),
-    //             Some(handle),
-    //             cx,
-    //         )
-    //         .detach_and_log_err(cx)
-    //     }
+    fn join_channel(&self, channel_id: u64, cx: &mut ViewContext<Self>) {
+        let Some(handle) = cx.window_handle().downcast::<Workspace>() else {
+            return;
+        };
+        let active_call = ActiveCall::global(cx);
+        cx.spawn(|_, mut cx| async move {
+            active_call
+                .update(&mut cx, |active_call, cx| {
+                    active_call.join_channel(channel_id, Some(handle), cx)
+                })
+                .log_err()?
+                .await
+                .notify_async_err(&mut cx)
+        })
+        .detach()
+    }
 
     //     fn join_channel_chat(&mut self, action: &JoinChannelChat, cx: &mut ViewContext<Self>) {
     //         let channel_id = action.channel_id;
@@ -2982,9 +2984,7 @@ impl CollabPanel {
         is_selected: bool,
         cx: &mut ViewContext<Self>,
     ) -> impl IntoElement {
-        ListItem::new("contact-placeholder")
-            .child(Label::new("Add a Contact"))
-            .on_click(cx.listener(|this, _, cx| todo!()))
+        ListItem::new("contact-placeholder").child(Label::new("Add a Contact"))
         // enum AddContacts {}
         // MouseEventHandler::new::<AddContacts, _>(0, cx, |state, _| {
         //     let style = theme.list_empty_state.style_for(is_selected, state);
@@ -3023,6 +3023,15 @@ impl CollabPanel {
     ) -> impl IntoElement {
         let channel_id = channel.id;
 
+        let is_active = maybe!({
+            let call_channel = ActiveCall::global(cx)
+                .read(cx)
+                .room()?
+                .read(cx)
+                .channel_id()?;
+            Some(call_channel == channel_id)
+        })
+        .unwrap_or(false);
         let is_public = self
             .channel_store
             .read(cx)
@@ -3034,17 +3043,7 @@ impl CollabPanel {
             .then(|| !self.collapsed_channels.binary_search(&channel.id).is_ok())
             .unwrap_or(false);
 
-        let is_active = maybe!({
-            let call_channel = ActiveCall::global(cx)
-                .read(cx)
-                .room()?
-                .read(cx)
-                .channel_id()?;
-            Some(call_channel == channel_id)
-        })
-        .unwrap_or(false);
-
-        let has_messages_notification = channel.unseen_message_id.is_some() || true;
+        let has_messages_notification = channel.unseen_message_id.is_some();
         let has_notes_notification = channel.unseen_note_version.is_some();
 
         const FACEPILE_LIMIT: usize = 3;
@@ -3052,6 +3051,7 @@ impl CollabPanel {
 
         let face_pile = if !participants.is_empty() {
             let extra_count = participants.len().saturating_sub(FACEPILE_LIMIT);
+            let user = &participants[0];
 
             let result = FacePile {
                 faces: participants
@@ -3059,6 +3059,7 @@ impl CollabPanel {
                     .filter_map(|user| Some(Avatar::data(user.avatar.clone()?).into_any_element()))
                     .take(FACEPILE_LIMIT)
                     .chain(if extra_count > 0 {
+                        // todo!() @nate - this label looks wrong.
                         Some(Label::new(format!("+{}", extra_count)).into_any_element())
                     } else {
                         None
@@ -3081,7 +3082,7 @@ impl CollabPanel {
                         .w_full()
                         .justify_between()
                         .child(
-                            div()
+                            h_stack()
                                 .id(channel_id as usize)
                                 .child(Label::new(channel.name.clone()))
                                 .children(face_pile.map(|face_pile| face_pile.render(cx)))
@@ -3092,11 +3093,10 @@ impl CollabPanel {
                                 .child(
                                     div()
                                         .id("channel_chat")
-                                        .bg(gpui::blue())
                                         .when(!has_messages_notification, |el| el.invisible())
                                         .group_hover("", |style| style.visible())
                                         .child(
-                                            IconButton::new("test_chat", Icon::MessageBubbles)
+                                            IconButton::new("channel_chat", Icon::MessageBubbles)
                                                 .color(if has_messages_notification {
                                                     Color::Default
                                                 } else {
@@ -3111,20 +3111,16 @@ impl CollabPanel {
                                         .when(!has_notes_notification, |el| el.invisible())
                                         .group_hover("", |style| style.visible())
                                         .child(
-                                            div().child("Notes").id("test_notes").tooltip(|cx| {
-                                                Tooltip::text("Open channel notes", cx)
-                                            }),
-                                        ), // .child(
-                                           //     IconButton::new("channel_notes", Icon::File)
-                                           //         .color(if has_notes_notification {
-                                           //             Color::Default
-                                           //         } else {
-                                           //             Color::Muted
-                                           //         })
-                                           //         .tooltip(|cx| {
-                                           //             Tooltip::text("Open channel notes", cx)
-                                           //         }),
-                                           // ),
+                                            IconButton::new("channel_notes", Icon::File)
+                                                .color(if has_notes_notification {
+                                                    Color::Default
+                                                } else {
+                                                    Color::Muted
+                                                })
+                                                .tooltip(|cx| {
+                                                    Tooltip::text("Open channel notes", cx)
+                                                }),
+                                        ),
                                 ),
                         ),
                 )
@@ -3133,7 +3129,18 @@ impl CollabPanel {
                 } else {
                     Toggle::NotToggleable
                 })
-                .on_click(cx.listener(|this, _, cx| todo!()))
+                .on_toggle(
+                    cx.listener(move |this, _, cx| this.toggle_channel_collapsed(channel_id, cx)),
+                )
+                .on_click(cx.listener(move |this, _, cx| {
+                    if this.drag_target_channel == ChannelDragTarget::None {
+                        if is_active {
+                            this.open_channel_notes(&OpenChannelNotes { channel_id }, cx)
+                        } else {
+                            this.join_channel(channel_id, cx)
+                        }
+                    }
+                }))
                 .on_secondary_mouse_down(cx.listener(|this, _, cx| {
                     todo!() // open context menu
                 })),
