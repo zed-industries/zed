@@ -76,6 +76,8 @@ impl RenderOnce for Button {
     fn render(self, _cx: &mut WindowContext) -> Self::Rendered {
         let label_color = if self.base.disabled {
             Color::Disabled
+        } else if self.selected {
+            Color::Selected
         } else {
             Color::Default
         };
