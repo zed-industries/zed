@@ -3,7 +3,7 @@ use std::rc::Rc;
 use gpui::{ClickEvent, Div};
 
 use crate::prelude::*;
-use crate::{disclosure_control, h_stack, Icon, IconButton, IconElement, IconSize, Label, Toggle};
+use crate::{h_stack, Disclosure, Icon, IconButton, IconElement, IconSize, Label, Toggle};
 
 pub enum ListHeaderMeta {
     Tools(Vec<IconButton>),
@@ -73,8 +73,6 @@ impl RenderOnce for ListHeader {
     type Rendered = Div;
 
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {
-        let disclosure_control = disclosure_control(self.toggle, self.on_toggle);
-
         let meta = match self.meta {
             Some(ListHeaderMeta::Tools(icons)) => div().child(
                 h_stack()
@@ -115,7 +113,7 @@ impl RenderOnce for ListHeader {
                                 }))
                                 .child(Label::new(self.label.clone()).color(Color::Muted)),
                         )
-                        .child(disclosure_control),
+                        .child(Disclosure::new(self.toggle).on_toggle(self.on_toggle)),
                 )
                 .child(meta),
         )

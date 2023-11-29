@@ -1,30 +1,55 @@
 use std::rc::Rc;
 
-use gpui::{div, ClickEvent, Element, IntoElement, ParentElement, WindowContext};
+use gpui::{ClickEvent, Div};
 
+use crate::prelude::*;
 use crate::{Color, Icon, IconButton, IconSize, Toggle};
 
-pub fn disclosure_control(
+#[derive(IntoElement)]
+pub struct Disclosure {
     toggle: Toggle,
     on_toggle: Option<Rc<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
-) -> impl Element {
-    match (toggle.is_toggleable(), toggle.is_toggled()) {
-        (false, _) => div(),
-        (_, true) => div().child(
-            IconButton::new("toggle", Icon::ChevronDown)
-                .color(Color::Muted)
-                .size(IconSize::Small)
-                .when_some(on_toggle, move |el, on_toggle| {
-                    el.on_click(move |e, cx| on_toggle(e, cx))
-                }),
-        ),
-        (_, false) => div().child(
-            IconButton::new("toggle", Icon::ChevronRight)
-                .color(Color::Muted)
-                .size(IconSize::Small)
-                .when_some(on_toggle, move |el, on_toggle| {
-                    el.on_click(move |e, cx| on_toggle(e, cx))
-                }),
-        ),
+}
+
+impl Disclosure {
+    pub fn new(toggle: Toggle) -> Self {
+        Self {
+            toggle,
+            on_toggle: None,
+        }
+    }
+
+    pub fn on_toggle(
+        mut self,
+        handler: impl Into<Option<Rc<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>>,
+    ) -> Self {
+        self.on_toggle = handler.into();
+        self
+    }
+}
+
+impl RenderOnce for Disclosure {
+    type Rendered = Div;
+
+    fn render(self, _cx: &mut WindowContext) -> Self::Rendered {
+        if !self.toggle.is_toggleable() {
+            return div();
+        }
+
+        div().child(
+            IconButton::new(
+                "toggle",
+                if self.toggle.is_toggled() {
+                    Icon::ChevronDown
+                } else {
+                    Icon::ChevronRight
+                },
+            )
+            .color(Color::Muted)
+            .size(IconSize::Small)
+            .when_some(self.on_toggle, move |this, on_toggle| {
+                this.on_click(move |event, cx| on_toggle(event, cx))
+            }),
+        )
     }
 }

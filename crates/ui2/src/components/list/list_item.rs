@@ -6,7 +6,7 @@ use gpui::{
 use smallvec::SmallVec;
 
 use crate::prelude::*;
-use crate::{disclosure_control, Avatar, GraphicSlot, Icon, IconElement, IconSize, Toggle};
+use crate::{Avatar, Disclosure, GraphicSlot, Icon, IconElement, IconSize, Toggle};
 
 #[derive(IntoElement)]
 pub struct ListItem {
@@ -150,7 +150,7 @@ impl RenderOnce for ListItem {
                     .gap_1()
                     .items_center()
                     .relative()
-                    .child(disclosure_control(self.toggle, self.on_toggle))
+                    .child(Disclosure::new(self.toggle).on_toggle(self.on_toggle))
                     .map(|this| match self.left_slot {
                         Some(GraphicSlot::Icon(i)) => this.child(
                             IconElement::new(i)
