@@ -7,11 +7,13 @@ use anyhow::{anyhow, Result};
 use call_settings::CallSettings;
 use client::{proto, Client, TelemetrySettings, TypedEnvelope, UserStore, ZED_ALWAYS_ACTIVE};
 use collections::HashSet;
+use fs::Fs;
 use futures::{channel::oneshot, future::Shared, Future, FutureExt};
 use gpui::{
     AppContext, AsyncAppContext, Context, EventEmitter, Model, ModelContext, PromptLevel,
     Subscription, Task, WeakModel, WindowHandle,
 };
+use language::LanguageRegistry;
 pub use participant::ParticipantLocation;
 use postage::watch;
 use project::Project;
@@ -19,12 +21,12 @@ pub use room::Room;
 use room::{Event, RoomWrapper};
 use settings::Settings;
 use std::sync::Arc;
-use workspace::{CallHub, IncomingCall, Workspace};
+use workspace::{AppState, CallHub, IncomingCall, Workspace};
 
-pub fn init(client: Arc<Client>, user_store: Model<UserStore>, cx: &mut AppContext) {
+pub fn init(state: &AppState, cx: &mut AppContext) {
     CallSettings::register(cx);
 
-    let hub = create_call_hub(client, user_store, cx);
+    let hub = create_call_hub(state, cx);
     cx.set_global(hub);
 }
 
@@ -72,22 +74,34 @@ pub struct ActiveCall {
     ),
     client: Arc<Client>,
     user_store: Model<UserStore>,
+    fs: Arc<dyn Fs>,
+    languages: Arc<LanguageRegistry>,
     _subscriptions: Vec<client::Subscription>,
 }
 
 impl EventEmitter<Event> for ActiveCall {}
 
-pub fn create_call_hub(
-    client: Arc<Client>,
-    user_store: Model<UserStore>,
-    cx: &mut AppContext,
-) -> Arc<dyn CallHub> {
-    let active_call = cx.build_model(|cx| ActiveCall::new(client, user_store, cx));
+pub fn create_call_hub(app_state: &AppState, cx: &mut AppContext) -> Arc<dyn CallHub> {
+    let active_call = cx.build_model(|cx| {
+        ActiveCall::new(
+            app_state.client.clone(),
+            app_state.user_store.clone(),
+            app_state.languages.clone(),
+            app_state.fs.clone(),
+            cx,
+        )
+    });
     Arc::new(ActiveCallWrapper(active_call))
 }
 
 impl ActiveCall {
-    fn new(client: Arc<Client>, user_store: Model<UserStore>, cx: &mut ModelContext<Self>) -> Self {
+    fn new(
+        client: Arc<Client>,
+        user_store: Model<UserStore>,
+        languages: Arc<LanguageRegistry>,
+        fs: Arc<dyn Fs>,
+        cx: &mut ModelContext<Self>,
+    ) -> Self {
         Self {
             room: None,
             pending_room_creation: None,
@@ -101,6 +115,8 @@ impl ActiveCall {
             ],
             client,
             user_store,
+            languages,
+            fs,
         }
     }
 
@@ -329,20 +345,20 @@ impl ActiveCall {
     ) -> Task<Result<Option<Model<Room>>>> {
         if let Some(room) = self.room().cloned() {
             if room.read(cx).channel_id() == Some(channel_id) {
-                todo!()
-                // return cx.spawn(|_, cx| async move {
-                //     let future = room.update(&mut cx, |room, cx| {
-                //         room.most_active_project(cx).map(|(host, project)| {
-                //             room.join_project(project, host, app_state.clone(), cx)
-                //         })
-                //     })?;
+                let languages = self.languages.clone();
+                let fs = self.fs.clone();
+                return cx.spawn(|_, mut cx| async move {
+                    let future = room.update(&mut cx, |room, cx| {
+                        room.most_active_project(cx)
+                            .map(|(_, project)| room.join_project(project, languages, fs, cx))
+                    })?;
 
-                //     if let Some(future) = future {
-                //         future.await?;
-                //     }
+                    if let Some(future) = future {
+                        future.await?;
+                    }
 
-                //     Ok(Some(room))
-                // });
+                    Ok(Some(room))
+                });
             }
 
             let should_prompt = room.update(cx, |room, _| {
