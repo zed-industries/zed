@@ -179,8 +179,8 @@ use project::Fs;
 use serde_derive::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use ui::{
-    h_stack, v_stack, Avatar, Button, Color, ContextMenu, Icon, IconButton, IconElement, Label,
-    List, ListHeader, ListItem, Toggle, Tooltip,
+    h_stack, v_stack, Avatar, Button, Color, ContextMenu, Icon, IconButton, IconElement, IconSize,
+    Label, List, ListHeader, ListItem, Toggle, Tooltip,
 };
 use util::{maybe, ResultExt, TryFutureExt};
 use workspace::{
@@ -2802,6 +2802,9 @@ impl CollabPanel {
                     cx.build_view({ |cx| DraggedChannelView { channel, width } })
                 }
             })
+            .drag_over::<DraggedChannelView>(|style| {
+                style.bg(cx.theme().colors().ghost_element_hover)
+            })
             .on_drop(
                 cx.listener(move |this, view: &View<DraggedChannelView>, cx| {
                     this.channel_store
@@ -3588,13 +3591,17 @@ impl Render for DraggedChannelView {
             .w(self.width)
             .p_1()
             .gap_1()
-            .child(IconElement::new(
-                if self.channel.visibility == proto::ChannelVisibility::Public {
-                    Icon::Public
-                } else {
-                    Icon::Hash
-                },
-            ))
+            .child(
+                IconElement::new(
+                    if self.channel.visibility == proto::ChannelVisibility::Public {
+                        Icon::Public
+                    } else {
+                        Icon::Hash
+                    },
+                )
+                .size(IconSize::Small)
+                .color(Color::Muted),
+            )
             .child(Label::new(self.channel.name.clone()))
     }
 }
