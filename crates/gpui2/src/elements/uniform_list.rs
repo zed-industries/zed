@@ -119,8 +119,7 @@ impl Element for UniformList {
                 .layout(state.map(|s| s.interactive), cx, |style, cx| {
                     cx.request_measured_layout(
                         style,
-                        move |known_dimensions: Size<Option<Pixels>>,
-                              available_space: Size<AvailableSpace>| {
+                        move |known_dimensions, available_space, _cx| {
                             let desired_height = item_size.height * max_items;
                             let width =
                                 known_dimensions

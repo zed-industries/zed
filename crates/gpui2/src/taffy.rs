@@ -1,4 +1,7 @@
-use super::{AbsoluteLength, Bounds, DefiniteLength, Edges, Length, Pixels, Point, Size, Style};
+use crate::{
+    AbsoluteLength, Bounds, DefiniteLength, Edges, Length, Pixels, Point, Size, Style,
+    WindowContext,
+};
 use collections::{HashMap, HashSet};
 use smallvec::SmallVec;
 use std::fmt::Debug;
@@ -16,7 +19,13 @@ pub struct TaffyLayoutEngine {
     computed_layouts: HashSet<LayoutId>,
     nodes_to_measure: HashMap<
         LayoutId,
-        Box<dyn FnMut(Size<Option<Pixels>>, Size<AvailableSpace>) -> Size<Pixels>>,
+        Box<
+            dyn FnMut(
+                Size<Option<Pixels>>,
+                Size<AvailableSpace>,
+                &mut WindowContext,
+            ) -> Size<Pixels>,
+        >,
     >,
 }
 
@@ -69,7 +78,8 @@ impl TaffyLayoutEngine {
         &mut self,
         style: Style,
         rem_size: Pixels,
-        measure: impl FnMut(Size<Option<Pixels>>, Size<AvailableSpace>) -> Size<Pixels> + 'static,
+        measure: impl FnMut(Size<Option<Pixels>>, Size<AvailableSpace>, &mut WindowContext) -> Size<Pixels>
+            + 'static,
     ) -> LayoutId {
         let style = style.to_taffy(rem_size);
 
@@ -129,7 +139,12 @@ impl TaffyLayoutEngine {
         Ok(edges)
     }
 
-    pub fn compute_layout(&mut self, id: LayoutId, available_space: Size<AvailableSpace>) {
+    pub fn compute_layout(
+        &mut self,
+        id: LayoutId,
+        available_space: Size<AvailableSpace>,
+        cx: &mut WindowContext,
+    ) {
         // Leaving this here until we have a better instrumentation approach.
         // println!("Laying out {} children", self.count_all_children(id)?);
         // println!("Max layout depth: {}", self.max_depth(0, id)?);
@@ -158,8 +173,6 @@ impl TaffyLayoutEngine {
         }
 
         // let started_at = std::time::Instant::now();
-        dbg!(">>>>>>>>>>>>>");
-
         self.taffy
             .compute_layout_with_measure(
                 id.into(),
@@ -174,12 +187,11 @@ impl TaffyLayoutEngine {
                         height: known_dimensions.height.map(Pixels),
                     };
 
-                    measure(known_dimensions, available_space.into()).into()
+                    measure(known_dimensions, available_space.into(), cx).into()
                 },
             )
             .expect(EXPECT_MESSAGE);
 
-        dbg!("<<<<<<");
         // println!("compute_layout took {:?}", started_at.elapsed());
     }
 

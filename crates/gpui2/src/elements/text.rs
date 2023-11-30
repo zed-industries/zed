@@ -144,7 +144,6 @@ impl TextState {
         runs: Option<Vec<TextRun>>,
         cx: &mut WindowContext,
     ) -> LayoutId {
-        let text_system = cx.text_system().clone();
         let text_style = cx.text_style();
         let font_size = text_style.font_size.to_pixels(cx.rem_size());
         let line_height = text_style
@@ -161,7 +160,7 @@ impl TextState {
         let layout_id = cx.request_measured_layout(Default::default(), {
             let element_state = self.clone();
 
-            move |known_dimensions, available_space| {
+            move |known_dimensions, available_space, cx| {
                 let wrap_width = if text_style.white_space == WhiteSpace::Normal {
                     known_dimensions.width.or(match available_space.width {
                         crate::AvailableSpace::Definite(x) => Some(x),
@@ -179,7 +178,8 @@ impl TextState {
                     }
                 }
 
-                let Some(lines) = text_system
+                let Some(lines) = cx
+                    .text_system()
                     .shape_text(
                         &text, font_size, &runs, wrap_width, // Wrap if we know the width.
                     )
