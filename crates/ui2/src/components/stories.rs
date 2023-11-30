@@ -8,6 +8,7 @@ mod icon_button;
 mod keybinding;
 mod label;
 mod list;
+mod list_header;
 mod list_item;
 
 pub use avatar::*;
@@ -20,4 +21,5 @@ pub use icon_button::*;
 pub use keybinding::*;
 pub use label::*;
 pub use list::*;
+pub use list_header::*;
 pub use list_item::*;
