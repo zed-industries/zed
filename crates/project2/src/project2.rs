@@ -2677,8 +2677,9 @@ impl Project {
                 })?;
 
                 for (adapter, server) in servers {
-                    let workspace_config =
-                        cx.update(|cx| adapter.workspace_configuration(cx))?.await;
+                    let workspace_config = cx
+                        .update(|cx| adapter.workspace_configuration(server.root_path(), cx))?
+                        .await;
                     server
                         .notify::<lsp::notification::DidChangeConfiguration>(
                             lsp::DidChangeConfigurationParams {
@@ -2790,7 +2791,7 @@ impl Project {
             stderr_capture.clone(),
             language.clone(),
             adapter.clone(),
-            worktree_path,
+            Arc::clone(&worktree_path),
             ProjectLspAdapterDelegate::new(self, cx),
             cx,
         ) {
@@ -2822,6 +2823,7 @@ impl Project {
             cx.spawn(move |this, mut cx| async move {
                 let result = Self::setup_and_insert_language_server(
                     this.clone(),
+                    &worktree_path,
                     initialization_options,
                     pending_server,
                     adapter.clone(),
@@ -2942,6 +2944,7 @@ impl Project {
 
     async fn setup_and_insert_language_server(
         this: WeakModel<Self>,
+        worktree_path: &Path,
         initialization_options: Option<serde_json::Value>,
         pending_server: PendingLanguageServer,
         adapter: Arc<CachedLspAdapter>,
@@ -2954,6 +2957,7 @@ impl Project {
             this.clone(),
             initialization_options,
             pending_server,
+            worktree_path,
             adapter.clone(),
             server_id,
             cx,
@@ -2983,11 +2987,14 @@ impl Project {
         this: WeakModel<Self>,
         initialization_options: Option<serde_json::Value>,
         pending_server: PendingLanguageServer,
+        worktree_path: &Path,
         adapter: Arc<CachedLspAdapter>,
         server_id: LanguageServerId,
         cx: &mut AsyncAppContext,
     ) -> Result<Arc<LanguageServer>> {
-        let workspace_config = cx.update(|cx| adapter.workspace_configuration(cx))?.await;
+        let workspace_config = cx
+            .update(|cx| adapter.workspace_configuration(worktree_path, cx))?
+            .await;
         let language_server = pending_server.task.await?;
 
         language_server
@@ -3016,11 +3023,14 @@ impl Project {
         language_server
             .on_request::<lsp::request::WorkspaceConfiguration, _, _>({
                 let adapter = adapter.clone();
+                let worktree_path = worktree_path.to_path_buf();
                 move |params, cx| {
                     let adapter = adapter.clone();
+                    let worktree_path = worktree_path.clone();
                     async move {
-                        let workspace_config =
-                            cx.update(|cx| adapter.workspace_configuration(cx))?.await;
+                        let workspace_config = cx
+                            .update(|cx| adapter.workspace_configuration(&worktree_path, cx))?
+                            .await;
                         Ok(params
                             .items
                             .into_iter()
