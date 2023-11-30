@@ -151,18 +151,20 @@ impl Render for CollabTitlebarItem {
                 h_stack()
                     .gap_1()
                     // TODO - Add player menu
-                    .child(
-                        div()
-                            .border()
-                            .border_color(gpui::red())
-                            .id("project_owner_indicator")
-                            .child(
-                                Button::new("player", "player")
-                                    .style(ButtonStyle2::Subtle)
-                                    .color(Some(Color::Player(0))),
-                            )
-                            .tooltip(move |cx| Tooltip::text("Toggle following", cx)),
-                    )
+                    .when(is_in_room, |this| {
+                        this.child(
+                            div()
+                                .border()
+                                .border_color(gpui::red())
+                                .id("project_owner_indicator")
+                                .child(
+                                    Button::new("project_owner", "project_owner")
+                                        .style(ButtonStyle2::Subtle)
+                                        .color(Some(Color::Player(0))),
+                                )
+                                .tooltip(move |cx| Tooltip::text("Toggle following", cx)),
+                        )
+                    })
                     // TODO - Add project menu
                     .child(
                         div()
