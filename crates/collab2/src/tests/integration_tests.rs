@@ -57,18 +57,15 @@ async fn test_basic_calls(
         .make_contacts(&mut [(&client_a, cx_a), (&client_b, cx_b), (&client_c, cx_c)])
         .await;
 
-    let active_call_a = cx_a.read(ActiveCall::global);
-    let active_call_b = cx_b.read(ActiveCall::global);
-    let active_call_c = cx_c.read(ActiveCall::global);
+    let active_call_a = cx_a.read(workspace::call_hub);
+    let active_call_b = cx_b.read(workspace::call_hub);
+    let active_call_c = cx_c.read(workspace::call_hub);
 
     // Call user B from client A.
-    active_call_a
-        .update(cx_a, |call, cx| {
-            call.invite(client_b.user_id().unwrap(), None, cx)
-        })
+    cx_a.update(|cx| active_call_a.invite(client_b.user_id().unwrap(), None, cx))
         .await
         .unwrap();
-    let room_a = active_call_a.read_with(cx_a, |call, _| call.room().unwrap().clone());
+    let room_a = cx_a.update(|cx| active_call_a.room(cx)).unwrap().clone();
     executor.run_until_parked();
     assert_eq!(
         room_participants(&room_a, cx_a),
@@ -86,7 +83,7 @@ async fn test_basic_calls(
 
     // User B connects via another client and also receives a ring on the newly-connected client.
     let _client_b2 = server.create_client(cx_b2, "user_b").await;
-    let active_call_b2 = cx_b2.read(ActiveCall::global);
+    let active_call_b2 = cx_b2.read(workspace::call_hub);
 
     let mut incoming_call_b2 = active_call_b2.read_with(cx_b2, |call, _| call.incoming());
     executor.run_until_parked();
@@ -366,10 +363,10 @@ async fn test_calling_multiple_users_simultaneously(
         ])
         .await;
 
-    let active_call_a = cx_a.read(ActiveCall::global);
-    let active_call_b = cx_b.read(ActiveCall::global);
-    let active_call_c = cx_c.read(ActiveCall::global);
-    let active_call_d = cx_d.read(ActiveCall::global);
+    let active_call_a = cx_a.read(workspace::call_hub);
+    let active_call_b = cx_b.read(workspace::call_hub);
+    let active_call_c = cx_c.read(workspace::call_hub);
+    let active_call_d = cx_d.read(workspace::call_hub);
 
     // Simultaneously call user B and user C from client A.
     let b_invite = active_call_a.update(cx_a, |call, cx| {
@@ -506,7 +503,7 @@ async fn test_joining_channels_and_calling_multiple_users_simultaneously(
         )
         .await;
 
-    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_a = cx_a.read(workspace::call_hub);
 
     // Simultaneously join channel 1 and then channel 2
     active_call_a
@@ -606,11 +603,11 @@ async fn test_room_uniqueness(
         .make_contacts(&mut [(&client_a, cx_a), (&client_b, cx_b), (&client_c, cx_c)])
         .await;
 
-    let active_call_a = cx_a.read(ActiveCall::global);
-    let active_call_a2 = cx_a2.read(ActiveCall::global);
-    let active_call_b = cx_b.read(ActiveCall::global);
-    let active_call_b2 = cx_b2.read(ActiveCall::global);
-    let active_call_c = cx_c.read(ActiveCall::global);
+    let active_call_a = cx_a.read(workspace::call_hub);
+    let active_call_a2 = cx_a2.read(workspace::call_hub);
+    let active_call_b = cx_b.read(workspace::call_hub);
+    let active_call_b2 = cx_b2.read(workspace::call_hub);
+    let active_call_c = cx_c.read(workspace::call_hub);
 
     // Call user B from client A.
     active_call_a
@@ -712,8 +709,8 @@ async fn test_client_disconnecting_from_room(
         .make_contacts(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
 
-    let active_call_a = cx_a.read(ActiveCall::global);
-    let active_call_b = cx_b.read(ActiveCall::global);
+    let active_call_a = cx_a.read(workspace::call_hub);
+    let active_call_b = cx_b.read(workspace::call_hub);
 
     // Call user B from client A.
     active_call_a
@@ -888,10 +885,10 @@ async fn test_server_restarts(
         ])
         .await;
 
-    let active_call_a = cx_a.read(ActiveCall::global);
-    let active_call_b = cx_b.read(ActiveCall::global);
-    let active_call_c = cx_c.read(ActiveCall::global);
-    let active_call_d = cx_d.read(ActiveCall::global);
+    let active_call_a = cx_a.read(workspace::call_hub);
+    let active_call_b = cx_b.read(workspace::call_hub);
+    let active_call_c = cx_c.read(workspace::call_hub);
+    let active_call_d = cx_d.read(workspace::call_hub);
 
     // User A calls users B, C, and D.
     active_call_a
@@ -1186,9 +1183,9 @@ async fn test_calls_on_multiple_connections(
         .make_contacts(&mut [(&client_a, cx_a), (&client_b1, cx_b1)])
         .await;
 
-    let active_call_a = cx_a.read(ActiveCall::global);
-    let active_call_b1 = cx_b1.read(ActiveCall::global);
-    let active_call_b2 = cx_b2.read(ActiveCall::global);
+    let active_call_a = cx_a.read(workspace::call_hub);
+    let active_call_b1 = cx_b1.read(workspace::call_hub);
+    let active_call_b2 = cx_b2.read(workspace::call_hub);
 
     let mut incoming_call_b1 = active_call_b1.read_with(cx_b1, |call, _| call.incoming());
 
@@ -1345,8 +1342,8 @@ async fn test_unshare_project(
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b), (&client_c, cx_c)])
         .await;
 
-    let active_call_a = cx_a.read(ActiveCall::global);
-    let active_call_b = cx_b.read(ActiveCall::global);
+    let active_call_a = cx_a.read(workspace::call_hub);
+    let active_call_b = cx_b.read(workspace::call_hub);
 
     client_a
         .fs()
@@ -1489,7 +1486,7 @@ async fn test_project_reconnect(
         )
         .await;
 
-    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_a = cx_a.read(workspace::call_hub);
     let (project_a1, _) = client_a.build_local_project("/root-1/dir1", cx_a).await;
     let (project_a2, _) = client_a.build_local_project("/root-2", cx_a).await;
     let (project_a3, _) = client_a.build_local_project("/root-3", cx_a).await;
@@ -1808,8 +1805,8 @@ async fn test_active_call_events(
     server
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
-    let active_call_a = cx_a.read(ActiveCall::global);
-    let active_call_b = cx_b.read(ActiveCall::global);
+    let active_call_a = cx_a.read(workspace::call_hub);
+    let active_call_b = cx_b.read(workspace::call_hub);
 
     let events_a = active_call_events(cx_a);
     let events_b = active_call_events(cx_b);
@@ -1865,7 +1862,7 @@ async fn test_active_call_events(
 
 fn active_call_events(cx: &mut TestAppContext) -> Rc<RefCell<Vec<room::Event>>> {
     let events = Rc::new(RefCell::new(Vec::new()));
-    let active_call = cx.read(ActiveCall::global);
+    let active_call = cx.read(workspace::call_hub);
     cx.update({
         let events = events.clone();
         |cx| {
@@ -1890,8 +1887,8 @@ async fn test_room_location(
     client_a.fs().insert_tree("/a", json!({})).await;
     client_b.fs().insert_tree("/b", json!({})).await;
 
-    let active_call_a = cx_a.read(ActiveCall::global);
-    let active_call_b = cx_b.read(ActiveCall::global);
+    let active_call_a = cx_a.read(workspace::call_hub);
+    let active_call_b = cx_b.read(workspace::call_hub);
 
     let a_notified = Rc::new(Cell::new(false));
     cx_a.update({
@@ -2059,7 +2056,7 @@ async fn test_propagate_saves_and_fs_changes(
     server
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b), (&client_c, cx_c)])
         .await;
-    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_a = cx_a.read(workspace::call_hub);
 
     let rust = Arc::new(Language::new(
         LanguageConfig {
@@ -2287,7 +2284,7 @@ async fn test_git_diff_base_change(
     server
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
-    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_a = cx_a.read(workspace::call_hub);
 
     client_a
         .fs()
@@ -2532,7 +2529,7 @@ async fn test_git_branch_name(
     server
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b), (&client_c, cx_c)])
         .await;
-    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_a = cx_a.read(workspace::call_hub);
 
     client_a
         .fs()
@@ -2619,7 +2616,7 @@ async fn test_git_status_sync(
     server
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b), (&client_c, cx_c)])
         .await;
-    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_a = cx_a.read(workspace::call_hub);
 
     client_a
         .fs()
@@ -2759,7 +2756,7 @@ async fn test_fs_operations(
     server
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
-    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_a = cx_a.read(workspace::call_hub);
 
     client_a
         .fs()
@@ -3044,7 +3041,7 @@ async fn test_local_settings(
     server
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
-    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_a = cx_a.read(workspace::call_hub);
 
     // As client A, open a project that contains some local settings files
     client_a
@@ -3182,7 +3179,7 @@ async fn test_buffer_conflict_after_save(
     server
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
-    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_a = cx_a.read(workspace::call_hub);
 
     client_a
         .fs()
@@ -3246,7 +3243,7 @@ async fn test_buffer_reloading(
     server
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
-    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_a = cx_a.read(workspace::call_hub);
 
     client_a
         .fs()
@@ -3305,7 +3302,7 @@ async fn test_editing_while_guest_opens_buffer(
     server
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
-    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_a = cx_a.read(workspace::call_hub);
 
     client_a
         .fs()
@@ -3353,7 +3350,7 @@ async fn test_leaving_worktree_while_opening_buffer(
     server
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
-    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_a = cx_a.read(workspace::call_hub);
 
     client_a
         .fs()
@@ -3395,7 +3392,7 @@ async fn test_canceling_buffer_opening(
     server
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
-    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_a = cx_a.read(workspace::call_hub);
 
     client_a
         .fs()
@@ -3451,7 +3448,7 @@ async fn test_leaving_project(
     server
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b), (&client_c, cx_c)])
         .await;
-    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_a = cx_a.read(workspace::call_hub);
 
     client_a
         .fs()
@@ -3599,7 +3596,7 @@ async fn test_collaborating_with_diagnostics(
     server
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b), (&client_c, cx_c)])
         .await;
-    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_a = cx_a.read(workspace::call_hub);
 
     // Set up a fake language server.
     let mut language = Language::new(
@@ -3905,7 +3902,7 @@ async fn test_collaborating_with_lsp_progress_updates_and_diagnostics_ordering(
     let (project_a, worktree_id) = client_a.build_local_project("/test", cx_a).await;
 
     // Share a project as client A
-    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_a = cx_a.read(workspace::call_hub);
     let project_id = active_call_a
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
@@ -4002,7 +3999,7 @@ async fn test_reloading_buffer_manually(
     server
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
-    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_a = cx_a.read(workspace::call_hub);
 
     client_a
         .fs()
@@ -4096,7 +4093,7 @@ async fn test_formatting_buffer(
     server
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
-    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_a = cx_a.read(workspace::call_hub);
 
     // Set up a fake language server.
     let mut language = Language::new(
@@ -4201,7 +4198,7 @@ async fn test_prettier_formatting_buffer(
     server
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
-    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_a = cx_a.read(workspace::call_hub);
 
     // Set up a fake language server.
     let mut language = Language::new(
@@ -4317,7 +4314,7 @@ async fn test_definition(
     server
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
-    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_a = cx_a.read(workspace::call_hub);
 
     // Set up a fake language server.
     let mut language = Language::new(
@@ -4461,7 +4458,7 @@ async fn test_references(
     server
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
-    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_a = cx_a.read(workspace::call_hub);
 
     // Set up a fake language server.
     let mut language = Language::new(
@@ -4562,7 +4559,7 @@ async fn test_project_search(
     server
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
-    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_a = cx_a.read(workspace::call_hub);
 
     client_a
         .fs()
@@ -4648,7 +4645,7 @@ async fn test_document_highlights(
     server
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
-    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_a = cx_a.read(workspace::call_hub);
 
     client_a
         .fs()
@@ -4751,7 +4748,7 @@ async fn test_lsp_hover(
     server
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
-    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_a = cx_a.read(workspace::call_hub);
 
     client_a
         .fs()
@@ -4857,7 +4854,7 @@ async fn test_project_symbols(
     server
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
-    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_a = cx_a.read(workspace::call_hub);
 
     // Set up a fake language server.
     let mut language = Language::new(
@@ -4966,7 +4963,7 @@ async fn test_open_buffer_while_getting_definition_pointing_to_it(
     server
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
-    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_a = cx_a.read(workspace::call_hub);
 
     // Set up a fake language server.
     let mut language = Language::new(
@@ -5042,10 +5039,10 @@ async fn test_contacts(
     server
         .make_contacts(&mut [(&client_a, cx_a), (&client_b, cx_b), (&client_c, cx_c)])
         .await;
-    let active_call_a = cx_a.read(ActiveCall::global);
-    let active_call_b = cx_b.read(ActiveCall::global);
-    let active_call_c = cx_c.read(ActiveCall::global);
-    let _active_call_d = cx_d.read(ActiveCall::global);
+    let active_call_a = cx_a.read(workspace::call_hub);
+    let active_call_b = cx_b.read(workspace::call_hub);
+    let active_call_c = cx_c.read(workspace::call_hub);
+    let _active_call_d = cx_d.read(workspace::call_hub);
 
     executor.run_until_parked();
     assert_eq!(
@@ -5639,8 +5636,8 @@ async fn test_join_call_after_screen_was_shared(
         .make_contacts(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
 
-    let active_call_a = cx_a.read(ActiveCall::global);
-    let active_call_b = cx_b.read(ActiveCall::global);
+    let active_call_a = cx_a.read(workspace::call_hub);
+    let active_call_b = cx_b.read(workspace::call_hub);
 
     // Call users B and C from client A.
     active_call_a

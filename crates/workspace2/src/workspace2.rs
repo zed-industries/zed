@@ -373,6 +373,10 @@ impl CallHub for TestCallHandler {
     fn incoming(&self, cx: &AppContext) -> postage::watch::Receiver<Option<IncomingCall>> {
         todo!()
     }
+
+    fn observe(&self, on_event: Box<dyn Fn(&mut WindowContext<'_>)>, cx: &mut WindowContext<'_>) {
+        todo!()
+    }
 }
 
 impl AppState {
@@ -478,6 +482,7 @@ pub trait Room {
     ) -> Option<Box<dyn ItemHandle>>;
     fn hang_up(&self, cx: &mut AppContext) -> Task<Result<()>>;
     fn remote_participants(&self, cx: &AppContext) -> Vec<(Arc<User>, PeerId)>;
+    fn pending_participants<'a>(&self, cx: &'a AppContext) -> &'a [Arc<User>];
     fn is_muted(&self, cx: &AppContext) -> bool;
     fn is_deafened(&self, cx: &AppContext) -> bool;
     fn toggle_mute(&self, cx: &mut AppContext);

@@ -25,22 +25,22 @@ struct RoomParticipants {
     pending: Vec<String>,
 }
 
-fn room_participants(room: &Model<Room>, cx: &mut TestAppContext) -> RoomParticipants {
-    room.read_with(cx, |room, _| {
-        let mut remote = room
-            .remote_participants()
+fn room_participants(room: &dyn workspace::Room, cx: &mut TestAppContext) -> RoomParticipants {
+    let mut remote = cx.update(|cx| {
+        room.remote_participants(cx)
             .iter()
-            .map(|(_, participant)| participant.user.github_login.clone())
-            .collect::<Vec<_>>();
-        let mut pending = room
-            .pending_participants()
+            .map(|(_, participant)| participant.0.github_login.clone())
+            .collect::<Vec<_>>()
+    });
+    let mut pending = cx.update(|cx| {
+        room.pending_participants(cx)
             .iter()
             .map(|user| user.github_login.clone())
-            .collect::<Vec<_>>();
-        remote.sort();
-        pending.sort();
-        RoomParticipants { remote, pending }
-    })
+            .collect::<Vec<_>>()
+    });
+    remote.sort();
+    pending.sort();
+    RoomParticipants { remote, pending }
 }
 
 fn channel_id(room: &Model<Room>, cx: &mut TestAppContext) -> Option<u64> {

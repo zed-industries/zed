@@ -361,7 +361,7 @@ async fn test_joining_channel_ancestor_member(
         .await
         .unwrap();
 
-    let active_call_b = cx_b.read(ActiveCall::global);
+    let active_call_b = cx_b.read(workspace::call_hub);
 
     assert!(active_call_b
         .update(cx_b, |active_call, cx| active_call
@@ -391,8 +391,8 @@ async fn test_channel_room(
         )
         .await;
 
-    let active_call_a = cx_a.read(ActiveCall::global);
-    let active_call_b = cx_b.read(ActiveCall::global);
+    let active_call_a = cx_a.read(workspace::call_hub);
+    let active_call_b = cx_b.read(workspace::call_hub);
 
     active_call_a
         .update(cx_a, |active_call, cx| {
@@ -614,7 +614,7 @@ async fn test_channel_jumping(executor: BackgroundExecutor, cx_a: &mut TestAppCo
         .make_channel("rust", None, (&client_a, cx_a), &mut [])
         .await;
 
-    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_a = cx_a.read(workspace::call_hub);
 
     active_call_a
         .update(cx_a, |active_call, cx| {
@@ -800,8 +800,8 @@ async fn test_call_from_channel(
         )
         .await;
 
-    let active_call_a = cx_a.read(ActiveCall::global);
-    let active_call_b = cx_b.read(ActiveCall::global);
+    let active_call_a = cx_a.read(workspace::call_hub);
+    let active_call_b = cx_b.read(workspace::call_hub);
 
     active_call_a
         .update(cx_a, |call, cx| call.join_channel(channel_id, None, cx))
@@ -1293,7 +1293,7 @@ async fn test_guest_access(
     let channel_a = channels[0];
     let channel_b = channels[1];
 
-    let active_call_b = cx_b.read(ActiveCall::global);
+    let active_call_b = cx_b.read(workspace::call_hub);
 
     // Non-members should not be allowed to join
     assert!(active_call_b
@@ -1379,7 +1379,7 @@ async fn test_invite_access(
     let channel_a_id = channels[0];
     let channel_b_id = channels[0];
 
-    let active_call_b = cx_b.read(ActiveCall::global);
+    let active_call_b = cx_b.read(workspace::call_hub);
 
     // should not be allowed to join
     assert!(active_call_b

@@ -1642,6 +1642,10 @@ impl workspace::Room for RoomWrapper {
         self.0
             .update(cx, |this, cx| this.unshare_project(project, cx))
     }
+
+    fn pending_participants<'a>(&self, cx: &'a AppContext) -> &'a [Arc<User>] {
+        self.0.read(cx).pending_participants()
+    }
 }
 struct LiveKitRoom {
     room: Arc<live_kit_client::Room>,
