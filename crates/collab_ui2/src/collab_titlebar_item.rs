@@ -291,7 +291,7 @@ impl Render for CollabTitlebarItem {
                         //
                         this.child(
                             popover_menu("user-menu")
-                                .menu(|cx| ContextMenu::build(cx, |menu, cx| menu.header("ADADA")))
+                                .menu(|cx| ContextMenu::build(cx, |menu, _| menu.header("ADADA")))
                                 .trigger(
                                     ButtonLike::new("user-menu")
                                         .child(
