@@ -47,19 +47,7 @@ impl Render for StatusBar {
             .w_full()
             .h_8()
             .bg(cx.theme().colors().status_bar_background)
-            // Nate: I know this isn't how we render status bar tools
-            // We can move these to the correct place once we port their tools
-            .child(
-                h_stack().gap_1().child(self.render_left_tools(cx)).child(
-                    h_stack().gap_4().child(
-                        // TODO: Language Server status
-                        div()
-                            .border()
-                            .border_color(gpui::red())
-                            .child("Checking..."),
-                    ),
-                ),
-            )
+            .child(h_stack().gap_1().child(self.render_left_tools(cx)))
             .child(
                 h_stack()
                     .gap_4()
