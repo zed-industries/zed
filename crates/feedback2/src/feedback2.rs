@@ -1,12 +1,17 @@
+use gpui::AppContext;
+
 pub mod deploy_feedback_button;
 pub mod feedback_editor;
 pub mod feedback_info_text;
+pub mod feedback_modal;
 pub mod submit_feedback_button;
 
 mod system_specs;
-use gpui::{actions, platform::PromptLevel, AppContext, ClipboardItem, ViewContext};
-use system_specs::SystemSpecs;
-use workspace::Workspace;
+
+pub fn init(cx: &mut AppContext) {
+    cx.observe_new_views(feedback_modal::FeedbackModal::register)
+        .detach();
+}
 
 // actions!(
 //     zed,

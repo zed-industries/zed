@@ -3,38 +3,27 @@
 // use client::{Client, ZED_SECRET_CLIENT_TOKEN, ZED_SERVER_URL};
 // use editor::{Anchor, Editor};
 // use futures::AsyncReadExt;
-// use gpui::{
-//     actions,
-//     elements::{ChildView, Flex, Label, ParentElement, Svg},
-//     platform::PromptLevel,
-//     serde_json, AnyElement, AnyViewHandle, AppContext, Element, Entity, ModelHandle, Task, View,
-//     ViewContext, ViewHandle,
-// };
+// use gpui::{actions, serde_json, AppContext, Model, PromptLevel, Task, View, ViewContext};
 // use isahc::Request;
 // use language::Buffer;
 // use postage::prelude::Stream;
 // use project::{search::SearchQuery, Project};
 // use regex::Regex;
 // use serde::Serialize;
-// use smallvec::SmallVec;
 // use std::{
-//     any::TypeId,
-//     borrow::Cow,
 //     ops::{Range, RangeInclusive},
 //     sync::Arc,
 // };
 // use util::ResultExt;
-// use workspace::{
-//     item::{Item, ItemEvent, ItemHandle},
-//     searchable::{SearchableItem, SearchableItemHandle},
-//     Workspace,
-// };
+// use workspace::{searchable::SearchableItem, Workspace};
 
 // const FEEDBACK_CHAR_LIMIT: RangeInclusive<usize> = 10..=5000;
 // const FEEDBACK_SUBMISSION_ERROR_TEXT: &str =
 //     "Feedback failed to submit, see error log for details.";
 
-// actions!(feedback, [GiveFeedback, SubmitFeedback]);
+use gpui::actions;
+
+actions!(GiveFeedback, SubmitFeedback);
 
 // pub fn init(cx: &mut AppContext) {
 //     cx.add_action({
@@ -58,16 +47,16 @@
 // #[derive(Clone)]
 // pub(crate) struct FeedbackEditor {
 //     system_specs: SystemSpecs,
-//     editor: ViewHandle<Editor>,
-//     project: ModelHandle<Project>,
+//     editor: View<Editor>,
+//     project: Model<Project>,
 //     pub allow_submission: bool,
 // }
 
 // impl FeedbackEditor {
 //     fn new(
 //         system_specs: SystemSpecs,
-//         project: ModelHandle<Project>,
-//         buffer: ModelHandle<Buffer>,
+//         project: Model<Project>,
+//         buffer: Model<Buffer>,
 //         cx: &mut ViewContext<Self>,
 //     ) -> Self {
 //         let editor = cx.add_view(|cx| {
@@ -135,7 +124,7 @@
 
 //                 match FeedbackEditor::submit_feedback(&feedback_text, client, specs).await {
 //                     Ok(_) => {
-//                         this.update(&mut cx, |_, cx| cx.emit(editor::Event::Closed))
+//                         this.update(&mut cx, |_, cx| cx.emit(editor::EditorEvent::Closed))
 //                             .log_err();
 //                     }
 

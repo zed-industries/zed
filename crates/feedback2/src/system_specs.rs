@@ -1,17 +1,16 @@
-// use client::ZED_APP_VERSION;
-// use gpui::{platform::AppVersion, AppContext};
+// // use client::ZED_APP_VERSION;
+// use gpui::AppContext;
 // use human_bytes::human_bytes;
 // use serde::Serialize;
 // use std::{env, fmt::Display};
 // use sysinfo::{System, SystemExt};
 // use util::channel::ReleaseChannel;
 
-// TODO: Move this file out of feedback and into a more general place
-
 // #[derive(Clone, Debug, Serialize)]
 // pub struct SystemSpecs {
-//     #[serde(serialize_with = "serialize_app_version")]
-//     app_version: Option<AppVersion>,
+//     // todo!()
+//     // #[serde(serialize_with = "serialize_app_version")]
+//     // app_version: Option<AppVersion>,
 //     release_channel: &'static str,
 //     os_name: &'static str,
 //     os_version: Option<String>,
@@ -22,7 +21,7 @@
 // impl SystemSpecs {
 //     pub fn new(cx: &AppContext) -> Self {
 //         let platform = cx.platform();
-//         let app_version = ZED_APP_VERSION.or_else(|| platform.app_version().ok());
+//         // let app_version = ZED_APP_VERSION.or_else(|| platform.app_version().ok());
 //         let release_channel = cx.global::<ReleaseChannel>().dev_name();
 //         let os_name = platform.os_name();
 //         let system = System::new_all();
@@ -34,7 +33,7 @@
 //             .map(|os_version| os_version.to_string());
 
 //         SystemSpecs {
-//             app_version,
+//             //   app_version,
 //             release_channel,
 //             os_name,
 //             os_version,
@@ -69,9 +68,9 @@
 //     }
 // }
 
-// fn serialize_app_version<S>(version: &Option<AppVersion>, serializer: S) -> Result<S::Ok, S::Error>
-// where
-//     S: serde::Serializer,
-// {
-//     version.map(|v| v.to_string()).serialize(serializer)
-// }
+// // fn serialize_app_version<S>(version: &Option<AppVersion>, serializer: S) -> Result<S::Ok, S::Error>
+// // where
+// //     S: serde::Serializer,
+// // {
+// //     version.map(|v| v.to_string()).serialize(serializer)
+// // }

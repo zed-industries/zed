@@ -1,91 +1,58 @@
-// use gpui::{
-//     elements::*,
-//     platform::{CursorStyle, MouseButton},
-//     Entity, View, ViewContext, WeakViewHandle,
-// };
-// use workspace::{item::ItemHandle, StatusItemView, Workspace};
+use gpui::{Action, AnyElement, Render, ViewContext, WeakView};
+use ui::{prelude::*, ButtonCommon, Icon, IconButton, Tooltip};
+use workspace::{StatusItemView, Workspace};
 
-// use crate::feedback_editor::{FeedbackEditor, GiveFeedback};
+use crate::{feedback_editor::GiveFeedback, feedback_modal::FeedbackModal};
 
-// pub struct DeployFeedbackButton {
-//     active: bool,
-//     workspace: WeakViewHandle<Workspace>,
-// }
+pub struct DeployFeedbackButton {
+    active: bool,
+    workspace: WeakView<Workspace>,
+}
 
-// impl Entity for DeployFeedbackButton {
-//     type Event = ();
-// }
+impl DeployFeedbackButton {
+    pub fn new(workspace: &Workspace) -> Self {
+        DeployFeedbackButton {
+            active: false,
+            workspace: workspace.weak_handle(),
+        }
+    }
+}
 
-// impl DeployFeedbackButton {
-//     pub fn new(workspace: &Workspace) -> Self {
-//         DeployFeedbackButton {
-//             active: false,
-//             workspace: workspace.weak_handle(),
-//         }
-//     }
-// }
+impl Render for DeployFeedbackButton {
+    type Element = AnyElement;
 
-// impl View for DeployFeedbackButton {
-//     fn ui_name() -> &'static str {
-//         "DeployFeedbackButton"
-//     }
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+        let is_open = self
+            .workspace
+            .upgrade()
+            .and_then(|workspace| {
+                workspace.update(cx, |workspace, cx| {
+                    workspace.active_modal::<FeedbackModal>(cx)
+                })
+            })
+            .is_some();
 
-//     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-//         let active = self.active;
-//         let theme = theme::current(cx).clone();
-//         Stack::new()
-//             .with_child(
-//                 MouseEventHandler::new::<Self, _>(0, cx, |state, _| {
-//                     let style = &theme
-//                         .workspace
-//                         .status_bar
-//                         .panel_buttons
-//                         .button
-//                         .in_state(active)
-//                         .style_for(state);
-
-//                     Svg::new("icons/feedback.svg")
-//                         .with_color(style.icon_color)
-//                         .constrained()
-//                         .with_width(style.icon_size)
-//                         .aligned()
-//                         .constrained()
-//                         .with_width(style.icon_size)
-//                         .with_height(style.icon_size)
-//                         .contained()
-//                         .with_style(style.container)
-//                 })
-//                 .with_cursor_style(CursorStyle::PointingHand)
-//                 .on_click(MouseButton::Left, move |_, this, cx| {
-//                     if !active {
-//                         if let Some(workspace) = this.workspace.upgrade(cx) {
-//                             workspace
-//                                 .update(cx, |workspace, cx| FeedbackEditor::deploy(workspace, cx))
-//                         }
-//                     }
-//                 })
-//                 .with_tooltip::<Self>(
-//                     0,
-//                     "Send Feedback",
-//                     Some(Box::new(GiveFeedback)),
-//                     theme.tooltip.clone(),
-//                     cx,
-//                 ),
-//             )
-//             .into_any()
-//     }
-// }
-
-// impl StatusItemView for DeployFeedbackButton {
-//     fn set_active_pane_item(&mut self, item: Option<&dyn ItemHandle>, cx: &mut ViewContext<Self>) {
-//         if let Some(item) = item {
-//             if let Some(_) = item.downcast::<FeedbackEditor>() {
-//                 self.active = true;
-//                 cx.notify();
-//                 return;
-//             }
-//         }
-//         self.active = false;
-//         cx.notify();
-//     }
-// }
+        IconButton::new("give-feedback", Icon::Envelope)
+            .style(ui::ButtonStyle::Subtle)
+            .selected(is_open)
+            .tooltip(|cx| Tooltip::text("Give Feedback", cx))
+            .on_click(cx.listener(|this, _, cx| {
+                let Some(workspace) = this.workspace.upgrade() else {
+                    return;
+                };
+                workspace.update(cx, |workspace, cx| {
+                    workspace.toggle_modal(cx, |cx| FeedbackModal::new(cx))
+                })
+            }))
+            .into_any_element()
+    }
+}
+impl StatusItemView for DeployFeedbackButton {
+    fn set_active_pane_item(
+        &mut self,
+        _active_pane_item: Option<&dyn workspace::item::ItemHandle>,
+        _cx: &mut ViewContext<Self>,
+    ) {
+        // no-op
+    }
+}
