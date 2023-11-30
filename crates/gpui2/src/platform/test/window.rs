@@ -11,11 +11,11 @@ use std::{
 };
 
 #[derive(Default)]
-struct Handlers {
-    active_status_change: Vec<Box<dyn FnMut(bool)>>,
-    input: Vec<Box<dyn FnMut(crate::InputEvent) -> bool>>,
-    moved: Vec<Box<dyn FnMut()>>,
-    resize: Vec<Box<dyn FnMut(Size<Pixels>, f32)>>,
+pub(crate) struct TestWindowHandlers {
+    pub(crate) active_status_change: Vec<Box<dyn FnMut(bool)>>,
+    pub(crate) input: Vec<Box<dyn FnMut(crate::InputEvent) -> bool>>,
+    pub(crate) moved: Vec<Box<dyn FnMut()>>,
+    pub(crate) resize: Vec<Box<dyn FnMut(Size<Pixels>, f32)>>,
 }
 
 pub struct TestWindow {
@@ -23,7 +23,7 @@ pub struct TestWindow {
     current_scene: Mutex<Option<Scene>>,
     display: Rc<dyn PlatformDisplay>,
     pub(crate) input_handler: Option<Arc<Mutex<Box<dyn PlatformInputHandler>>>>,
-    handlers: Mutex<Handlers>,
+    pub(crate) handlers: Arc<Mutex<TestWindowHandlers>>,
     platform: Weak<TestPlatform>,
     sprite_atlas: Arc<dyn PlatformAtlas>,
 }
@@ -166,6 +166,10 @@ impl PlatformWindow for TestWindow {
 
     fn sprite_atlas(&self) -> sync::Arc<dyn crate::PlatformAtlas> {
         self.sprite_atlas.clone()
+    }
+
+    fn as_test(&self) -> Option<&TestWindow> {
+        Some(self)
     }
 }
 

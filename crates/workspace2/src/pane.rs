@@ -12,9 +12,9 @@ use gpui::{
     ViewContext, VisualContext, WeakView, WindowContext,
 };
 use parking_lot::Mutex;
-use project2::{Project, ProjectEntryId, ProjectPath};
+use project::{Project, ProjectEntryId, ProjectPath};
 use serde::Deserialize;
-use settings2::Settings;
+use settings::Settings;
 use std::{
     any::Any,
     cmp, fmt, mem,

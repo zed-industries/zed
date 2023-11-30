@@ -2,8 +2,8 @@ use crate::{
     div, Action, AnyView, AnyWindowHandle, AppCell, AppContext, AsyncAppContext,
     BackgroundExecutor, Context, Div, Entity, EventEmitter, ForegroundExecutor, InputEvent,
     KeyDownEvent, Keystroke, Model, ModelContext, Render, Result, Task, TestDispatcher,
-    TestPlatform, TestWindow, View, ViewContext, VisualContext, WindowContext, WindowHandle,
-    WindowOptions,
+    TestPlatform, TestWindow, TestWindowHandlers, View, ViewContext, VisualContext, WindowContext,
+    WindowHandle, WindowOptions,
 };
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt};
@@ -508,6 +508,39 @@ impl<'a> VisualTestContext<'a> {
 
     pub fn simulate_input(&mut self, input: &str) {
         self.cx.simulate_input(self.window, input)
+    }
+
+    pub fn simulate_activation(&mut self) {
+        self.simulate_window_events(&mut |handlers| {
+            handlers
+                .active_status_change
+                .iter_mut()
+                .for_each(|f| f(true));
+        })
+    }
+
+    pub fn simulate_deactivation(&mut self) {
+        self.simulate_window_events(&mut |handlers| {
+            handlers
+                .active_status_change
+                .iter_mut()
+                .for_each(|f| f(false));
+        })
+    }
+
+    fn simulate_window_events(&mut self, f: &mut dyn FnMut(&mut TestWindowHandlers)) {
+        let handlers = self
+            .cx
+            .update_window(self.window, |_, cx| {
+                cx.window
+                    .platform_window
+                    .as_test()
+                    .unwrap()
+                    .handlers
+                    .clone()
+            })
+            .unwrap();
+        f(&mut *handlers.lock());
     }
 }
 
