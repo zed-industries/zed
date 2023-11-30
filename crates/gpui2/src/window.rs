@@ -40,8 +40,8 @@ use util::ResultExt;
 
 /// A global stacking order, which is created by stacking successive z-index values.
 /// Each z-index will always be interpreted in the context of its parent z-index.
-#[derive(Deref, DerefMut, Ord, PartialOrd, Eq, PartialEq, Clone, Default)]
-pub(crate) struct StackingOrder(pub(crate) SmallVec<[u32; 16]>);
+#[derive(Deref, DerefMut, Ord, PartialOrd, Eq, PartialEq, Clone, Default, Debug)]
+pub struct StackingOrder(pub(crate) SmallVec<[u32; 16]>);
 
 /// Represents the two different phases when dispatching events.
 #[derive(Default, Copy, Clone, Debug, Eq, PartialEq)]
@@ -198,9 +198,7 @@ pub trait ManagedView: FocusableView + EventEmitter<DismissEvent> {}
 
 impl<M: FocusableView + EventEmitter<DismissEvent>> ManagedView for M {}
 
-pub enum DismissEvent {
-    Dismiss,
-}
+pub struct DismissEvent;
 
 // Holds the state for a specific window.
 pub struct Window {
@@ -244,7 +242,8 @@ pub(crate) struct Frame {
     pub(crate) dispatch_tree: DispatchTree,
     pub(crate) focus_listeners: Vec<AnyFocusListener>,
     pub(crate) scene_builder: SceneBuilder,
-    z_index_stack: StackingOrder,
+    pub(crate) depth_map: Vec<(StackingOrder, Bounds<Pixels>)>,
+    pub(crate) z_index_stack: StackingOrder,
     content_mask_stack: Vec<ContentMask<Pixels>>,
     element_offset_stack: Vec<Point<Pixels>>,
 }
@@ -258,6 +257,7 @@ impl Frame {
             focus_listeners: Vec::new(),
             scene_builder: SceneBuilder::default(),
             z_index_stack: StackingOrder::default(),
+            depth_map: Default::default(),
             content_mask_stack: Vec::new(),
             element_offset_stack: Vec::new(),
         }
@@ -807,6 +807,32 @@ impl<'a> WindowContext<'a> {
         result
     }
 
+    /// Called during painting to track which z-index is on top at each pixel position
+    pub fn add_opaque_layer(&mut self, bounds: Bounds<Pixels>) {
+        let stacking_order = self.window.current_frame.z_index_stack.clone();
+        let depth_map = &mut self.window.current_frame.depth_map;
+        match depth_map.binary_search_by(|(level, _)| stacking_order.cmp(&level)) {
+            Ok(i) | Err(i) => depth_map.insert(i, (stacking_order, bounds)),
+        }
+    }
+
+    /// Returns true if the top-most opaque layer painted over this point was part of the
+    /// same layer as the given stacking order.
+    pub fn was_top_layer(&self, point: &Point<Pixels>, level: &StackingOrder) -> bool {
+        for (stack, bounds) in self.window.previous_frame.depth_map.iter() {
+            if bounds.contains_point(point) {
+                return level.starts_with(stack) || stack.starts_with(level);
+            }
+        }
+
+        false
+    }
+
+    /// Called during painting to get the current stacking order.
+    pub fn stacking_order(&self) -> &StackingOrder {
+        &self.window.current_frame.z_index_stack
+    }
+
     /// Paint one or more drop shadows into the scene for the current frame at the current z-index.
     pub fn paint_shadows(
         &mut self,
@@ -1171,6 +1197,7 @@ impl<'a> WindowContext<'a> {
         frame.mouse_listeners.values_mut().for_each(Vec::clear);
         frame.focus_listeners.clear();
         frame.dispatch_tree.clear();
+        frame.depth_map.clear();
     }
 
     /// Dispatch a mouse or keyboard event on the window.
@@ -1471,13 +1498,15 @@ impl<'a> WindowContext<'a> {
         }
     }
 
-    pub fn constructor_for<V: Render, R>(
+    pub fn handler_for<V: Render>(
         &self,
         view: &View<V>,
-        f: impl Fn(&mut V, &mut ViewContext<V>) -> R + 'static,
-    ) -> impl Fn(&mut WindowContext) -> R + 'static {
-        let view = view.clone();
-        move |cx: &mut WindowContext| view.update(cx, |view, cx| f(view, cx))
+        f: impl Fn(&mut V, &mut ViewContext<V>) + 'static,
+    ) -> impl Fn(&mut WindowContext) {
+        let view = view.downgrade();
+        move |cx: &mut WindowContext| {
+            view.update(cx, |view, cx| f(view, cx)).ok();
+        }
     }
 
     //========== ELEMENT RELATED FUNCTIONS ===========
@@ -1688,7 +1717,7 @@ impl VisualContext for WindowContext<'_> {
     where
         V: ManagedView,
     {
-        self.update_view(view, |_, cx| cx.emit(DismissEvent::Dismiss))
+        self.update_view(view, |_, cx| cx.emit(DismissEvent))
     }
 }
 
@@ -1926,23 +1955,6 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
                 result
             }
         })
-    }
-
-    /// Like `with_element_state`, but for situations where the element_id is optional. If the
-    /// id is `None`, no state will be retrieved or stored.
-    fn with_optional_element_state<S, R>(
-        &mut self,
-        element_id: Option<ElementId>,
-        f: impl FnOnce(Option<S>, &mut Self) -> (R, S),
-    ) -> R
-    where
-        S: 'static,
-    {
-        if let Some(element_id) = element_id {
-            self.with_element_state(element_id, f)
-        } else {
-            f(None, self).0
-        }
     }
 
     /// Obtain the current content mask.
@@ -2392,7 +2404,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     where
         V: ManagedView,
     {
-        self.defer(|_, cx| cx.emit(DismissEvent::Dismiss))
+        self.defer(|_, cx| cx.emit(DismissEvent))
     }
 
     pub fn listener<E>(
@@ -2588,7 +2600,7 @@ impl<V: 'static + Render> WindowHandle<V> {
         cx.read_window(self, |root_view, _cx| root_view.clone())
     }
 
-    pub fn is_active(&self, cx: &WindowContext) -> Option<bool> {
+    pub fn is_active(&self, cx: &AppContext) -> Option<bool> {
         cx.windows
             .get(self.id)
             .and_then(|window| window.as_ref().map(|window| window.active))

@@ -1,5 +1,3 @@
-#![allow(dead_code, unused_variables)]
-
 mod assets;
 mod stories;
 mod story_selector;
@@ -70,7 +68,7 @@ fn main() {
         language::init(cx);
         editor::init(cx);
 
-        let window = cx.open_window(
+        let _window = cx.open_window(
             WindowOptions {
                 bounds: WindowBounds::Fixed(Bounds {
                     origin: Default::default(),
@@ -104,7 +102,7 @@ impl StoryWrapper {
 impl Render for StoryWrapper {
     type Element = Div;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
         div()
             .flex()
             .flex_col()

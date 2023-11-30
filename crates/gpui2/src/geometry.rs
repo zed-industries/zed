@@ -740,7 +740,7 @@ impl<T> Copy for Corners<T> where T: Copy + Clone + Default + Debug {}
     Deserialize,
 )]
 #[repr(transparent)]
-pub struct Pixels(pub(crate) f32);
+pub struct Pixels(pub f32);
 
 impl std::ops::Div for Pixels {
     type Output = f32;
@@ -1052,7 +1052,7 @@ impl sqlez::bindable::Bind for GlobalPixels {
 }
 
 #[derive(Clone, Copy, Default, Add, Sub, Mul, Div, Neg)]
-pub struct Rems(f32);
+pub struct Rems(pub f32);
 
 impl Mul<Pixels> for Rems {
     type Output = Pixels;

@@ -20,6 +20,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "activity_indicator2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "auto_update2",
+ "editor2",
+ "futures 0.3.28",
+ "gpui2",
+ "language2",
+ "project2",
+ "settings2",
+ "smallvec",
+ "theme2",
+ "ui2",
+ "util",
+ "workspace2",
+]
+
+[[package]]
 name = "addr2line"
 version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9472,6 +9491,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "theme_selector2"
+version = "0.1.0"
+dependencies = [
+ "editor2",
+ "feature_flags2",
+ "fs2",
+ "fuzzy2",
+ "gpui2",
+ "log",
+ "parking_lot 0.11.2",
+ "picker2",
+ "postage",
+ "settings2",
+ "smol",
+ "theme2",
+ "ui2",
+ "util",
+ "workspace2",
+]
+
+[[package]]
 name = "thiserror"
 version = "1.0.48"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11055,6 +11095,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "welcome2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "client2",
+ "db2",
+ "editor2",
+ "fs2",
+ "fuzzy2",
+ "gpui2",
+ "install_cli2",
+ "log",
+ "picker2",
+ "project2",
+ "schemars",
+ "serde",
+ "settings2",
+ "theme2",
+ "theme_selector2",
+ "ui2",
+ "util",
+ "workspace2",
+]
+
+[[package]]
 name = "which"
 version = "4.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11508,7 +11573,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.115.0"
+version = "0.116.0"
 dependencies = [
  "activity_indicator",
  "ai",
@@ -11651,6 +11716,7 @@ dependencies = [
 name = "zed2"
 version = "0.109.0"
 dependencies = [
+ "activity_indicator2",
  "ai2",
  "anyhow",
  "async-compression",
@@ -11661,6 +11727,7 @@ dependencies = [
  "auto_update2",
  "backtrace",
  "call2",
+ "channel2",
  "chrono",
  "cli",
  "client2",
@@ -11719,6 +11786,7 @@ dependencies = [
  "terminal_view2",
  "text2",
  "theme2",
+ "theme_selector2",
  "thiserror",
  "tiny_http",
  "toml 0.5.11",
@@ -11756,6 +11824,7 @@ dependencies = [
  "urlencoding",
  "util",
  "uuid 1.4.1",
+ "welcome2",
  "workspace2",
  "zed_actions2",
 ]

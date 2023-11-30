@@ -364,7 +364,8 @@ async fn test_joining_channel_ancestor_member(
     let active_call_b = cx_b.read(ActiveCall::global);
 
     assert!(active_call_b
-        .update(cx_b, |active_call, cx| active_call.join_channel(sub_id, cx))
+        .update(cx_b, |active_call, cx| active_call
+            .join_channel(sub_id, None, cx))
         .await
         .is_ok());
 }
@@ -394,7 +395,9 @@ async fn test_channel_room(
     let active_call_b = cx_b.read(ActiveCall::global);
 
     active_call_a
-        .update(cx_a, |active_call, cx| active_call.join_channel(zed_id, cx))
+        .update(cx_a, |active_call, cx| {
+            active_call.join_channel(zed_id, None, cx)
+        })
         .await
         .unwrap();
 
@@ -442,7 +445,9 @@ async fn test_channel_room(
     });
 
     active_call_b
-        .update(cx_b, |active_call, cx| active_call.join_channel(zed_id, cx))
+        .update(cx_b, |active_call, cx| {
+            active_call.join_channel(zed_id, None, cx)
+        })
         .await
         .unwrap();
 
@@ -559,12 +564,16 @@ async fn test_channel_room(
     });
 
     active_call_a
-        .update(cx_a, |active_call, cx| active_call.join_channel(zed_id, cx))
+        .update(cx_a, |active_call, cx| {
+            active_call.join_channel(zed_id, None, cx)
+        })
         .await
         .unwrap();
 
     active_call_b
-        .update(cx_b, |active_call, cx| active_call.join_channel(zed_id, cx))
+        .update(cx_b, |active_call, cx| {
+            active_call.join_channel(zed_id, None, cx)
+        })
         .await
         .unwrap();
 
@@ -608,7 +617,9 @@ async fn test_channel_jumping(executor: BackgroundExecutor, cx_a: &mut TestAppCo
     let active_call_a = cx_a.read(ActiveCall::global);
 
     active_call_a
-        .update(cx_a, |active_call, cx| active_call.join_channel(zed_id, cx))
+        .update(cx_a, |active_call, cx| {
+            active_call.join_channel(zed_id, None, cx)
+        })
         .await
         .unwrap();
 
@@ -627,7 +638,7 @@ async fn test_channel_jumping(executor: BackgroundExecutor, cx_a: &mut TestAppCo
 
     active_call_a
         .update(cx_a, |active_call, cx| {
-            active_call.join_channel(rust_id, cx)
+            active_call.join_channel(rust_id, None, cx)
         })
         .await
         .unwrap();
@@ -793,7 +804,7 @@ async fn test_call_from_channel(
     let active_call_b = cx_b.read(ActiveCall::global);
 
     active_call_a
-        .update(cx_a, |call, cx| call.join_channel(channel_id, cx))
+        .update(cx_a, |call, cx| call.join_channel(channel_id, None, cx))
         .await
         .unwrap();
 
@@ -1286,7 +1297,7 @@ async fn test_guest_access(
 
     // Non-members should not be allowed to join
     assert!(active_call_b
-        .update(cx_b, |call, cx| call.join_channel(channel_a, cx))
+        .update(cx_b, |call, cx| call.join_channel(channel_a, None, cx))
         .await
         .is_err());
 
@@ -1308,7 +1319,7 @@ async fn test_guest_access(
 
     // Client B joins channel A as a guest
     active_call_b
-        .update(cx_b, |call, cx| call.join_channel(channel_a, cx))
+        .update(cx_b, |call, cx| call.join_channel(channel_a, None, cx))
         .await
         .unwrap();
 
@@ -1341,7 +1352,7 @@ async fn test_guest_access(
     assert_channels_list_shape(client_b.channel_store(), cx_b, &[]);
 
     active_call_b
-        .update(cx_b, |call, cx| call.join_channel(channel_b, cx))
+        .update(cx_b, |call, cx| call.join_channel(channel_b, None, cx))
         .await
         .unwrap();
 
@@ -1372,7 +1383,7 @@ async fn test_invite_access(
 
     // should not be allowed to join
     assert!(active_call_b
-        .update(cx_b, |call, cx| call.join_channel(channel_b_id, cx))
+        .update(cx_b, |call, cx| call.join_channel(channel_b_id, None, cx))
         .await
         .is_err());
 
@@ -1390,7 +1401,7 @@ async fn test_invite_access(
         .unwrap();
 
     active_call_b
-        .update(cx_b, |call, cx| call.join_channel(channel_b_id, cx))
+        .update(cx_b, |call, cx| call.join_channel(channel_b_id, None, cx))
         .await
         .unwrap();
 

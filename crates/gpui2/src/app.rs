@@ -520,6 +520,10 @@ impl AppContext {
         self.platform.should_auto_hide_scrollbars()
     }
 
+    pub fn restart(&self) {
+        self.platform.restart()
+    }
+
     pub(crate) fn push_effect(&mut self, effect: Effect) {
         match &effect {
             Effect::Notify { emitter } => {

@@ -3,9 +3,9 @@ use gpui::{
     WindowContext,
 };
 use smallvec::SmallVec;
-use theme2::ActiveTheme;
 
-use crate::{v_stack, StyledExt};
+use crate::prelude::*;
+use crate::v_stack;
 
 /// A popover is used to display a menu or show some options.
 ///

@@ -15,7 +15,7 @@ use lsp::DiagnosticSeverity;
 use project::{HoverBlock, HoverBlockKind, InlayHintLabelPart, Project};
 use settings::Settings;
 use std::{ops::Range, sync::Arc, time::Duration};
-use ui::Tooltip;
+use ui::{StyledExt, Tooltip};
 use util::TryFutureExt;
 use workspace::Workspace;
 
@@ -476,16 +476,15 @@ impl InfoPopover {
     ) -> AnyElement {
         div()
             .id("info_popover")
+            .elevation_2(cx)
+            .text_ui()
+            .p_2()
             .overflow_y_scroll()
-            .bg(gpui::red())
             .max_w(max_size.width)
             .max_h(max_size.height)
             // Prevent a mouse move on the popover from being propagated to the editor,
             // because that would dismiss the popover.
             .on_mouse_move(|_, cx| cx.stop_propagation())
-            // Prevent a mouse down on the popover from being propagated to the editor,
-            // because that would move the cursor.
-            .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
             .child(crate::render_parsed_markdown(
                 "content",
                 &self.parsed_content,

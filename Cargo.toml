@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/activity_indicator",
+    "crates/activity_indicator2",
     "crates/ai",
     "crates/assistant",
     "crates/audio",
@@ -107,6 +108,7 @@ members = [
     "crates/theme2",
     "crates/theme_importer",
     "crates/theme_selector",
+    "crates/theme_selector2",
     "crates/ui2",
     "crates/util",
     "crates/semantic_index",
@@ -115,6 +117,7 @@ members = [
     "crates/vcs_menu",
     "crates/workspace2",
     "crates/welcome",
+    "crates/welcome2",
     "crates/xtask",
     "crates/zed",
     "crates/zed2",

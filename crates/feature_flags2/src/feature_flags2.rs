@@ -30,11 +30,11 @@ pub trait FeatureFlagViewExt<V: 'static> {
 
 impl<V> FeatureFlagViewExt<V> for ViewContext<'_, V>
 where
-    V: 'static + Send + Sync,
+    V: 'static,
 {
     fn observe_flag<T: FeatureFlag, F>(&mut self, callback: F) -> Subscription
     where
-        F: Fn(bool, &mut V, &mut ViewContext<V>) + Send + Sync + 'static,
+        F: Fn(bool, &mut V, &mut ViewContext<V>) + 'static,
     {
         self.observe_global::<FeatureFlags>(move |v, cx| {
             let feature_flags = cx.global::<FeatureFlags>();

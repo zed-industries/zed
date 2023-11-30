@@ -106,10 +106,8 @@ impl Workspace {
             let notification = build_notification(cx);
             cx.subscribe(
                 &notification,
-                move |this, handle, event: &DismissEvent, cx| match event {
-                    DismissEvent::Dismiss => {
-                        this.dismiss_notification_internal(type_id, id, cx);
-                    }
+                move |this, handle, event: &DismissEvent, cx| {
+                    this.dismiss_notification_internal(type_id, id, cx);
                 },
             )
             .detach();
@@ -183,6 +181,7 @@ pub mod simple_message_notification {
     };
     use serde::Deserialize;
     use std::{borrow::Cow, sync::Arc};
+    use ui::prelude::*;
     use ui::{h_stack, v_stack, Button, Icon, IconElement, Label, StyledExt};
 
     #[derive(Clone, Default, Deserialize, PartialEq)]
@@ -260,7 +259,7 @@ pub mod simple_message_notification {
         }
 
         pub fn dismiss(&mut self, cx: &mut ViewContext<Self>) {
-            cx.emit(DismissEvent::Dismiss);
+            cx.emit(DismissEvent);
         }
     }
 
@@ -289,12 +288,14 @@ pub mod simple_message_notification {
                         ),
                 )
                 .children(self.click_message.iter().map(|message| {
-                    Button::new(message.clone()).on_click(cx.listener(|this, _, cx| {
-                        if let Some(on_click) = this.on_click.as_ref() {
-                            (on_click)(cx)
-                        };
-                        this.dismiss(cx)
-                    }))
+                    Button::new(message.clone(), message.clone()).on_click(cx.listener(
+                        |this, _, cx| {
+                            if let Some(on_click) = this.on_click.as_ref() {
+                                (on_click)(cx)
+                            };
+                            this.dismiss(cx)
+                        },
+                    ))
                 }))
         }
     }

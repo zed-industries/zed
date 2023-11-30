@@ -13,12 +13,14 @@ use std::{
 };
 use util::paths::{PathMatcher, DEFAULT_PRETTIER_DIR};
 
+#[derive(Clone)]
 pub enum Prettier {
     Real(RealPrettier),
     #[cfg(any(test, feature = "test-support"))]
     Test(TestPrettier),
 }
 
+#[derive(Clone)]
 pub struct RealPrettier {
     default: bool,
     prettier_dir: PathBuf,
@@ -26,11 +28,13 @@ pub struct RealPrettier {
 }
 
 #[cfg(any(test, feature = "test-support"))]
+#[derive(Clone)]
 pub struct TestPrettier {
     prettier_dir: PathBuf,
     default: bool,
 }
 
+pub const FAIL_THRESHOLD: usize = 4;
 pub const PRETTIER_SERVER_FILE: &str = "prettier_server.js";
 pub const PRETTIER_SERVER_JS: &str = include_str!("./prettier_server.js");
 const PRETTIER_PACKAGE_NAME: &str = "prettier";

@@ -325,8 +325,7 @@ impl VisualContext for AsyncWindowContext {
     where
         V: crate::ManagedView,
     {
-        self.window.update(self, |_, cx| {
-            view.update(cx, |_, cx| cx.emit(DismissEvent::Dismiss))
-        })
+        self.window
+            .update(self, |_, cx| view.update(cx, |_, cx| cx.emit(DismissEvent)))
     }
 }

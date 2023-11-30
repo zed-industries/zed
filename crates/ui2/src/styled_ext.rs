@@ -1,6 +1,6 @@
 use gpui::{px, Styled, WindowContext};
-use theme2::ActiveTheme;
 
+use crate::prelude::*;
 use crate::{ElevationIndex, UITextSize};
 
 fn elevated<E: Styled>(this: E, cx: &mut WindowContext, index: ElevationIndex) -> E {

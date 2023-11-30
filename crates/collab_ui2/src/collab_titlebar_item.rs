@@ -37,9 +37,9 @@ use gpui::{
 };
 use project::Project;
 use theme::ActiveTheme;
-use ui::{h_stack, Avatar, Button, ButtonVariant, Color, IconButton, KeyBinding, Tooltip};
+use ui::{h_stack, prelude::*, Avatar, Button, ButtonStyle2, IconButton, KeyBinding, Tooltip};
 use util::ResultExt;
-use workspace::Workspace;
+use workspace::{notifications::NotifyResultExt, Workspace};
 
 use crate::face_pile::FacePile;
 
@@ -153,8 +153,8 @@ impl Render for CollabTitlebarItem {
                             .border_color(gpui::red())
                             .id("project_owner_indicator")
                             .child(
-                                Button::new("player")
-                                    .variant(ButtonVariant::Ghost)
+                                Button::new("player", "player")
+                                    .style(ButtonStyle2::Subtle)
                                     .color(Some(Color::Player(0))),
                             )
                             .tooltip(move |cx| Tooltip::text("Toggle following", cx)),
@@ -165,7 +165,10 @@ impl Render for CollabTitlebarItem {
                             .border()
                             .border_color(gpui::red())
                             .id("titlebar_project_menu_button")
-                            .child(Button::new("project_name").variant(ButtonVariant::Ghost))
+                            .child(
+                                Button::new("project_name", "project_name")
+                                    .style(ButtonStyle2::Subtle),
+                            )
                             .tooltip(move |cx| Tooltip::text("Recent Projects", cx)),
                     )
                     // TODO - Add git menu
@@ -175,8 +178,8 @@ impl Render for CollabTitlebarItem {
                             .border_color(gpui::red())
                             .id("titlebar_git_menu_button")
                             .child(
-                                Button::new("branch_name")
-                                    .variant(ButtonVariant::Ghost)
+                                Button::new("branch_name", "branch_name")
+                                    .style(ButtonStyle2::Subtle)
                                     .color(Some(Color::Muted)),
                             )
                             .tooltip(move |cx| {
@@ -235,7 +238,10 @@ impl Render for CollabTitlebarItem {
                     h_stack()
                         .child(
                             h_stack()
-                                .child(Button::new(if is_shared { "Unshare" } else { "Share" }))
+                                .child(Button::new(
+                                    "toggle_sharing",
+                                    if is_shared { "Unshare" } else { "Share" },
+                                ))
                                 .child(IconButton::new("leave-call", ui::Icon::Exit).on_click({
                                     let workspace = workspace.clone();
                                     move |_, cx| {
@@ -288,13 +294,15 @@ impl Render for CollabTitlebarItem {
                         this.child(ui::Avatar::data(avatar))
                     })
                 } else {
-                    this.child(Button::new("Sign in").on_click(move |_, cx| {
+                    this.child(Button::new("sign_in", "Sign in").on_click(move |_, cx| {
                         let client = client.clone();
-                        cx.spawn(move |cx| async move {
-                            client.authenticate_and_connect(true, &cx).await?;
-                            Ok::<(), anyhow::Error>(())
+                        cx.spawn(move |mut cx| async move {
+                            client
+                                .authenticate_and_connect(true, &cx)
+                                .await
+                                .notify_async_err(&mut cx);
                         })
-                        .detach_and_log_err(cx);
+                        .detach();
                     }))
                 }
             })

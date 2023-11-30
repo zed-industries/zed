@@ -9,7 +9,7 @@ pub struct ZIndexStory;
 impl Render for ZIndexStory {
     type Element = Div;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
         Story::container().child(Story::title("z-index")).child(
             div()
                 .flex()
@@ -84,7 +84,7 @@ struct ZIndexExample {
 impl RenderOnce for ZIndexExample {
     type Rendered = Div;
 
-    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
+    fn render(self, _cx: &mut WindowContext) -> Self::Rendered {
         div()
             .relative()
             .size_full()

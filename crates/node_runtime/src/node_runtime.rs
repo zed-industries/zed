@@ -73,6 +73,7 @@ impl RealNodeRuntime {
         let npm_file = node_dir.join("bin/npm");
 
         let result = Command::new(&node_binary)
+            .env_clear()
             .arg(npm_file)
             .arg("--version")
             .stdin(Stdio::null())
@@ -149,6 +150,7 @@ impl NodeRuntime for RealNodeRuntime {
             }
 
             let mut command = Command::new(node_binary);
+            command.env_clear();
             command.env("PATH", env_path);
             command.arg(npm_file).arg(subcommand);
             command.args(["--cache".into(), installation_path.join("cache")]);
@@ -200,11 +202,11 @@ impl NodeRuntime for RealNodeRuntime {
                 &[
                     name,
                     "--json",
-                    "-fetch-retry-mintimeout",
+                    "--fetch-retry-mintimeout",
                     "2000",
-                    "-fetch-retry-maxtimeout",
+                    "--fetch-retry-maxtimeout",
                     "5000",
-                    "-fetch-timeout",
+                    "--fetch-timeout",
                     "5000",
                 ],
             )
@@ -229,11 +231,11 @@ impl NodeRuntime for RealNodeRuntime {
 
         let mut arguments: Vec<_> = packages.iter().map(|p| p.as_str()).collect();
         arguments.extend_from_slice(&[
-            "-fetch-retry-mintimeout",
+            "--fetch-retry-mintimeout",
             "2000",
-            "-fetch-retry-maxtimeout",
+            "--fetch-retry-maxtimeout",
             "5000",
-            "-fetch-timeout",
+            "--fetch-timeout",
             "5000",
         ]);
 

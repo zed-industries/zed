@@ -1,12 +1,12 @@
 use gpui::{div, prelude::*, px, Div, Render, SharedString, Stateful, Styled, View, WindowContext};
-use theme2::ActiveTheme;
+use ui::prelude::*;
 use ui::Tooltip;
 
 pub struct ScrollStory;
 
 impl ScrollStory {
     pub fn view(cx: &mut WindowContext) -> View<ScrollStory> {
-        cx.build_view(|cx| ScrollStory)
+        cx.build_view(|_cx| ScrollStory)
     }
 }
 
