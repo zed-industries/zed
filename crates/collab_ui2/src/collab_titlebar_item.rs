@@ -37,7 +37,7 @@ use gpui::{
 };
 use project::Project;
 use theme::ActiveTheme;
-use ui::{h_stack, prelude::*, Avatar, Button, ButtonStyle2, IconButton, KeyBinding, Tooltip};
+use ui::{h_stack, prelude::*, Avatar, Button, ButtonStyle, IconButton, KeyBinding, Tooltip};
 use util::ResultExt;
 use workspace::{notifications::NotifyResultExt, Workspace};
 
@@ -154,7 +154,7 @@ impl Render for CollabTitlebarItem {
                             .id("project_owner_indicator")
                             .child(
                                 Button::new("player", "player")
-                                    .style(ButtonStyle2::Subtle)
+                                    .style(ButtonStyle::Subtle)
                                     .color(Some(Color::Player(0))),
                             )
                             .tooltip(move |cx| Tooltip::text("Toggle following", cx)),
@@ -167,7 +167,7 @@ impl Render for CollabTitlebarItem {
                             .id("titlebar_project_menu_button")
                             .child(
                                 Button::new("project_name", "project_name")
-                                    .style(ButtonStyle2::Subtle),
+                                    .style(ButtonStyle::Subtle),
                             )
                             .tooltip(move |cx| Tooltip::text("Recent Projects", cx)),
                     )
@@ -179,7 +179,7 @@ impl Render for CollabTitlebarItem {
                             .id("titlebar_git_menu_button")
                             .child(
                                 Button::new("branch_name", "branch_name")
-                                    .style(ButtonStyle2::Subtle)
+                                    .style(ButtonStyle::Subtle)
                                     .color(Some(Color::Muted)),
                             )
                             .tooltip(move |cx| {
