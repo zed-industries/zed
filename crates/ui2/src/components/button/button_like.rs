@@ -262,7 +262,12 @@ impl RenderOnce for ButtonLike {
             .active(|active| active.bg(self.style.active(cx).background))
             .when_some(
                 self.on_click.filter(|_| !self.disabled),
-                |this, on_click| this.on_click(move |event, cx| (on_click)(event, cx)),
+                |this, on_click| {
+                    this.on_click(move |event, cx| {
+                        cx.stop_propagation();
+                        (on_click)(event, cx)
+                    })
+                },
             )
             .when_some(self.tooltip, |this, tooltip| {
                 this.tooltip(move |cx| tooltip(cx))
