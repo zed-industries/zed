@@ -35,7 +35,7 @@ use gpui::{
     ParentElement, Render, RenderOnce, Stateful, StatefulInteractiveElement, Styled, Subscription,
     ViewContext, VisualContext, WeakView, WindowBounds,
 };
-use project::Project;
+use project::{Project, RepositoryEntry};
 use theme::ActiveTheme;
 use ui::{
     h_stack, prelude::*, Avatar, Button, ButtonLike, ButtonStyle2, Icon, IconButton, IconElement,
@@ -46,8 +46,8 @@ use workspace::{notifications::NotifyResultExt, Workspace};
 
 use crate::face_pile::FacePile;
 
-// const MAX_PROJECT_NAME_LENGTH: usize = 40;
-// const MAX_BRANCH_NAME_LENGTH: usize = 40;
+const MAX_PROJECT_NAME_LENGTH: usize = 40;
+const MAX_BRANCH_NAME_LENGTH: usize = 40;
 
 // actions!(
 //     collab,
@@ -153,58 +153,60 @@ impl Render for CollabTitlebarItem {
                     .when(is_in_room, |this| {
                         this.children(self.render_project_owner(cx))
                     })
-                    // TODO - Add player menu
-                    // .when(is_in_room, |this| {
-                    //     this.child(
-                    //         div()
-                    //             .border()
-                    //             .border_color(gpui::red())
-                    //             .id("project_owner_indicator")
-                    //             .child(
-                    //                 Button::new("project_owner", "project_owner")
-                    //                     .style(ButtonStyle2::Subtle)
-                    //                     .color(Some(Color::Player(0))),
-                    //             )
-                    //             .tooltip(move |cx| Tooltip::text("Toggle following", cx)),
-                    //     )
-                    // })
-                    // TODO - Add project menu
-                    .child(
-                        div()
-                            .border()
-                            .border_color(gpui::red())
-                            .id("titlebar_project_menu_button")
-                            .child(
-                                Button::new("project_name", "project_name")
-                                    .style(ButtonStyle2::Subtle),
-                            )
-                            .tooltip(move |cx| Tooltip::text("Recent Projects", cx)),
-                    )
-                    // TODO - Add git menu
-                    .child(
-                        div()
-                            .border()
-                            .border_color(gpui::red())
-                            .id("titlebar_git_menu_button")
-                            .child(
-                                Button::new("branch_name", "branch_name")
-                                    .style(ButtonStyle2::Subtle)
-                                    .color(Some(Color::Muted)),
-                            )
-                            .tooltip(move |cx| {
-                                cx.build_view(|_| {
-                                    Tooltip::new("Recent Branches")
-                                        .key_binding(KeyBinding::new(gpui::KeyBinding::new(
-                                            "cmd-b",
-                                            // todo!() Replace with real action.
-                                            gpui::NoAction,
-                                            None,
-                                        )))
-                                        .meta("Only local branches shown")
-                                })
-                                .into()
-                            }),
-                    ),
+                    .child(self.render_project_name(cx))
+                    .children(self.render_project_branch(cx)),
+                // TODO - Add player menu
+                // .when(is_in_room, |this| {
+                //     this.child(
+                //         div()
+                //             .border()
+                //             .border_color(gpui::red())
+                //             .id("project_owner_indicator")
+                //             .child(
+                //                 Button::new("project_owner", "project_owner")
+                //                     .style(ButtonStyle2::Subtle)
+                //                     .color(Some(Color::Player(0))),
+                //             )
+                //             .tooltip(move |cx| Tooltip::text("Toggle following", cx)),
+                //     )
+                // })
+                // TODO - Add project menu
+                // .child(
+                //     div()
+                //         .border()
+                //         .border_color(gpui::red())
+                //         .id("titlebar_project_menu_button")
+                //         .child(
+                //             Button::new("project_name", "project_name")
+                //                 .style(ButtonStyle2::Subtle),
+                //         )
+                //         .tooltip(move |cx| Tooltip::text("Recent Projects", cx)),
+                // )
+                // TODO - Add git menu
+                // .child(
+                //     div()
+                //         .border()
+                //         .border_color(gpui::red())
+                //         .id("titlebar_git_menu_button")
+                //         .child(
+                //             Button::new("branch_name", "branch_name")
+                //                 .style(ButtonStyle2::Subtle)
+                //                 .color(Some(Color::Muted)),
+                //         )
+                //         .tooltip(move |cx| {
+                //             cx.build_view(|_| {
+                //                 Tooltip::new("Recent Branches")
+                //                     .key_binding(KeyBinding::new(gpui::KeyBinding::new(
+                //                         "cmd-b",
+                //                         // todo!() Replace with real action.
+                //                         gpui::NoAction,
+                //                         None,
+                //                     )))
+                //                     .meta("Only local branches shown")
+                //             })
+                //             .into()
+                //         }),
+                // ),
             )
             .when_some(
                 users.zip(current_user.clone()),
@@ -523,8 +525,46 @@ impl CollabTitlebarItem {
             .style(ButtonStyle2::Subtle)
             .into_element(),
         )
+    }
 
-        // add lock if you are in a locked project
+    pub fn render_project_name(&self, cx: &mut ViewContext<Self>) -> impl Element {
+        let name = {
+            let mut names = self.project.read(cx).visible_worktrees(cx).map(|worktree| {
+                let worktree = worktree.read(cx);
+                worktree.root_name()
+            });
+
+            names.next().unwrap_or("")
+        };
+
+        let name = util::truncate_and_trailoff(name, MAX_PROJECT_NAME_LENGTH);
+
+        Button::new("project_name_trigger", name)
+            .style(ButtonStyle2::Subtle)
+            .into_element()
+    }
+
+    pub fn render_project_branch(&self, cx: &mut ViewContext<Self>) -> Option<impl Element> {
+        let entry = {
+            let mut names_and_branches =
+                self.project.read(cx).visible_worktrees(cx).map(|worktree| {
+                    let worktree = worktree.read(cx);
+                    worktree.root_git_entry()
+                });
+
+            names_and_branches.next().flatten()
+        };
+
+        let branch_name = entry
+            .as_ref()
+            .and_then(RepositoryEntry::branch)
+            .map(|branch| util::truncate_and_trailoff(&branch, MAX_BRANCH_NAME_LENGTH))?;
+
+        Some(
+            Button::new("project_branch_trigger", branch_name)
+                .style(ButtonStyle2::Subtle)
+                .into_element(),
+        )
     }
 
     // fn collect_title_root_names(
