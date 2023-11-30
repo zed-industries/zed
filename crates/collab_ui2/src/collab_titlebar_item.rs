@@ -103,17 +103,18 @@ impl Render for CollabTitlebarItem {
             .update(cx, |this, cx| this.call_state().remote_participants(cx))
             .log_err()
             .flatten();
-        let mic_icon = if self
+        let is_muted = self
             .workspace
             .update(cx, |this, cx| this.call_state().is_muted(cx))
             .log_err()
             .flatten()
-            .unwrap_or_default()
-        {
-            ui::Icon::MicMute
-        } else {
-            ui::Icon::Mic
-        };
+            .unwrap_or_default();
+        let is_deafened = self
+            .workspace
+            .update(cx, |this, cx| this.call_state().is_deafened(cx))
+            .log_err()
+            .flatten()
+            .unwrap_or_default();
         let speakers_icon = if self
             .workspace
             .update(cx, |this, cx| this.call_state().is_deafened(cx))
@@ -269,22 +270,39 @@ impl Render for CollabTitlebarItem {
                             h_stack()
                                 .gap_1()
                                 .child(
-                                    IconButton::new("mute-microphone", mic_icon)
-                                        .style(ButtonStyle2::Subtle)
-                                        .on_click({
-                                            let workspace = workspace.clone();
-                                            move |_, cx| {
-                                                workspace
-                                                    .update(cx, |this, cx| {
-                                                        this.call_state().toggle_mute(cx);
-                                                    })
-                                                    .log_err();
-                                            }
-                                        }),
+                                    IconButton::new(
+                                        "mute-microphone",
+                                        if is_muted.clone() {
+                                            ui::Icon::MicMute
+                                        } else {
+                                            ui::Icon::Mic
+                                        },
+                                    )
+                                    .style(ButtonStyle2::Subtle)
+                                    .selected(is_muted.clone())
+                                    .on_click({
+                                        let workspace = workspace.clone();
+                                        move |_, cx| {
+                                            workspace
+                                                .update(cx, |this, cx| {
+                                                    this.call_state().toggle_mute(cx);
+                                                })
+                                                .log_err();
+                                        }
+                                    }),
                                 )
                                 .child(
                                     IconButton::new("mute-sound", speakers_icon)
                                         .style(ButtonStyle2::Subtle)
+                                        .selected(is_deafened.clone())
+                                        .tooltip(move |cx| {
+                                            Tooltip::with_meta(
+                                                "Deafen Audio",
+                                                None,
+                                                "Mic will be muted",
+                                                cx,
+                                            )
+                                        })
                                         .on_click({
                                             let workspace = workspace.clone();
                                             move |_, cx| {
