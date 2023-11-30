@@ -62,8 +62,10 @@ impl ListHeader {
         self.meta = meta;
         self
     }
+}
 
-    pub fn selected(mut self, selected: bool) -> Self {
+impl Selectable for ListHeader {
+    fn selected(mut self, selected: bool) -> Self {
         self.selected = selected;
         self
     }
