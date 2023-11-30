@@ -434,8 +434,8 @@ impl LanguageServer {
         let root_uri = Url::from_file_path(&self.root_path).unwrap();
         #[allow(deprecated)]
         let params = InitializeParams {
-            process_id: Default::default(),
-            root_path: Default::default(),
+            process_id: None,
+            root_path: None,
             root_uri: Some(root_uri.clone()),
             initialization_options: options,
             capabilities: ClientCapabilities {
@@ -456,12 +456,15 @@ impl LanguageServer {
                     inlay_hint: Some(InlayHintWorkspaceClientCapabilities {
                         refresh_support: Some(true),
                     }),
+                    diagnostic: Some(DiagnosticWorkspaceClientCapabilities {
+                        refresh_support: None,
+                    }),
                     ..Default::default()
                 }),
                 text_document: Some(TextDocumentClientCapabilities {
                     definition: Some(GotoCapability {
                         link_support: Some(true),
-                        ..Default::default()
+                        dynamic_registration: None,
                     }),
                     code_action: Some(CodeActionClientCapabilities {
                         code_action_literal_support: Some(CodeActionLiteralSupport {
@@ -503,7 +506,7 @@ impl LanguageServer {
                     }),
                     hover: Some(HoverClientCapabilities {
                         content_format: Some(vec![MarkupKind::Markdown]),
-                        ..Default::default()
+                        dynamic_registration: None,
                     }),
                     inlay_hint: Some(InlayHintClientCapabilities {
                         resolve_support: Some(InlayHintResolveClientCapabilities {
@@ -517,6 +520,20 @@ impl LanguageServer {
                         }),
                         dynamic_registration: Some(false),
                     }),
+                    publish_diagnostics: Some(PublishDiagnosticsClientCapabilities {
+                        related_information: Some(true),
+                        ..Default::default()
+                    }),
+                    formatting: Some(DynamicRegistrationClientCapabilities {
+                        dynamic_registration: None,
+                    }),
+                    on_type_formatting: Some(DynamicRegistrationClientCapabilities {
+                        dynamic_registration: None,
+                    }),
+                    diagnostic: Some(DiagnosticClientCapabilities {
+                        related_document_support: Some(true),
+                        dynamic_registration: None,
+                    }),
                     ..Default::default()
                 }),
                 experimental: Some(json!({
@@ -526,15 +543,15 @@ impl LanguageServer {
                     work_done_progress: Some(true),
                     ..Default::default()
                 }),
-                ..Default::default()
+                general: None,
             },
-            trace: Default::default(),
+            trace: None,
             workspace_folders: Some(vec![WorkspaceFolder {
                 uri: root_uri,
                 name: Default::default(),
             }]),
-            client_info: Default::default(),
-            locale: Default::default(),
+            client_info: None,
+            locale: None,
         };
 
         let response = self.request::<request::Initialize>(params).await?;
