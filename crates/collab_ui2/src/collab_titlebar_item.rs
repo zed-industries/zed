@@ -38,8 +38,8 @@ use gpui::{
 use project::{Project, RepositoryEntry};
 use theme::ActiveTheme;
 use ui::{
-    h_stack, prelude::*, Avatar, Button, ButtonLike, ButtonStyle2, Icon, IconButton, IconElement,
-    KeyBinding, PopoverMenu, Tooltip,
+    h_stack, popover_menu, prelude::*, Avatar, Button, ButtonLike, ButtonStyle2, ContextMenu, Icon,
+    IconButton, IconElement, KeyBinding, Tooltip,
 };
 use util::ResultExt;
 use workspace::{notifications::NotifyResultExt, Workspace};
@@ -290,19 +290,20 @@ impl Render for CollabTitlebarItem {
                         // TODO: Finish implementing user menu popover
                         //
                         this.child(
-                            PopoverMenu::new(
-                                ButtonLike::new("user-menu")
-                                    .child(h_stack().gap_0p5().child(Avatar::data(avatar)).child(
-                                        IconElement::new(Icon::ChevronDown).color(Color::Muted),
-                                    ))
-                                    .style(ButtonStyle2::Subtle)
-                                    .tooltip(move |cx| Tooltip::text("Toggle User Menu", cx))
-                                    .into_any_element(),
-                            )
-                            .anchor(gpui::AnchorCorner::TopRight)
-                            // TODO: Show when trigger is clicked
-                            .show_menu(true)
-                            .children(vec![div().w_96().h_96().bg(gpui::red())]),
+                            popover_menu("user-menu")
+                                .menu(|cx| ContextMenu::build(cx, |menu, cx| menu.header("ADADA")))
+                                .trigger(
+                                    ButtonLike::new("user-menu")
+                                        .child(
+                                            h_stack().gap_0p5().child(Avatar::data(avatar)).child(
+                                                IconElement::new(Icon::ChevronDown)
+                                                    .color(Color::Muted),
+                                            ),
+                                        )
+                                        .style(ButtonStyle2::Subtle)
+                                        .tooltip(move |cx| Tooltip::text("Toggle User Menu", cx)),
+                                )
+                                .anchor(gpui::AnchorCorner::TopRight),
                         )
                         // this.child(
                         //     ButtonLike::new("user-menu")
