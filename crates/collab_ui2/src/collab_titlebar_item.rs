@@ -300,6 +300,8 @@ impl Render for CollabTitlebarItem {
                                     .into_any_element(),
                             )
                             .anchor(gpui::AnchorCorner::TopRight)
+                            // TODO: Show when trigger is clicked
+                            .show_menu(true)
                             .children(vec![div().w_96().h_96().bg(gpui::red())]),
                         )
                         // this.child(
