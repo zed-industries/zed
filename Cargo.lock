@@ -4792,6 +4792,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "language_selector2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "editor2",
+ "fuzzy2",
+ "gpui2",
+ "language2",
+ "picker2",
+ "project2",
+ "settings2",
+ "theme2",
+ "util",
+ "workspace2",
+]
+
+[[package]]
 name = "language_tools"
 version = "0.1.0"
 dependencies = [
@@ -11772,6 +11789,7 @@ dependencies = [
  "isahc",
  "journal2",
  "language2",
+ "language_selector2",
  "lazy_static",
  "libc",
  "log",
