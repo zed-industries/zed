@@ -147,12 +147,20 @@ impl InteractiveElement for Img {
 }
 
 fn preserve_aspect_ratio(bounds: Bounds<Pixels>, image_size: Size<DevicePixels>) -> Bounds<Pixels> {
-    let new_size = if bounds.size.width > bounds.size.height {
-        let ratio = u32::from(image_size.height) as f32 / u32::from(image_size.width) as f32;
-        size(bounds.size.width, bounds.size.width * ratio)
+    let image_size = image_size.map(|dimension| Pixels::from(u32::from(dimension)));
+    let image_ratio = image_size.width / image_size.height;
+    let bounds_ratio = bounds.size.width / bounds.size.height;
+
+    let new_size = if bounds_ratio > image_ratio {
+        size(
+            image_size.width * (bounds.size.height / image_size.height),
+            bounds.size.height,
+        )
     } else {
-        let ratio = u32::from(image_size.width) as f32 / u32::from(image_size.height) as f32;
-        size(bounds.size.width * ratio, bounds.size.height)
+        size(
+            bounds.size.width,
+            image_size.height * (bounds.size.width / image_size.width),
+        )
     };
 
     Bounds {
