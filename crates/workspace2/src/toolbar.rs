@@ -290,7 +290,6 @@ impl<T: ToolbarItemView> ToolbarItemViewHandle for View<T> {
     }
 
     fn focus_changed(&mut self, pane_focused: bool, cx: &mut WindowContext) {
-        println!("focus changed, pane_focused: {pane_focused}");
         self.update(cx, |this, cx| {
             this.pane_focus_update(pane_focused, cx);
             cx.notify();
