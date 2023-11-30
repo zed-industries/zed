@@ -5,7 +5,7 @@ use gpui::{
     div, AnyView, Div, IntoElement, ParentElement, Render, Styled, Subscription, View, ViewContext,
     WindowContext,
 };
-use theme2::ActiveTheme;
+use ui::prelude::*;
 use ui::{h_stack, Button, Icon, IconButton};
 use util::ResultExt;
 
@@ -47,19 +47,7 @@ impl Render for StatusBar {
             .w_full()
             .h_8()
             .bg(cx.theme().colors().status_bar_background)
-            // Nate: I know this isn't how we render status bar tools
-            // We can move these to the correct place once we port their tools
-            .child(
-                h_stack().gap_1().child(self.render_left_tools(cx)).child(
-                    h_stack().gap_4().child(
-                        // TODO: Language Server status
-                        div()
-                            .border()
-                            .border_color(gpui::red())
-                            .child("Checking..."),
-                    ),
-                ),
-            )
+            .child(h_stack().gap_1().child(self.render_left_tools(cx)))
             .child(
                 h_stack()
                     .gap_4()
@@ -71,14 +59,14 @@ impl Render for StatusBar {
                                 div()
                                     .border()
                                     .border_color(gpui::red())
-                                    .child(Button::new("15:22")),
+                                    .child(Button::new("status_line_column_numbers", "15:22")),
                             )
                             .child(
                                 // TODO: Language picker
                                 div()
                                     .border()
                                     .border_color(gpui::red())
-                                    .child(Button::new("Rust")),
+                                    .child(Button::new("status_buffer_language", "Rust")),
                             ),
                     )
                     .child(

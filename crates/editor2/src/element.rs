@@ -5,7 +5,9 @@ use crate::{
     },
     editor_settings::ShowScrollbar,
     git::{diff_hunk_to_display, DisplayDiffHunk},
-    hover_popover::hover_at,
+    hover_popover::{
+        self, hover_at, HOVER_POPOVER_GAP, MIN_POPOVER_CHARACTER_WIDTH, MIN_POPOVER_LINE_HEIGHT,
+    },
     link_go_to_definition::{
         go_to_fetched_definition, go_to_fetched_type_definition, update_go_to_definition_link,
         update_inlay_link_and_hover_points, GoToDefinitionTrigger,
@@ -20,10 +22,11 @@ use collections::{BTreeMap, HashMap};
 use gpui::{
     div, point, px, relative, size, transparent_black, Action, AnyElement, AvailableSpace,
     BorrowWindow, Bounds, ContentMask, Corners, DispatchPhase, Edges, Element, ElementId,
-    ElementInputHandler, Entity, EntityId, Hsla, InteractiveElement, IntoElement, LineLayout,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, RenderOnce,
-    ScrollWheelEvent, ShapedLine, SharedString, Size, StatefulInteractiveElement, Style, Styled,
-    TextRun, TextStyle, View, ViewContext, WeakView, WindowContext, WrappedLine,
+    ElementInputHandler, Entity, EntityId, Hsla, InteractiveBounds, InteractiveElement,
+    IntoElement, LineLayout, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    ParentElement, Pixels, RenderOnce, ScrollWheelEvent, ShapedLine, SharedString, Size,
+    StackingOrder, StatefulInteractiveElement, Style, Styled, TextRun, TextStyle, View,
+    ViewContext, WeakView, WindowContext, WrappedLine,
 };
 use itertools::Itertools;
 use language::language_settings::ShowWhitespaceSetting;
@@ -45,6 +48,7 @@ use std::{
 };
 use sum_tree::Bias;
 use theme::{ActiveTheme, PlayerColor};
+use ui::prelude::*;
 use ui::{h_stack, IconButton, Tooltip};
 use util::ResultExt;
 use workspace::item::Item;
@@ -126,6 +130,11 @@ impl EditorElement {
 
     fn register_actions(&self, cx: &mut WindowContext) {
         let view = &self.editor;
+        self.editor.update(cx, |editor, cx| {
+            for action in editor.editor_actions.iter() {
+                (action)(cx)
+            }
+        });
         register_action(view, cx, Editor::move_left);
         register_action(view, cx, Editor::move_right);
         register_action(view, cx, Editor::move_down);
@@ -257,6 +266,7 @@ impl EditorElement {
         // on_action(cx, Editor::open_excerpts); todo!()
         register_action(view, cx, Editor::toggle_soft_wrap);
         register_action(view, cx, Editor::toggle_inlay_hints);
+        register_action(view, cx, hover_popover::hover);
         register_action(view, cx, Editor::reveal_in_finder);
         register_action(view, cx, Editor::copy_path);
         register_action(view, cx, Editor::copy_relative_path);
@@ -308,6 +318,7 @@ impl EditorElement {
         position_map: &PositionMap,
         text_bounds: Bounds<Pixels>,
         gutter_bounds: Bounds<Pixels>,
+        stacking_order: &StackingOrder,
         cx: &mut ViewContext<Editor>,
     ) -> bool {
         let mut click_count = event.click_count;
@@ -316,6 +327,9 @@ impl EditorElement {
         if gutter_bounds.contains_point(&event.position) {
             click_count = 3; // Simulate triple-click when clicking the gutter to select lines
         } else if !text_bounds.contains_point(&event.position) {
+            return false;
+        }
+        if !cx.was_top_layer(&event.position, stacking_order) {
             return false;
         }
 
@@ -376,6 +390,7 @@ impl EditorElement {
         event: &MouseUpEvent,
         position_map: &PositionMap,
         text_bounds: Bounds<Pixels>,
+        stacking_order: &StackingOrder,
         cx: &mut ViewContext<Editor>,
     ) -> bool {
         let end_selection = editor.has_pending_selection();
@@ -388,6 +403,7 @@ impl EditorElement {
         if !pending_nonempty_selections
             && event.modifiers.command
             && text_bounds.contains_point(&event.position)
+            && cx.was_top_layer(&event.position, stacking_order)
         {
             let point = position_map.point_for_position(text_bounds, event.position);
             let could_be_inlay = point.as_valid().is_none();
@@ -410,6 +426,7 @@ impl EditorElement {
         position_map: &PositionMap,
         text_bounds: Bounds<Pixels>,
         gutter_bounds: Bounds<Pixels>,
+        stacking_order: &StackingOrder,
         cx: &mut ViewContext<Editor>,
     ) -> bool {
         let modifiers = event.modifiers;
@@ -449,10 +466,12 @@ impl EditorElement {
 
         let text_hovered = text_bounds.contains_point(&event.position);
         let gutter_hovered = gutter_bounds.contains_point(&event.position);
+        let was_top = cx.was_top_layer(&event.position, stacking_order);
+
         editor.set_gutter_hovered(gutter_hovered, cx);
 
         // Don't trigger hover popover if mouse is hovering over context menu
-        if text_hovered {
+        if text_hovered && was_top {
             let point_for_position = position_map.point_for_position(text_bounds, event.position);
 
             match point_for_position.as_valid() {
@@ -482,7 +501,7 @@ impl EditorElement {
         } else {
             update_go_to_definition_link(editor, None, modifiers.command, modifiers.shift, cx);
             hover_at(editor, None, cx);
-            gutter_hovered
+            gutter_hovered && was_top
         }
     }
 
@@ -490,10 +509,10 @@ impl EditorElement {
         editor: &mut Editor,
         event: &ScrollWheelEvent,
         position_map: &PositionMap,
-        bounds: Bounds<Pixels>,
+        bounds: &InteractiveBounds,
         cx: &mut ViewContext<Editor>,
     ) -> bool {
-        if !bounds.contains_point(&event.position) {
+        if !bounds.visibly_contains(&event.position, cx) {
             return false;
         }
 
@@ -1024,8 +1043,8 @@ impl EditorElement {
                     }
                 });
 
-                if let Some((position, mut context_menu)) = layout.context_menu.take() {
-                    cx.with_z_index(1, |cx| {
+                cx.with_z_index(1, |cx| {
+                    if let Some((position, mut context_menu)) = layout.context_menu.take() {
                         let available_space =
                             size(AvailableSpace::MinContent, AvailableSpace::MinContent);
                         let context_menu_size = context_menu.measure(available_space, cx);
@@ -1052,81 +1071,74 @@ impl EditorElement {
                             list_origin.y -= layout.position_map.line_height + list_height;
                         }
 
-                        context_menu.draw(list_origin, available_space, cx);
-                    })
-                }
+                        cx.break_content_mask(|cx| {
+                            context_menu.draw(list_origin, available_space, cx)
+                        });
+                    }
 
-                // if let Some((position, hover_popovers)) = layout.hover_popovers.as_mut() {
-                //     cx.scene().push_stacking_context(None, None);
+                    if let Some((position, mut hover_popovers)) = layout.hover_popovers.take() {
+                        let available_space =
+                            size(AvailableSpace::MinContent, AvailableSpace::MinContent);
 
-                //     // This is safe because we check on layout whether the required row is available
-                //     let hovered_row_layout =
-                //         &layout.position_map.line_layouts[(position.row() - start_row) as usize].line;
+                        // This is safe because we check on layout whether the required row is available
+                        let hovered_row_layout = &layout.position_map.line_layouts
+                            [(position.row() - start_row) as usize]
+                            .line;
 
-                //     // Minimum required size: Take the first popover, and add 1.5 times the minimum popover
-                //     // height. This is the size we will use to decide whether to render popovers above or below
-                //     // the hovered line.
-                //     let first_size = hover_popovers[0].size();
-                //     let height_to_reserve = first_size.y
-                //         + 1.5 * MIN_POPOVER_LINE_HEIGHT as f32 * layout.position_map.line_height;
+                        // Minimum required size: Take the first popover, and add 1.5 times the minimum popover
+                        // height. This is the size we will use to decide whether to render popovers above or below
+                        // the hovered line.
+                        let first_size = hover_popovers[0].measure(available_space, cx);
+                        let height_to_reserve = first_size.height
+                            + 1.5 * MIN_POPOVER_LINE_HEIGHT * layout.position_map.line_height;
 
-                //     // Compute Hovered Point
-                //     let x = hovered_row_layout.x_for_index(position.column() as usize) - scroll_left;
-                //     let y = position.row() as f32 * layout.position_map.line_height - scroll_top;
-                //     let hovered_point = content_origin + point(x, y);
+                        // Compute Hovered Point
+                        let x = hovered_row_layout.x_for_index(position.column() as usize)
+                            - layout.position_map.scroll_position.x;
+                        let y = position.row() as f32 * layout.position_map.line_height
+                            - layout.position_map.scroll_position.y;
+                        let hovered_point = content_origin + point(x, y);
 
-                //     if hovered_point.y - height_to_reserve > 0.0 {
-                //         // There is enough space above. Render popovers above the hovered point
-                //         let mut current_y = hovered_point.y;
-                //         for hover_popover in hover_popovers {
-                //             let size = hover_popover.size();
-                //             let mut popover_origin = point(hovered_point.x, current_y - size.y);
+                        if hovered_point.y - height_to_reserve > Pixels::ZERO {
+                            // There is enough space above. Render popovers above the hovered point
+                            let mut current_y = hovered_point.y;
+                            for mut hover_popover in hover_popovers {
+                                let size = hover_popover.measure(available_space, cx);
+                                let mut popover_origin =
+                                    point(hovered_point.x, current_y - size.height);
 
-                //             let x_out_of_bounds = bounds.max_x - (popover_origin.x + size.x);
-                //             if x_out_of_bounds < 0.0 {
-                //                 popover_origin.set_x(popover_origin.x + x_out_of_bounds);
-                //             }
+                                let x_out_of_bounds =
+                                    text_bounds.upper_right().x - (popover_origin.x + size.width);
+                                if x_out_of_bounds < Pixels::ZERO {
+                                    popover_origin.x = popover_origin.x + x_out_of_bounds;
+                                }
 
-                //             hover_popover.paint(
-                //                 popover_origin,
-                //                 Bounds::<Pixels>::from_points(
-                //                     gpui::Point::<Pixels>::zero(),
-                //                     point(f32::MAX, f32::MAX),
-                //                 ), // Let content bleed outside of editor
-                //                 editor,
-                //                 cx,
-                //             );
+                                cx.break_content_mask(|cx| {
+                                    hover_popover.draw(popover_origin, available_space, cx)
+                                });
 
-                //             current_y = popover_origin.y - HOVER_POPOVER_GAP;
-                //         }
-                //     } else {
-                //         // There is not enough space above. Render popovers below the hovered point
-                //         let mut current_y = hovered_point.y + layout.position_map.line_height;
-                //         for hover_popover in hover_popovers {
-                //             let size = hover_popover.size();
-                //             let mut popover_origin = point(hovered_point.x, current_y);
+                                current_y = popover_origin.y - HOVER_POPOVER_GAP;
+                            }
+                        } else {
+                            // There is not enough space above. Render popovers below the hovered point
+                            let mut current_y = hovered_point.y + layout.position_map.line_height;
+                            for mut hover_popover in hover_popovers {
+                                let size = hover_popover.measure(available_space, cx);
+                                let mut popover_origin = point(hovered_point.x, current_y);
 
-                //             let x_out_of_bounds = bounds.max_x - (popover_origin.x + size.x);
-                //             if x_out_of_bounds < 0.0 {
-                //                 popover_origin.set_x(popover_origin.x + x_out_of_bounds);
-                //             }
+                                let x_out_of_bounds =
+                                    text_bounds.upper_right().x - (popover_origin.x + size.width);
+                                if x_out_of_bounds < Pixels::ZERO {
+                                    popover_origin.x = popover_origin.x + x_out_of_bounds;
+                                }
 
-                //             hover_popover.paint(
-                //                 popover_origin,
-                //                 Bounds::<Pixels>::from_points(
-                //                     gpui::Point::<Pixels>::zero(),
-                //                     point(f32::MAX, f32::MAX),
-                //                 ), // Let content bleed outside of editor
-                //                 editor,
-                //                 cx,
-                //             );
+                                hover_popover.draw(popover_origin, available_space, cx);
 
-                //             current_y = popover_origin.y + size.y + HOVER_POPOVER_GAP;
-                //         }
-                //     }
-
-                //     cx.scene().pop_stacking_context();
-                // }
+                                current_y = popover_origin.y + size.height + HOVER_POPOVER_GAP;
+                            }
+                        }
+                    }
+                })
             },
         )
     }
@@ -1992,15 +2004,23 @@ impl EditorElement {
             }
 
             let visible_rows = start_row..start_row + line_layouts.len() as u32;
-            // todo!("hover")
-            // let mut hover = editor.hover_state.render(
-            //     &snapshot,
-            //     &style,
-            //     visible_rows,
-            //     editor.workspace.as_ref().map(|(w, _)| w.clone()),
-            //     cx,
-            // );
-            // let mode = editor.mode;
+            let max_size = size(
+                (120. * em_width) // Default size
+                    .min(bounds.size.width / 2.) // Shrink to half of the editor width
+                    .max(MIN_POPOVER_CHARACTER_WIDTH * em_width), // Apply minimum width of 20 characters
+                (16. * line_height) // Default size
+                    .min(bounds.size.height / 2.) // Shrink to half of the editor height
+                    .max(MIN_POPOVER_LINE_HEIGHT * line_height), // Apply minimum height of 4 lines
+            );
+
+            let mut hover = editor.hover_state.render(
+                &snapshot,
+                &style,
+                visible_rows,
+                max_size,
+                editor.workspace.as_ref().map(|(w, _)| w.clone()),
+                cx,
+            );
 
             let mut fold_indicators = cx.with_element_id(Some("gutter_fold_indicators"), |cx| {
                 editor.render_fold_indicators(
@@ -2012,27 +2032,6 @@ impl EditorElement {
                     cx,
                 )
             });
-
-            // todo!("hover popovers")
-            // if let Some((_, hover_popovers)) = hover.as_mut() {
-            //     for hover_popover in hover_popovers.iter_mut() {
-            //         hover_popover.layout(
-            //             SizeConstraint {
-            //                 min: gpui::Point::<Pixels>::zero(),
-            //                 max: point(
-            //                     (120. * em_width) // Default size
-            //                         .min(size.x / 2.) // Shrink to half of the editor width
-            //                         .max(MIN_POPOVER_CHARACTER_WIDTH * em_width), // Apply minimum width of 20 characters
-            //                     (16. * line_height) // Default size
-            //                         .min(size.y / 2.) // Shrink to half of the editor height
-            //                         .max(MIN_POPOVER_LINE_HEIGHT * line_height), // Apply minimum height of 4 lines
-            //                 ),
-            //             },
-            //             editor,
-            //             cx,
-            //         );
-            //     }
-            // }
 
             let invisible_symbol_font_size = font_size / 2.;
             let tab_invisible = cx
@@ -2102,7 +2101,7 @@ impl EditorElement {
                 fold_indicators,
                 tab_invisible,
                 space_invisible,
-                // hover_popovers: hover,
+                hover_popovers: hover,
             }
         })
     }
@@ -2294,10 +2293,15 @@ impl EditorElement {
         cx: &mut WindowContext,
     ) {
         let content_origin = text_bounds.origin + point(layout.gutter_margin, Pixels::ZERO);
+        let interactive_bounds = InteractiveBounds {
+            bounds: bounds.intersect(&cx.content_mask().bounds),
+            stacking_order: cx.stacking_order().clone(),
+        };
 
         cx.on_mouse_event({
             let position_map = layout.position_map.clone();
             let editor = self.editor.clone();
+            let interactive_bounds = interactive_bounds.clone();
 
             move |event: &ScrollWheelEvent, phase, cx| {
                 if phase != DispatchPhase::Bubble {
@@ -2305,7 +2309,7 @@ impl EditorElement {
                 }
 
                 let should_cancel = editor.update(cx, |editor, cx| {
-                    Self::scroll(editor, event, &position_map, bounds, cx)
+                    Self::scroll(editor, event, &position_map, &interactive_bounds, cx)
                 });
                 if should_cancel {
                     cx.stop_propagation();
@@ -2316,6 +2320,7 @@ impl EditorElement {
         cx.on_mouse_event({
             let position_map = layout.position_map.clone();
             let editor = self.editor.clone();
+            let stacking_order = cx.stacking_order().clone();
 
             move |event: &MouseDownEvent, phase, cx| {
                 if phase != DispatchPhase::Bubble {
@@ -2323,7 +2328,15 @@ impl EditorElement {
                 }
 
                 let should_cancel = editor.update(cx, |editor, cx| {
-                    Self::mouse_down(editor, event, &position_map, text_bounds, gutter_bounds, cx)
+                    Self::mouse_down(
+                        editor,
+                        event,
+                        &position_map,
+                        text_bounds,
+                        gutter_bounds,
+                        &stacking_order,
+                        cx,
+                    )
                 });
 
                 if should_cancel {
@@ -2335,9 +2348,18 @@ impl EditorElement {
         cx.on_mouse_event({
             let position_map = layout.position_map.clone();
             let editor = self.editor.clone();
+            let stacking_order = cx.stacking_order().clone();
+
             move |event: &MouseUpEvent, phase, cx| {
                 let should_cancel = editor.update(cx, |editor, cx| {
-                    Self::mouse_up(editor, event, &position_map, text_bounds, cx)
+                    Self::mouse_up(
+                        editor,
+                        event,
+                        &position_map,
+                        text_bounds,
+                        &stacking_order,
+                        cx,
+                    )
                 });
 
                 if should_cancel {
@@ -2363,13 +2385,23 @@ impl EditorElement {
         cx.on_mouse_event({
             let position_map = layout.position_map.clone();
             let editor = self.editor.clone();
+            let stacking_order = cx.stacking_order().clone();
+
             move |event: &MouseMoveEvent, phase, cx| {
                 if phase != DispatchPhase::Bubble {
                     return;
                 }
 
                 let stop_propogating = editor.update(cx, |editor, cx| {
-                    Self::mouse_moved(editor, event, &position_map, text_bounds, gutter_bounds, cx)
+                    Self::mouse_moved(
+                        editor,
+                        event,
+                        &position_map,
+                        text_bounds,
+                        gutter_bounds,
+                        &stacking_order,
+                        cx,
+                    )
                 });
 
                 if stop_propogating {
@@ -2629,9 +2661,11 @@ impl Element for EditorElement {
             // We call with_z_index to establish a new stacking context.
             cx.with_z_index(0, |cx| {
                 cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
-                    // Paint mouse listeners first, so any elements we paint on top of the editor
+                    // Paint mouse listeners at z-index 0 so any elements we paint on top of the editor
                     // take precedence.
-                    self.paint_mouse_listeners(bounds, gutter_bounds, text_bounds, &layout, cx);
+                    cx.with_z_index(0, |cx| {
+                        self.paint_mouse_listeners(bounds, gutter_bounds, text_bounds, &layout, cx);
+                    });
                     let input_handler = ElementInputHandler::new(bounds, self.editor.clone(), cx);
                     cx.handle_input(&focus_handle, input_handler);
 
@@ -3287,7 +3321,7 @@ pub struct LayoutState {
     max_row: u32,
     context_menu: Option<(DisplayPoint, AnyElement)>,
     code_actions_indicator: Option<CodeActionsIndicator>,
-    // hover_popovers: Option<(DisplayPoint, Vec<AnyElement>)>,
+    hover_popovers: Option<(DisplayPoint, Vec<AnyElement>)>,
     fold_indicators: Vec<Option<IconButton>>,
     tab_invisible: ShapedLine,
     space_invisible: ShapedLine,
@@ -4085,7 +4119,7 @@ fn scale_horizontal_mouse_autoscroll_delta(delta: Pixels) -> f32 {
 //     }
 // }
 
-fn register_action<T: Action>(
+pub fn register_action<T: Action>(
     view: &View<Editor>,
     cx: &mut WindowContext,
     listener: impl Fn(&mut Editor, &T, &mut ViewContext<Editor>) + 'static,

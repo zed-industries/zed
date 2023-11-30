@@ -9,7 +9,6 @@ pub mod pane_group;
 mod persistence;
 pub mod searchable;
 // todo!()
-// pub mod shared_screen;
 mod modal_layer;
 mod status_bar;
 mod toolbar;
@@ -19,7 +18,7 @@ use anyhow::{anyhow, Context as _, Result};
 use async_trait::async_trait;
 use client2::{
     proto::{self, PeerId},
-    Client, TypedEnvelope, UserStore,
+    Client, TypedEnvelope, User, UserStore,
 };
 use collections::{hash_map, HashMap, HashSet};
 use dock::{Dock, DockPosition, Panel, PanelButtons, PanelHandle};
@@ -327,7 +326,12 @@ pub struct TestCallHandler;
 
 #[cfg(any(test, feature = "test-support"))]
 impl CallHandler for TestCallHandler {
-    fn peer_state(&mut self, id: PeerId, cx: &mut ViewContext<Workspace>) -> Option<(bool, bool)> {
+    fn peer_state(
+        &mut self,
+        id: PeerId,
+        project: &Model<Project>,
+        cx: &mut ViewContext<Workspace>,
+    ) -> Option<(bool, bool)> {
         None
     }
 
@@ -344,14 +348,42 @@ impl CallHandler for TestCallHandler {
         None
     }
 
-    fn hang_up(&self, cx: AsyncWindowContext) -> Result<Task<Result<()>>> {
-        anyhow::bail!("TestCallHandler should not be hanging up")
+    fn hang_up(&self, cx: &mut AppContext) -> Task<Result<()>> {
+        Task::ready(Err(anyhow!("TestCallHandler should not be hanging up")))
     }
 
     fn active_project(&self, cx: &AppContext) -> Option<WeakModel<Project>> {
         None
     }
+
+    fn invite(
+        &mut self,
+        called_user_id: u64,
+        initial_project: Option<Model<Project>>,
+        cx: &mut AppContext,
+    ) -> Task<Result<()>> {
+        unimplemented!()
+    }
+
+    fn remote_participants(&self, cx: &AppContext) -> Option<Vec<(Arc<User>, PeerId)>> {
+        None
+    }
+
+    fn is_muted(&self, cx: &AppContext) -> Option<bool> {
+        None
+    }
+
+    fn toggle_mute(&self, cx: &mut AppContext) {}
+
+    fn toggle_screen_share(&self, cx: &mut AppContext) {}
+
+    fn toggle_deafen(&self, cx: &mut AppContext) {}
+
+    fn is_deafened(&self, cx: &AppContext) -> Option<bool> {
+        None
+    }
 }
+
 impl AppState {
     #[cfg(any(test, feature = "test-support"))]
     pub fn test(cx: &mut AppContext) -> Arc<Self> {
@@ -382,7 +414,7 @@ impl AppState {
             workspace_store,
             node_runtime: FakeNodeRuntime::new(),
             build_window_options: |_, _, _| Default::default(),
-            call_factory: |_, _| Box::new(TestCallHandler),
+            call_factory: |_| Box::new(TestCallHandler),
         })
     }
 }
@@ -441,7 +473,12 @@ pub enum Event {
 
 #[async_trait(?Send)]
 pub trait CallHandler {
-    fn peer_state(&mut self, id: PeerId, cx: &mut ViewContext<Workspace>) -> Option<(bool, bool)>;
+    fn peer_state(
+        &mut self,
+        id: PeerId,
+        project: &Model<Project>,
+        cx: &mut ViewContext<Workspace>,
+    ) -> Option<(bool, bool)>;
     fn shared_screen_for_peer(
         &self,
         peer_id: PeerId,
@@ -452,8 +489,20 @@ pub trait CallHandler {
     fn is_in_room(&self, cx: &mut ViewContext<Workspace>) -> bool {
         self.room_id(cx).is_some()
     }
-    fn hang_up(&self, cx: AsyncWindowContext) -> Result<Task<Result<()>>>;
+    fn hang_up(&self, cx: &mut AppContext) -> Task<Result<()>>;
     fn active_project(&self, cx: &AppContext) -> Option<WeakModel<Project>>;
+    fn invite(
+        &mut self,
+        called_user_id: u64,
+        initial_project: Option<Model<Project>>,
+        cx: &mut AppContext,
+    ) -> Task<Result<()>>;
+    fn remote_participants(&self, cx: &AppContext) -> Option<Vec<(Arc<User>, PeerId)>>;
+    fn is_muted(&self, cx: &AppContext) -> Option<bool>;
+    fn is_deafened(&self, cx: &AppContext) -> Option<bool>;
+    fn toggle_mute(&self, cx: &mut AppContext);
+    fn toggle_deafen(&self, cx: &mut AppContext);
+    fn toggle_screen_share(&self, cx: &mut AppContext);
 }
 
 pub struct Workspace {
@@ -507,7 +556,7 @@ struct FollowerState {
 
 enum WorkspaceBounds {}
 
-type CallFactory = fn(WeakView<Workspace>, &mut ViewContext<Workspace>) -> Box<dyn CallHandler>;
+type CallFactory = fn(&mut ViewContext<Workspace>) -> Box<dyn CallHandler>;
 impl Workspace {
     pub fn new(
         workspace_id: WorkspaceId,
@@ -683,7 +732,21 @@ impl Workspace {
             }),
         ];
 
-        cx.defer(|this, cx| this.update_window_title(cx));
+        cx.defer(|this, cx| {
+            this.update_window_title(cx);
+            // todo! @nate - these are useful for testing notifications
+            // this.show_error(
+            //     &anyhow::anyhow!("what happens if this message is very very very very very long"),
+            //     cx,
+            // );
+
+            // this.show_notification(1, cx, |cx| {
+            //     cx.build_view(|_cx| {
+            //         simple_message_notification::MessageNotification::new(format!("Error:"))
+            //             .with_click_message("click here because!")
+            //     })
+            // });
+        });
         Workspace {
             window_self: window_handle,
             weak_self: weak_handle.clone(),
@@ -707,7 +770,7 @@ impl Workspace {
             last_leaders_by_pane: Default::default(),
             window_edited: false,
 
-            call_handler: (app_state.call_factory)(weak_handle.clone(), cx),
+            call_handler: (app_state.call_factory)(cx),
             database_id: workspace_id,
             app_state,
             _observe_current_user,
@@ -1183,7 +1246,7 @@ impl Workspace {
                 if answer.await.log_err() == Some(1) {
                     return anyhow::Ok(false);
                 } else {
-                    this.update(&mut cx, |this, cx| this.call_handler.hang_up(cx.to_async()))??
+                    this.update(&mut cx, |this, cx| this.call_handler.hang_up(cx))?
                         .await
                         .log_err();
                 }
@@ -1755,22 +1818,22 @@ impl Workspace {
         pane
     }
 
-    //     pub fn add_item_to_center(
-    //         &mut self,
-    //         item: Box<dyn ItemHandle>,
-    //         cx: &mut ViewContext<Self>,
-    //     ) -> bool {
-    //         if let Some(center_pane) = self.last_active_center_pane.clone() {
-    //             if let Some(center_pane) = center_pane.upgrade(cx) {
-    //                 center_pane.update(cx, |pane, cx| pane.add_item(item, true, true, None, cx));
-    //                 true
-    //             } else {
-    //                 false
-    //             }
-    //         } else {
-    //             false
-    //         }
-    //     }
+    pub fn add_item_to_center(
+        &mut self,
+        item: Box<dyn ItemHandle>,
+        cx: &mut ViewContext<Self>,
+    ) -> bool {
+        if let Some(center_pane) = self.last_active_center_pane.clone() {
+            if let Some(center_pane) = center_pane.upgrade() {
+                center_pane.update(cx, |pane, cx| pane.add_item(item, true, true, None, cx));
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        }
+    }
 
     pub fn add_item(&mut self, item: Box<dyn ItemHandle>, cx: &mut ViewContext<Self>) {
         self.active_pane
@@ -1967,13 +2030,13 @@ impl Workspace {
         item
     }
 
-    //     pub fn open_shared_screen(&mut self, peer_id: PeerId, cx: &mut ViewContext<Self>) {
-    //         if let Some(shared_screen) = self.shared_screen_for_peer(peer_id, &self.active_pane, cx) {
-    //             self.active_pane.update(cx, |pane, cx| {
-    //                 pane.add_item(Box::new(shared_screen), false, true, None, cx)
-    //             });
-    //         }
-    //     }
+    pub fn open_shared_screen(&mut self, peer_id: PeerId, cx: &mut ViewContext<Self>) {
+        if let Some(shared_screen) = self.shared_screen_for_peer(peer_id, &self.active_pane, cx) {
+            self.active_pane.update(cx, |pane, cx| {
+                pane.add_item(shared_screen, false, true, None, cx)
+            });
+        }
+    }
 
     pub fn activate_item(&mut self, item: &dyn ItemHandle, cx: &mut ViewContext<Self>) -> bool {
         let result = self.panes.iter().find_map(|pane| {
@@ -2289,6 +2352,11 @@ impl Workspace {
         &self.active_pane
     }
 
+    pub fn pane_for(&self, handle: &dyn ItemHandle) -> Option<View<Pane>> {
+        let weak_pane = self.panes_by_item.get(&handle.item_id())?;
+        weak_pane.upgrade()
+    }
+
     fn collaborator_left(&mut self, peer_id: PeerId, cx: &mut ViewContext<Self>) {
         self.follower_states.retain(|_, state| {
             if state.leader_id == peer_id {
@@ -2566,32 +2634,30 @@ impl Workspace {
     //         }
     //     }
 
-    //     fn render_notifications(
-    //         &self,
-    //         theme: &theme::Workspace,
-    //         cx: &AppContext,
-    //     ) -> Option<AnyElement<Workspace>> {
-    //         if self.notifications.is_empty() {
-    //             None
-    //         } else {
-    //             Some(
-    //                 Flex::column()
-    //                     .with_children(self.notifications.iter().map(|(_, _, notification)| {
-    //                         ChildView::new(notification.as_any(), cx)
-    //                             .contained()
-    //                             .with_style(theme.notification)
-    //                     }))
-    //                     .constrained()
-    //                     .with_width(theme.notifications.width)
-    //                     .contained()
-    //                     .with_style(theme.notifications.container)
-    //                     .aligned()
-    //                     .bottom()
-    //                     .right()
-    //                     .into_any(),
-    //             )
-    //         }
-    //     }
+    fn render_notifications(&self, cx: &ViewContext<Self>) -> Option<Div> {
+        if self.notifications.is_empty() {
+            None
+        } else {
+            Some(
+                div()
+                    .absolute()
+                    .z_index(100)
+                    .right_3()
+                    .bottom_3()
+                    .w_96()
+                    .h_full()
+                    .flex()
+                    .flex_col()
+                    .justify_end()
+                    .gap_2()
+                    .children(
+                        self.notifications
+                            .iter()
+                            .map(|(_, _, notification)| notification.to_any()),
+                    ),
+            )
+        }
+    }
 
     //     // RPC handlers
 
@@ -2828,7 +2894,7 @@ impl Workspace {
         cx.notify();
 
         let (leader_in_this_project, leader_in_this_app) =
-            self.call_handler.peer_state(leader_id, cx)?;
+            self.call_handler.peer_state(leader_id, &self.project, cx)?;
         let mut items_to_activate = Vec::new();
         for (pane, state) in &self.follower_states {
             if state.leader_id != leader_id {
@@ -2848,10 +2914,10 @@ impl Workspace {
                 }
                 continue;
             }
-            // todo!()
-            // if let Some(shared_screen) = self.shared_screen_for_peer(leader_id, pane, cx) {
-            //     items_to_activate.push((pane.clone(), Box::new(shared_screen)));
-            // }
+
+            if let Some(shared_screen) = self.shared_screen_for_peer(leader_id, pane, cx) {
+                items_to_activate.push((pane.clone(), shared_screen));
+            }
         }
 
         for (pane, item) in items_to_activate {
@@ -2872,27 +2938,27 @@ impl Workspace {
         None
     }
 
-    // todo!()
-    //     fn shared_screen_for_peer(
-    //         &self,
-    //         peer_id: PeerId,
-    //         pane: &View<Pane>,
-    //         cx: &mut ViewContext<Self>,
-    //     ) -> Option<View<SharedScreen>> {
-    //         let call = self.active_call()?;
-    //         let room = call.read(cx).room()?.read(cx);
-    //         let participant = room.remote_participant_for_peer_id(peer_id)?;
-    //         let track = participant.video_tracks.values().next()?.clone();
-    //         let user = participant.user.clone();
+    fn shared_screen_for_peer(
+        &self,
+        peer_id: PeerId,
+        pane: &View<Pane>,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<Box<dyn ItemHandle>> {
+        self.call_handler.shared_screen_for_peer(peer_id, pane, cx)
+        // let call = self.active_call()?;
+        // let room = call.read(cx).room()?.read(cx);
+        // let participant = room.remote_participant_for_peer_id(peer_id)?;
+        // let track = participant.video_tracks.values().next()?.clone();
+        // let user = participant.user.clone();
 
-    //         for item in pane.read(cx).items_of_type::<SharedScreen>() {
-    //             if item.read(cx).peer_id == peer_id {
-    //                 return Some(item);
-    //             }
-    //         }
+        // for item in pane.read(cx).items_of_type::<SharedScreen>() {
+        //     if item.read(cx).peer_id == peer_id {
+        //         return Some(item);
+        //     }
+        // }
 
-    //         Some(cx.build_view(|cx| SharedScreen::new(&track, peer_id, user.clone(), cx)))
-    //     }
+        // Some(cx.build_view(|cx| SharedScreen::new(&track, peer_id, user.clone(), cx)))
+    }
 
     pub fn on_window_activation_changed(&mut self, cx: &mut ViewContext<Self>) {
         if cx.is_window_active() {
@@ -3329,7 +3395,7 @@ impl Workspace {
             fs: project.read(cx).fs().clone(),
             build_window_options: |_, _, _| Default::default(),
             node_runtime: FakeNodeRuntime::new(),
-            call_factory: |_, _| Box::new(TestCallHandler),
+            call_factory: |_| Box::new(TestCallHandler),
         });
         let workspace = Self::new(0, project, app_state, cx);
         workspace.active_pane.update(cx, |pane, cx| pane.focus(cx));
@@ -3407,6 +3473,10 @@ impl Workspace {
     {
         self.modal_layer
             .update(cx, |modal_layer, cx| modal_layer.toggle_modal(cx, build))
+    }
+
+    pub fn call_state(&mut self) -> &mut dyn CallHandler {
+        &mut *self.call_handler
     }
 }
 
@@ -3653,7 +3723,6 @@ impl Render for Workspace {
             .bg(cx.theme().colors().background)
             .children(self.titlebar_item.clone())
             .child(
-                // todo! should this be a component a view?
                 div()
                     .id("workspace")
                     .relative()
@@ -3703,7 +3772,8 @@ impl Render for Workspace {
                                     .overflow_hidden()
                                     .child(self.right_dock.clone()),
                             ),
-                    ),
+                    )
+                    .children(self.render_notifications(cx)),
             )
             .child(self.status_bar.clone())
     }
@@ -4421,50 +4491,54 @@ pub fn create_and_open_local_file(
 //     })
 // }
 
-// pub fn restart(_: &Restart, cx: &mut AppContext) {
-//     let should_confirm = settings::get::<WorkspaceSettings>(cx).confirm_quit;
-//     cx.spawn(|mut cx| async move {
-//         let mut workspace_windows = cx
-//             .windows()
-//             .into_iter()
-//             .filter_map(|window| window.downcast::<Workspace>())
-//             .collect::<Vec<_>>();
+pub fn restart(_: &Restart, cx: &mut AppContext) {
+    let should_confirm = WorkspaceSettings::get_global(cx).confirm_quit;
+    let mut workspace_windows = cx
+        .windows()
+        .into_iter()
+        .filter_map(|window| window.downcast::<Workspace>())
+        .collect::<Vec<_>>();
 
-//         // If multiple windows have unsaved changes, and need a save prompt,
-//         // prompt in the active window before switching to a different window.
-//         workspace_windows.sort_by_key(|window| window.is_active(&cx) == Some(false));
+    // If multiple windows have unsaved changes, and need a save prompt,
+    // prompt in the active window before switching to a different window.
+    workspace_windows.sort_by_key(|window| window.is_active(&cx) == Some(false));
 
-//         if let (true, Some(window)) = (should_confirm, workspace_windows.first()) {
-//             let answer = window.prompt(
-//                 PromptLevel::Info,
-//                 "Are you sure you want to restart?",
-//                 &["Restart", "Cancel"],
-//                 &mut cx,
-//             );
+    let mut prompt = None;
+    if let (true, Some(window)) = (should_confirm, workspace_windows.first()) {
+        prompt = window
+            .update(cx, |_, cx| {
+                cx.prompt(
+                    PromptLevel::Info,
+                    "Are you sure you want to restart?",
+                    &["Restart", "Cancel"],
+                )
+            })
+            .ok();
+    }
 
-//             if let Some(mut answer) = answer {
-//                 let answer = answer.next().await;
-//                 if answer != Some(0) {
-//                     return Ok(());
-//                 }
-//             }
-//         }
+    cx.spawn(|mut cx| async move {
+        if let Some(mut prompt) = prompt {
+            let answer = prompt.await?;
+            if answer != 0 {
+                return Ok(());
+            }
+        }
 
-//         // If the user cancels any save prompt, then keep the app open.
-//         for window in workspace_windows {
-//             if let Some(should_close) = window.update_root(&mut cx, |workspace, cx| {
-//                 workspace.prepare_to_close(true, cx)
-//             }) {
-//                 if !should_close.await? {
-//                     return Ok(());
-//                 }
-//             }
-//         }
-//         cx.platform().restart();
-//         anyhow::Ok(())
-//     })
-//     .detach_and_log_err(cx);
-// }
+        // If the user cancels any save prompt, then keep the app open.
+        for window in workspace_windows {
+            if let Ok(should_close) = window.update(&mut cx, |workspace, cx| {
+                workspace.prepare_to_close(true, cx)
+            }) {
+                if !should_close.await? {
+                    return Ok(());
+                }
+            }
+        }
+
+        cx.update(|cx| cx.restart())
+    })
+    .detach_and_log_err(cx);
+}
 
 fn parse_pixel_position_env_var(value: &str) -> Option<Point<GlobalPixels>> {
     let mut parts = value.split(',');

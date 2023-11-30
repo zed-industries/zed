@@ -20,6 +20,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "activity_indicator2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "auto_update2",
+ "editor2",
+ "futures 0.3.28",
+ "gpui2",
+ "language2",
+ "project2",
+ "settings2",
+ "smallvec",
+ "theme2",
+ "ui2",
+ "util",
+ "workspace2",
+]
+
+[[package]]
 name = "addr2line"
 version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1210,6 +1229,7 @@ dependencies = [
  "fs2",
  "futures 0.3.28",
  "gpui2",
+ "image",
  "language2",
  "live_kit_client2",
  "log",
@@ -1221,6 +1241,8 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "settings2",
+ "smallvec",
+ "ui2",
  "util",
  "workspace2",
 ]
@@ -9486,6 +9508,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "theme_selector2"
+version = "0.1.0"
+dependencies = [
+ "editor2",
+ "feature_flags2",
+ "fs2",
+ "fuzzy2",
+ "gpui2",
+ "log",
+ "parking_lot 0.11.2",
+ "picker2",
+ "postage",
+ "settings2",
+ "smol",
+ "theme2",
+ "ui2",
+ "util",
+ "workspace2",
+]
+
+[[package]]
 name = "thiserror"
 version = "1.0.48"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9944,7 +9987,7 @@ dependencies = [
 [[package]]
 name = "tree-sitter"
 version = "0.20.10"
-source = "git+https://github.com/tree-sitter/tree-sitter?rev=35a6052fbcafc5e5fc0f9415b8652be7dcaf7222#35a6052fbcafc5e5fc0f9415b8652be7dcaf7222"
+source = "git+https://github.com/tree-sitter/tree-sitter?rev=3b0159d25559b603af566ade3c83d930bf466db1#3b0159d25559b603af566ade3c83d930bf466db1"
 dependencies = [
  "cc",
  "regex",
@@ -10187,6 +10230,15 @@ dependencies = [
 name = "tree-sitter-typescript"
 version = "0.20.2"
 source = "git+https://github.com/tree-sitter/tree-sitter-typescript?rev=5d20856f34315b068c41edaee2ac8a100081d259#5d20856f34315b068c41edaee2ac8a100081d259"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
+name = "tree-sitter-uiua"
+version = "0.3.3"
+source = "git+https://github.com/shnarazk/tree-sitter-uiua?rev=9260f11be5900beda4ee6d1a24ab8ddfaf5a19b2#9260f11be5900beda4ee6d1a24ab8ddfaf5a19b2"
 dependencies = [
  "cc",
  "tree-sitter",
@@ -11060,6 +11112,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "welcome2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "client2",
+ "db2",
+ "editor2",
+ "fs2",
+ "fuzzy2",
+ "gpui2",
+ "install_cli2",
+ "log",
+ "picker2",
+ "project2",
+ "schemars",
+ "serde",
+ "settings2",
+ "theme2",
+ "theme_selector2",
+ "ui2",
+ "util",
+ "workspace2",
+]
+
+[[package]]
 name = "which"
 version = "4.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11513,7 +11590,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.115.0"
+version = "0.116.0"
 dependencies = [
  "activity_indicator",
  "ai",
@@ -11630,6 +11707,7 @@ dependencies = [
  "tree-sitter-svelte",
  "tree-sitter-toml",
  "tree-sitter-typescript",
+ "tree-sitter-uiua",
  "tree-sitter-vue",
  "tree-sitter-yaml",
  "unindent",
@@ -11655,16 +11733,19 @@ dependencies = [
 name = "zed2"
 version = "0.109.0"
 dependencies = [
+ "activity_indicator2",
  "ai2",
  "anyhow",
  "async-compression",
  "async-recursion 0.3.2",
  "async-tar",
  "async-trait",
+ "audio2",
  "auto_update2",
  "backtrace",
  "breadcrumbs2",
  "call2",
+ "channel2",
  "chrono",
  "cli",
  "client2",
@@ -11723,6 +11804,7 @@ dependencies = [
  "terminal_view2",
  "text2",
  "theme2",
+ "theme_selector2",
  "thiserror",
  "tiny_http",
  "toml 0.5.11",
@@ -11752,6 +11834,7 @@ dependencies = [
  "tree-sitter-svelte",
  "tree-sitter-toml",
  "tree-sitter-typescript",
+ "tree-sitter-uiua",
  "tree-sitter-vue",
  "tree-sitter-yaml",
  "unindent",
@@ -11759,6 +11842,7 @@ dependencies = [
  "urlencoding",
  "util",
  "uuid 1.4.1",
+ "welcome2",
  "workspace2",
  "zed_actions2",
 ]

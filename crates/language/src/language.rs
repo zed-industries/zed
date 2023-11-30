@@ -197,8 +197,12 @@ impl CachedLspAdapter {
         self.adapter.code_action_kinds()
     }
 
-    pub fn workspace_configuration(&self, cx: &mut AppContext) -> BoxFuture<'static, Value> {
-        self.adapter.workspace_configuration(cx)
+    pub fn workspace_configuration(
+        &self,
+        workspace_root: &Path,
+        cx: &mut AppContext,
+    ) -> BoxFuture<'static, Value> {
+        self.adapter.workspace_configuration(workspace_root, cx)
     }
 
     pub fn process_diagnostics(&self, params: &mut lsp::PublishDiagnosticsParams) {
@@ -312,7 +316,7 @@ pub trait LspAdapter: 'static + Send + Sync {
         None
     }
 
-    fn workspace_configuration(&self, _: &mut AppContext) -> BoxFuture<'static, Value> {
+    fn workspace_configuration(&self, _: &Path, _: &mut AppContext) -> BoxFuture<'static, Value> {
         futures::future::ready(serde_json::json!({})).boxed()
     }
 
@@ -1383,7 +1387,7 @@ impl Language {
         let query = Query::new(self.grammar_mut().ts_language, source)?;
 
         let mut override_configs_by_id = HashMap::default();
-        for (ix, name) in query.capture_names().iter().enumerate() {
+        for (ix, name) in query.capture_names().iter().copied().enumerate() {
             if !name.starts_with('_') {
                 let value = self.config.overrides.remove(name).unwrap_or_default();
                 for server_name in &value.opt_into_language_servers {
@@ -1396,7 +1400,7 @@ impl Language {
                     }
                 }
 
-                override_configs_by_id.insert(ix as u32, (name.clone(), value));
+                override_configs_by_id.insert(ix as u32, (name.into(), value));
             }
         }
 

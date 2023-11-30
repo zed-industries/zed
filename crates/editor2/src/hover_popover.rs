@@ -1,15 +1,21 @@
 use crate::{
-    display_map::InlayOffset,
+    display_map::{InlayOffset, ToDisplayPoint},
     link_go_to_definition::{InlayHighlight, RangeInEditor},
     Anchor, AnchorRangeExt, DisplayPoint, Editor, EditorSettings, EditorSnapshot, EditorStyle,
     ExcerptId, RangeToAnchorExt,
 };
 use futures::FutureExt;
-use gpui::{AnyElement, AppContext, Model, Task, ViewContext, WeakView};
+use gpui::{
+    actions, div, px, AnyElement, AppContext, CursorStyle, InteractiveElement, IntoElement, Model,
+    MouseButton, ParentElement, Pixels, SharedString, Size, StatefulInteractiveElement, Styled,
+    Task, ViewContext, WeakView,
+};
 use language::{markdown, Bias, DiagnosticEntry, Language, LanguageRegistry, ParsedMarkdown};
+use lsp::DiagnosticSeverity;
 use project::{HoverBlock, HoverBlockKind, InlayHintLabelPart, Project};
 use settings::Settings;
 use std::{ops::Range, sync::Arc, time::Duration};
+use ui::{StyledExt, Tooltip};
 use util::TryFutureExt;
 use workspace::Workspace;
 
@@ -17,21 +23,16 @@ pub const HOVER_DELAY_MILLIS: u64 = 350;
 pub const HOVER_REQUEST_DELAY_MILLIS: u64 = 200;
 
 pub const MIN_POPOVER_CHARACTER_WIDTH: f32 = 20.;
-pub const MIN_POPOVER_LINE_HEIGHT: f32 = 4.;
-pub const HOVER_POPOVER_GAP: f32 = 10.;
+pub const MIN_POPOVER_LINE_HEIGHT: Pixels = px(4.);
+pub const HOVER_POPOVER_GAP: Pixels = px(10.);
 
-// actions!(editor, [Hover]);
+actions!(Hover);
 
-pub fn init(cx: &mut AppContext) {
-    // cx.add_action(hover);
+/// Bindable action which uses the most recent selection head to trigger a hover
+pub fn hover(editor: &mut Editor, _: &Hover, cx: &mut ViewContext<Editor>) {
+    let head = editor.selections.newest_display(cx).head();
+    show_hover(editor, head, true, cx);
 }
-
-// todo!()
-// /// Bindable action which uses the most recent selection head to trigger a hover
-// pub fn hover(editor: &mut Editor, _: &Hover, cx: &mut ViewContext<Editor>) {
-//     let head = editor.selections.newest_display(cx).head();
-//     show_hover(editor, head, true, cx);
-// }
 
 /// The internal hover action dispatches between `show_hover` or `hide_hover`
 /// depending on whether a point to hover over is provided.
@@ -74,64 +75,63 @@ pub fn find_hovered_hint_part(
 }
 
 pub fn hover_at_inlay(editor: &mut Editor, inlay_hover: InlayHover, cx: &mut ViewContext<Editor>) {
-    todo!()
-    // if EditorSettings::get_global(cx).hover_popover_enabled {
-    //     if editor.pending_rename.is_some() {
-    //         return;
-    //     }
+    if EditorSettings::get_global(cx).hover_popover_enabled {
+        if editor.pending_rename.is_some() {
+            return;
+        }
 
-    //     let Some(project) = editor.project.clone() else {
-    //         return;
-    //     };
+        let Some(project) = editor.project.clone() else {
+            return;
+        };
 
-    //     if let Some(InfoPopover { symbol_range, .. }) = &editor.hover_state.info_popover {
-    //         if let RangeInEditor::Inlay(range) = symbol_range {
-    //             if range == &inlay_hover.range {
-    //                 // Hover triggered from same location as last time. Don't show again.
-    //                 return;
-    //             }
-    //         }
-    //         hide_hover(editor, cx);
-    //     }
+        if let Some(InfoPopover { symbol_range, .. }) = &editor.hover_state.info_popover {
+            if let RangeInEditor::Inlay(range) = symbol_range {
+                if range == &inlay_hover.range {
+                    // Hover triggered from same location as last time. Don't show again.
+                    return;
+                }
+            }
+            hide_hover(editor, cx);
+        }
 
-    //     let task = cx.spawn(|this, mut cx| {
-    //         async move {
-    //             cx.background_executor()
-    //                 .timer(Duration::from_millis(HOVER_DELAY_MILLIS))
-    //                 .await;
-    //             this.update(&mut cx, |this, _| {
-    //                 this.hover_state.diagnostic_popover = None;
-    //             })?;
+        let task = cx.spawn(|this, mut cx| {
+            async move {
+                cx.background_executor()
+                    .timer(Duration::from_millis(HOVER_DELAY_MILLIS))
+                    .await;
+                this.update(&mut cx, |this, _| {
+                    this.hover_state.diagnostic_popover = None;
+                })?;
 
-    //             let language_registry = project.update(&mut cx, |p, _| p.languages().clone())?;
-    //             let blocks = vec![inlay_hover.tooltip];
-    //             let parsed_content = parse_blocks(&blocks, &language_registry, None).await;
+                let language_registry = project.update(&mut cx, |p, _| p.languages().clone())?;
+                let blocks = vec![inlay_hover.tooltip];
+                let parsed_content = parse_blocks(&blocks, &language_registry, None).await;
 
-    //             let hover_popover = InfoPopover {
-    //                 project: project.clone(),
-    //                 symbol_range: RangeInEditor::Inlay(inlay_hover.range.clone()),
-    //                 blocks,
-    //                 parsed_content,
-    //             };
+                let hover_popover = InfoPopover {
+                    project: project.clone(),
+                    symbol_range: RangeInEditor::Inlay(inlay_hover.range.clone()),
+                    blocks,
+                    parsed_content,
+                };
 
-    //             this.update(&mut cx, |this, cx| {
-    //                 // Highlight the selected symbol using a background highlight
-    //                 this.highlight_inlay_background::<HoverState>(
-    //                     vec![inlay_hover.range],
-    //                     |theme| theme.editor.hover_popover.highlight,
-    //                     cx,
-    //                 );
-    //                 this.hover_state.info_popover = Some(hover_popover);
-    //                 cx.notify();
-    //             })?;
+                this.update(&mut cx, |this, cx| {
+                    // Highlight the selected symbol using a background highlight
+                    this.highlight_inlay_background::<HoverState>(
+                        vec![inlay_hover.range],
+                        |theme| theme.element_hover, // todo!("use a proper background here")
+                        cx,
+                    );
+                    this.hover_state.info_popover = Some(hover_popover);
+                    cx.notify();
+                })?;
 
-    //             anyhow::Ok(())
-    //         }
-    //         .log_err()
-    //     });
+                anyhow::Ok(())
+            }
+            .log_err()
+        });
 
-    //     editor.hover_state.info_task = Some(task);
-    // }
+        editor.hover_state.info_task = Some(task);
+    }
 }
 
 /// Hides the type information popup.
@@ -420,43 +420,42 @@ impl HoverState {
         snapshot: &EditorSnapshot,
         style: &EditorStyle,
         visible_rows: Range<u32>,
+        max_size: Size<Pixels>,
         workspace: Option<WeakView<Workspace>>,
         cx: &mut ViewContext<Editor>,
     ) -> Option<(DisplayPoint, Vec<AnyElement>)> {
-        todo!("old version below")
+        // If there is a diagnostic, position the popovers based on that.
+        // Otherwise use the start of the hover range
+        let anchor = self
+            .diagnostic_popover
+            .as_ref()
+            .map(|diagnostic_popover| &diagnostic_popover.local_diagnostic.range.start)
+            .or_else(|| {
+                self.info_popover
+                    .as_ref()
+                    .map(|info_popover| match &info_popover.symbol_range {
+                        RangeInEditor::Text(range) => &range.start,
+                        RangeInEditor::Inlay(range) => &range.inlay_position,
+                    })
+            })?;
+        let point = anchor.to_display_point(&snapshot.display_snapshot);
+
+        // Don't render if the relevant point isn't on screen
+        if !self.visible() || !visible_rows.contains(&point.row()) {
+            return None;
+        }
+
+        let mut elements = Vec::new();
+
+        if let Some(diagnostic_popover) = self.diagnostic_popover.as_ref() {
+            elements.push(diagnostic_popover.render(style, max_size, cx));
+        }
+        if let Some(info_popover) = self.info_popover.as_mut() {
+            elements.push(info_popover.render(style, max_size, workspace, cx));
+        }
+
+        Some((point, elements))
     }
-    //     // If there is a diagnostic, position the popovers based on that.
-    //     // Otherwise use the start of the hover range
-    //     let anchor = self
-    //         .diagnostic_popover
-    //         .as_ref()
-    //         .map(|diagnostic_popover| &diagnostic_popover.local_diagnostic.range.start)
-    //         .or_else(|| {
-    //             self.info_popover
-    //                 .as_ref()
-    //                 .map(|info_popover| match &info_popover.symbol_range {
-    //                     RangeInEditor::Text(range) => &range.start,
-    //                     RangeInEditor::Inlay(range) => &range.inlay_position,
-    //                 })
-    //         })?;
-    //     let point = anchor.to_display_point(&snapshot.display_snapshot);
-
-    //     // Don't render if the relevant point isn't on screen
-    //     if !self.visible() || !visible_rows.contains(&point.row()) {
-    //         return None;
-    //     }
-
-    //     let mut elements = Vec::new();
-
-    //     if let Some(diagnostic_popover) = self.diagnostic_popover.as_ref() {
-    //         elements.push(diagnostic_popover.render(style, cx));
-    //     }
-    //     if let Some(info_popover) = self.info_popover.as_mut() {
-    //         elements.push(info_popover.render(style, workspace, cx));
-    //     }
-
-    //     Some((point, elements))
-    // }
 }
 
 #[derive(Debug, Clone)]
@@ -467,35 +466,35 @@ pub struct InfoPopover {
     parsed_content: ParsedMarkdown,
 }
 
-// impl InfoPopover {
-//     pub fn render(
-//         &mut self,
-//         style: &EditorStyle,
-//         workspace: Option<WeakView<Workspace>>,
-//         cx: &mut ViewContext<Editor>,
-//     ) -> AnyElement<Editor> {
-//         MouseEventHandler::new::<InfoPopover, _>(0, cx, |_, cx| {
-//             Flex::column()
-//                 .scrollable::<HoverBlock>(0, None, cx)
-//                 .with_child(crate::render_parsed_markdown::<HoverBlock>(
-//                     &self.parsed_content,
-//                     style,
-//                     workspace,
-//                     cx,
-//                 ))
-//                 .contained()
-//                 .with_style(style.hover_popover.container)
-//         })
-//         .on_move(|_, _, _| {}) // Consume move events so they don't reach regions underneath.
-//         .with_cursor_style(CursorStyle::Arrow)
-//         .with_padding(Padding {
-//             bottom: HOVER_POPOVER_GAP,
-//             top: HOVER_POPOVER_GAP,
-//             ..Default::default()
-//         })
-//         .into_any()
-//     }
-// }
+impl InfoPopover {
+    pub fn render(
+        &mut self,
+        style: &EditorStyle,
+        max_size: Size<Pixels>,
+        workspace: Option<WeakView<Workspace>>,
+        cx: &mut ViewContext<Editor>,
+    ) -> AnyElement {
+        div()
+            .id("info_popover")
+            .elevation_2(cx)
+            .text_ui()
+            .p_2()
+            .overflow_y_scroll()
+            .max_w(max_size.width)
+            .max_h(max_size.height)
+            // Prevent a mouse move on the popover from being propagated to the editor,
+            // because that would dismiss the popover.
+            .on_mouse_move(|_, cx| cx.stop_propagation())
+            .child(crate::render_parsed_markdown(
+                "content",
+                &self.parsed_content,
+                style,
+                workspace,
+                cx,
+            ))
+            .into_any_element()
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct DiagnosticPopover {
@@ -504,57 +503,40 @@ pub struct DiagnosticPopover {
 }
 
 impl DiagnosticPopover {
-    pub fn render(&self, style: &EditorStyle, cx: &mut ViewContext<Editor>) -> AnyElement {
-        todo!()
-        // enum PrimaryDiagnostic {}
+    pub fn render(
+        &self,
+        style: &EditorStyle,
+        max_size: Size<Pixels>,
+        cx: &mut ViewContext<Editor>,
+    ) -> AnyElement {
+        let text = match &self.local_diagnostic.diagnostic.source {
+            Some(source) => format!("{source}: {}", self.local_diagnostic.diagnostic.message),
+            None => self.local_diagnostic.diagnostic.message.clone(),
+        };
 
-        // let mut text_style = style.hover_popover.prose.clone();
-        // text_style.font_size = style.text.font_size;
-        // let diagnostic_source_style = style.hover_popover.diagnostic_source_highlight.clone();
+        let container_bg = crate::diagnostic_style(
+            self.local_diagnostic.diagnostic.severity,
+            true,
+            &style.diagnostic_style,
+        );
 
-        // let text = match &self.local_diagnostic.diagnostic.source {
-        //     Some(source) => Text::new(
-        //         format!("{source}: {}", self.local_diagnostic.diagnostic.message),
-        //         text_style,
-        //     )
-        //     .with_highlights(vec![(0..source.len(), diagnostic_source_style)]),
-
-        //     None => Text::new(self.local_diagnostic.diagnostic.message.clone(), text_style),
-        // };
-
-        // let container_style = match self.local_diagnostic.diagnostic.severity {
-        //     DiagnosticSeverity::HINT => style.hover_popover.info_container,
-        //     DiagnosticSeverity::INFORMATION => style.hover_popover.info_container,
-        //     DiagnosticSeverity::WARNING => style.hover_popover.warning_container,
-        //     DiagnosticSeverity::ERROR => style.hover_popover.error_container,
-        //     _ => style.hover_popover.container,
-        // };
-
-        // let tooltip_style = theme::current(cx).tooltip.clone();
-
-        // MouseEventHandler::new::<DiagnosticPopover, _>(0, cx, |_, _| {
-        //     text.with_soft_wrap(true)
-        //         .contained()
-        //         .with_style(container_style)
-        // })
-        // .with_padding(Padding {
-        //     top: HOVER_POPOVER_GAP,
-        //     bottom: HOVER_POPOVER_GAP,
-        //     ..Default::default()
-        // })
-        // .on_move(|_, _, _| {}) // Consume move events so they don't reach regions underneath.
-        // .on_click(MouseButton::Left, |_, this, cx| {
-        //     this.go_to_diagnostic(&Default::default(), cx)
-        // })
-        // .with_cursor_style(CursorStyle::PointingHand)
-        // .with_tooltip::<PrimaryDiagnostic>(
-        //     0,
-        //     "Go To Diagnostic".to_string(),
-        //     Some(Box::new(crate::GoToDiagnostic)),
-        //     tooltip_style,
-        //     cx,
-        // )
-        // .into_any()
+        div()
+            .id("diagnostic")
+            .overflow_y_scroll()
+            .bg(container_bg)
+            .max_w(max_size.width)
+            .max_h(max_size.height)
+            .cursor(CursorStyle::PointingHand)
+            .tooltip(move |cx| Tooltip::for_action("Go To Diagnostic", &crate::GoToDiagnostic, cx))
+            // Prevent a mouse move on the popover from being propagated to the editor,
+            // because that would dismiss the popover.
+            .on_mouse_move(|_, cx| cx.stop_propagation())
+            // Prevent a mouse down on the popover from being propagated to the editor,
+            // because that would move the cursor.
+            .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
+            .on_click(cx.listener(|editor, _, cx| editor.go_to_diagnostic(&Default::default(), cx)))
+            .child(SharedString::from(text))
+            .into_any_element()
     }
 
     pub fn activation_info(&self) -> (usize, Anchor) {
@@ -567,763 +549,763 @@ impl DiagnosticPopover {
     }
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     use crate::{
-//         editor_tests::init_test,
-//         element::PointForPosition,
-//         inlay_hint_cache::tests::{cached_hint_labels, visible_hint_labels},
-//         link_go_to_definition::update_inlay_link_and_hover_points,
-//         test::editor_lsp_test_context::EditorLspTestContext,
-//         InlayId,
-//     };
-//     use collections::BTreeSet;
-//     use gpui::fonts::{HighlightStyle, Underline, Weight};
-//     use indoc::indoc;
-//     use language::{language_settings::InlayHintSettings, Diagnostic, DiagnosticSet};
-//     use lsp::LanguageServerId;
-//     use project::{HoverBlock, HoverBlockKind};
-//     use smol::stream::StreamExt;
-//     use unindent::Unindent;
-//     use util::test::marked_text_ranges;
-
-//     #[gpui::test]
-//     async fn test_mouse_hover_info_popover(cx: &mut gpui::TestAppContext) {
-//         init_test(cx, |_| {});
-
-//         let mut cx = EditorLspTestContext::new_rust(
-//             lsp::ServerCapabilities {
-//                 hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
-//                 ..Default::default()
-//             },
-//             cx,
-//         )
-//         .await;
-
-//         // Basic hover delays and then pops without moving the mouse
-//         cx.set_state(indoc! {"
-//             fn ˇtest() { println!(); }
-//         "});
-//         let hover_point = cx.display_point(indoc! {"
-//             fn test() { printˇln!(); }
-//         "});
-
-//         cx.update_editor(|editor, cx| hover_at(editor, Some(hover_point), cx));
-//         assert!(!cx.editor(|editor, _| editor.hover_state.visible()));
-
-//         // After delay, hover should be visible.
-//         let symbol_range = cx.lsp_range(indoc! {"
-//             fn test() { «println!»(); }
-//         "});
-//         let mut requests =
-//             cx.handle_request::<lsp::request::HoverRequest, _, _>(move |_, _, _| async move {
-//                 Ok(Some(lsp::Hover {
-//                     contents: lsp::HoverContents::Markup(lsp::MarkupContent {
-//                         kind: lsp::MarkupKind::Markdown,
-//                         value: "some basic docs".to_string(),
-//                     }),
-//                     range: Some(symbol_range),
-//                 }))
-//             });
-//         cx.foreground()
-//             .advance_clock(Duration::from_millis(HOVER_DELAY_MILLIS + 100));
-//         requests.next().await;
-
-//         cx.editor(|editor, _| {
-//             assert!(editor.hover_state.visible());
-//             assert_eq!(
-//                 editor.hover_state.info_popover.clone().unwrap().blocks,
-//                 vec![HoverBlock {
-//                     text: "some basic docs".to_string(),
-//                     kind: HoverBlockKind::Markdown,
-//                 },]
-//             )
-//         });
-
-//         // Mouse moved with no hover response dismisses
-//         let hover_point = cx.display_point(indoc! {"
-//             fn teˇst() { println!(); }
-//         "});
-//         let mut request = cx
-//             .lsp
-//             .handle_request::<lsp::request::HoverRequest, _, _>(|_, _| async move { Ok(None) });
-//         cx.update_editor(|editor, cx| hover_at(editor, Some(hover_point), cx));
-//         cx.foreground()
-//             .advance_clock(Duration::from_millis(HOVER_DELAY_MILLIS + 100));
-//         request.next().await;
-//         cx.editor(|editor, _| {
-//             assert!(!editor.hover_state.visible());
-//         });
-//     }
-
-//     #[gpui::test]
-//     async fn test_keyboard_hover_info_popover(cx: &mut gpui::TestAppContext) {
-//         init_test(cx, |_| {});
-
-//         let mut cx = EditorLspTestContext::new_rust(
-//             lsp::ServerCapabilities {
-//                 hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
-//                 ..Default::default()
-//             },
-//             cx,
-//         )
-//         .await;
-
-//         // Hover with keyboard has no delay
-//         cx.set_state(indoc! {"
-//             fˇn test() { println!(); }
-//         "});
-//         cx.update_editor(|editor, cx| hover(editor, &Hover, cx));
-//         let symbol_range = cx.lsp_range(indoc! {"
-//             «fn» test() { println!(); }
-//         "});
-//         cx.handle_request::<lsp::request::HoverRequest, _, _>(move |_, _, _| async move {
-//             Ok(Some(lsp::Hover {
-//                 contents: lsp::HoverContents::Markup(lsp::MarkupContent {
-//                     kind: lsp::MarkupKind::Markdown,
-//                     value: "some other basic docs".to_string(),
-//                 }),
-//                 range: Some(symbol_range),
-//             }))
-//         })
-//         .next()
-//         .await;
-
-//         cx.condition(|editor, _| editor.hover_state.visible()).await;
-//         cx.editor(|editor, _| {
-//             assert_eq!(
-//                 editor.hover_state.info_popover.clone().unwrap().blocks,
-//                 vec![HoverBlock {
-//                     text: "some other basic docs".to_string(),
-//                     kind: HoverBlockKind::Markdown,
-//                 }]
-//             )
-//         });
-//     }
-
-//     #[gpui::test]
-//     async fn test_empty_hovers_filtered(cx: &mut gpui::TestAppContext) {
-//         init_test(cx, |_| {});
-
-//         let mut cx = EditorLspTestContext::new_rust(
-//             lsp::ServerCapabilities {
-//                 hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
-//                 ..Default::default()
-//             },
-//             cx,
-//         )
-//         .await;
-
-//         // Hover with keyboard has no delay
-//         cx.set_state(indoc! {"
-//             fˇn test() { println!(); }
-//         "});
-//         cx.update_editor(|editor, cx| hover(editor, &Hover, cx));
-//         let symbol_range = cx.lsp_range(indoc! {"
-//             «fn» test() { println!(); }
-//         "});
-//         cx.handle_request::<lsp::request::HoverRequest, _, _>(move |_, _, _| async move {
-//             Ok(Some(lsp::Hover {
-//                 contents: lsp::HoverContents::Array(vec![
-//                     lsp::MarkedString::String("regular text for hover to show".to_string()),
-//                     lsp::MarkedString::String("".to_string()),
-//                     lsp::MarkedString::LanguageString(lsp::LanguageString {
-//                         language: "Rust".to_string(),
-//                         value: "".to_string(),
-//                     }),
-//                 ]),
-//                 range: Some(symbol_range),
-//             }))
-//         })
-//         .next()
-//         .await;
-
-//         cx.condition(|editor, _| editor.hover_state.visible()).await;
-//         cx.editor(|editor, _| {
-//             assert_eq!(
-//                 editor.hover_state.info_popover.clone().unwrap().blocks,
-//                 vec![HoverBlock {
-//                     text: "regular text for hover to show".to_string(),
-//                     kind: HoverBlockKind::Markdown,
-//                 }],
-//                 "No empty string hovers should be shown"
-//             );
-//         });
-//     }
-
-//     #[gpui::test]
-//     async fn test_line_ends_trimmed(cx: &mut gpui::TestAppContext) {
-//         init_test(cx, |_| {});
-
-//         let mut cx = EditorLspTestContext::new_rust(
-//             lsp::ServerCapabilities {
-//                 hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
-//                 ..Default::default()
-//             },
-//             cx,
-//         )
-//         .await;
-
-//         // Hover with keyboard has no delay
-//         cx.set_state(indoc! {"
-//             fˇn test() { println!(); }
-//         "});
-//         cx.update_editor(|editor, cx| hover(editor, &Hover, cx));
-//         let symbol_range = cx.lsp_range(indoc! {"
-//             «fn» test() { println!(); }
-//         "});
-
-//         let code_str = "\nlet hovered_point: Vector2F // size = 8, align = 0x4\n";
-//         let markdown_string = format!("\n```rust\n{code_str}```");
-
-//         let closure_markdown_string = markdown_string.clone();
-//         cx.handle_request::<lsp::request::HoverRequest, _, _>(move |_, _, _| {
-//             let future_markdown_string = closure_markdown_string.clone();
-//             async move {
-//                 Ok(Some(lsp::Hover {
-//                     contents: lsp::HoverContents::Markup(lsp::MarkupContent {
-//                         kind: lsp::MarkupKind::Markdown,
-//                         value: future_markdown_string,
-//                     }),
-//                     range: Some(symbol_range),
-//                 }))
-//             }
-//         })
-//         .next()
-//         .await;
-
-//         cx.condition(|editor, _| editor.hover_state.visible()).await;
-//         cx.editor(|editor, _| {
-//             let blocks = editor.hover_state.info_popover.clone().unwrap().blocks;
-//             assert_eq!(
-//                 blocks,
-//                 vec![HoverBlock {
-//                     text: markdown_string,
-//                     kind: HoverBlockKind::Markdown,
-//                 }],
-//             );
-
-//             let rendered = smol::block_on(parse_blocks(&blocks, &Default::default(), None));
-//             assert_eq!(
-//                 rendered.text,
-//                 code_str.trim(),
-//                 "Should not have extra line breaks at end of rendered hover"
-//             );
-//         });
-//     }
-
-//     #[gpui::test]
-//     async fn test_hover_diagnostic_and_info_popovers(cx: &mut gpui::TestAppContext) {
-//         init_test(cx, |_| {});
-
-//         let mut cx = EditorLspTestContext::new_rust(
-//             lsp::ServerCapabilities {
-//                 hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
-//                 ..Default::default()
-//             },
-//             cx,
-//         )
-//         .await;
-
-//         // Hover with just diagnostic, pops DiagnosticPopover immediately and then
-//         // info popover once request completes
-//         cx.set_state(indoc! {"
-//             fn teˇst() { println!(); }
-//         "});
-
-//         // Send diagnostic to client
-//         let range = cx.text_anchor_range(indoc! {"
-//             fn «test»() { println!(); }
-//         "});
-//         cx.update_buffer(|buffer, cx| {
-//             let snapshot = buffer.text_snapshot();
-//             let set = DiagnosticSet::from_sorted_entries(
-//                 vec![DiagnosticEntry {
-//                     range,
-//                     diagnostic: Diagnostic {
-//                         message: "A test diagnostic message.".to_string(),
-//                         ..Default::default()
-//                     },
-//                 }],
-//                 &snapshot,
-//             );
-//             buffer.update_diagnostics(LanguageServerId(0), set, cx);
-//         });
-
-//         // Hover pops diagnostic immediately
-//         cx.update_editor(|editor, cx| hover(editor, &Hover, cx));
-//         cx.foreground().run_until_parked();
-
-//         cx.editor(|Editor { hover_state, .. }, _| {
-//             assert!(hover_state.diagnostic_popover.is_some() && hover_state.info_popover.is_none())
-//         });
-
-//         // Info Popover shows after request responded to
-//         let range = cx.lsp_range(indoc! {"
-//             fn «test»() { println!(); }
-//         "});
-//         cx.handle_request::<lsp::request::HoverRequest, _, _>(move |_, _, _| async move {
-//             Ok(Some(lsp::Hover {
-//                 contents: lsp::HoverContents::Markup(lsp::MarkupContent {
-//                     kind: lsp::MarkupKind::Markdown,
-//                     value: "some new docs".to_string(),
-//                 }),
-//                 range: Some(range),
-//             }))
-//         });
-//         cx.foreground()
-//             .advance_clock(Duration::from_millis(HOVER_DELAY_MILLIS + 100));
-
-//         cx.foreground().run_until_parked();
-//         cx.editor(|Editor { hover_state, .. }, _| {
-//             hover_state.diagnostic_popover.is_some() && hover_state.info_task.is_some()
-//         });
-//     }
-
-//     #[gpui::test]
-//     fn test_render_blocks(cx: &mut gpui::TestAppContext) {
-//         init_test(cx, |_| {});
-
-//         cx.add_window(|cx| {
-//             let editor = Editor::single_line(None, cx);
-//             let style = editor.style(cx);
-
-//             struct Row {
-//                 blocks: Vec<HoverBlock>,
-//                 expected_marked_text: String,
-//                 expected_styles: Vec<HighlightStyle>,
-//             }
-
-//             let rows = &[
-//                 // Strong emphasis
-//                 Row {
-//                     blocks: vec![HoverBlock {
-//                         text: "one **two** three".to_string(),
-//                         kind: HoverBlockKind::Markdown,
-//                     }],
-//                     expected_marked_text: "one «two» three".to_string(),
-//                     expected_styles: vec![HighlightStyle {
-//                         weight: Some(Weight::BOLD),
-//                         ..Default::default()
-//                     }],
-//                 },
-//                 // Links
-//                 Row {
-//                     blocks: vec![HoverBlock {
-//                         text: "one [two](https://the-url) three".to_string(),
-//                         kind: HoverBlockKind::Markdown,
-//                     }],
-//                     expected_marked_text: "one «two» three".to_string(),
-//                     expected_styles: vec![HighlightStyle {
-//                         underline: Some(Underline {
-//                             thickness: 1.0.into(),
-//                             ..Default::default()
-//                         }),
-//                         ..Default::default()
-//                     }],
-//                 },
-//                 // Lists
-//                 Row {
-//                     blocks: vec![HoverBlock {
-//                         text: "
-//                             lists:
-//                             * one
-//                                 - a
-//                                 - b
-//                             * two
-//                                 - [c](https://the-url)
-//                                 - d"
-//                         .unindent(),
-//                         kind: HoverBlockKind::Markdown,
-//                     }],
-//                     expected_marked_text: "
-//                         lists:
-//                         - one
-//                           - a
-//                           - b
-//                         - two
-//                           - «c»
-//                           - d"
-//                     .unindent(),
-//                     expected_styles: vec![HighlightStyle {
-//                         underline: Some(Underline {
-//                             thickness: 1.0.into(),
-//                             ..Default::default()
-//                         }),
-//                         ..Default::default()
-//                     }],
-//                 },
-//                 // Multi-paragraph list items
-//                 Row {
-//                     blocks: vec![HoverBlock {
-//                         text: "
-//                             * one two
-//                               three
-
-//                             * four five
-//                                 * six seven
-//                                   eight
-
-//                                   nine
-//                                 * ten
-//                             * six"
-//                             .unindent(),
-//                         kind: HoverBlockKind::Markdown,
-//                     }],
-//                     expected_marked_text: "
-//                         - one two three
-//                         - four five
-//                           - six seven eight
-
-//                             nine
-//                           - ten
-//                         - six"
-//                         .unindent(),
-//                     expected_styles: vec![HighlightStyle {
-//                         underline: Some(Underline {
-//                             thickness: 1.0.into(),
-//                             ..Default::default()
-//                         }),
-//                         ..Default::default()
-//                     }],
-//                 },
-//             ];
-
-//             for Row {
-//                 blocks,
-//                 expected_marked_text,
-//                 expected_styles,
-//             } in &rows[0..]
-//             {
-//                 let rendered = smol::block_on(parse_blocks(&blocks, &Default::default(), None));
-
-//                 let (expected_text, ranges) = marked_text_ranges(expected_marked_text, false);
-//                 let expected_highlights = ranges
-//                     .into_iter()
-//                     .zip(expected_styles.iter().cloned())
-//                     .collect::<Vec<_>>();
-//                 assert_eq!(
-//                     rendered.text, expected_text,
-//                     "wrong text for input {blocks:?}"
-//                 );
-
-//                 let rendered_highlights: Vec<_> = rendered
-//                     .highlights
-//                     .iter()
-//                     .filter_map(|(range, highlight)| {
-//                         let highlight = highlight.to_highlight_style(&style.syntax)?;
-//                         Some((range.clone(), highlight))
-//                     })
-//                     .collect();
-
-//                 assert_eq!(
-//                     rendered_highlights, expected_highlights,
-//                     "wrong highlights for input {blocks:?}"
-//                 );
-//             }
-
-//             editor
-//         });
-//     }
-
-//     #[gpui::test]
-//     async fn test_hover_inlay_label_parts(cx: &mut gpui::TestAppContext) {
-//         init_test(cx, |settings| {
-//             settings.defaults.inlay_hints = Some(InlayHintSettings {
-//                 enabled: true,
-//                 show_type_hints: true,
-//                 show_parameter_hints: true,
-//                 show_other_hints: true,
-//             })
-//         });
-
-//         let mut cx = EditorLspTestContext::new_rust(
-//             lsp::ServerCapabilities {
-//                 inlay_hint_provider: Some(lsp::OneOf::Right(
-//                     lsp::InlayHintServerCapabilities::Options(lsp::InlayHintOptions {
-//                         resolve_provider: Some(true),
-//                         ..Default::default()
-//                     }),
-//                 )),
-//                 ..Default::default()
-//             },
-//             cx,
-//         )
-//         .await;
-
-//         cx.set_state(indoc! {"
-//             struct TestStruct;
-
-//             // ==================
-
-//             struct TestNewType<T>(T);
-
-//             fn main() {
-//                 let variableˇ = TestNewType(TestStruct);
-//             }
-//         "});
-
-//         let hint_start_offset = cx.ranges(indoc! {"
-//             struct TestStruct;
-
-//             // ==================
-
-//             struct TestNewType<T>(T);
-
-//             fn main() {
-//                 let variableˇ = TestNewType(TestStruct);
-//             }
-//         "})[0]
-//             .start;
-//         let hint_position = cx.to_lsp(hint_start_offset);
-//         let new_type_target_range = cx.lsp_range(indoc! {"
-//             struct TestStruct;
-
-//             // ==================
-
-//             struct «TestNewType»<T>(T);
-
-//             fn main() {
-//                 let variable = TestNewType(TestStruct);
-//             }
-//         "});
-//         let struct_target_range = cx.lsp_range(indoc! {"
-//             struct «TestStruct»;
-
-//             // ==================
-
-//             struct TestNewType<T>(T);
-
-//             fn main() {
-//                 let variable = TestNewType(TestStruct);
-//             }
-//         "});
-
-//         let uri = cx.buffer_lsp_url.clone();
-//         let new_type_label = "TestNewType";
-//         let struct_label = "TestStruct";
-//         let entire_hint_label = ": TestNewType<TestStruct>";
-//         let closure_uri = uri.clone();
-//         cx.lsp
-//             .handle_request::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
-//                 let task_uri = closure_uri.clone();
-//                 async move {
-//                     assert_eq!(params.text_document.uri, task_uri);
-//                     Ok(Some(vec![lsp::InlayHint {
-//                         position: hint_position,
-//                         label: lsp::InlayHintLabel::LabelParts(vec![lsp::InlayHintLabelPart {
-//                             value: entire_hint_label.to_string(),
-//                             ..Default::default()
-//                         }]),
-//                         kind: Some(lsp::InlayHintKind::TYPE),
-//                         text_edits: None,
-//                         tooltip: None,
-//                         padding_left: Some(false),
-//                         padding_right: Some(false),
-//                         data: None,
-//                     }]))
-//                 }
-//             })
-//             .next()
-//             .await;
-//         cx.foreground().run_until_parked();
-//         cx.update_editor(|editor, cx| {
-//             let expected_layers = vec![entire_hint_label.to_string()];
-//             assert_eq!(expected_layers, cached_hint_labels(editor));
-//             assert_eq!(expected_layers, visible_hint_labels(editor, cx));
-//         });
-
-//         let inlay_range = cx
-//             .ranges(indoc! {"
-//                 struct TestStruct;
-
-//                 // ==================
-
-//                 struct TestNewType<T>(T);
-
-//                 fn main() {
-//                     let variable« »= TestNewType(TestStruct);
-//                 }
-//         "})
-//             .get(0)
-//             .cloned()
-//             .unwrap();
-//         let new_type_hint_part_hover_position = cx.update_editor(|editor, cx| {
-//             let snapshot = editor.snapshot(cx);
-//             let previous_valid = inlay_range.start.to_display_point(&snapshot);
-//             let next_valid = inlay_range.end.to_display_point(&snapshot);
-//             assert_eq!(previous_valid.row(), next_valid.row());
-//             assert!(previous_valid.column() < next_valid.column());
-//             let exact_unclipped = DisplayPoint::new(
-//                 previous_valid.row(),
-//                 previous_valid.column()
-//                     + (entire_hint_label.find(new_type_label).unwrap() + new_type_label.len() / 2)
-//                         as u32,
-//             );
-//             PointForPosition {
-//                 previous_valid,
-//                 next_valid,
-//                 exact_unclipped,
-//                 column_overshoot_after_line_end: 0,
-//             }
-//         });
-//         cx.update_editor(|editor, cx| {
-//             update_inlay_link_and_hover_points(
-//                 &editor.snapshot(cx),
-//                 new_type_hint_part_hover_position,
-//                 editor,
-//                 true,
-//                 false,
-//                 cx,
-//             );
-//         });
-
-//         let resolve_closure_uri = uri.clone();
-//         cx.lsp
-//             .handle_request::<lsp::request::InlayHintResolveRequest, _, _>(
-//                 move |mut hint_to_resolve, _| {
-//                     let mut resolved_hint_positions = BTreeSet::new();
-//                     let task_uri = resolve_closure_uri.clone();
-//                     async move {
-//                         let inserted = resolved_hint_positions.insert(hint_to_resolve.position);
-//                         assert!(inserted, "Hint {hint_to_resolve:?} was resolved twice");
-
-//                         // `: TestNewType<TestStruct>`
-//                         hint_to_resolve.label = lsp::InlayHintLabel::LabelParts(vec![
-//                             lsp::InlayHintLabelPart {
-//                                 value: ": ".to_string(),
-//                                 ..Default::default()
-//                             },
-//                             lsp::InlayHintLabelPart {
-//                                 value: new_type_label.to_string(),
-//                                 location: Some(lsp::Location {
-//                                     uri: task_uri.clone(),
-//                                     range: new_type_target_range,
-//                                 }),
-//                                 tooltip: Some(lsp::InlayHintLabelPartTooltip::String(format!(
-//                                     "A tooltip for `{new_type_label}`"
-//                                 ))),
-//                                 ..Default::default()
-//                             },
-//                             lsp::InlayHintLabelPart {
-//                                 value: "<".to_string(),
-//                                 ..Default::default()
-//                             },
-//                             lsp::InlayHintLabelPart {
-//                                 value: struct_label.to_string(),
-//                                 location: Some(lsp::Location {
-//                                     uri: task_uri,
-//                                     range: struct_target_range,
-//                                 }),
-//                                 tooltip: Some(lsp::InlayHintLabelPartTooltip::MarkupContent(
-//                                     lsp::MarkupContent {
-//                                         kind: lsp::MarkupKind::Markdown,
-//                                         value: format!("A tooltip for `{struct_label}`"),
-//                                     },
-//                                 )),
-//                                 ..Default::default()
-//                             },
-//                             lsp::InlayHintLabelPart {
-//                                 value: ">".to_string(),
-//                                 ..Default::default()
-//                             },
-//                         ]);
-
-//                         Ok(hint_to_resolve)
-//                     }
-//                 },
-//             )
-//             .next()
-//             .await;
-//         cx.foreground().run_until_parked();
-
-//         cx.update_editor(|editor, cx| {
-//             update_inlay_link_and_hover_points(
-//                 &editor.snapshot(cx),
-//                 new_type_hint_part_hover_position,
-//                 editor,
-//                 true,
-//                 false,
-//                 cx,
-//             );
-//         });
-//         cx.foreground()
-//             .advance_clock(Duration::from_millis(HOVER_DELAY_MILLIS + 100));
-//         cx.foreground().run_until_parked();
-//         cx.update_editor(|editor, cx| {
-//             let hover_state = &editor.hover_state;
-//             assert!(hover_state.diagnostic_popover.is_none() && hover_state.info_popover.is_some());
-//             let popover = hover_state.info_popover.as_ref().unwrap();
-//             let buffer_snapshot = editor.buffer().update(cx, |buffer, cx| buffer.snapshot(cx));
-//             assert_eq!(
-//                 popover.symbol_range,
-//                 RangeInEditor::Inlay(InlayHighlight {
-//                     inlay: InlayId::Hint(0),
-//                     inlay_position: buffer_snapshot.anchor_at(inlay_range.start, Bias::Right),
-//                     range: ": ".len()..": ".len() + new_type_label.len(),
-//                 }),
-//                 "Popover range should match the new type label part"
-//             );
-//             assert_eq!(
-//                 popover.parsed_content.text,
-//                 format!("A tooltip for `{new_type_label}`"),
-//                 "Rendered text should not anyhow alter backticks"
-//             );
-//         });
-
-//         let struct_hint_part_hover_position = cx.update_editor(|editor, cx| {
-//             let snapshot = editor.snapshot(cx);
-//             let previous_valid = inlay_range.start.to_display_point(&snapshot);
-//             let next_valid = inlay_range.end.to_display_point(&snapshot);
-//             assert_eq!(previous_valid.row(), next_valid.row());
-//             assert!(previous_valid.column() < next_valid.column());
-//             let exact_unclipped = DisplayPoint::new(
-//                 previous_valid.row(),
-//                 previous_valid.column()
-//                     + (entire_hint_label.find(struct_label).unwrap() + struct_label.len() / 2)
-//                         as u32,
-//             );
-//             PointForPosition {
-//                 previous_valid,
-//                 next_valid,
-//                 exact_unclipped,
-//                 column_overshoot_after_line_end: 0,
-//             }
-//         });
-//         cx.update_editor(|editor, cx| {
-//             update_inlay_link_and_hover_points(
-//                 &editor.snapshot(cx),
-//                 struct_hint_part_hover_position,
-//                 editor,
-//                 true,
-//                 false,
-//                 cx,
-//             );
-//         });
-//         cx.foreground()
-//             .advance_clock(Duration::from_millis(HOVER_DELAY_MILLIS + 100));
-//         cx.foreground().run_until_parked();
-//         cx.update_editor(|editor, cx| {
-//             let hover_state = &editor.hover_state;
-//             assert!(hover_state.diagnostic_popover.is_none() && hover_state.info_popover.is_some());
-//             let popover = hover_state.info_popover.as_ref().unwrap();
-//             let buffer_snapshot = editor.buffer().update(cx, |buffer, cx| buffer.snapshot(cx));
-//             assert_eq!(
-//                 popover.symbol_range,
-//                 RangeInEditor::Inlay(InlayHighlight {
-//                     inlay: InlayId::Hint(0),
-//                     inlay_position: buffer_snapshot.anchor_at(inlay_range.start, Bias::Right),
-//                     range: ": ".len() + new_type_label.len() + "<".len()
-//                         ..": ".len() + new_type_label.len() + "<".len() + struct_label.len(),
-//                 }),
-//                 "Popover range should match the struct label part"
-//             );
-//             assert_eq!(
-//                 popover.parsed_content.text,
-//                 format!("A tooltip for {struct_label}"),
-//                 "Rendered markdown element should remove backticks from text"
-//             );
-//         });
-//     }
-// }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        editor_tests::init_test,
+        element::PointForPosition,
+        inlay_hint_cache::tests::{cached_hint_labels, visible_hint_labels},
+        link_go_to_definition::update_inlay_link_and_hover_points,
+        test::editor_lsp_test_context::EditorLspTestContext,
+        InlayId,
+    };
+    use collections::BTreeSet;
+    use gpui::{FontWeight, HighlightStyle, UnderlineStyle};
+    use indoc::indoc;
+    use language::{language_settings::InlayHintSettings, Diagnostic, DiagnosticSet};
+    use lsp::LanguageServerId;
+    use project::{HoverBlock, HoverBlockKind};
+    use smol::stream::StreamExt;
+    use unindent::Unindent;
+    use util::test::marked_text_ranges;
+
+    #[gpui::test]
+    async fn test_mouse_hover_info_popover(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+
+        // Basic hover delays and then pops without moving the mouse
+        cx.set_state(indoc! {"
+            fn ˇtest() { println!(); }
+        "});
+        let hover_point = cx.display_point(indoc! {"
+            fn test() { printˇln!(); }
+        "});
+
+        cx.update_editor(|editor, cx| hover_at(editor, Some(hover_point), cx));
+        assert!(!cx.editor(|editor, _| editor.hover_state.visible()));
+
+        // After delay, hover should be visible.
+        let symbol_range = cx.lsp_range(indoc! {"
+            fn test() { «println!»(); }
+        "});
+        let mut requests =
+            cx.handle_request::<lsp::request::HoverRequest, _, _>(move |_, _, _| async move {
+                Ok(Some(lsp::Hover {
+                    contents: lsp::HoverContents::Markup(lsp::MarkupContent {
+                        kind: lsp::MarkupKind::Markdown,
+                        value: "some basic docs".to_string(),
+                    }),
+                    range: Some(symbol_range),
+                }))
+            });
+        cx.background_executor
+            .advance_clock(Duration::from_millis(HOVER_DELAY_MILLIS + 100));
+        requests.next().await;
+
+        cx.editor(|editor, _| {
+            assert!(editor.hover_state.visible());
+            assert_eq!(
+                editor.hover_state.info_popover.clone().unwrap().blocks,
+                vec![HoverBlock {
+                    text: "some basic docs".to_string(),
+                    kind: HoverBlockKind::Markdown,
+                },]
+            )
+        });
+
+        // Mouse moved with no hover response dismisses
+        let hover_point = cx.display_point(indoc! {"
+            fn teˇst() { println!(); }
+        "});
+        let mut request = cx
+            .lsp
+            .handle_request::<lsp::request::HoverRequest, _, _>(|_, _| async move { Ok(None) });
+        cx.update_editor(|editor, cx| hover_at(editor, Some(hover_point), cx));
+        cx.background_executor
+            .advance_clock(Duration::from_millis(HOVER_DELAY_MILLIS + 100));
+        request.next().await;
+        cx.editor(|editor, _| {
+            assert!(!editor.hover_state.visible());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_keyboard_hover_info_popover(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+
+        // Hover with keyboard has no delay
+        cx.set_state(indoc! {"
+            fˇn test() { println!(); }
+        "});
+        cx.update_editor(|editor, cx| hover(editor, &Hover, cx));
+        let symbol_range = cx.lsp_range(indoc! {"
+            «fn» test() { println!(); }
+        "});
+        cx.handle_request::<lsp::request::HoverRequest, _, _>(move |_, _, _| async move {
+            Ok(Some(lsp::Hover {
+                contents: lsp::HoverContents::Markup(lsp::MarkupContent {
+                    kind: lsp::MarkupKind::Markdown,
+                    value: "some other basic docs".to_string(),
+                }),
+                range: Some(symbol_range),
+            }))
+        })
+        .next()
+        .await;
+
+        cx.condition(|editor, _| editor.hover_state.visible()).await;
+        cx.editor(|editor, _| {
+            assert_eq!(
+                editor.hover_state.info_popover.clone().unwrap().blocks,
+                vec![HoverBlock {
+                    text: "some other basic docs".to_string(),
+                    kind: HoverBlockKind::Markdown,
+                }]
+            )
+        });
+    }
+
+    #[gpui::test]
+    async fn test_empty_hovers_filtered(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+
+        // Hover with keyboard has no delay
+        cx.set_state(indoc! {"
+            fˇn test() { println!(); }
+        "});
+        cx.update_editor(|editor, cx| hover(editor, &Hover, cx));
+        let symbol_range = cx.lsp_range(indoc! {"
+            «fn» test() { println!(); }
+        "});
+        cx.handle_request::<lsp::request::HoverRequest, _, _>(move |_, _, _| async move {
+            Ok(Some(lsp::Hover {
+                contents: lsp::HoverContents::Array(vec![
+                    lsp::MarkedString::String("regular text for hover to show".to_string()),
+                    lsp::MarkedString::String("".to_string()),
+                    lsp::MarkedString::LanguageString(lsp::LanguageString {
+                        language: "Rust".to_string(),
+                        value: "".to_string(),
+                    }),
+                ]),
+                range: Some(symbol_range),
+            }))
+        })
+        .next()
+        .await;
+
+        cx.condition(|editor, _| editor.hover_state.visible()).await;
+        cx.editor(|editor, _| {
+            assert_eq!(
+                editor.hover_state.info_popover.clone().unwrap().blocks,
+                vec![HoverBlock {
+                    text: "regular text for hover to show".to_string(),
+                    kind: HoverBlockKind::Markdown,
+                }],
+                "No empty string hovers should be shown"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_line_ends_trimmed(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+
+        // Hover with keyboard has no delay
+        cx.set_state(indoc! {"
+            fˇn test() { println!(); }
+        "});
+        cx.update_editor(|editor, cx| hover(editor, &Hover, cx));
+        let symbol_range = cx.lsp_range(indoc! {"
+            «fn» test() { println!(); }
+        "});
+
+        let code_str = "\nlet hovered_point: Vector2F // size = 8, align = 0x4\n";
+        let markdown_string = format!("\n```rust\n{code_str}```");
+
+        let closure_markdown_string = markdown_string.clone();
+        cx.handle_request::<lsp::request::HoverRequest, _, _>(move |_, _, _| {
+            let future_markdown_string = closure_markdown_string.clone();
+            async move {
+                Ok(Some(lsp::Hover {
+                    contents: lsp::HoverContents::Markup(lsp::MarkupContent {
+                        kind: lsp::MarkupKind::Markdown,
+                        value: future_markdown_string,
+                    }),
+                    range: Some(symbol_range),
+                }))
+            }
+        })
+        .next()
+        .await;
+
+        cx.condition(|editor, _| editor.hover_state.visible()).await;
+        cx.editor(|editor, _| {
+            let blocks = editor.hover_state.info_popover.clone().unwrap().blocks;
+            assert_eq!(
+                blocks,
+                vec![HoverBlock {
+                    text: markdown_string,
+                    kind: HoverBlockKind::Markdown,
+                }],
+            );
+
+            let rendered = smol::block_on(parse_blocks(&blocks, &Default::default(), None));
+            assert_eq!(
+                rendered.text,
+                code_str.trim(),
+                "Should not have extra line breaks at end of rendered hover"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_hover_diagnostic_and_info_popovers(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+
+        // Hover with just diagnostic, pops DiagnosticPopover immediately and then
+        // info popover once request completes
+        cx.set_state(indoc! {"
+            fn teˇst() { println!(); }
+        "});
+
+        // Send diagnostic to client
+        let range = cx.text_anchor_range(indoc! {"
+            fn «test»() { println!(); }
+        "});
+        cx.update_buffer(|buffer, cx| {
+            let snapshot = buffer.text_snapshot();
+            let set = DiagnosticSet::from_sorted_entries(
+                vec![DiagnosticEntry {
+                    range,
+                    diagnostic: Diagnostic {
+                        message: "A test diagnostic message.".to_string(),
+                        ..Default::default()
+                    },
+                }],
+                &snapshot,
+            );
+            buffer.update_diagnostics(LanguageServerId(0), set, cx);
+        });
+
+        // Hover pops diagnostic immediately
+        cx.update_editor(|editor, cx| hover(editor, &Hover, cx));
+        cx.background_executor.run_until_parked();
+
+        cx.editor(|Editor { hover_state, .. }, _| {
+            assert!(hover_state.diagnostic_popover.is_some() && hover_state.info_popover.is_none())
+        });
+
+        // Info Popover shows after request responded to
+        let range = cx.lsp_range(indoc! {"
+            fn «test»() { println!(); }
+        "});
+        cx.handle_request::<lsp::request::HoverRequest, _, _>(move |_, _, _| async move {
+            Ok(Some(lsp::Hover {
+                contents: lsp::HoverContents::Markup(lsp::MarkupContent {
+                    kind: lsp::MarkupKind::Markdown,
+                    value: "some new docs".to_string(),
+                }),
+                range: Some(range),
+            }))
+        });
+        cx.background_executor
+            .advance_clock(Duration::from_millis(HOVER_DELAY_MILLIS + 100));
+
+        cx.background_executor.run_until_parked();
+        cx.editor(|Editor { hover_state, .. }, _| {
+            hover_state.diagnostic_popover.is_some() && hover_state.info_task.is_some()
+        });
+    }
+
+    #[gpui::test]
+    fn test_render_blocks(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+
+        let editor = cx.add_window(|cx| Editor::single_line(cx));
+        editor
+            .update(cx, |editor, cx| {
+                let style = editor.style.clone().unwrap();
+
+                struct Row {
+                    blocks: Vec<HoverBlock>,
+                    expected_marked_text: String,
+                    expected_styles: Vec<HighlightStyle>,
+                }
+
+                let rows = &[
+                    // Strong emphasis
+                    Row {
+                        blocks: vec![HoverBlock {
+                            text: "one **two** three".to_string(),
+                            kind: HoverBlockKind::Markdown,
+                        }],
+                        expected_marked_text: "one «two» three".to_string(),
+                        expected_styles: vec![HighlightStyle {
+                            font_weight: Some(FontWeight::BOLD),
+                            ..Default::default()
+                        }],
+                    },
+                    // Links
+                    Row {
+                        blocks: vec![HoverBlock {
+                            text: "one [two](https://the-url) three".to_string(),
+                            kind: HoverBlockKind::Markdown,
+                        }],
+                        expected_marked_text: "one «two» three".to_string(),
+                        expected_styles: vec![HighlightStyle {
+                            underline: Some(UnderlineStyle {
+                                thickness: 1.0.into(),
+                                ..Default::default()
+                            }),
+                            ..Default::default()
+                        }],
+                    },
+                    // Lists
+                    Row {
+                        blocks: vec![HoverBlock {
+                            text: "
+                            lists:
+                            * one
+                                - a
+                                - b
+                            * two
+                                - [c](https://the-url)
+                                - d"
+                            .unindent(),
+                            kind: HoverBlockKind::Markdown,
+                        }],
+                        expected_marked_text: "
+                        lists:
+                        - one
+                          - a
+                          - b
+                        - two
+                          - «c»
+                          - d"
+                        .unindent(),
+                        expected_styles: vec![HighlightStyle {
+                            underline: Some(UnderlineStyle {
+                                thickness: 1.0.into(),
+                                ..Default::default()
+                            }),
+                            ..Default::default()
+                        }],
+                    },
+                    // Multi-paragraph list items
+                    Row {
+                        blocks: vec![HoverBlock {
+                            text: "
+                            * one two
+                              three
+
+                            * four five
+                                * six seven
+                                  eight
+
+                                  nine
+                                * ten
+                            * six"
+                                .unindent(),
+                            kind: HoverBlockKind::Markdown,
+                        }],
+                        expected_marked_text: "
+                        - one two three
+                        - four five
+                          - six seven eight
+
+                            nine
+                          - ten
+                        - six"
+                            .unindent(),
+                        expected_styles: vec![HighlightStyle {
+                            underline: Some(UnderlineStyle {
+                                thickness: 1.0.into(),
+                                ..Default::default()
+                            }),
+                            ..Default::default()
+                        }],
+                    },
+                ];
+
+                for Row {
+                    blocks,
+                    expected_marked_text,
+                    expected_styles,
+                } in &rows[0..]
+                {
+                    let rendered = smol::block_on(parse_blocks(&blocks, &Default::default(), None));
+
+                    let (expected_text, ranges) = marked_text_ranges(expected_marked_text, false);
+                    let expected_highlights = ranges
+                        .into_iter()
+                        .zip(expected_styles.iter().cloned())
+                        .collect::<Vec<_>>();
+                    assert_eq!(
+                        rendered.text, expected_text,
+                        "wrong text for input {blocks:?}"
+                    );
+
+                    let rendered_highlights: Vec<_> = rendered
+                        .highlights
+                        .iter()
+                        .filter_map(|(range, highlight)| {
+                            let highlight = highlight.to_highlight_style(&style.syntax)?;
+                            Some((range.clone(), highlight))
+                        })
+                        .collect();
+
+                    assert_eq!(
+                        rendered_highlights, expected_highlights,
+                        "wrong highlights for input {blocks:?}"
+                    );
+                }
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_hover_inlay_label_parts(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |settings| {
+            settings.defaults.inlay_hints = Some(InlayHintSettings {
+                enabled: true,
+                show_type_hints: true,
+                show_parameter_hints: true,
+                show_other_hints: true,
+            })
+        });
+
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                inlay_hint_provider: Some(lsp::OneOf::Right(
+                    lsp::InlayHintServerCapabilities::Options(lsp::InlayHintOptions {
+                        resolve_provider: Some(true),
+                        ..Default::default()
+                    }),
+                )),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+
+        cx.set_state(indoc! {"
+            struct TestStruct;
+
+            // ==================
+
+            struct TestNewType<T>(T);
+
+            fn main() {
+                let variableˇ = TestNewType(TestStruct);
+            }
+        "});
+
+        let hint_start_offset = cx.ranges(indoc! {"
+            struct TestStruct;
+
+            // ==================
+
+            struct TestNewType<T>(T);
+
+            fn main() {
+                let variableˇ = TestNewType(TestStruct);
+            }
+        "})[0]
+            .start;
+        let hint_position = cx.to_lsp(hint_start_offset);
+        let new_type_target_range = cx.lsp_range(indoc! {"
+            struct TestStruct;
+
+            // ==================
+
+            struct «TestNewType»<T>(T);
+
+            fn main() {
+                let variable = TestNewType(TestStruct);
+            }
+        "});
+        let struct_target_range = cx.lsp_range(indoc! {"
+            struct «TestStruct»;
+
+            // ==================
+
+            struct TestNewType<T>(T);
+
+            fn main() {
+                let variable = TestNewType(TestStruct);
+            }
+        "});
+
+        let uri = cx.buffer_lsp_url.clone();
+        let new_type_label = "TestNewType";
+        let struct_label = "TestStruct";
+        let entire_hint_label = ": TestNewType<TestStruct>";
+        let closure_uri = uri.clone();
+        cx.lsp
+            .handle_request::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
+                let task_uri = closure_uri.clone();
+                async move {
+                    assert_eq!(params.text_document.uri, task_uri);
+                    Ok(Some(vec![lsp::InlayHint {
+                        position: hint_position,
+                        label: lsp::InlayHintLabel::LabelParts(vec![lsp::InlayHintLabelPart {
+                            value: entire_hint_label.to_string(),
+                            ..Default::default()
+                        }]),
+                        kind: Some(lsp::InlayHintKind::TYPE),
+                        text_edits: None,
+                        tooltip: None,
+                        padding_left: Some(false),
+                        padding_right: Some(false),
+                        data: None,
+                    }]))
+                }
+            })
+            .next()
+            .await;
+        cx.background_executor.run_until_parked();
+        cx.update_editor(|editor, cx| {
+            let expected_layers = vec![entire_hint_label.to_string()];
+            assert_eq!(expected_layers, cached_hint_labels(editor));
+            assert_eq!(expected_layers, visible_hint_labels(editor, cx));
+        });
+
+        let inlay_range = cx
+            .ranges(indoc! {"
+                struct TestStruct;
+
+                // ==================
+
+                struct TestNewType<T>(T);
+
+                fn main() {
+                    let variable« »= TestNewType(TestStruct);
+                }
+        "})
+            .get(0)
+            .cloned()
+            .unwrap();
+        let new_type_hint_part_hover_position = cx.update_editor(|editor, cx| {
+            let snapshot = editor.snapshot(cx);
+            let previous_valid = inlay_range.start.to_display_point(&snapshot);
+            let next_valid = inlay_range.end.to_display_point(&snapshot);
+            assert_eq!(previous_valid.row(), next_valid.row());
+            assert!(previous_valid.column() < next_valid.column());
+            let exact_unclipped = DisplayPoint::new(
+                previous_valid.row(),
+                previous_valid.column()
+                    + (entire_hint_label.find(new_type_label).unwrap() + new_type_label.len() / 2)
+                        as u32,
+            );
+            PointForPosition {
+                previous_valid,
+                next_valid,
+                exact_unclipped,
+                column_overshoot_after_line_end: 0,
+            }
+        });
+        cx.update_editor(|editor, cx| {
+            update_inlay_link_and_hover_points(
+                &editor.snapshot(cx),
+                new_type_hint_part_hover_position,
+                editor,
+                true,
+                false,
+                cx,
+            );
+        });
+
+        let resolve_closure_uri = uri.clone();
+        cx.lsp
+            .handle_request::<lsp::request::InlayHintResolveRequest, _, _>(
+                move |mut hint_to_resolve, _| {
+                    let mut resolved_hint_positions = BTreeSet::new();
+                    let task_uri = resolve_closure_uri.clone();
+                    async move {
+                        let inserted = resolved_hint_positions.insert(hint_to_resolve.position);
+                        assert!(inserted, "Hint {hint_to_resolve:?} was resolved twice");
+
+                        // `: TestNewType<TestStruct>`
+                        hint_to_resolve.label = lsp::InlayHintLabel::LabelParts(vec![
+                            lsp::InlayHintLabelPart {
+                                value: ": ".to_string(),
+                                ..Default::default()
+                            },
+                            lsp::InlayHintLabelPart {
+                                value: new_type_label.to_string(),
+                                location: Some(lsp::Location {
+                                    uri: task_uri.clone(),
+                                    range: new_type_target_range,
+                                }),
+                                tooltip: Some(lsp::InlayHintLabelPartTooltip::String(format!(
+                                    "A tooltip for `{new_type_label}`"
+                                ))),
+                                ..Default::default()
+                            },
+                            lsp::InlayHintLabelPart {
+                                value: "<".to_string(),
+                                ..Default::default()
+                            },
+                            lsp::InlayHintLabelPart {
+                                value: struct_label.to_string(),
+                                location: Some(lsp::Location {
+                                    uri: task_uri,
+                                    range: struct_target_range,
+                                }),
+                                tooltip: Some(lsp::InlayHintLabelPartTooltip::MarkupContent(
+                                    lsp::MarkupContent {
+                                        kind: lsp::MarkupKind::Markdown,
+                                        value: format!("A tooltip for `{struct_label}`"),
+                                    },
+                                )),
+                                ..Default::default()
+                            },
+                            lsp::InlayHintLabelPart {
+                                value: ">".to_string(),
+                                ..Default::default()
+                            },
+                        ]);
+
+                        Ok(hint_to_resolve)
+                    }
+                },
+            )
+            .next()
+            .await;
+        cx.background_executor.run_until_parked();
+
+        cx.update_editor(|editor, cx| {
+            update_inlay_link_and_hover_points(
+                &editor.snapshot(cx),
+                new_type_hint_part_hover_position,
+                editor,
+                true,
+                false,
+                cx,
+            );
+        });
+        cx.background_executor
+            .advance_clock(Duration::from_millis(HOVER_DELAY_MILLIS + 100));
+        cx.background_executor.run_until_parked();
+        cx.update_editor(|editor, cx| {
+            let hover_state = &editor.hover_state;
+            assert!(hover_state.diagnostic_popover.is_none() && hover_state.info_popover.is_some());
+            let popover = hover_state.info_popover.as_ref().unwrap();
+            let buffer_snapshot = editor.buffer().update(cx, |buffer, cx| buffer.snapshot(cx));
+            assert_eq!(
+                popover.symbol_range,
+                RangeInEditor::Inlay(InlayHighlight {
+                    inlay: InlayId::Hint(0),
+                    inlay_position: buffer_snapshot.anchor_at(inlay_range.start, Bias::Right),
+                    range: ": ".len()..": ".len() + new_type_label.len(),
+                }),
+                "Popover range should match the new type label part"
+            );
+            assert_eq!(
+                popover.parsed_content.text,
+                format!("A tooltip for `{new_type_label}`"),
+                "Rendered text should not anyhow alter backticks"
+            );
+        });
+
+        let struct_hint_part_hover_position = cx.update_editor(|editor, cx| {
+            let snapshot = editor.snapshot(cx);
+            let previous_valid = inlay_range.start.to_display_point(&snapshot);
+            let next_valid = inlay_range.end.to_display_point(&snapshot);
+            assert_eq!(previous_valid.row(), next_valid.row());
+            assert!(previous_valid.column() < next_valid.column());
+            let exact_unclipped = DisplayPoint::new(
+                previous_valid.row(),
+                previous_valid.column()
+                    + (entire_hint_label.find(struct_label).unwrap() + struct_label.len() / 2)
+                        as u32,
+            );
+            PointForPosition {
+                previous_valid,
+                next_valid,
+                exact_unclipped,
+                column_overshoot_after_line_end: 0,
+            }
+        });
+        cx.update_editor(|editor, cx| {
+            update_inlay_link_and_hover_points(
+                &editor.snapshot(cx),
+                struct_hint_part_hover_position,
+                editor,
+                true,
+                false,
+                cx,
+            );
+        });
+        cx.background_executor
+            .advance_clock(Duration::from_millis(HOVER_DELAY_MILLIS + 100));
+        cx.background_executor.run_until_parked();
+        cx.update_editor(|editor, cx| {
+            let hover_state = &editor.hover_state;
+            assert!(hover_state.diagnostic_popover.is_none() && hover_state.info_popover.is_some());
+            let popover = hover_state.info_popover.as_ref().unwrap();
+            let buffer_snapshot = editor.buffer().update(cx, |buffer, cx| buffer.snapshot(cx));
+            assert_eq!(
+                popover.symbol_range,
+                RangeInEditor::Inlay(InlayHighlight {
+                    inlay: InlayId::Hint(0),
+                    inlay_position: buffer_snapshot.anchor_at(inlay_range.start, Bias::Right),
+                    range: ": ".len() + new_type_label.len() + "<".len()
+                        ..": ".len() + new_type_label.len() + "<".len() + struct_label.len(),
+                }),
+                "Popover range should match the struct label part"
+            );
+            assert_eq!(
+                popover.parsed_content.text,
+                format!("A tooltip for {struct_label}"),
+                "Rendered markdown element should remove backticks from text"
+            );
+        });
+    }
+}

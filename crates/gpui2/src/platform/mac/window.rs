@@ -683,6 +683,9 @@ impl Drop for MacWindow {
         this.executor
             .spawn(async move {
                 unsafe {
+                    // todo!() this panic()s when you click the red close button
+                    // unless should_close returns false.
+                    // (luckliy in zed it always returns false)
                     window.close();
                 }
             })

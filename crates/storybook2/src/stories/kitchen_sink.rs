@@ -9,7 +9,7 @@ pub struct KitchenSinkStory;
 
 impl KitchenSinkStory {
     pub fn view(cx: &mut WindowContext) -> View<Self> {
-        cx.build_view(|cx| Self)
+        cx.build_view(|_cx| Self)
     }
 }
 

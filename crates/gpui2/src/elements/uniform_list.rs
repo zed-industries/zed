@@ -9,7 +9,7 @@ use taffy::style::Overflow;
 
 /// uniform_list provides lazy rendering for a set of items that are of uniform height.
 /// When rendered into a container with overflow-y: hidden and a fixed (or max) height,
-/// uniform_list will only render the visibile subset of items.
+/// uniform_list will only render the visible subset of items.
 pub fn uniform_list<I, R, V>(
     view: View<V>,
     id: I,
@@ -173,7 +173,7 @@ impl Element for UniformList {
         let item_size = element_state.item_size;
         let content_size = Size {
             width: padded_bounds.size.width,
-            height: item_size.height * self.item_count,
+            height: item_size.height * self.item_count + padding.top + padding.bottom,
         };
 
         let shared_scroll_offset = element_state
@@ -221,9 +221,7 @@ impl Element for UniformList {
 
                         let items = (self.render_items)(visible_range.clone(), cx);
                         cx.with_z_index(1, |cx| {
-                            let content_mask = ContentMask {
-                                bounds: padded_bounds,
-                            };
+                            let content_mask = ContentMask { bounds };
                             cx.with_content_mask(Some(content_mask), |cx| {
                                 for (item, ix) in items.into_iter().zip(visible_range) {
                                     let item_origin = padded_bounds.origin

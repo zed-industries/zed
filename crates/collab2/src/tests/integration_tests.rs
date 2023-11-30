@@ -510,9 +510,10 @@ async fn test_joining_channels_and_calling_multiple_users_simultaneously(
 
     // Simultaneously join channel 1 and then channel 2
     active_call_a
-        .update(cx_a, |call, cx| call.join_channel(channel_1, cx))
+        .update(cx_a, |call, cx| call.join_channel(channel_1, None, cx))
         .detach();
-    let join_channel_2 = active_call_a.update(cx_a, |call, cx| call.join_channel(channel_2, cx));
+    let join_channel_2 =
+        active_call_a.update(cx_a, |call, cx| call.join_channel(channel_2, None, cx));
 
     join_channel_2.await.unwrap();
 
@@ -538,7 +539,8 @@ async fn test_joining_channels_and_calling_multiple_users_simultaneously(
         call.invite(client_c.user_id().unwrap(), None, cx)
     });
 
-    let join_channel = active_call_a.update(cx_a, |call, cx| call.join_channel(channel_1, cx));
+    let join_channel =
+        active_call_a.update(cx_a, |call, cx| call.join_channel(channel_1, None, cx));
 
     b_invite.await.unwrap();
     c_invite.await.unwrap();
@@ -567,7 +569,8 @@ async fn test_joining_channels_and_calling_multiple_users_simultaneously(
         .unwrap();
 
     // Simultaneously join channel 1 and call user B and user C from client A.
-    let join_channel = active_call_a.update(cx_a, |call, cx| call.join_channel(channel_1, cx));
+    let join_channel =
+        active_call_a.update(cx_a, |call, cx| call.join_channel(channel_1, None, cx));
 
     let b_invite = active_call_a.update(cx_a, |call, cx| {
         call.invite(client_b.user_id().unwrap(), None, cx)
@@ -3685,7 +3688,7 @@ async fn test_collaborating_with_diagnostics(
 
     project_b.read_with(cx_b, |project, cx| {
         assert_eq!(
-            project.diagnostic_summaries(cx).collect::<Vec<_>>(),
+            project.diagnostic_summaries(false, cx).collect::<Vec<_>>(),
             &[(
                 ProjectPath {
                     worktree_id,
@@ -3705,14 +3708,14 @@ async fn test_collaborating_with_diagnostics(
     let project_c = client_c.build_remote_project(project_id, cx_c).await;
     let project_c_diagnostic_summaries =
         Rc::new(RefCell::new(project_c.read_with(cx_c, |project, cx| {
-            project.diagnostic_summaries(cx).collect::<Vec<_>>()
+            project.diagnostic_summaries(false, cx).collect::<Vec<_>>()
         })));
     project_c.update(cx_c, |_, cx| {
         let summaries = project_c_diagnostic_summaries.clone();
         cx.subscribe(&project_c, {
             move |p, _, event, cx| {
                 if let project::Event::DiskBasedDiagnosticsFinished { .. } = event {
-                    *summaries.borrow_mut() = p.diagnostic_summaries(cx).collect();
+                    *summaries.borrow_mut() = p.diagnostic_summaries(false, cx).collect();
                 }
             }
         })
@@ -3763,7 +3766,7 @@ async fn test_collaborating_with_diagnostics(
 
     project_b.read_with(cx_b, |project, cx| {
         assert_eq!(
-            project.diagnostic_summaries(cx).collect::<Vec<_>>(),
+            project.diagnostic_summaries(false, cx).collect::<Vec<_>>(),
             [(
                 ProjectPath {
                     worktree_id,
@@ -3780,7 +3783,7 @@ async fn test_collaborating_with_diagnostics(
 
     project_c.read_with(cx_c, |project, cx| {
         assert_eq!(
-            project.diagnostic_summaries(cx).collect::<Vec<_>>(),
+            project.diagnostic_summaries(false, cx).collect::<Vec<_>>(),
             [(
                 ProjectPath {
                     worktree_id,
@@ -3841,15 +3844,24 @@ async fn test_collaborating_with_diagnostics(
     executor.run_until_parked();
 
     project_a.read_with(cx_a, |project, cx| {
-        assert_eq!(project.diagnostic_summaries(cx).collect::<Vec<_>>(), [])
+        assert_eq!(
+            project.diagnostic_summaries(false, cx).collect::<Vec<_>>(),
+            []
+        )
     });
 
     project_b.read_with(cx_b, |project, cx| {
-        assert_eq!(project.diagnostic_summaries(cx).collect::<Vec<_>>(), [])
+        assert_eq!(
+            project.diagnostic_summaries(false, cx).collect::<Vec<_>>(),
+            []
+        )
     });
 
     project_c.read_with(cx_c, |project, cx| {
-        assert_eq!(project.diagnostic_summaries(cx).collect::<Vec<_>>(), [])
+        assert_eq!(
+            project.diagnostic_summaries(false, cx).collect::<Vec<_>>(),
+            []
+        )
     });
 }
 

@@ -107,7 +107,11 @@ impl LspAdapter for TailwindLspAdapter {
         }))
     }
 
-    fn workspace_configuration(&self, _: &mut AppContext) -> BoxFuture<'static, Value> {
+    fn workspace_configuration(
+        &self,
+        _workspace_root: &Path,
+        _: &mut AppContext,
+    ) -> BoxFuture<'static, Value> {
         future::ready(json!({
             "tailwindCSS": {
                 "emmetCompletions": true,

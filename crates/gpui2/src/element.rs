@@ -111,7 +111,7 @@ pub struct Component<C> {
 
 pub struct CompositeElementState<C: RenderOnce> {
     rendered_element: Option<<C::Rendered as IntoElement>::Element>,
-    rendered_element_state: <<C::Rendered as IntoElement>::Element as Element>::State,
+    rendered_element_state: Option<<<C::Rendered as IntoElement>::Element as Element>::State>,
 }
 
 impl<C> Component<C> {
@@ -131,20 +131,40 @@ impl<C: RenderOnce> Element for Component<C> {
         cx: &mut WindowContext,
     ) -> (LayoutId, Self::State) {
         let mut element = self.component.take().unwrap().render(cx).into_element();
-        let (layout_id, state) = element.layout(state.map(|s| s.rendered_element_state), cx);
-        let state = CompositeElementState {
-            rendered_element: Some(element),
-            rendered_element_state: state,
-        };
-        (layout_id, state)
+        if let Some(element_id) = element.element_id() {
+            let layout_id =
+                cx.with_element_state(element_id, |state, cx| element.layout(state, cx));
+            let state = CompositeElementState {
+                rendered_element: Some(element),
+                rendered_element_state: None,
+            };
+            (layout_id, state)
+        } else {
+            let (layout_id, state) =
+                element.layout(state.and_then(|s| s.rendered_element_state), cx);
+            let state = CompositeElementState {
+                rendered_element: Some(element),
+                rendered_element_state: Some(state),
+            };
+            (layout_id, state)
+        }
     }
 
     fn paint(self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut WindowContext) {
-        state
-            .rendered_element
-            .take()
-            .unwrap()
-            .paint(bounds, &mut state.rendered_element_state, cx);
+        let element = state.rendered_element.take().unwrap();
+        if let Some(element_id) = element.element_id() {
+            cx.with_element_state(element_id, |element_state, cx| {
+                let mut element_state = element_state.unwrap();
+                element.paint(bounds, &mut element_state, cx);
+                ((), element_state)
+            });
+        } else {
+            element.paint(
+                bounds,
+                &mut state.rendered_element_state.as_mut().unwrap(),
+                cx,
+            );
+        }
     }
 }
 

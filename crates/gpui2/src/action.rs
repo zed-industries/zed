@@ -162,6 +162,7 @@ macro_rules! actions {
 
     ( $name:ident ) => {
         #[derive(::std::cmp::PartialEq, ::std::clone::Clone, ::std::default::Default, gpui::serde_derive::Deserialize, gpui::Action)]
+        #[serde(crate = "gpui::serde")]
         pub struct $name;
     };
 

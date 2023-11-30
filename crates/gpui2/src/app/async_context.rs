@@ -1,7 +1,7 @@
 use crate::{
-    AnyView, AnyWindowHandle, AppCell, AppContext, BackgroundExecutor, Context, FocusableView,
-    ForegroundExecutor, Manager, Model, ModelContext, Render, Result, Task, View, ViewContext,
-    VisualContext, WindowContext, WindowHandle,
+    AnyView, AnyWindowHandle, AppCell, AppContext, BackgroundExecutor, Context, DismissEvent,
+    FocusableView, ForegroundExecutor, Model, ModelContext, Render, Result, Task, View,
+    ViewContext, VisualContext, WindowContext, WindowHandle,
 };
 use anyhow::{anyhow, Context as _};
 use derive_more::{Deref, DerefMut};
@@ -325,8 +325,7 @@ impl VisualContext for AsyncWindowContext {
     where
         V: crate::ManagedView,
     {
-        self.window.update(self, |_, cx| {
-            view.update(cx, |_, cx| cx.emit(Manager::Dismiss))
-        })
+        self.window
+            .update(self, |_, cx| view.update(cx, |_, cx| cx.emit(DismissEvent)))
     }
 }

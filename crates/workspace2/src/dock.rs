@@ -7,8 +7,8 @@ use gpui::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use theme2::ActiveTheme;
-use ui::{h_stack, menu_handle, ContextMenu, IconButton, InteractionState, Tooltip};
+use ui::prelude::*;
+use ui::{h_stack, menu_handle, ContextMenu, IconButton, Tooltip};
 
 pub enum PanelEvent {
     ChangePosition,
@@ -686,20 +686,19 @@ impl Render for PanelButtons {
                 let name = entry.panel.persistent_name();
                 let panel = entry.panel.clone();
 
-                let mut button: IconButton = if i == active_index && is_open {
+                let is_active_button = i == active_index && is_open;
+
+                let (action, tooltip) = if is_active_button {
                     let action = dock.toggle_action();
+
                     let tooltip: SharedString =
                         format!("Close {} dock", dock.position.to_label()).into();
-                    IconButton::new(name, icon)
-                        .state(InteractionState::Active)
-                        .action(action.boxed_clone())
-                        .tooltip(move |cx| Tooltip::for_action(tooltip.clone(), &*action, cx))
+
+                    (action, tooltip)
                 } else {
                     let action = entry.panel.toggle_action(cx);
 
-                    IconButton::new(name, icon)
-                        .action(action.boxed_clone())
-                        .tooltip(move |cx| Tooltip::for_action(name, &*action, cx))
+                    (action, name.into())
                 };
 
                 Some(
@@ -717,7 +716,7 @@ impl Render for PanelButtons {
                                         && panel.position_is_valid(position, cx)
                                     {
                                         let panel = panel.clone();
-                                        menu = menu.entry(position.to_label(), move |_, cx| {
+                                        menu = menu.entry(position.to_label(), move |cx| {
                                             panel.set_position(position, cx);
                                         })
                                     }
@@ -727,7 +726,14 @@ impl Render for PanelButtons {
                         })
                         .anchor(menu_anchor)
                         .attach(menu_attach)
-                        .child(|is_open| button.selected(is_open)),
+                        .child(move |_is_open| {
+                            IconButton::new(name, icon)
+                                .selected(is_active_button)
+                                .action(action.boxed_clone())
+                                .tooltip(move |cx| {
+                                    Tooltip::for_action(tooltip.clone(), &*action, cx)
+                                })
+                        }),
                 )
             });
 

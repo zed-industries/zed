@@ -7,23 +7,23 @@ use crate::{
     ToggleCaseSensitive, ToggleReplace, ToggleWholeWord,
 };
 use collections::HashMap;
-use editor::Editor;
+use editor::{Editor, EditorMode};
 use futures::channel::oneshot;
 use gpui::{
     actions, div, red, Action, AppContext, Div, EventEmitter, InteractiveElement as _, IntoElement,
     ParentElement as _, Render, Styled, Subscription, Task, View, ViewContext, VisualContext as _,
-    WindowContext,
+    WeakView, WindowContext,
 };
 use project::search::SearchQuery;
 use serde::Deserialize;
 use std::{any::Any, sync::Arc};
 
-use ui::{h_stack, ButtonGroup, Icon, IconButton, IconElement};
+use ui::{h_stack, Icon, IconButton, IconElement};
 use util::ResultExt;
 use workspace::{
     item::ItemHandle,
     searchable::{Direction, SearchEvent, SearchableItemHandle, WeakSearchableItemHandle},
-    ToolbarItemLocation, ToolbarItemView, Workspace,
+    ToolbarItemLocation, ToolbarItemView,
 };
 
 #[derive(PartialEq, Clone, Deserialize, Default, Action)]
@@ -38,7 +38,7 @@ pub enum Event {
 }
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_views(|workspace: &mut Workspace, _| BufferSearchBar::register(workspace))
+    cx.observe_new_views(|editor: &mut Editor, cx| BufferSearchBar::register(editor, cx))
         .detach();
 }
 
@@ -187,6 +187,7 @@ impl Render for BufferSearchBar {
             })
             .on_action(cx.listener(Self::previous_history_query))
             .on_action(cx.listener(Self::next_history_query))
+            .on_action(cx.listener(Self::dismiss))
             .w_full()
             .p_1()
             .child(
@@ -213,10 +214,11 @@ impl Render for BufferSearchBar {
             .child(
                 h_stack()
                     .flex_none()
-                    .child(ButtonGroup::new(vec![
-                        search_button_for_mode(SearchMode::Text),
-                        search_button_for_mode(SearchMode::Regex),
-                    ]))
+                    .child(
+                        h_stack()
+                            .child(search_button_for_mode(SearchMode::Text))
+                            .child(search_button_for_mode(SearchMode::Regex)),
+                    )
                     .when(supported_options.replacement, |this| {
                         this.child(super::toggle_replace_button(self.replace_enabled))
                     }),
@@ -294,9 +296,19 @@ impl ToolbarItemView for BufferSearchBar {
 }
 
 impl BufferSearchBar {
-    pub fn register(workspace: &mut Workspace) {
-        workspace.register_action(|workspace, a: &Deploy, cx| {
-            workspace.active_pane().update(cx, |this, cx| {
+    pub fn register(editor: &mut Editor, cx: &mut ViewContext<Editor>) {
+        if editor.mode() != EditorMode::Full {
+            return;
+        };
+
+        let handle = cx.view().downgrade();
+
+        editor.register_action(move |a: &Deploy, cx| {
+            let Some(pane) = handle.upgrade().and_then(|editor| editor.read(cx).pane(cx)) else {
+                return;
+            };
+
+            pane.update(cx, |this, cx| {
                 this.toolbar().update(cx, |this, cx| {
                     if let Some(search_bar) = this.item_of_type::<BufferSearchBar>() {
                         search_bar.update(cx, |this, cx| {
@@ -316,11 +328,16 @@ impl BufferSearchBar {
             });
         });
         fn register_action<A: Action>(
-            workspace: &mut Workspace,
+            editor: &mut Editor,
+            handle: WeakView<Editor>,
             update: fn(&mut BufferSearchBar, &A, &mut ViewContext<BufferSearchBar>),
         ) {
-            workspace.register_action(move |workspace, action: &A, cx| {
-                workspace.active_pane().update(cx, move |this, cx| {
+            editor.register_action(move |action: &A, cx| {
+                let Some(pane) = handle.upgrade().and_then(|editor| editor.read(cx).pane(cx))
+                else {
+                    return;
+                };
+                pane.update(cx, move |this, cx| {
                     this.toolbar().update(cx, move |this, cx| {
                         if let Some(search_bar) = this.item_of_type::<BufferSearchBar>() {
                             search_bar.update(cx, move |this, cx| update(this, action, cx));
@@ -331,49 +348,76 @@ impl BufferSearchBar {
             });
         }
 
-        register_action(workspace, |this, action: &ToggleCaseSensitive, cx| {
-            if this.supported_options().case {
-                this.toggle_case_sensitive(action, cx);
-            }
-        });
-        register_action(workspace, |this, action: &ToggleWholeWord, cx| {
-            if this.supported_options().word {
-                this.toggle_whole_word(action, cx);
-            }
-        });
-        register_action(workspace, |this, action: &ToggleReplace, cx| {
-            if this.supported_options().replacement {
-                this.toggle_replace(action, cx);
-            }
-        });
-        register_action(workspace, |this, _: &ActivateRegexMode, cx| {
+        let handle = cx.view().downgrade();
+        register_action(
+            editor,
+            handle.clone(),
+            |this, action: &ToggleCaseSensitive, cx| {
+                if this.supported_options().case {
+                    this.toggle_case_sensitive(action, cx);
+                }
+            },
+        );
+        register_action(
+            editor,
+            handle.clone(),
+            |this, action: &ToggleWholeWord, cx| {
+                if this.supported_options().word {
+                    this.toggle_whole_word(action, cx);
+                }
+            },
+        );
+        register_action(
+            editor,
+            handle.clone(),
+            |this, action: &ToggleReplace, cx| {
+                if this.supported_options().replacement {
+                    this.toggle_replace(action, cx);
+                }
+            },
+        );
+        register_action(editor, handle.clone(), |this, _: &ActivateRegexMode, cx| {
             if this.supported_options().regex {
                 this.activate_search_mode(SearchMode::Regex, cx);
             }
         });
-        register_action(workspace, |this, _: &ActivateTextMode, cx| {
+        register_action(editor, handle.clone(), |this, _: &ActivateTextMode, cx| {
             this.activate_search_mode(SearchMode::Text, cx);
         });
-        register_action(workspace, |this, action: &CycleMode, cx| {
+        register_action(editor, handle.clone(), |this, action: &CycleMode, cx| {
             if this.supported_options().regex {
                 // If regex is not supported then search has just one mode (text) - in that case there's no point in supporting
                 // cycling.
                 this.cycle_mode(action, cx)
             }
         });
-        register_action(workspace, |this, action: &SelectNextMatch, cx| {
-            this.select_next_match(action, cx);
-        });
-        register_action(workspace, |this, action: &SelectPrevMatch, cx| {
-            this.select_prev_match(action, cx);
-        });
-        register_action(workspace, |this, action: &SelectAllMatches, cx| {
-            this.select_all_matches(action, cx);
-        });
-        register_action(workspace, |this, _: &editor::Cancel, cx| {
+        register_action(
+            editor,
+            handle.clone(),
+            |this, action: &SelectNextMatch, cx| {
+                this.select_next_match(action, cx);
+            },
+        );
+        register_action(
+            editor,
+            handle.clone(),
+            |this, action: &SelectPrevMatch, cx| {
+                this.select_prev_match(action, cx);
+            },
+        );
+        register_action(
+            editor,
+            handle.clone(),
+            |this, action: &SelectAllMatches, cx| {
+                this.select_all_matches(action, cx);
+            },
+        );
+        register_action(editor, handle.clone(), |this, _: &editor::Cancel, cx| {
             if !this.dismissed {
                 this.dismiss(&Dismiss, cx);
+                return;
             }
+            cx.propagate();
         });
     }
     pub fn new(cx: &mut ViewContext<Self>) -> Self {
@@ -543,8 +587,7 @@ impl BufferSearchBar {
 
         // let style = theme.search.action_button.clone();
 
-        IconButton::new(0, ui::Icon::SelectAll)
-            .on_click(|_, cx| cx.dispatch_action(Box::new(SelectAllMatches)))
+        IconButton::new(0, ui::Icon::SelectAll).action(Box::new(SelectAllMatches))
     }
 
     pub fn activate_search_mode(&mut self, mode: SearchMode, cx: &mut ViewContext<Self>) {

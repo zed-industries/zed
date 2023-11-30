@@ -11,16 +11,24 @@
 #![doc = include_str!("../docs/hello-world.md")]
 #![doc = include_str!("../docs/building-ui.md")]
 #![doc = include_str!("../docs/todo.md")]
-// TODO: Fix warnings instead of supressing.
-#![allow(dead_code, unused_variables)]
 
+mod clickable;
 mod components;
+mod disableable;
+mod fixed;
 pub mod prelude;
+mod selectable;
+mod slot;
 mod styled_ext;
 mod styles;
 pub mod utils;
 
+pub use clickable::*;
 pub use components::*;
+pub use disableable::*;
+pub use fixed::*;
 pub use prelude::*;
+pub use selectable::*;
+pub use slot::*;
 pub use styled_ext::*;
 pub use styles::*;

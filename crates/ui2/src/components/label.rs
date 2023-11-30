@@ -2,7 +2,7 @@ use std::ops::Range;
 
 use crate::prelude::*;
 use crate::styled_ext::StyledExt;
-use gpui::{relative, Div, HighlightStyle, Hsla, IntoElement, StyledText, WindowContext};
+use gpui::{relative, Div, HighlightStyle, IntoElement, StyledText, WindowContext};
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Default)]
 pub enum LabelSize {
@@ -177,10 +177,4 @@ impl HighlightedLabel {
         self.strikethrough = strikethrough;
         self
     }
-}
-
-/// A run of text that receives the same style.
-struct Run {
-    pub text: String,
-    pub color: Hsla,
 }

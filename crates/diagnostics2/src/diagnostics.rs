@@ -165,7 +165,7 @@ impl ProjectDiagnosticsEditor {
             });
 
         let project = project_handle.read(cx);
-        let summary = project.diagnostic_summary(cx);
+        let summary = project.diagnostic_summary(false, cx);
         let mut this = Self {
             project: project_handle,
             summary,
@@ -252,7 +252,7 @@ impl ProjectDiagnosticsEditor {
         let mut new_summaries: HashMap<LanguageServerId, HashSet<ProjectPath>> = self
             .project
             .read(cx)
-            .diagnostic_summaries(cx)
+            .diagnostic_summaries(false, cx)
             .fold(HashMap::default(), |mut summaries, (path, server_id, _)| {
                 summaries.entry(server_id).or_default().insert(path);
                 summaries
@@ -332,7 +332,7 @@ impl ProjectDiagnosticsEditor {
                 .context("rechecking diagnostics for paths")?;
 
                 this.update(&mut cx, |this, cx| {
-                    this.summary = this.project.read(cx).diagnostic_summary(cx);
+                    this.summary = this.project.read(cx).diagnostic_summary(false, cx);
                     cx.emit(ItemEvent::UpdateTab);
                     cx.emit(ItemEvent::UpdateBreadcrumbs);
                 })?;

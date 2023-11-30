@@ -8,7 +8,7 @@ pub struct TextStory;
 
 impl TextStory {
     pub fn view(cx: &mut WindowContext) -> View<Self> {
-        cx.build_view(|cx| Self)
+        cx.build_view(|_cx| Self)
     }
 }
 
@@ -66,7 +66,7 @@ impl Render for TextStory {
                         }),
                     ]),
                 )
-                .on_click(vec![2..4, 1..3, 7..9], |range_ix, cx| {
+                .on_click(vec![2..4, 1..3, 7..9], |range_ix, _cx| {
                     println!("Clicked range {range_ix}");
                 })
             )

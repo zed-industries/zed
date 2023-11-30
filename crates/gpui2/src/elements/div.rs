@@ -3,7 +3,8 @@ use crate::{
     BorrowWindow, Bounds, ClickEvent, DispatchPhase, Element, ElementId, FocusEvent, FocusHandle,
     IntoElement, KeyContext, KeyDownEvent, KeyUpEvent, LayoutId, MouseButton, MouseDownEvent,
     MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, Render, ScrollWheelEvent,
-    SharedString, Size, Style, StyleRefinement, Styled, Task, View, Visibility, WindowContext,
+    SharedString, Size, StackingOrder, Style, StyleRefinement, Styled, Task, View, Visibility,
+    WindowContext,
 };
 use collections::HashMap;
 use refineable::Refineable;
@@ -11,6 +12,7 @@ use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
     cell::RefCell,
+    cmp::Ordering,
     fmt::Debug,
     mem,
     rc::Rc,
@@ -84,7 +86,7 @@ pub trait InteractiveElement: Sized + Element {
             move |event, bounds, phase, cx| {
                 if phase == DispatchPhase::Bubble
                     && event.button == button
-                    && bounds.contains_point(&event.position)
+                    && bounds.visibly_contains(&event.position, cx)
                 {
                     (listener)(event, cx)
                 }
@@ -99,7 +101,7 @@ pub trait InteractiveElement: Sized + Element {
     ) -> Self {
         self.interactivity().mouse_down_listeners.push(Box::new(
             move |event, bounds, phase, cx| {
-                if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position) {
+                if phase == DispatchPhase::Bubble && bounds.visibly_contains(&event.position, cx) {
                     (listener)(event, cx)
                 }
             },
@@ -117,7 +119,7 @@ pub trait InteractiveElement: Sized + Element {
             .push(Box::new(move |event, bounds, phase, cx| {
                 if phase == DispatchPhase::Bubble
                     && event.button == button
-                    && bounds.contains_point(&event.position)
+                    && bounds.visibly_contains(&event.position, cx)
                 {
                     (listener)(event, cx)
                 }
@@ -132,7 +134,7 @@ pub trait InteractiveElement: Sized + Element {
         self.interactivity()
             .mouse_up_listeners
             .push(Box::new(move |event, bounds, phase, cx| {
-                if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position) {
+                if phase == DispatchPhase::Bubble && bounds.visibly_contains(&event.position, cx) {
                     (listener)(event, cx)
                 }
             }));
@@ -145,7 +147,8 @@ pub trait InteractiveElement: Sized + Element {
     ) -> Self {
         self.interactivity().mouse_down_listeners.push(Box::new(
             move |event, bounds, phase, cx| {
-                if phase == DispatchPhase::Capture && !bounds.contains_point(&event.position) {
+                if phase == DispatchPhase::Capture && !bounds.visibly_contains(&event.position, cx)
+                {
                     (listener)(event, cx)
                 }
             },
@@ -163,7 +166,7 @@ pub trait InteractiveElement: Sized + Element {
             .push(Box::new(move |event, bounds, phase, cx| {
                 if phase == DispatchPhase::Capture
                     && event.button == button
-                    && !bounds.contains_point(&event.position)
+                    && !bounds.visibly_contains(&event.position, cx)
                 {
                     (listener)(event, cx);
                 }
@@ -177,7 +180,7 @@ pub trait InteractiveElement: Sized + Element {
     ) -> Self {
         self.interactivity().mouse_move_listeners.push(Box::new(
             move |event, bounds, phase, cx| {
-                if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position) {
+                if phase == DispatchPhase::Bubble && bounds.visibly_contains(&event.position, cx) {
                     (listener)(event, cx);
                 }
             },
@@ -191,7 +194,7 @@ pub trait InteractiveElement: Sized + Element {
     ) -> Self {
         self.interactivity().scroll_wheel_listeners.push(Box::new(
             move |event, bounds, phase, cx| {
-                if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position) {
+                if phase == DispatchPhase::Bubble && bounds.visibly_contains(&event.position, cx) {
                     (listener)(event, cx);
                 }
             },
@@ -352,6 +355,11 @@ pub trait StatefulInteractiveElement: InteractiveElement {
 
     fn overflow_y_scroll(mut self) -> Self {
         self.interactivity().base_style.overflow.y = Some(Overflow::Scroll);
+        self
+    }
+
+    fn track_scroll(mut self, scroll_handle: &ScrollHandle) -> Self {
+        self.interactivity().scroll_handle = Some(scroll_handle.clone());
         self
     }
 
@@ -526,15 +534,15 @@ pub type FocusListeners = SmallVec<[FocusListener; 2]>;
 pub type FocusListener = Box<dyn Fn(&FocusHandle, &FocusEvent, &mut WindowContext) + 'static>;
 
 pub type MouseDownListener =
-    Box<dyn Fn(&MouseDownEvent, &Bounds<Pixels>, DispatchPhase, &mut WindowContext) + 'static>;
+    Box<dyn Fn(&MouseDownEvent, &InteractiveBounds, DispatchPhase, &mut WindowContext) + 'static>;
 pub type MouseUpListener =
-    Box<dyn Fn(&MouseUpEvent, &Bounds<Pixels>, DispatchPhase, &mut WindowContext) + 'static>;
+    Box<dyn Fn(&MouseUpEvent, &InteractiveBounds, DispatchPhase, &mut WindowContext) + 'static>;
 
 pub type MouseMoveListener =
-    Box<dyn Fn(&MouseMoveEvent, &Bounds<Pixels>, DispatchPhase, &mut WindowContext) + 'static>;
+    Box<dyn Fn(&MouseMoveEvent, &InteractiveBounds, DispatchPhase, &mut WindowContext) + 'static>;
 
 pub type ScrollWheelListener =
-    Box<dyn Fn(&ScrollWheelEvent, &Bounds<Pixels>, DispatchPhase, &mut WindowContext) + 'static>;
+    Box<dyn Fn(&ScrollWheelEvent, &InteractiveBounds, DispatchPhase, &mut WindowContext) + 'static>;
 
 pub type ClickListener = Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>;
 
@@ -624,6 +632,26 @@ impl Element for Div {
         let mut child_max = Point::default();
         let content_size = if element_state.child_layout_ids.is_empty() {
             bounds.size
+        } else if let Some(scroll_handle) = self.interactivity.scroll_handle.as_ref() {
+            let mut state = scroll_handle.0.borrow_mut();
+            state.child_bounds = Vec::with_capacity(element_state.child_layout_ids.len());
+            state.bounds = bounds;
+            let requested = state.requested_scroll_top.take();
+
+            for (ix, child_layout_id) in element_state.child_layout_ids.iter().enumerate() {
+                let child_bounds = cx.layout_bounds(*child_layout_id);
+                child_min = child_min.min(&child_bounds.origin);
+                child_max = child_max.max(&child_bounds.lower_right());
+                state.child_bounds.push(child_bounds);
+
+                if let Some(requested) = requested.as_ref() {
+                    if requested.0 == ix {
+                        *state.offset.borrow_mut() =
+                            bounds.origin - (child_bounds.origin - point(px(0.), requested.1));
+                    }
+                }
+            }
+            (child_max - child_min).into()
         } else {
             for child_layout_id in &element_state.child_layout_ids {
                 let child_bounds = cx.layout_bounds(*child_layout_id);
@@ -694,6 +722,7 @@ pub struct Interactivity {
     pub key_context: KeyContext,
     pub focusable: bool,
     pub tracked_focus_handle: Option<FocusHandle>,
+    pub scroll_handle: Option<ScrollHandle>,
     pub focus_listeners: FocusListeners,
     pub group: Option<SharedString>,
     pub base_style: StyleRefinement,
@@ -719,6 +748,18 @@ pub struct Interactivity {
     pub tooltip_builder: Option<TooltipBuilder>,
 }
 
+#[derive(Clone)]
+pub struct InteractiveBounds {
+    pub bounds: Bounds<Pixels>,
+    pub stacking_order: StackingOrder,
+}
+
+impl InteractiveBounds {
+    pub fn visibly_contains(&self, point: &Point<Pixels>, cx: &WindowContext) -> bool {
+        self.bounds.contains_point(point) && cx.was_top_layer(&point, &self.stacking_order)
+    }
+}
+
 impl Interactivity {
     pub fn layout(
         &mut self,
@@ -740,6 +781,10 @@ impl Interactivity {
             });
         }
 
+        if let Some(scroll_handle) = self.scroll_handle.as_ref() {
+            element_state.scroll_offset = Some(scroll_handle.0.borrow().offset.clone());
+        }
+
         let style = self.compute_style(None, &mut element_state, cx);
         let layout_id = f(style, cx);
         (layout_id, element_state)
@@ -755,34 +800,52 @@ impl Interactivity {
     ) {
         let style = self.compute_style(Some(bounds), element_state, cx);
 
+        if style
+            .background
+            .as_ref()
+            .is_some_and(|fill| fill.color().is_some_and(|color| !color.is_transparent()))
+        {
+            cx.with_z_index(style.z_index.unwrap_or(0), |cx| cx.add_opaque_layer(bounds))
+        }
+
+        let interactive_bounds = Rc::new(InteractiveBounds {
+            bounds: bounds.intersect(&cx.content_mask().bounds),
+            stacking_order: cx.stacking_order().clone(),
+        });
+
         if let Some(mouse_cursor) = style.mouse_cursor {
-            let hovered = bounds.contains_point(&cx.mouse_position());
+            let mouse_position = &cx.mouse_position();
+            let hovered = interactive_bounds.visibly_contains(mouse_position, cx);
             if hovered {
                 cx.set_cursor_style(mouse_cursor);
             }
         }
 
         for listener in self.mouse_down_listeners.drain(..) {
+            let interactive_bounds = interactive_bounds.clone();
             cx.on_mouse_event(move |event: &MouseDownEvent, phase, cx| {
-                listener(event, &bounds, phase, cx);
+                listener(event, &*interactive_bounds, phase, cx);
             })
         }
 
         for listener in self.mouse_up_listeners.drain(..) {
+            let interactive_bounds = interactive_bounds.clone();
             cx.on_mouse_event(move |event: &MouseUpEvent, phase, cx| {
-                listener(event, &bounds, phase, cx);
+                listener(event, &*interactive_bounds, phase, cx);
             })
         }
 
         for listener in self.mouse_move_listeners.drain(..) {
+            let interactive_bounds = interactive_bounds.clone();
             cx.on_mouse_event(move |event: &MouseMoveEvent, phase, cx| {
-                listener(event, &bounds, phase, cx);
+                listener(event, &*interactive_bounds, phase, cx);
             })
         }
 
         for listener in self.scroll_wheel_listeners.drain(..) {
+            let interactive_bounds = interactive_bounds.clone();
             cx.on_mouse_event(move |event: &ScrollWheelEvent, phase, cx| {
-                listener(event, &bounds, phase, cx);
+                listener(event, &*interactive_bounds, phase, cx);
             })
         }
 
@@ -803,8 +866,9 @@ impl Interactivity {
         }
 
         if self.hover_style.is_some()
-            || (cx.active_drag.is_some() && !self.drag_over_styles.is_empty())
+            || cx.active_drag.is_some() && !self.drag_over_styles.is_empty()
         {
+            let bounds = bounds.intersect(&cx.content_mask().bounds);
             let hovered = bounds.contains_point(&cx.mouse_position());
             cx.on_mouse_event(move |event: &MouseMoveEvent, phase, cx| {
                 if phase == DispatchPhase::Capture {
@@ -817,8 +881,11 @@ impl Interactivity {
 
         if cx.active_drag.is_some() {
             let drop_listeners = mem::take(&mut self.drop_listeners);
+            let interactive_bounds = interactive_bounds.clone();
             cx.on_mouse_event(move |event: &MouseUpEvent, phase, cx| {
-                if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position) {
+                if phase == DispatchPhase::Bubble
+                    && interactive_bounds.visibly_contains(&event.position, &cx)
+                {
                     if let Some(drag_state_type) =
                         cx.active_drag.as_ref().map(|drag| drag.view.entity_type())
                     {
@@ -847,6 +914,7 @@ impl Interactivity {
             if let Some(mouse_down) = mouse_down {
                 if let Some(drag_listener) = drag_listener {
                     let active_state = element_state.clicked_state.clone();
+                    let interactive_bounds = interactive_bounds.clone();
 
                     cx.on_mouse_event(move |event: &MouseMoveEvent, phase, cx| {
                         if cx.active_drag.is_some() {
@@ -854,7 +922,7 @@ impl Interactivity {
                                 cx.notify();
                             }
                         } else if phase == DispatchPhase::Bubble
-                            && bounds.contains_point(&event.position)
+                            && interactive_bounds.visibly_contains(&event.position, cx)
                             && (event.position - mouse_down.position).magnitude() > DRAG_THRESHOLD
                         {
                             *active_state.borrow_mut() = ElementClickedState::default();
@@ -867,8 +935,11 @@ impl Interactivity {
                     });
                 }
 
+                let interactive_bounds = interactive_bounds.clone();
                 cx.on_mouse_event(move |event: &MouseUpEvent, phase, cx| {
-                    if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position) {
+                    if phase == DispatchPhase::Bubble
+                        && interactive_bounds.visibly_contains(&event.position, cx)
+                    {
                         let mouse_click = ClickEvent {
                             down: mouse_down.clone(),
                             up: event.clone(),
@@ -881,8 +952,11 @@ impl Interactivity {
                     cx.notify();
                 });
             } else {
+                let interactive_bounds = interactive_bounds.clone();
                 cx.on_mouse_event(move |event: &MouseDownEvent, phase, cx| {
-                    if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position) {
+                    if phase == DispatchPhase::Bubble
+                        && interactive_bounds.visibly_contains(&event.position, cx)
+                    {
                         *pending_mouse_down.borrow_mut() = Some(event.clone());
                         cx.notify();
                     }
@@ -893,13 +967,14 @@ impl Interactivity {
         if let Some(hover_listener) = self.hover_listener.take() {
             let was_hovered = element_state.hover_state.clone();
             let has_mouse_down = element_state.pending_mouse_down.clone();
+            let interactive_bounds = interactive_bounds.clone();
 
             cx.on_mouse_event(move |event: &MouseMoveEvent, phase, cx| {
                 if phase != DispatchPhase::Bubble {
                     return;
                 }
-                let is_hovered =
-                    bounds.contains_point(&event.position) && has_mouse_down.borrow().is_none();
+                let is_hovered = interactive_bounds.visibly_contains(&event.position, cx)
+                    && has_mouse_down.borrow().is_none();
                 let mut was_hovered = was_hovered.borrow_mut();
 
                 if is_hovered != was_hovered.clone() {
@@ -914,14 +989,15 @@ impl Interactivity {
         if let Some(tooltip_builder) = self.tooltip_builder.take() {
             let active_tooltip = element_state.active_tooltip.clone();
             let pending_mouse_down = element_state.pending_mouse_down.clone();
+            let interactive_bounds = interactive_bounds.clone();
 
             cx.on_mouse_event(move |event: &MouseMoveEvent, phase, cx| {
                 if phase != DispatchPhase::Bubble {
                     return;
                 }
 
-                let is_hovered =
-                    bounds.contains_point(&event.position) && pending_mouse_down.borrow().is_none();
+                let is_hovered = interactive_bounds.visibly_contains(&event.position, cx)
+                    && pending_mouse_down.borrow().is_none();
                 if !is_hovered {
                     active_tooltip.borrow_mut().take();
                     return;
@@ -979,11 +1055,12 @@ impl Interactivity {
                 .group_active_style
                 .as_ref()
                 .and_then(|group_active| GroupBounds::get(&group_active.group, cx));
+            let interactive_bounds = interactive_bounds.clone();
             cx.on_mouse_event(move |down: &MouseDownEvent, phase, cx| {
                 if phase == DispatchPhase::Bubble {
                     let group = active_group_bounds
                         .map_or(false, |bounds| bounds.contains_point(&down.position));
-                    let element = bounds.contains_point(&down.position);
+                    let element = interactive_bounds.visibly_contains(&down.position, cx);
                     if group || element {
                         *active_state.borrow_mut() = ElementClickedState { group, element };
                         cx.notify();
@@ -1000,9 +1077,12 @@ impl Interactivity {
                 .clone();
             let line_height = cx.line_height();
             let scroll_max = (content_size - bounds.size).max(&Size::default());
+            let interactive_bounds = interactive_bounds.clone();
 
             cx.on_mouse_event(move |event: &ScrollWheelEvent, phase, cx| {
-                if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position) {
+                if phase == DispatchPhase::Bubble
+                    && interactive_bounds.visibly_contains(&event.position, cx)
+                {
                     let mut scroll_offset = scroll_offset.borrow_mut();
                     let old_scroll_offset = *scroll_offset;
                     let delta = event.delta.pixel_delta(line_height);
@@ -1093,19 +1173,22 @@ impl Interactivity {
             let mouse_position = cx.mouse_position();
             if let Some(group_hover) = self.group_hover_style.as_ref() {
                 if let Some(group_bounds) = GroupBounds::get(&group_hover.group, cx) {
-                    if group_bounds.contains_point(&mouse_position) {
+                    if group_bounds.contains_point(&mouse_position)
+                        && cx.was_top_layer(&mouse_position, cx.stacking_order())
+                    {
                         style.refine(&group_hover.style);
                     }
                 }
             }
-            // if self.hover_style.is_some() {
-            if bounds.contains_point(&mouse_position) {
-                // eprintln!("div hovered {bounds:?} {mouse_position:?}");
-                style.refine(&self.hover_style);
-            } else {
-                // eprintln!("div NOT hovered {bounds:?} {mouse_position:?}");
+            if self.hover_style.is_some() {
+                if bounds
+                    .intersect(&cx.content_mask().bounds)
+                    .contains_point(&mouse_position)
+                    && cx.was_top_layer(&mouse_position, cx.stacking_order())
+                {
+                    style.refine(&self.hover_style);
+                }
             }
-            // }
 
             if let Some(drag) = cx.active_drag.take() {
                 for (state_type, group_drag_style) in &self.group_drag_over_styles {
@@ -1120,7 +1203,9 @@ impl Interactivity {
 
                 for (state_type, drag_over_style) in &self.drag_over_styles {
                     if *state_type == drag.view.entity_type()
-                        && bounds.contains_point(&mouse_position)
+                        && bounds
+                            .intersect(&cx.content_mask().bounds)
+                            .contains_point(&mouse_position)
                     {
                         style.refine(drag_over_style);
                     }
@@ -1152,6 +1237,7 @@ impl Default for Interactivity {
             key_context: KeyContext::default(),
             focusable: false,
             tracked_focus_handle: None,
+            scroll_handle: None,
             focus_listeners: SmallVec::default(),
             // scroll_offset: Point::default(),
             group: None,
@@ -1373,5 +1459,85 @@ where
 {
     fn children_mut(&mut self) -> &mut SmallVec<[AnyElement; 2]> {
         self.element.children_mut()
+    }
+}
+
+#[derive(Default)]
+struct ScrollHandleState {
+    // not great to have the nested rc's...
+    offset: Rc<RefCell<Point<Pixels>>>,
+    bounds: Bounds<Pixels>,
+    child_bounds: Vec<Bounds<Pixels>>,
+    requested_scroll_top: Option<(usize, Pixels)>,
+}
+
+#[derive(Clone)]
+pub struct ScrollHandle(Rc<RefCell<ScrollHandleState>>);
+
+impl ScrollHandle {
+    pub fn new() -> Self {
+        Self(Rc::default())
+    }
+
+    pub fn offset(&self) -> Point<Pixels> {
+        self.0.borrow().offset.borrow().clone()
+    }
+
+    pub fn top_item(&self) -> usize {
+        let state = self.0.borrow();
+        let top = state.bounds.top() - state.offset.borrow().y;
+
+        match state.child_bounds.binary_search_by(|bounds| {
+            if top < bounds.top() {
+                Ordering::Greater
+            } else if top > bounds.bottom() {
+                Ordering::Less
+            } else {
+                Ordering::Equal
+            }
+        }) {
+            Ok(ix) => ix,
+            Err(ix) => ix.min(state.child_bounds.len().saturating_sub(1)),
+        }
+    }
+
+    pub fn bounds_for_item(&self, ix: usize) -> Option<Bounds<Pixels>> {
+        self.0.borrow().child_bounds.get(ix).cloned()
+    }
+
+    /// scroll_to_item scrolls the minimal amount to ensure that the item is
+    /// fully visible
+    pub fn scroll_to_item(&self, ix: usize) {
+        let state = self.0.borrow();
+
+        let Some(bounds) = state.child_bounds.get(ix) else {
+            return;
+        };
+
+        let scroll_offset = state.offset.borrow().y;
+
+        if bounds.top() + scroll_offset < state.bounds.top() {
+            state.offset.borrow_mut().y = state.bounds.top() - bounds.top();
+        } else if bounds.bottom() + scroll_offset > state.bounds.bottom() {
+            state.offset.borrow_mut().y = state.bounds.bottom() - bounds.bottom();
+        }
+    }
+
+    pub fn logical_scroll_top(&self) -> (usize, Pixels) {
+        let ix = self.top_item();
+        let state = self.0.borrow();
+
+        if let Some(child_bounds) = state.child_bounds.get(ix) {
+            (
+                ix,
+                child_bounds.top() + state.offset.borrow().y - state.bounds.top(),
+            )
+        } else {
+            (ix, px(0.))
+        }
+    }
+
+    pub fn set_logical_scroll_top(&self, ix: usize, px: Pixels) {
+        self.0.borrow_mut().requested_scroll_top = Some((ix, px));
     }
 }

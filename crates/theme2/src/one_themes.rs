@@ -20,7 +20,7 @@ pub fn one_family() -> ThemeFamily {
 pub(crate) fn one_dark() -> Theme {
     let bg = hsla(215. / 360., 12. / 100., 15. / 100., 1.);
     let editor = hsla(220. / 360., 12. / 100., 18. / 100., 1.);
-    let elevated_surface = hsla(220. / 360., 12. / 100., 18. / 100., 1.);
+    let elevated_surface = hsla(225. / 360., 12. / 100., 17. / 100., 1.);
 
     let blue = hsla(207.8 / 360., 81. / 100., 66. / 100., 1.0);
     let gray = hsla(218.8 / 360., 10. / 100., 40. / 100., 1.0);
@@ -48,7 +48,7 @@ pub(crate) fn one_dark() -> Theme {
                 elevated_surface_background: elevated_surface,
                 surface_background: bg,
                 background: bg,
-                element_background: elevated_surface,
+                element_background: hsla(223.0 / 360., 13. / 100., 21. / 100., 1.0),
                 element_hover: hsla(225.0 / 360., 11.8 / 100., 26.7 / 100., 1.0),
                 element_active: hsla(220.0 / 360., 11.8 / 100., 20.0 / 100., 1.0),
                 element_selected: hsla(224.0 / 360., 11.3 / 100., 26.1 / 100., 1.0),

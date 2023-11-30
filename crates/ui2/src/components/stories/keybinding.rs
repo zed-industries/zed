@@ -16,7 +16,7 @@ pub fn binding(key: &str) -> gpui::KeyBinding {
 impl Render for KeybindingStory {
     type Element = Div;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
         let all_modifier_permutations = ["ctrl", "alt", "cmd", "shift"].into_iter().permutations(2);
 
         Story::container()

@@ -9,15 +9,23 @@ pub struct AvatarStory;
 impl Render for AvatarStory {
     type Element = Div;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
         Story::container()
             .child(Story::title_for::<Avatar>())
             .child(Story::label("Default"))
-            .child(Avatar::new(
+            .child(Avatar::uri(
                 "https://avatars.githubusercontent.com/u/1714999?v=4",
             ))
-            .child(Avatar::new(
+            .child(Avatar::uri(
                 "https://avatars.githubusercontent.com/u/326587?v=4",
             ))
+            .child(
+                Avatar::uri("https://avatars.githubusercontent.com/u/326587?v=4")
+                    .availability_indicator(true),
+            )
+            .child(
+                Avatar::uri("https://avatars.githubusercontent.com/u/326587?v=4")
+                    .availability_indicator(false),
+            )
     }
 }

@@ -2,9 +2,8 @@ use collections::HashMap;
 use editor::{scroll::autoscroll::Autoscroll, Bias, Editor};
 use fuzzy::{CharBag, PathMatch, PathMatchCandidate};
 use gpui::{
-    actions, div, AppContext, Div, EventEmitter, FocusHandle, FocusableView, InteractiveElement,
-    IntoElement, Manager, Model, ParentElement, Render, Styled, Task, View, ViewContext,
-    VisualContext, WeakView,
+    actions, AppContext, DismissEvent, Div, EventEmitter, FocusHandle, FocusableView, Model,
+    ParentElement, Render, Styled, Task, View, ViewContext, VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};
 use project::{PathMatchCandidateSet, Project, ProjectPath, WorktreeId};
@@ -16,8 +15,7 @@ use std::{
     },
 };
 use text::Point;
-use theme::ActiveTheme;
-use ui::{v_stack, HighlightedLabel, StyledExt};
+use ui::{v_stack, HighlightedLabel, ListItem};
 use util::{paths::PathLikeWithPosition, post_inc, ResultExt};
 use workspace::Workspace;
 
@@ -111,7 +109,7 @@ impl FileFinder {
     }
 }
 
-impl EventEmitter<Manager> for FileFinder {}
+impl EventEmitter<DismissEvent> for FileFinder {}
 impl FocusableView for FileFinder {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
         self.picker.focus_handle(cx)
@@ -530,7 +528,7 @@ impl FileFinderDelegate {
 }
 
 impl PickerDelegate for FileFinderDelegate {
-    type ListItem = Div;
+    type ListItem = ListItem;
 
     fn placeholder_text(&self) -> Arc<str> {
         "Search project files...".into()
@@ -554,6 +552,7 @@ impl PickerDelegate for FileFinderDelegate {
         raw_query: String,
         cx: &mut ViewContext<Picker<Self>>,
     ) -> Task<()> {
+        let raw_query = raw_query.trim();
         if raw_query.is_empty() {
             let project = self.project.read(cx);
             self.latest_search_id = post_inc(&mut self.search_count);
@@ -575,7 +574,6 @@ impl PickerDelegate for FileFinderDelegate {
             cx.notify();
             Task::ready(())
         } else {
-            let raw_query = &raw_query;
             let query = PathLikeWithPosition::parse_str(raw_query, |path_like_str| {
                 Ok::<_, std::convert::Infallible>(FileSearchQuery {
                     raw_query: raw_query.to_owned(),
@@ -689,9 +687,7 @@ impl PickerDelegate for FileFinderDelegate {
                                 .log_err();
                         }
                     }
-                    finder
-                        .update(&mut cx, |_, cx| cx.emit(Manager::Dismiss))
-                        .ok()?;
+                    finder.update(&mut cx, |_, cx| cx.emit(DismissEvent)).ok()?;
 
                     Some(())
                 })
@@ -702,7 +698,7 @@ impl PickerDelegate for FileFinderDelegate {
 
     fn dismissed(&mut self, cx: &mut ViewContext<Picker<FileFinderDelegate>>) {
         self.file_finder
-            .update(cx, |_, cx| cx.emit(Manager::Dismiss))
+            .update(cx, |_, cx| cx.emit(DismissEvent))
             .log_err();
     }
 
@@ -711,30 +707,22 @@ impl PickerDelegate for FileFinderDelegate {
         ix: usize,
         selected: bool,
         cx: &mut ViewContext<Picker<Self>>,
-    ) -> Self::ListItem {
+    ) -> Option<Self::ListItem> {
         let path_match = self
             .matches
             .get(ix)
             .expect("Invalid matches state: no element for index {ix}");
-        let theme = cx.theme();
-        let colors = theme.colors();
 
         let (file_name, file_name_positions, full_path, full_path_positions) =
             self.labels_for_match(path_match, cx, ix);
 
-        div()
-            .px_1()
-            .text_color(colors.text)
-            .text_ui()
-            .bg(colors.ghost_element_background)
-            .rounded_md()
-            .when(selected, |this| this.bg(colors.ghost_element_selected))
-            .hover(|this| this.bg(colors.ghost_element_hover))
-            .child(
+        Some(
+            ListItem::new(ix).inset(true).selected(selected).child(
                 v_stack()
                     .child(HighlightedLabel::new(file_name, file_name_positions))
                     .child(HighlightedLabel::new(full_path, full_path_positions)),
-            )
+            ),
+        )
     }
 }
 
@@ -778,18 +766,49 @@ mod tests {
         let (picker, workspace, cx) = build_find_picker(project, cx);
 
         cx.simulate_input("bna");
-
         picker.update(cx, |picker, _| {
             assert_eq!(picker.delegate.matches.len(), 2);
         });
-
         cx.dispatch_action(SelectNext);
         cx.dispatch_action(Confirm);
-
         cx.read(|cx| {
             let active_editor = workspace.read(cx).active_item_as::<Editor>(cx).unwrap();
             assert_eq!(active_editor.read(cx).title(cx), "bandana");
         });
+
+        for bandana_query in [
+            "bandana",
+            " bandana",
+            "bandana ",
+            " bandana ",
+            " ndan ",
+            " band ",
+        ] {
+            picker
+                .update(cx, |picker, cx| {
+                    picker
+                        .delegate
+                        .update_matches(bandana_query.to_string(), cx)
+                })
+                .await;
+            picker.update(cx, |picker, _| {
+                assert_eq!(
+                    picker.delegate.matches.len(),
+                    1,
+                    "Wrong number of matches for bandana query '{bandana_query}'"
+                );
+            });
+            cx.dispatch_action(SelectNext);
+            cx.dispatch_action(Confirm);
+            cx.read(|cx| {
+                let active_editor = workspace.read(cx).active_item_as::<Editor>(cx).unwrap();
+                assert_eq!(
+                    active_editor.read(cx).title(cx),
+                    "bandana",
+                    "Wrong match for bandana query '{bandana_query}'"
+                );
+            });
+        }
     }
 
     #[gpui::test]
