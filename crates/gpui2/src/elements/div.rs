@@ -1491,4 +1491,22 @@ impl ScrollHandle {
             Err(ix) => ix.min(state.child_bounds.len().saturating_sub(1)),
         }
     }
+
+    /// scroll_to_item scrolls the minimal amount to ensure that the item is
+    /// fully visible
+    pub fn scroll_to_item(&self, ix: usize) {
+        let state = self.0.borrow();
+
+        let Some(bounds) = state.child_bounds.get(ix) else {
+            return;
+        };
+
+        let scroll_offset = state.offset.borrow().y;
+
+        if bounds.top() + scroll_offset < state.bounds.top() {
+            state.offset.borrow_mut().y = state.bounds.top() - bounds.top();
+        } else if bounds.bottom() + scroll_offset > state.bounds.bottom() {
+            state.offset.borrow_mut().y = state.bounds.bottom() - bounds.bottom();
+        }
+    }
 }

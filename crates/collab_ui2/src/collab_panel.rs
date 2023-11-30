@@ -1808,14 +1808,9 @@ impl CollabPanel {
             self.selection = Some(ix);
         }
 
-        // todo!()
-        // self.list_state.reset(self.entries.len());
-        // if let Some(ix) = self.selection {
-        //     self.list_state.scroll_to(ListOffset {
-        //         item_ix: ix,
-        //         offset_in_item: 0.,
-        //     });
-        // }
+        if let Some(ix) = self.selection {
+            self.scroll_handle.scroll_to_item(ix)
+        }
         cx.notify();
     }
 
@@ -1825,14 +1820,9 @@ impl CollabPanel {
             self.selection = Some(ix - 1);
         }
 
-        // todo!()
-        // self.list_state.reset(self.entries.len());
-        // if let Some(ix) = self.selection {
-        //     self.list_state.scroll_to(ListOffset {
-        //         item_ix: ix,
-        //         offset_in_item: 0.,
-        //     });
-        // }
+        if let Some(ix) = self.selection {
+            self.scroll_handle.scroll_to_item(ix)
+        }
         cx.notify();
     }
 
@@ -2350,8 +2340,6 @@ impl CollabPanel {
     }
 
     fn render_signed_in(&mut self, cx: &mut ViewContext<Self>) -> Div {
-        dbg!(&self.scroll_handle.top_item());
-
         v_stack()
             .size_full()
             .child(
