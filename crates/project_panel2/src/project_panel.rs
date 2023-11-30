@@ -10,9 +10,9 @@ use anyhow::{anyhow, Result};
 use gpui::{
     actions, div, overlay, px, uniform_list, Action, AppContext, AssetSource, AsyncWindowContext,
     ClipboardItem, DismissEvent, Div, EventEmitter, FocusHandle, Focusable, FocusableView,
-    InteractiveElement, Model, MouseButton, MouseDownEvent, ParentElement, Pixels, Point,
-    PromptLevel, Render, Stateful, Styled, Subscription, Task, UniformListScrollHandle, View,
-    ViewContext, VisualContext as _, WeakView, WindowContext,
+    InteractiveElement, KeyContext, Model, MouseButton, MouseDownEvent, ParentElement, Pixels,
+    Point, PromptLevel, Render, Stateful, Styled, Subscription, Task, UniformListScrollHandle,
+    View, ViewContext, VisualContext as _, WeakView, WindowContext,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
 use project::{
@@ -1355,7 +1355,7 @@ impl ProjectPanel {
         details: EntryDetails,
         // dragged_entry_destination: &mut Option<Arc<Path>>,
         cx: &mut ViewContext<Self>,
-    ) -> ListItem {
+    ) -> Div {
         let kind = details.kind;
         let settings = ProjectPanelSettings::get_global(cx);
         let show_editor = details.is_editing && !details.is_processing;
@@ -1374,44 +1374,46 @@ impl ProjectPanel {
             })
             .unwrap_or(theme.status().info);
 
-        ListItem::new(entry_id.to_proto() as usize)
-            .indent_level(details.depth)
-            .indent_step_size(px(settings.indent_size))
-            .selected(is_selected)
-            .child(if let Some(icon) = &details.icon {
-                div().child(IconElement::from_path(icon.to_string()))
-            } else {
-                div()
-            })
-            .child(
-                if let (Some(editor), true) = (Some(&self.filename_editor), show_editor) {
-                    div().h_full().w_full().child(editor.clone())
+        div().key_context(self.dispatch_context(cx)).child(
+            ListItem::new(entry_id.to_proto() as usize)
+                .indent_level(details.depth)
+                .indent_step_size(px(settings.indent_size))
+                .selected(is_selected)
+                .child(if let Some(icon) = &details.icon {
+                    div().child(IconElement::from_path(icon.to_string()))
                 } else {
                     div()
-                        .text_color(filename_text_color)
-                        .child(Label::new(details.filename.clone()))
-                }
-                .ml_1(),
-            )
-            .on_click(cx.listener(move |this, event: &gpui::ClickEvent, cx| {
-                if event.down.button == MouseButton::Right {
-                    return;
-                }
-                if !show_editor {
-                    if kind.is_dir() {
-                        this.toggle_expanded(entry_id, cx);
+                })
+                .child(
+                    if let (Some(editor), true) = (Some(&self.filename_editor), show_editor) {
+                        div().h_full().w_full().child(editor.clone())
                     } else {
-                        if event.down.modifiers.command {
-                            this.split_entry(entry_id, cx);
+                        div()
+                            .text_color(filename_text_color)
+                            .child(Label::new(details.filename.clone()))
+                    }
+                    .ml_1(),
+                )
+                .on_click(cx.listener(move |this, event: &gpui::ClickEvent, cx| {
+                    if event.down.button == MouseButton::Right {
+                        return;
+                    }
+                    if !show_editor {
+                        if kind.is_dir() {
+                            this.toggle_expanded(entry_id, cx);
                         } else {
-                            this.open_entry(entry_id, event.up.click_count > 1, cx);
+                            if event.down.modifiers.command {
+                                this.split_entry(entry_id, cx);
+                            } else {
+                                this.open_entry(entry_id, event.up.click_count > 1, cx);
+                            }
                         }
                     }
-                }
-            }))
-            .on_secondary_mouse_down(cx.listener(move |this, event: &MouseDownEvent, cx| {
-                this.deploy_context_menu(event.position, entry_id, cx);
-            }))
+                }))
+                .on_secondary_mouse_down(cx.listener(move |this, event: &MouseDownEvent, cx| {
+                    this.deploy_context_menu(event.position, entry_id, cx);
+                })),
+        )
         // .on_drop::<ProjectEntryId>(|this, event, cx| {
         //     this.move_entry(
         //         *dragged_entry,
@@ -1420,6 +1422,22 @@ impl ProjectPanel {
         //         cx,
         //     );
         // })
+    }
+
+    fn dispatch_context(&self, cx: &ViewContext<Self>) -> KeyContext {
+        let mut dispatch_context = KeyContext::default();
+        dispatch_context.add("menu");
+        dispatch_context.add("not_editing");
+
+        let identifier = if self.filename_editor.focus_handle(cx).is_focused(cx) {
+            "editing"
+        } else {
+            "not_editing"
+        };
+
+        dispatch_context.add(identifier);
+
+        dispatch_context
     }
 }
 
@@ -3011,21 +3029,3 @@ mod tests {
             .unwrap();
     }
 }
-
-// TODO - implement this in the new keymap system
-// fn update_keymap_context(&self, keymap: &mut KeymapContext, cx: &AppContext) {
-//     Self::reset_to_default_keymap_context(keymap);
-//     keymap.add_identifier("menu");
-
-//     if let Some(window) = cx.active_window() {
-//         window.read_with(cx, |cx| {
-//             let identifier = if self.filename_editor.is_focused(cx) {
-//                 "editing"
-//             } else {
-//                 "not_editing"
-//             };
-
-//             keymap.add_identifier(identifier);
-//         });
-//     }
-// }
