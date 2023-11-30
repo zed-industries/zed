@@ -20,9 +20,9 @@ use crate::{
 use anyhow::Result;
 use collections::{BTreeMap, HashMap};
 use gpui::{
-    div, point, px, relative, size, transparent_black, Action, AnyElement, AvailableSpace,
-    BorrowWindow, Bounds, ContentMask, Corners, DispatchPhase, Edges, Element, ElementId,
-    ElementInputHandler, Entity, EntityId, Hsla, InteractiveBounds, InteractiveElement,
+    div, point, px, relative, size, transparent_black, Action, AnyElement, AsyncWindowContext,
+    AvailableSpace, BorrowWindow, Bounds, ContentMask, Corners, DispatchPhase, Edges, Element,
+    ElementId, ElementInputHandler, Entity, EntityId, Hsla, InteractiveBounds, InteractiveElement,
     IntoElement, LineLayout, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     ParentElement, Pixels, RenderOnce, ScrollWheelEvent, ShapedLine, SharedString, Size,
     StackingOrder, StatefulInteractiveElement, Style, Styled, TextRun, TextStyle, View,
@@ -1662,11 +1662,6 @@ impl EditorElement {
         cx: &mut WindowContext,
     ) -> LayoutState {
         self.editor.update(cx, |editor, cx| {
-            // let mut size = constraint.max;
-            // if size.x.is_infinite() {
-            //     unimplemented!("we don't yet handle an infinite width constraint on buffer elements");
-            // }
-
             let snapshot = editor.snapshot(cx);
             let style = self.style.clone();
 
@@ -1702,6 +1697,7 @@ impl EditorElement {
             };
 
             editor.gutter_width = gutter_width;
+
             let text_width = bounds.size.width - gutter_width;
             let overscroll = size(em_width, px(0.));
             let snapshot = {
@@ -1714,6 +1710,8 @@ impl EditorElement {
                     SoftWrap::Column(column) => editor_width.min(column as f32 * em_advance),
                 };
 
+                dbg!(bounds.size.width, gutter_width, gutter_margin, overscroll.width, em_width, em_advance, wrap_width);
+                println!("setting wrap width during paint: {wrap_width:?}");
                 if editor.set_wrap_width(Some(wrap_width), cx) {
                     editor.snapshot(cx)
                 } else {
@@ -1728,25 +1726,6 @@ impl EditorElement {
                 .collect::<SmallVec<[_; 2]>>();
 
             let scroll_height = Pixels::from(snapshot.max_point().row() + 1) * line_height;
-            // todo!("this should happen during layout")
-            let editor_mode = snapshot.mode;
-            if let EditorMode::AutoHeight { max_lines } = editor_mode {
-                todo!()
-                //     size.set_y(
-                //         scroll_height
-                //             .min(constraint.max_along(Axis::Vertical))
-                //             .max(constraint.min_along(Axis::Vertical))
-                //             .max(line_height)
-                //             .min(line_height * max_lines as f32),
-                //     )
-            } else if let EditorMode::SingleLine = editor_mode {
-                bounds.size.height = line_height.min(bounds.size.height);
-            }
-            // todo!()
-            // else if size.y.is_infinite() {
-            //     //     size.set_y(scroll_height);
-            // }
-            //
             let gutter_size = size(gutter_width, bounds.size.height);
             let text_size = size(text_width, bounds.size.height);
 
@@ -2064,7 +2043,7 @@ impl EditorElement {
                 .unwrap();
 
             LayoutState {
-                mode: editor_mode,
+                mode: snapshot.mode,
                 position_map: Arc::new(PositionMap {
                     size: bounds.size,
                     scroll_position: point(
@@ -2617,19 +2596,44 @@ impl Element for EditorElement {
         cx: &mut gpui::WindowContext,
     ) -> (gpui::LayoutId, Self::State) {
         self.editor.update(cx, |editor, cx| {
-            editor.style = Some(self.style.clone()); // Long-term, we'd like to eliminate this.
+            editor.set_style(self.style.clone(), cx);
 
-            let rem_size = cx.rem_size();
-            let mut style = Style::default();
-            style.size.width = relative(1.).into();
-            style.size.height = match editor.mode {
+            let layout_id = match editor.mode {
                 EditorMode::SingleLine => {
-                    self.style.text.line_height_in_pixels(cx.rem_size()).into()
+                    let rem_size = cx.rem_size();
+                    let mut style = Style::default();
+                    style.size.width = relative(1.).into();
+                    style.size.height = self.style.text.line_height_in_pixels(rem_size).into();
+                    cx.request_layout(&style, None)
                 }
-                EditorMode::AutoHeight { .. } => todo!(),
-                EditorMode::Full => relative(1.).into(),
+                EditorMode::AutoHeight { max_lines } => {
+                    let editor_handle = cx.view().clone();
+                    let max_line_number_width =
+                        self.max_line_number_width(&editor.snapshot(cx), cx);
+                    cx.request_measured_layout(
+                        Style::default(),
+                        move |known_dimensions, available_space, cx| {
+                            editor_handle
+                                .update(cx, |editor, cx| {
+                                    dbg!(compute_auto_height_layout(
+                                        editor,
+                                        max_lines,
+                                        max_line_number_width,
+                                        known_dimensions,
+                                        cx,
+                                    ))
+                                })
+                                .unwrap_or_default()
+                        },
+                    )
+                }
+                EditorMode::Full => {
+                    let mut style = Style::default();
+                    style.size.width = relative(1.).into();
+                    style.size.height = relative(1.).into();
+                    cx.request_layout(&style, None)
+                }
             };
-            let layout_id = cx.request_layout(&style, None);
 
             (layout_id, ())
         })
@@ -4133,4 +4137,61 @@ pub fn register_action<T: Action>(
             })
         }
     })
+}
+
+fn compute_auto_height_layout(
+    editor: &mut Editor,
+    max_lines: usize,
+    max_line_number_width: Pixels,
+    known_dimensions: Size<Option<Pixels>>,
+    cx: &mut ViewContext<Editor>,
+) -> Option<Size<Pixels>> {
+    let mut width = known_dimensions.width?;
+    if let Some(height) = known_dimensions.height {
+        return Some(size(width, height));
+    }
+
+    let style = editor.style.as_ref().unwrap();
+    let font_id = cx.text_system().font_id(&style.text.font()).unwrap();
+    let font_size = style.text.font_size.to_pixels(cx.rem_size());
+    let line_height = style.text.line_height_in_pixels(cx.rem_size());
+    let em_width = cx
+        .text_system()
+        .typographic_bounds(font_id, font_size, 'm')
+        .unwrap()
+        .size
+        .width;
+
+    let mut snapshot = editor.snapshot(cx);
+    let gutter_padding;
+    let gutter_width;
+    let gutter_margin;
+    if snapshot.show_gutter {
+        let descent = cx.text_system().descent(font_id, font_size).unwrap();
+        let gutter_padding_factor = 3.5;
+        gutter_padding = (em_width * gutter_padding_factor).round();
+        gutter_width = max_line_number_width + gutter_padding * 2.0;
+        gutter_margin = -descent;
+    } else {
+        gutter_padding = Pixels::ZERO;
+        gutter_width = Pixels::ZERO;
+        gutter_margin = Pixels::ZERO;
+    };
+
+    editor.gutter_width = gutter_width;
+    let text_width = width - gutter_width;
+    let overscroll = size(em_width, px(0.));
+
+    let editor_width = text_width - gutter_margin - overscroll.width - em_width;
+    println!("setting wrap width during layout: {editor_width:?}");
+    if editor.set_wrap_width(Some(editor_width), cx) {
+        snapshot = editor.snapshot(cx);
+    }
+
+    let scroll_height = Pixels::from(snapshot.max_point().row() + 1) * line_height;
+    let height = scroll_height
+        .max(line_height)
+        .min(line_height * max_lines as f32);
+
+    Some(size(width, height))
 }

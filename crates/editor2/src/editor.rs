@@ -1734,21 +1734,11 @@ impl Editor {
     //         Self::new(EditorMode::Full, buffer, None, field_editor_style, cx)
     //     }
 
-    //     pub fn auto_height(
-    //         max_lines: usize,
-    //         field_editor_style: Option<Arc<GetFieldEditorTheme>>,
-    //         cx: &mut ViewContext<Self>,
-    //     ) -> Self {
-    //         let buffer = cx.build_model(|cx| Buffer::new(0, cx.model_id() as u64, String::new()));
-    //         let buffer = cx.build_model(|cx| MultiBuffer::singleton(buffer, cx));
-    //         Self::new(
-    //             EditorMode::AutoHeight { max_lines },
-    //             buffer,
-    //             None,
-    //             field_editor_style,
-    //             cx,
-    //         )
-    //     }
+    pub fn auto_height(max_lines: usize, cx: &mut ViewContext<Self>) -> Self {
+        let buffer = cx.build_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), String::new()));
+        let buffer = cx.build_model(|cx| MultiBuffer::singleton(buffer, cx));
+        Self::new(EditorMode::AutoHeight { max_lines }, buffer, None, cx)
+    }
 
     pub fn for_buffer(
         buffer: Model<Buffer>,
@@ -2908,6 +2898,7 @@ impl Editor {
     }
 
     pub fn newline(&mut self, _: &Newline, cx: &mut ViewContext<Self>) {
+        dbg!("!!!!!!!!!!");
         self.transact(cx, |this, cx| {
             let (edits, selection_fixup_info): (Vec<_>, Vec<_>) = {
                 let selections = this.selections.all::<usize>(cx);
@@ -8374,6 +8365,18 @@ impl Editor {
         cx.notify();
     }
 
+    pub fn set_style(&mut self, style: EditorStyle, cx: &mut ViewContext<Self>) {
+        let rem_size = cx.rem_size();
+        self.display_map.update(cx, |map, cx| {
+            map.set_font(
+                style.text.font(),
+                style.text.font_size.to_pixels(rem_size),
+                cx,
+            )
+        });
+        self.style = Some(style);
+    }
+
     pub fn set_wrap_width(&self, width: Option<Pixels>, cx: &mut AppContext) -> bool {
         self.display_map
             .update(cx, |map, cx| map.set_wrap_width(width, cx))
@@ -9397,7 +9400,7 @@ impl Render for Editor {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         let settings = ThemeSettings::get_global(cx);
         let text_style = match self.mode {
-            EditorMode::SingleLine => TextStyle {
+            EditorMode::SingleLine | EditorMode::AutoHeight { .. } => TextStyle {
                 color: cx.theme().colors().text,
                 font_family: settings.ui_font.family.clone(),
                 font_features: settings.ui_font.features,
@@ -9409,8 +9412,6 @@ impl Render for Editor {
                 underline: None,
                 white_space: WhiteSpace::Normal,
             },
-
-            EditorMode::AutoHeight { max_lines } => todo!(),
 
             EditorMode::Full => TextStyle {
                 color: cx.theme().colors().text,
