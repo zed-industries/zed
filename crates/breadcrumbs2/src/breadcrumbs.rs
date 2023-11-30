@@ -1,6 +1,6 @@
 use gpui::{
-    div, Div, Element, EventEmitter, InteractiveElement, IntoElement, ParentElement, Render,
-    Stateful, StatefulInteractiveElement, StyledText, Subscription, ViewContext, WeakView,
+    Div, Element, EventEmitter, InteractiveElement, IntoElement, ParentElement, Render, Stateful,
+    StatefulInteractiveElement, Styled, StyledText, Subscription, ViewContext, WeakView,
 };
 use itertools::Itertools;
 use theme::ActiveTheme;
@@ -18,7 +18,7 @@ pub struct Breadcrumbs {
     pane_focused: bool,
     active_item: Option<Box<dyn ItemHandle>>,
     subscription: Option<Subscription>,
-    workspace: WeakView<Workspace>,
+    _workspace: WeakView<Workspace>,
 }
 
 impl Breadcrumbs {
@@ -27,7 +27,7 @@ impl Breadcrumbs {
             pane_focused: false,
             active_item: Default::default(),
             subscription: Default::default(),
-            workspace: workspace.weak_handle(),
+            _workspace: workspace.weak_handle(),
         }
     }
 }
@@ -39,45 +39,44 @@ impl Render for Breadcrumbs {
     type Element = Stateful<Div>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-        let id = "breadcrumbs";
-        let default_style = cx.text_style();
+        let div = h_stack().id("breadcrumbs").bg(gpui::red());
 
         let active_item = match &self.active_item {
             Some(active_item) => active_item,
-            None => return div().id(id),
+            None => return div,
         };
         let not_editor = active_item.downcast::<editor::Editor>().is_none();
 
         let breadcrumbs = match active_item.breadcrumbs(cx.theme(), cx) {
             Some(breadcrumbs) => breadcrumbs,
-            None => return div().id(id),
+            None => return div,
         }
         .into_iter()
         .map(|breadcrumb| {
             StyledText::new(breadcrumb.text)
-                .with_highlights(&default_style, breadcrumb.highlights.unwrap_or_default())
+                .with_highlights(&cx.text_style(), breadcrumb.highlights.unwrap_or_default())
                 .into_any()
         });
 
-        let crumbs = h_stack().children(Itertools::intersperse_with(breadcrumbs, || {
+        let crumbs = div.children(Itertools::intersperse_with(breadcrumbs, || {
             Label::new(" › ").into_any_element()
         }));
 
         if not_editor || !self.pane_focused {
-            return crumbs.id(id);
+            return crumbs;
         }
 
-        let this = cx.view().downgrade();
-        crumbs.id(id).on_click(move |_, cx| {
-            this.update(cx, |this, cx| {
-                if let Some(workspace) = this.workspace.upgrade() {
-                    workspace.update(cx, |_workspace, _cx| {
-                        todo!("outline::toggle");
-                        // outline::toggle(workspace, &Default::default(), cx)
-                    })
-                }
-            })
-            .ok();
+        // let this = cx.view().downgrade();
+        crumbs.on_click(move |_, _cx| {
+            todo!("outline::toggle");
+            // this.update(cx, |this, cx| {
+            //     if let Some(workspace) = this.workspace.upgrade() {
+            //         workspace.update(cx, |_workspace, _cx| {
+            //             outline::toggle(workspace, &Default::default(), cx)
+            //         })
+            //     }
+            // })
+            // .ok();
         })
     }
 }

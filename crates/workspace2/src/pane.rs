@@ -7,9 +7,9 @@ use crate::{
 use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
 use gpui::{
-    actions, prelude::*, Action, AppContext, AsyncWindowContext, Div, EntityId, EventEmitter,
-    FocusHandle, Focusable, FocusableView, Model, Pixels, Point, PromptLevel, Render, Task, View,
-    ViewContext, VisualContext, WeakView, WindowContext,
+    actions, prelude::*, Action, AnyWeakView, AppContext, AsyncWindowContext, Div, EntityId,
+    EventEmitter, FocusHandle, Focusable, FocusableView, Model, Pixels, Point, PromptLevel, Render,
+    Task, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use parking_lot::Mutex;
 use project2::{Project, ProjectEntryId, ProjectPath};
@@ -143,13 +143,18 @@ impl fmt::Debug for Event {
     }
 }
 
+struct FocusedView {
+    view: AnyWeakView,
+    focus_handle: FocusHandle,
+}
+
 pub struct Pane {
     focus_handle: FocusHandle,
     items: Vec<Box<dyn ItemHandle>>,
     activation_history: Vec<EntityId>,
     zoomed: bool,
     active_item_index: usize,
-    //     last_focused_view_by_item: HashMap<usize, AnyWeakViewHandle>,
+    last_focused_view_by_item: HashMap<EntityId, FocusHandle>,
     autoscroll: bool,
     nav_history: NavHistory,
     toolbar: View<Toolbar>,
@@ -306,7 +311,7 @@ impl Pane {
             activation_history: Vec::new(),
             zoomed: false,
             active_item_index: 0,
-            // last_focused_view_by_item: Default::default(),
+            last_focused_view_by_item: Default::default(),
             autoscroll: false,
             nav_history: NavHistory(Arc::new(Mutex::new(NavHistoryState {
                 mode: NavigationMode::Normal,
@@ -393,6 +398,53 @@ impl Pane {
 
     pub fn has_focus(&self, cx: &WindowContext) -> bool {
         self.focus_handle.contains_focused(cx)
+    }
+
+    fn focus_in(&mut self, cx: &mut ViewContext<Self>) {
+        println!("focus_in");
+
+        if !self.has_focus(cx) {
+            cx.emit(Event::Focus);
+            cx.notify();
+        }
+
+        self.toolbar.update(cx, |toolbar, cx| {
+            toolbar.focus_changed(true, cx);
+        });
+
+        if let Some(active_item) = self.active_item() {
+            if self.focus_handle.is_focused(cx) {
+                // Pane was focused directly. We need to either focus a view inside the active item,
+                // or focus the active item itself
+                if let Some(weak_last_focused_view) =
+                    self.last_focused_view_by_item.get(&active_item.item_id())
+                {
+                    weak_last_focused_view.focus(cx);
+                    // if let Some(last_focused_view) = weak_last_focused_view.upgrade() {
+                    //     last_focused_view.cx.focus(&last_focused_view);
+                    //     return;
+                    // } else {
+                    //     self.last_focused_view_by_item.remove(&active_item.id());
+                    // }
+                }
+
+                active_item.focus_handle(cx).focus(cx);
+            // todo!() Do this once we have tab bar context menu
+            // } else if !self.tab_bar_context_menu.handle.is_focused() {
+            } else if let Some(focused) = cx.focused() {
+                self.last_focused_view_by_item
+                    .insert(active_item.item_id(), focused);
+            }
+        }
+    }
+
+    fn focus_out(&mut self, cx: &mut ViewContext<Self>) {
+        println!("focus_out");
+
+        self.toolbar.update(cx, |toolbar, cx| {
+            toolbar.focus_changed(false, cx);
+        });
+        cx.notify();
     }
 
     pub fn active_item_index(&self) -> usize {
@@ -1936,9 +1988,23 @@ impl Render for Pane {
     type Element = Focusable<Div>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+        let this = cx.view().downgrade();
+
         v_stack()
             .key_context("Pane")
             .track_focus(&self.focus_handle)
+            .on_focus_in({
+                let this = this.clone();
+                move |event, cx| {
+                    this.update(cx, |this, cx| this.focus_in(cx)).ok();
+                }
+            })
+            .on_focus_out({
+                let this = this.clone();
+                move |event, cx| {
+                    this.update(cx, |this, cx| this.focus_out(cx)).ok();
+                }
+            })
             .on_action(cx.listener(|pane: &mut Pane, _: &SplitLeft, cx| {
                 pane.split(SplitDirection::Left, cx)
             }))
