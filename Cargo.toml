@@ -197,7 +197,7 @@ tree-sitter-nu = { git = "https://github.com/nushell/tree-sitter-nu", rev = "786
 tree-sitter-vue = {git = "https://github.com/zed-industries/tree-sitter-vue", rev = "9b6cb221ccb8d0b956fcb17e9a1efac2feefeb58"}
 
 [patch.crates-io]
-tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "3b0159d25559b603af566ade3c83d930bf466db1" }
+tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "b5f461a69bf3df7298b1903574d506179e6390b0" }
 async-task = { git = "https://github.com/zed-industries/async-task", rev = "341b57d6de98cdfd7b418567b8de2022ca993a6e" }
 
 # TODO - Remove when a version is released with this PR: https://github.com/servo/core-foundation-rs/pull/457
