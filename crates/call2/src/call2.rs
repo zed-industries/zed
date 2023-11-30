@@ -15,7 +15,7 @@ use collections::HashSet;
 use futures::{channel::oneshot, future::Shared, Future, FutureExt};
 use gpui::{
     AppContext, AsyncAppContext, Context, EventEmitter, Model, ModelContext, PromptLevel,
-    Subscription, Task, View, ViewContext, VisualContext, WeakModel, WeakView, WindowHandle,
+    Subscription, Task, View, ViewContext, VisualContext, WeakModel, WindowHandle,
 };
 pub use participant::ParticipantLocation;
 use postage::watch;
@@ -557,24 +557,17 @@ pub fn report_call_event_for_channel(
 
 pub struct Call {
     active_call: Option<(Model<ActiveCall>, Vec<Subscription>)>,
-    parent_workspace: WeakView<Workspace>,
 }
 
 impl Call {
-    pub fn new(
-        parent_workspace: WeakView<Workspace>,
-        cx: &mut ViewContext<'_, Workspace>,
-    ) -> Box<dyn CallHandler> {
+    pub fn new(cx: &mut ViewContext<'_, Workspace>) -> Box<dyn CallHandler> {
         let mut active_call = None;
         if cx.has_global::<Model<ActiveCall>>() {
             let call = cx.global::<Model<ActiveCall>>().clone();
             let subscriptions = vec![cx.subscribe(&call, Self::on_active_call_event)];
             active_call = Some((call, subscriptions));
         }
-        Box::new(Self {
-            active_call,
-            parent_workspace,
-        })
+        Box::new(Self { active_call })
     }
     fn on_active_call_event(
         workspace: &mut Workspace,
@@ -597,6 +590,7 @@ impl CallHandler for Call {
     fn peer_state(
         &mut self,
         leader_id: PeerId,
+        project: &Model<Project>,
         cx: &mut ViewContext<Workspace>,
     ) -> Option<(bool, bool)> {
         let (call, _) = self.active_call.as_ref()?;
@@ -608,12 +602,7 @@ impl CallHandler for Call {
         match participant.location {
             ParticipantLocation::SharedProject { project_id } => {
                 leader_in_this_app = true;
-                leader_in_this_project = Some(project_id)
-                    == self
-                        .parent_workspace
-                        .update(cx, |this, cx| this.project().read(cx).remote_id())
-                        .log_err()
-                        .flatten();
+                leader_in_this_project = Some(project_id) == project.read(cx).remote_id();
             }
             ParticipantLocation::UnsharedProject => {
                 leader_in_this_app = true;

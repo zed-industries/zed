@@ -25,6 +25,7 @@ pub(crate) struct SceneBuilder {
     underlines: Vec<Underline>,
     monochrome_sprites: Vec<MonochromeSprite>,
     polychrome_sprites: Vec<PolychromeSprite>,
+    surfaces: Vec<Surface>,
 }
 
 impl Default for SceneBuilder {
@@ -38,6 +39,7 @@ impl Default for SceneBuilder {
             underlines: Vec::new(),
             monochrome_sprites: Vec::new(),
             polychrome_sprites: Vec::new(),
+            surfaces: Vec::new(),
         }
     }
 }
@@ -120,6 +122,7 @@ impl SceneBuilder {
                 (PrimitiveKind::PolychromeSprite, ix) => {
                     self.polychrome_sprites[ix].order = draw_order as DrawOrder
                 }
+                (PrimitiveKind::Surface, ix) => self.surfaces[ix].order = draw_order as DrawOrder,
             }
         }
 
@@ -129,6 +132,7 @@ impl SceneBuilder {
         self.underlines.sort_unstable();
         self.monochrome_sprites.sort_unstable();
         self.polychrome_sprites.sort_unstable();
+        self.surfaces.sort_unstable();
 
         Scene {
             shadows: mem::take(&mut self.shadows),
@@ -137,6 +141,7 @@ impl SceneBuilder {
             underlines: mem::take(&mut self.underlines),
             monochrome_sprites: mem::take(&mut self.monochrome_sprites),
             polychrome_sprites: mem::take(&mut self.polychrome_sprites),
+            surfaces: mem::take(&mut self.surfaces),
         }
     }
 
@@ -185,6 +190,10 @@ impl SceneBuilder {
                 sprite.order = layer_id;
                 self.polychrome_sprites.push(sprite);
             }
+            Primitive::Surface(mut surface) => {
+                surface.order = layer_id;
+                self.surfaces.push(surface);
+            }
         }
     }
 }
@@ -196,6 +205,7 @@ pub(crate) struct Scene {
     pub underlines: Vec<Underline>,
     pub monochrome_sprites: Vec<MonochromeSprite>,
     pub polychrome_sprites: Vec<PolychromeSprite>,
+    pub surfaces: Vec<Surface>,
 }
 
 impl Scene {
@@ -224,6 +234,9 @@ impl Scene {
             polychrome_sprites: &self.polychrome_sprites,
             polychrome_sprites_start: 0,
             polychrome_sprites_iter: self.polychrome_sprites.iter().peekable(),
+            surfaces: &self.surfaces,
+            surfaces_start: 0,
+            surfaces_iter: self.surfaces.iter().peekable(),
         }
     }
 }
@@ -247,6 +260,9 @@ struct BatchIterator<'a> {
     polychrome_sprites: &'a [PolychromeSprite],
     polychrome_sprites_start: usize,
     polychrome_sprites_iter: Peekable<slice::Iter<'a, PolychromeSprite>>,
+    surfaces: &'a [Surface],
+    surfaces_start: usize,
+    surfaces_iter: Peekable<slice::Iter<'a, Surface>>,
 }
 
 impl<'a> Iterator for BatchIterator<'a> {
@@ -271,6 +287,10 @@ impl<'a> Iterator for BatchIterator<'a> {
             (
                 self.polychrome_sprites_iter.peek().map(|s| s.order),
                 PrimitiveKind::PolychromeSprite,
+            ),
+            (
+                self.surfaces_iter.peek().map(|s| s.order),
+                PrimitiveKind::Surface,
             ),
         ];
         orders_and_kinds.sort_by_key(|(order, kind)| (order.unwrap_or(u32::MAX), *kind));
@@ -378,6 +398,21 @@ impl<'a> Iterator for BatchIterator<'a> {
                     sprites: &self.polychrome_sprites[sprites_start..sprites_end],
                 })
             }
+            PrimitiveKind::Surface => {
+                let surfaces_start = self.surfaces_start;
+                let mut surfaces_end = surfaces_start;
+                while self
+                    .surfaces_iter
+                    .next_if(|surface| surface.order <= max_order)
+                    .is_some()
+                {
+                    surfaces_end += 1;
+                }
+                self.surfaces_start = surfaces_end;
+                Some(PrimitiveBatch::Surfaces(
+                    &self.surfaces[surfaces_start..surfaces_end],
+                ))
+            }
         }
     }
 }
@@ -391,6 +426,7 @@ pub enum PrimitiveKind {
     Underline,
     MonochromeSprite,
     PolychromeSprite,
+    Surface,
 }
 
 pub enum Primitive {
@@ -400,6 +436,7 @@ pub enum Primitive {
     Underline(Underline),
     MonochromeSprite(MonochromeSprite),
     PolychromeSprite(PolychromeSprite),
+    Surface(Surface),
 }
 
 impl Primitive {
@@ -411,6 +448,7 @@ impl Primitive {
             Primitive::Underline(underline) => &underline.bounds,
             Primitive::MonochromeSprite(sprite) => &sprite.bounds,
             Primitive::PolychromeSprite(sprite) => &sprite.bounds,
+            Primitive::Surface(surface) => &surface.bounds,
         }
     }
 
@@ -422,6 +460,7 @@ impl Primitive {
             Primitive::Underline(underline) => &underline.content_mask,
             Primitive::MonochromeSprite(sprite) => &sprite.content_mask,
             Primitive::PolychromeSprite(sprite) => &sprite.content_mask,
+            Primitive::Surface(surface) => &surface.content_mask,
         }
     }
 }
@@ -440,6 +479,7 @@ pub(crate) enum PrimitiveBatch<'a> {
         texture_id: AtlasTextureId,
         sprites: &'a [PolychromeSprite],
     },
+    Surfaces(&'a [Surface]),
 }
 
 #[derive(Default, Debug, Clone, Eq, PartialEq)]
@@ -590,6 +630,32 @@ impl PartialOrd for PolychromeSprite {
 impl From<PolychromeSprite> for Primitive {
     fn from(sprite: PolychromeSprite) -> Self {
         Primitive::PolychromeSprite(sprite)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Surface {
+    pub order: u32,
+    pub bounds: Bounds<ScaledPixels>,
+    pub content_mask: ContentMask<ScaledPixels>,
+    pub image_buffer: media::core_video::CVImageBuffer,
+}
+
+impl Ord for Surface {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.order.cmp(&other.order)
+    }
+}
+
+impl PartialOrd for Surface {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl From<Surface> for Primitive {
+    fn from(surface: Surface) -> Self {
+        Primitive::Surface(surface)
     }
 }
 

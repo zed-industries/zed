@@ -469,6 +469,58 @@ fragment float4 path_sprite_fragment(
   return color;
 }
 
+struct SurfaceVertexOutput {
+  float4 position [[position]];
+  float2 texture_position;
+  float clip_distance [[clip_distance]][4];
+};
+
+struct SurfaceFragmentInput {
+  float4 position [[position]];
+  float2 texture_position;
+};
+
+vertex SurfaceVertexOutput surface_vertex(
+    uint unit_vertex_id [[vertex_id]], uint surface_id [[instance_id]],
+    constant float2 *unit_vertices [[buffer(SurfaceInputIndex_Vertices)]],
+    constant SurfaceBounds *surfaces [[buffer(SurfaceInputIndex_Surfaces)]],
+    constant Size_DevicePixels *viewport_size
+    [[buffer(SurfaceInputIndex_ViewportSize)]],
+    constant Size_DevicePixels *texture_size
+    [[buffer(SurfaceInputIndex_TextureSize)]]) {
+  float2 unit_vertex = unit_vertices[unit_vertex_id];
+  SurfaceBounds surface = surfaces[surface_id];
+  float4 device_position =
+      to_device_position(unit_vertex, surface.bounds, viewport_size);
+  float4 clip_distance = distance_from_clip_rect(unit_vertex, surface.bounds,
+                                                 surface.content_mask.bounds);
+  // We are going to copy the whole texture, so the texture position corresponds
+  // to the current vertex of the unit triangle.
+  float2 texture_position = unit_vertex;
+  return SurfaceVertexOutput{
+      device_position,
+      texture_position,
+      {clip_distance.x, clip_distance.y, clip_distance.z, clip_distance.w}};
+}
+
+fragment float4 surface_fragment(SurfaceFragmentInput input [[stage_in]],
+                                 texture2d<float> y_texture
+                                 [[texture(SurfaceInputIndex_YTexture)]],
+                                 texture2d<float> cb_cr_texture
+                                 [[texture(SurfaceInputIndex_CbCrTexture)]]) {
+  constexpr sampler texture_sampler(mag_filter::linear, min_filter::linear);
+  const float4x4 ycbcrToRGBTransform =
+      float4x4(float4(+1.0000f, +1.0000f, +1.0000f, +0.0000f),
+               float4(+0.0000f, -0.3441f, +1.7720f, +0.0000f),
+               float4(+1.4020f, -0.7141f, +0.0000f, +0.0000f),
+               float4(-0.7010f, +0.5291f, -0.8860f, +1.0000f));
+  float4 ycbcr = float4(
+      y_texture.sample(texture_sampler, input.texture_position).r,
+      cb_cr_texture.sample(texture_sampler, input.texture_position).rg, 1.0);
+
+  return ycbcrToRGBTransform * ycbcr;
+}
+
 float4 hsla_to_rgba(Hsla hsla) {
   float h = hsla.h * 6.0; // Now, it's an angle but scaled in [0, 6) range
   float s = hsla.s;

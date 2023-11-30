@@ -65,6 +65,8 @@ fn generate_shader_bindings() -> PathBuf {
         "MonochromeSprite".into(),
         "PolychromeSprite".into(),
         "PathSprite".into(),
+        "SurfaceInputIndex".into(),
+        "SurfaceBounds".into(),
     ]);
     config.no_includes = true;
     config.enumeration.prefix_with_name = true;

@@ -3,10 +3,12 @@ use anyhow::Result;
 use client::{proto::PeerId, User};
 use futures::StreamExt;
 use gpui::{
-    div, AppContext, Div, Element, EventEmitter, FocusHandle, FocusableView, ParentElement, Render,
-    SharedString, Task, View, ViewContext, VisualContext, WindowContext,
+    div, img, AppContext, Div, Element, EventEmitter, FocusHandle, Focusable, FocusableView,
+    InteractiveElement, ParentElement, Render, SharedString, Styled, Task, View, ViewContext,
+    VisualContext, WindowContext,
 };
 use std::sync::{Arc, Weak};
+use ui::{h_stack, Icon, IconElement};
 use workspace::{item::Item, ItemNavHistory, WorkspaceId};
 
 pub enum Event {
@@ -16,8 +18,6 @@ pub enum Event {
 pub struct SharedScreen {
     track: Weak<RemoteVideoTrack>,
     frame: Option<Frame>,
-    // temporary addition just to render something interactive.
-    current_frame_id: usize,
     pub peer_id: PeerId,
     user: Arc<User>,
     nav_history: Option<ItemNavHistory>,
@@ -51,7 +51,6 @@ impl SharedScreen {
                 Ok(())
             }),
             focus: cx.focus_handle(),
-            current_frame_id: 0,
         }
     }
 }
@@ -65,50 +64,16 @@ impl FocusableView for SharedScreen {
     }
 }
 impl Render for SharedScreen {
-    type Element = Div;
+    type Element = Focusable<Div>;
+
     fn render(&mut self, _: &mut ViewContext<Self>) -> Self::Element {
-        let frame = self.frame.clone();
-        let frame_id = self.current_frame_id;
-        self.current_frame_id = self.current_frame_id.wrapping_add(1);
-        div().children(frame.map(|_| {
-            ui::Label::new(frame_id.to_string()).color(ui::Color::Error)
-            // img().data(Arc::new(ImageData::new(image::ImageBuffer::new(
-            //     frame.width() as u32,
-            //     frame.height() as u32,
-            // ))))
-        }))
+        div().track_focus(&self.focus).size_full().children(
+            self.frame
+                .as_ref()
+                .map(|frame| img(frame.image()).size_full()),
+        )
     }
 }
-// impl View for SharedScreen {
-//     fn ui_name() -> &'static str {
-//         "SharedScreen"
-//     }
-
-//     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-//         enum Focus {}
-
-//         let frame = self.frame.clone();
-//         MouseEventHandler::new::<Focus, _>(0, cx, |_, cx| {
-//             Canvas::new(move |bounds, _, _, cx| {
-//                 if let Some(frame) = frame.clone() {
-//                     let size = constrain_size_preserving_aspect_ratio(
-//                         bounds.size(),
-//                         vec2f(frame.width() as f32, frame.height() as f32),
-//                     );
-//                     let origin = bounds.origin() + (bounds.size() / 2.) - size / 2.;
-//                     cx.scene().push_surface(gpui::platform::mac::Surface {
-//                         bounds: RectF::new(origin, size),
-//                         image_buffer: frame.image(),
-//                     });
-//                 }
-//             })
-//             .contained()
-//             .with_style(theme::current(cx).shared_screen)
-//         })
-//         .on_down(MouseButton::Left, |_, _, cx| cx.focus_parent())
-//         .into_any()
-//     }
-// }
 
 impl Item for SharedScreen {
     fn tab_tooltip_text(&self, _: &AppContext) -> Option<SharedString> {
@@ -121,25 +86,14 @@ impl Item for SharedScreen {
     }
 
     fn tab_content(&self, _: Option<usize>, _: &WindowContext<'_>) -> gpui::AnyElement {
-        div().child("Shared screen").into_any()
-        // Flex::row()
-        //     .with_child(
-        //         Svg::new("icons/desktop.svg")
-        //             .with_color(style.label.text.color)
-        //             .constrained()
-        //             .with_width(style.type_icon_width)
-        //             .aligned()
-        //             .contained()
-        //             .with_margin_right(style.spacing),
-        //     )
-        //     .with_child(
-        //         Label::new(
-        //             format!("{}'s screen", self.user.github_login),
-        //             style.label.clone(),
-        //         )
-        //         .aligned(),
-        //     )
-        //     .into_any()
+        h_stack()
+            .gap_1()
+            .child(IconElement::new(Icon::Screen))
+            .child(SharedString::from(format!(
+                "{}'s screen",
+                self.user.github_login
+            )))
+            .into_any()
     }
 
     fn set_nav_history(&mut self, history: ItemNavHistory, _: &mut ViewContext<Self>) {

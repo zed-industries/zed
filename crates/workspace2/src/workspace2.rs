@@ -326,7 +326,12 @@ pub struct TestCallHandler;
 
 #[cfg(any(test, feature = "test-support"))]
 impl CallHandler for TestCallHandler {
-    fn peer_state(&mut self, id: PeerId, cx: &mut ViewContext<Workspace>) -> Option<(bool, bool)> {
+    fn peer_state(
+        &mut self,
+        id: PeerId,
+        project: &Model<Project>,
+        cx: &mut ViewContext<Workspace>,
+    ) -> Option<(bool, bool)> {
         None
     }
 
@@ -409,7 +414,7 @@ impl AppState {
             workspace_store,
             node_runtime: FakeNodeRuntime::new(),
             build_window_options: |_, _, _| Default::default(),
-            call_factory: |_, _| Box::new(TestCallHandler),
+            call_factory: |_| Box::new(TestCallHandler),
         })
     }
 }
@@ -468,7 +473,12 @@ pub enum Event {
 
 #[async_trait(?Send)]
 pub trait CallHandler {
-    fn peer_state(&mut self, id: PeerId, cx: &mut ViewContext<Workspace>) -> Option<(bool, bool)>;
+    fn peer_state(
+        &mut self,
+        id: PeerId,
+        project: &Model<Project>,
+        cx: &mut ViewContext<Workspace>,
+    ) -> Option<(bool, bool)>;
     fn shared_screen_for_peer(
         &self,
         peer_id: PeerId,
@@ -546,7 +556,7 @@ struct FollowerState {
 
 enum WorkspaceBounds {}
 
-type CallFactory = fn(WeakView<Workspace>, &mut ViewContext<Workspace>) -> Box<dyn CallHandler>;
+type CallFactory = fn(&mut ViewContext<Workspace>) -> Box<dyn CallHandler>;
 impl Workspace {
     pub fn new(
         workspace_id: WorkspaceId,
@@ -760,7 +770,7 @@ impl Workspace {
             last_leaders_by_pane: Default::default(),
             window_edited: false,
 
-            call_handler: (app_state.call_factory)(weak_handle.clone(), cx),
+            call_handler: (app_state.call_factory)(cx),
             database_id: workspace_id,
             app_state,
             _observe_current_user,
@@ -2884,7 +2894,7 @@ impl Workspace {
         cx.notify();
 
         let (leader_in_this_project, leader_in_this_app) =
-            self.call_handler.peer_state(leader_id, cx)?;
+            self.call_handler.peer_state(leader_id, &self.project, cx)?;
         let mut items_to_activate = Vec::new();
         for (pane, state) in &self.follower_states {
             if state.leader_id != leader_id {
@@ -3385,7 +3395,7 @@ impl Workspace {
             fs: project.read(cx).fs().clone(),
             build_window_options: |_, _, _| Default::default(),
             node_runtime: FakeNodeRuntime::new(),
-            call_factory: |_, _| Box::new(TestCallHandler),
+            call_factory: |_| Box::new(TestCallHandler),
         });
         let workspace = Self::new(0, project, app_state, cx);
         workspace.active_pane.update(cx, |pane, cx| pane.focus(cx));
