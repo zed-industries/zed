@@ -39,7 +39,7 @@ use project::{Project, RepositoryEntry};
 use theme::ActiveTheme;
 use ui::{
     h_stack, prelude::*, Avatar, Button, ButtonLike, ButtonStyle2, Icon, IconButton, IconElement,
-    KeyBinding, PopoverMenu, Tooltip,
+    KeyBinding, Tooltip,
 };
 use util::ResultExt;
 use workspace::{notifications::NotifyResultExt, Workspace};
@@ -287,28 +287,30 @@ impl Render for CollabTitlebarItem {
             .child(h_stack().px_1p5().map(|this| {
                 if let Some(user) = current_user {
                     this.when_some(user.avatar.clone(), |this, avatar| {
-                        this.child(
-                            PopoverMenu::new(
-                                ButtonLike::new("user-menu")
-                                    .child(h_stack().gap_0p5().child(Avatar::data(avatar)).child(
-                                        IconElement::new(Icon::ChevronDown).color(Color::Muted),
-                                    ))
-                                    .style(ButtonStyle2::Subtle)
-                                    .tooltip(move |cx| Tooltip::text("Toggle User Menu", cx))
-                                    .into_any_element(),
-                            )
-                            .children(vec![div().w_96().h_96().bg(gpui::red())]),
-                        )
+                        // TODO: Finish implementing user menu popover
+                        //
                         // this.child(
-                        //     ButtonLike::new("user-menu")
-                        //         .child(
-                        //             h_stack().gap_0p5().child(Avatar::data(avatar)).child(
+                        //     PopoverMenu::new(
+                        //         ButtonLike::new("user-menu")
+                        //             .child(h_stack().gap_0p5().child(Avatar::data(avatar)).child(
                         //                 IconElement::new(Icon::ChevronDown).color(Color::Muted),
-                        //             ),
-                        //         )
-                        //         .style(ButtonStyle2::Subtle)
-                        //         .tooltip(move |cx| Tooltip::text("Toggle User Menu", cx)),
+                        //             ))
+                        //             .style(ButtonStyle2::Subtle)
+                        //             .tooltip(move |cx| Tooltip::text("Toggle User Menu", cx))
+                        //             .into_any_element(),
+                        //     )
+                        //     .children(vec![div().w_96().h_96().bg(gpui::red())]),
                         // )
+                        this.child(
+                            ButtonLike::new("user-menu")
+                                .child(
+                                    h_stack().gap_0p5().child(Avatar::data(avatar)).child(
+                                        IconElement::new(Icon::ChevronDown).color(Color::Muted),
+                                    ),
+                                )
+                                .style(ButtonStyle2::Subtle)
+                                .tooltip(move |cx| Tooltip::text("Toggle User Menu", cx)),
+                        )
                     })
                 } else {
                     this.child(Button::new("sign_in", "Sign in").on_click(move |_, cx| {
