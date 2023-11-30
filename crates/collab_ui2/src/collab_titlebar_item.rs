@@ -38,8 +38,8 @@ use gpui::{
 use project::Project;
 use theme::ActiveTheme;
 use ui::{
-    h_stack, prelude::*, v_stack, Avatar, Button, ButtonLike, ButtonStyle2, Icon, IconButton,
-    IconElement, KeyBinding, List, ListItem, PopoverMenu, Tooltip,
+    h_stack, prelude::*, Avatar, Button, ButtonLike, ButtonStyle2, Icon, IconButton, IconElement,
+    KeyBinding, Tooltip,
 };
 use util::ResultExt;
 use workspace::{notifications::NotifyResultExt, Workspace};
@@ -150,21 +150,24 @@ impl Render for CollabTitlebarItem {
             .child(
                 h_stack()
                     .gap_1()
-                    // TODO - Add player menu
                     .when(is_in_room, |this| {
-                        this.child(
-                            div()
-                                .border()
-                                .border_color(gpui::red())
-                                .id("project_owner_indicator")
-                                .child(
-                                    Button::new("project_owner", "project_owner")
-                                        .style(ButtonStyle2::Subtle)
-                                        .color(Some(Color::Player(0))),
-                                )
-                                .tooltip(move |cx| Tooltip::text("Toggle following", cx)),
-                        )
+                        this.children(self.render_project_owner(cx))
                     })
+                    // TODO - Add player menu
+                    // .when(is_in_room, |this| {
+                    //     this.child(
+                    //         div()
+                    //             .border()
+                    //             .border_color(gpui::red())
+                    //             .id("project_owner_indicator")
+                    //             .child(
+                    //                 Button::new("project_owner", "project_owner")
+                    //                     .style(ButtonStyle2::Subtle)
+                    //                     .color(Some(Color::Player(0))),
+                    //             )
+                    //             .tooltip(move |cx| Tooltip::text("Toggle following", cx)),
+                    //     )
+                    // })
                     // TODO - Add project menu
                     .child(
                         div()
@@ -274,14 +277,14 @@ impl Render for CollabTitlebarItem {
                                 .child(
                                     IconButton::new(
                                         "mute-microphone",
-                                        if is_muted.clone() {
+                                        if is_muted {
                                             ui::Icon::MicMute
                                         } else {
                                             ui::Icon::Mic
                                         },
                                     )
                                     .style(ButtonStyle2::Subtle)
-                                    .selected(is_muted.clone())
+                                    .selected(is_muted)
                                     .on_click({
                                         let workspace = workspace.clone();
                                         move |_, cx| {
@@ -474,6 +477,54 @@ impl CollabTitlebarItem {
             //         project_popover: None,
             _subscriptions: subscriptions,
         }
+    }
+
+    // resolve if you are in a room -> render_project_owner
+    // render_project_owner -> resolve if you are in a room -> Option<foo>
+
+    pub fn render_project_owner(&self, cx: &mut ViewContext<Self>) -> Option<impl Element> {
+        // TODO: We can't finish implementing this until project sharing works
+        // - [ ] Show the project owner when the project is remote (maybe done)
+        // - [x] Show the project owner when the project is local
+        // - [ ] Show the project owner with a lock icon when the project is local and unshared
+
+        let remote_id = self.project.read(cx).remote_id();
+        let is_local = remote_id.is_none();
+        let is_shared = self.project.read(cx).is_shared();
+        let (user_name, participant_index) = {
+            if let Some(host) = self.project.read(cx).host() {
+                debug_assert!(!is_local);
+                let (Some(host_user), Some(participant_index)) = (
+                    self.user_store.read(cx).get_cached_user(host.user_id),
+                    self.user_store
+                        .read(cx)
+                        .participant_indices()
+                        .get(&host.user_id),
+                ) else {
+                    return None;
+                };
+                (host_user.github_login.clone(), participant_index.0)
+            } else {
+                debug_assert!(is_local);
+                let name = self
+                    .user_store
+                    .read(cx)
+                    .current_user()
+                    .map(|user| user.github_login.clone())?;
+                (name, 0)
+            }
+        };
+        Some(
+            Button::new(
+                "project_owner_trigger",
+                format!("{user_name} ({})", !is_shared),
+            )
+            .color(Color::Player(participant_index))
+            .style(ButtonStyle2::Subtle)
+            .into_element(),
+        )
+
+        // add lock if you are in a locked project
     }
 
     // fn collect_title_root_names(
