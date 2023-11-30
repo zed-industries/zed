@@ -15,7 +15,7 @@ use std::{
     },
 };
 use text::Point;
-use ui::{v_stack, HighlightedLabel, ListItem};
+use ui::{prelude::*, v_stack, HighlightedLabel, ListItem};
 use util::{paths::PathLikeWithPosition, post_inc, ResultExt};
 use workspace::Workspace;
 

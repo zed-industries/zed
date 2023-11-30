@@ -29,8 +29,7 @@ use std::{
     path::Path,
     sync::Arc,
 };
-use theme::ActiveTheme as _;
-use ui::{v_stack, ContextMenu, IconElement, Label, ListItem};
+use ui::{prelude::*, v_stack, ContextMenu, IconElement, Label, ListItem};
 use unicase::UniCase;
 use util::{maybe, ResultExt, TryFutureExt};
 use workspace::{
@@ -2845,7 +2844,7 @@ mod tests {
                 let worktree = worktree.read(cx);
                 if let Ok(relative_path) = path.strip_prefix(worktree.root_name()) {
                     let entry_id = worktree.entry_for_path(relative_path).unwrap().id;
-                    panel.selection = Some(Selection {
+                    panel.selection = Some(crate::Selection {
                         worktree_id: worktree.id(),
                         entry_id,
                     });
