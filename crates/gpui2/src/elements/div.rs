@@ -1492,6 +1492,10 @@ impl ScrollHandle {
         }
     }
 
+    pub fn bounds_for_item(&self, ix: usize) -> Option<Bounds<Pixels>> {
+        self.0.borrow().child_bounds.get(ix).cloned()
+    }
+
     /// scroll_to_item scrolls the minimal amount to ensure that the item is
     /// fully visible
     pub fn scroll_to_item(&self, ix: usize) {

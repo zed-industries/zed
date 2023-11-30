@@ -385,10 +385,6 @@ enum ListEntry {
     ContactPlaceholder,
 }
 
-// impl Entity for CollabPanel {
-//     type Event = Event;
-// }
-
 impl CollabPanel {
     pub fn new(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) -> View<Self> {
         cx.build_view(|cx| {
@@ -1079,71 +1075,71 @@ impl CollabPanel {
             self.entries.push(ListEntry::ContactPlaceholder);
         }
 
-        //         if select_same_item {
-        //             if let Some(prev_selected_entry) = prev_selected_entry {
-        //                 self.selection.take();
-        //                 for (ix, entry) in self.entries.iter().enumerate() {
-        //                     if *entry == prev_selected_entry {
-        //                         self.selection = Some(ix);
-        //                         break;
-        //                     }
-        //                 }
+        // if select_same_item {
+        //     if let Some(prev_selected_entry) = prev_selected_entry {
+        //         self.selection.take();
+        //         for (ix, entry) in self.entries.iter().enumerate() {
+        //             if *entry == prev_selected_entry {
+        //                 self.selection = Some(ix);
+        //                 break;
         //             }
-        //         } else {
-        //             self.selection = self.selection.and_then(|prev_selection| {
-        //                 if self.entries.is_empty() {
-        //                     None
-        //                 } else {
-        //                     Some(prev_selection.min(self.entries.len() - 1))
-        //                 }
-        //             });
         //         }
-
-        //         let old_scroll_top = self.list_state.logical_scroll_top();
-
-        //         self.list_state.reset(self.entries.len());
-
-        //         if scroll_to_top {
-        //             self.list_state.scroll_to(ListOffset::default());
+        //     }
+        // } else {
+        //     self.selection = self.selection.and_then(|prev_selection| {
+        //         if self.entries.is_empty() {
+        //             None
         //         } else {
-        //             // Attempt to maintain the same scroll position.
-        //             if let Some(old_top_entry) = old_entries.get(old_scroll_top.item_ix) {
-        //                 let new_scroll_top = self
+        //             Some(prev_selection.min(self.entries.len() - 1))
+        //         }
+        //     });
+        // }
+
+        // let old_scroll_top = self.list_state.logical_scroll_top();
+
+        // self.list_state.reset(self.entries.len());
+
+        // if scroll_to_top {
+        //     self.list_state.scroll_to(ListOffset::default());
+        // } else {
+        //     // Attempt to maintain the same scroll position.
+        //     if let Some(old_top_entry) = old_entries.get(old_scroll_top.item_ix) {
+        //         let new_scroll_top = self
+        //             .entries
+        //             .iter()
+        //             .position(|entry| entry == old_top_entry)
+        //             .map(|item_ix| ListOffset {
+        //                 item_ix,
+        //                 offset_in_item: old_scroll_top.offset_in_item,
+        //             })
+        //             .or_else(|| {
+        //                 let entry_after_old_top = old_entries.get(old_scroll_top.item_ix + 1)?;
+        //                 let item_ix = self
         //                     .entries
         //                     .iter()
-        //                     .position(|entry| entry == old_top_entry)
-        //                     .map(|item_ix| ListOffset {
-        //                         item_ix,
-        //                         offset_in_item: old_scroll_top.offset_in_item,
-        //                     })
-        //                     .or_else(|| {
-        //                         let entry_after_old_top = old_entries.get(old_scroll_top.item_ix + 1)?;
-        //                         let item_ix = self
-        //                             .entries
-        //                             .iter()
-        //                             .position(|entry| entry == entry_after_old_top)?;
-        //                         Some(ListOffset {
-        //                             item_ix,
-        //                             offset_in_item: 0.,
-        //                         })
-        //                     })
-        //                     .or_else(|| {
-        //                         let entry_before_old_top =
-        //                             old_entries.get(old_scroll_top.item_ix.saturating_sub(1))?;
-        //                         let item_ix = self
-        //                             .entries
-        //                             .iter()
-        //                             .position(|entry| entry == entry_before_old_top)?;
-        //                         Some(ListOffset {
-        //                             item_ix,
-        //                             offset_in_item: 0.,
-        //                         })
-        //                     });
+        //                     .position(|entry| entry == entry_after_old_top)?;
+        //                 Some(ListOffset {
+        //                     item_ix,
+        //                     offset_in_item: 0.,
+        //                 })
+        //             })
+        //             .or_else(|| {
+        //                 let entry_before_old_top =
+        //                     old_entries.get(old_scroll_top.item_ix.saturating_sub(1))?;
+        //                 let item_ix = self
+        //                     .entries
+        //                     .iter()
+        //                     .position(|entry| entry == entry_before_old_top)?;
+        //                 Some(ListOffset {
+        //                     item_ix,
+        //                     offset_in_item: 0.,
+        //                 })
+        //             });
 
-        //                 self.list_state
-        //                     .scroll_to(new_scroll_top.unwrap_or(old_scroll_top));
-        //             }
-        //         }
+        //         self.list_state
+        //             .scroll_to(new_scroll_top.unwrap_or(old_scroll_top));
+        //     }
+        // }
 
         cx.notify();
     }
@@ -1687,8 +1683,6 @@ impl CollabPanel {
         ix: usize,
         cx: &mut ViewContext<Self>,
     ) {
-        // self.context_menu_on_selected = position.is_none();
-
         let clipboard_channel_name = self.channel_clipboard.as_ref().and_then(|clipboard| {
             self.channel_store
                 .read(cx)
@@ -1779,10 +1773,16 @@ impl CollabPanel {
         });
 
         cx.focus_view(&context_menu);
-        let subscription = cx.subscribe(&context_menu, |this, _, _: &DismissEvent, cx| {
-            this.context_menu.take();
-            cx.notify();
-        });
+        let subscription =
+            cx.subscribe(&context_menu, |this, _, _: &DismissEvent, cx| {
+                if this.context_menu.as_ref().is_some_and(|context_menu| {
+                    context_menu.0.focus_handle(cx).contains_focused(cx)
+                }) {
+                    cx.focus_self();
+                }
+                this.context_menu.take();
+                cx.notify();
+            });
         self.context_menu = Some((context_menu, position, subscription));
 
         cx.notify();
@@ -2147,8 +2147,15 @@ impl CollabPanel {
         let Some(channel) = self.selected_channel() else {
             return;
         };
+        let Some(bounds) = self
+            .selection
+            .and_then(|ix| self.scroll_handle.bounds_for_item(ix))
+        else {
+            return;
+        };
 
-        self.deploy_channel_context_menu(todo!(), channel.id, self.selection.unwrap(), cx);
+        self.deploy_channel_context_menu(bounds.center(), channel.id, self.selection.unwrap(), cx);
+        cx.stop_propagation();
     }
 
     fn selected_channel(&self) -> Option<&Arc<Channel>> {
@@ -3258,6 +3265,12 @@ impl Render for CollabPanel {
             } else {
                 self.render_signed_in(cx)
             })
+            .children(self.context_menu.as_ref().map(|(menu, position, _)| {
+                overlay()
+                    .position(*position)
+                    .anchor(gpui::AnchorCorner::TopLeft)
+                    .child(menu.clone())
+            }))
     }
 }
 
