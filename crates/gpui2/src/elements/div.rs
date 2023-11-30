@@ -636,12 +636,20 @@ impl Element for Div {
             let mut state = scroll_handle.0.borrow_mut();
             state.child_bounds = Vec::with_capacity(element_state.child_layout_ids.len());
             state.bounds = bounds;
+            let requested = state.requested_scroll_top.take();
 
-            for child_layout_id in &element_state.child_layout_ids {
+            for (ix, child_layout_id) in element_state.child_layout_ids.iter().enumerate() {
                 let child_bounds = cx.layout_bounds(*child_layout_id);
                 child_min = child_min.min(&child_bounds.origin);
                 child_max = child_max.max(&child_bounds.lower_right());
-                state.child_bounds.push(child_bounds)
+                state.child_bounds.push(child_bounds);
+
+                if let Some(requested) = requested.as_ref() {
+                    if requested.0 == ix {
+                        *state.offset.borrow_mut() =
+                            bounds.origin - (child_bounds.origin - point(px(0.), requested.1));
+                    }
+                }
             }
             (child_max - child_min).into()
         } else {
@@ -1460,6 +1468,7 @@ struct ScrollHandleState {
     offset: Rc<RefCell<Point<Pixels>>>,
     bounds: Bounds<Pixels>,
     child_bounds: Vec<Bounds<Pixels>>,
+    requested_scroll_top: Option<(usize, Pixels)>,
 }
 
 #[derive(Clone)]
@@ -1512,5 +1521,23 @@ impl ScrollHandle {
         } else if bounds.bottom() + scroll_offset > state.bounds.bottom() {
             state.offset.borrow_mut().y = state.bounds.bottom() - bounds.bottom();
         }
+    }
+
+    pub fn logical_scroll_top(&self) -> (usize, Pixels) {
+        let ix = self.top_item();
+        let state = self.0.borrow();
+
+        if let Some(child_bounds) = state.child_bounds.get(ix) {
+            (
+                ix,
+                child_bounds.top() + state.offset.borrow().y - state.bounds.top(),
+            )
+        } else {
+            (ix, px(0.))
+        }
+    }
+
+    pub fn set_logical_scroll_top(&self, ix: usize, px: Pixels) {
+        self.0.borrow_mut().requested_scroll_top = Some((ix, px));
     }
 }

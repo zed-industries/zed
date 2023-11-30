@@ -303,7 +303,6 @@ pub struct CollabPanel {
     project: Model<Project>,
     match_candidates: Vec<StringMatchCandidate>,
     scroll_handle: ScrollHandle,
-    // list_state: ListState<Self>,
     subscriptions: Vec<Subscription>,
     collapsed_sections: Vec<Section>,
     collapsed_channels: Vec<ChannelId>,
@@ -590,7 +589,6 @@ impl CollabPanel {
                 client: workspace.app_state().client.clone(),
                 //                 context_menu_on_selected: true,
                 drag_target_channel: ChannelDragTarget::None,
-                //                 list_state,
             };
 
             this.update_entries(false, cx);
@@ -706,9 +704,9 @@ impl CollabPanel {
         let query = self.filter_editor.read(cx).text(cx);
         let executor = cx.background_executor().clone();
 
-        // let prev_selected_entry = self.selection.and_then(|ix| self.entries.get(ix).cloned());
-        let _old_entries = mem::take(&mut self.entries);
-        //         let mut scroll_to_top = false;
+        let prev_selected_entry = self.selection.and_then(|ix| self.entries.get(ix).cloned());
+        let old_entries = mem::take(&mut self.entries);
+        let scroll_to_top = false;
 
         //         if let Some(room) = ActiveCall::global(cx).read(cx).room() {
         //             self.entries.push(ListEntry::Header(Section::ActiveCall));
@@ -1075,71 +1073,62 @@ impl CollabPanel {
             self.entries.push(ListEntry::ContactPlaceholder);
         }
 
-        // if select_same_item {
-        //     if let Some(prev_selected_entry) = prev_selected_entry {
-        //         self.selection.take();
-        //         for (ix, entry) in self.entries.iter().enumerate() {
-        //             if *entry == prev_selected_entry {
-        //                 self.selection = Some(ix);
-        //                 break;
-        //             }
-        //         }
-        //     }
-        // } else {
-        //     self.selection = self.selection.and_then(|prev_selection| {
-        //         if self.entries.is_empty() {
-        //             None
-        //         } else {
-        //             Some(prev_selection.min(self.entries.len() - 1))
-        //         }
-        //     });
-        // }
+        if select_same_item {
+            if let Some(prev_selected_entry) = prev_selected_entry {
+                self.selection.take();
+                for (ix, entry) in self.entries.iter().enumerate() {
+                    if *entry == prev_selected_entry {
+                        self.selection = Some(ix);
+                        self.scroll_handle.scroll_to_item(ix);
+                        break;
+                    }
+                }
+            }
+        } else {
+            self.selection = self.selection.and_then(|prev_selection| {
+                if self.entries.is_empty() {
+                    None
+                } else {
+                    let ix = prev_selection.min(self.entries.len() - 1);
+                    self.scroll_handle.scroll_to_item(ix);
+                    Some(ix)
+                }
+            });
+        }
 
-        // let old_scroll_top = self.list_state.logical_scroll_top();
+        if scroll_to_top {
+            self.scroll_handle.scroll_to_item(0)
+        } else {
+            let (old_index, old_offset) = self.scroll_handle.logical_scroll_top();
+            // Attempt to maintain the same scroll position.
+            if let Some(old_top_entry) = old_entries.get(old_index) {
+                let (new_index, new_offset) = self
+                    .entries
+                    .iter()
+                    .position(|entry| entry == old_top_entry)
+                    .map(|item_ix| (item_ix, old_offset))
+                    .or_else(|| {
+                        let entry_after_old_top = old_entries.get(old_index + 1)?;
+                        let item_ix = self
+                            .entries
+                            .iter()
+                            .position(|entry| entry == entry_after_old_top)?;
+                        Some((item_ix, px(0.)))
+                    })
+                    .or_else(|| {
+                        let entry_before_old_top = old_entries.get(old_index.saturating_sub(1))?;
+                        let item_ix = self
+                            .entries
+                            .iter()
+                            .position(|entry| entry == entry_before_old_top)?;
+                        Some((item_ix, px(0.)))
+                    })
+                    .unwrap_or_else(|| (old_index, old_offset));
 
-        // self.list_state.reset(self.entries.len());
-
-        // if scroll_to_top {
-        //     self.list_state.scroll_to(ListOffset::default());
-        // } else {
-        //     // Attempt to maintain the same scroll position.
-        //     if let Some(old_top_entry) = old_entries.get(old_scroll_top.item_ix) {
-        //         let new_scroll_top = self
-        //             .entries
-        //             .iter()
-        //             .position(|entry| entry == old_top_entry)
-        //             .map(|item_ix| ListOffset {
-        //                 item_ix,
-        //                 offset_in_item: old_scroll_top.offset_in_item,
-        //             })
-        //             .or_else(|| {
-        //                 let entry_after_old_top = old_entries.get(old_scroll_top.item_ix + 1)?;
-        //                 let item_ix = self
-        //                     .entries
-        //                     .iter()
-        //                     .position(|entry| entry == entry_after_old_top)?;
-        //                 Some(ListOffset {
-        //                     item_ix,
-        //                     offset_in_item: 0.,
-        //                 })
-        //             })
-        //             .or_else(|| {
-        //                 let entry_before_old_top =
-        //                     old_entries.get(old_scroll_top.item_ix.saturating_sub(1))?;
-        //                 let item_ix = self
-        //                     .entries
-        //                     .iter()
-        //                     .position(|entry| entry == entry_before_old_top)?;
-        //                 Some(ListOffset {
-        //                     item_ix,
-        //                     offset_in_item: 0.,
-        //                 })
-        //             });
-
-        //         self.list_state
-        //             .scroll_to(new_scroll_top.unwrap_or(old_scroll_top));
-        //     }
-        // }
+                self.scroll_handle
+                    .set_logical_scroll_top(new_index, new_offset);
+            }
+        }
 
         cx.notify();
     }
@@ -3430,106 +3419,106 @@ impl FocusableView for CollabPanel {
     }
 }
 
-// impl PartialEq for ListEntry {
-//     fn eq(&self, other: &Self) -> bool {
-//         match self {
-//             ListEntry::Header(section_1) => {
-//                 if let ListEntry::Header(section_2) = other {
-//                     return section_1 == section_2;
-//                 }
-//             }
-//             ListEntry::CallParticipant { user: user_1, .. } => {
-//                 if let ListEntry::CallParticipant { user: user_2, .. } = other {
-//                     return user_1.id == user_2.id;
-//                 }
-//             }
-//             ListEntry::ParticipantProject {
-//                 project_id: project_id_1,
-//                 ..
-//             } => {
-//                 if let ListEntry::ParticipantProject {
-//                     project_id: project_id_2,
-//                     ..
-//                 } = other
-//                 {
-//                     return project_id_1 == project_id_2;
-//                 }
-//             }
-//             ListEntry::ParticipantScreen {
-//                 peer_id: peer_id_1, ..
-//             } => {
-//                 if let ListEntry::ParticipantScreen {
-//                     peer_id: peer_id_2, ..
-//                 } = other
-//                 {
-//                     return peer_id_1 == peer_id_2;
-//                 }
-//             }
-//             ListEntry::Channel {
-//                 channel: channel_1, ..
-//             } => {
-//                 if let ListEntry::Channel {
-//                     channel: channel_2, ..
-//                 } = other
-//                 {
-//                     return channel_1.id == channel_2.id;
-//                 }
-//             }
-//             ListEntry::ChannelNotes { channel_id } => {
-//                 if let ListEntry::ChannelNotes {
-//                     channel_id: other_id,
-//                 } = other
-//                 {
-//                     return channel_id == other_id;
-//                 }
-//             }
-//             ListEntry::ChannelChat { channel_id } => {
-//                 if let ListEntry::ChannelChat {
-//                     channel_id: other_id,
-//                 } = other
-//                 {
-//                     return channel_id == other_id;
-//                 }
-//             }
-//             ListEntry::ChannelInvite(channel_1) => {
-//                 if let ListEntry::ChannelInvite(channel_2) = other {
-//                     return channel_1.id == channel_2.id;
-//                 }
-//             }
-//             ListEntry::IncomingRequest(user_1) => {
-//                 if let ListEntry::IncomingRequest(user_2) = other {
-//                     return user_1.id == user_2.id;
-//                 }
-//             }
-//             ListEntry::OutgoingRequest(user_1) => {
-//                 if let ListEntry::OutgoingRequest(user_2) = other {
-//                     return user_1.id == user_2.id;
-//                 }
-//             }
-//             ListEntry::Contact {
-//                 contact: contact_1, ..
-//             } => {
-//                 if let ListEntry::Contact {
-//                     contact: contact_2, ..
-//                 } = other
-//                 {
-//                     return contact_1.user.id == contact_2.user.id;
-//                 }
-//             }
-//             ListEntry::ChannelEditor { depth } => {
-//                 if let ListEntry::ChannelEditor { depth: other_depth } = other {
-//                     return depth == other_depth;
-//                 }
-//             }
-//             ListEntry::ContactPlaceholder => {
-//                 if let ListEntry::ContactPlaceholder = other {
-//                     return true;
-//                 }
-//             }
-//         }
-//         false
-//     }
-// }
+impl PartialEq for ListEntry {
+    fn eq(&self, other: &Self) -> bool {
+        match self {
+            ListEntry::Header(section_1) => {
+                if let ListEntry::Header(section_2) = other {
+                    return section_1 == section_2;
+                }
+            }
+            // ListEntry::CallParticipant { user: user_1, .. } => {
+            //     if let ListEntry::CallParticipant { user: user_2, .. } = other {
+            //         return user_1.id == user_2.id;
+            //     }
+            // }
+            // ListEntry::ParticipantProject {
+            //     project_id: project_id_1,
+            //     ..
+            // } => {
+            //     if let ListEntry::ParticipantProject {
+            //         project_id: project_id_2,
+            //         ..
+            //     } = other
+            //     {
+            //         return project_id_1 == project_id_2;
+            //     }
+            // }
+            // ListEntry::ParticipantScreen {
+            //     peer_id: peer_id_1, ..
+            // } => {
+            //     if let ListEntry::ParticipantScreen {
+            //         peer_id: peer_id_2, ..
+            //     } = other
+            //     {
+            //         return peer_id_1 == peer_id_2;
+            //     }
+            // }
+            ListEntry::Channel {
+                channel: channel_1, ..
+            } => {
+                if let ListEntry::Channel {
+                    channel: channel_2, ..
+                } = other
+                {
+                    return channel_1.id == channel_2.id;
+                }
+            }
+            // ListEntry::ChannelNotes { channel_id } => {
+            //     if let ListEntry::ChannelNotes {
+            //         channel_id: other_id,
+            //     } = other
+            //     {
+            //         return channel_id == other_id;
+            //     }
+            // }
+            // ListEntry::ChannelChat { channel_id } => {
+            //     if let ListEntry::ChannelChat {
+            //         channel_id: other_id,
+            //     } = other
+            //     {
+            //         return channel_id == other_id;
+            //     }
+            // }
+            // ListEntry::ChannelInvite(channel_1) => {
+            //     if let ListEntry::ChannelInvite(channel_2) = other {
+            //         return channel_1.id == channel_2.id;
+            //     }
+            // }
+            ListEntry::IncomingRequest(user_1) => {
+                if let ListEntry::IncomingRequest(user_2) = other {
+                    return user_1.id == user_2.id;
+                }
+            }
+            ListEntry::OutgoingRequest(user_1) => {
+                if let ListEntry::OutgoingRequest(user_2) = other {
+                    return user_1.id == user_2.id;
+                }
+            }
+            ListEntry::Contact {
+                contact: contact_1, ..
+            } => {
+                if let ListEntry::Contact {
+                    contact: contact_2, ..
+                } = other
+                {
+                    return contact_1.user.id == contact_2.user.id;
+                }
+            }
+            ListEntry::ChannelEditor { depth } => {
+                if let ListEntry::ChannelEditor { depth: other_depth } = other {
+                    return depth == other_depth;
+                }
+            }
+            ListEntry::ContactPlaceholder => {
+                if let ListEntry::ContactPlaceholder = other {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+}
 
 // fn render_icon_button(style: &IconButton, svg_path: &'static str) -> impl Element<CollabPanel> {
 //     Svg::new(svg_path)
