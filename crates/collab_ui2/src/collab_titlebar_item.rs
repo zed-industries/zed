@@ -239,54 +239,74 @@ impl Render for CollabTitlebarItem {
             .when(is_in_room, |this| {
                 this.child(
                     h_stack()
+                        .gap_1()
                         .child(
                             h_stack()
-                                .child(Button::new(
-                                    "toggle_sharing",
-                                    if is_shared { "Unshare" } else { "Share" },
-                                ))
-                                .child(IconButton::new("leave-call", ui::Icon::Exit).on_click({
-                                    let workspace = workspace.clone();
-                                    move |_, cx| {
-                                        workspace
-                                            .update(cx, |this, cx| {
-                                                this.call_state().hang_up(cx).detach();
-                                            })
-                                            .log_err();
-                                    }
-                                })),
+                                .gap_1()
+                                .child(
+                                    Button::new(
+                                        "toggle_sharing",
+                                        if is_shared { "Unshare" } else { "Share" },
+                                    )
+                                    .style(ButtonStyle2::Subtle),
+                                )
+                                .child(
+                                    IconButton::new("leave-call", ui::Icon::Exit)
+                                        .style(ButtonStyle2::Subtle)
+                                        .on_click({
+                                            let workspace = workspace.clone();
+                                            move |_, cx| {
+                                                workspace
+                                                    .update(cx, |this, cx| {
+                                                        this.call_state().hang_up(cx).detach();
+                                                    })
+                                                    .log_err();
+                                            }
+                                        }),
+                                ),
                         )
                         .child(
                             h_stack()
-                                .child(IconButton::new("mute-microphone", mic_icon).on_click({
-                                    let workspace = workspace.clone();
-                                    move |_, cx| {
-                                        workspace
-                                            .update(cx, |this, cx| {
-                                                this.call_state().toggle_mute(cx);
-                                            })
-                                            .log_err();
-                                    }
-                                }))
-                                .child(IconButton::new("mute-sound", speakers_icon).on_click({
-                                    let workspace = workspace.clone();
-                                    move |_, cx| {
-                                        workspace
-                                            .update(cx, |this, cx| {
-                                                this.call_state().toggle_deafen(cx);
-                                            })
-                                            .log_err();
-                                    }
-                                }))
-                                .child(IconButton::new("screen-share", ui::Icon::Screen).on_click(
-                                    move |_, cx| {
-                                        workspace
-                                            .update(cx, |this, cx| {
-                                                this.call_state().toggle_screen_share(cx);
-                                            })
-                                            .log_err();
-                                    },
-                                ))
+                                .gap_1()
+                                .child(
+                                    IconButton::new("mute-microphone", mic_icon)
+                                        .style(ButtonStyle2::Subtle)
+                                        .on_click({
+                                            let workspace = workspace.clone();
+                                            move |_, cx| {
+                                                workspace
+                                                    .update(cx, |this, cx| {
+                                                        this.call_state().toggle_mute(cx);
+                                                    })
+                                                    .log_err();
+                                            }
+                                        }),
+                                )
+                                .child(
+                                    IconButton::new("mute-sound", speakers_icon)
+                                        .style(ButtonStyle2::Subtle)
+                                        .on_click({
+                                            let workspace = workspace.clone();
+                                            move |_, cx| {
+                                                workspace
+                                                    .update(cx, |this, cx| {
+                                                        this.call_state().toggle_deafen(cx);
+                                                    })
+                                                    .log_err();
+                                            }
+                                        }),
+                                )
+                                .child(
+                                    IconButton::new("screen-share", ui::Icon::Screen)
+                                        .style(ButtonStyle2::Subtle)
+                                        .on_click(move |_, cx| {
+                                            workspace
+                                                .update(cx, |this, cx| {
+                                                    this.call_state().toggle_screen_share(cx);
+                                                })
+                                                .log_err();
+                                        }),
+                                )
                                 .pl_2(),
                         ),
                 )
@@ -295,20 +315,14 @@ impl Render for CollabTitlebarItem {
                 if let Some(user) = current_user {
                     this.when_some(user.avatar.clone(), |this, avatar| {
                         this.child(
-                            PopoverMenu::new(
-                                ButtonLike::new("user-menu")
-                                    .child(h_stack().gap_0p5().child(Avatar::data(avatar)).child(
+                            ButtonLike::new("user-menu")
+                                .child(
+                                    h_stack().gap_0p5().child(Avatar::data(avatar)).child(
                                         IconElement::new(Icon::ChevronDown).color(Color::Muted),
-                                    ))
-                                    .style(ButtonStyle2::Subtle)
-                                    .tooltip(move |cx| Tooltip::text("Toggle User Menu", cx))
-                                    .into_any_element(),
-                            )
-                            .children(vec![
-                                ListItem::new("foo"),
-                                ListItem::new("bar"),
-                                ListItem::new("baz"),
-                            ]),
+                                    ),
+                                )
+                                .style(ButtonStyle2::Subtle)
+                                .tooltip(move |cx| Tooltip::text("Toggle User Menu", cx)),
                         )
                     })
                 } else {

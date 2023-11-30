@@ -1,10 +1,9 @@
-use gpui::{
-    div, overlay, AnyElement, Div, Element, ElementId, IntoElement, ParentElement, RenderOnce,
-    Styled, WindowContext,
-};
+use gpui::{div, overlay, AnyElement, Div, ParentElement, RenderOnce, Styled, WindowContext};
 use smallvec::SmallVec;
 
-use crate::{prelude::*, ElevationIndex, List, Popover};
+use crate::{prelude::*, Popover};
+
+// 🚧 Under Construction
 
 #[derive(IntoElement)]
 pub struct PopoverMenu {
@@ -15,7 +14,7 @@ pub struct PopoverMenu {
 impl RenderOnce for PopoverMenu {
     type Rendered = Div;
 
-    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
+    fn render(self, _cx: &mut WindowContext) -> Self::Rendered {
         div()
             .relative()
             .child(self.trigger)
