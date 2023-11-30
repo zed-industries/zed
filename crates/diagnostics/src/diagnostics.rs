@@ -126,7 +126,7 @@ impl View for ProjectDiagnosticsEditor {
         json!({
             "project": json!({
                 "language_servers": project.language_server_statuses().collect::<Vec<_>>(),
-                "summary": project.diagnostic_summary(cx),
+                "summary": project.diagnostic_summary(false, cx),
             }),
             "summary": self.summary,
             "paths_to_update": self.paths_to_update.iter().map(|(server_id, paths)|
@@ -195,7 +195,7 @@ impl ProjectDiagnosticsEditor {
         });
 
         let project = project_handle.read(cx);
-        let summary = project.diagnostic_summary(cx);
+        let summary = project.diagnostic_summary(false, cx);
         let mut this = Self {
             project: project_handle,
             summary,
@@ -241,7 +241,7 @@ impl ProjectDiagnosticsEditor {
         let mut new_summaries: HashMap<LanguageServerId, HashSet<ProjectPath>> = self
             .project
             .read(cx)
-            .diagnostic_summaries(cx)
+            .diagnostic_summaries(false, cx)
             .fold(HashMap::default(), |mut summaries, (path, server_id, _)| {
                 summaries.entry(server_id).or_default().insert(path);
                 summaries
@@ -320,7 +320,7 @@ impl ProjectDiagnosticsEditor {
                 .context("rechecking diagnostics for paths")?;
 
                 this.update(&mut cx, |this, cx| {
-                    this.summary = this.project.read(cx).diagnostic_summary(cx);
+                    this.summary = this.project.read(cx).diagnostic_summary(false, cx);
                     cx.emit(Event::TitleChanged);
                 })?;
                 anyhow::Ok(())
