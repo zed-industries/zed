@@ -518,6 +518,7 @@ impl PickerDelegate for FileFinderDelegate {
     }
 
     fn update_matches(&mut self, raw_query: String, cx: &mut ViewContext<FileFinder>) -> Task<()> {
+        let raw_query = raw_query.trim();
         if raw_query.is_empty() {
             let project = self.project.read(cx);
             self.latest_search_id = post_inc(&mut self.search_count);
@@ -539,7 +540,6 @@ impl PickerDelegate for FileFinderDelegate {
             cx.notify();
             Task::ready(())
         } else {
-            let raw_query = &raw_query;
             let query = PathLikeWithPosition::parse_str(raw_query, |path_like_str| {
                 Ok::<_, std::convert::Infallible>(FileSearchQuery {
                     raw_query: raw_query.to_owned(),
@@ -735,6 +735,7 @@ mod tests {
         cx.dispatch_action(window.into(), Toggle);
 
         let finder = cx.read(|cx| workspace.read(cx).modal::<FileFinder>().unwrap());
+
         finder
             .update(cx, |finder, cx| {
                 finder.delegate_mut().update_matches("bna".to_string(), cx)
@@ -743,7 +744,6 @@ mod tests {
         finder.read_with(cx, |finder, _| {
             assert_eq!(finder.delegate().matches.len(), 2);
         });
-
         let active_pane = cx.read(|cx| workspace.read(cx).active_pane().clone());
         cx.dispatch_action(window.into(), SelectNext);
         cx.dispatch_action(window.into(), Confirm);
@@ -762,6 +762,49 @@ mod tests {
                 "bandana"
             );
         });
+
+        for bandana_query in [
+            "bandana",
+            " bandana",
+            "bandana ",
+            " bandana ",
+            " ndan ",
+            " band ",
+        ] {
+            finder
+                .update(cx, |finder, cx| {
+                    finder
+                        .delegate_mut()
+                        .update_matches(bandana_query.to_string(), cx)
+                })
+                .await;
+            finder.read_with(cx, |finder, _| {
+                assert_eq!(
+                    finder.delegate().matches.len(),
+                    1,
+                    "Wrong number of matches for bandana query '{bandana_query}'"
+                );
+            });
+            let active_pane = cx.read(|cx| workspace.read(cx).active_pane().clone());
+            cx.dispatch_action(window.into(), SelectNext);
+            cx.dispatch_action(window.into(), Confirm);
+            active_pane
+                .condition(cx, |pane, _| pane.active_item().is_some())
+                .await;
+            cx.read(|cx| {
+                let active_item = active_pane.read(cx).active_item().unwrap();
+                assert_eq!(
+                    active_item
+                        .as_any()
+                        .downcast_ref::<Editor>()
+                        .unwrap()
+                        .read(cx)
+                        .title(cx),
+                    "bandana",
+                    "Wrong match for bandana query '{bandana_query}'"
+                );
+            });
+        }
     }
 
     #[gpui::test]
