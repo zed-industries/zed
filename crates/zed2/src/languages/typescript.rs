@@ -205,7 +205,6 @@ pub struct EsLintLspAdapter {
 impl EsLintLspAdapter {
     const SERVER_PATH: &'static str = "vscode-eslint/server/out/eslintServer.js";
 
-    #[allow(unused)]
     pub fn new(node: Arc<dyn NodeRuntime>) -> Self {
         EsLintLspAdapter { node }
     }
