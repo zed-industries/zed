@@ -22,6 +22,7 @@ pub struct TestWindow {
     bounds: WindowBounds,
     current_scene: Mutex<Option<Scene>>,
     display: Rc<dyn PlatformDisplay>,
+    pub(crate) window_title: Option<String>,
     pub(crate) input_handler: Option<Arc<Mutex<Box<dyn PlatformInputHandler>>>>,
     pub(crate) handlers: Arc<Mutex<TestWindowHandlers>>,
     platform: Weak<TestPlatform>,
@@ -42,6 +43,7 @@ impl TestWindow {
             input_handler: None,
             sprite_atlas: Arc::new(TestAtlas::new()),
             handlers: Default::default(),
+            window_title: Default::default(),
         }
     }
 }
@@ -100,8 +102,8 @@ impl PlatformWindow for TestWindow {
         todo!()
     }
 
-    fn set_title(&mut self, _title: &str) {
-        todo!()
+    fn set_title(&mut self, title: &str) {
+        self.window_title = Some(title.to_owned());
     }
 
     fn set_edited(&mut self, _edited: bool) {

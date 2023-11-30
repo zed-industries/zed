@@ -2591,8 +2591,7 @@ impl Workspace {
             title.push_str(" ↗");
         }
 
-        // todo!()
-        // cx.set_window_title(&title);
+        cx.set_window_title(&title);
     }
 
     fn update_window_edited(&mut self, cx: &mut ViewContext<Self>) {
@@ -4556,12 +4555,9 @@ fn parse_pixel_size_env_var(value: &str) -> Option<Size<GlobalPixels>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        dock::test::TestPanel,
-        item::{
-            test::{TestItem, TestItemEvent, TestProjectItem},
-            ItemEvent,
-        },
+    use crate::item::{
+        test::{TestItem, TestProjectItem},
+        ItemEvent,
     };
     use fs::FakeFs;
     use gpui::TestAppContext;
@@ -4618,244 +4614,238 @@ mod tests {
         item3.update(cx, |item, _| assert_eq!(item.tab_detail.get(), Some(3)));
     }
 
-    //     #[gpui::test]
-    //     async fn test_tracking_active_path(cx: &mut TestAppContext) {
-    //         init_test(cx);
+    #[gpui::test]
+    async fn test_tracking_active_path(cx: &mut TestAppContext) {
+        init_test(cx);
 
-    //         let fs = FakeFs::new(cx.background());
-    //         fs.insert_tree(
-    //             "/root1",
-    //             json!({
-    //                 "one.txt": "",
-    //                 "two.txt": "",
-    //             }),
-    //         )
-    //         .await;
-    //         fs.insert_tree(
-    //             "/root2",
-    //             json!({
-    //                 "three.txt": "",
-    //             }),
-    //         )
-    //         .await;
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/root1",
+            json!({
+                "one.txt": "",
+                "two.txt": "",
+            }),
+        )
+        .await;
+        fs.insert_tree(
+            "/root2",
+            json!({
+                "three.txt": "",
+            }),
+        )
+        .await;
 
-    //         let project = Project::test(fs, ["root1".as_ref()], cx).await;
-    //         let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
-    //         let workspace = window.root(cx);
-    //         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
-    //         let worktree_id = project.read_with(cx, |project, cx| {
-    //             project.worktrees().next().unwrap().read(cx).id()
-    //         });
+        let project = Project::test(fs, ["root1".as_ref()], cx).await;
+        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
+        let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
+        let worktree_id = project.read_with(cx, |project, cx| {
+            project.worktrees().next().unwrap().read(cx).id()
+        });
 
-    //         let item1 = window.build_view(cx, |cx| {
-    //             TestItem::new().with_project_items(&[TestProjectItem::new(1, "one.txt", cx)])
-    //         });
-    //         let item2 = window.build_view(cx, |cx| {
-    //             TestItem::new().with_project_items(&[TestProjectItem::new(2, "two.txt", cx)])
-    //         });
+        let item1 = cx.build_view(|cx| {
+            TestItem::new(cx).with_project_items(&[TestProjectItem::new(1, "one.txt", cx)])
+        });
+        let item2 = cx.build_view(|cx| {
+            TestItem::new(cx).with_project_items(&[TestProjectItem::new(2, "two.txt", cx)])
+        });
 
-    //         // Add an item to an empty pane
-    //         workspace.update(cx, |workspace, cx| workspace.add_item(Box::new(item1), cx));
-    //         project.read_with(cx, |project, cx| {
-    //             assert_eq!(
-    //                 project.active_entry(),
-    //                 project
-    //                     .entry_for_path(&(worktree_id, "one.txt").into(), cx)
-    //                     .map(|e| e.id)
-    //             );
-    //         });
-    //         assert_eq!(window.current_title(cx).as_deref(), Some("one.txt — root1"));
+        // Add an item to an empty pane
+        workspace.update(cx, |workspace, cx| workspace.add_item(Box::new(item1), cx));
+        project.read_with(cx, |project, cx| {
+            assert_eq!(
+                project.active_entry(),
+                project
+                    .entry_for_path(&(worktree_id, "one.txt").into(), cx)
+                    .map(|e| e.id)
+            );
+        });
+        assert_eq!(cx.window_title().as_deref(), Some("one.txt — root1"));
 
-    //         // Add a second item to a non-empty pane
-    //         workspace.update(cx, |workspace, cx| workspace.add_item(Box::new(item2), cx));
-    //         assert_eq!(window.current_title(cx).as_deref(), Some("two.txt — root1"));
-    //         project.read_with(cx, |project, cx| {
-    //             assert_eq!(
-    //                 project.active_entry(),
-    //                 project
-    //                     .entry_for_path(&(worktree_id, "two.txt").into(), cx)
-    //                     .map(|e| e.id)
-    //             );
-    //         });
+        // Add a second item to a non-empty pane
+        workspace.update(cx, |workspace, cx| workspace.add_item(Box::new(item2), cx));
+        assert_eq!(cx.window_title().as_deref(), Some("two.txt — root1"));
+        project.read_with(cx, |project, cx| {
+            assert_eq!(
+                project.active_entry(),
+                project
+                    .entry_for_path(&(worktree_id, "two.txt").into(), cx)
+                    .map(|e| e.id)
+            );
+        });
 
-    //         // Close the active item
-    //         pane.update(cx, |pane, cx| {
-    //             pane.close_active_item(&Default::default(), cx).unwrap()
-    //         })
-    //         .await
-    //         .unwrap();
-    //         assert_eq!(window.current_title(cx).as_deref(), Some("one.txt — root1"));
-    //         project.read_with(cx, |project, cx| {
-    //             assert_eq!(
-    //                 project.active_entry(),
-    //                 project
-    //                     .entry_for_path(&(worktree_id, "one.txt").into(), cx)
-    //                     .map(|e| e.id)
-    //             );
-    //         });
+        // Close the active item
+        pane.update(cx, |pane, cx| {
+            pane.close_active_item(&Default::default(), cx).unwrap()
+        })
+        .await
+        .unwrap();
+        assert_eq!(cx.window_title().as_deref(), Some("one.txt — root1"));
+        project.read_with(cx, |project, cx| {
+            assert_eq!(
+                project.active_entry(),
+                project
+                    .entry_for_path(&(worktree_id, "one.txt").into(), cx)
+                    .map(|e| e.id)
+            );
+        });
 
-    //         // Add a project folder
-    //         project
-    //             .update(cx, |project, cx| {
-    //                 project.find_or_create_local_worktree("/root2", true, cx)
-    //             })
-    //             .await
-    //             .unwrap();
-    //         assert_eq!(
-    //             window.current_title(cx).as_deref(),
-    //             Some("one.txt — root1, root2")
-    //         );
+        // Add a project folder
+        project
+            .update(cx, |project, cx| {
+                project.find_or_create_local_worktree("/root2", true, cx)
+            })
+            .await
+            .unwrap();
+        assert_eq!(cx.window_title().as_deref(), Some("one.txt — root1, root2"));
 
-    //         // Remove a project folder
-    //         project.update(cx, |project, cx| project.remove_worktree(worktree_id, cx));
-    //         assert_eq!(window.current_title(cx).as_deref(), Some("one.txt — root2"));
-    //     }
+        // Remove a project folder
+        project.update(cx, |project, cx| project.remove_worktree(worktree_id, cx));
+        assert_eq!(cx.window_title().as_deref(), Some("one.txt — root2"));
+    }
 
-    //     #[gpui::test]
-    //     async fn test_close_window(cx: &mut TestAppContext) {
-    //         init_test(cx);
+    #[gpui::test]
+    async fn test_close_window(cx: &mut TestAppContext) {
+        init_test(cx);
 
-    //         let fs = FakeFs::new(cx.background());
-    //         fs.insert_tree("/root", json!({ "one": "" })).await;
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/root", json!({ "one": "" })).await;
 
-    //         let project = Project::test(fs, ["root".as_ref()], cx).await;
-    //         let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
-    //         let workspace = window.root(cx);
+        let project = Project::test(fs, ["root".as_ref()], cx).await;
+        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
 
-    //         // When there are no dirty items, there's nothing to do.
-    //         let item1 = window.build_view(cx, |_| TestItem::new());
-    //         workspace.update(cx, |w, cx| w.add_item(Box::new(item1.clone()), cx));
-    //         let task = workspace.update(cx, |w, cx| w.prepare_to_close(false, cx));
-    //         assert!(task.await.unwrap());
+        // When there are no dirty items, there's nothing to do.
+        let item1 = cx.build_view(|cx| TestItem::new(cx));
+        workspace.update(cx, |w, cx| w.add_item(Box::new(item1.clone()), cx));
+        let task = workspace.update(cx, |w, cx| w.prepare_to_close(false, cx));
+        assert!(task.await.unwrap());
 
-    //         // When there are dirty untitled items, prompt to save each one. If the user
-    //         // cancels any prompt, then abort.
-    //         let item2 = window.build_view(cx, |_| TestItem::new().with_dirty(true));
-    //         let item3 = window.build_view(cx, |cx| {
-    //             TestItem::new()
-    //                 .with_dirty(true)
-    //                 .with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
-    //         });
-    //         workspace.update(cx, |w, cx| {
-    //             w.add_item(Box::new(item2.clone()), cx);
-    //             w.add_item(Box::new(item3.clone()), cx);
-    //         });
-    //         let task = workspace.update(cx, |w, cx| w.prepare_to_close(false, cx));
-    //         cx.foreground().run_until_parked();
-    //         window.simulate_prompt_answer(2, cx); // cancel save all
-    //         cx.foreground().run_until_parked();
-    //         window.simulate_prompt_answer(2, cx); // cancel save all
-    //         cx.foreground().run_until_parked();
-    //         assert!(!window.has_pending_prompt(cx));
-    //         assert!(!task.await.unwrap());
-    //     }
+        // When there are dirty untitled items, prompt to save each one. If the user
+        // cancels any prompt, then abort.
+        let item2 = cx.build_view(|cx| TestItem::new(cx).with_dirty(true));
+        let item3 = cx.build_view(|cx| {
+            TestItem::new(cx)
+                .with_dirty(true)
+                .with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
+        });
+        workspace.update(cx, |w, cx| {
+            w.add_item(Box::new(item2.clone()), cx);
+            w.add_item(Box::new(item3.clone()), cx);
+        });
+        let task = workspace.update(cx, |w, cx| w.prepare_to_close(false, cx));
+        cx.executor().run_until_parked();
+        cx.simulate_prompt_answer(2); // cancel save all
+        cx.executor().run_until_parked();
+        cx.simulate_prompt_answer(2); // cancel save all
+        cx.executor().run_until_parked();
+        assert!(!cx.has_pending_prompt());
+        assert!(!task.await.unwrap());
+    }
 
-    //     #[gpui::test]
-    //     async fn test_close_pane_items(cx: &mut TestAppContext) {
-    //         init_test(cx);
+    #[gpui::test]
+    async fn test_close_pane_items(cx: &mut TestAppContext) {
+        init_test(cx);
 
-    //         let fs = FakeFs::new(cx.background());
+        let fs = FakeFs::new(cx.executor());
 
-    //         let project = Project::test(fs, None, cx).await;
-    //         let window = cx.add_window(|cx| Workspace::test_new(project, cx));
-    //         let workspace = window.root(cx);
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
 
-    //         let item1 = window.build_view(cx, |cx| {
-    //             TestItem::new()
-    //                 .with_dirty(true)
-    //                 .with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
-    //         });
-    //         let item2 = window.build_view(cx, |cx| {
-    //             TestItem::new()
-    //                 .with_dirty(true)
-    //                 .with_conflict(true)
-    //                 .with_project_items(&[TestProjectItem::new(2, "2.txt", cx)])
-    //         });
-    //         let item3 = window.build_view(cx, |cx| {
-    //             TestItem::new()
-    //                 .with_dirty(true)
-    //                 .with_conflict(true)
-    //                 .with_project_items(&[TestProjectItem::new(3, "3.txt", cx)])
-    //         });
-    //         let item4 = window.build_view(cx, |cx| {
-    //             TestItem::new()
-    //                 .with_dirty(true)
-    //                 .with_project_items(&[TestProjectItem::new_untitled(cx)])
-    //         });
-    //         let pane = workspace.update(cx, |workspace, cx| {
-    //             workspace.add_item(Box::new(item1.clone()), cx);
-    //             workspace.add_item(Box::new(item2.clone()), cx);
-    //             workspace.add_item(Box::new(item3.clone()), cx);
-    //             workspace.add_item(Box::new(item4.clone()), cx);
-    //             workspace.active_pane().clone()
-    //         });
+        let item1 = cx.build_view(|cx| {
+            TestItem::new(cx)
+                .with_dirty(true)
+                .with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
+        });
+        let item2 = cx.build_view(|cx| {
+            TestItem::new(cx)
+                .with_dirty(true)
+                .with_conflict(true)
+                .with_project_items(&[TestProjectItem::new(2, "2.txt", cx)])
+        });
+        let item3 = cx.build_view(|cx| {
+            TestItem::new(cx)
+                .with_dirty(true)
+                .with_conflict(true)
+                .with_project_items(&[TestProjectItem::new(3, "3.txt", cx)])
+        });
+        let item4 = cx.build_view(|cx| {
+            TestItem::new(cx)
+                .with_dirty(true)
+                .with_project_items(&[TestProjectItem::new_untitled(cx)])
+        });
+        let pane = workspace.update(cx, |workspace, cx| {
+            workspace.add_item(Box::new(item1.clone()), cx);
+            workspace.add_item(Box::new(item2.clone()), cx);
+            workspace.add_item(Box::new(item3.clone()), cx);
+            workspace.add_item(Box::new(item4.clone()), cx);
+            workspace.active_pane().clone()
+        });
 
-    //         let close_items = pane.update(cx, |pane, cx| {
-    //             pane.activate_item(1, true, true, cx);
-    //             assert_eq!(pane.active_item().unwrap().id(), item2.id());
-    //             let item1_id = item1.id();
-    //             let item3_id = item3.id();
-    //             let item4_id = item4.id();
-    //             pane.close_items(cx, SaveIntent::Close, move |id| {
-    //                 [item1_id, item3_id, item4_id].contains(&id)
-    //             })
-    //         });
-    //         cx.foreground().run_until_parked();
+        let close_items = pane.update(cx, |pane, cx| {
+            pane.activate_item(1, true, true, cx);
+            assert_eq!(pane.active_item().unwrap().item_id(), item2.item_id());
+            let item1_id = item1.item_id();
+            let item3_id = item3.item_id();
+            let item4_id = item4.item_id();
+            pane.close_items(cx, SaveIntent::Close, move |id| {
+                [item1_id, item3_id, item4_id].contains(&id)
+            })
+        });
+        cx.executor().run_until_parked();
 
-    //         assert!(window.has_pending_prompt(cx));
-    //         // Ignore "Save all" prompt
-    //         window.simulate_prompt_answer(2, cx);
-    //         cx.foreground().run_until_parked();
-    //         // There's a prompt to save item 1.
-    //         pane.read_with(cx, |pane, _| {
-    //             assert_eq!(pane.items_len(), 4);
-    //             assert_eq!(pane.active_item().unwrap().id(), item1.id());
-    //         });
-    //         // Confirm saving item 1.
-    //         window.simulate_prompt_answer(0, cx);
-    //         cx.foreground().run_until_parked();
+        assert!(cx.has_pending_prompt());
+        // Ignore "Save all" prompt
+        cx.simulate_prompt_answer(2);
+        cx.executor().run_until_parked();
+        // There's a prompt to save item 1.
+        pane.update(cx, |pane, _| {
+            assert_eq!(pane.items_len(), 4);
+            assert_eq!(pane.active_item().unwrap().item_id(), item1.item_id());
+        });
+        // Confirm saving item 1.
+        cx.simulate_prompt_answer(0);
+        cx.executor().run_until_parked();
 
-    //         // Item 1 is saved. There's a prompt to save item 3.
-    //         pane.read_with(cx, |pane, cx| {
-    //             assert_eq!(item1.read(cx).save_count, 1);
-    //             assert_eq!(item1.read(cx).save_as_count, 0);
-    //             assert_eq!(item1.read(cx).reload_count, 0);
-    //             assert_eq!(pane.items_len(), 3);
-    //             assert_eq!(pane.active_item().unwrap().id(), item3.id());
-    //         });
-    //         assert!(window.has_pending_prompt(cx));
+        // Item 1 is saved. There's a prompt to save item 3.
+        pane.update(cx, |pane, cx| {
+            assert_eq!(item1.read(cx).save_count, 1);
+            assert_eq!(item1.read(cx).save_as_count, 0);
+            assert_eq!(item1.read(cx).reload_count, 0);
+            assert_eq!(pane.items_len(), 3);
+            assert_eq!(pane.active_item().unwrap().item_id(), item3.item_id());
+        });
+        assert!(cx.has_pending_prompt());
 
-    //         // Cancel saving item 3.
-    //         window.simulate_prompt_answer(1, cx);
-    //         cx.foreground().run_until_parked();
+        // Cancel saving item 3.
+        cx.simulate_prompt_answer(1);
+        cx.executor().run_until_parked();
 
-    //         // Item 3 is reloaded. There's a prompt to save item 4.
-    //         pane.read_with(cx, |pane, cx| {
-    //             assert_eq!(item3.read(cx).save_count, 0);
-    //             assert_eq!(item3.read(cx).save_as_count, 0);
-    //             assert_eq!(item3.read(cx).reload_count, 1);
-    //             assert_eq!(pane.items_len(), 2);
-    //             assert_eq!(pane.active_item().unwrap().id(), item4.id());
-    //         });
-    //         assert!(window.has_pending_prompt(cx));
+        // Item 3 is reloaded. There's a prompt to save item 4.
+        pane.update(cx, |pane, cx| {
+            assert_eq!(item3.read(cx).save_count, 0);
+            assert_eq!(item3.read(cx).save_as_count, 0);
+            assert_eq!(item3.read(cx).reload_count, 1);
+            assert_eq!(pane.items_len(), 2);
+            assert_eq!(pane.active_item().unwrap().item_id(), item4.item_id());
+        });
+        assert!(cx.has_pending_prompt());
 
-    //         // Confirm saving item 4.
-    //         window.simulate_prompt_answer(0, cx);
-    //         cx.foreground().run_until_parked();
+        // Confirm saving item 4.
+        cx.simulate_prompt_answer(0);
+        cx.executor().run_until_parked();
 
-    //         // There's a prompt for a path for item 4.
-    //         cx.simulate_new_path_selection(|_| Some(Default::default()));
-    //         close_items.await.unwrap();
+        // There's a prompt for a path for item 4.
+        cx.simulate_new_path_selection(|_| Some(Default::default()));
+        close_items.await.unwrap();
 
-    //         // The requested items are closed.
-    //         pane.read_with(cx, |pane, cx| {
-    //             assert_eq!(item4.read(cx).save_count, 0);
-    //             assert_eq!(item4.read(cx).save_as_count, 1);
-    //             assert_eq!(item4.read(cx).reload_count, 0);
-    //             assert_eq!(pane.items_len(), 1);
-    //             assert_eq!(pane.active_item().unwrap().id(), item2.id());
-    //         });
-    //     }
+        // The requested items are closed.
+        pane.update(cx, |pane, cx| {
+            assert_eq!(item4.read(cx).save_count, 0);
+            assert_eq!(item4.read(cx).save_as_count, 1);
+            assert_eq!(item4.read(cx).reload_count, 0);
+            assert_eq!(pane.items_len(), 1);
+            assert_eq!(pane.active_item().unwrap().item_id(), item2.item_id());
+        });
+    }
 
     #[gpui::test]
     async fn test_prompting_to_save_only_on_last_item_for_entry(cx: &mut TestAppContext) {
@@ -5143,7 +5133,7 @@ mod tests {
     //     #[gpui::test]
     //     async fn test_toggle_docks_and_panels(cx: &mut gpui::TestAppContext) {
     //         init_test(cx);
-    //         let fs = FakeFs::new(cx.background());
+    //         let fs = FakeFs::new(cx.executor());
 
     //         let project = Project::test(fs, [], cx).await;
     //         let window = cx.add_window(|cx| Workspace::test_new(project, cx));
@@ -5160,9 +5150,9 @@ mod tests {
     //             panel
     //         });
 
-    //         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+    //         let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
     //         pane.update(cx, |pane, cx| {
-    //             let item = cx.build_view(|_| TestItem::new());
+    //             let item = cx.build_view(|_| TestItem::new(cx));
     //             pane.add_item(Box::new(item), true, true, None, cx);
     //         });
 
@@ -5171,7 +5161,7 @@ mod tests {
     //             workspace.toggle_panel_focus::<TestPanel>(cx);
     //         });
 
-    //         workspace.read_with(cx, |workspace, cx| {
+    //         workspace.update(cx, |workspace, cx| {
     //             assert!(workspace.right_dock().read(cx).is_open());
     //             assert!(!panel.is_zoomed(cx));
     //             assert!(panel.has_focus(cx));
@@ -5182,7 +5172,7 @@ mod tests {
     //             workspace.toggle_panel_focus::<TestPanel>(cx);
     //         });
 
-    //         workspace.read_with(cx, |workspace, cx| {
+    //         workspace.update(cx, |workspace, cx| {
     //             assert!(workspace.right_dock().read(cx).is_open());
     //             assert!(!panel.is_zoomed(cx));
     //             assert!(!panel.has_focus(cx));
@@ -5193,7 +5183,7 @@ mod tests {
     //             workspace.toggle_dock(DockPosition::Right, cx);
     //         });
 
-    //         workspace.read_with(cx, |workspace, cx| {
+    //         workspace.update(cx, |workspace, cx| {
     //             assert!(!workspace.right_dock().read(cx).is_open());
     //             assert!(!panel.is_zoomed(cx));
     //             assert!(!panel.has_focus(cx));
@@ -5204,7 +5194,7 @@ mod tests {
     //             workspace.toggle_dock(DockPosition::Right, cx);
     //         });
 
-    //         workspace.read_with(cx, |workspace, cx| {
+    //         workspace.update(cx, |workspace, cx| {
     //             assert!(workspace.right_dock().read(cx).is_open());
     //             assert!(!panel.is_zoomed(cx));
     //             assert!(panel.has_focus(cx));
@@ -5216,7 +5206,7 @@ mod tests {
     //             panel.set_zoomed(true, cx)
     //         });
 
-    //         workspace.read_with(cx, |workspace, cx| {
+    //         workspace.update(cx, |workspace, cx| {
     //             assert!(workspace.right_dock().read(cx).is_open());
     //             assert!(panel.is_zoomed(cx));
     //             assert!(panel.has_focus(cx));
@@ -5227,7 +5217,7 @@ mod tests {
     //             workspace.toggle_panel_focus::<TestPanel>(cx);
     //         });
 
-    //         workspace.read_with(cx, |workspace, cx| {
+    //         workspace.update(cx, |workspace, cx| {
     //             assert!(!workspace.right_dock().read(cx).is_open());
     //             assert!(panel.is_zoomed(cx));
     //             assert!(!panel.has_focus(cx));
@@ -5238,7 +5228,7 @@ mod tests {
     //             workspace.toggle_panel_focus::<TestPanel>(cx);
     //         });
 
-    //         workspace.read_with(cx, |workspace, cx| {
+    //         workspace.update(cx, |workspace, cx| {
     //             assert!(workspace.right_dock().read(cx).is_open());
     //             assert!(panel.is_zoomed(cx));
     //             assert!(panel.has_focus(cx));
@@ -5249,7 +5239,7 @@ mod tests {
     //             workspace.toggle_dock(DockPosition::Right, cx)
     //         });
 
-    //         workspace.read_with(cx, |workspace, cx| {
+    //         workspace.update(cx, |workspace, cx| {
     //             assert!(!workspace.right_dock().read(cx).is_open());
     //             assert!(panel.is_zoomed(cx));
     //             assert!(workspace.zoomed.is_none());
@@ -5261,7 +5251,7 @@ mod tests {
     //             workspace.toggle_dock(DockPosition::Right, cx)
     //         });
 
-    //         workspace.read_with(cx, |workspace, cx| {
+    //         workspace.update(cx, |workspace, cx| {
     //             assert!(workspace.right_dock().read(cx).is_open());
     //             assert!(panel.is_zoomed(cx));
     //             assert!(workspace.zoomed.is_some());
@@ -5279,7 +5269,7 @@ mod tests {
     //         workspace.update(cx, |workspace, cx| {
     //             workspace.toggle_dock(DockPosition::Right, cx)
     //         });
-    //         workspace.read_with(cx, |workspace, cx| {
+    //         workspace.update(cx, |workspace, cx| {
     //             let pane = pane.read(cx);
     //             assert!(!pane.is_zoomed());
     //             assert!(!pane.has_focus());
@@ -5291,7 +5281,7 @@ mod tests {
     //     #[gpui::test]
     //     async fn test_panels(cx: &mut gpui::TestAppContext) {
     //         init_test(cx);
-    //         let fs = FakeFs::new(cx.background());
+    //         let fs = FakeFs::new(cx.executor());
 
     //         let project = Project::test(fs, [], cx).await;
     //         let window = cx.add_window(|cx| Workspace::test_new(project, cx));
@@ -5413,7 +5403,7 @@ mod tests {
     //         panel_1.update(cx, |_, cx| cx.emit(TestPanelEvent::Activated));
 
     //         // Now the left dock is open and panel_1 is active and focused.
-    //         workspace.read_with(cx, |workspace, cx| {
+    //         workspace.update(cx, |workspace, cx| {
     //             let left_dock = workspace.left_dock();
     //             assert!(left_dock.read(cx).is_open());
     //             assert_eq!(
@@ -5427,7 +5417,7 @@ mod tests {
     //         panel_2.update(cx, |_, cx| cx.emit(TestPanelEvent::Closed));
 
     //         // Wo don't close the left dock, because panel_2 wasn't the active panel
-    //         workspace.read_with(cx, |workspace, cx| {
+    //         workspace.update(cx, |workspace, cx| {
     //             let left_dock = workspace.left_dock();
     //             assert!(left_dock.read(cx).is_open());
     //             assert_eq!(
@@ -5438,30 +5428,30 @@ mod tests {
 
     //         // Emitting a ZoomIn event shows the panel as zoomed.
     //         panel_1.update(cx, |_, cx| cx.emit(TestPanelEvent::ZoomIn));
-    //         workspace.read_with(cx, |workspace, _| {
+    //         workspace.update(cx, |workspace, _| {
     //             assert_eq!(workspace.zoomed, Some(panel_1.downgrade().into_any()));
     //             assert_eq!(workspace.zoomed_position, Some(DockPosition::Left));
     //         });
 
     //         // Move panel to another dock while it is zoomed
     //         panel_1.update(cx, |panel, cx| panel.set_position(DockPosition::Right, cx));
-    //         workspace.read_with(cx, |workspace, _| {
+    //         workspace.update(cx, |workspace, _| {
     //             assert_eq!(workspace.zoomed, Some(panel_1.downgrade().into_any()));
     //             assert_eq!(workspace.zoomed_position, Some(DockPosition::Right));
     //         });
 
     //         // If focus is transferred to another view that's not a panel or another pane, we still show
     //         // the panel as zoomed.
-    //         let focus_receiver = window.build_view(cx, |_| EmptyView);
+    //         let focus_receiver = cx.build_view(|_| EmptyView);
     //         focus_receiver.update(cx, |_, cx| cx.focus_self());
-    //         workspace.read_with(cx, |workspace, _| {
+    //         workspace.update(cx, |workspace, _| {
     //             assert_eq!(workspace.zoomed, Some(panel_1.downgrade().into_any()));
     //             assert_eq!(workspace.zoomed_position, Some(DockPosition::Right));
     //         });
 
     //         // If focus is transferred elsewhere in the workspace, the panel is no longer zoomed.
     //         workspace.update(cx, |_, cx| cx.focus_self());
-    //         workspace.read_with(cx, |workspace, _| {
+    //         workspace.update(cx, |workspace, _| {
     //             assert_eq!(workspace.zoomed, None);
     //             assert_eq!(workspace.zoomed_position, None);
     //         });
@@ -5469,21 +5459,21 @@ mod tests {
     //         // If focus is transferred again to another view that's not a panel or a pane, we won't
     //         // show the panel as zoomed because it wasn't zoomed before.
     //         focus_receiver.update(cx, |_, cx| cx.focus_self());
-    //         workspace.read_with(cx, |workspace, _| {
+    //         workspace.update(cx, |workspace, _| {
     //             assert_eq!(workspace.zoomed, None);
     //             assert_eq!(workspace.zoomed_position, None);
     //         });
 
     //         // When focus is transferred back to the panel, it is zoomed again.
     //         panel_1.update(cx, |_, cx| cx.focus_self());
-    //         workspace.read_with(cx, |workspace, _| {
+    //         workspace.update(cx, |workspace, _| {
     //             assert_eq!(workspace.zoomed, Some(panel_1.downgrade().into_any()));
     //             assert_eq!(workspace.zoomed_position, Some(DockPosition::Right));
     //         });
 
     //         // Emitting a ZoomOut event unzooms the panel.
     //         panel_1.update(cx, |_, cx| cx.emit(TestPanelEvent::ZoomOut));
-    //         workspace.read_with(cx, |workspace, _| {
+    //         workspace.update(cx, |workspace, _| {
     //             assert_eq!(workspace.zoomed, None);
     //             assert_eq!(workspace.zoomed_position, None);
     //         });
@@ -5492,7 +5482,7 @@ mod tests {
     //         panel_1.update(cx, |_, cx| cx.emit(TestPanelEvent::Closed));
 
     //         // Now the left dock is closed, because panel_1 was the active panel
-    //         workspace.read_with(cx, |workspace, cx| {
+    //         workspace.update(cx, |workspace, cx| {
     //             let right_dock = workspace.right_dock();
     //             assert!(!right_dock.read(cx).is_open());
     //         });

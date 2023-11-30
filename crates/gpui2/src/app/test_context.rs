@@ -502,6 +502,19 @@ impl<'a> VisualTestContext<'a> {
         self.cx.dispatch_action(self.window, action)
     }
 
+    pub fn window_title(&mut self) -> Option<String> {
+        self.cx
+            .update_window(self.window, |_, cx| {
+                cx.window
+                    .platform_window
+                    .as_test()
+                    .unwrap()
+                    .window_title
+                    .clone()
+            })
+            .unwrap()
+    }
+
     pub fn simulate_keystrokes(&mut self, keystrokes: &str) {
         self.cx.simulate_keystrokes(self.window, keystrokes)
     }
