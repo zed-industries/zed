@@ -152,15 +152,13 @@ impl TextState {
             .to_pixels(font_size.into(), cx.rem_size());
         let text = SharedString::from(text);
 
-        let rem_size = cx.rem_size();
-
         let runs = if let Some(runs) = runs {
             runs
         } else {
             vec![text_style.to_run(text.len())]
         };
 
-        let layout_id = cx.request_measured_layout(Default::default(), rem_size, {
+        let layout_id = cx.request_measured_layout(Default::default(), {
             let element_state = self.clone();
 
             move |known_dimensions, available_space| {

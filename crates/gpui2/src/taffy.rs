@@ -9,13 +9,15 @@ use taffy::{
     Taffy,
 };
 
-type Measureable = dyn Fn(Size<Option<Pixels>>, Size<AvailableSpace>) -> Size<Pixels> + Send + Sync;
-
 pub struct TaffyLayoutEngine {
-    taffy: Taffy<Box<Measureable>>,
+    taffy: Taffy,
     children_to_parents: HashMap<LayoutId, LayoutId>,
     absolute_layout_bounds: HashMap<LayoutId, Bounds<Pixels>>,
     computed_layouts: HashSet<LayoutId>,
+    nodes_to_measure: HashMap<
+        LayoutId,
+        Box<dyn FnMut(Size<Option<Pixels>>, Size<AvailableSpace>) -> Size<Pixels>>,
+    >,
 }
 
 static EXPECT_MESSAGE: &'static str =
@@ -28,6 +30,7 @@ impl TaffyLayoutEngine {
             children_to_parents: HashMap::default(),
             absolute_layout_bounds: HashMap::default(),
             computed_layouts: HashSet::default(),
+            nodes_to_measure: HashMap::default(),
         }
     }
 
@@ -36,6 +39,7 @@ impl TaffyLayoutEngine {
         self.children_to_parents.clear();
         self.absolute_layout_bounds.clear();
         self.computed_layouts.clear();
+        self.nodes_to_measure.clear();
     }
 
     pub fn request_layout(
@@ -65,18 +69,17 @@ impl TaffyLayoutEngine {
         &mut self,
         style: Style,
         rem_size: Pixels,
-        measure: impl Fn(Size<Option<Pixels>>, Size<AvailableSpace>) -> Size<Pixels>
-            + Send
-            + Sync
-            + 'static,
+        measure: impl FnMut(Size<Option<Pixels>>, Size<AvailableSpace>) -> Size<Pixels> + 'static,
     ) -> LayoutId {
         let style = style.to_taffy(rem_size);
 
-        let measurable = Box::new(measure);
-        self.taffy
-            .new_leaf_with_context(style, measurable)
+        let layout_id = self
+            .taffy
+            .new_leaf_with_context(style, ())
             .expect(EXPECT_MESSAGE)
-            .into()
+            .into();
+        self.nodes_to_measure.insert(layout_id, Box::new(measure));
+        layout_id
     }
 
     // Used to understand performance
@@ -155,12 +158,14 @@ impl TaffyLayoutEngine {
         }
 
         // let started_at = std::time::Instant::now();
+        dbg!(">>>>>>>>>>>>>");
+
         self.taffy
             .compute_layout_with_measure(
                 id.into(),
                 available_space.into(),
-                |known_dimensions, available_space, _node_id, context| {
-                    let Some(measure) = context else {
+                |known_dimensions, available_space, node_id, _context| {
+                    let Some(measure) = self.nodes_to_measure.get_mut(&node_id.into()) else {
                         return taffy::geometry::Size::default();
                     };
 
@@ -173,6 +178,8 @@ impl TaffyLayoutEngine {
                 },
             )
             .expect(EXPECT_MESSAGE);
+
+        dbg!("<<<<<<");
         // println!("compute_layout took {:?}", started_at.elapsed());
     }
 

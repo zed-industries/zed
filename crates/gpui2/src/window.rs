@@ -618,13 +618,13 @@ impl<'a> WindowContext<'a> {
     /// The given closure is invoked at layout time with the known dimensions and available space and
     /// returns a `Size`.
     pub fn request_measured_layout<
-        F: Fn(Size<Option<Pixels>>, Size<AvailableSpace>) -> Size<Pixels> + Send + Sync + 'static,
+        F: FnMut(Size<Option<Pixels>>, Size<AvailableSpace>) -> Size<Pixels> + 'static,
     >(
         &mut self,
         style: Style,
-        rem_size: Pixels,
         measure: F,
     ) -> LayoutId {
+        let rem_size = self.rem_size();
         self.window
             .layout_engine
             .request_measured_layout(style, rem_size, measure)
