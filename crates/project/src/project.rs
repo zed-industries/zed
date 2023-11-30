@@ -6533,9 +6533,15 @@ impl Project {
             })
     }
 
-    pub fn diagnostic_summary(&self, cx: &AppContext) -> DiagnosticSummary {
+    pub fn diagnostic_summary(&self, include_ignored: bool, cx: &AppContext) -> DiagnosticSummary {
         let mut summary = DiagnosticSummary::default();
-        for (_, _, path_summary) in self.diagnostic_summaries(cx) {
+        for (_, _, path_summary) in
+            self.diagnostic_summaries(include_ignored, cx)
+                .filter(|(path, _, _)| {
+                    let worktree = self.entry_for_path(&path, cx).map(|entry| entry.is_ignored);
+                    include_ignored || worktree == Some(false)
+                })
+        {
             summary.error_count += path_summary.error_count;
             summary.warning_count += path_summary.warning_count;
         }
@@ -6544,6 +6550,7 @@ impl Project {
 
     pub fn diagnostic_summaries<'a>(
         &'a self,
+        include_ignored: bool,
         cx: &'a AppContext,
     ) -> impl Iterator<Item = (ProjectPath, LanguageServerId, DiagnosticSummary)> + 'a {
         self.visible_worktrees(cx).flat_map(move |worktree| {
@@ -6553,6 +6560,10 @@ impl Project {
                 .diagnostic_summaries()
                 .map(move |(path, server_id, summary)| {
                     (ProjectPath { worktree_id, path }, server_id, summary)
+                })
+                .filter(move |(path, _, _)| {
+                    let worktree = self.entry_for_path(&path, cx).map(|entry| entry.is_ignored);
+                    include_ignored || worktree == Some(false)
                 })
         })
     }
