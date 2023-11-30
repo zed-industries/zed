@@ -3148,6 +3148,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "feedback2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "client2",
+ "editor2",
+ "futures 0.3.28",
+ "gpui2",
+ "human_bytes",
+ "isahc",
+ "language2",
+ "lazy_static",
+ "log",
+ "postage",
+ "project2",
+ "regex",
+ "search2",
+ "serde",
+ "serde_derive",
+ "settings2",
+ "smallvec",
+ "sysinfo",
+ "theme2",
+ "tree-sitter-markdown",
+ "ui2",
+ "urlencoding",
+ "util",
+ "workspace2",
+]
+
+[[package]]
 name = "file-per-thread-logger"
 version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11741,6 +11772,7 @@ dependencies = [
  "editor2",
  "env_logger 0.9.3",
  "feature_flags2",
+ "feedback2",
  "file_finder2",
  "fs2",
  "fsevent",

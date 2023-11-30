@@ -65,6 +65,7 @@ use std::{
 use theme2::{ActiveTheme, ThemeSettings};
 pub use toolbar::{ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 pub use ui;
+use ui::{h_stack, v_stack, StyledExt};
 use util::ResultExt;
 use uuid::Uuid;
 pub use workspace_settings::{AutosaveSetting, WorkspaceSettings};
@@ -3722,6 +3723,26 @@ impl Render for Workspace {
             .text_color(cx.theme().colors().text)
             .bg(cx.theme().colors().background)
             .children(self.titlebar_item.clone())
+            .child(
+                div()
+                    .absolute()
+                    .ml_1_4()
+                    .mt_20()
+                    .elevation_3(cx)
+                    .z_index(999)
+                    .w_1_2()
+                    .h_2_3()
+                    .child(
+                        v_stack().w_full().child(h_stack().child("header")),
+                        // Header
+                        // - has some info, maybe some links
+                        // Body
+                        // - Markdown Editor
+                        // - Email address
+                        // Footer
+                        // - CTA buttons (Send, Cancel)
+                    ),
+            )
             .child(
                 div()
                     .id("workspace")
