@@ -34,19 +34,19 @@ impl DiagnosticIndicator {
             }
             project::Event::DiskBasedDiagnosticsFinished { language_server_id }
             | project::Event::LanguageServerRemoved(language_server_id) => {
-                this.summary = project.read(cx).diagnostic_summary(cx);
+                this.summary = project.read(cx).diagnostic_summary(false, cx);
                 this.in_progress_checks.remove(language_server_id);
                 cx.notify();
             }
             project::Event::DiagnosticsUpdated { .. } => {
-                this.summary = project.read(cx).diagnostic_summary(cx);
+                this.summary = project.read(cx).diagnostic_summary(false, cx);
                 cx.notify();
             }
             _ => {}
         })
         .detach();
         Self {
-            summary: project.read(cx).diagnostic_summary(cx),
+            summary: project.read(cx).diagnostic_summary(false, cx),
             in_progress_checks: project
                 .read(cx)
                 .language_servers_running_disk_based_diagnostics()
