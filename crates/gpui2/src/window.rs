@@ -8,8 +8,8 @@ use crate::{
     MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInputHandler,
     PlatformWindow, Point, PolychromeSprite, PromptLevel, Quad, Render, RenderGlyphParams,
     RenderImageParams, RenderSvgParams, ScaledPixels, SceneBuilder, Shadow, SharedString, Size,
-    Style, SubscriberSet, Subscription, TaffyLayoutEngine, Task, Underline, UnderlineStyle, View,
-    VisualContext, WeakView, WindowBounds, WindowOptions, SUBPIXEL_VARIANTS,
+    Style, SubscriberSet, Subscription, Surface, TaffyLayoutEngine, Task, Underline,
+    UnderlineStyle, View, VisualContext, WeakView, WindowBounds, WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::HashMap;
@@ -18,6 +18,7 @@ use futures::{
     channel::{mpsc, oneshot},
     StreamExt,
 };
+use media::core_video::CVImageBuffer;
 use parking_lot::RwLock;
 use slotmap::SlotMap;
 use smallvec::SmallVec;
@@ -197,9 +198,7 @@ pub trait ManagedView: FocusableView + EventEmitter<DismissEvent> {}
 
 impl<M: FocusableView + EventEmitter<DismissEvent>> ManagedView for M {}
 
-pub enum DismissEvent {
-    Dismiss,
-}
+pub struct DismissEvent;
 
 // Holds the state for a specific window.
 pub struct Window {
@@ -1138,6 +1137,23 @@ impl<'a> WindowContext<'a> {
         Ok(())
     }
 
+    /// Paint a surface into the scene for the current frame at the current z-index.
+    pub fn paint_surface(&mut self, bounds: Bounds<Pixels>, image_buffer: CVImageBuffer) {
+        let scale_factor = self.scale_factor();
+        let bounds = bounds.scale(scale_factor);
+        let content_mask = self.content_mask().scale(scale_factor);
+        let window = &mut *self.window;
+        window.current_frame.scene_builder.insert(
+            &window.current_frame.z_index_stack,
+            Surface {
+                order: 0,
+                bounds,
+                content_mask,
+                image_buffer,
+            },
+        );
+    }
+
     /// Draw pixels to the display for this window based on the contents of its scene.
     pub(crate) fn draw(&mut self) {
         let root_view = self.window.root_view.take().unwrap();
@@ -1502,13 +1518,15 @@ impl<'a> WindowContext<'a> {
         }
     }
 
-    pub fn constructor_for<V: Render, R>(
+    pub fn handler_for<V: Render>(
         &self,
         view: &View<V>,
-        f: impl Fn(&mut V, &mut ViewContext<V>) -> R + 'static,
-    ) -> impl Fn(&mut WindowContext) -> R + 'static {
-        let view = view.clone();
-        move |cx: &mut WindowContext| view.update(cx, |view, cx| f(view, cx))
+        f: impl Fn(&mut V, &mut ViewContext<V>) + 'static,
+    ) -> impl Fn(&mut WindowContext) {
+        let view = view.downgrade();
+        move |cx: &mut WindowContext| {
+            view.update(cx, |view, cx| f(view, cx)).ok();
+        }
     }
 
     //========== ELEMENT RELATED FUNCTIONS ===========
@@ -1719,7 +1737,7 @@ impl VisualContext for WindowContext<'_> {
     where
         V: ManagedView,
     {
-        self.update_view(view, |_, cx| cx.emit(DismissEvent::Dismiss))
+        self.update_view(view, |_, cx| cx.emit(DismissEvent))
     }
 }
 
@@ -2406,7 +2424,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     where
         V: ManagedView,
     {
-        self.defer(|_, cx| cx.emit(DismissEvent::Dismiss))
+        self.defer(|_, cx| cx.emit(DismissEvent))
     }
 
     pub fn listener<E>(
@@ -2602,7 +2620,7 @@ impl<V: 'static + Render> WindowHandle<V> {
         cx.read_window(self, |root_view, _cx| root_view.clone())
     }
 
-    pub fn is_active(&self, cx: &WindowContext) -> Option<bool> {
+    pub fn is_active(&self, cx: &AppContext) -> Option<bool> {
         cx.windows
             .get(self.id)
             .and_then(|window| window.as_ref().map(|window| window.active))

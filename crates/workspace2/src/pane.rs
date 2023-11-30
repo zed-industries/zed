@@ -1482,18 +1482,14 @@ impl Pane {
                             .gap_px()
                             .child(
                                 div().border().border_color(gpui::red()).child(
-                                    IconButton::new("navigate_backward", Icon::ArrowLeft).state(
-                                        InteractionState::Enabled
-                                            .if_enabled(self.can_navigate_backward()),
-                                    ),
+                                    IconButton::new("navigate_backward", Icon::ArrowLeft)
+                                        .disabled(!self.can_navigate_backward()),
                                 ),
                             )
                             .child(
                                 div().border().border_color(gpui::red()).child(
-                                    IconButton::new("navigate_forward", Icon::ArrowRight).state(
-                                        InteractionState::Enabled
-                                            .if_enabled(self.can_navigate_forward()),
-                                    ),
+                                    IconButton::new("navigate_forward", Icon::ArrowRight)
+                                        .disabled(!self.can_navigate_forward()),
                                 ),
                             ),
                     ),

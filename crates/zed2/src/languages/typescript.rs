@@ -205,7 +205,6 @@ pub struct EsLintLspAdapter {
 impl EsLintLspAdapter {
     const SERVER_PATH: &'static str = "vscode-eslint/server/out/eslintServer.js";
 
-    #[allow(unused)]
     pub fn new(node: Arc<dyn NodeRuntime>) -> Self {
         EsLintLspAdapter { node }
     }
@@ -213,13 +212,23 @@ impl EsLintLspAdapter {
 
 #[async_trait]
 impl LspAdapter for EsLintLspAdapter {
-    fn workspace_configuration(&self, _: &mut AppContext) -> BoxFuture<'static, Value> {
+    fn workspace_configuration(
+        &self,
+        workspace_root: &Path,
+        _: &mut AppContext,
+    ) -> BoxFuture<'static, Value> {
         future::ready(json!({
             "": {
                 "validate": "on",
                 "rulesCustomizations": [],
                 "run": "onType",
                 "nodePath": null,
+                "workingDirectory": {"mode": "auto"},
+                "workspaceFolder": {
+                    "uri": workspace_root,
+                    "name": workspace_root.file_name()
+                        .unwrap_or_else(|| workspace_root.as_os_str()),
+                },
             }
         }))
         .boxed()

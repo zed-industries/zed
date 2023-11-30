@@ -549,35 +549,6 @@ pub fn report_call_event_for_channel(
     )
 }
 
-// pub fn new(
-//     parent_workspace: WeakView<Workspace>,
-//     cx: &mut ViewContext<'_, Workspace>,
-// ) -> Box<dyn CallHandler> {
-//     let mut active_call = None;
-//     if cx.has_global::<Model<ActiveCall>>() {
-//         let call = cx.global::<Model<ActiveCall>>().clone();
-//         let subscriptions = vec![cx.subscribe(&call, Self::on_active_call_event)];
-//         active_call = Some((call, subscriptions));
-//     }
-//     Box::new(Self {
-//         active_call,
-//         parent_workspace,
-//     })
-// }
-// fn on_active_call_event(
-//     workspace: &mut Workspace,
-//     _: Model<ActiveCall>,
-//     event: &room::Event,
-//     cx: &mut ViewContext<Workspace>,
-// ) {
-//     match event {
-//         room::Event::ParticipantLocationChanged { participant_id }
-//         | room::Event::RemoteVideoTracksChanged { participant_id } => {
-//             workspace.leader_updated(*participant_id, cx);
-//         }
-//         _ => {}
-//     }
-// }
 #[derive(Clone)]
 struct ActiveCallWrapper(Model<ActiveCall>);
 
@@ -646,11 +617,14 @@ impl CallHub for ActiveCallWrapper {
         self.0.read(cx).incoming()
     }
 
-    fn observe(&self, on_event: Box<dyn Fn(&mut WindowContext<'_>)>, cx: &mut WindowContext<'_>) {
+    fn observe(
+        &self,
+        on_event: Box<dyn Fn(&mut WindowContext<'_>)>,
+        cx: &mut WindowContext<'_>,
+    ) -> Subscription {
         cx.observe(&self.0, move |_, cx| {
             on_event(cx);
         })
-        .detach();
     }
 }
 

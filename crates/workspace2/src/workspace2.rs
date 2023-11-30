@@ -470,8 +470,8 @@ pub trait Room {
     fn channel_id(&self, cx: &AppContext) -> Option<u64>;
     fn peer_state(
         &self,
-        current_project_id: Option<u64>,
         id: PeerId,
+        project: &Model<Project>,
         cx: &AppContext,
     ) -> Option<(bool, bool)>;
     fn shared_screen_for_peer(
@@ -524,7 +524,11 @@ pub trait CallHub {
         cx: &mut AppContext,
     ) -> Task<Result<()>>;
     fn incoming(&self, cx: &AppContext) -> postage::watch::Receiver<Option<IncomingCall>>;
-    fn observe(&self, on_event: Box<dyn Fn(&mut WindowContext<'_>)>, cx: &mut WindowContext<'_>);
+    fn observe(
+        &self,
+        on_event: Box<dyn Fn(&mut WindowContext<'_>)>,
+        cx: &mut WindowContext<'_>,
+    ) -> Subscription;
 }
 
 pub struct Workspace {
@@ -2903,10 +2907,10 @@ impl Workspace {
 
     pub fn leader_updated(&mut self, leader_id: PeerId, cx: &mut ViewContext<Self>) -> Option<()> {
         cx.notify();
-        let project_id = self.project.read(cx).remote_id();
-        let (leader_in_this_project, leader_in_this_app) = call_hub(cx)
-            .room(cx)?
-            .peer_state(project_id, leader_id, cx)?;
+        let (leader_in_this_project, leader_in_this_app) =
+            call_hub(cx)
+                .room(cx)?
+                .peer_state(leader_id, &self.project, cx)?;
         let mut items_to_activate = Vec::new();
         for (pane, state) in &self.follower_states {
             if state.leader_id != leader_id {
@@ -4480,50 +4484,54 @@ pub fn create_and_open_local_file(
 //     })
 // }
 
-// pub fn restart(_: &Restart, cx: &mut AppContext) {
-//     let should_confirm = settings::get::<WorkspaceSettings>(cx).confirm_quit;
-//     cx.spawn(|mut cx| async move {
-//         let mut workspace_windows = cx
-//             .windows()
-//             .into_iter()
-//             .filter_map(|window| window.downcast::<Workspace>())
-//             .collect::<Vec<_>>();
+pub fn restart(_: &Restart, cx: &mut AppContext) {
+    let should_confirm = WorkspaceSettings::get_global(cx).confirm_quit;
+    let mut workspace_windows = cx
+        .windows()
+        .into_iter()
+        .filter_map(|window| window.downcast::<Workspace>())
+        .collect::<Vec<_>>();
 
-//         // If multiple windows have unsaved changes, and need a save prompt,
-//         // prompt in the active window before switching to a different window.
-//         workspace_windows.sort_by_key(|window| window.is_active(&cx) == Some(false));
+    // If multiple windows have unsaved changes, and need a save prompt,
+    // prompt in the active window before switching to a different window.
+    workspace_windows.sort_by_key(|window| window.is_active(&cx) == Some(false));
 
-//         if let (true, Some(window)) = (should_confirm, workspace_windows.first()) {
-//             let answer = window.prompt(
-//                 PromptLevel::Info,
-//                 "Are you sure you want to restart?",
-//                 &["Restart", "Cancel"],
-//                 &mut cx,
-//             );
+    let mut prompt = None;
+    if let (true, Some(window)) = (should_confirm, workspace_windows.first()) {
+        prompt = window
+            .update(cx, |_, cx| {
+                cx.prompt(
+                    PromptLevel::Info,
+                    "Are you sure you want to restart?",
+                    &["Restart", "Cancel"],
+                )
+            })
+            .ok();
+    }
 
-//             if let Some(mut answer) = answer {
-//                 let answer = answer.next().await;
-//                 if answer != Some(0) {
-//                     return Ok(());
-//                 }
-//             }
-//         }
+    cx.spawn(|mut cx| async move {
+        if let Some(mut prompt) = prompt {
+            let answer = prompt.await?;
+            if answer != 0 {
+                return Ok(());
+            }
+        }
 
-//         // If the user cancels any save prompt, then keep the app open.
-//         for window in workspace_windows {
-//             if let Some(should_close) = window.update_root(&mut cx, |workspace, cx| {
-//                 workspace.prepare_to_close(true, cx)
-//             }) {
-//                 if !should_close.await? {
-//                     return Ok(());
-//                 }
-//             }
-//         }
-//         cx.platform().restart();
-//         anyhow::Ok(())
-//     })
-//     .detach_and_log_err(cx);
-// }
+        // If the user cancels any save prompt, then keep the app open.
+        for window in workspace_windows {
+            if let Ok(should_close) = window.update(&mut cx, |workspace, cx| {
+                workspace.prepare_to_close(true, cx)
+            }) {
+                if !should_close.await? {
+                    return Ok(());
+                }
+            }
+        }
+
+        cx.update(|cx| cx.restart())
+    })
+    .detach_and_log_err(cx);
+}
 
 fn parse_pixel_position_env_var(value: &str) -> Option<Point<GlobalPixels>> {
     let mut parts = value.split(',');

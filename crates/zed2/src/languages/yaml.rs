@@ -93,7 +93,11 @@ impl LspAdapter for YamlLspAdapter {
     ) -> Option<LanguageServerBinary> {
         get_cached_server_binary(container_dir, &*self.node).await
     }
-    fn workspace_configuration(&self, cx: &mut AppContext) -> BoxFuture<'static, Value> {
+    fn workspace_configuration(
+        &self,
+        _workspace_root: &Path,
+        cx: &mut AppContext,
+    ) -> BoxFuture<'static, Value> {
         let tab_size = all_language_settings(None, cx)
             .language(Some("YAML"))
             .tab_size;

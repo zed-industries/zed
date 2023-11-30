@@ -1536,11 +1536,12 @@ impl workspace::Room for RoomWrapper {
 
     fn peer_state(
         &self,
-        current_project_id: Option<u64>,
         leader_id: PeerId,
+        project: &Model<Project>,
         cx: &AppContext,
     ) -> Option<(bool, bool)> {
         let participant = self.0.read(cx).remote_participant_for_peer_id(leader_id)?;
+        let current_project_id = project.read(cx).remote_id();
 
         let leader_in_this_app;
         let leader_in_this_project;

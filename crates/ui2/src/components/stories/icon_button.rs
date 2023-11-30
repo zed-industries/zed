@@ -14,6 +14,18 @@ impl Render for IconButtonStory {
             .child(Story::title_for::<IconButton>())
             .child(Story::label("Default"))
             .child(div().w_8().child(IconButton::new("icon_a", Icon::Hash)))
+            .child(Story::label("Selected"))
+            .child(
+                div()
+                    .w_8()
+                    .child(IconButton::new("icon_a", Icon::Hash).selected(true)),
+            )
+            .child(Story::label("Disabled"))
+            .child(
+                div()
+                    .w_8()
+                    .child(IconButton::new("icon_a", Icon::Hash).disabled(true)),
+            )
             .child(Story::label("With `on_click`"))
             .child(
                 div()

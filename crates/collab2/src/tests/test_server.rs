@@ -221,6 +221,7 @@ impl TestServer {
             fs: fs.clone(),
             build_window_options: |_, _, _| Default::default(),
             node_runtime: FakeNodeRuntime::new(),
+
         });
 
         cx.update(|cx| {

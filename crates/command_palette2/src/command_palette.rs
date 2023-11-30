@@ -269,7 +269,7 @@ impl PickerDelegate for CommandPaletteDelegate {
 
     fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>) {
         self.command_palette
-            .update(cx, |_, cx| cx.emit(DismissEvent::Dismiss))
+            .update(cx, |_, cx| cx.emit(DismissEvent))
             .log_err();
     }
 

@@ -161,7 +161,7 @@ impl PickerDelegate for ContactFinderDelegate {
     fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>) {
         //cx.emit(PickerEvent::Dismiss);
         self.parent
-            .update(cx, |_, cx| cx.emit(DismissEvent::Dismiss))
+            .update(cx, |_, cx| cx.emit(DismissEvent))
             .log_err();
     }
 
@@ -181,12 +181,11 @@ impl PickerDelegate for ContactFinderDelegate {
             ContactRequestStatus::RequestSent => Some("icons/x.svg"),
             ContactRequestStatus::RequestAccepted => None,
         };
-        dbg!(icon_path);
         Some(
             div()
                 .flex_1()
                 .justify_between()
-                .children(user.avatar.clone().map(|avatar| img().data(avatar)))
+                .children(user.avatar.clone().map(|avatar| img(avatar)))
                 .child(Label::new(user.github_login.clone()))
                 .children(icon_path.map(|icon_path| svg().path(icon_path))),
         )

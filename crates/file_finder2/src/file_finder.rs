@@ -552,6 +552,7 @@ impl PickerDelegate for FileFinderDelegate {
         raw_query: String,
         cx: &mut ViewContext<Picker<Self>>,
     ) -> Task<()> {
+        let raw_query = raw_query.trim();
         if raw_query.is_empty() {
             let project = self.project.read(cx);
             self.latest_search_id = post_inc(&mut self.search_count);
@@ -573,7 +574,6 @@ impl PickerDelegate for FileFinderDelegate {
             cx.notify();
             Task::ready(())
         } else {
-            let raw_query = &raw_query;
             let query = PathLikeWithPosition::parse_str(raw_query, |path_like_str| {
                 Ok::<_, std::convert::Infallible>(FileSearchQuery {
                     raw_query: raw_query.to_owned(),
@@ -687,9 +687,7 @@ impl PickerDelegate for FileFinderDelegate {
                                 .log_err();
                         }
                     }
-                    finder
-                        .update(&mut cx, |_, cx| cx.emit(DismissEvent::Dismiss))
-                        .ok()?;
+                    finder.update(&mut cx, |_, cx| cx.emit(DismissEvent)).ok()?;
 
                     Some(())
                 })
@@ -700,7 +698,7 @@ impl PickerDelegate for FileFinderDelegate {
 
     fn dismissed(&mut self, cx: &mut ViewContext<Picker<FileFinderDelegate>>) {
         self.file_finder
-            .update(cx, |_, cx| cx.emit(DismissEvent::Dismiss))
+            .update(cx, |_, cx| cx.emit(DismissEvent))
             .log_err();
     }
 
@@ -768,18 +766,49 @@ mod tests {
         let (picker, workspace, cx) = build_find_picker(project, cx);
 
         cx.simulate_input("bna");
-
         picker.update(cx, |picker, _| {
             assert_eq!(picker.delegate.matches.len(), 2);
         });
-
         cx.dispatch_action(SelectNext);
         cx.dispatch_action(Confirm);
-
         cx.read(|cx| {
             let active_editor = workspace.read(cx).active_item_as::<Editor>(cx).unwrap();
             assert_eq!(active_editor.read(cx).title(cx), "bandana");
         });
+
+        for bandana_query in [
+            "bandana",
+            " bandana",
+            "bandana ",
+            " bandana ",
+            " ndan ",
+            " band ",
+        ] {
+            picker
+                .update(cx, |picker, cx| {
+                    picker
+                        .delegate
+                        .update_matches(bandana_query.to_string(), cx)
+                })
+                .await;
+            picker.update(cx, |picker, _| {
+                assert_eq!(
+                    picker.delegate.matches.len(),
+                    1,
+                    "Wrong number of matches for bandana query '{bandana_query}'"
+                );
+            });
+            cx.dispatch_action(SelectNext);
+            cx.dispatch_action(Confirm);
+            cx.read(|cx| {
+                let active_editor = workspace.read(cx).active_item_as::<Editor>(cx).unwrap();
+                assert_eq!(
+                    active_editor.read(cx).title(cx),
+                    "bandana",
+                    "Wrong match for bandana query '{bandana_query}'"
+                );
+            });
+        }
     }
 
     #[gpui::test]

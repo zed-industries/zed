@@ -153,7 +153,10 @@ async function handleMessage(message, prettier) {
     const { method, id, params } = message;
     if (method === undefined) {
         throw new Error(`Message method is undefined: ${JSON.stringify(message)}`);
+    } else if (method == "initialized") {
+        return;
     }
+
     if (id === undefined) {
         throw new Error(`Message id is undefined: ${JSON.stringify(message)}`);
     }

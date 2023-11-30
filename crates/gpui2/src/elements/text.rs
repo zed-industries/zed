@@ -265,7 +265,9 @@ impl TextState {
 pub struct InteractiveText {
     element_id: ElementId,
     text: StyledText,
-    click_listener: Option<Box<dyn Fn(InteractiveTextClickEvent, &mut WindowContext<'_>)>>,
+    click_listener:
+        Option<Box<dyn Fn(&[Range<usize>], InteractiveTextClickEvent, &mut WindowContext<'_>)>>,
+    clickable_ranges: Vec<Range<usize>>,
 }
 
 struct InteractiveTextClickEvent {
@@ -284,6 +286,7 @@ impl InteractiveText {
             element_id: id.into(),
             text,
             click_listener: None,
+            clickable_ranges: Vec::new(),
         }
     }
 
@@ -292,7 +295,7 @@ impl InteractiveText {
         ranges: Vec<Range<usize>>,
         listener: impl Fn(usize, &mut WindowContext<'_>) + 'static,
     ) -> Self {
-        self.click_listener = Some(Box::new(move |event, cx| {
+        self.click_listener = Some(Box::new(move |ranges, event, cx| {
             for (range_ix, range) in ranges.iter().enumerate() {
                 if range.contains(&event.mouse_down_index) && range.contains(&event.mouse_up_index)
                 {
@@ -300,6 +303,7 @@ impl InteractiveText {
                 }
             }
         }));
+        self.clickable_ranges = ranges;
         self
     }
 }
@@ -334,6 +338,19 @@ impl Element for InteractiveText {
 
     fn paint(self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut WindowContext) {
         if let Some(click_listener) = self.click_listener {
+            if let Some(ix) = state
+                .text_state
+                .index_for_position(bounds, cx.mouse_position())
+            {
+                if self
+                    .clickable_ranges
+                    .iter()
+                    .any(|range| range.contains(&ix))
+                {
+                    cx.set_cursor_style(crate::CursorStyle::PointingHand)
+                }
+            }
+
             let text_state = state.text_state.clone();
             let mouse_down = state.mouse_down_index.clone();
             if let Some(mouse_down_index) = mouse_down.get() {
@@ -343,6 +360,7 @@ impl Element for InteractiveText {
                             text_state.index_for_position(bounds, event.position)
                         {
                             click_listener(
+                                &self.clickable_ranges,
                                 InteractiveTextClickEvent {
                                     mouse_down_index,
                                     mouse_up_index,

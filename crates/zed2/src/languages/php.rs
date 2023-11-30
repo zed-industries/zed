@@ -29,7 +29,6 @@ pub struct IntelephenseLspAdapter {
 impl IntelephenseLspAdapter {
     const SERVER_PATH: &'static str = "node_modules/intelephense/lib/intelephense.js";
 
-    #[allow(unused)]
     pub fn new(node: Arc<dyn NodeRuntime>) -> Self {
         Self { node }
     }
