@@ -2511,7 +2511,7 @@ impl CollabPanel {
                 } else {
                     el.child(
                         ListHeader::new(text)
-                            .when_some(button, |el, button| el.right_button(button))
+                            .when_some(button, |el, button| el.meta(button))
                             .selected(is_selected),
                     )
                 }
