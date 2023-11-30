@@ -139,11 +139,8 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
         //         cx.add_view(|cx| copilot_button::CopilotButton::new(app_state.fs.clone(), cx));
         let diagnostic_summary =
             cx.build_view(|cx| diagnostics::items::DiagnosticIndicator::new(workspace, cx));
-        //     let activity_indicator = activity_indicator::ActivityIndicator::new(
-        //         workspace,
-        //         app_state.languages.clone(),
-        //         cx,
-        //     );
+        let activity_indicator =
+            activity_indicator::ActivityIndicator::new(workspace, app_state.languages.clone(), cx);
         //     let active_buffer_language =
         //         cx.add_view(|_| language_selector::ActiveBufferLanguage::new(workspace));
         //     let vim_mode_indicator = cx.add_view(|cx| vim::ModeIndicator::new(cx));
@@ -153,7 +150,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
         //     let cursor_position = cx.add_view(|_| editor::items::CursorPosition::new());
         workspace.status_bar().update(cx, |status_bar, cx| {
             status_bar.add_left_item(diagnostic_summary, cx);
-            // status_bar.add_left_item(activity_indicator, cx);
+            status_bar.add_left_item(activity_indicator, cx);
 
             // status_bar.add_right_item(feedback_button, cx);
             // status_bar.add_right_item(copilot, cx);
