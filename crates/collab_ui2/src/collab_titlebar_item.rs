@@ -39,7 +39,7 @@ use project::{Project, RepositoryEntry};
 use theme::ActiveTheme;
 use ui::{
     h_stack, prelude::*, Avatar, Button, ButtonLike, ButtonStyle2, Icon, IconButton, IconElement,
-    KeyBinding, Tooltip,
+    KeyBinding, PopoverMenu, Tooltip,
 };
 use util::ResultExt;
 use workspace::{notifications::NotifyResultExt, Workspace};
@@ -155,58 +155,6 @@ impl Render for CollabTitlebarItem {
                     })
                     .child(self.render_project_name(cx))
                     .children(self.render_project_branch(cx)),
-                // TODO - Add player menu
-                // .when(is_in_room, |this| {
-                //     this.child(
-                //         div()
-                //             .border()
-                //             .border_color(gpui::red())
-                //             .id("project_owner_indicator")
-                //             .child(
-                //                 Button::new("project_owner", "project_owner")
-                //                     .style(ButtonStyle2::Subtle)
-                //                     .color(Some(Color::Player(0))),
-                //             )
-                //             .tooltip(move |cx| Tooltip::text("Toggle following", cx)),
-                //     )
-                // })
-                // TODO - Add project menu
-                // .child(
-                //     div()
-                //         .border()
-                //         .border_color(gpui::red())
-                //         .id("titlebar_project_menu_button")
-                //         .child(
-                //             Button::new("project_name", "project_name")
-                //                 .style(ButtonStyle2::Subtle),
-                //         )
-                //         .tooltip(move |cx| Tooltip::text("Recent Projects", cx)),
-                // )
-                // TODO - Add git menu
-                // .child(
-                //     div()
-                //         .border()
-                //         .border_color(gpui::red())
-                //         .id("titlebar_git_menu_button")
-                //         .child(
-                //             Button::new("branch_name", "branch_name")
-                //                 .style(ButtonStyle2::Subtle)
-                //                 .color(Some(Color::Muted)),
-                //         )
-                //         .tooltip(move |cx| {
-                //             cx.build_view(|_| {
-                //                 Tooltip::new("Recent Branches")
-                //                     .key_binding(KeyBinding::new(gpui::KeyBinding::new(
-                //                         "cmd-b",
-                //                         // todo!() Replace with real action.
-                //                         gpui::NoAction,
-                //                         None,
-                //                     )))
-                //                     .meta("Only local branches shown")
-                //             })
-                //             .into()
-                //         }),
-                // ),
             )
             .when_some(
                 users.zip(current_user.clone()),
@@ -340,15 +288,27 @@ impl Render for CollabTitlebarItem {
                 if let Some(user) = current_user {
                     this.when_some(user.avatar.clone(), |this, avatar| {
                         this.child(
-                            ButtonLike::new("user-menu")
-                                .child(
-                                    h_stack().gap_0p5().child(Avatar::data(avatar)).child(
+                            PopoverMenu::new(
+                                ButtonLike::new("user-menu")
+                                    .child(h_stack().gap_0p5().child(Avatar::data(avatar)).child(
                                         IconElement::new(Icon::ChevronDown).color(Color::Muted),
-                                    ),
-                                )
-                                .style(ButtonStyle2::Subtle)
-                                .tooltip(move |cx| Tooltip::text("Toggle User Menu", cx)),
+                                    ))
+                                    .style(ButtonStyle2::Subtle)
+                                    .tooltip(move |cx| Tooltip::text("Toggle User Menu", cx))
+                                    .into_any_element(),
+                            )
+                            .children(vec![div().w_96().h_96().bg(gpui::red())]),
                         )
+                        // this.child(
+                        //     ButtonLike::new("user-menu")
+                        //         .child(
+                        //             h_stack().gap_0p5().child(Avatar::data(avatar)).child(
+                        //                 IconElement::new(Icon::ChevronDown).color(Color::Muted),
+                        //             ),
+                        //         )
+                        //         .style(ButtonStyle2::Subtle)
+                        //         .tooltip(move |cx| Tooltip::text("Toggle User Menu", cx)),
+                        // )
                     })
                 } else {
                     this.child(Button::new("sign_in", "Sign in").on_click(move |_, cx| {
@@ -517,13 +477,15 @@ impl CollabTitlebarItem {
             }
         };
         Some(
-            Button::new(
-                "project_owner_trigger",
-                format!("{user_name} ({})", !is_shared),
-            )
-            .color(Color::Player(participant_index))
-            .style(ButtonStyle2::Subtle)
-            .into_element(),
+            div().border().border_color(gpui::red()).child(
+                Button::new(
+                    "project_owner_trigger",
+                    format!("{user_name} ({})", !is_shared),
+                )
+                .color(Color::Player(participant_index))
+                .style(ButtonStyle2::Subtle)
+                .tooltip(move |cx| Tooltip::text("Toggle following", cx)),
+            ),
         )
     }
 
@@ -539,9 +501,11 @@ impl CollabTitlebarItem {
 
         let name = util::truncate_and_trailoff(name, MAX_PROJECT_NAME_LENGTH);
 
-        Button::new("project_name_trigger", name)
-            .style(ButtonStyle2::Subtle)
-            .into_element()
+        div().border().border_color(gpui::red()).child(
+            Button::new("project_name_trigger", name)
+                .style(ButtonStyle2::Subtle)
+                .tooltip(move |cx| Tooltip::text("Recent Projects", cx)),
+        )
     }
 
     pub fn render_project_branch(&self, cx: &mut ViewContext<Self>) -> Option<impl Element> {
@@ -561,9 +525,23 @@ impl CollabTitlebarItem {
             .map(|branch| util::truncate_and_trailoff(&branch, MAX_BRANCH_NAME_LENGTH))?;
 
         Some(
-            Button::new("project_branch_trigger", branch_name)
-                .style(ButtonStyle2::Subtle)
-                .into_element(),
+            div().border().border_color(gpui::red()).child(
+                Button::new("project_branch_trigger", branch_name)
+                    .style(ButtonStyle2::Subtle)
+                    .tooltip(move |cx| {
+                        cx.build_view(|_| {
+                            Tooltip::new("Recent Branches")
+                                .key_binding(KeyBinding::new(gpui::KeyBinding::new(
+                                    "cmd-b",
+                                    // todo!() Replace with real action.
+                                    gpui::NoAction,
+                                    None,
+                                )))
+                                .meta("Local branches only")
+                        })
+                        .into()
+                    }),
+            ),
         )
     }
 

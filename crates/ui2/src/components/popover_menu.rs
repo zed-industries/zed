@@ -1,4 +1,4 @@
-use gpui::{div, overlay, AnyElement, Div, ParentElement, RenderOnce, Styled, WindowContext};
+use gpui::{div, overlay, px, AnyElement, Div, ParentElement, RenderOnce, Styled, WindowContext};
 use smallvec::SmallVec;
 
 use crate::{prelude::*, Popover};
@@ -16,9 +16,18 @@ impl RenderOnce for PopoverMenu {
 
     fn render(self, _cx: &mut WindowContext) -> Self::Rendered {
         div()
+            .bg(gpui::green())
             .relative()
-            .child(self.trigger)
-            .child(overlay().child(Popover::new().children(self.children)))
+            .child(div().bg(gpui::blue()).child(self.trigger))
+            .child(
+                overlay()
+                    .position(gpui::Point {
+                        x: px(100.),
+                        y: px(100.),
+                    })
+                    .anchor(gpui::AnchorCorner::TopRight)
+                    .child(Popover::new().children(self.children)),
+            )
     }
 }
 
