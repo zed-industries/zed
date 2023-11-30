@@ -73,7 +73,7 @@ use ordered_float::OrderedFloat;
 use parking_lot::{Mutex, RwLock};
 use project::{FormatTrigger, Location, Project, ProjectPath, ProjectTransaction};
 use rand::prelude::*;
-use rpc::proto::*;
+use rpc::proto::{self, *};
 use scroll::{
     autoscroll::Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager, ScrollbarAutoHide,
 };
@@ -155,7 +155,6 @@ pub fn render_parsed_markdown(
     );
     let runs = text_runs_for_highlights(&parsed.text, &editor_style.text, highlights);
 
-    // todo!("add the ability to change cursor style for link ranges")
     let mut links = Vec::new();
     let mut link_ranges = Vec::new();
     for (range, region) in parsed.region_ranges.iter().zip(&parsed.regions) {
@@ -972,95 +971,94 @@ impl CompletionsMenu {
 
     fn pre_resolve_completion_documentation(
         &self,
-        _editor: &Editor,
-        _cx: &mut ViewContext<Editor>,
+        editor: &Editor,
+        cx: &mut ViewContext<Editor>,
     ) -> Option<Task<()>> {
-        // todo!("implementation below ");
-        None
+        let settings = EditorSettings::get_global(cx);
+        if !settings.show_completion_documentation {
+            return None;
+        }
+
+        let Some(project) = editor.project.clone() else {
+            return None;
+        };
+
+        let client = project.read(cx).client();
+        let language_registry = project.read(cx).languages().clone();
+
+        let is_remote = project.read(cx).is_remote();
+        let project_id = project.read(cx).remote_id();
+
+        let completions = self.completions.clone();
+        let completion_indices: Vec<_> = self.matches.iter().map(|m| m.candidate_id).collect();
+
+        Some(cx.spawn(move |this, mut cx| async move {
+            if is_remote {
+                let Some(project_id) = project_id else {
+                    log::error!("Remote project without remote_id");
+                    return;
+                };
+
+                for completion_index in completion_indices {
+                    let completions_guard = completions.read();
+                    let completion = &completions_guard[completion_index];
+                    if completion.documentation.is_some() {
+                        continue;
+                    }
+
+                    let server_id = completion.server_id;
+                    let completion = completion.lsp_completion.clone();
+                    drop(completions_guard);
+
+                    Self::resolve_completion_documentation_remote(
+                        project_id,
+                        server_id,
+                        completions.clone(),
+                        completion_index,
+                        completion,
+                        client.clone(),
+                        language_registry.clone(),
+                    )
+                    .await;
+
+                    _ = this.update(&mut cx, |_, cx| cx.notify());
+                }
+            } else {
+                for completion_index in completion_indices {
+                    let completions_guard = completions.read();
+                    let completion = &completions_guard[completion_index];
+                    if completion.documentation.is_some() {
+                        continue;
+                    }
+
+                    let server_id = completion.server_id;
+                    let completion = completion.lsp_completion.clone();
+                    drop(completions_guard);
+
+                    let server = project
+                        .read_with(&mut cx, |project, _| {
+                            project.language_server_for_id(server_id)
+                        })
+                        .ok()
+                        .flatten();
+                    let Some(server) = server else {
+                        return;
+                    };
+
+                    Self::resolve_completion_documentation_local(
+                        server,
+                        completions.clone(),
+                        completion_index,
+                        completion,
+                        language_registry.clone(),
+                    )
+                    .await;
+
+                    _ = this.update(&mut cx, |_, cx| cx.notify());
+                }
+            }
+        }))
     }
-    // {
-    //     let settings = EditorSettings::get_global(cx);
-    //     if !settings.show_completion_documentation {
-    //         return None;
-    //     }
-
-    //     let Some(project) = editor.project.clone() else {
-    //         return None;
-    //     };
-
-    //     let client = project.read(cx).client();
-    //     let language_registry = project.read(cx).languages().clone();
-
-    //     let is_remote = project.read(cx).is_remote();
-    //     let project_id = project.read(cx).remote_id();
-
-    //     let completions = self.completions.clone();
-    //     let completion_indices: Vec<_> = self.matches.iter().map(|m| m.candidate_id).collect();
-
-    //     Some(cx.spawn(move |this, mut cx| async move {
-    //         if is_remote {
-    //             let Some(project_id) = project_id else {
-    //                 log::error!("Remote project without remote_id");
-    //                 return;
-    //             };
-
-    //             for completion_index in completion_indices {
-    //                 let completions_guard = completions.read();
-    //                 let completion = &completions_guard[completion_index];
-    //                 if completion.documentation.is_some() {
-    //                     continue;
-    //                 }
-
-    //                 let server_id = completion.server_id;
-    //                 let completion = completion.lsp_completion.clone();
-    //                 drop(completions_guard);
-
-    //                 Self::resolve_completion_documentation_remote(
-    //                     project_id,
-    //                     server_id,
-    //                     completions.clone(),
-    //                     completion_index,
-    //                     completion,
-    //                     client.clone(),
-    //                     language_registry.clone(),
-    //                 )
-    //                 .await;
-
-    //                 _ = this.update(&mut cx, |_, cx| cx.notify());
-    //             }
-    //         } else {
-    //             for completion_index in completion_indices {
-    //                 let completions_guard = completions.read();
-    //                 let completion = &completions_guard[completion_index];
-    //                 if completion.documentation.is_some() {
-    //                     continue;
-    //                 }
-
-    //                 let server_id = completion.server_id;
-    //                 let completion = completion.lsp_completion.clone();
-    //                 drop(completions_guard);
-
-    //                 let server = project.read_with(&mut cx, |project, _| {
-    //                     project.language_server_for_id(server_id)
-    //                 });
-    //                 let Some(server) = server else {
-    //                     return;
-    //                 };
-
-    //                 Self::resolve_completion_documentation_local(
-    //                     server,
-    //                     completions.clone(),
-    //                     completion_index,
-    //                     completion,
-    //                     language_registry.clone(),
-    //                 )
-    //                 .await;
-
-    //                 _ = this.update(&mut cx, |_, cx| cx.notify());
-    //             }
-    //         }
-    //     }))
-    // }
 
     fn attempt_resolve_selected_completion_documentation(
         &mut self,
@@ -1081,10 +1079,9 @@ impl CompletionsMenu {
         let completions = self.completions.clone();
         let completions_guard = completions.read();
         let completion = &completions_guard[completion_index];
-        // todo!()
-        // if completion.documentation.is_some() {
-        //     return;
-        // }
+        if completion.documentation.is_some() {
+            return;
+        }
 
         let server_id = completion.server_id;
         let completion = completion.lsp_completion.clone();
@@ -1143,41 +1140,40 @@ impl CompletionsMenu {
         client: Arc<Client>,
         language_registry: Arc<LanguageRegistry>,
     ) {
-        // todo!()
-        // let request = proto::ResolveCompletionDocumentation {
-        //     project_id,
-        //     language_server_id: server_id.0 as u64,
-        //     lsp_completion: serde_json::to_string(&completion).unwrap().into_bytes(),
-        // };
+        let request = proto::ResolveCompletionDocumentation {
+            project_id,
+            language_server_id: server_id.0 as u64,
+            lsp_completion: serde_json::to_string(&completion).unwrap().into_bytes(),
+        };
 
-        // let Some(response) = client
-        //     .request(request)
-        //     .await
-        //     .context("completion documentation resolve proto request")
-        //     .log_err()
-        // else {
-        //     return;
-        // };
+        let Some(response) = client
+            .request(request)
+            .await
+            .context("completion documentation resolve proto request")
+            .log_err()
+        else {
+            return;
+        };
 
-        // if response.text.is_empty() {
-        //     let mut completions = completions.write();
-        //     let completion = &mut completions[completion_index];
-        //     completion.documentation = Some(Documentation::Undocumented);
-        // }
+        if response.text.is_empty() {
+            let mut completions = completions.write();
+            let completion = &mut completions[completion_index];
+            completion.documentation = Some(Documentation::Undocumented);
+        }
 
-        // let documentation = if response.is_markdown {
-        //     Documentation::MultiLineMarkdown(
-        //         markdown::parse_markdown(&response.text, &language_registry, None).await,
-        //     )
-        // } else if response.text.lines().count() <= 1 {
-        //     Documentation::SingleLine(response.text)
-        // } else {
-        //     Documentation::MultiLinePlainText(response.text)
-        // };
+        let documentation = if response.is_markdown {
+            Documentation::MultiLineMarkdown(
+                markdown::parse_markdown(&response.text, &language_registry, None).await,
+            )
+        } else if response.text.lines().count() <= 1 {
+            Documentation::SingleLine(response.text)
+        } else {
+            Documentation::MultiLinePlainText(response.text)
+        };
 
-        // let mut completions = completions.write();
-        // let completion = &mut completions[completion_index];
-        // completion.documentation = Some(documentation);
+        let mut completions = completions.write();
+        let completion = &mut completions[completion_index];
+        completion.documentation = Some(documentation);
     }
 
     async fn resolve_completion_documentation_local(
@@ -1187,38 +1183,37 @@ impl CompletionsMenu {
         completion: lsp::CompletionItem,
         language_registry: Arc<LanguageRegistry>,
     ) {
-        // todo!()
-        // let can_resolve = server
-        //     .capabilities()
-        //     .completion_provider
-        //     .as_ref()
-        //     .and_then(|options| options.resolve_provider)
-        //     .unwrap_or(false);
-        // if !can_resolve {
-        //     return;
-        // }
+        let can_resolve = server
+            .capabilities()
+            .completion_provider
+            .as_ref()
+            .and_then(|options| options.resolve_provider)
+            .unwrap_or(false);
+        if !can_resolve {
+            return;
+        }
 
-        // let request = server.request::<lsp::request::ResolveCompletionItem>(completion);
-        // let Some(completion_item) = request.await.log_err() else {
-        //     return;
-        // };
+        let request = server.request::<lsp::request::ResolveCompletionItem>(completion);
+        let Some(completion_item) = request.await.log_err() else {
+            return;
+        };
 
-        // if let Some(lsp_documentation) = completion_item.documentation {
-        //     let documentation = language::prepare_completion_documentation(
-        //         &lsp_documentation,
-        //         &language_registry,
-        //         None, // TODO: Try to reasonably work out which language the completion is for
-        //     )
-        //     .await;
+        if let Some(lsp_documentation) = completion_item.documentation {
+            let documentation = language::prepare_completion_documentation(
+                &lsp_documentation,
+                &language_registry,
+                None, // TODO: Try to reasonably work out which language the completion is for
+            )
+            .await;
 
-        //     let mut completions = completions.write();
-        //     let completion = &mut completions[completion_index];
-        //     completion.documentation = Some(documentation);
-        // } else {
-        //     let mut completions = completions.write();
-        //     let completion = &mut completions[completion_index];
-        //     completion.documentation = Some(Documentation::Undocumented);
-        // }
+            let mut completions = completions.write();
+            let completion = &mut completions[completion_index];
+            completion.documentation = Some(documentation);
+        } else {
+            let mut completions = completions.write();
+            let completion = &mut completions[completion_index];
+            completion.documentation = Some(Documentation::Undocumented);
+        }
     }
 
     fn visible(&self) -> bool {
