@@ -37,7 +37,10 @@ use gpui::{
 };
 use project::Project;
 use theme::ActiveTheme;
-use ui::{h_stack, prelude::*, Avatar, Button, ButtonStyle2, IconButton, KeyBinding, Tooltip};
+use ui::{
+    h_stack, prelude::*, v_stack, Avatar, Button, ButtonLike, ButtonStyle2, Icon, IconButton,
+    IconElement, KeyBinding, List, ListItem, PopoverMenu, Tooltip,
+};
 use util::ResultExt;
 use workspace::{notifications::NotifyResultExt, Workspace};
 
@@ -288,10 +291,25 @@ impl Render for CollabTitlebarItem {
                         ),
                 )
             })
-            .map(|this| {
+            .child(h_stack().px_1p5().map(|this| {
                 if let Some(user) = current_user {
                     this.when_some(user.avatar.clone(), |this, avatar| {
-                        this.child(ui::Avatar::data(avatar))
+                        this.child(
+                            PopoverMenu::new(
+                                ButtonLike::new("user-menu")
+                                    .child(h_stack().gap_0p5().child(Avatar::data(avatar)).child(
+                                        IconElement::new(Icon::ChevronDown).color(Color::Muted),
+                                    ))
+                                    .style(ButtonStyle2::Subtle)
+                                    .tooltip(move |cx| Tooltip::text("Toggle User Menu", cx))
+                                    .into_any_element(),
+                            )
+                            .children(vec![
+                                ListItem::new("foo"),
+                                ListItem::new("bar"),
+                                ListItem::new("baz"),
+                            ]),
+                        )
                     })
                 } else {
                     this.child(Button::new("sign_in", "Sign in").on_click(move |_, cx| {
@@ -305,7 +323,7 @@ impl Render for CollabTitlebarItem {
                         .detach();
                     }))
                 }
-            })
+            }))
     }
 }
 
