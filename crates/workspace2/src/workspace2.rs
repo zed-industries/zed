@@ -374,7 +374,11 @@ impl CallHub for TestCallHandler {
         todo!()
     }
 
-    fn observe(&self, on_event: Box<dyn Fn(&mut WindowContext<'_>)>, cx: &mut WindowContext<'_>) {
+    fn observe(
+        &self,
+        on_event: Box<dyn Fn(&mut WindowContext<'_>)>,
+        cx: &mut WindowContext<'_>,
+    ) -> Subscription {
         todo!()
     }
 }
