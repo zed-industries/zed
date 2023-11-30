@@ -529,39 +529,38 @@ fn deserialize_anchor(buffer: &MultiBufferSnapshot, anchor: proto::EditorAnchor)
 
 impl Item for Editor {
     fn navigate(&mut self, data: Box<dyn std::any::Any>, cx: &mut ViewContext<Self>) -> bool {
-        todo!();
-        // if let Ok(data) = data.downcast::<NavigationData>() {
-        //     let newest_selection = self.selections.newest::<Point>(cx);
-        //     let buffer = self.buffer.read(cx).read(cx);
-        //     let offset = if buffer.can_resolve(&data.cursor_anchor) {
-        //         data.cursor_anchor.to_point(&buffer)
-        //     } else {
-        //         buffer.clip_point(data.cursor_position, Bias::Left)
-        //     };
+        if let Ok(data) = data.downcast::<NavigationData>() {
+            let newest_selection = self.selections.newest::<Point>(cx);
+            let buffer = self.buffer.read(cx).read(cx);
+            let offset = if buffer.can_resolve(&data.cursor_anchor) {
+                data.cursor_anchor.to_point(&buffer)
+            } else {
+                buffer.clip_point(data.cursor_position, Bias::Left)
+            };
 
-        //     let mut scroll_anchor = data.scroll_anchor;
-        //     if !buffer.can_resolve(&scroll_anchor.anchor) {
-        //         scroll_anchor.anchor = buffer.anchor_before(
-        //             buffer.clip_point(Point::new(data.scroll_top_row, 0), Bias::Left),
-        //         );
-        //     }
+            let mut scroll_anchor = data.scroll_anchor;
+            if !buffer.can_resolve(&scroll_anchor.anchor) {
+                scroll_anchor.anchor = buffer.anchor_before(
+                    buffer.clip_point(Point::new(data.scroll_top_row, 0), Bias::Left),
+                );
+            }
 
-        //     drop(buffer);
+            drop(buffer);
 
-        //     if newest_selection.head() == offset {
-        //         false
-        //     } else {
-        //         let nav_history = self.nav_history.take();
-        //         self.set_scroll_anchor(scroll_anchor, cx);
-        //         self.change_selections(Some(Autoscroll::fit()), cx, |s| {
-        //             s.select_ranges([offset..offset])
-        //         });
-        //         self.nav_history = nav_history;
-        //         true
-        //     }
-        // } else {
-        //     false
-        // }
+            if newest_selection.head() == offset {
+                false
+            } else {
+                let nav_history = self.nav_history.take();
+                self.set_scroll_anchor(scroll_anchor, cx);
+                self.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                    s.select_ranges([offset..offset])
+                });
+                self.nav_history = nav_history;
+                true
+            }
+        } else {
+            false
+        }
     }
 
     fn tab_tooltip_text(&self, cx: &AppContext) -> Option<SharedString> {

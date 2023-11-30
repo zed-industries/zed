@@ -457,6 +457,28 @@ impl Pane {
         !self.nav_history.0.lock().forward_stack.is_empty()
     }
 
+    fn navigate_backward(&mut self, cx: &mut ViewContext<Self>) {
+        if let Some(workspace) = self.workspace.upgrade() {
+            let pane = cx.view().downgrade();
+            cx.window_context().defer(move |cx| {
+                workspace.update(cx, |workspace, cx| {
+                    workspace.go_back(pane, cx).detach_and_log_err(cx)
+                })
+            })
+        }
+    }
+
+    fn navigate_forward(&mut self, cx: &mut ViewContext<Self>) {
+        if let Some(workspace) = self.workspace.upgrade() {
+            let pane = cx.view().downgrade();
+            cx.window_context().defer(move |cx| {
+                workspace.update(cx, |workspace, cx| {
+                    workspace.go_forward(pane, cx).detach_and_log_err(cx)
+                })
+            })
+        }
+    }
+
     fn history_updated(&mut self, cx: &mut ViewContext<Self>) {
         self.toolbar.update(cx, |_, cx| cx.notify());
     }
@@ -1483,12 +1505,20 @@ impl Pane {
                             .child(
                                 div().border().border_color(gpui::red()).child(
                                     IconButton::new("navigate_backward", Icon::ArrowLeft)
+                                        .on_click({
+                                            let view = cx.view().clone();
+                                            move |_, cx| view.update(cx, Self::navigate_backward)
+                                        })
                                         .disabled(!self.can_navigate_backward()),
                                 ),
                             )
                             .child(
                                 div().border().border_color(gpui::red()).child(
                                     IconButton::new("navigate_forward", Icon::ArrowRight)
+                                        .on_click({
+                                            let view = cx.view().clone();
+                                            move |_, cx| view.update(cx, Self::navigate_backward)
+                                        })
                                         .disabled(!self.can_navigate_forward()),
                                 ),
                             ),
@@ -1935,18 +1965,14 @@ impl Render for Pane {
         v_stack()
             .key_context("Pane")
             .track_focus(&self.focus_handle)
-            .on_action(cx.listener(|pane: &mut Pane, _: &SplitLeft, cx| {
-                pane.split(SplitDirection::Left, cx)
-            }))
+            .on_action(cx.listener(|pane, _: &SplitLeft, cx| pane.split(SplitDirection::Left, cx)))
+            .on_action(cx.listener(|pane, _: &SplitUp, cx| pane.split(SplitDirection::Up, cx)))
             .on_action(
-                cx.listener(|pane: &mut Pane, _: &SplitUp, cx| pane.split(SplitDirection::Up, cx)),
+                cx.listener(|pane, _: &SplitRight, cx| pane.split(SplitDirection::Right, cx)),
             )
-            .on_action(cx.listener(|pane: &mut Pane, _: &SplitRight, cx| {
-                pane.split(SplitDirection::Right, cx)
-            }))
-            .on_action(cx.listener(|pane: &mut Pane, _: &SplitDown, cx| {
-                pane.split(SplitDirection::Down, cx)
-            }))
+            .on_action(cx.listener(|pane, _: &SplitDown, cx| pane.split(SplitDirection::Down, cx)))
+            .on_action(cx.listener(|pane, _: &GoBack, cx| pane.navigate_backward(cx)))
+            .on_action(cx.listener(|pane, _: &GoForward, cx| pane.navigate_forward(cx)))
             //     cx.add_action(Pane::toggle_zoom);
             //     cx.add_action(|pane: &mut Pane, action: &ActivateItem, cx| {
             //         pane.activate_item(action.0, true, true, cx);
