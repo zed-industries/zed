@@ -1,8 +1,8 @@
 use gpui::{
-    div, AppContext, DismissEvent, Div, EventEmitter, FocusHandle, FocusableView, Render,
+    div, rems, AppContext, DismissEvent, Div, EventEmitter, FocusHandle, FocusableView, Render,
     ViewContext,
 };
-use ui::prelude::*;
+use ui::{prelude::*, Button, ButtonStyle, Label, Tooltip};
 use workspace::Workspace;
 
 use crate::feedback_editor::GiveFeedback;
@@ -112,19 +112,53 @@ impl Render for FeedbackModal {
     type Element = Div;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-        div().elevation_3(cx).w_1_2().h_2_3().child(
-            v_stack()
-                .w_full()
-                .child(h_stack().child("header"))
-                .child("editor"),
-            // Header
-            // - has some info, maybe some links
-            // Body
-            // - Markdown Editor
-            // - Email address
-            // Footer
-            // - CTA buttons (Send, Cancel)
-        )
+        v_stack()
+            .elevation_3(cx)
+            .min_w(rems(40.))
+            .max_w(rems(96.))
+            .h(rems(40.))
+            .p_2()
+            .gap_2()
+            .child(h_stack().child(Label::new("Give Feedback").color(Color::Default)))
+            .child(
+                div()
+                    .flex_1()
+                    .bg(cx.theme().colors().editor_background)
+                    .border()
+                    .border_color(cx.theme().colors().border)
+                    .child("editor"),
+            )
+            .child(
+                h_stack()
+                    .justify_end()
+                    .gap_1()
+                    .child(
+                        Button::new("cancel_feedback", "Cancel")
+                            .style(ButtonStyle::Subtle)
+                            .color(Color::Muted),
+                    )
+                    .child(
+                        Button::new("send_feedback", "Send Feedback")
+                            .color(Color::Accent)
+                            .style(ButtonStyle::Filled)
+                            .tooltip(|cx| {
+                                Tooltip::with_meta(
+                                    "Submit feedback to the Zed team.",
+                                    None,
+                                    "Provide an email address if you want us to be able to reply.",
+                                    cx,
+                                )
+                            }),
+                    ),
+            )
+
+        // Header
+        // - has some info, maybe some links
+        // Body
+        // - Markdown Editor
+        // - Email address
+        // Footer
+        // - CTA buttons (Send, Cancel)
 
         // div()
         //     .elevation_2(cx)
