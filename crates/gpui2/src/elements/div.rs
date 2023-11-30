@@ -12,6 +12,7 @@ use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
     cell::RefCell,
+    cmp::Ordering,
     fmt::Debug,
     mem,
     rc::Rc,
@@ -357,6 +358,11 @@ pub trait StatefulInteractiveElement: InteractiveElement {
         self
     }
 
+    fn track_scroll(mut self, scroll_handle: &ScrollHandle) -> Self {
+        self.interactivity().scroll_handle = Some(scroll_handle.clone());
+        self
+    }
+
     fn active(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self
     where
         Self: Sized,
@@ -626,6 +632,18 @@ impl Element for Div {
         let mut child_max = Point::default();
         let content_size = if element_state.child_layout_ids.is_empty() {
             bounds.size
+        } else if let Some(scroll_handle) = self.interactivity.scroll_handle.as_ref() {
+            let mut state = scroll_handle.0.borrow_mut();
+            state.child_bounds = Vec::with_capacity(element_state.child_layout_ids.len());
+            state.bounds = bounds;
+
+            for child_layout_id in &element_state.child_layout_ids {
+                let child_bounds = cx.layout_bounds(*child_layout_id);
+                child_min = child_min.min(&child_bounds.origin);
+                child_max = child_max.max(&child_bounds.lower_right());
+                state.child_bounds.push(child_bounds)
+            }
+            (child_max - child_min).into()
         } else {
             for child_layout_id in &element_state.child_layout_ids {
                 let child_bounds = cx.layout_bounds(*child_layout_id);
@@ -696,6 +714,7 @@ pub struct Interactivity {
     pub key_context: KeyContext,
     pub focusable: bool,
     pub tracked_focus_handle: Option<FocusHandle>,
+    pub scroll_handle: Option<ScrollHandle>,
     pub focus_listeners: FocusListeners,
     pub group: Option<SharedString>,
     pub base_style: StyleRefinement,
@@ -752,6 +771,10 @@ impl Interactivity {
                     .clone()
                     .unwrap_or_else(|| cx.focus_handle())
             });
+        }
+
+        if let Some(scroll_handle) = self.scroll_handle.as_ref() {
+            element_state.scroll_offset = Some(scroll_handle.0.borrow().offset.clone());
         }
 
         let style = self.compute_style(None, &mut element_state, cx);
@@ -1206,6 +1229,7 @@ impl Default for Interactivity {
             key_context: KeyContext::default(),
             focusable: false,
             tracked_focus_handle: None,
+            scroll_handle: None,
             focus_listeners: SmallVec::default(),
             // scroll_offset: Point::default(),
             group: None,
@@ -1427,5 +1451,44 @@ where
 {
     fn children_mut(&mut self) -> &mut SmallVec<[AnyElement; 2]> {
         self.element.children_mut()
+    }
+}
+
+#[derive(Default)]
+struct ScrollHandleState {
+    // not great to have the nested rc's...
+    offset: Rc<RefCell<Point<Pixels>>>,
+    bounds: Bounds<Pixels>,
+    child_bounds: Vec<Bounds<Pixels>>,
+}
+
+#[derive(Clone)]
+pub struct ScrollHandle(Rc<RefCell<ScrollHandleState>>);
+
+impl ScrollHandle {
+    pub fn new() -> Self {
+        Self(Rc::default())
+    }
+
+    pub fn offset(&self) -> Point<Pixels> {
+        self.0.borrow().offset.borrow().clone()
+    }
+
+    pub fn top_item(&self) -> usize {
+        let state = self.0.borrow();
+        let top = state.bounds.top() - state.offset.borrow().y;
+
+        match state.child_bounds.binary_search_by(|bounds| {
+            if top < bounds.top() {
+                Ordering::Greater
+            } else if top > bounds.bottom() {
+                Ordering::Less
+            } else {
+                Ordering::Equal
+            }
+        }) {
+            Ok(ix) => ix,
+            Err(ix) => ix.min(state.child_bounds.len().saturating_sub(1)),
+        }
     }
 }

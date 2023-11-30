@@ -172,8 +172,8 @@ use gpui::{
     actions, div, img, overlay, prelude::*, px, rems, serde_json, Action, AppContext,
     AsyncWindowContext, Bounds, ClipboardItem, DismissEvent, Div, EventEmitter, FocusHandle,
     Focusable, FocusableView, InteractiveElement, IntoElement, Model, MouseDownEvent,
-    ParentElement, Pixels, Point, PromptLevel, Render, RenderOnce, SharedString, Stateful, Styled,
-    Subscription, Task, View, ViewContext, VisualContext, WeakView,
+    ParentElement, Pixels, Point, PromptLevel, Render, RenderOnce, ScrollHandle, SharedString,
+    Stateful, Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView,
 };
 use project::{Fs, Project};
 use serde_derive::{Deserialize, Serialize};
@@ -302,6 +302,7 @@ pub struct CollabPanel {
     client: Arc<Client>,
     project: Model<Project>,
     match_candidates: Vec<StringMatchCandidate>,
+    scroll_handle: ScrollHandle,
     // list_state: ListState<Self>,
     subscriptions: Vec<Subscription>,
     collapsed_sections: Vec<Section>,
@@ -586,6 +587,7 @@ impl CollabPanel {
                 project: workspace.project().clone(),
                 subscriptions: Vec::default(),
                 match_candidates: Vec::default(),
+                scroll_handle: ScrollHandle::new(),
                 collapsed_sections: vec![Section::Offline],
                 collapsed_channels: Vec::default(),
                 workspace: workspace.weak_handle(),
@@ -2348,48 +2350,67 @@ impl CollabPanel {
     }
 
     fn render_signed_in(&mut self, cx: &mut ViewContext<Self>) -> Div {
-        div()
+        dbg!(&self.scroll_handle.top_item());
+
+        v_stack()
+            .size_full()
             .child(
                 div()
-                    .m_2()
-                    .rounded(px(2.0))
-                    .child(self.filter_editor.clone()),
+                    .p_2()
+                    .child(div().rounded(px(2.0)).child(self.filter_editor.clone())),
             )
             .child(
-                List::new().children(self.entries.clone().into_iter().enumerate().map(
-                    |(ix, entry)| {
-                        let is_selected = self.selection == Some(ix);
-                        match entry {
-                            ListEntry::Header(section) => {
-                                let is_collapsed = self.collapsed_sections.contains(&section);
-                                self.render_header(section, is_selected, is_collapsed, cx)
-                                    .into_any_element()
-                            }
-                            ListEntry::Contact { contact, calling } => self
-                                .render_contact(&*contact, calling, is_selected, cx)
-                                .into_any_element(),
-                            ListEntry::ContactPlaceholder => self
-                                .render_contact_placeholder(is_selected, cx)
-                                .into_any_element(),
-                            ListEntry::IncomingRequest(user) => self
-                                .render_contact_request(user, true, is_selected, cx)
-                                .into_any_element(),
-                            ListEntry::OutgoingRequest(user) => self
-                                .render_contact_request(user, false, is_selected, cx)
-                                .into_any_element(),
-                            ListEntry::Channel {
-                                channel,
-                                depth,
-                                has_children,
-                            } => self
-                                .render_channel(&*channel, depth, has_children, is_selected, ix, cx)
-                                .into_any_element(),
-                            ListEntry::ChannelEditor { depth } => {
-                                self.render_channel_editor(depth, cx).into_any_element()
-                            }
-                        }
-                    },
-                )),
+                v_stack()
+                    .size_full()
+                    .id("scroll")
+                    .overflow_y_scroll()
+                    .track_scroll(&self.scroll_handle)
+                    .children(
+                        self.entries
+                            .clone()
+                            .into_iter()
+                            .enumerate()
+                            .map(|(ix, entry)| {
+                                let is_selected = self.selection == Some(ix);
+                                match entry {
+                                    ListEntry::Header(section) => {
+                                        let is_collapsed =
+                                            self.collapsed_sections.contains(&section);
+                                        self.render_header(section, is_selected, is_collapsed, cx)
+                                            .into_any_element()
+                                    }
+                                    ListEntry::Contact { contact, calling } => self
+                                        .render_contact(&*contact, calling, is_selected, cx)
+                                        .into_any_element(),
+                                    ListEntry::ContactPlaceholder => self
+                                        .render_contact_placeholder(is_selected, cx)
+                                        .into_any_element(),
+                                    ListEntry::IncomingRequest(user) => self
+                                        .render_contact_request(user, true, is_selected, cx)
+                                        .into_any_element(),
+                                    ListEntry::OutgoingRequest(user) => self
+                                        .render_contact_request(user, false, is_selected, cx)
+                                        .into_any_element(),
+                                    ListEntry::Channel {
+                                        channel,
+                                        depth,
+                                        has_children,
+                                    } => self
+                                        .render_channel(
+                                            &*channel,
+                                            depth,
+                                            has_children,
+                                            is_selected,
+                                            ix,
+                                            cx,
+                                        )
+                                        .into_any_element(),
+                                    ListEntry::ChannelEditor { depth } => {
+                                        self.render_channel_editor(depth, cx).into_any_element()
+                                    }
+                                }
+                            }),
+                    ),
             )
     }
 
@@ -3249,12 +3270,6 @@ impl Render for CollabPanel {
             } else {
                 self.render_signed_in(cx)
             })
-            .children(self.context_menu.as_ref().map(|(menu, position, _)| {
-                overlay()
-                    .position(*position)
-                    .anchor(gpui::AnchorCorner::TopLeft)
-                    .child(menu.clone())
-            }))
     }
 }
 
