@@ -678,6 +678,10 @@ impl<'a> WindowContext<'a> {
         self.window.platform_window.zoom();
     }
 
+    pub fn set_window_title(&mut self, title: &str) {
+        self.window.platform_window.set_title(title);
+    }
+
     pub fn display(&self) -> Option<Rc<dyn PlatformDisplay>> {
         self.platform
             .displays()

@@ -189,13 +189,9 @@ impl Platform for TestPlatform {
         unimplemented!()
     }
 
-    fn on_become_active(&self, _callback: Box<dyn FnMut()>) {
-        unimplemented!()
-    }
+    fn on_become_active(&self, _callback: Box<dyn FnMut()>) {}
 
-    fn on_resign_active(&self, _callback: Box<dyn FnMut()>) {
-        unimplemented!()
-    }
+    fn on_resign_active(&self, _callback: Box<dyn FnMut()>) {}
 
     fn on_quit(&self, _callback: Box<dyn FnMut()>) {}
 
