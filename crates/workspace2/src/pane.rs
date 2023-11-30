@@ -401,8 +401,6 @@ impl Pane {
     }
 
     fn focus_in(&mut self, cx: &mut ViewContext<Self>) {
-        println!("focus_in");
-
         if !self.has_focus(cx) {
             cx.emit(Event::Focus);
             cx.notify();
@@ -420,12 +418,7 @@ impl Pane {
                     self.last_focused_view_by_item.get(&active_item.item_id())
                 {
                     weak_last_focused_view.focus(cx);
-                    // if let Some(last_focused_view) = weak_last_focused_view.upgrade() {
-                    //     last_focused_view.cx.focus(&last_focused_view);
-                    //     return;
-                    // } else {
-                    //     self.last_focused_view_by_item.remove(&active_item.id());
-                    // }
+                    return;
                 }
 
                 active_item.focus_handle(cx).focus(cx);
@@ -439,8 +432,6 @@ impl Pane {
     }
 
     fn focus_out(&mut self, cx: &mut ViewContext<Self>) {
-        println!("focus_out");
-
         self.toolbar.update(cx, |toolbar, cx| {
             toolbar.focus_changed(false, cx);
         });
