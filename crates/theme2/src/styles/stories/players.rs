@@ -55,9 +55,8 @@ impl Render for PlayerStory {
                             .border_2()
                             .border_color(player.cursor)
                             .child(
-                                img()
+                                img("https://avatars.githubusercontent.com/u/1714999?v=4")
                                     .rounded_full()
-                                    .uri("https://avatars.githubusercontent.com/u/1714999?v=4")
                                     .size_6()
                                     .bg(gpui::red()),
                             )
@@ -67,51 +66,62 @@ impl Render for PlayerStory {
                 .child(div().flex().gap_1().children(
                     cx.theme().players().0.clone().iter_mut().map(|player| {
                         div()
-                                .my_1()
-                                .rounded_xl()
-                                .flex()
-                                .items_center()
-                                .h_8()
-                                .py_0p5()
-                                .px_1p5()
-                                .bg(player.background)
-                                .child(
-                                div().relative().neg_mx_1().rounded_full().z_index(3)
+                            .my_1()
+                            .rounded_xl()
+                            .flex()
+                            .items_center()
+                            .h_8()
+                            .py_0p5()
+                            .px_1p5()
+                            .bg(player.background)
+                            .child(
+                                div()
+                                    .relative()
+                                    .neg_mx_1()
+                                    .rounded_full()
+                                    .z_index(3)
                                     .border_2()
                                     .border_color(player.background)
                                     .size(px(28.))
                                     .child(
-                                    img()
-                                        .rounded_full()
-                                        .uri("https://avatars.githubusercontent.com/u/1714999?v=4")
-                                        .size(px(24.))
-                                        .bg(gpui::red()),
-                                ),
-                            ).child(
-                            div().relative().neg_mx_1().rounded_full().z_index(2)
-                                .border_2()
-                                .border_color(player.background)
-                                .size(px(28.))
-                                .child(
-                                img()
-                                    .rounded_full()
-                                    .uri("https://avatars.githubusercontent.com/u/1714999?v=4")
-                                    .size(px(24.))
-                                    .bg(gpui::red()),
-                            ),
-                        ).child(
-                        div().relative().neg_mx_1().rounded_full().z_index(1)
-                            .border_2()
-                            .border_color(player.background)
-                            .size(px(28.))
+                                        img("https://avatars.githubusercontent.com/u/1714999?v=4")
+                                            .rounded_full()
+                                            .size(px(24.))
+                                            .bg(gpui::red()),
+                                    ),
+                            )
                             .child(
-                            img()
-                                .rounded_full()
-                                .uri("https://avatars.githubusercontent.com/u/1714999?v=4")
-                                .size(px(24.))
-                                .bg(gpui::red()),
-                        ),
-                    )
+                                div()
+                                    .relative()
+                                    .neg_mx_1()
+                                    .rounded_full()
+                                    .z_index(2)
+                                    .border_2()
+                                    .border_color(player.background)
+                                    .size(px(28.))
+                                    .child(
+                                        img("https://avatars.githubusercontent.com/u/1714999?v=4")
+                                            .rounded_full()
+                                            .size(px(24.))
+                                            .bg(gpui::red()),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .relative()
+                                    .neg_mx_1()
+                                    .rounded_full()
+                                    .z_index(1)
+                                    .border_2()
+                                    .border_color(player.background)
+                                    .size(px(28.))
+                                    .child(
+                                        img("https://avatars.githubusercontent.com/u/1714999?v=4")
+                                            .rounded_full()
+                                            .size(px(24.))
+                                            .bg(gpui::red()),
+                                    ),
+                            )
                     }),
                 ))
                 .child(Story::label("Player Selections"))
