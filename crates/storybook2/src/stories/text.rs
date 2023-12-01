@@ -1,6 +1,6 @@
 use gpui::{
-    blue, div, green, red, white, Div, InteractiveText, ParentElement, Render, Styled, StyledText,
-    TextRun, View, VisualContext, WindowContext,
+    blue, div, green, red, white, Div, HighlightStyle, InteractiveText, ParentElement, Render,
+    Styled, StyledText, View, VisualContext, WindowContext,
 };
 use ui::v_stack;
 
@@ -59,13 +59,11 @@ impl Render for TextStory {
             ))).child(
                 InteractiveText::new(
                     "interactive",
-                    StyledText::new("Hello world, how is it going?").with_runs(vec![
-                        cx.text_style().to_run(6),
-                        TextRun {
+                    StyledText::new("Hello world, how is it going?").with_highlights(&cx.text_style(), [
+                        (6..11, HighlightStyle {
                             background_color: Some(green()),
-                            ..cx.text_style().to_run(5)
-                        },
-                        cx.text_style().to_run(18),
+                            ..Default::default()
+                        }),
                     ]),
                 )
                 .on_click(vec![2..4, 1..3, 7..9], |range_ix, _cx| {

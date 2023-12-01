@@ -7,6 +7,7 @@ mod only_instance;
 mod open_listener;
 
 pub use assets::*;
+use breadcrumbs::Breadcrumbs;
 use collections::VecDeque;
 use editor::{Editor, MultiBuffer};
 use gpui::{
@@ -95,11 +96,11 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 if let workspace::Event::PaneAdded(pane) = event {
                     pane.update(cx, |pane, cx| {
                         pane.toolbar().update(cx, |toolbar, cx| {
-                            // todo!()
-                            //     let breadcrumbs = cx.add_view(|_| Breadcrumbs::new(workspace));
-                            //     toolbar.add_item(breadcrumbs, cx);
+                            let breadcrumbs = cx.build_view(|_| Breadcrumbs::new(workspace));
+                            toolbar.add_item(breadcrumbs, cx);
                             let buffer_search_bar = cx.build_view(search::BufferSearchBar::new);
                             toolbar.add_item(buffer_search_bar.clone(), cx);
+                            // todo!()
                             //     let quick_action_bar = cx.add_view(|_| {
                             //         QuickActionBar::new(buffer_search_bar, workspace)
                             //     });
