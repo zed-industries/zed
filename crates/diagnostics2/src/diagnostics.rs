@@ -774,24 +774,39 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
     Arc::new(move |_| {
         h_stack()
             .id("diagnostic header")
-            .gap_3()
-            .bg(gpui::red())
-            .map(|stack| {
-                let icon = if diagnostic.severity == DiagnosticSeverity::ERROR {
-                    IconElement::new(Icon::XCircle).color(Color::Error)
-                } else {
-                    IconElement::new(Icon::ExclamationTriangle).color(Color::Warning)
-                };
-
-                stack.child(div().pl_8().child(icon))
-            })
-            .when_some(diagnostic.source.as_ref(), |stack, source| {
-                stack.child(Label::new(format!("{source}:")).color(Color::Accent))
-            })
-            .child(HighlightedLabel::new(message.clone(), highlights.clone()))
-            .when_some(diagnostic.code.as_ref(), |stack, code| {
-                stack.child(Label::new(code.clone()))
-            })
+            .py_2()
+            .pl_10()
+            .pr_5()
+            .w_full()
+            .justify_between()
+            .gap_2()
+            .child(
+                h_stack()
+                    .gap_3()
+                    .map(|stack| {
+                        let icon = if diagnostic.severity == DiagnosticSeverity::ERROR {
+                            IconElement::new(Icon::XCircle).color(Color::Error)
+                        } else {
+                            IconElement::new(Icon::ExclamationTriangle).color(Color::Warning)
+                        };
+                        stack.child(icon)
+                    })
+                    .child(
+                        h_stack()
+                            .gap_1()
+                            .child(HighlightedLabel::new(message.clone(), highlights.clone()))
+                            .when_some(diagnostic.code.as_ref(), |stack, code| {
+                                stack.child(Label::new(format!("({code})")).color(Color::Muted))
+                            }),
+                    ),
+            )
+            .child(
+                h_stack()
+                    .gap_1()
+                    .when_some(diagnostic.source.as_ref(), |stack, source| {
+                        stack.child(Label::new(format!("{source}")).color(Color::Muted))
+                    }),
+            )
             .into_any_element()
     })
 }
@@ -802,11 +817,22 @@ pub(crate) fn render_summary(summary: &DiagnosticSummary) -> AnyElement {
         label.into_any_element()
     } else {
         h_stack()
-            .bg(gpui::red())
-            .child(IconElement::new(Icon::XCircle))
-            .child(Label::new(summary.error_count.to_string()))
-            .child(IconElement::new(Icon::ExclamationTriangle))
-            .child(Label::new(summary.warning_count.to_string()))
+            .gap_1()
+            .when(summary.error_count > 0, |then| {
+                then.child(
+                    h_stack()
+                        .gap_1()
+                        .child(IconElement::new(Icon::XCircle).color(Color::Error))
+                        .child(Label::new(summary.error_count.to_string())),
+                )
+            })
+            .when(summary.warning_count > 0, |then| {
+                then.child(
+                    h_stack()
+                        .child(IconElement::new(Icon::ExclamationTriangle).color(Color::Warning))
+                        .child(Label::new(summary.warning_count.to_string())),
+                )
+            })
             .into_any_element()
     }
 }
