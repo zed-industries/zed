@@ -1,4 +1,4 @@
-use gpui::AnyView;
+use gpui::{AnyView, DefiniteLength};
 
 use crate::prelude::*;
 use crate::{ButtonCommon, ButtonLike, ButtonSize, ButtonStyle, Label, LineHeightStyle};
@@ -45,6 +45,18 @@ impl Clickable for Button {
         handler: impl Fn(&gpui::ClickEvent, &mut WindowContext) + 'static,
     ) -> Self {
         self.base = self.base.on_click(handler);
+        self
+    }
+}
+
+impl FixedWidth for Button {
+    fn width(mut self, width: DefiniteLength) -> Self {
+        self.base = self.base.width(width);
+        self
+    }
+
+    fn full_width(mut self) -> Self {
+        self.base = self.base.full_width();
         self
     }
 }

@@ -1,4 +1,4 @@
-use gpui::{Action, AnyView};
+use gpui::{Action, AnyView, DefiniteLength};
 
 use crate::prelude::*;
 use crate::{ButtonCommon, ButtonLike, ButtonSize, ButtonStyle, Icon, IconElement, IconSize};
@@ -56,6 +56,18 @@ impl Clickable for IconButton {
         handler: impl Fn(&gpui::ClickEvent, &mut WindowContext) + 'static,
     ) -> Self {
         self.base = self.base.on_click(handler);
+        self
+    }
+}
+
+impl FixedWidth for IconButton {
+    fn width(mut self, width: DefiniteLength) -> Self {
+        self.base = self.base.width(width);
+        self
+    }
+
+    fn full_width(mut self) -> Self {
+        self.base = self.base.full_width();
         self
     }
 }
