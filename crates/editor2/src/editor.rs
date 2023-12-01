@@ -8798,62 +8798,56 @@ impl Editor {
     //         self.searchable
     //     }
 
-    //     fn open_excerpts(workspace: &mut Workspace, _: &OpenExcerpts, cx: &mut ViewContext<Workspace>) {
-    //         let active_item = workspace.active_item(cx);
-    //         let editor_handle = if let Some(editor) = active_item
-    //             .as_ref()
-    //             .and_then(|item| item.act_as::<Self>(cx))
-    //         {
-    //             editor
-    //         } else {
-    //             cx.propagate();
-    //             return;
-    //         };
+    fn open_excerpts(&mut self, _: &OpenExcerpts, cx: &mut ViewContext<Self>) {
+        let buffer = self.buffer.read(cx);
+        if buffer.is_singleton() {
+            cx.propagate();
+            return;
+        }
 
-    //         let editor = editor_handle.read(cx);
-    //         let buffer = editor.buffer.read(cx);
-    //         if buffer.is_singleton() {
-    //             cx.propagate();
-    //             return;
-    //         }
+        let Some(workspace) = self.workspace() else {
+            cx.propagate();
+            return;
+        };
 
-    //         let mut new_selections_by_buffer = HashMap::default();
-    //         for selection in editor.selections.all::<usize>(cx) {
-    //             for (buffer, mut range, _) in
-    //                 buffer.range_to_buffer_ranges(selection.start..selection.end, cx)
-    //             {
-    //                 if selection.reversed {
-    //                     mem::swap(&mut range.start, &mut range.end);
-    //                 }
-    //                 new_selections_by_buffer
-    //                     .entry(buffer)
-    //                     .or_insert(Vec::new())
-    //                     .push(range)
-    //             }
-    //         }
+        let mut new_selections_by_buffer = HashMap::default();
+        for selection in self.selections.all::<usize>(cx) {
+            for (buffer, mut range, _) in
+                buffer.range_to_buffer_ranges(selection.start..selection.end, cx)
+            {
+                if selection.reversed {
+                    mem::swap(&mut range.start, &mut range.end);
+                }
+                new_selections_by_buffer
+                    .entry(buffer)
+                    .or_insert(Vec::new())
+                    .push(range)
+            }
+        }
 
-    //         editor_handle.update(cx, |editor, cx| {
-    //             editor.push_to_nav_history(editor.selections.newest_anchor().head(), None, cx);
-    //         });
-    //         let pane = workspace.active_pane().clone();
-    //         pane.update(cx, |pane, _| pane.disable_history());
+        self.push_to_nav_history(self.selections.newest_anchor().head(), None, cx);
 
-    //         // We defer the pane interaction because we ourselves are a workspace item
-    //         // and activating a new item causes the pane to call a method on us reentrantly,
-    //         // which panics if we're on the stack.
-    //         cx.defer(move |workspace, cx| {
-    //             for (buffer, ranges) in new_selections_by_buffer.into_iter() {
-    //                 let editor = workspace.open_project_item::<Self>(buffer, cx);
-    //                 editor.update(cx, |editor, cx| {
-    //                     editor.change_selections(Some(Autoscroll::newest()), cx, |s| {
-    //                         s.select_ranges(ranges);
-    //                     });
-    //                 });
-    //             }
+        // We defer the pane interaction because we ourselves are a workspace item
+        // and activating a new item causes the pane to call a method on us reentrantly,
+        // which panics if we're on the stack.
+        cx.window_context().defer(move |cx| {
+            workspace.update(cx, |workspace, cx| {
+                let pane = workspace.active_pane().clone();
+                pane.update(cx, |pane, _| pane.disable_history());
 
-    //             pane.update(cx, |pane, _| pane.enable_history());
-    //         });
-    //     }
+                for (buffer, ranges) in new_selections_by_buffer.into_iter() {
+                    let editor = workspace.open_project_item::<Self>(buffer, cx);
+                    editor.update(cx, |editor, cx| {
+                        editor.change_selections(Some(Autoscroll::newest()), cx, |s| {
+                            s.select_ranges(ranges);
+                        });
+                    });
+                }
+
+                pane.update(cx, |pane, _| pane.enable_history());
+            })
+        });
+    }
 
     fn jump(
         &mut self,
