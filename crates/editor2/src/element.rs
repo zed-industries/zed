@@ -19,6 +19,7 @@ use crate::{
 };
 use anyhow::Result;
 use collections::{BTreeMap, HashMap};
+use git::diff::DiffHunkStatus;
 use gpui::{
     div, point, px, relative, size, transparent_black, Action, AnyElement, AsyncWindowContext,
     AvailableSpace, BorrowWindow, Bounds, ContentMask, Corners, DispatchPhase, Edges, Element,
@@ -723,87 +724,85 @@ impl EditorElement {
     }
 
     fn paint_diff_hunks(bounds: Bounds<Pixels>, layout: &LayoutState, cx: &mut WindowContext) {
-        // todo!()
-        // let diff_style = &theme::current(cx).editor.diff.clone();
-        // let line_height = layout.position_map.line_height;
+        let line_height = layout.position_map.line_height;
 
-        // let scroll_position = layout.position_map.snapshot.scroll_position();
-        // let scroll_top = scroll_position.y * line_height;
+        let scroll_position = layout.position_map.snapshot.scroll_position();
+        let scroll_top = scroll_position.y * line_height;
 
-        // for hunk in &layout.display_hunks {
-        //     let (display_row_range, status) = match hunk {
-        //         //TODO: This rendering is entirely a horrible hack
-        //         &DisplayDiffHunk::Folded { display_row: row } => {
-        //             let start_y = row as f32 * line_height - scroll_top;
-        //             let end_y = start_y + line_height;
+        for hunk in &layout.display_hunks {
+            let (display_row_range, status) = match hunk {
+                //TODO: This rendering is entirely a horrible hack
+                &DisplayDiffHunk::Folded { display_row: row } => {
+                    let start_y = row as f32 * line_height - scroll_top;
+                    let end_y = start_y + line_height;
 
-        //             let width = diff_style.removed_width_em * line_height;
-        //             let highlight_origin = bounds.origin + point(-width, start_y);
-        //             let highlight_size = point(width * 2., end_y - start_y);
-        //             let highlight_bounds = Bounds::<Pixels>::new(highlight_origin, highlight_size);
+                    let width = 0.275 * line_height;
+                    let highlight_origin = bounds.origin + point(-width, start_y);
+                    let highlight_size = size(width * 2., end_y - start_y);
+                    let highlight_bounds = Bounds::new(highlight_origin, highlight_size);
+                    cx.paint_quad(
+                        highlight_bounds,
+                        Corners::all(1. * line_height),
+                        gpui::yellow(), // todo!("use the right color")
+                        Edges::default(),
+                        transparent_black(),
+                    );
 
-        //             cx.paint_quad(Quad {
-        //                 bounds: highlight_bounds,
-        //                 background: Some(diff_style.modified),
-        //                 border: Border::new(0., Color::transparent_black()).into(),
-        //                 corner_radii: (1. * line_height).into(),
-        //             });
+                    continue;
+                }
 
-        //             continue;
-        //         }
+                DisplayDiffHunk::Unfolded {
+                    display_row_range,
+                    status,
+                } => (display_row_range, status),
+            };
 
-        //         DisplayDiffHunk::Unfolded {
-        //             display_row_range,
-        //             status,
-        //         } => (display_row_range, status),
-        //     };
+            let color = match status {
+                DiffHunkStatus::Added => gpui::green(), // todo!("use the appropriate color")
+                DiffHunkStatus::Modified => gpui::yellow(), // todo!("use the appropriate color")
 
-        //     let color = match status {
-        //         DiffHunkStatus::Added => diff_style.inserted,
-        //         DiffHunkStatus::Modified => diff_style.modified,
+                //TODO: This rendering is entirely a horrible hack
+                DiffHunkStatus::Removed => {
+                    let row = display_row_range.start;
 
-        //         //TODO: This rendering is entirely a horrible hack
-        //         DiffHunkStatus::Removed => {
-        //             let row = display_row_range.start;
+                    let offset = line_height / 2.;
+                    let start_y = row as f32 * line_height - offset - scroll_top;
+                    let end_y = start_y + line_height;
 
-        //             let offset = line_height / 2.;
-        //             let start_y = row as f32 * line_height - offset - scroll_top;
-        //             let end_y = start_y + line_height;
+                    let width = 0.275 * line_height;
+                    let highlight_origin = bounds.origin + point(-width, start_y);
+                    let highlight_size = size(width * 2., end_y - start_y);
+                    let highlight_bounds = Bounds::new(highlight_origin, highlight_size);
+                    cx.paint_quad(
+                        highlight_bounds,
+                        Corners::all(1. * line_height),
+                        gpui::red(), // todo!("use the right color")
+                        Edges::default(),
+                        transparent_black(),
+                    );
 
-        //             let width = diff_style.removed_width_em * line_height;
-        //             let highlight_origin = bounds.origin + point(-width, start_y);
-        //             let highlight_size = point(width * 2., end_y - start_y);
-        //             let highlight_bounds = Bounds::<Pixels>::new(highlight_origin, highlight_size);
+                    continue;
+                }
+            };
 
-        //             cx.paint_quad(Quad {
-        //                 bounds: highlight_bounds,
-        //                 background: Some(diff_style.deleted),
-        //                 border: Border::new(0., Color::transparent_black()).into(),
-        //                 corner_radii: (1. * line_height).into(),
-        //             });
+            let start_row = display_row_range.start;
+            let end_row = display_row_range.end;
 
-        //             continue;
-        //         }
-        //     };
+            let start_y = start_row as f32 * line_height - scroll_top;
+            let end_y = end_row as f32 * line_height - scroll_top;
 
-        //     let start_row = display_row_range.start;
-        //     let end_row = display_row_range.end;
-
-        //     let start_y = start_row as f32 * line_height - scroll_top;
-        //     let end_y = end_row as f32 * line_height - scroll_top;
-
-        //     let width = diff_style.width_em * line_height;
-        //     let highlight_origin = bounds.origin + point(-width, start_y);
-        //     let highlight_size = point(width * 2., end_y - start_y);
-        //     let highlight_bounds = Bounds::<Pixels>::new(highlight_origin, highlight_size);
-
-        //     cx.paint_quad(Quad {
-        //         bounds: highlight_bounds,
-        //         background: Some(color),
-        //         border: Border::new(0., Color::transparent_black()).into(),
-        //         corner_radii: (diff_style.corner_radius * line_height).into(),
-        //     });
-        // }
+            let width = 0.275 * line_height;
+            let highlight_origin = bounds.origin + point(-width, start_y);
+            let highlight_size = size(width * 2., end_y - start_y);
+            let highlight_bounds = Bounds::new(highlight_origin, highlight_size);
+            cx.paint_quad(
+                highlight_bounds,
+                Corners::all(0.05 * line_height),
+                color, // todo!("use the right color")
+                Edges::default(),
+                transparent_black(),
+            );
+        }
     }
 
     fn paint_text(
