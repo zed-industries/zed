@@ -250,7 +250,7 @@ impl RenderOnce for ButtonLike {
             .id(self.id.clone())
             .h(self.size.height())
             .rounded_md()
-            .cursor_pointer()
+            .when(!self.disabled, |el| el.cursor_pointer())
             .gap_1()
             .px_1()
             .bg(self.style.enabled(cx).background)
