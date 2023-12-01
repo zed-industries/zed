@@ -171,7 +171,7 @@ use gpui::{
     actions, div, img, prelude::*, serde_json, Action, AppContext, AsyncWindowContext, Div,
     EventEmitter, FocusHandle, Focusable, FocusableView, InteractiveElement, IntoElement, Model,
     ParentElement, PromptLevel, Render, RenderOnce, SharedString, Styled, Subscription, Task, View,
-    ViewContext, VisualContext, WeakView,
+    ViewContext, VisualContext, WeakView, WindowContext,
 };
 use project::Fs;
 use serde_derive::{Deserialize, Serialize};
@@ -2814,7 +2814,9 @@ impl CollabPanel {
                                 .id(channel_id as usize)
                                 .child(Label::new(channel.name.clone()))
                                 .children(face_pile.map(|face_pile| face_pile.render(cx)))
-                                .tooltip(|cx| Tooltip::text("Join channel", cx)),
+                                .tooltip(|cx: &mut WindowContext| {
+                                    Tooltip::text("Join channel", cx)
+                                }),
                         )
                         .child(
                             h_stack()
@@ -2831,7 +2833,9 @@ impl CollabPanel {
                                                     Color::Muted
                                                 }),
                                         )
-                                        .tooltip(|cx| Tooltip::text("Open channel chat", cx)),
+                                        .tooltip(|cx: &mut WindowContext| {
+                                            Tooltip::text("Open channel chat", cx)
+                                        }),
                                 )
                                 .child(
                                     div()

@@ -39,8 +39,8 @@ use futures::FutureExt;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use git::diff_hunk_to_display;
 use gpui::{
-    actions, div, listener, point, prelude::*, px, relative, rems, size, uniform_list, Action,
-    AnyElement, AppContext, AsyncWindowContext, BackgroundExecutor, Bounds, ClipboardItem, Context,
+    actions, div, point, prelude::*, px, relative, rems, size, uniform_list, Action, AnyElement,
+    AppContext, AsyncWindowContext, BackgroundExecutor, Bounds, ClipboardItem, Context,
     DispatchPhase, Div, ElementId, EventEmitter, FocusHandle, FocusableView, FontFeatures,
     FontStyle, FontWeight, HighlightStyle, Hsla, InputHandler, InteractiveText, KeyContext, Model,
     MouseButton, ParentElement, Pixels, Render, RenderOnce, SharedString, Styled, StyledText,
@@ -1283,7 +1283,9 @@ impl CompletionsMenu {
                     .overflow_y_scroll()
                     // Prevent a mouse down on documentation from being propagated to the editor,
                     // because that would move the cursor.
-                    .on_mouse_down(MouseButton::Left, listener(|_, cx| cx.stop_propagation()))
+                    .on_mouse_down(MouseButton::Left, |_: &_, cx: &mut WindowContext| {
+                        cx.stop_propagation()
+                    })
             })
         };
         let list = uniform_list(
@@ -10016,7 +10018,7 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, is_valid: bool) -> Rend
             .on_click(cx.listener(move |_, _, cx| {
                 cx.write_to_clipboard(ClipboardItem::new(message.clone()));
             }))
-            .tooltip(|cx| Tooltip::text("Copy diagnostic message", cx))
+            .tooltip(|cx: &mut WindowContext| Tooltip::text("Copy diagnostic message", cx))
             .into_any_element()
     })
 }

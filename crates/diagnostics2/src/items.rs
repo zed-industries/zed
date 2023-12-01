@@ -2,7 +2,7 @@ use collections::HashSet;
 use editor::{Editor, GoToDiagnostic};
 use gpui::{
     rems, Div, EventEmitter, InteractiveElement, ParentElement, Render, Stateful,
-    StatefulInteractiveElement, Styled, Subscription, View, ViewContext, WeakView,
+    StatefulInteractiveElement, Styled, Subscription, View, ViewContext, WeakView, WindowContext,
 };
 use language::Diagnostic;
 use lsp::LanguageServerId;
@@ -54,7 +54,7 @@ impl Render for DiagnosticIndicator {
             .bg(cx.theme().colors().ghost_element_background)
             .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
             .active(|style| style.bg(cx.theme().colors().ghost_element_active))
-            .tooltip(|cx| Tooltip::text("Project Diagnostics", cx))
+            .tooltip(|cx: &mut WindowContext| Tooltip::text("Project Diagnostics", cx))
             .on_click(cx.listener(|this, _, cx| {
                 if let Some(workspace) = this.workspace.upgrade() {
                     workspace.update(cx, |workspace, cx| {

@@ -1,6 +1,6 @@
 use bitflags::bitflags;
 pub use buffer_search::BufferSearchBar;
-use gpui::{actions, Action, AppContext, IntoElement};
+use gpui::{actions, Action, AppContext, IntoElement, WindowContext};
 pub use mode::SearchMode;
 use project::search::SearchQuery;
 use ui::ButtonVariant;
@@ -86,7 +86,7 @@ impl SearchOptions {
         ui::IconButton::new(0, self.icon())
             .on_click({
                 let action = self.to_toggle_action();
-                move |_, cx| {
+                move |_: &_, cx: &mut WindowContext| {
                     cx.dispatch_action(action.boxed_clone());
                 }
             })
@@ -98,7 +98,7 @@ impl SearchOptions {
 fn toggle_replace_button(active: bool) -> impl IntoElement {
     // todo: add toggle_replace button
     ui::IconButton::new(0, ui::Icon::Replace)
-        .on_click(|_, cx| {
+        .on_click(|_: &_, cx: &mut WindowContext| {
             cx.dispatch_action(Box::new(ToggleReplace));
             cx.notify();
         })
@@ -111,7 +111,7 @@ fn render_replace_button(
     icon: ui::Icon,
 ) -> impl IntoElement {
     // todo: add tooltip
-    ui::IconButton::new(0, icon).on_click(move |_, cx| {
+    ui::IconButton::new(0, icon).on_click(move |_: &_, cx: &mut WindowContext| {
         cx.dispatch_action(action.boxed_clone());
     })
 }

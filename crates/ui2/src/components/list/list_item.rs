@@ -71,8 +71,8 @@ impl ListItem {
         self
     }
 
-    pub fn on_toggle(mut self, on_toggle: Listener<ClickEvent>) -> Self {
-        self.on_toggle = Some(on_toggle);
+    pub fn on_toggle(mut self, on_toggle: impl IntoListener<ClickEvent>) -> Self {
+        self.on_toggle = Some(on_toggle.into_listener());
         self
     }
 

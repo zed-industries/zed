@@ -2730,7 +2730,7 @@ impl<'a> From<&'a FocusHandle> for ElementId {
     }
 }
 
-/// This trait allows us to abstract over boxed and unboxed
+/// This trait allows us to abstract over unboxed and wrapped closures,
 /// closures without any more overhead than necessary.
 pub trait DynFn<F: ?Sized>: 'static {
     fn borrowed(&self) -> &F;

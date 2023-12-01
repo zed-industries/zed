@@ -586,8 +586,9 @@ impl BufferSearchBar {
 
         // let style = theme.search.action_button.clone();
 
-        IconButton::new(0, ui::Icon::SelectAll)
-            .on_click(|_, cx| cx.dispatch_action(Box::new(SelectAllMatches)))
+        IconButton::new(0, ui::Icon::SelectAll).on_click(|_: &_, cx: &mut WindowContext| {
+            cx.dispatch_action(Box::new(SelectAllMatches))
+        })
     }
 
     pub fn activate_search_mode(&mut self, mode: SearchMode, cx: &mut ViewContext<Self>) {

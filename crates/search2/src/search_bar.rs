@@ -1,4 +1,4 @@
-use gpui::{ClickEvent, IntoElement, WindowContext};
+use gpui::{ClickEvent, IntoElement, IntoListener};
 use ui::{Button, ButtonVariant, IconButton};
 
 use crate::mode::SearchMode;
@@ -6,7 +6,7 @@ use crate::mode::SearchMode;
 pub(super) fn render_nav_button(
     icon: ui::Icon,
     _active: bool,
-    on_click: impl Fn(&ClickEvent, &mut WindowContext) + 'static,
+    on_click: impl IntoListener<ClickEvent>,
 ) -> impl IntoElement {
     // let tooltip_style = cx.theme().tooltip.clone();
     // let cursor_style = if active {
@@ -21,7 +21,7 @@ pub(super) fn render_nav_button(
 pub(crate) fn render_search_mode_button(
     mode: SearchMode,
     is_active: bool,
-    on_click: impl Fn(&ClickEvent, &mut WindowContext) + 'static,
+    on_click: impl IntoListener<ClickEvent>,
 ) -> Button {
     let button_variant = if is_active {
         ButtonVariant::Filled

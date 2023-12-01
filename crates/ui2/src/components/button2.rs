@@ -1,6 +1,6 @@
 use gpui::{
-    rems, AnyElement, AnyView, ClickEvent, Constructor, Div, Hsla, IntoElement, Listener, Rems,
-    Stateful, StatefulInteractiveElement, WindowContext,
+    rems, AnyElement, AnyView, ClickEvent, Constructor, Div, Hsla, IntoConstructor, IntoElement,
+    IntoListener, Listener, Rems, Stateful, StatefulInteractiveElement, WindowContext,
 };
 use smallvec::SmallVec;
 
@@ -205,7 +205,7 @@ pub trait ButtonCommon: Clickable + Disableable {
     fn id(&self) -> &ElementId;
     fn style(self, style: ButtonStyle2) -> Self;
     fn size(self, size: ButtonSize2) -> Self;
-    fn tooltip(self, tooltip: Constructor<AnyView>) -> Self;
+    fn tooltip(self, tooltip: impl IntoConstructor<AnyView>) -> Self;
 }
 
 // pub struct LabelButton {
@@ -285,8 +285,8 @@ impl Disableable for ButtonLike {
 }
 
 impl Clickable for ButtonLike {
-    fn on_click(mut self, handler: Listener<ClickEvent>) -> Self {
-        self.on_click = Some(handler);
+    fn on_click(mut self, handler: impl IntoListener<ClickEvent>) -> Self {
+        self.on_click = Some(handler.into_listener());
         self
     }
 }
@@ -319,8 +319,8 @@ impl ButtonCommon for ButtonLike {
         self
     }
 
-    fn tooltip(mut self, tooltip: Constructor<AnyView>) -> Self {
-        self.tooltip = Some(tooltip);
+    fn tooltip(mut self, tooltip: impl IntoConstructor<AnyView>) -> Self {
+        self.tooltip = Some(tooltip.into_constructor());
         self
     }
 }

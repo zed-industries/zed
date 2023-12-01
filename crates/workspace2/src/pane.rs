@@ -1386,7 +1386,9 @@ impl Pane {
             .id(ix)
             .cursor_pointer()
             .when_some(item.tab_tooltip_text(cx), |div, text| {
-                div.tooltip(move |cx| cx.build_view(|cx| Tooltip::new(text.clone())).into())
+                div.tooltip(move |cx: &mut WindowContext| {
+                    cx.build_view(|cx| Tooltip::new(text.clone())).into()
+                })
             })
             .on_click(cx.listener(move |v: &mut Self, e, cx| v.activate_item(ix, true, true, cx)))
             // .on_drag(move |pane, cx| pane.render_tab(ix, item.boxed_clone(), detail, cx))

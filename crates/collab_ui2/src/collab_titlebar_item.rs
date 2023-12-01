@@ -31,9 +31,9 @@ use std::sync::Arc;
 use call::ActiveCall;
 use client::{Client, UserStore};
 use gpui::{
-    div, px, rems, AppContext, Div, Element, InteractiveElement, IntoElement, Model, MouseButton,
-    ParentElement, Render, RenderOnce, Stateful, StatefulInteractiveElement, Styled, Subscription,
-    ViewContext, VisualContext, WeakView, WindowBounds,
+    div, px, rems, AppContext, ClickEvent, Div, Element, InteractiveElement, IntoElement, Model,
+    MouseButton, ParentElement, Render, RenderOnce, Stateful, StatefulInteractiveElement, Styled,
+    Subscription, ViewContext, VisualContext, WeakView, WindowBounds, WindowContext,
 };
 use project::Project;
 use theme::ActiveTheme;
@@ -141,7 +141,7 @@ impl Render for CollabTitlebarItem {
                 |s| s.pl(px(68.)),
             )
             .bg(cx.theme().colors().title_bar_background)
-            .on_click(|event, cx| {
+            .on_click(|event: &ClickEvent, cx: &mut WindowContext| {
                 if event.up.click_count == 2 {
                     cx.zoom_window();
                 }
@@ -160,7 +160,9 @@ impl Render for CollabTitlebarItem {
                                     .variant(ButtonVariant::Ghost)
                                     .color(Some(Color::Player(0))),
                             )
-                            .tooltip(move |cx| Tooltip::text("Toggle following", cx)),
+                            .tooltip(move |cx: &mut WindowContext| {
+                                Tooltip::text("Toggle following", cx)
+                            }),
                     )
                     // TODO - Add project menu
                     .child(
@@ -169,7 +171,9 @@ impl Render for CollabTitlebarItem {
                             .border_color(gpui::red())
                             .id("titlebar_project_menu_button")
                             .child(Button::new("project_name").variant(ButtonVariant::Ghost))
-                            .tooltip(move |cx| Tooltip::text("Recent Projects", cx)),
+                            .tooltip(move |cx: &mut WindowContext| {
+                                Tooltip::text("Recent Projects", cx)
+                            }),
                     )
                     // TODO - Add git menu
                     .child(
@@ -182,7 +186,7 @@ impl Render for CollabTitlebarItem {
                                     .variant(ButtonVariant::Ghost)
                                     .color(Some(Color::Muted)),
                             )
-                            .tooltip(move |cx| {
+                            .tooltip(move |cx: &mut WindowContext| {
                                 cx.build_view(|_| {
                                     Tooltip::new("Recent Branches")
                                         .key_binding(KeyBinding::new(gpui::KeyBinding::new(
@@ -217,7 +221,7 @@ impl Render for CollabTitlebarItem {
                                         )
                                         .on_mouse_down(MouseButton::Left, {
                                             let workspace = workspace.clone();
-                                            move |_, cx| {
+                                            move |_: &_, cx: &mut WindowContext| {
                                                 workspace
                                                     .update(cx, |this, cx| {
                                                         this.open_shared_screen(peer_id, cx);
@@ -241,7 +245,7 @@ impl Render for CollabTitlebarItem {
                                 .child(Button::new(if is_shared { "Unshare" } else { "Share" }))
                                 .child(IconButton::new("leave-call", ui::Icon::Exit).on_click({
                                     let workspace = workspace.clone();
-                                    move |_, cx| {
+                                    move |_: &_, cx: &mut WindowContext| {
                                         workspace
                                             .update(cx, |this, cx| {
                                                 this.call_state().hang_up(cx).detach();
@@ -254,7 +258,7 @@ impl Render for CollabTitlebarItem {
                             h_stack()
                                 .child(IconButton::new("mute-microphone", mic_icon).on_click({
                                     let workspace = workspace.clone();
-                                    move |_, cx| {
+                                    move |_: &_, cx: &mut WindowContext| {
                                         workspace
                                             .update(cx, |this, cx| {
                                                 this.call_state().toggle_mute(cx);
@@ -264,7 +268,7 @@ impl Render for CollabTitlebarItem {
                                 }))
                                 .child(IconButton::new("mute-sound", speakers_icon).on_click({
                                     let workspace = workspace.clone();
-                                    move |_, cx| {
+                                    move |_: &_, cx: &mut WindowContext| {
                                         workspace
                                             .update(cx, |this, cx| {
                                                 this.call_state().toggle_deafen(cx);
@@ -273,7 +277,7 @@ impl Render for CollabTitlebarItem {
                                     }
                                 }))
                                 .child(IconButton::new("screen-share", ui::Icon::Screen).on_click(
-                                    move |_, cx| {
+                                    move |_: &_, cx: &mut WindowContext| {
                                         workspace
                                             .update(cx, |this, cx| {
                                                 this.call_state().toggle_screen_share(cx);
@@ -291,16 +295,18 @@ impl Render for CollabTitlebarItem {
                         this.child(ui::Avatar::data(avatar))
                     })
                 } else {
-                    this.child(Button::new("Sign in").on_click(move |_, cx| {
-                        let client = client.clone();
-                        cx.spawn(move |mut cx| async move {
-                            client
-                                .authenticate_and_connect(true, &cx)
-                                .await
-                                .notify_async_err(&mut cx);
-                        })
-                        .detach();
-                    }))
+                    this.child(Button::new("Sign in").on_click(
+                        move |_: &_, cx: &mut WindowContext| {
+                            let client = client.clone();
+                            cx.spawn(move |mut cx| async move {
+                                client
+                                    .authenticate_and_connect(true, &cx)
+                                    .await
+                                    .notify_async_err(&mut cx);
+                            })
+                            .detach();
+                        },
+                    ))
                     // Temporary, will be removed when the last part of button2 is merged
                     .child(
                         div().border().border_color(gpui::blue()).child(
@@ -316,10 +322,12 @@ impl Render for CollabTitlebarItem {
                                         .into_element()
                                         .into_any(),
                                 ])
-                                .on_click(move |event, _cx| {
+                                .on_click(move |event: &ClickEvent, _cx: &mut WindowContext| {
                                     dbg!(format!("clicked: {:?}", event.down.position));
                                 })
-                                .tooltip(|cx| Tooltip::text("Test tooltip", cx)),
+                                .tooltip(|cx: &mut WindowContext| {
+                                    Tooltip::text("Test tooltip", cx)
+                                }),
                         ),
                     )
                 }

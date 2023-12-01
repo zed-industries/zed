@@ -3,7 +3,8 @@ use call::{ActiveCall, IncomingCall};
 use futures::StreamExt;
 use gpui::{
     div, green, px, red, AppContext, Div, Element, ParentElement, Render, RenderOnce,
-    StatefulInteractiveElement, Styled, ViewContext, VisualContext as _, WindowHandle,
+    StatefulInteractiveElement, Styled, ViewContext, VisualContext as _, WindowContext,
+    WindowHandle,
 };
 use std::sync::{Arc, Weak};
 use ui::{h_stack, v_stack, Avatar, Button, Label};
@@ -201,11 +202,11 @@ impl IncomingCallNotification {
         h_stack()
             .child(Button::new("Accept").render(cx).bg(green()).on_click({
                 let state = self.state.clone();
-                move |_, cx| state.respond(true, cx)
+                move |_: &_, cx: &mut WindowContext| state.respond(true, cx)
             }))
             .child(Button::new("Decline").render(cx).bg(red()).on_click({
                 let state = self.state.clone();
-                move |_, cx| state.respond(false, cx)
+                move |_: &_, cx: &mut WindowContext| state.respond(false, cx)
             }))
 
         // enum Accept {}
