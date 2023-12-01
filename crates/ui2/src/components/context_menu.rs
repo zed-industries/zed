@@ -3,8 +3,8 @@ use crate::{
 };
 use gpui::{
     overlay, px, Action, AnchorCorner, AnyElement, AppContext, Bounds, DismissEvent, DispatchPhase,
-    Div, EventEmitter, FocusHandle, FocusableView, IntoElement, LayoutId, ManagedView, MouseButton,
-    MouseDownEvent, Pixels, Point, Render, View, VisualContext,
+    Div, DynFn, EventEmitter, FocusHandle, FocusableView, IntoElement, LayoutId, ManagedView,
+    MouseButton, MouseDownEvent, Pixels, Point, Render, View, VisualContext,
 };
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrev};
 use std::{cell::RefCell, rc::Rc};
@@ -196,9 +196,9 @@ impl Render for ContextMenu {
                                             ),
                                     )
                                     .selected(Some(ix) == self.selected_index)
-                                    .on_click(move |event, cx| {
+                                    .on_click(move |event: &_, cx: &mut WindowContext| {
                                         callback(cx);
-                                        dismiss(event, cx)
+                                        (dismiss.borrowed())(event, cx)
                                     })
                                     .into_any_element()
                             }

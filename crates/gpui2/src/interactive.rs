@@ -286,8 +286,9 @@ pub struct FocusEvent {
 #[cfg(test)]
 mod test {
     use crate::{
-        self as gpui, div, Div, FocusHandle, InteractiveElement, IntoElement, KeyBinding,
-        Keystroke, ParentElement, Render, Stateful, TestAppContext, VisualContext,
+        self as gpui, div, Div, FocusHandle, InteractiveElement, IntoElement, IntoListener,
+        KeyBinding, Keystroke, Listener, ParentElement, Render, Stateful, TestAppContext,
+        VisualContext, WindowContext,
     };
 
     struct TestView {
@@ -296,21 +297,30 @@ mod test {
         focus_handle: FocusHandle,
     }
 
-    actions!(TestAction);
+    actions!(TestAction, SecondTestAction);
 
     impl Render for TestView {
         type Element = Stateful<Div>;
 
         fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> Self::Element {
+            let listener_test: Listener<_> =
+                (|_: &_, _: &mut WindowContext| eprintln!("This is just a compile test"))
+                    .into_listener();
+
+            // Ensure that we can call the listener as if it where a normal `impl Fn`
+            cx.window_context().defer(move |cx| {
+                listener_test(&TestAction, cx);
+            });
+
             div().id("testview").child(
                 div()
                     .key_context("parent")
                     .on_key_down(cx.listener(|this, _, _| this.saw_key_down = true))
-                    .on_action(
-                        cx.listener(|this: &mut TestView, _: &TestAction, _| {
-                            this.saw_action = true
-                        }),
-                    )
+                    .on_action(cx.listener(|this, _: &TestAction, _| this.saw_action = true))
+                    // The only downside is that client code must specify the full type of both arguments :(
+                    .on_action(|_: &SecondTestAction, _: &mut WindowContext| {
+                        eprintln!("This is just a compile test")
+                    })
                     .child(
                         div()
                             .key_context("nested")

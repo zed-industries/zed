@@ -1,7 +1,6 @@
-use std::rc::Rc;
-
 use gpui::{
-    px, AnyElement, ClickEvent, Div, ImageSource, MouseButton, MouseDownEvent, Pixels, Stateful,
+    px, AnyElement, ClickEvent, Div, ImageSource, IntoListener, Listener, MouseButton,
+    MouseDownEvent, Pixels, Stateful,
 };
 use smallvec::SmallVec;
 
@@ -19,9 +18,9 @@ pub struct ListItem {
     left_slot: Option<GraphicSlot>,
     toggle: Toggle,
     inset: bool,
-    on_click: Option<Rc<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
-    on_toggle: Option<Rc<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
-    on_secondary_mouse_down: Option<Rc<dyn Fn(&MouseDownEvent, &mut WindowContext) + 'static>>,
+    on_click: Option<Listener<ClickEvent>>,
+    on_toggle: Option<Listener<ClickEvent>>,
+    on_secondary_mouse_down: Option<Listener<MouseDownEvent>>,
     children: SmallVec<[AnyElement; 2]>,
 }
 
@@ -42,16 +41,13 @@ impl ListItem {
         }
     }
 
-    pub fn on_click(mut self, handler: impl Fn(&ClickEvent, &mut WindowContext) + 'static) -> Self {
-        self.on_click = Some(Rc::new(handler));
+    pub fn on_click(mut self, handler: impl IntoListener<ClickEvent>) -> Self {
+        self.on_click = Some(handler.into_listener());
         self
     }
 
-    pub fn on_secondary_mouse_down(
-        mut self,
-        handler: impl Fn(&MouseDownEvent, &mut WindowContext) + 'static,
-    ) -> Self {
-        self.on_secondary_mouse_down = Some(Rc::new(handler));
+    pub fn on_secondary_mouse_down(mut self, handler: impl IntoListener<MouseDownEvent>) -> Self {
+        self.on_secondary_mouse_down = Some(handler.into_listener());
         self
     }
 
@@ -75,11 +71,8 @@ impl ListItem {
         self
     }
 
-    pub fn on_toggle(
-        mut self,
-        on_toggle: impl Fn(&ClickEvent, &mut WindowContext) + 'static,
-    ) -> Self {
-        self.on_toggle = Some(Rc::new(on_toggle));
+    pub fn on_toggle(mut self, on_toggle: Listener<ClickEvent>) -> Self {
+        self.on_toggle = Some(on_toggle);
         self
     }
 
@@ -129,18 +122,17 @@ impl RenderOnce for ListItem {
                 this.bg(cx.theme().colors().ghost_element_selected)
             })
             .when_some(self.on_click, |this, on_click| {
-                this.cursor_pointer().on_click(move |event, cx| {
-                    // HACK: GPUI currently fires `on_click` with any mouse button,
-                    // but we only care about the left button.
-                    if event.down.button == MouseButton::Left {
-                        (on_click)(event, cx)
-                    }
-                })
+                this.cursor_pointer()
+                    .on_click(move |event: &ClickEvent, cx: &mut WindowContext| {
+                        // HACK: GPUI currently fires `on_click` with any mouse button,
+                        // but we only care about the left button.
+                        if event.down.button == MouseButton::Left {
+                            on_click(event, cx)
+                        }
+                    })
             })
             .when_some(self.on_secondary_mouse_down, |this, on_mouse_down| {
-                this.on_mouse_down(MouseButton::Right, move |event, cx| {
-                    (on_mouse_down)(event, cx)
-                })
+                this.on_mouse_down(MouseButton::Right, on_mouse_down)
             })
             .child(
                 div()

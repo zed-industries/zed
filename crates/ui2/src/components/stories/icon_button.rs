@@ -18,11 +18,11 @@ impl Render for IconButtonStory {
             .child(
                 div()
                     .w_8()
-                    .child(
-                        IconButton::new("with_on_click", Icon::Ai).on_click(|_event, _cx| {
+                    .child(IconButton::new("with_on_click", Icon::Ai).on_click(
+                        |_event: &_, _cx: &mut WindowContext| {
                             println!("Clicked!");
-                        }),
-                    ),
+                        },
+                    )),
             )
             .child(Story::label("With `tooltip`"))
             .child(

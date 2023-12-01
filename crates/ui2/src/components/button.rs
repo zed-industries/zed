@@ -1,7 +1,7 @@
 use gpui::{
-    ClickEvent, DefiniteLength, Div, Hsla, IntoElement, StatefulInteractiveElement, WindowContext,
+    ClickEvent, DefiniteLength, Div, Hsla, IntoElement, IntoListener, Listener,
+    StatefulInteractiveElement, WindowContext,
 };
-use std::rc::Rc;
 
 use crate::prelude::*;
 use crate::{h_stack, Color, Icon, IconButton, IconElement, Label, LineHeightStyle};
@@ -65,7 +65,7 @@ impl ButtonVariant {
 #[derive(IntoElement)]
 pub struct Button {
     disabled: bool,
-    click_handler: Option<Rc<dyn Fn(&ClickEvent, &mut WindowContext)>>,
+    click_handler: Option<Listener<ClickEvent>>,
     icon: Option<Icon>,
     icon_position: Option<IconPosition>,
     label: SharedString,
@@ -115,10 +115,8 @@ impl RenderOnce for Button {
             button = button.w(width).justify_center();
         }
 
-        if let Some(click_handler) = self.click_handler.clone() {
-            button = button.on_click(move |event, cx| {
-                click_handler(event, cx);
-            });
+        if let Some(click_handler) = self.click_handler {
+            button = button.on_click(click_handler);
         }
 
         button
@@ -166,8 +164,8 @@ impl Button {
         self
     }
 
-    pub fn on_click(mut self, handler: impl Fn(&ClickEvent, &mut WindowContext) + 'static) -> Self {
-        self.click_handler = Some(Rc::new(handler));
+    pub fn on_click(mut self, handler: impl IntoListener<ClickEvent>) -> Self {
+        self.click_handler = Some(handler.into_listener());
         self
     }
 

@@ -1,5 +1,5 @@
 use gpui::{
-    div, DismissEvent, Div, EventEmitter, InteractiveElement, ParentElement, Render,
+    div, listener, DismissEvent, Div, EventEmitter, InteractiveElement, ParentElement, Render,
     SemanticVersion, StatefulInteractiveElement, Styled, ViewContext,
 };
 use util::channel::ReleaseChannel;
@@ -40,7 +40,9 @@ impl Render for UpdateNotification {
                     .id("notes")
                     .child(Label::new("View the release notes"))
                     .cursor_pointer()
-                    .on_click(|_, cx| crate::view_release_notes(&Default::default(), cx)),
+                    .on_click(listener(|_, cx| {
+                        crate::view_release_notes(&Default::default(), cx)
+                    })),
             )
     }
 }

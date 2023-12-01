@@ -71,7 +71,7 @@ impl Render for ButtonStory {
             .child(
                 Button::new("Label")
                     .variant(ButtonVariant::Ghost)
-                    .on_click(|_, _cx| println!("Button clicked.")),
+                    .on_click(|_: &_, _: &mut WindowContext| println!("Button clicked.")),
             )
     }
 }

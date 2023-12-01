@@ -29,18 +29,16 @@ impl Render for ListItemStory {
                     )),
             )
             .child(Story::label("With `on_click`"))
-            .child(
-                ListItem::new("with_on_click")
-                    .child("Click me")
-                    .on_click(|_event, _cx| {
-                        println!("Clicked!");
-                    }),
-            )
+            .child(ListItem::new("with_on_click").child("Click me").on_click(
+                |_event: &_, _cx: &mut WindowContext| {
+                    println!("Clicked!");
+                },
+            ))
             .child(Story::label("With `on_secondary_mouse_down`"))
             .child(
                 ListItem::new("with_on_secondary_mouse_down")
                     .child("Right click me")
-                    .on_secondary_mouse_down(|_event, _cx| {
+                    .on_secondary_mouse_down(|_event: &_, _cx: &mut WindowContext| {
                         println!("Right mouse down!");
                     }),
             )

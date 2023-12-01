@@ -1,6 +1,6 @@
 use gpui::{
-    rems, AnyElement, AnyView, ClickEvent, Div, Hsla, IntoElement, Rems, Stateful,
-    StatefulInteractiveElement, WindowContext,
+    rems, AnyElement, AnyView, ClickEvent, Constructor, Div, Hsla, IntoElement, Listener, Rems,
+    Stateful, StatefulInteractiveElement, WindowContext,
 };
 use smallvec::SmallVec;
 
@@ -205,7 +205,7 @@ pub trait ButtonCommon: Clickable + Disableable {
     fn id(&self) -> &ElementId;
     fn style(self, style: ButtonStyle2) -> Self;
     fn size(self, size: ButtonSize2) -> Self;
-    fn tooltip(self, tooltip: impl Fn(&mut WindowContext) -> AnyView + 'static) -> Self;
+    fn tooltip(self, tooltip: Constructor<AnyView>) -> Self;
 }
 
 // pub struct LabelButton {
@@ -258,8 +258,8 @@ pub struct ButtonLike {
     style: ButtonStyle2,
     disabled: bool,
     size: ButtonSize2,
-    tooltip: Option<Box<dyn Fn(&mut WindowContext) -> AnyView>>,
-    on_click: Option<Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
+    tooltip: Option<Constructor<AnyView>>,
+    on_click: Option<Listener<ClickEvent>>,
     children: SmallVec<[AnyElement; 2]>,
 }
 
@@ -285,8 +285,8 @@ impl Disableable for ButtonLike {
 }
 
 impl Clickable for ButtonLike {
-    fn on_click(mut self, handler: impl Fn(&ClickEvent, &mut WindowContext) + 'static) -> Self {
-        self.on_click = Some(Box::new(handler));
+    fn on_click(mut self, handler: Listener<ClickEvent>) -> Self {
+        self.on_click = Some(handler);
         self
     }
 }
@@ -319,8 +319,8 @@ impl ButtonCommon for ButtonLike {
         self
     }
 
-    fn tooltip(mut self, tooltip: impl Fn(&mut WindowContext) -> AnyView + 'static) -> Self {
-        self.tooltip = Some(Box::new(tooltip));
+    fn tooltip(mut self, tooltip: Constructor<AnyView>) -> Self {
+        self.tooltip = Some(tooltip);
         self
     }
 }
@@ -341,11 +341,9 @@ impl RenderOnce for ButtonLike {
             .active(|active| active.bg(self.style.active(cx).background))
             .when_some(
                 self.on_click.filter(|_| !self.disabled),
-                |this, on_click| this.on_click(move |event, cx| (on_click)(event, cx)),
+                |this, on_click| this.on_click(on_click),
             )
-            .when_some(self.tooltip, |this, tooltip| {
-                this.tooltip(move |cx| tooltip(cx))
-            })
+            .when_some(self.tooltip, |this, tooltip| this.tooltip(tooltip))
             .children(self.children)
     }
 }

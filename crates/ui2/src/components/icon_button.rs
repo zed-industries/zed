@@ -1,5 +1,5 @@
 use crate::{h_stack, prelude::*, Icon, IconElement, IconSize};
-use gpui::{prelude::*, Action, AnyView, ClickEvent, Div, Stateful};
+use gpui::{prelude::*, Action, AnyView, ClickEvent, Div, IntoListener, Listener, Stateful};
 
 #[derive(IntoElement)]
 pub struct IconButton {
@@ -11,7 +11,7 @@ pub struct IconButton {
     disabled: bool,
     selected: bool,
     tooltip: Option<Box<dyn Fn(&mut WindowContext) -> AnyView + 'static>>,
-    on_click: Option<Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
+    on_click: Option<Listener<ClickEvent>>,
 }
 
 impl RenderOnce for IconButton {
@@ -58,7 +58,7 @@ impl RenderOnce for IconButton {
             );
 
         if let Some(click_handler) = self.on_click {
-            button = button.on_click(move |event, cx| {
+            button = button.on_click(move |event: &_, cx: &mut WindowContext| {
                 cx.stop_propagation();
                 click_handler(event, cx);
             })
@@ -66,7 +66,7 @@ impl RenderOnce for IconButton {
 
         if let Some(tooltip) = self.tooltip {
             if !self.selected {
-                button = button.tooltip(move |cx| tooltip(cx))
+                button = button.tooltip(tooltip)
             }
         }
 
@@ -124,12 +124,12 @@ impl IconButton {
         self
     }
 
-    pub fn on_click(mut self, handler: impl 'static + Fn(&ClickEvent, &mut WindowContext)) -> Self {
-        self.on_click = Some(Box::new(handler));
+    pub fn on_click(mut self, handler: impl IntoListener<ClickEvent>) -> Self {
+        self.on_click = Some(handler.into_listener());
         self
     }
 
     pub fn action(self, action: Box<dyn Action>) -> Self {
-        self.on_click(move |_event, cx| cx.dispatch_action(action.boxed_clone()))
+        self.on_click(move |_: &_, cx: &mut WindowContext| cx.dispatch_action(action.boxed_clone()))
     }
 }

@@ -1,6 +1,4 @@
-use std::rc::Rc;
-
-use gpui::{ClickEvent, Div};
+use gpui::{ClickEvent, Div, Listener};
 
 use crate::prelude::*;
 use crate::{disclosure_control, h_stack, Icon, IconButton, IconElement, IconSize, Label, Toggle};
@@ -18,7 +16,7 @@ pub struct ListHeader {
     left_icon: Option<Icon>,
     meta: Option<ListHeaderMeta>,
     toggle: Toggle,
-    on_toggle: Option<Rc<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
+    on_toggle: Option<Listener<ClickEvent>>,
     inset: bool,
     selected: bool,
 }
@@ -41,11 +39,8 @@ impl ListHeader {
         self
     }
 
-    pub fn on_toggle(
-        mut self,
-        on_toggle: impl Fn(&ClickEvent, &mut WindowContext) + 'static,
-    ) -> Self {
-        self.on_toggle = Some(Rc::new(on_toggle));
+    pub fn on_toggle(mut self, on_toggle: Listener<ClickEvent>) -> Self {
+        self.on_toggle = Some(on_toggle);
         self
     }
 

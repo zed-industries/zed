@@ -1,9 +1,9 @@
-use gpui::{div, prelude::*, Div, Element, ElementId, IntoElement, Styled, WindowContext};
+use gpui::{
+    div, prelude::*, Div, Element, ElementId, IntoElement, Listener, Styled, WindowContext,
+};
 
 use crate::prelude::*;
 use crate::{Color, Icon, IconElement, Selection};
-
-pub type CheckHandler = Box<dyn Fn(&Selection, &mut WindowContext) + 'static>;
 
 /// # Checkbox
 ///
@@ -15,7 +15,7 @@ pub struct Checkbox {
     id: ElementId,
     checked: Selection,
     disabled: bool,
-    on_click: Option<CheckHandler>,
+    on_click: Option<Listener<Selection>>,
 }
 
 impl RenderOnce for Checkbox {
@@ -136,7 +136,11 @@ impl RenderOnce for Checkbox {
             )
             .when_some(
                 self.on_click.filter(|_| !self.disabled),
-                |this, on_click| this.on_click(move |_, cx| on_click(&self.checked.inverse(), cx)),
+                |this, on_click| {
+                    this.on_click(move |_: &_, cx: &mut WindowContext| {
+                        on_click(&self.checked.inverse(), cx)
+                    })
+                },
             )
     }
 }
@@ -155,11 +159,8 @@ impl Checkbox {
         self
     }
 
-    pub fn on_click(
-        mut self,
-        handler: impl 'static + Fn(&Selection, &mut WindowContext) + Send + Sync,
-    ) -> Self {
-        self.on_click = Some(Box::new(handler));
+    pub fn on_click(mut self, handler: Listener<Selection>) -> Self {
+        self.on_click = Some(handler);
         self
     }
 
@@ -278,7 +279,11 @@ impl Checkbox {
             )
             .when_some(
                 self.on_click.filter(|_| !self.disabled),
-                |this, on_click| this.on_click(move |_, cx| on_click(&self.checked.inverse(), cx)),
+                |this, on_click| {
+                    this.on_click(move |_: &_, cx: &mut WindowContext| {
+                        on_click(&self.checked.inverse(), cx)
+                    })
+                },
             )
     }
 }

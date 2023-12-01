@@ -29,6 +29,7 @@ use std::{
     hash::{Hash, Hasher},
     marker::PhantomData,
     mem,
+    ops::Deref,
     rc::Rc,
     sync::{
         atomic::{AtomicUsize, Ordering::SeqCst},
@@ -1473,7 +1474,7 @@ impl<'a> WindowContext<'a> {
         &self,
         view: &View<V>,
         f: impl Fn(&mut V, &E, &mut ViewContext<V>) + 'static,
-    ) -> impl Fn(&E, &mut WindowContext) + 'static {
+    ) -> impl DynFn<dyn Fn(&E, &mut WindowContext) + 'static> {
         let view = view.downgrade();
         move |e: &E, cx: &mut WindowContext| {
             view.update(cx, |view, cx| f(view, e, cx)).ok();
@@ -1703,7 +1704,7 @@ impl VisualContext for WindowContext<'_> {
     }
 }
 
-impl<'a> std::ops::Deref for WindowContext<'a> {
+impl<'a> Deref for WindowContext<'a> {
     type Target = AppContext;
 
     fn deref(&self) -> &Self::Target {
@@ -2392,7 +2393,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     pub fn listener<E>(
         &self,
         f: impl Fn(&mut V, &E, &mut ViewContext<V>) + 'static,
-    ) -> impl Fn(&E, &mut WindowContext) + 'static {
+    ) -> impl DynFn<dyn Fn(&E, &mut WindowContext) + 'static> {
         let view = self.view().downgrade();
         move |e: &E, cx: &mut WindowContext| {
             view.update(cx, |view, cx| f(view, e, cx)).ok();
@@ -2483,7 +2484,7 @@ impl<V: 'static> VisualContext for ViewContext<'_, V> {
     }
 }
 
-impl<'a, V> std::ops::Deref for ViewContext<'a, V> {
+impl<'a, V> Deref for ViewContext<'a, V> {
     type Target = WindowContext<'a>;
 
     fn deref(&self) -> &Self::Target {
@@ -2726,5 +2727,105 @@ impl From<&'static str> for ElementId {
 impl<'a> From<&'a FocusHandle> for ElementId {
     fn from(handle: &'a FocusHandle) -> Self {
         ElementId::FocusHandle(handle.id)
+    }
+}
+
+/// This trait allows us to abstract over boxed and unboxed
+/// closures without any more overhead than necessary.
+pub trait DynFn<F: ?Sized>: 'static {
+    fn borrowed(&self) -> &F;
+
+    fn boxed(self) -> Box<F>;
+}
+
+pub struct Listener<E>(Box<dyn Fn(&E, &mut WindowContext) + 'static>);
+
+impl<E: 'static> Deref for Listener<E> {
+    type Target = dyn Fn(&E, &mut WindowContext) + 'static;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<E: 'static> DynFn<dyn Fn(&E, &mut WindowContext) + 'static> for Listener<E> {
+    fn borrowed(&self) -> &(dyn Fn(&E, &mut WindowContext) + 'static) {
+        &self.0
+    }
+
+    fn boxed(self) -> Box<dyn Fn(&E, &mut WindowContext)> {
+        self.0
+    }
+}
+
+impl<E, F> DynFn<dyn Fn(&E, &mut WindowContext) + 'static> for F
+where
+    F: Fn(&E, &mut WindowContext) + 'static,
+{
+    fn borrowed(&self) -> &(dyn Fn(&E, &mut WindowContext) + 'static) {
+        self
+    }
+
+    fn boxed(self) -> Box<dyn Fn(&E, &mut WindowContext)> {
+        Box::new(self)
+    }
+}
+
+pub trait IntoListener<E> {
+    fn into_listener(self) -> Listener<E>;
+}
+
+impl<F, E> IntoListener<E> for F
+where
+    F: DynFn<dyn Fn(&E, &mut WindowContext) + 'static>,
+{
+    fn into_listener(self) -> Listener<E> {
+        Listener(self.boxed())
+    }
+}
+
+pub struct Constructor<R>(Box<dyn Fn(&mut WindowContext) -> R + 'static>);
+
+pub trait IntoConstructor<R> {
+    fn into_constructor(self) -> Constructor<R>;
+}
+
+impl<F, R> IntoConstructor<R> for F
+where
+    F: DynFn<dyn Fn(&mut WindowContext) -> R + 'static>,
+{
+    fn into_constructor(self) -> Constructor<R> {
+        Constructor(self.boxed())
+    }
+}
+
+impl<R: 'static> Deref for Constructor<R> {
+    type Target = dyn Fn(&mut WindowContext) -> R + 'static;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<R: 'static> DynFn<dyn Fn(&mut WindowContext) -> R + 'static> for Constructor<R> {
+    fn borrowed(&self) -> &(dyn Fn(&mut WindowContext) -> R + 'static) {
+        &self.0
+    }
+
+    fn boxed(self) -> Box<dyn Fn(&mut WindowContext) -> R> {
+        self.0
+    }
+}
+
+impl<R: 'static, F> DynFn<dyn Fn(&mut WindowContext) -> R + 'static> for F
+where
+    F: Fn(&mut WindowContext) -> R + 'static,
+{
+    fn borrowed(&self) -> &(dyn Fn(&mut WindowContext) -> R + 'static) {
+        self
+    }
+
+    fn boxed(self) -> Box<dyn Fn(&mut WindowContext) -> R> {
+        Box::new(self)
     }
 }

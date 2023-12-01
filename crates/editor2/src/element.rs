@@ -20,9 +20,9 @@ use crate::{
 use anyhow::Result;
 use collections::{BTreeMap, HashMap};
 use gpui::{
-    div, point, px, relative, size, transparent_black, Action, AnyElement, AvailableSpace,
-    BorrowWindow, Bounds, ContentMask, Corners, DispatchPhase, Edges, Element, ElementId,
-    ElementInputHandler, Entity, EntityId, Hsla, InteractiveBounds, InteractiveElement,
+    div, listener, point, px, relative, size, transparent_black, Action, AnyElement,
+    AvailableSpace, BorrowWindow, Bounds, ContentMask, Corners, DispatchPhase, Edges, Element,
+    ElementId, ElementInputHandler, Entity, EntityId, Hsla, InteractiveBounds, InteractiveElement,
     IntoElement, LineLayout, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     ParentElement, Pixels, RenderOnce, ScrollWheelEvent, ShapedLine, SharedString, Size,
     StackingOrder, StatefulInteractiveElement, Style, Styled, TextRun, TextStyle, View,
@@ -872,7 +872,10 @@ impl EditorElement {
                             div()
                                 .id(fold.id)
                                 .size_full()
-                                .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    listener(|_, cx| cx.stop_propagation()),
+                                )
                                 .on_click(cx.listener_for(
                                     &self.editor,
                                     move |editor: &mut Editor, _, cx| {
