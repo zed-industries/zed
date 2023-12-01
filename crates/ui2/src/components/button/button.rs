@@ -79,7 +79,7 @@ impl RenderOnce for Button {
         } else if self.base.selected {
             Color::Selected
         } else {
-            Color::Default
+            self.label_color.unwrap_or_default()
         };
 
         self.base.child(
