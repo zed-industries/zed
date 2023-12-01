@@ -2898,7 +2898,6 @@ impl Editor {
     }
 
     pub fn newline(&mut self, _: &Newline, cx: &mut ViewContext<Self>) {
-        dbg!("!!!!!!!!!!");
         self.transact(cx, |this, cx| {
             let (edits, selection_fixup_info): (Vec<_>, Vec<_>) = {
                 let selections = this.selections.all::<usize>(cx);
