@@ -514,123 +514,123 @@ fn test_clone(cx: &mut TestAppContext) {
 }
 
 //todo!(editor navigate)
-// #[gpui::test]
-// async fn test_navigation_history(cx: &mut TestAppContext) {
-//     init_test(cx, |_| {});
+#[gpui::test]
+async fn test_navigation_history(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
 
-//     use workspace::item::Item;
+    use workspace::item::Item;
 
-//     let fs = FakeFs::new(cx.executor());
-//     let project = Project::test(fs, [], cx).await;
-//     let workspace = cx.add_window(|cx| Workspace::test_new(project, cx));
-//     let pane = workspace
-//         .update(cx, |workspace, _| workspace.active_pane().clone())
-//         .unwrap();
+    let fs = FakeFs::new(cx.executor());
+    let project = Project::test(fs, [], cx).await;
+    let workspace = cx.add_window(|cx| Workspace::test_new(project, cx));
+    let pane = workspace
+        .update(cx, |workspace, _| workspace.active_pane().clone())
+        .unwrap();
 
-//     workspace.update(cx, |v, cx| {
-//         cx.build_view(|cx| {
-//             let buffer = MultiBuffer::build_simple(&sample_text(300, 5, 'a'), cx);
-//             let mut editor = build_editor(buffer.clone(), cx);
-//             let handle = cx.view();
-//             editor.set_nav_history(Some(pane.read(cx).nav_history_for_item(&handle)));
+    workspace.update(cx, |v, cx| {
+        cx.build_view(|cx| {
+            let buffer = MultiBuffer::build_simple(&sample_text(300, 5, 'a'), cx);
+            let mut editor = build_editor(buffer.clone(), cx);
+            let handle = cx.view();
+            editor.set_nav_history(Some(pane.read(cx).nav_history_for_item(&handle)));
 
-//             fn pop_history(editor: &mut Editor, cx: &mut WindowContext) -> Option<NavigationEntry> {
-//                 editor.nav_history.as_mut().unwrap().pop_backward(cx)
-//             }
+            fn pop_history(editor: &mut Editor, cx: &mut WindowContext) -> Option<NavigationEntry> {
+                editor.nav_history.as_mut().unwrap().pop_backward(cx)
+            }
 
-//             // Move the cursor a small distance.
-//             // Nothing is added to the navigation history.
-//             editor.change_selections(None, cx, |s| {
-//                 s.select_display_ranges([DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0)])
-//             });
-//             editor.change_selections(None, cx, |s| {
-//                 s.select_display_ranges([DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0)])
-//             });
-//             assert!(pop_history(&mut editor, cx).is_none());
+            // Move the cursor a small distance.
+            // Nothing is added to the navigation history.
+            editor.change_selections(None, cx, |s| {
+                s.select_display_ranges([DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0)])
+            });
+            editor.change_selections(None, cx, |s| {
+                s.select_display_ranges([DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0)])
+            });
+            assert!(pop_history(&mut editor, cx).is_none());
 
-//             // Move the cursor a large distance.
-//             // The history can jump back to the previous position.
-//             editor.change_selections(None, cx, |s| {
-//                 s.select_display_ranges([DisplayPoint::new(13, 0)..DisplayPoint::new(13, 3)])
-//             });
-//             let nav_entry = pop_history(&mut editor, cx).unwrap();
-//             editor.navigate(nav_entry.data.unwrap(), cx);
-//             assert_eq!(nav_entry.item.id(), cx.entity_id());
-//             assert_eq!(
-//                 editor.selections.display_ranges(cx),
-//                 &[DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0)]
-//             );
-//             assert!(pop_history(&mut editor, cx).is_none());
+            // Move the cursor a large distance.
+            // The history can jump back to the previous position.
+            editor.change_selections(None, cx, |s| {
+                s.select_display_ranges([DisplayPoint::new(13, 0)..DisplayPoint::new(13, 3)])
+            });
+            let nav_entry = pop_history(&mut editor, cx).unwrap();
+            editor.navigate(nav_entry.data.unwrap(), cx);
+            assert_eq!(nav_entry.item.id(), cx.entity_id());
+            assert_eq!(
+                editor.selections.display_ranges(cx),
+                &[DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0)]
+            );
+            assert!(pop_history(&mut editor, cx).is_none());
 
-//             // Move the cursor a small distance via the mouse.
-//             // Nothing is added to the navigation history.
-//             editor.begin_selection(DisplayPoint::new(5, 0), false, 1, cx);
-//             editor.end_selection(cx);
-//             assert_eq!(
-//                 editor.selections.display_ranges(cx),
-//                 &[DisplayPoint::new(5, 0)..DisplayPoint::new(5, 0)]
-//             );
-//             assert!(pop_history(&mut editor, cx).is_none());
+            // Move the cursor a small distance via the mouse.
+            // Nothing is added to the navigation history.
+            editor.begin_selection(DisplayPoint::new(5, 0), false, 1, cx);
+            editor.end_selection(cx);
+            assert_eq!(
+                editor.selections.display_ranges(cx),
+                &[DisplayPoint::new(5, 0)..DisplayPoint::new(5, 0)]
+            );
+            assert!(pop_history(&mut editor, cx).is_none());
 
-//             // Move the cursor a large distance via the mouse.
-//             // The history can jump back to the previous position.
-//             editor.begin_selection(DisplayPoint::new(15, 0), false, 1, cx);
-//             editor.end_selection(cx);
-//             assert_eq!(
-//                 editor.selections.display_ranges(cx),
-//                 &[DisplayPoint::new(15, 0)..DisplayPoint::new(15, 0)]
-//             );
-//             let nav_entry = pop_history(&mut editor, cx).unwrap();
-//             editor.navigate(nav_entry.data.unwrap(), cx);
-//             assert_eq!(nav_entry.item.id(), cx.entity_id());
-//             assert_eq!(
-//                 editor.selections.display_ranges(cx),
-//                 &[DisplayPoint::new(5, 0)..DisplayPoint::new(5, 0)]
-//             );
-//             assert!(pop_history(&mut editor, cx).is_none());
+            // Move the cursor a large distance via the mouse.
+            // The history can jump back to the previous position.
+            editor.begin_selection(DisplayPoint::new(15, 0), false, 1, cx);
+            editor.end_selection(cx);
+            assert_eq!(
+                editor.selections.display_ranges(cx),
+                &[DisplayPoint::new(15, 0)..DisplayPoint::new(15, 0)]
+            );
+            let nav_entry = pop_history(&mut editor, cx).unwrap();
+            editor.navigate(nav_entry.data.unwrap(), cx);
+            assert_eq!(nav_entry.item.id(), cx.entity_id());
+            assert_eq!(
+                editor.selections.display_ranges(cx),
+                &[DisplayPoint::new(5, 0)..DisplayPoint::new(5, 0)]
+            );
+            assert!(pop_history(&mut editor, cx).is_none());
 
-//             // Set scroll position to check later
-//             editor.set_scroll_position(gpui::Point::<f32>::new(5.5, 5.5), cx);
-//             let original_scroll_position = editor.scroll_manager.anchor();
+            // Set scroll position to check later
+            editor.set_scroll_position(gpui::Point::<f32>::new(5.5, 5.5), cx);
+            let original_scroll_position = editor.scroll_manager.anchor();
 
-//             // Jump to the end of the document and adjust scroll
-//             editor.move_to_end(&MoveToEnd, cx);
-//             editor.set_scroll_position(gpui::Point::<f32>::new(-2.5, -0.5), cx);
-//             assert_ne!(editor.scroll_manager.anchor(), original_scroll_position);
+            // Jump to the end of the document and adjust scroll
+            editor.move_to_end(&MoveToEnd, cx);
+            editor.set_scroll_position(gpui::Point::<f32>::new(-2.5, -0.5), cx);
+            assert_ne!(editor.scroll_manager.anchor(), original_scroll_position);
 
-//             let nav_entry = pop_history(&mut editor, cx).unwrap();
-//             editor.navigate(nav_entry.data.unwrap(), cx);
-//             assert_eq!(editor.scroll_manager.anchor(), original_scroll_position);
+            let nav_entry = pop_history(&mut editor, cx).unwrap();
+            editor.navigate(nav_entry.data.unwrap(), cx);
+            assert_eq!(editor.scroll_manager.anchor(), original_scroll_position);
 
-//             // Ensure we don't panic when navigation data contains invalid anchors *and* points.
-//             let mut invalid_anchor = editor.scroll_manager.anchor().anchor;
-//             invalid_anchor.text_anchor.buffer_id = Some(999);
-//             let invalid_point = Point::new(9999, 0);
-//             editor.navigate(
-//                 Box::new(NavigationData {
-//                     cursor_anchor: invalid_anchor,
-//                     cursor_position: invalid_point,
-//                     scroll_anchor: ScrollAnchor {
-//                         anchor: invalid_anchor,
-//                         offset: Default::default(),
-//                     },
-//                     scroll_top_row: invalid_point.row,
-//                 }),
-//                 cx,
-//             );
-//             assert_eq!(
-//                 editor.selections.display_ranges(cx),
-//                 &[editor.max_point(cx)..editor.max_point(cx)]
-//             );
-//             assert_eq!(
-//                 editor.scroll_position(cx),
-//                 gpui::Point::new(0., editor.max_point(cx).row() as f32)
-//             );
+            // Ensure we don't panic when navigation data contains invalid anchors *and* points.
+            let mut invalid_anchor = editor.scroll_manager.anchor().anchor;
+            invalid_anchor.text_anchor.buffer_id = Some(999);
+            let invalid_point = Point::new(9999, 0);
+            editor.navigate(
+                Box::new(NavigationData {
+                    cursor_anchor: invalid_anchor,
+                    cursor_position: invalid_point,
+                    scroll_anchor: ScrollAnchor {
+                        anchor: invalid_anchor,
+                        offset: Default::default(),
+                    },
+                    scroll_top_row: invalid_point.row,
+                }),
+                cx,
+            );
+            assert_eq!(
+                editor.selections.display_ranges(cx),
+                &[editor.max_point(cx)..editor.max_point(cx)]
+            );
+            assert_eq!(
+                editor.scroll_position(cx),
+                gpui::Point::new(0., editor.max_point(cx).row() as f32)
+            );
 
-//             editor
-//         })
-//     });
-// }
+            editor
+        })
+    });
+}
 
 #[gpui::test]
 fn test_cancel(cx: &mut TestAppContext) {
