@@ -26,13 +26,19 @@ impl ButtonIcon {
         }
     }
 
-    pub fn size(mut self, size: IconSize) -> Self {
-        self.size = size;
+    pub fn size(mut self, size: impl Into<Option<IconSize>>) -> Self {
+        if let Some(size) = size.into() {
+            self.size = size;
+        }
+
         self
     }
 
-    pub fn color(mut self, color: Color) -> Self {
-        self.color = color;
+    pub fn color(mut self, color: impl Into<Option<Color>>) -> Self {
+        if let Some(color) = color.into() {
+            self.color = color;
+        }
+
         self
     }
 

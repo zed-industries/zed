@@ -133,8 +133,8 @@ impl RenderOnce for Button {
                     .disabled(is_disabled)
                     .selected(is_selected)
                     .selected_icon(self.selected_icon)
-                    .when_some(self.icon_size, |icon, size| icon.size(size))
-                    .when_some(self.icon_color, |icon, color| icon.color(color))
+                    .size(self.icon_size)
+                    .color(self.icon_color)
             }))
             .child(
                 Label::new(label)
