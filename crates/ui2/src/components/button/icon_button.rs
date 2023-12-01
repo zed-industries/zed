@@ -9,6 +9,7 @@ pub struct IconButton {
     icon: Icon,
     icon_size: IconSize,
     icon_color: Color,
+    selected_icon: Option<Icon>,
 }
 
 impl IconButton {
@@ -18,6 +19,7 @@ impl IconButton {
             icon,
             icon_size: IconSize::default(),
             icon_color: Color::Default,
+            selected_icon: None,
         }
     }
 
@@ -28,6 +30,11 @@ impl IconButton {
 
     pub fn icon_color(mut self, icon_color: Color) -> Self {
         self.icon_color = icon_color;
+        self
+    }
+
+    pub fn selected_icon(mut self, icon: impl Into<Option<Icon>>) -> Self {
+        self.selected_icon = icon.into();
         self
     }
 
@@ -85,6 +92,11 @@ impl RenderOnce for IconButton {
     type Rendered = ButtonLike;
 
     fn render(self, _cx: &mut WindowContext) -> Self::Rendered {
+        let icon = self
+            .selected_icon
+            .filter(|_| self.base.selected)
+            .unwrap_or(self.icon);
+
         let icon_color = if self.base.disabled {
             Color::Disabled
         } else if self.base.selected {
@@ -94,7 +106,7 @@ impl RenderOnce for IconButton {
         };
 
         self.base.child(
-            IconElement::new(self.icon)
+            IconElement::new(icon)
                 .size(self.icon_size)
                 .color(icon_color),
         )
