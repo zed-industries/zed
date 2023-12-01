@@ -1642,14 +1642,7 @@ impl Editor {
     }
 
     pub fn clone(&self, cx: &mut ViewContext<Self>) -> Self {
-        let mut clone = Self::new(
-            self.mode,
-            self.buffer.clone(),
-            self.project.clone(),
-            // todo!
-            // self.get_field_editor_theme.clone(),
-            cx,
-        );
+        let mut clone = Self::new(self.mode, self.buffer.clone(), self.project.clone(), cx);
         self.display_map.update(cx, |display_map, cx| {
             let snapshot = display_map.snapshot(cx);
             clone.display_map.update(cx, |display_map, cx| {
@@ -1666,17 +1659,11 @@ impl Editor {
         mode: EditorMode,
         buffer: Model<MultiBuffer>,
         project: Option<Model<Project>>,
-        // todo!()
-        // get_field_editor_theme: Option<Arc<GetFieldEditorTheme>>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        // let editor_view_id = cx.view_id();
         let style = cx.text_style();
         let font_size = style.font_size.to_pixels(cx.rem_size());
         let display_map = cx.build_model(|cx| {
-            // todo!()
-            // let settings = settings::get::<ThemeSettings>(cx);
-            // let style = build_style(settings, get_field_editor_theme.as_deref(), None, cx);
             DisplayMap::new(buffer.clone(), style.font(), font_size, None, 2, 1, cx)
         });
 
@@ -9669,72 +9656,6 @@ impl InputHandler for Editor {
         })
     }
 }
-
-// fn build_style(
-//     settings: &ThemeSettings,
-//     get_field_editor_theme: Option<&GetFieldEditorTheme>,
-//     override_text_style: Option<&OverrideTextStyle>,
-//     cx: &mut AppContext,
-// ) -> EditorStyle {
-//     let font_cache = cx.font_cache();
-//     let line_height_scalar = settings.line_height();
-//     let theme_id = settings.theme.meta.id;
-//     let mut theme = settings.theme.editor.clone();
-//     let mut style = if let Some(get_field_editor_theme) = get_field_editor_theme {
-//         let field_editor_theme = get_field_editor_theme(&settings.theme);
-//         theme.text_color = field_editor_theme.text.color;
-//         theme.selection = field_editor_theme.selection;
-//         theme.background = field_editor_theme
-//             .container
-//             .background_color
-//             .unwrap_or_default();
-//         EditorStyle {
-//             text: field_editor_theme.text,
-//             placeholder_text: field_editor_theme.placeholder_text,
-//             line_height_scalar,
-//             theme,
-//             theme_id,
-//         }
-//     } else {
-//         todo!();
-//         // let font_family_id = settings.buffer_font_family;
-//         // let font_family_name = cx.font_cache().family_name(font_family_id).unwrap();
-//         // let font_properties = Default::default();
-//         // let font_id = font_cache
-//         //     .select_font(font_family_id, &font_properties)
-//         //     .unwrap();
-//         // let font_size = settings.buffer_font_size(cx);
-//         // EditorStyle {
-//         //     text: TextStyle {
-//         //         color: settings.theme.editor.text_color,
-//         //         font_family_name,
-//         //         font_family_id,
-//         //         font_id,
-//         //         font_size,
-//         //         font_properties,
-//         //         underline: Default::default(),
-//         //         soft_wrap: false,
-//         //     },
-//         //     placeholder_text: None,
-//         //     line_height_scalar,
-//         //     theme,
-//         //     theme_id,
-//         // }
-//     };
-
-//     if let Some(highlight_style) = override_text_style.and_then(|build_style| build_style(&style)) {
-//         if let Some(highlighted) = style
-//             .text
-//             .clone()
-//             .highlight(highlight_style, font_cache)
-//             .log_err()
-//         {
-//             style.text = highlighted;
-//         }
-//     }
-
-//     style
-// }
 
 trait SelectionExt {
     fn offset_range(&self, buffer: &MultiBufferSnapshot) -> Range<usize>;

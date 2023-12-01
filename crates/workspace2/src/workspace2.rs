@@ -247,7 +247,7 @@ type FollowableItemBuilder = fn(
     View<Workspace>,
     ViewId,
     &mut Option<proto::view::Variant>,
-    &mut AppContext,
+    &mut WindowContext,
 ) -> Option<Task<Result<Box<dyn FollowableItemHandle>>>>;
 type FollowableItemBuilders = HashMap<
     TypeId,
