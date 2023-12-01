@@ -1,7 +1,9 @@
 use gpui::AnyView;
 
-use crate::{prelude::*, Icon, IconSize};
-use crate::{ButtonCommon, ButtonLike, ButtonSize, ButtonStyle, Label, LineHeightStyle};
+use crate::prelude::*;
+use crate::{
+    ButtonCommon, ButtonLike, ButtonSize, ButtonStyle, Icon, IconSize, Label, LineHeightStyle,
+};
 
 use super::button_icon::ButtonIcon;
 
