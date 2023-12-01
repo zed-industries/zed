@@ -1710,8 +1710,6 @@ impl EditorElement {
                     SoftWrap::Column(column) => editor_width.min(column as f32 * em_advance),
                 };
 
-                dbg!(bounds.size.width, gutter_width, gutter_margin, overscroll.width, em_width, em_advance, wrap_width);
-                println!("setting wrap width during paint: {wrap_width:?}");
                 if editor.set_wrap_width(Some(wrap_width), cx) {
                     editor.snapshot(cx)
                 } else {
@@ -4183,7 +4181,6 @@ fn compute_auto_height_layout(
     let overscroll = size(em_width, px(0.));
 
     let editor_width = text_width - gutter_margin - overscroll.width - em_width;
-    println!("setting wrap width during layout: {editor_width:?}");
     if editor.set_wrap_width(Some(editor_width), cx) {
         snapshot = editor.snapshot(cx);
     }
