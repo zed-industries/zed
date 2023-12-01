@@ -450,6 +450,20 @@ async fn test_db_channel_moving_bugs(db: &Arc<Database>) {
             (livestreaming_id, &[projects_id]),
         ],
     );
+
+    // Can't move a channel into its ancestor
+    db.move_channel(projects_id, Some(livestreaming_id), user_id)
+        .await
+        .unwrap_err();
+    let result = db.get_channels_for_user(user_id).await.unwrap();
+    assert_channel_tree(
+        result.channels,
+        &[
+            (zed_id, &[]),
+            (projects_id, &[]),
+            (livestreaming_id, &[projects_id]),
+        ],
+    );
 }
 
 test_both_dbs!(
