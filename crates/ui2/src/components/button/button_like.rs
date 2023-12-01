@@ -5,20 +5,23 @@ use crate::h_stack;
 use crate::prelude::*;
 
 pub trait ButtonCommon: Clickable + Disableable {
-    /// A unique element id to help identify the button.
+    /// A unique element ID to identify the button.
     fn id(&self) -> &ElementId;
+
     /// The visual style of the button.
     ///
-    /// Mosty commonly will be `ButtonStyle::Subtle`, or `ButtonStyle::Filled`
+    /// Mosty commonly will be [`ButtonStyle::Subtle`], or [`ButtonStyle::Filled`]
     /// for an emphasized button.
     fn style(self, style: ButtonStyle) -> Self;
+
     /// The size of the button.
     ///
     /// Most buttons will use the default size.
     ///
-    /// ButtonSize can also be used to help build  non-button elements
+    /// [`ButtonSize`] can also be used to help build non-button elements
     /// that are consistently sized with buttons.
     fn size(self, size: ButtonSize) -> Self;
+
     /// The tooltip that shows when a user hovers over the button.
     ///
     /// Nearly all interactable elements should have a tooltip. Some example
@@ -31,15 +34,18 @@ pub enum ButtonStyle {
     /// A filled button with a solid background color. Provides emphasis versus
     /// the more common subtle button.
     Filled,
+
     /// 🚧 Under construction 🚧
     ///
     /// Used to emphasize a button in some way, like a selected state, or a semantic
     /// coloring like an error or success button.
     Tinted,
+
     /// The default button style, used for most buttons. Has a transparent background,
     /// but has a background color to indicate states like hover and active.
     #[default]
     Subtle,
+
     /// Used for buttons that only change forground color on hover and active states.
     ///
     /// TODO: Better docs for this.
