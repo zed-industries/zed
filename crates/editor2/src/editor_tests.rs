@@ -6325,7 +6325,6 @@ async fn test_extra_newline_insertion(cx: &mut gpui::TestAppContext) {
     });
 }
 
-//todo!(finish editor tests)
 // #[gpui::test]
 // fn test_highlighted_ranges(cx: &mut TestAppContext) {
 //     init_test(cx, |_| {});

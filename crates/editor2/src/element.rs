@@ -328,7 +328,7 @@ impl EditorElement {
         });
     }
 
-    fn modifiers_changed(
+    pub(crate) fn modifiers_changed(
         editor: &mut Editor,
         event: &ModifiersChangedEvent,
         cx: &mut ViewContext<Editor>,
