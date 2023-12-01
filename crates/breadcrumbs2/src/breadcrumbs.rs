@@ -1,11 +1,10 @@
 use gpui::{
-    AnyElement, Component, Div, Element, EventEmitter, InteractiveElement, IntoElement,
-    ParentElement, Render, Stateful, StatefulInteractiveElement, Styled, StyledText, Subscription,
+    Component, Element, EventEmitter, IntoElement, ParentElement, Render, StyledText, Subscription,
     ViewContext, WeakView,
 };
 use itertools::Itertools;
 use theme::ActiveTheme;
-use ui::{h_stack, ButtonCommon, ButtonLike, ButtonStyle2, Clickable, Disableable, Label};
+use ui::{ButtonCommon, ButtonLike, ButtonStyle, Clickable, Disableable, Label};
 use workspace::{
     item::{ItemEvent, ItemHandle},
     ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
@@ -41,7 +40,7 @@ impl Render for Breadcrumbs {
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         let button = ButtonLike::new("breadcrumbs")
-            .style(ButtonStyle2::Transparent)
+            .style(ButtonStyle::Transparent)
             .disabled(true);
 
         let active_item = match &self.active_item {
@@ -71,7 +70,7 @@ impl Render for Breadcrumbs {
 
         // let this = cx.view().downgrade();
         button
-            .style(ButtonStyle2::Filled)
+            .style(ButtonStyle::Filled)
             .disabled(false)
             .on_click(move |_, _cx| {
                 todo!("outline::toggle");

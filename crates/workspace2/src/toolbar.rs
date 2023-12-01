@@ -4,7 +4,7 @@ use gpui::{
     ViewContext, WindowContext,
 };
 use ui::prelude::*;
-use ui::{h_stack, v_stack, ButtonLike, Color, Icon, IconButton, Label};
+use ui::{h_stack, v_stack, Icon, IconButton};
 
 pub enum ToolbarItemEvent {
     ChangeLocation(ToolbarItemLocation),
