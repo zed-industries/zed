@@ -9,8 +9,9 @@ use crate::{
         self, hover_at, HOVER_POPOVER_GAP, MIN_POPOVER_CHARACTER_WIDTH, MIN_POPOVER_LINE_HEIGHT,
     },
     link_go_to_definition::{
-        go_to_fetched_definition, go_to_fetched_type_definition, update_go_to_definition_link,
-        update_inlay_link_and_hover_points, GoToDefinitionTrigger,
+        go_to_fetched_definition, go_to_fetched_type_definition, show_link_definition,
+        update_go_to_definition_link, update_inlay_link_and_hover_points, GoToDefinitionTrigger,
+        LinkGoToDefinitionState,
     },
     scroll::scroll_amount::ScrollAmount,
     CursorShape, DisplayPoint, Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle,
@@ -19,14 +20,15 @@ use crate::{
 };
 use anyhow::Result;
 use collections::{BTreeMap, HashMap};
+use git::diff::DiffHunkStatus;
 use gpui::{
     div, point, px, relative, size, transparent_black, Action, AnyElement, AsyncWindowContext,
-    AvailableSpace, BorrowWindow, Bounds, ContentMask, Corners, DispatchPhase, Edges, Element,
-    ElementId, ElementInputHandler, Entity, EntityId, Hsla, InteractiveBounds, InteractiveElement,
-    IntoElement, LineLayout, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    ParentElement, Pixels, RenderOnce, ScrollWheelEvent, ShapedLine, SharedString, Size,
-    StackingOrder, StatefulInteractiveElement, Style, Styled, TextRun, TextStyle, View,
-    ViewContext, WeakView, WindowContext, WrappedLine,
+    AvailableSpace, BorrowWindow, Bounds, ContentMask, Corners, CursorStyle, DispatchPhase, Edges,
+    Element, ElementId, ElementInputHandler, Entity, EntityId, Hsla, InteractiveBounds,
+    InteractiveElement, IntoElement, LineLayout, ModifiersChangedEvent, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, RenderOnce,
+    ScrollWheelEvent, ShapedLine, SharedString, Size, StackingOrder, StatefulInteractiveElement,
+    Style, Styled, TextRun, TextStyle, View, ViewContext, WeakView, WindowContext, WrappedLine,
 };
 use itertools::Itertools;
 use language::language_settings::ShowWhitespaceSetting;
@@ -139,8 +141,6 @@ impl EditorElement {
         register_action(view, cx, Editor::move_right);
         register_action(view, cx, Editor::move_down);
         register_action(view, cx, Editor::move_up);
-        // on_action(cx, Editor::new_file); todo!()
-        // on_action(cx, Editor::new_file_in_direction); todo!()
         register_action(view, cx, Editor::cancel);
         register_action(view, cx, Editor::newline);
         register_action(view, cx, Editor::newline_above);
@@ -263,7 +263,7 @@ impl EditorElement {
         register_action(view, cx, Editor::fold_selected_ranges);
         register_action(view, cx, Editor::show_completions);
         register_action(view, cx, Editor::toggle_code_actions);
-        // on_action(cx, Editor::open_excerpts); todo!()
+        register_action(view, cx, Editor::open_excerpts);
         register_action(view, cx, Editor::toggle_soft_wrap);
         register_action(view, cx, Editor::toggle_inlay_hints);
         register_action(view, cx, hover_popover::hover);
@@ -310,6 +310,56 @@ impl EditorElement {
         register_action(view, cx, Editor::context_menu_prev);
         register_action(view, cx, Editor::context_menu_next);
         register_action(view, cx, Editor::context_menu_last);
+    }
+
+    fn register_key_listeners(&self, cx: &mut WindowContext) {
+        cx.on_key_event({
+            let editor = self.editor.clone();
+            move |event: &ModifiersChangedEvent, phase, cx| {
+                if phase != DispatchPhase::Bubble {
+                    return;
+                }
+
+                if editor.update(cx, |editor, cx| Self::modifiers_changed(editor, event, cx)) {
+                    cx.stop_propagation();
+                }
+            }
+        });
+    }
+
+    fn modifiers_changed(
+        editor: &mut Editor,
+        event: &ModifiersChangedEvent,
+        cx: &mut ViewContext<Editor>,
+    ) -> bool {
+        let pending_selection = editor.has_pending_selection();
+
+        if let Some(point) = &editor.link_go_to_definition_state.last_trigger_point {
+            if event.command && !pending_selection {
+                let point = point.clone();
+                let snapshot = editor.snapshot(cx);
+                let kind = point.definition_kind(event.shift);
+
+                show_link_definition(kind, editor, point, snapshot, cx);
+                return false;
+            }
+        }
+
+        {
+            if editor.link_go_to_definition_state.symbol_range.is_some()
+                || !editor.link_go_to_definition_state.definitions.is_empty()
+            {
+                editor.link_go_to_definition_state.symbol_range.take();
+                editor.link_go_to_definition_state.definitions.clear();
+                cx.notify();
+            }
+
+            editor.link_go_to_definition_state.task = None;
+
+            editor.clear_highlights::<LinkGoToDefinitionState>(cx);
+        }
+
+        false
     }
 
     fn mouse_down(
@@ -725,87 +775,85 @@ impl EditorElement {
     }
 
     fn paint_diff_hunks(bounds: Bounds<Pixels>, layout: &LayoutState, cx: &mut WindowContext) {
-        // todo!()
-        // let diff_style = &theme::current(cx).editor.diff.clone();
-        // let line_height = layout.position_map.line_height;
+        let line_height = layout.position_map.line_height;
 
-        // let scroll_position = layout.position_map.snapshot.scroll_position();
-        // let scroll_top = scroll_position.y * line_height;
+        let scroll_position = layout.position_map.snapshot.scroll_position();
+        let scroll_top = scroll_position.y * line_height;
 
-        // for hunk in &layout.display_hunks {
-        //     let (display_row_range, status) = match hunk {
-        //         //TODO: This rendering is entirely a horrible hack
-        //         &DisplayDiffHunk::Folded { display_row: row } => {
-        //             let start_y = row as f32 * line_height - scroll_top;
-        //             let end_y = start_y + line_height;
+        for hunk in &layout.display_hunks {
+            let (display_row_range, status) = match hunk {
+                //TODO: This rendering is entirely a horrible hack
+                &DisplayDiffHunk::Folded { display_row: row } => {
+                    let start_y = row as f32 * line_height - scroll_top;
+                    let end_y = start_y + line_height;
 
-        //             let width = diff_style.removed_width_em * line_height;
-        //             let highlight_origin = bounds.origin + point(-width, start_y);
-        //             let highlight_size = point(width * 2., end_y - start_y);
-        //             let highlight_bounds = Bounds::<Pixels>::new(highlight_origin, highlight_size);
+                    let width = 0.275 * line_height;
+                    let highlight_origin = bounds.origin + point(-width, start_y);
+                    let highlight_size = size(width * 2., end_y - start_y);
+                    let highlight_bounds = Bounds::new(highlight_origin, highlight_size);
+                    cx.paint_quad(
+                        highlight_bounds,
+                        Corners::all(1. * line_height),
+                        gpui::yellow(), // todo!("use the right color")
+                        Edges::default(),
+                        transparent_black(),
+                    );
 
-        //             cx.paint_quad(Quad {
-        //                 bounds: highlight_bounds,
-        //                 background: Some(diff_style.modified),
-        //                 border: Border::new(0., Color::transparent_black()).into(),
-        //                 corner_radii: (1. * line_height).into(),
-        //             });
+                    continue;
+                }
 
-        //             continue;
-        //         }
+                DisplayDiffHunk::Unfolded {
+                    display_row_range,
+                    status,
+                } => (display_row_range, status),
+            };
 
-        //         DisplayDiffHunk::Unfolded {
-        //             display_row_range,
-        //             status,
-        //         } => (display_row_range, status),
-        //     };
+            let color = match status {
+                DiffHunkStatus::Added => gpui::green(), // todo!("use the appropriate color")
+                DiffHunkStatus::Modified => gpui::yellow(), // todo!("use the appropriate color")
 
-        //     let color = match status {
-        //         DiffHunkStatus::Added => diff_style.inserted,
-        //         DiffHunkStatus::Modified => diff_style.modified,
+                //TODO: This rendering is entirely a horrible hack
+                DiffHunkStatus::Removed => {
+                    let row = display_row_range.start;
 
-        //         //TODO: This rendering is entirely a horrible hack
-        //         DiffHunkStatus::Removed => {
-        //             let row = display_row_range.start;
+                    let offset = line_height / 2.;
+                    let start_y = row as f32 * line_height - offset - scroll_top;
+                    let end_y = start_y + line_height;
 
-        //             let offset = line_height / 2.;
-        //             let start_y = row as f32 * line_height - offset - scroll_top;
-        //             let end_y = start_y + line_height;
+                    let width = 0.275 * line_height;
+                    let highlight_origin = bounds.origin + point(-width, start_y);
+                    let highlight_size = size(width * 2., end_y - start_y);
+                    let highlight_bounds = Bounds::new(highlight_origin, highlight_size);
+                    cx.paint_quad(
+                        highlight_bounds,
+                        Corners::all(1. * line_height),
+                        gpui::red(), // todo!("use the right color")
+                        Edges::default(),
+                        transparent_black(),
+                    );
 
-        //             let width = diff_style.removed_width_em * line_height;
-        //             let highlight_origin = bounds.origin + point(-width, start_y);
-        //             let highlight_size = point(width * 2., end_y - start_y);
-        //             let highlight_bounds = Bounds::<Pixels>::new(highlight_origin, highlight_size);
+                    continue;
+                }
+            };
 
-        //             cx.paint_quad(Quad {
-        //                 bounds: highlight_bounds,
-        //                 background: Some(diff_style.deleted),
-        //                 border: Border::new(0., Color::transparent_black()).into(),
-        //                 corner_radii: (1. * line_height).into(),
-        //             });
+            let start_row = display_row_range.start;
+            let end_row = display_row_range.end;
 
-        //             continue;
-        //         }
-        //     };
+            let start_y = start_row as f32 * line_height - scroll_top;
+            let end_y = end_row as f32 * line_height - scroll_top;
 
-        //     let start_row = display_row_range.start;
-        //     let end_row = display_row_range.end;
-
-        //     let start_y = start_row as f32 * line_height - scroll_top;
-        //     let end_y = end_row as f32 * line_height - scroll_top;
-
-        //     let width = diff_style.width_em * line_height;
-        //     let highlight_origin = bounds.origin + point(-width, start_y);
-        //     let highlight_size = point(width * 2., end_y - start_y);
-        //     let highlight_bounds = Bounds::<Pixels>::new(highlight_origin, highlight_size);
-
-        //     cx.paint_quad(Quad {
-        //         bounds: highlight_bounds,
-        //         background: Some(color),
-        //         border: Border::new(0., Color::transparent_black()).into(),
-        //         corner_radii: (diff_style.corner_radius * line_height).into(),
-        //     });
-        // }
+            let width = 0.275 * line_height;
+            let highlight_origin = bounds.origin + point(-width, start_y);
+            let highlight_size = size(width * 2., end_y - start_y);
+            let highlight_bounds = Bounds::new(highlight_origin, highlight_size);
+            cx.paint_quad(
+                highlight_bounds,
+                Corners::all(0.05 * line_height),
+                color, // todo!("use the right color")
+                Edges::default(),
+                transparent_black(),
+            );
+        }
     }
 
     fn paint_text(
@@ -831,15 +879,19 @@ impl EditorElement {
                 bounds: text_bounds,
             }),
             |cx| {
-                // todo!("cursor region")
-                // cx.scene().push_cursor_region(CursorRegion {
-                //     bounds,
-                //     style: if !editor.link_go_to_definition_state.definitions.is_empty {
-                //         CursorStyle::PointingHand
-                //     } else {
-                //         CursorStyle::IBeam
-                //     },
-                // });
+                if text_bounds.contains_point(&cx.mouse_position()) {
+                    if self
+                        .editor
+                        .read(cx)
+                        .link_go_to_definition_state
+                        .definitions
+                        .is_empty()
+                    {
+                        cx.set_cursor_style(CursorStyle::IBeam);
+                    } else {
+                        cx.set_cursor_style(CursorStyle::PointingHand);
+                    }
+                }
 
                 let fold_corner_radius = 0.15 * layout.position_map.line_height;
                 cx.with_element_id(Some("folds"), |cx| {
@@ -2659,6 +2711,7 @@ impl Element for EditorElement {
         let dispatch_context = self.editor.read(cx).dispatch_context(cx);
         cx.with_key_dispatch(dispatch_context, Some(focus_handle.clone()), |_, cx| {
             self.register_actions(cx);
+            self.register_key_listeners(cx);
 
             // We call with_z_index to establish a new stacking context.
             cx.with_z_index(0, |cx| {

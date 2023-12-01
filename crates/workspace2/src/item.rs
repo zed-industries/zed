@@ -662,19 +662,19 @@ pub trait FollowableEvents {
 pub trait FollowableItem: Item {
     type FollowableEvent: FollowableEvents;
     fn remote_id(&self) -> Option<ViewId>;
-    fn to_state_proto(&self, cx: &AppContext) -> Option<proto::view::Variant>;
+    fn to_state_proto(&self, cx: &WindowContext) -> Option<proto::view::Variant>;
     fn from_state_proto(
         pane: View<Pane>,
         project: View<Workspace>,
         id: ViewId,
         state: &mut Option<proto::view::Variant>,
-        cx: &mut AppContext,
+        cx: &mut WindowContext,
     ) -> Option<Task<Result<View<Self>>>>;
     fn add_event_to_update_proto(
         &self,
         event: &Self::FollowableEvent,
         update: &mut Option<proto::update_view::Variant>,
-        cx: &AppContext,
+        cx: &WindowContext,
     ) -> bool;
     fn apply_update_proto(
         &mut self,
@@ -682,20 +682,20 @@ pub trait FollowableItem: Item {
         message: proto::update_view::Variant,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>>;
-    fn is_project_item(&self, cx: &AppContext) -> bool;
+    fn is_project_item(&self, cx: &WindowContext) -> bool;
 
     fn set_leader_peer_id(&mut self, leader_peer_id: Option<PeerId>, cx: &mut ViewContext<Self>);
 }
 
 pub trait FollowableItemHandle: ItemHandle {
-    fn remote_id(&self, client: &Arc<Client>, cx: &AppContext) -> Option<ViewId>;
+    fn remote_id(&self, client: &Arc<Client>, cx: &WindowContext) -> Option<ViewId>;
     fn set_leader_peer_id(&self, leader_peer_id: Option<PeerId>, cx: &mut WindowContext);
-    fn to_state_proto(&self, cx: &AppContext) -> Option<proto::view::Variant>;
+    fn to_state_proto(&self, cx: &WindowContext) -> Option<proto::view::Variant>;
     fn add_event_to_update_proto(
         &self,
         event: &dyn Any,
         update: &mut Option<proto::update_view::Variant>,
-        cx: &AppContext,
+        cx: &WindowContext,
     ) -> bool;
     fn to_follow_event(&self, event: &dyn Any) -> Option<FollowEvent>;
     fn apply_update_proto(
@@ -704,11 +704,11 @@ pub trait FollowableItemHandle: ItemHandle {
         message: proto::update_view::Variant,
         cx: &mut WindowContext,
     ) -> Task<Result<()>>;
-    fn is_project_item(&self, cx: &AppContext) -> bool;
+    fn is_project_item(&self, cx: &WindowContext) -> bool;
 }
 
 impl<T: FollowableItem> FollowableItemHandle for View<T> {
-    fn remote_id(&self, client: &Arc<Client>, cx: &AppContext) -> Option<ViewId> {
+    fn remote_id(&self, client: &Arc<Client>, cx: &WindowContext) -> Option<ViewId> {
         self.read(cx).remote_id().or_else(|| {
             client.peer_id().map(|creator| ViewId {
                 creator,
@@ -721,7 +721,7 @@ impl<T: FollowableItem> FollowableItemHandle for View<T> {
         self.update(cx, |this, cx| this.set_leader_peer_id(leader_peer_id, cx))
     }
 
-    fn to_state_proto(&self, cx: &AppContext) -> Option<proto::view::Variant> {
+    fn to_state_proto(&self, cx: &WindowContext) -> Option<proto::view::Variant> {
         self.read(cx).to_state_proto(cx)
     }
 
@@ -729,7 +729,7 @@ impl<T: FollowableItem> FollowableItemHandle for View<T> {
         &self,
         event: &dyn Any,
         update: &mut Option<proto::update_view::Variant>,
-        cx: &AppContext,
+        cx: &WindowContext,
     ) -> bool {
         if let Some(event) = event.downcast_ref() {
             self.read(cx).add_event_to_update_proto(event, update, cx)
@@ -754,7 +754,7 @@ impl<T: FollowableItem> FollowableItemHandle for View<T> {
         self.update(cx, |this, cx| this.apply_update_proto(project, message, cx))
     }
 
-    fn is_project_item(&self, cx: &AppContext) -> bool {
+    fn is_project_item(&self, cx: &WindowContext) -> bool {
         self.read(cx).is_project_item(cx)
     }
 }
