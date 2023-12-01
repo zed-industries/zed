@@ -1355,7 +1355,7 @@ impl ProjectPanel {
         details: EntryDetails,
         // dragged_entry_destination: &mut Option<Arc<Path>>,
         cx: &mut ViewContext<Self>,
-    ) -> Div {
+    ) -> ListItem {
         let kind = details.kind;
         let settings = ProjectPanelSettings::get_global(cx);
         let show_editor = details.is_editing && !details.is_processing;
@@ -1374,46 +1374,44 @@ impl ProjectPanel {
             })
             .unwrap_or(theme.status().info);
 
-        div().key_context(self.dispatch_context(cx)).child(
-            ListItem::new(entry_id.to_proto() as usize)
-                .indent_level(details.depth)
-                .indent_step_size(px(settings.indent_size))
-                .selected(is_selected)
-                .child(if let Some(icon) = &details.icon {
-                    div().child(IconElement::from_path(icon.to_string()))
+        ListItem::new(entry_id.to_proto() as usize)
+            .indent_level(details.depth)
+            .indent_step_size(px(settings.indent_size))
+            .selected(is_selected)
+            .child(if let Some(icon) = &details.icon {
+                div().child(IconElement::from_path(icon.to_string()))
+            } else {
+                div()
+            })
+            .child(
+                if let (Some(editor), true) = (Some(&self.filename_editor), show_editor) {
+                    div().h_full().w_full().child(editor.clone())
                 } else {
                     div()
-                })
-                .child(
-                    if let (Some(editor), true) = (Some(&self.filename_editor), show_editor) {
-                        div().h_full().w_full().child(editor.clone())
+                        .text_color(filename_text_color)
+                        .child(Label::new(details.filename.clone()))
+                }
+                .ml_1(),
+            )
+            .on_click(cx.listener(move |this, event: &gpui::ClickEvent, cx| {
+                if event.down.button == MouseButton::Right {
+                    return;
+                }
+                if !show_editor {
+                    if kind.is_dir() {
+                        this.toggle_expanded(entry_id, cx);
                     } else {
-                        div()
-                            .text_color(filename_text_color)
-                            .child(Label::new(details.filename.clone()))
-                    }
-                    .ml_1(),
-                )
-                .on_click(cx.listener(move |this, event: &gpui::ClickEvent, cx| {
-                    if event.down.button == MouseButton::Right {
-                        return;
-                    }
-                    if !show_editor {
-                        if kind.is_dir() {
-                            this.toggle_expanded(entry_id, cx);
+                        if event.down.modifiers.command {
+                            this.split_entry(entry_id, cx);
                         } else {
-                            if event.down.modifiers.command {
-                                this.split_entry(entry_id, cx);
-                            } else {
-                                this.open_entry(entry_id, event.up.click_count > 1, cx);
-                            }
+                            this.open_entry(entry_id, event.up.click_count > 1, cx);
                         }
                     }
-                }))
-                .on_secondary_mouse_down(cx.listener(move |this, event: &MouseDownEvent, cx| {
-                    this.deploy_context_menu(event.position, entry_id, cx);
-                })),
-        )
+                }
+            }))
+            .on_secondary_mouse_down(cx.listener(move |this, event: &MouseDownEvent, cx| {
+                this.deploy_context_menu(event.position, entry_id, cx);
+            }))
         // .on_drop::<ProjectEntryId>(|this, event, cx| {
         //     this.move_entry(
         //         *dragged_entry,
@@ -1426,8 +1424,8 @@ impl ProjectPanel {
 
     fn dispatch_context(&self, cx: &ViewContext<Self>) -> KeyContext {
         let mut dispatch_context = KeyContext::default();
+        dispatch_context.add("ProjectPanel");
         dispatch_context.add("menu");
-        dispatch_context.add("not_editing");
 
         let identifier = if self.filename_editor.focus_handle(cx).is_focused(cx) {
             "editing"
@@ -1452,7 +1450,7 @@ impl Render for ProjectPanel {
                 .id("project-panel")
                 .size_full()
                 .relative()
-                .key_context("ProjectPanel")
+                .key_context(self.dispatch_context(cx))
                 .on_action(cx.listener(Self::select_next))
                 .on_action(cx.listener(Self::select_prev))
                 .on_action(cx.listener(Self::expand_selected_entry))
