@@ -4809,114 +4809,113 @@ async fn test_delete_autoclose_pair(cx: &mut gpui::TestAppContext) {
 }
 
 // todo!(select_anchor_ranges)
-// #[gpui::test]
-// async fn test_snippets(cx: &mut gpui::TestAppContext) {
-//     init_test(cx, |_| {});
+#[gpui::test]
+async fn test_snippets(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
 
-//     let (text, insertion_ranges) = marked_text_ranges(
-//         indoc! {"
-//             a.ˇ b
-//             a.ˇ b
-//             a.ˇ b
-//         "},
-//         false,
-//     );
+    let (text, insertion_ranges) = marked_text_ranges(
+        indoc! {"
+            a.ˇ b
+            a.ˇ b
+            a.ˇ b
+        "},
+        false,
+    );
 
-//     let buffer = cx.update(|cx| MultiBuffer::build_simple(&text, cx));
-//     let (editor, mut cx) = cx.add_window_view(|cx| build_editor(buffer, cx));
-//     let cx = &mut cx;
+    let buffer = cx.update(|cx| MultiBuffer::build_simple(&text, cx));
+    let (editor, mut cx) = cx.add_window_view(|cx| build_editor(buffer, cx));
 
-//     editor.update(cx, |editor, cx| {
-//         let snippet = Snippet::parse("f(${1:one}, ${2:two}, ${1:three})$0").unwrap();
+    editor.update(cx, |editor, cx| {
+        let snippet = Snippet::parse("f(${1:one}, ${2:two}, ${1:three})$0").unwrap();
 
-//         editor
-//             .insert_snippet(&insertion_ranges, snippet, cx)
-//             .unwrap();
+        editor
+            .insert_snippet(&insertion_ranges, snippet, cx)
+            .unwrap();
 
-//         fn assert(editor: &mut Editor, cx: &mut ViewContext<Editor>, marked_text: &str) {
-//             let (expected_text, selection_ranges) = marked_text_ranges(marked_text, false);
-//             assert_eq!(editor.text(cx), expected_text);
-//             assert_eq!(editor.selections.ranges::<usize>(cx), selection_ranges);
-//         }
+        fn assert(editor: &mut Editor, cx: &mut ViewContext<Editor>, marked_text: &str) {
+            let (expected_text, selection_ranges) = marked_text_ranges(marked_text, false);
+            assert_eq!(editor.text(cx), expected_text);
+            assert_eq!(editor.selections.ranges::<usize>(cx), selection_ranges);
+        }
 
-//         assert(
-//             editor,
-//             cx,
-//             indoc! {"
-//                 a.f(«one», two, «three») b
-//                 a.f(«one», two, «three») b
-//                 a.f(«one», two, «three») b
-//             "},
-//         );
+        assert(
+            editor,
+            cx,
+            indoc! {"
+                a.f(«one», two, «three») b
+                a.f(«one», two, «three») b
+                a.f(«one», two, «three») b
+            "},
+        );
 
-//         // Can't move earlier than the first tab stop
-//         assert!(!editor.move_to_prev_snippet_tabstop(cx));
-//         assert(
-//             editor,
-//             cx,
-//             indoc! {"
-//                 a.f(«one», two, «three») b
-//                 a.f(«one», two, «three») b
-//                 a.f(«one», two, «three») b
-//             "},
-//         );
+        // Can't move earlier than the first tab stop
+        assert!(!editor.move_to_prev_snippet_tabstop(cx));
+        assert(
+            editor,
+            cx,
+            indoc! {"
+                a.f(«one», two, «three») b
+                a.f(«one», two, «three») b
+                a.f(«one», two, «three») b
+            "},
+        );
 
-//         assert!(editor.move_to_next_snippet_tabstop(cx));
-//         assert(
-//             editor,
-//             cx,
-//             indoc! {"
-//                 a.f(one, «two», three) b
-//                 a.f(one, «two», three) b
-//                 a.f(one, «two», three) b
-//             "},
-//         );
+        assert!(editor.move_to_next_snippet_tabstop(cx));
+        assert(
+            editor,
+            cx,
+            indoc! {"
+                a.f(one, «two», three) b
+                a.f(one, «two», three) b
+                a.f(one, «two», three) b
+            "},
+        );
 
-//         editor.move_to_prev_snippet_tabstop(cx);
-//         assert(
-//             editor,
-//             cx,
-//             indoc! {"
-//                 a.f(«one», two, «three») b
-//                 a.f(«one», two, «three») b
-//                 a.f(«one», two, «three») b
-//             "},
-//         );
+        editor.move_to_prev_snippet_tabstop(cx);
+        assert(
+            editor,
+            cx,
+            indoc! {"
+                a.f(«one», two, «three») b
+                a.f(«one», two, «three») b
+                a.f(«one», two, «three») b
+            "},
+        );
 
-//         assert!(editor.move_to_next_snippet_tabstop(cx));
-//         assert(
-//             editor,
-//             cx,
-//             indoc! {"
-//                 a.f(one, «two», three) b
-//                 a.f(one, «two», three) b
-//                 a.f(one, «two», three) b
-//             "},
-//         );
-//         assert!(editor.move_to_next_snippet_tabstop(cx));
-//         assert(
-//             editor,
-//             cx,
-//             indoc! {"
-//                 a.f(one, two, three)ˇ b
-//                 a.f(one, two, three)ˇ b
-//                 a.f(one, two, three)ˇ b
-//             "},
-//         );
+        assert!(editor.move_to_next_snippet_tabstop(cx));
+        assert(
+            editor,
+            cx,
+            indoc! {"
+                a.f(one, «two», three) b
+                a.f(one, «two», three) b
+                a.f(one, «two», three) b
+            "},
+        );
+        assert!(editor.move_to_next_snippet_tabstop(cx));
+        assert(
+            editor,
+            cx,
+            indoc! {"
+                a.f(one, two, three)ˇ b
+                a.f(one, two, three)ˇ b
+                a.f(one, two, three)ˇ b
+            "},
+        );
 
-//         // As soon as the last tab stop is reached, snippet state is gone
-//         editor.move_to_prev_snippet_tabstop(cx);
-//         assert(
-//             editor,
-//             cx,
-//             indoc! {"
-//                 a.f(one, two, three)ˇ b
-//                 a.f(one, two, three)ˇ b
-//                 a.f(one, two, three)ˇ b
-//             "},
-//         );
-//     });
-// }
+        // As soon as the last tab stop is reached, snippet state is gone
+        editor.move_to_prev_snippet_tabstop(cx);
+        assert(
+            editor,
+            cx,
+            indoc! {"
+                a.f(one, two, three)ˇ b
+                a.f(one, two, three)ˇ b
+                a.f(one, two, three)ˇ b
+            "},
+        );
+    });
+}
 
 #[gpui::test]
 async fn test_document_format_during_save(cx: &mut gpui::TestAppContext) {
@@ -7046,255 +7045,256 @@ async fn test_move_to_enclosing_bracket(cx: &mut gpui::TestAppContext) {
 }
 
 // todo!(completions)
-// #[gpui::test(iterations = 10)]
-// async fn test_copilot(executor: BackgroundExecutor, cx: &mut gpui::TestAppContext) {
-//     init_test(cx, |_| {});
+#[gpui::test(iterations = 10)]
+async fn test_copilot(executor: BackgroundExecutor, cx: &mut gpui::TestAppContext) {
+    // flaky
+    init_test(cx, |_| {});
 
-//     let (copilot, copilot_lsp) = Copilot::fake(cx);
-//     cx.update(|cx| cx.set_global(copilot));
-//     let mut cx = EditorLspTestContext::new_rust(
-//         lsp::ServerCapabilities {
-//             completion_provider: Some(lsp::CompletionOptions {
-//                 trigger_characters: Some(vec![".".to_string(), ":".to_string()]),
-//                 ..Default::default()
-//             }),
-//             ..Default::default()
-//         },
-//         cx,
-//     )
-//     .await;
+    let (copilot, copilot_lsp) = Copilot::fake(cx);
+    cx.update(|cx| cx.set_global(copilot));
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            completion_provider: Some(lsp::CompletionOptions {
+                trigger_characters: Some(vec![".".to_string(), ":".to_string()]),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
 
-//     // When inserting, ensure autocompletion is favored over Copilot suggestions.
-//     cx.set_state(indoc! {"
-//         oneˇ
-//         two
-//         three
-//     "});
-//     cx.simulate_keystroke(".");
-//     let _ = handle_completion_request(
-//         &mut cx,
-//         indoc! {"
-//             one.|<>
-//             two
-//             three
-//         "},
-//         vec!["completion_a", "completion_b"],
-//     );
-//     handle_copilot_completion_request(
-//         &copilot_lsp,
-//         vec![copilot::request::Completion {
-//             text: "one.copilot1".into(),
-//             range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 4)),
-//             ..Default::default()
-//         }],
-//         vec![],
-//     );
-//     executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
-//     cx.update_editor(|editor, cx| {
-//         assert!(editor.context_menu_visible());
-//         assert!(!editor.has_active_copilot_suggestion(cx));
+    // When inserting, ensure autocompletion is favored over Copilot suggestions.
+    cx.set_state(indoc! {"
+        oneˇ
+        two
+        three
+    "});
+    cx.simulate_keystroke(".");
+    let _ = handle_completion_request(
+        &mut cx,
+        indoc! {"
+            one.|<>
+            two
+            three
+        "},
+        vec!["completion_a", "completion_b"],
+    );
+    handle_copilot_completion_request(
+        &copilot_lsp,
+        vec![copilot::request::Completion {
+            text: "one.copilot1".into(),
+            range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 4)),
+            ..Default::default()
+        }],
+        vec![],
+    );
+    executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+    cx.update_editor(|editor, cx| {
+        assert!(editor.context_menu_visible());
+        assert!(!editor.has_active_copilot_suggestion(cx));
 
-//         // Confirming a completion inserts it and hides the context menu, without showing
-//         // the copilot suggestion afterwards.
-//         editor
-//             .confirm_completion(&Default::default(), cx)
-//             .unwrap()
-//             .detach();
-//         assert!(!editor.context_menu_visible());
-//         assert!(!editor.has_active_copilot_suggestion(cx));
-//         assert_eq!(editor.text(cx), "one.completion_a\ntwo\nthree\n");
-//         assert_eq!(editor.display_text(cx), "one.completion_a\ntwo\nthree\n");
-//     });
+        // Confirming a completion inserts it and hides the context menu, without showing
+        // the copilot suggestion afterwards.
+        editor
+            .confirm_completion(&Default::default(), cx)
+            .unwrap()
+            .detach();
+        assert!(!editor.context_menu_visible());
+        assert!(!editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.text(cx), "one.completion_a\ntwo\nthree\n");
+        assert_eq!(editor.display_text(cx), "one.completion_a\ntwo\nthree\n");
+    });
 
-//     // Ensure Copilot suggestions are shown right away if no autocompletion is available.
-//     cx.set_state(indoc! {"
-//         oneˇ
-//         two
-//         three
-//     "});
-//     cx.simulate_keystroke(".");
-//     let _ = handle_completion_request(
-//         &mut cx,
-//         indoc! {"
-//             one.|<>
-//             two
-//             three
-//         "},
-//         vec![],
-//     );
-//     handle_copilot_completion_request(
-//         &copilot_lsp,
-//         vec![copilot::request::Completion {
-//             text: "one.copilot1".into(),
-//             range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 4)),
-//             ..Default::default()
-//         }],
-//         vec![],
-//     );
-//     executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
-//     cx.update_editor(|editor, cx| {
-//         assert!(!editor.context_menu_visible());
-//         assert!(editor.has_active_copilot_suggestion(cx));
-//         assert_eq!(editor.display_text(cx), "one.copilot1\ntwo\nthree\n");
-//         assert_eq!(editor.text(cx), "one.\ntwo\nthree\n");
-//     });
+    // Ensure Copilot suggestions are shown right away if no autocompletion is available.
+    cx.set_state(indoc! {"
+        oneˇ
+        two
+        three
+    "});
+    cx.simulate_keystroke(".");
+    let _ = handle_completion_request(
+        &mut cx,
+        indoc! {"
+            one.|<>
+            two
+            three
+        "},
+        vec![],
+    );
+    handle_copilot_completion_request(
+        &copilot_lsp,
+        vec![copilot::request::Completion {
+            text: "one.copilot1".into(),
+            range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 4)),
+            ..Default::default()
+        }],
+        vec![],
+    );
+    executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+    cx.update_editor(|editor, cx| {
+        assert!(!editor.context_menu_visible());
+        assert!(editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.display_text(cx), "one.copilot1\ntwo\nthree\n");
+        assert_eq!(editor.text(cx), "one.\ntwo\nthree\n");
+    });
 
-//     // Reset editor, and ensure autocompletion is still favored over Copilot suggestions.
-//     cx.set_state(indoc! {"
-//         oneˇ
-//         two
-//         three
-//     "});
-//     cx.simulate_keystroke(".");
-//     let _ = handle_completion_request(
-//         &mut cx,
-//         indoc! {"
-//             one.|<>
-//             two
-//             three
-//         "},
-//         vec!["completion_a", "completion_b"],
-//     );
-//     handle_copilot_completion_request(
-//         &copilot_lsp,
-//         vec![copilot::request::Completion {
-//             text: "one.copilot1".into(),
-//             range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 4)),
-//             ..Default::default()
-//         }],
-//         vec![],
-//     );
-//     executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
-//     cx.update_editor(|editor, cx| {
-//         assert!(editor.context_menu_visible());
-//         assert!(!editor.has_active_copilot_suggestion(cx));
+    // Reset editor, and ensure autocompletion is still favored over Copilot suggestions.
+    cx.set_state(indoc! {"
+        oneˇ
+        two
+        three
+    "});
+    cx.simulate_keystroke(".");
+    let _ = handle_completion_request(
+        &mut cx,
+        indoc! {"
+            one.|<>
+            two
+            three
+        "},
+        vec!["completion_a", "completion_b"],
+    );
+    handle_copilot_completion_request(
+        &copilot_lsp,
+        vec![copilot::request::Completion {
+            text: "one.copilot1".into(),
+            range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 4)),
+            ..Default::default()
+        }],
+        vec![],
+    );
+    executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+    cx.update_editor(|editor, cx| {
+        assert!(editor.context_menu_visible());
+        assert!(!editor.has_active_copilot_suggestion(cx));
 
-//         // When hiding the context menu, the Copilot suggestion becomes visible.
-//         editor.hide_context_menu(cx);
-//         assert!(!editor.context_menu_visible());
-//         assert!(editor.has_active_copilot_suggestion(cx));
-//         assert_eq!(editor.display_text(cx), "one.copilot1\ntwo\nthree\n");
-//         assert_eq!(editor.text(cx), "one.\ntwo\nthree\n");
-//     });
+        // When hiding the context menu, the Copilot suggestion becomes visible.
+        editor.hide_context_menu(cx);
+        assert!(!editor.context_menu_visible());
+        assert!(editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.display_text(cx), "one.copilot1\ntwo\nthree\n");
+        assert_eq!(editor.text(cx), "one.\ntwo\nthree\n");
+    });
 
-//     // Ensure existing completion is interpolated when inserting again.
-//     cx.simulate_keystroke("c");
-//     executor.run_until_parked();
-//     cx.update_editor(|editor, cx| {
-//         assert!(!editor.context_menu_visible());
-//         assert!(editor.has_active_copilot_suggestion(cx));
-//         assert_eq!(editor.display_text(cx), "one.copilot1\ntwo\nthree\n");
-//         assert_eq!(editor.text(cx), "one.c\ntwo\nthree\n");
-//     });
+    // Ensure existing completion is interpolated when inserting again.
+    cx.simulate_keystroke("c");
+    executor.run_until_parked();
+    cx.update_editor(|editor, cx| {
+        assert!(!editor.context_menu_visible());
+        assert!(editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.display_text(cx), "one.copilot1\ntwo\nthree\n");
+        assert_eq!(editor.text(cx), "one.c\ntwo\nthree\n");
+    });
 
-//     // After debouncing, new Copilot completions should be requested.
-//     handle_copilot_completion_request(
-//         &copilot_lsp,
-//         vec![copilot::request::Completion {
-//             text: "one.copilot2".into(),
-//             range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 5)),
-//             ..Default::default()
-//         }],
-//         vec![],
-//     );
-//     executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
-//     cx.update_editor(|editor, cx| {
-//         assert!(!editor.context_menu_visible());
-//         assert!(editor.has_active_copilot_suggestion(cx));
-//         assert_eq!(editor.display_text(cx), "one.copilot2\ntwo\nthree\n");
-//         assert_eq!(editor.text(cx), "one.c\ntwo\nthree\n");
+    // After debouncing, new Copilot completions should be requested.
+    handle_copilot_completion_request(
+        &copilot_lsp,
+        vec![copilot::request::Completion {
+            text: "one.copilot2".into(),
+            range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 5)),
+            ..Default::default()
+        }],
+        vec![],
+    );
+    executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+    cx.update_editor(|editor, cx| {
+        assert!(!editor.context_menu_visible());
+        assert!(editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.display_text(cx), "one.copilot2\ntwo\nthree\n");
+        assert_eq!(editor.text(cx), "one.c\ntwo\nthree\n");
 
-//         // Canceling should remove the active Copilot suggestion.
-//         editor.cancel(&Default::default(), cx);
-//         assert!(!editor.has_active_copilot_suggestion(cx));
-//         assert_eq!(editor.display_text(cx), "one.c\ntwo\nthree\n");
-//         assert_eq!(editor.text(cx), "one.c\ntwo\nthree\n");
+        // Canceling should remove the active Copilot suggestion.
+        editor.cancel(&Default::default(), cx);
+        assert!(!editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.display_text(cx), "one.c\ntwo\nthree\n");
+        assert_eq!(editor.text(cx), "one.c\ntwo\nthree\n");
 
-//         // After canceling, tabbing shouldn't insert the previously shown suggestion.
-//         editor.tab(&Default::default(), cx);
-//         assert!(!editor.has_active_copilot_suggestion(cx));
-//         assert_eq!(editor.display_text(cx), "one.c   \ntwo\nthree\n");
-//         assert_eq!(editor.text(cx), "one.c   \ntwo\nthree\n");
+        // After canceling, tabbing shouldn't insert the previously shown suggestion.
+        editor.tab(&Default::default(), cx);
+        assert!(!editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.display_text(cx), "one.c   \ntwo\nthree\n");
+        assert_eq!(editor.text(cx), "one.c   \ntwo\nthree\n");
 
-//         // When undoing the previously active suggestion is shown again.
-//         editor.undo(&Default::default(), cx);
-//         assert!(editor.has_active_copilot_suggestion(cx));
-//         assert_eq!(editor.display_text(cx), "one.copilot2\ntwo\nthree\n");
-//         assert_eq!(editor.text(cx), "one.c\ntwo\nthree\n");
-//     });
+        // When undoing the previously active suggestion is shown again.
+        editor.undo(&Default::default(), cx);
+        assert!(editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.display_text(cx), "one.copilot2\ntwo\nthree\n");
+        assert_eq!(editor.text(cx), "one.c\ntwo\nthree\n");
+    });
 
-//     // If an edit occurs outside of this editor, the suggestion is still correctly interpolated.
-//     cx.update_buffer(|buffer, cx| buffer.edit([(5..5, "o")], None, cx));
-//     cx.update_editor(|editor, cx| {
-//         assert!(editor.has_active_copilot_suggestion(cx));
-//         assert_eq!(editor.display_text(cx), "one.copilot2\ntwo\nthree\n");
-//         assert_eq!(editor.text(cx), "one.co\ntwo\nthree\n");
+    // If an edit occurs outside of this editor, the suggestion is still correctly interpolated.
+    cx.update_buffer(|buffer, cx| buffer.edit([(5..5, "o")], None, cx));
+    cx.update_editor(|editor, cx| {
+        assert!(editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.display_text(cx), "one.copilot2\ntwo\nthree\n");
+        assert_eq!(editor.text(cx), "one.co\ntwo\nthree\n");
 
-//         // Tabbing when there is an active suggestion inserts it.
-//         editor.tab(&Default::default(), cx);
-//         assert!(!editor.has_active_copilot_suggestion(cx));
-//         assert_eq!(editor.display_text(cx), "one.copilot2\ntwo\nthree\n");
-//         assert_eq!(editor.text(cx), "one.copilot2\ntwo\nthree\n");
+        // Tabbing when there is an active suggestion inserts it.
+        editor.tab(&Default::default(), cx);
+        assert!(!editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.display_text(cx), "one.copilot2\ntwo\nthree\n");
+        assert_eq!(editor.text(cx), "one.copilot2\ntwo\nthree\n");
 
-//         // When undoing the previously active suggestion is shown again.
-//         editor.undo(&Default::default(), cx);
-//         assert!(editor.has_active_copilot_suggestion(cx));
-//         assert_eq!(editor.display_text(cx), "one.copilot2\ntwo\nthree\n");
-//         assert_eq!(editor.text(cx), "one.co\ntwo\nthree\n");
+        // When undoing the previously active suggestion is shown again.
+        editor.undo(&Default::default(), cx);
+        assert!(editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.display_text(cx), "one.copilot2\ntwo\nthree\n");
+        assert_eq!(editor.text(cx), "one.co\ntwo\nthree\n");
 
-//         // Hide suggestion.
-//         editor.cancel(&Default::default(), cx);
-//         assert!(!editor.has_active_copilot_suggestion(cx));
-//         assert_eq!(editor.display_text(cx), "one.co\ntwo\nthree\n");
-//         assert_eq!(editor.text(cx), "one.co\ntwo\nthree\n");
-//     });
+        // Hide suggestion.
+        editor.cancel(&Default::default(), cx);
+        assert!(!editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.display_text(cx), "one.co\ntwo\nthree\n");
+        assert_eq!(editor.text(cx), "one.co\ntwo\nthree\n");
+    });
 
-//     // If an edit occurs outside of this editor but no suggestion is being shown,
-//     // we won't make it visible.
-//     cx.update_buffer(|buffer, cx| buffer.edit([(6..6, "p")], None, cx));
-//     cx.update_editor(|editor, cx| {
-//         assert!(!editor.has_active_copilot_suggestion(cx));
-//         assert_eq!(editor.display_text(cx), "one.cop\ntwo\nthree\n");
-//         assert_eq!(editor.text(cx), "one.cop\ntwo\nthree\n");
-//     });
+    // If an edit occurs outside of this editor but no suggestion is being shown,
+    // we won't make it visible.
+    cx.update_buffer(|buffer, cx| buffer.edit([(6..6, "p")], None, cx));
+    cx.update_editor(|editor, cx| {
+        assert!(!editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.display_text(cx), "one.cop\ntwo\nthree\n");
+        assert_eq!(editor.text(cx), "one.cop\ntwo\nthree\n");
+    });
 
-//     // Reset the editor to verify how suggestions behave when tabbing on leading indentation.
-//     cx.update_editor(|editor, cx| {
-//         editor.set_text("fn foo() {\n  \n}", cx);
-//         editor.change_selections(None, cx, |s| {
-//             s.select_ranges([Point::new(1, 2)..Point::new(1, 2)])
-//         });
-//     });
-//     handle_copilot_completion_request(
-//         &copilot_lsp,
-//         vec![copilot::request::Completion {
-//             text: "    let x = 4;".into(),
-//             range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(1, 2)),
-//             ..Default::default()
-//         }],
-//         vec![],
-//     );
+    // Reset the editor to verify how suggestions behave when tabbing on leading indentation.
+    cx.update_editor(|editor, cx| {
+        editor.set_text("fn foo() {\n  \n}", cx);
+        editor.change_selections(None, cx, |s| {
+            s.select_ranges([Point::new(1, 2)..Point::new(1, 2)])
+        });
+    });
+    handle_copilot_completion_request(
+        &copilot_lsp,
+        vec![copilot::request::Completion {
+            text: "    let x = 4;".into(),
+            range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(1, 2)),
+            ..Default::default()
+        }],
+        vec![],
+    );
 
-//     cx.update_editor(|editor, cx| editor.next_copilot_suggestion(&Default::default(), cx));
-//     executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
-//     cx.update_editor(|editor, cx| {
-//         assert!(editor.has_active_copilot_suggestion(cx));
-//         assert_eq!(editor.display_text(cx), "fn foo() {\n    let x = 4;\n}");
-//         assert_eq!(editor.text(cx), "fn foo() {\n  \n}");
+    cx.update_editor(|editor, cx| editor.next_copilot_suggestion(&Default::default(), cx));
+    executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+    cx.update_editor(|editor, cx| {
+        assert!(editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.display_text(cx), "fn foo() {\n    let x = 4;\n}");
+        assert_eq!(editor.text(cx), "fn foo() {\n  \n}");
 
-//         // Tabbing inside of leading whitespace inserts indentation without accepting the suggestion.
-//         editor.tab(&Default::default(), cx);
-//         assert!(editor.has_active_copilot_suggestion(cx));
-//         assert_eq!(editor.text(cx), "fn foo() {\n    \n}");
-//         assert_eq!(editor.display_text(cx), "fn foo() {\n    let x = 4;\n}");
+        // Tabbing inside of leading whitespace inserts indentation without accepting the suggestion.
+        editor.tab(&Default::default(), cx);
+        assert!(editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.text(cx), "fn foo() {\n    \n}");
+        assert_eq!(editor.display_text(cx), "fn foo() {\n    let x = 4;\n}");
 
-//         // Tabbing again accepts the suggestion.
-//         editor.tab(&Default::default(), cx);
-//         assert!(!editor.has_active_copilot_suggestion(cx));
-//         assert_eq!(editor.text(cx), "fn foo() {\n    let x = 4;\n}");
-//         assert_eq!(editor.display_text(cx), "fn foo() {\n    let x = 4;\n}");
-//     });
-// }
+        // Tabbing again accepts the suggestion.
+        editor.tab(&Default::default(), cx);
+        assert!(!editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.text(cx), "fn foo() {\n    let x = 4;\n}");
+        assert_eq!(editor.display_text(cx), "fn foo() {\n    let x = 4;\n}");
+    });
+}
 
 #[gpui::test]
 async fn test_copilot_completion_invalidation(
