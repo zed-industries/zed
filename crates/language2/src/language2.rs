@@ -200,8 +200,12 @@ impl CachedLspAdapter {
         self.adapter.code_action_kinds()
     }
 
-    pub fn workspace_configuration(&self, cx: &mut AppContext) -> BoxFuture<'static, Value> {
-        self.adapter.workspace_configuration(cx)
+    pub fn workspace_configuration(
+        &self,
+        workspace_root: &Path,
+        cx: &mut AppContext,
+    ) -> BoxFuture<'static, Value> {
+        self.adapter.workspace_configuration(workspace_root, cx)
     }
 
     pub fn process_diagnostics(&self, params: &mut lsp::PublishDiagnosticsParams) {
@@ -315,7 +319,7 @@ pub trait LspAdapter: 'static + Send + Sync {
         None
     }
 
-    fn workspace_configuration(&self, _: &mut AppContext) -> BoxFuture<'static, Value> {
+    fn workspace_configuration(&self, _: &Path, _: &mut AppContext) -> BoxFuture<'static, Value> {
         futures::future::ready(serde_json::json!({})).boxed()
     }
 

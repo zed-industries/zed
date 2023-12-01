@@ -1627,9 +1627,21 @@ impl View for ProjectPanel {
         }
     }
 
-    fn update_keymap_context(&self, keymap: &mut KeymapContext, _: &AppContext) {
+    fn update_keymap_context(&self, keymap: &mut KeymapContext, cx: &AppContext) {
         Self::reset_to_default_keymap_context(keymap);
         keymap.add_identifier("menu");
+
+        if let Some(window) = cx.active_window() {
+            window.read_with(cx, |cx| {
+                let identifier = if self.filename_editor.is_focused(cx) {
+                    "editing"
+                } else {
+                    "not_editing"
+                };
+
+                keymap.add_identifier(identifier);
+            });
+        }
     }
 
     fn focus_in(&mut self, _: gpui::AnyViewHandle, cx: &mut ViewContext<Self>) {

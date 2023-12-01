@@ -80,7 +80,6 @@ impl Render for Toolbar {
     type Element = Div;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-        //dbg!(&self.items.len());
         v_stack()
             .border_b()
             .border_color(cx.theme().colors().border_variant)

@@ -1,7 +1,7 @@
 use gpui::{Action, AnyView};
 
 use crate::prelude::*;
-use crate::{ButtonCommon, ButtonLike, ButtonSize2, ButtonStyle2, Icon, IconElement, IconSize};
+use crate::{ButtonCommon, ButtonLike, ButtonSize, ButtonStyle, Icon, IconElement, IconSize};
 
 #[derive(IntoElement)]
 pub struct IconButton {
@@ -65,12 +65,12 @@ impl ButtonCommon for IconButton {
         self.base.id()
     }
 
-    fn style(mut self, style: ButtonStyle2) -> Self {
+    fn style(mut self, style: ButtonStyle) -> Self {
         self.base = self.base.style(style);
         self
     }
 
-    fn size(mut self, size: ButtonSize2) -> Self {
+    fn size(mut self, size: ButtonSize) -> Self {
         self.base = self.base.size(size);
         self
     }

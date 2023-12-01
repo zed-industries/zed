@@ -12,6 +12,7 @@ use ui::prelude::*;
 #[derive(Debug, PartialEq, Eq, Clone, Copy, strum::Display, EnumString, EnumIter)]
 #[strum(serialize_all = "snake_case")]
 pub enum ComponentStory {
+    AutoHeightEditor,
     Avatar,
     Button,
     Checkbox,
@@ -23,6 +24,7 @@ pub enum ComponentStory {
     Keybinding,
     Label,
     List,
+    ListHeader,
     ListItem,
     Scroll,
     Text,
@@ -33,6 +35,7 @@ pub enum ComponentStory {
 impl ComponentStory {
     pub fn story(&self, cx: &mut WindowContext) -> AnyView {
         match self {
+            Self::AutoHeightEditor => AutoHeightEditorStory::new(cx).into(),
             Self::Avatar => cx.build_view(|_| ui::AvatarStory).into(),
             Self::Button => cx.build_view(|_| ui::ButtonStory).into(),
             Self::Checkbox => cx.build_view(|_| ui::CheckboxStory).into(),
@@ -44,6 +47,7 @@ impl ComponentStory {
             Self::Keybinding => cx.build_view(|_| ui::KeybindingStory).into(),
             Self::Label => cx.build_view(|_| ui::LabelStory).into(),
             Self::List => cx.build_view(|_| ui::ListStory).into(),
+            Self::ListHeader => cx.build_view(|_| ui::ListHeaderStory).into(),
             Self::ListItem => cx.build_view(|_| ui::ListItemStory).into(),
             Self::Scroll => ScrollStory::view(cx).into(),
             Self::Text => TextStory::view(cx).into(),

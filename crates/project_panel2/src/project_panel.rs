@@ -10,9 +10,9 @@ use anyhow::{anyhow, Result};
 use gpui::{
     actions, div, overlay, px, uniform_list, Action, AppContext, AssetSource, AsyncWindowContext,
     ClipboardItem, DismissEvent, Div, EventEmitter, FocusHandle, Focusable, FocusableView,
-    InteractiveElement, Model, MouseButton, MouseDownEvent, ParentElement, Pixels, Point,
-    PromptLevel, Render, Stateful, Styled, Subscription, Task, UniformListScrollHandle, View,
-    ViewContext, VisualContext as _, WeakView, WindowContext,
+    InteractiveElement, KeyContext, Model, MouseButton, MouseDownEvent, ParentElement, Pixels,
+    Point, PromptLevel, Render, Stateful, Styled, Subscription, Task, UniformListScrollHandle,
+    View, ViewContext, VisualContext as _, WeakView, WindowContext,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
 use project::{
@@ -29,8 +29,7 @@ use std::{
     path::Path,
     sync::Arc,
 };
-use theme::ActiveTheme as _;
-use ui::{v_stack, ContextMenu, IconElement, Label, ListItem};
+use ui::{prelude::*, v_stack, ContextMenu, IconElement, Label, ListItem};
 use unicase::UniCase;
 use util::{maybe, ResultExt, TryFutureExt};
 use workspace::{
@@ -1421,6 +1420,22 @@ impl ProjectPanel {
         //     );
         // })
     }
+
+    fn dispatch_context(&self, cx: &ViewContext<Self>) -> KeyContext {
+        let mut dispatch_context = KeyContext::default();
+        dispatch_context.add("ProjectPanel");
+        dispatch_context.add("menu");
+
+        let identifier = if self.filename_editor.focus_handle(cx).is_focused(cx) {
+            "editing"
+        } else {
+            "not_editing"
+        };
+
+        dispatch_context.add(identifier);
+
+        dispatch_context
+    }
 }
 
 impl Render for ProjectPanel {
@@ -1434,7 +1449,7 @@ impl Render for ProjectPanel {
                 .id("project-panel")
                 .size_full()
                 .relative()
-                .key_context("ProjectPanel")
+                .key_context(self.dispatch_context(cx))
                 .on_action(cx.listener(Self::select_next))
                 .on_action(cx.listener(Self::select_prev))
                 .on_action(cx.listener(Self::expand_selected_entry))
@@ -2845,7 +2860,7 @@ mod tests {
                 let worktree = worktree.read(cx);
                 if let Ok(relative_path) = path.strip_prefix(worktree.root_name()) {
                     let entry_id = worktree.entry_for_path(relative_path).unwrap().id;
-                    panel.selection = Some(Selection {
+                    panel.selection = Some(crate::Selection {
                         worktree_id: worktree.id(),
                         entry_id,
                     });

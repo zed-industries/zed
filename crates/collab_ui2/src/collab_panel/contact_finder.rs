@@ -185,7 +185,7 @@ impl PickerDelegate for ContactFinderDelegate {
             div()
                 .flex_1()
                 .justify_between()
-                .children(user.avatar.clone().map(|avatar| img().data(avatar)))
+                .children(user.avatar.clone().map(|avatar| img(avatar)))
                 .child(Label::new(user.github_login.clone()))
                 .children(icon_path.map(|icon_path| svg().path(icon_path))),
         )

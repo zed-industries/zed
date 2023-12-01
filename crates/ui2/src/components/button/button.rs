@@ -1,7 +1,7 @@
 use gpui::AnyView;
 
 use crate::prelude::*;
-use crate::{ButtonCommon, ButtonLike, ButtonSize2, ButtonStyle2, Label, LineHeightStyle};
+use crate::{ButtonCommon, ButtonLike, ButtonSize, ButtonStyle, Label, LineHeightStyle};
 
 #[derive(IntoElement)]
 pub struct Button {
@@ -54,12 +54,12 @@ impl ButtonCommon for Button {
         self.base.id()
     }
 
-    fn style(mut self, style: ButtonStyle2) -> Self {
+    fn style(mut self, style: ButtonStyle) -> Self {
         self.base = self.base.style(style);
         self
     }
 
-    fn size(mut self, size: ButtonSize2) -> Self {
+    fn size(mut self, size: ButtonSize) -> Self {
         self.base = self.base.size(size);
         self
     }
@@ -79,7 +79,7 @@ impl RenderOnce for Button {
         } else if self.base.selected {
             Color::Selected
         } else {
-            Color::Default
+            self.label_color.unwrap_or_default()
         };
 
         self.base.child(

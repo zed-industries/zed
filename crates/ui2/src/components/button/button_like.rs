@@ -1,4 +1,4 @@
-use gpui::{rems, AnyElement, AnyView, ClickEvent, Div, Hsla, Rems, Stateful};
+use gpui::{rems, transparent_black, AnyElement, AnyView, ClickEvent, Div, Hsla, Rems, Stateful};
 use smallvec::SmallVec;
 
 use crate::h_stack;
@@ -6,13 +6,13 @@ use crate::prelude::*;
 
 pub trait ButtonCommon: Clickable + Disableable {
     fn id(&self) -> &ElementId;
-    fn style(self, style: ButtonStyle2) -> Self;
-    fn size(self, size: ButtonSize2) -> Self;
+    fn style(self, style: ButtonStyle) -> Self;
+    fn size(self, size: ButtonSize) -> Self;
     fn tooltip(self, tooltip: impl Fn(&mut WindowContext) -> AnyView + 'static) -> Self;
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Default)]
-pub enum ButtonStyle2 {
+pub enum ButtonStyle {
     #[default]
     Filled,
     // Tinted,
@@ -21,54 +21,57 @@ pub enum ButtonStyle2 {
 }
 
 #[derive(Debug, Clone)]
-pub struct ButtonStyle {
+pub(crate) struct ButtonLikeStyles {
     pub background: Hsla,
+    #[allow(unused)]
     pub border_color: Hsla,
+    #[allow(unused)]
     pub label_color: Hsla,
+    #[allow(unused)]
     pub icon_color: Hsla,
 }
 
-impl ButtonStyle2 {
-    pub fn enabled(self, cx: &mut WindowContext) -> ButtonStyle {
+impl ButtonStyle {
+    pub(crate) fn enabled(self, cx: &mut WindowContext) -> ButtonLikeStyles {
         match self {
-            ButtonStyle2::Filled => ButtonStyle {
+            ButtonStyle::Filled => ButtonLikeStyles {
                 background: cx.theme().colors().element_background,
-                border_color: gpui::transparent_black(),
+                border_color: transparent_black(),
                 label_color: Color::Default.color(cx),
                 icon_color: Color::Default.color(cx),
             },
-            ButtonStyle2::Subtle => ButtonStyle {
+            ButtonStyle::Subtle => ButtonLikeStyles {
                 background: cx.theme().colors().ghost_element_background,
-                border_color: gpui::transparent_black(),
+                border_color: transparent_black(),
                 label_color: Color::Default.color(cx),
                 icon_color: Color::Default.color(cx),
             },
-            ButtonStyle2::Transparent => ButtonStyle {
-                background: gpui::transparent_black(),
-                border_color: gpui::transparent_black(),
+            ButtonStyle::Transparent => ButtonLikeStyles {
+                background: transparent_black(),
+                border_color: transparent_black(),
                 label_color: Color::Default.color(cx),
                 icon_color: Color::Default.color(cx),
             },
         }
     }
 
-    pub fn hovered(self, cx: &mut WindowContext) -> ButtonStyle {
+    pub(crate) fn hovered(self, cx: &mut WindowContext) -> ButtonLikeStyles {
         match self {
-            ButtonStyle2::Filled => ButtonStyle {
+            ButtonStyle::Filled => ButtonLikeStyles {
                 background: cx.theme().colors().element_hover,
-                border_color: gpui::transparent_black(),
+                border_color: transparent_black(),
                 label_color: Color::Default.color(cx),
                 icon_color: Color::Default.color(cx),
             },
-            ButtonStyle2::Subtle => ButtonStyle {
+            ButtonStyle::Subtle => ButtonLikeStyles {
                 background: cx.theme().colors().ghost_element_hover,
-                border_color: gpui::transparent_black(),
+                border_color: transparent_black(),
                 label_color: Color::Default.color(cx),
                 icon_color: Color::Default.color(cx),
             },
-            ButtonStyle2::Transparent => ButtonStyle {
-                background: gpui::transparent_black(),
-                border_color: gpui::transparent_black(),
+            ButtonStyle::Transparent => ButtonLikeStyles {
+                background: transparent_black(),
+                border_color: transparent_black(),
                 // TODO: These are not great
                 label_color: Color::Muted.color(cx),
                 // TODO: These are not great
@@ -77,23 +80,23 @@ impl ButtonStyle2 {
         }
     }
 
-    pub fn active(self, cx: &mut WindowContext) -> ButtonStyle {
+    pub(crate) fn active(self, cx: &mut WindowContext) -> ButtonLikeStyles {
         match self {
-            ButtonStyle2::Filled => ButtonStyle {
+            ButtonStyle::Filled => ButtonLikeStyles {
                 background: cx.theme().colors().element_active,
-                border_color: gpui::transparent_black(),
+                border_color: transparent_black(),
                 label_color: Color::Default.color(cx),
                 icon_color: Color::Default.color(cx),
             },
-            ButtonStyle2::Subtle => ButtonStyle {
+            ButtonStyle::Subtle => ButtonLikeStyles {
                 background: cx.theme().colors().ghost_element_active,
-                border_color: gpui::transparent_black(),
+                border_color: transparent_black(),
                 label_color: Color::Default.color(cx),
                 icon_color: Color::Default.color(cx),
             },
-            ButtonStyle2::Transparent => ButtonStyle {
-                background: gpui::transparent_black(),
-                border_color: gpui::transparent_black(),
+            ButtonStyle::Transparent => ButtonLikeStyles {
+                background: transparent_black(),
+                border_color: transparent_black(),
                 // TODO: These are not great
                 label_color: Color::Muted.color(cx),
                 // TODO: These are not great
@@ -102,22 +105,23 @@ impl ButtonStyle2 {
         }
     }
 
-    pub fn focused(self, cx: &mut WindowContext) -> ButtonStyle {
+    #[allow(unused)]
+    pub(crate) fn focused(self, cx: &mut WindowContext) -> ButtonLikeStyles {
         match self {
-            ButtonStyle2::Filled => ButtonStyle {
+            ButtonStyle::Filled => ButtonLikeStyles {
                 background: cx.theme().colors().element_background,
                 border_color: cx.theme().colors().border_focused,
                 label_color: Color::Default.color(cx),
                 icon_color: Color::Default.color(cx),
             },
-            ButtonStyle2::Subtle => ButtonStyle {
+            ButtonStyle::Subtle => ButtonLikeStyles {
                 background: cx.theme().colors().ghost_element_background,
                 border_color: cx.theme().colors().border_focused,
                 label_color: Color::Default.color(cx),
                 icon_color: Color::Default.color(cx),
             },
-            ButtonStyle2::Transparent => ButtonStyle {
-                background: gpui::transparent_black(),
+            ButtonStyle::Transparent => ButtonLikeStyles {
+                background: transparent_black(),
                 border_color: cx.theme().colors().border_focused,
                 label_color: Color::Accent.color(cx),
                 icon_color: Color::Accent.color(cx),
@@ -125,23 +129,23 @@ impl ButtonStyle2 {
         }
     }
 
-    pub fn disabled(self, cx: &mut WindowContext) -> ButtonStyle {
+    pub(crate) fn disabled(self, cx: &mut WindowContext) -> ButtonLikeStyles {
         match self {
-            ButtonStyle2::Filled => ButtonStyle {
+            ButtonStyle::Filled => ButtonLikeStyles {
                 background: cx.theme().colors().element_disabled,
                 border_color: cx.theme().colors().border_disabled,
                 label_color: Color::Disabled.color(cx),
                 icon_color: Color::Disabled.color(cx),
             },
-            ButtonStyle2::Subtle => ButtonStyle {
+            ButtonStyle::Subtle => ButtonLikeStyles {
                 background: cx.theme().colors().ghost_element_disabled,
                 border_color: cx.theme().colors().border_disabled,
                 label_color: Color::Disabled.color(cx),
                 icon_color: Color::Disabled.color(cx),
             },
-            ButtonStyle2::Transparent => ButtonStyle {
-                background: gpui::transparent_black(),
-                border_color: gpui::transparent_black(),
+            ButtonStyle::Transparent => ButtonLikeStyles {
+                background: transparent_black(),
+                border_color: transparent_black(),
                 label_color: Color::Disabled.color(cx),
                 icon_color: Color::Disabled.color(cx),
             },
@@ -150,19 +154,19 @@ impl ButtonStyle2 {
 }
 
 #[derive(Default, PartialEq, Clone, Copy)]
-pub enum ButtonSize2 {
+pub enum ButtonSize {
     #[default]
     Default,
     Compact,
     None,
 }
 
-impl ButtonSize2 {
+impl ButtonSize {
     fn height(self) -> Rems {
         match self {
-            ButtonSize2::Default => rems(22. / 16.),
-            ButtonSize2::Compact => rems(18. / 16.),
-            ButtonSize2::None => rems(16. / 16.),
+            ButtonSize::Default => rems(22. / 16.),
+            ButtonSize::Compact => rems(18. / 16.),
+            ButtonSize::None => rems(16. / 16.),
         }
     }
 }
@@ -170,10 +174,10 @@ impl ButtonSize2 {
 #[derive(IntoElement)]
 pub struct ButtonLike {
     id: ElementId,
-    pub(super) style: ButtonStyle2,
+    pub(super) style: ButtonStyle,
     pub(super) disabled: bool,
     pub(super) selected: bool,
-    size: ButtonSize2,
+    size: ButtonSize,
     tooltip: Option<Box<dyn Fn(&mut WindowContext) -> AnyView>>,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
     children: SmallVec<[AnyElement; 2]>,
@@ -183,10 +187,10 @@ impl ButtonLike {
     pub fn new(id: impl Into<ElementId>) -> Self {
         Self {
             id: id.into(),
-            style: ButtonStyle2::default(),
+            style: ButtonStyle::default(),
             disabled: false,
             selected: false,
-            size: ButtonSize2::Default,
+            size: ButtonSize::Default,
             tooltip: None,
             children: SmallVec::new(),
             on_click: None,
@@ -220,12 +224,12 @@ impl ButtonCommon for ButtonLike {
         &self.id
     }
 
-    fn style(mut self, style: ButtonStyle2) -> Self {
+    fn style(mut self, style: ButtonStyle) -> Self {
         self.style = style;
         self
     }
 
-    fn size(mut self, size: ButtonSize2) -> Self {
+    fn size(mut self, size: ButtonSize) -> Self {
         self.size = size;
         self
     }
@@ -258,7 +262,12 @@ impl RenderOnce for ButtonLike {
             .active(|active| active.bg(self.style.active(cx).background))
             .when_some(
                 self.on_click.filter(|_| !self.disabled),
-                |this, on_click| this.on_click(move |event, cx| (on_click)(event, cx)),
+                |this, on_click| {
+                    this.on_click(move |event, cx| {
+                        cx.stop_propagation();
+                        (on_click)(event, cx)
+                    })
+                },
             )
             .when_some(self.tooltip, |this, tooltip| {
                 if !self.selected {

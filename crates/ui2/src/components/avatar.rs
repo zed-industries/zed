@@ -21,7 +21,7 @@ impl RenderOnce for Avatar {
     type Rendered = Div;
 
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {
-        let mut img = img();
+        let mut img = img(self.src);
 
         if self.shape == Shape::Circle {
             img = img.rounded_full();
@@ -34,8 +34,7 @@ impl RenderOnce for Avatar {
         div()
             .size(size)
             .child(
-                img.source(self.src.clone())
-                    .size(size)
+                img.size(size)
                     // todo!(Pull the avatar fallback background from the theme.)
                     .bg(gpui::red()),
             )

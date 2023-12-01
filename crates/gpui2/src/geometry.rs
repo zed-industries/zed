@@ -655,6 +655,20 @@ pub struct Corners<T: Clone + Default + Debug> {
     pub bottom_left: T,
 }
 
+impl<T> Corners<T>
+where
+    T: Clone + Default + Debug,
+{
+    pub fn all(value: T) -> Self {
+        Self {
+            top_left: value.clone(),
+            top_right: value.clone(),
+            bottom_right: value.clone(),
+            bottom_left: value,
+        }
+    }
+}
+
 impl Corners<AbsoluteLength> {
     pub fn to_pixels(&self, size: Size<Pixels>, rem_size: Pixels) -> Corners<Pixels> {
         let max = size.width.max(size.height) / 2.;
@@ -905,6 +919,12 @@ impl From<Pixels> for usize {
     }
 }
 
+impl From<usize> for Pixels {
+    fn from(pixels: usize) -> Self {
+        Pixels(pixels as f32)
+    }
+}
+
 #[derive(
     Add, AddAssign, Clone, Copy, Default, Div, Eq, Hash, Ord, PartialEq, PartialOrd, Sub, SubAssign,
 )]
@@ -955,6 +975,18 @@ impl From<DevicePixels> for u64 {
 
 impl From<u64> for DevicePixels {
     fn from(device_pixels: u64) -> Self {
+        DevicePixels(device_pixels as i32)
+    }
+}
+
+impl From<DevicePixels> for usize {
+    fn from(device_pixels: DevicePixels) -> Self {
+        device_pixels.0 as usize
+    }
+}
+
+impl From<usize> for DevicePixels {
+    fn from(device_pixels: usize) -> Self {
         DevicePixels(device_pixels as i32)
     }
 }

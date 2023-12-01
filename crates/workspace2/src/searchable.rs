@@ -4,7 +4,7 @@ use gpui::{
     AnyView, AppContext, EventEmitter, Subscription, Task, View, ViewContext, WeakView,
     WindowContext,
 };
-use project2::search::SearchQuery;
+use project::search::SearchQuery;
 
 use crate::{
     item::{Item, WeakItemHandle},

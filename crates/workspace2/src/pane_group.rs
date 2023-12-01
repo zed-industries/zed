@@ -1,7 +1,7 @@
 use crate::{AppState, FollowerState, Pane, Workspace};
 use anyhow::{anyhow, bail, Result};
 use collections::HashMap;
-use db2::sqlez::{
+use db::sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
 };
@@ -9,7 +9,7 @@ use gpui::{
     point, size, AnyWeakView, Bounds, Div, IntoElement, Model, Pixels, Point, View, ViewContext,
 };
 use parking_lot::Mutex;
-use project2::Project;
+use project::Project;
 use serde::Deserialize;
 use std::sync::Arc;
 use ui::prelude::*;

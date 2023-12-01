@@ -17,7 +17,7 @@ mod contact_finder;
 //     Client, Contact, User, UserStore,
 // };
 use contact_finder::ContactFinder;
-use menu::Confirm;
+use menu::{Cancel, Confirm, SelectNext, SelectPrev};
 use rpc::proto;
 use theme::{ActiveTheme, ThemeSettings};
 // use context_menu::{ContextMenu, ContextMenuItem};
@@ -170,10 +170,10 @@ use feature_flags::{ChannelsAlpha, FeatureFlagAppExt, FeatureFlagViewExt};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
     actions, div, img, overlay, prelude::*, px, rems, serde_json, Action, AppContext,
-    AsyncWindowContext, ClipboardItem, DismissEvent, Div, EventEmitter, FocusHandle, Focusable,
-    FocusableView, InteractiveElement, IntoElement, Model, MouseDownEvent, ParentElement, Pixels,
-    Point, PromptLevel, Render, RenderOnce, SharedString, Stateful, Styled, Subscription, Task,
-    View, ViewContext, VisualContext, WeakView,
+    AsyncWindowContext, Bounds, ClipboardItem, DismissEvent, Div, EventEmitter, FocusHandle,
+    Focusable, FocusableView, InteractiveElement, IntoElement, Model, MouseDownEvent,
+    ParentElement, Pixels, Point, PromptLevel, Render, RenderOnce, ScrollHandle, SharedString,
+    Stateful, Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView,
 };
 use project::{Fs, Project};
 use serde_derive::{Deserialize, Serialize};
@@ -302,7 +302,7 @@ pub struct CollabPanel {
     client: Arc<Client>,
     project: Model<Project>,
     match_candidates: Vec<StringMatchCandidate>,
-    // list_state: ListState<Self>,
+    scroll_handle: ScrollHandle,
     subscriptions: Vec<Subscription>,
     collapsed_sections: Vec<Section>,
     collapsed_channels: Vec<ChannelId>,
@@ -384,10 +384,6 @@ enum ListEntry {
     ContactPlaceholder,
 }
 
-// impl Entity for CollabPanel {
-//     type Event = Event;
-// }
-
 impl CollabPanel {
     pub fn new(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) -> View<Self> {
         cx.build_view(|cx| {
@@ -399,28 +395,28 @@ impl CollabPanel {
                 editor
             });
 
-            //             cx.subscribe(&filter_editor, |this, _, event, cx| {
-            //                 if let editor::Event::BufferEdited = event {
-            //                     let query = this.filter_editor.read(cx).text(cx);
-            //                     if !query.is_empty() {
-            //                         this.selection.take();
-            //                     }
-            //                     this.update_entries(true, cx);
-            //                     if !query.is_empty() {
-            //                         this.selection = this
-            //                             .entries
-            //                             .iter()
-            //                             .position(|entry| !matches!(entry, ListEntry::Header(_)));
-            //                     }
-            //                 } else if let editor::Event::Blurred = event {
-            //                     let query = this.filter_editor.read(cx).text(cx);
-            //                     if query.is_empty() {
-            //                         this.selection.take();
-            //                         this.update_entries(true, cx);
-            //                     }
-            //                 }
-            //             })
-            //             .detach();
+            cx.subscribe(&filter_editor, |this: &mut Self, _, event, cx| {
+                if let editor::EditorEvent::BufferEdited = event {
+                    let query = this.filter_editor.read(cx).text(cx);
+                    if !query.is_empty() {
+                        this.selection.take();
+                    }
+                    this.update_entries(true, cx);
+                    if !query.is_empty() {
+                        this.selection = this
+                            .entries
+                            .iter()
+                            .position(|entry| !matches!(entry, ListEntry::Header(_)));
+                    }
+                } else if let editor::EditorEvent::Blurred = event {
+                    let query = this.filter_editor.read(cx).text(cx);
+                    if query.is_empty() {
+                        this.selection.take();
+                        this.update_entries(true, cx);
+                    }
+                }
+            })
+            .detach();
 
             let channel_name_editor = cx.build_view(|cx| Editor::single_line(cx));
 
@@ -586,13 +582,13 @@ impl CollabPanel {
                 project: workspace.project().clone(),
                 subscriptions: Vec::default(),
                 match_candidates: Vec::default(),
+                scroll_handle: ScrollHandle::new(),
                 collapsed_sections: vec![Section::Offline],
                 collapsed_channels: Vec::default(),
                 workspace: workspace.weak_handle(),
                 client: workspace.app_state().client.clone(),
                 //                 context_menu_on_selected: true,
                 drag_target_channel: ChannelDragTarget::None,
-                //                 list_state,
             };
 
             this.update_entries(false, cx);
@@ -708,9 +704,9 @@ impl CollabPanel {
         let query = self.filter_editor.read(cx).text(cx);
         let executor = cx.background_executor().clone();
 
-        // let prev_selected_entry = self.selection.and_then(|ix| self.entries.get(ix).cloned());
-        let _old_entries = mem::take(&mut self.entries);
-        //         let mut scroll_to_top = false;
+        let prev_selected_entry = self.selection.and_then(|ix| self.entries.get(ix).cloned());
+        let old_entries = mem::take(&mut self.entries);
+        let scroll_to_top = false;
 
         //         if let Some(room) = ActiveCall::global(cx).read(cx).room() {
         //             self.entries.push(ListEntry::Header(Section::ActiveCall));
@@ -1077,71 +1073,62 @@ impl CollabPanel {
             self.entries.push(ListEntry::ContactPlaceholder);
         }
 
-        //         if select_same_item {
-        //             if let Some(prev_selected_entry) = prev_selected_entry {
-        //                 self.selection.take();
-        //                 for (ix, entry) in self.entries.iter().enumerate() {
-        //                     if *entry == prev_selected_entry {
-        //                         self.selection = Some(ix);
-        //                         break;
-        //                     }
-        //                 }
-        //             }
-        //         } else {
-        //             self.selection = self.selection.and_then(|prev_selection| {
-        //                 if self.entries.is_empty() {
-        //                     None
-        //                 } else {
-        //                     Some(prev_selection.min(self.entries.len() - 1))
-        //                 }
-        //             });
-        //         }
+        if select_same_item {
+            if let Some(prev_selected_entry) = prev_selected_entry {
+                self.selection.take();
+                for (ix, entry) in self.entries.iter().enumerate() {
+                    if *entry == prev_selected_entry {
+                        self.selection = Some(ix);
+                        self.scroll_handle.scroll_to_item(ix);
+                        break;
+                    }
+                }
+            }
+        } else {
+            self.selection = self.selection.and_then(|prev_selection| {
+                if self.entries.is_empty() {
+                    None
+                } else {
+                    let ix = prev_selection.min(self.entries.len() - 1);
+                    self.scroll_handle.scroll_to_item(ix);
+                    Some(ix)
+                }
+            });
+        }
 
-        //         let old_scroll_top = self.list_state.logical_scroll_top();
+        if scroll_to_top {
+            self.scroll_handle.scroll_to_item(0)
+        } else {
+            let (old_index, old_offset) = self.scroll_handle.logical_scroll_top();
+            // Attempt to maintain the same scroll position.
+            if let Some(old_top_entry) = old_entries.get(old_index) {
+                let (new_index, new_offset) = self
+                    .entries
+                    .iter()
+                    .position(|entry| entry == old_top_entry)
+                    .map(|item_ix| (item_ix, old_offset))
+                    .or_else(|| {
+                        let entry_after_old_top = old_entries.get(old_index + 1)?;
+                        let item_ix = self
+                            .entries
+                            .iter()
+                            .position(|entry| entry == entry_after_old_top)?;
+                        Some((item_ix, px(0.)))
+                    })
+                    .or_else(|| {
+                        let entry_before_old_top = old_entries.get(old_index.saturating_sub(1))?;
+                        let item_ix = self
+                            .entries
+                            .iter()
+                            .position(|entry| entry == entry_before_old_top)?;
+                        Some((item_ix, px(0.)))
+                    })
+                    .unwrap_or_else(|| (old_index, old_offset));
 
-        //         self.list_state.reset(self.entries.len());
-
-        //         if scroll_to_top {
-        //             self.list_state.scroll_to(ListOffset::default());
-        //         } else {
-        //             // Attempt to maintain the same scroll position.
-        //             if let Some(old_top_entry) = old_entries.get(old_scroll_top.item_ix) {
-        //                 let new_scroll_top = self
-        //                     .entries
-        //                     .iter()
-        //                     .position(|entry| entry == old_top_entry)
-        //                     .map(|item_ix| ListOffset {
-        //                         item_ix,
-        //                         offset_in_item: old_scroll_top.offset_in_item,
-        //                     })
-        //                     .or_else(|| {
-        //                         let entry_after_old_top = old_entries.get(old_scroll_top.item_ix + 1)?;
-        //                         let item_ix = self
-        //                             .entries
-        //                             .iter()
-        //                             .position(|entry| entry == entry_after_old_top)?;
-        //                         Some(ListOffset {
-        //                             item_ix,
-        //                             offset_in_item: 0.,
-        //                         })
-        //                     })
-        //                     .or_else(|| {
-        //                         let entry_before_old_top =
-        //                             old_entries.get(old_scroll_top.item_ix.saturating_sub(1))?;
-        //                         let item_ix = self
-        //                             .entries
-        //                             .iter()
-        //                             .position(|entry| entry == entry_before_old_top)?;
-        //                         Some(ListOffset {
-        //                             item_ix,
-        //                             offset_in_item: 0.,
-        //                         })
-        //                     });
-
-        //                 self.list_state
-        //                     .scroll_to(new_scroll_top.unwrap_or(old_scroll_top));
-        //             }
-        //         }
+                self.scroll_handle
+                    .set_logical_scroll_top(new_index, new_offset);
+            }
+        }
 
         cx.notify();
     }
@@ -1685,8 +1672,6 @@ impl CollabPanel {
         ix: usize,
         cx: &mut ViewContext<Self>,
     ) {
-        // self.context_menu_on_selected = position.is_none();
-
         let clipboard_channel_name = self.channel_clipboard.as_ref().and_then(|clipboard| {
             self.channel_store
                 .read(cx)
@@ -1777,138 +1762,131 @@ impl CollabPanel {
         });
 
         cx.focus_view(&context_menu);
-        let subscription = cx.subscribe(&context_menu, |this, _, _: &DismissEvent, cx| {
-            this.context_menu.take();
-            cx.notify();
-        });
+        let subscription =
+            cx.subscribe(&context_menu, |this, _, _: &DismissEvent, cx| {
+                if this.context_menu.as_ref().is_some_and(|context_menu| {
+                    context_menu.0.focus_handle(cx).contains_focused(cx)
+                }) {
+                    cx.focus_self();
+                }
+                this.context_menu.take();
+                cx.notify();
+            });
         self.context_menu = Some((context_menu, position, subscription));
 
         cx.notify();
     }
 
-    //     fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
-    //         if self.take_editing_state(cx) {
-    //             cx.focus(&self.filter_editor);
-    //         } else {
-    //             self.filter_editor.update(cx, |editor, cx| {
-    //                 if editor.buffer().read(cx).len(cx) > 0 {
-    //                     editor.set_text("", cx);
-    //                 }
-    //             });
-    //         }
+    fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
+        if self.take_editing_state(cx) {
+            cx.focus_view(&self.filter_editor);
+        } else {
+            self.filter_editor.update(cx, |editor, cx| {
+                if editor.buffer().read(cx).len(cx) > 0 {
+                    editor.set_text("", cx);
+                }
+            });
+        }
 
-    //         self.update_entries(false, cx);
-    //     }
+        self.update_entries(false, cx);
+    }
 
-    //     fn select_next(&mut self, _: &SelectNext, cx: &mut ViewContext<Self>) {
-    //         let ix = self.selection.map_or(0, |ix| ix + 1);
-    //         if ix < self.entries.len() {
-    //             self.selection = Some(ix);
-    //         }
+    fn select_next(&mut self, _: &SelectNext, cx: &mut ViewContext<Self>) {
+        let ix = self.selection.map_or(0, |ix| ix + 1);
+        if ix < self.entries.len() {
+            self.selection = Some(ix);
+        }
 
-    //         self.list_state.reset(self.entries.len());
-    //         if let Some(ix) = self.selection {
-    //             self.list_state.scroll_to(ListOffset {
-    //                 item_ix: ix,
-    //                 offset_in_item: 0.,
-    //             });
-    //         }
-    //         cx.notify();
-    //     }
+        if let Some(ix) = self.selection {
+            self.scroll_handle.scroll_to_item(ix)
+        }
+        cx.notify();
+    }
 
-    //     fn select_prev(&mut self, _: &SelectPrev, cx: &mut ViewContext<Self>) {
-    //         let ix = self.selection.take().unwrap_or(0);
-    //         if ix > 0 {
-    //             self.selection = Some(ix - 1);
-    //         }
+    fn select_prev(&mut self, _: &SelectPrev, cx: &mut ViewContext<Self>) {
+        let ix = self.selection.take().unwrap_or(0);
+        if ix > 0 {
+            self.selection = Some(ix - 1);
+        }
 
-    //         self.list_state.reset(self.entries.len());
-    //         if let Some(ix) = self.selection {
-    //             self.list_state.scroll_to(ListOffset {
-    //                 item_ix: ix,
-    //                 offset_in_item: 0.,
-    //             });
-    //         }
-    //         cx.notify();
-    //     }
+        if let Some(ix) = self.selection {
+            self.scroll_handle.scroll_to_item(ix)
+        }
+        cx.notify();
+    }
 
     fn confirm(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
         if self.confirm_channel_edit(cx) {
             return;
         }
 
-        // if let Some(selection) = self.selection {
-        //     if let Some(entry) = self.entries.get(selection) {
-        //         match entry {
-        //             ListEntry::Header(section) => match section {
-        //                 Section::ActiveCall => Self::leave_call(cx),
-        //                 Section::Channels => self.new_root_channel(cx),
-        //                 Section::Contacts => self.toggle_contact_finder(cx),
-        //                 Section::ContactRequests
-        //                 | Section::Online
-        //                 | Section::Offline
-        //                 | Section::ChannelInvites => {
-        //                     self.toggle_section_expanded(*section, cx);
-        //                 }
-        //             },
-        //             ListEntry::Contact { contact, calling } => {
-        //                 if contact.online && !contact.busy && !calling {
-        //                     self.call(contact.user.id, Some(self.project.clone()), cx);
-        //                 }
-        //             }
-        //             ListEntry::ParticipantProject {
-        //                 project_id,
-        //                 host_user_id,
-        //                 ..
-        //             } => {
-        //                 if let Some(workspace) = self.workspace.upgrade(cx) {
-        //                     let app_state = workspace.read(cx).app_state().clone();
-        //                     workspace::join_remote_project(
-        //                         *project_id,
-        //                         *host_user_id,
-        //                         app_state,
-        //                         cx,
-        //                     )
-        //                     .detach_and_log_err(cx);
-        //                 }
-        //             }
-        //             ListEntry::ParticipantScreen { peer_id, .. } => {
-        //                 let Some(peer_id) = peer_id else {
-        //                     return;
-        //                 };
-        //                 if let Some(workspace) = self.workspace.upgrade(cx) {
-        //                     workspace.update(cx, |workspace, cx| {
-        //                         workspace.open_shared_screen(*peer_id, cx)
-        //                     });
-        //                 }
-        //             }
-        //             ListEntry::Channel { channel, .. } => {
-        //                 let is_active = maybe!({
-        //                     let call_channel = ActiveCall::global(cx)
-        //                         .read(cx)
-        //                         .room()?
-        //                         .read(cx)
-        //                         .channel_id()?;
+        if let Some(selection) = self.selection {
+            if let Some(entry) = self.entries.get(selection) {
+                match entry {
+                    ListEntry::Header(section) => match section {
+                        Section::ActiveCall => Self::leave_call(cx),
+                        Section::Channels => self.new_root_channel(cx),
+                        Section::Contacts => self.toggle_contact_finder(cx),
+                        Section::ContactRequests
+                        | Section::Online
+                        | Section::Offline
+                        | Section::ChannelInvites => {
+                            self.toggle_section_expanded(*section, cx);
+                        }
+                    },
+                    ListEntry::Contact { contact, calling } => {
+                        if contact.online && !contact.busy && !calling {
+                            self.call(contact.user.id, cx);
+                        }
+                    }
+                    // ListEntry::ParticipantProject {
+                    //     project_id,
+                    //     host_user_id,
+                    //     ..
+                    // } => {
+                    //     if let Some(workspace) = self.workspace.upgrade(cx) {
+                    //         let app_state = workspace.read(cx).app_state().clone();
+                    //         workspace::join_remote_project(
+                    //             *project_id,
+                    //             *host_user_id,
+                    //             app_state,
+                    //             cx,
+                    //         )
+                    //         .detach_and_log_err(cx);
+                    //     }
+                    // }
+                    // ListEntry::ParticipantScreen { peer_id, .. } => {
+                    //     let Some(peer_id) = peer_id else {
+                    //         return;
+                    //     };
+                    //     if let Some(workspace) = self.workspace.upgrade(cx) {
+                    //         workspace.update(cx, |workspace, cx| {
+                    //             workspace.open_shared_screen(*peer_id, cx)
+                    //         });
+                    //     }
+                    // }
+                    ListEntry::Channel { channel, .. } => {
+                        let is_active = maybe!({
+                            let call_channel = ActiveCall::global(cx)
+                                .read(cx)
+                                .room()?
+                                .read(cx)
+                                .channel_id()?;
 
-        //                     Some(call_channel == channel.id)
-        //                 })
-        //                 .unwrap_or(false);
-        //                 if is_active {
-        //                     self.open_channel_notes(
-        //                         &OpenChannelNotes {
-        //                             channel_id: channel.id,
-        //                         },
-        //                         cx,
-        //                     )
-        //                 } else {
-        //                     self.join_channel(channel.id, cx)
-        //                 }
-        //             }
-        //             ListEntry::ContactPlaceholder => self.toggle_contact_finder(cx),
-        //             _ => {}
-        //         }
-        //     }
-        // }
+                            Some(call_channel == channel.id)
+                        })
+                        .unwrap_or(false);
+                        if is_active {
+                            self.open_channel_notes(channel.id, cx)
+                        } else {
+                            self.join_channel(channel.id, cx)
+                        }
+                    }
+                    ListEntry::ContactPlaceholder => self.toggle_contact_finder(cx),
+                    _ => {}
+                }
+            }
+        }
     }
 
     fn insert_space(&mut self, _: &InsertSpace, cx: &mut ViewContext<Self>) {
@@ -1975,33 +1953,33 @@ impl CollabPanel {
         self.update_entries(false, cx);
     }
 
-    //     fn collapse_selected_channel(
-    //         &mut self,
-    //         _: &CollapseSelectedChannel,
-    //         cx: &mut ViewContext<Self>,
-    //     ) {
-    //         let Some(channel_id) = self.selected_channel().map(|channel| channel.id) else {
-    //             return;
-    //         };
+    fn collapse_selected_channel(
+        &mut self,
+        _: &CollapseSelectedChannel,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let Some(channel_id) = self.selected_channel().map(|channel| channel.id) else {
+            return;
+        };
 
-    //         if self.is_channel_collapsed(channel_id) {
-    //             return;
-    //         }
+        if self.is_channel_collapsed(channel_id) {
+            return;
+        }
 
-    //         self.toggle_channel_collapsed(channel_id, cx);
-    //     }
+        self.toggle_channel_collapsed(channel_id, cx);
+    }
 
-    //     fn expand_selected_channel(&mut self, _: &ExpandSelectedChannel, cx: &mut ViewContext<Self>) {
-    //         let Some(id) = self.selected_channel().map(|channel| channel.id) else {
-    //             return;
-    //         };
+    fn expand_selected_channel(&mut self, _: &ExpandSelectedChannel, cx: &mut ViewContext<Self>) {
+        let Some(id) = self.selected_channel().map(|channel| channel.id) else {
+            return;
+        };
 
-    //         if !self.is_channel_collapsed(id) {
-    //             return;
-    //         }
+        if !self.is_channel_collapsed(id) {
+            return;
+        }
 
-    //         self.toggle_channel_collapsed(id, cx)
-    //     }
+        self.toggle_channel_collapsed(id, cx)
+    }
 
     //     fn toggle_channel_collapsed_action(
     //         &mut self,
@@ -2030,11 +2008,11 @@ impl CollabPanel {
         self.collapsed_channels.binary_search(&channel_id).is_ok()
     }
 
-    //     fn leave_call(cx: &mut ViewContext<Self>) {
-    //         ActiveCall::global(cx)
-    //             .update(cx, |call, cx| call.hang_up(cx))
-    //             .detach_and_log_err(cx);
-    //     }
+    fn leave_call(cx: &mut ViewContext<Self>) {
+        ActiveCall::global(cx)
+            .update(cx, |call, cx| call.hang_up(cx))
+            .detach_and_log_err(cx);
+    }
 
     fn toggle_contact_finder(&mut self, cx: &mut ViewContext<Self>) {
         if let Some(workspace) = self.workspace.upgrade() {
@@ -2154,13 +2132,20 @@ impl CollabPanel {
         }
     }
 
-    //     fn show_inline_context_menu(&mut self, _: &menu::ShowContextMenu, cx: &mut ViewContext<Self>) {
-    //         let Some(channel) = self.selected_channel() else {
-    //             return;
-    //         };
+    fn show_inline_context_menu(&mut self, _: &menu::ShowContextMenu, cx: &mut ViewContext<Self>) {
+        let Some(channel) = self.selected_channel() else {
+            return;
+        };
+        let Some(bounds) = self
+            .selection
+            .and_then(|ix| self.scroll_handle.bounds_for_item(ix))
+        else {
+            return;
+        };
 
-    //         self.deploy_channel_context_menu(None, &channel.clone(), self.selection.unwrap(), cx);
-    //     }
+        self.deploy_channel_context_menu(bounds.center(), channel.id, self.selection.unwrap(), cx);
+        cx.stop_propagation();
+    }
 
     fn selected_channel(&self) -> Option<&Arc<Channel>> {
         self.selection
@@ -2350,44 +2335,67 @@ impl CollabPanel {
         )
     }
 
-    fn render_signed_in(&mut self, cx: &mut ViewContext<Self>) -> List {
-        let is_selected = false; // todo!() this.selection == Some(ix);
-
-        List::new().children(
-            self.entries
-                .clone()
-                .into_iter()
-                .enumerate()
-                .map(|(ix, entry)| match entry {
-                    ListEntry::Header(section) => {
-                        let is_collapsed = self.collapsed_sections.contains(&section);
-                        self.render_header(section, is_selected, is_collapsed, cx)
-                            .into_any_element()
-                    }
-                    ListEntry::Contact { contact, calling } => self
-                        .render_contact(&*contact, calling, is_selected, cx)
-                        .into_any_element(),
-                    ListEntry::ContactPlaceholder => self
-                        .render_contact_placeholder(is_selected, cx)
-                        .into_any_element(),
-                    ListEntry::IncomingRequest(user) => self
-                        .render_contact_request(user, true, is_selected, cx)
-                        .into_any_element(),
-                    ListEntry::OutgoingRequest(user) => self
-                        .render_contact_request(user, false, is_selected, cx)
-                        .into_any_element(),
-                    ListEntry::Channel {
-                        channel,
-                        depth,
-                        has_children,
-                    } => self
-                        .render_channel(&*channel, depth, has_children, is_selected, ix, cx)
-                        .into_any_element(),
-                    ListEntry::ChannelEditor { depth } => {
-                        self.render_channel_editor(depth, cx).into_any_element()
-                    }
-                }),
-        )
+    fn render_signed_in(&mut self, cx: &mut ViewContext<Self>) -> Div {
+        v_stack()
+            .size_full()
+            .child(
+                div()
+                    .p_2()
+                    .child(div().rounded(px(2.0)).child(self.filter_editor.clone())),
+            )
+            .child(
+                v_stack()
+                    .size_full()
+                    .id("scroll")
+                    .overflow_y_scroll()
+                    .track_scroll(&self.scroll_handle)
+                    .children(
+                        self.entries
+                            .clone()
+                            .into_iter()
+                            .enumerate()
+                            .map(|(ix, entry)| {
+                                let is_selected = self.selection == Some(ix);
+                                match entry {
+                                    ListEntry::Header(section) => {
+                                        let is_collapsed =
+                                            self.collapsed_sections.contains(&section);
+                                        self.render_header(section, is_selected, is_collapsed, cx)
+                                            .into_any_element()
+                                    }
+                                    ListEntry::Contact { contact, calling } => self
+                                        .render_contact(&*contact, calling, is_selected, cx)
+                                        .into_any_element(),
+                                    ListEntry::ContactPlaceholder => self
+                                        .render_contact_placeholder(is_selected, cx)
+                                        .into_any_element(),
+                                    ListEntry::IncomingRequest(user) => self
+                                        .render_contact_request(user, true, is_selected, cx)
+                                        .into_any_element(),
+                                    ListEntry::OutgoingRequest(user) => self
+                                        .render_contact_request(user, false, is_selected, cx)
+                                        .into_any_element(),
+                                    ListEntry::Channel {
+                                        channel,
+                                        depth,
+                                        has_children,
+                                    } => self
+                                        .render_channel(
+                                            &*channel,
+                                            depth,
+                                            has_children,
+                                            is_selected,
+                                            ix,
+                                            cx,
+                                        )
+                                        .into_any_element(),
+                                    ListEntry::ChannelEditor { depth } => {
+                                        self.render_channel_editor(depth, cx).into_any_element()
+                                    }
+                                }
+                            }),
+                    ),
+            )
     }
 
     fn render_header(
@@ -2494,6 +2502,7 @@ impl CollabPanel {
                     el.child(
                         ListItem::new(text.clone())
                             .child(div().w_full().child(Label::new(text)))
+                            .selected(is_selected)
                             .toggle(Some(!is_collapsed))
                             .on_click(cx.listener(move |this, _, cx| {
                                 this.toggle_section_expanded(section, cx)
@@ -2502,7 +2511,7 @@ impl CollabPanel {
                 } else {
                     el.child(
                         ListHeader::new(text)
-                            .when_some(button, |el, button| el.right_button(button))
+                            .when_some(button, |el, button| el.meta(button))
                             .selected(is_selected),
                     )
                 }
@@ -3214,23 +3223,36 @@ impl CollabPanel {
 // }
 
 impl Render for CollabPanel {
-    type Element = Focusable<Stateful<Div>>;
+    type Element = Focusable<Div>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-        div()
-            .id("collab-panel")
+        v_stack()
             .key_context("CollabPanel")
+            .on_action(cx.listener(CollabPanel::cancel))
+            .on_action(cx.listener(CollabPanel::select_next))
+            .on_action(cx.listener(CollabPanel::select_prev))
+            .on_action(cx.listener(CollabPanel::confirm))
+            .on_action(cx.listener(CollabPanel::insert_space))
+            //     .on_action(cx.listener(CollabPanel::remove))
+            .on_action(cx.listener(CollabPanel::remove_selected_channel))
+            .on_action(cx.listener(CollabPanel::show_inline_context_menu))
+            //     .on_action(cx.listener(CollabPanel::new_subchannel))
+            //     .on_action(cx.listener(CollabPanel::invite_members))
+            //     .on_action(cx.listener(CollabPanel::manage_members))
+            .on_action(cx.listener(CollabPanel::rename_selected_channel))
+            //     .on_action(cx.listener(CollabPanel::rename_channel))
+            //     .on_action(cx.listener(CollabPanel::toggle_channel_collapsed_action))
+            .on_action(cx.listener(CollabPanel::collapse_selected_channel))
+            .on_action(cx.listener(CollabPanel::expand_selected_channel))
+            //     .on_action(cx.listener(CollabPanel::open_channel_notes))
+            //     .on_action(cx.listener(CollabPanel::join_channel_chat))
+            //     .on_action(cx.listener(CollabPanel::copy_channel_link))
             .track_focus(&self.focus_handle)
             .size_full()
-            .overflow_scroll()
-            .on_action(cx.listener(Self::confirm))
-            .on_action(cx.listener(Self::insert_space))
-            .map(|el| {
-                if self.user_store.read(cx).current_user().is_none() {
-                    el.child(self.render_signed_out(cx))
-                } else {
-                    el.child(self.render_signed_in(cx))
-                }
+            .child(if self.user_store.read(cx).current_user().is_none() {
+                self.render_signed_out(cx)
+            } else {
+                self.render_signed_in(cx)
             })
             .children(self.context_menu.as_ref().map(|(menu, position, _)| {
                 overlay()
@@ -3392,111 +3414,111 @@ impl Panel for CollabPanel {
 }
 
 impl FocusableView for CollabPanel {
-    fn focus_handle(&self, _cx: &AppContext) -> gpui::FocusHandle {
-        self.focus_handle.clone()
+    fn focus_handle(&self, cx: &AppContext) -> gpui::FocusHandle {
+        self.filter_editor.focus_handle(cx).clone()
     }
 }
 
-// impl PartialEq for ListEntry {
-//     fn eq(&self, other: &Self) -> bool {
-//         match self {
-//             ListEntry::Header(section_1) => {
-//                 if let ListEntry::Header(section_2) = other {
-//                     return section_1 == section_2;
-//                 }
-//             }
-//             ListEntry::CallParticipant { user: user_1, .. } => {
-//                 if let ListEntry::CallParticipant { user: user_2, .. } = other {
-//                     return user_1.id == user_2.id;
-//                 }
-//             }
-//             ListEntry::ParticipantProject {
-//                 project_id: project_id_1,
-//                 ..
-//             } => {
-//                 if let ListEntry::ParticipantProject {
-//                     project_id: project_id_2,
-//                     ..
-//                 } = other
-//                 {
-//                     return project_id_1 == project_id_2;
-//                 }
-//             }
-//             ListEntry::ParticipantScreen {
-//                 peer_id: peer_id_1, ..
-//             } => {
-//                 if let ListEntry::ParticipantScreen {
-//                     peer_id: peer_id_2, ..
-//                 } = other
-//                 {
-//                     return peer_id_1 == peer_id_2;
-//                 }
-//             }
-//             ListEntry::Channel {
-//                 channel: channel_1, ..
-//             } => {
-//                 if let ListEntry::Channel {
-//                     channel: channel_2, ..
-//                 } = other
-//                 {
-//                     return channel_1.id == channel_2.id;
-//                 }
-//             }
-//             ListEntry::ChannelNotes { channel_id } => {
-//                 if let ListEntry::ChannelNotes {
-//                     channel_id: other_id,
-//                 } = other
-//                 {
-//                     return channel_id == other_id;
-//                 }
-//             }
-//             ListEntry::ChannelChat { channel_id } => {
-//                 if let ListEntry::ChannelChat {
-//                     channel_id: other_id,
-//                 } = other
-//                 {
-//                     return channel_id == other_id;
-//                 }
-//             }
-//             ListEntry::ChannelInvite(channel_1) => {
-//                 if let ListEntry::ChannelInvite(channel_2) = other {
-//                     return channel_1.id == channel_2.id;
-//                 }
-//             }
-//             ListEntry::IncomingRequest(user_1) => {
-//                 if let ListEntry::IncomingRequest(user_2) = other {
-//                     return user_1.id == user_2.id;
-//                 }
-//             }
-//             ListEntry::OutgoingRequest(user_1) => {
-//                 if let ListEntry::OutgoingRequest(user_2) = other {
-//                     return user_1.id == user_2.id;
-//                 }
-//             }
-//             ListEntry::Contact {
-//                 contact: contact_1, ..
-//             } => {
-//                 if let ListEntry::Contact {
-//                     contact: contact_2, ..
-//                 } = other
-//                 {
-//                     return contact_1.user.id == contact_2.user.id;
-//                 }
-//             }
-//             ListEntry::ChannelEditor { depth } => {
-//                 if let ListEntry::ChannelEditor { depth: other_depth } = other {
-//                     return depth == other_depth;
-//                 }
-//             }
-//             ListEntry::ContactPlaceholder => {
-//                 if let ListEntry::ContactPlaceholder = other {
-//                     return true;
-//                 }
-//             }
-//         }
-//         false
-//     }
-// }
+impl PartialEq for ListEntry {
+    fn eq(&self, other: &Self) -> bool {
+        match self {
+            ListEntry::Header(section_1) => {
+                if let ListEntry::Header(section_2) = other {
+                    return section_1 == section_2;
+                }
+            }
+            // ListEntry::CallParticipant { user: user_1, .. } => {
+            //     if let ListEntry::CallParticipant { user: user_2, .. } = other {
+            //         return user_1.id == user_2.id;
+            //     }
+            // }
+            // ListEntry::ParticipantProject {
+            //     project_id: project_id_1,
+            //     ..
+            // } => {
+            //     if let ListEntry::ParticipantProject {
+            //         project_id: project_id_2,
+            //         ..
+            //     } = other
+            //     {
+            //         return project_id_1 == project_id_2;
+            //     }
+            // }
+            // ListEntry::ParticipantScreen {
+            //     peer_id: peer_id_1, ..
+            // } => {
+            //     if let ListEntry::ParticipantScreen {
+            //         peer_id: peer_id_2, ..
+            //     } = other
+            //     {
+            //         return peer_id_1 == peer_id_2;
+            //     }
+            // }
+            ListEntry::Channel {
+                channel: channel_1, ..
+            } => {
+                if let ListEntry::Channel {
+                    channel: channel_2, ..
+                } = other
+                {
+                    return channel_1.id == channel_2.id;
+                }
+            }
+            // ListEntry::ChannelNotes { channel_id } => {
+            //     if let ListEntry::ChannelNotes {
+            //         channel_id: other_id,
+            //     } = other
+            //     {
+            //         return channel_id == other_id;
+            //     }
+            // }
+            // ListEntry::ChannelChat { channel_id } => {
+            //     if let ListEntry::ChannelChat {
+            //         channel_id: other_id,
+            //     } = other
+            //     {
+            //         return channel_id == other_id;
+            //     }
+            // }
+            // ListEntry::ChannelInvite(channel_1) => {
+            //     if let ListEntry::ChannelInvite(channel_2) = other {
+            //         return channel_1.id == channel_2.id;
+            //     }
+            // }
+            ListEntry::IncomingRequest(user_1) => {
+                if let ListEntry::IncomingRequest(user_2) = other {
+                    return user_1.id == user_2.id;
+                }
+            }
+            ListEntry::OutgoingRequest(user_1) => {
+                if let ListEntry::OutgoingRequest(user_2) = other {
+                    return user_1.id == user_2.id;
+                }
+            }
+            ListEntry::Contact {
+                contact: contact_1, ..
+            } => {
+                if let ListEntry::Contact {
+                    contact: contact_2, ..
+                } = other
+                {
+                    return contact_1.user.id == contact_2.user.id;
+                }
+            }
+            ListEntry::ChannelEditor { depth } => {
+                if let ListEntry::ChannelEditor { depth: other_depth } = other {
+                    return depth == other_depth;
+                }
+            }
+            ListEntry::ContactPlaceholder => {
+                if let ListEntry::ContactPlaceholder = other {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+}
 
 // fn render_icon_button(style: &IconButton, svg_path: &'static str) -> impl Element<CollabPanel> {
 //     Svg::new(svg_path)

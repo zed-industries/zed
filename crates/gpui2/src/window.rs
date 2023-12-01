@@ -8,8 +8,8 @@ use crate::{
     MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInputHandler,
     PlatformWindow, Point, PolychromeSprite, PromptLevel, Quad, Render, RenderGlyphParams,
     RenderImageParams, RenderSvgParams, ScaledPixels, SceneBuilder, Shadow, SharedString, Size,
-    Style, SubscriberSet, Subscription, TaffyLayoutEngine, Task, Underline, UnderlineStyle, View,
-    VisualContext, WeakView, WindowBounds, WindowOptions, SUBPIXEL_VARIANTS,
+    Style, SubscriberSet, Subscription, Surface, TaffyLayoutEngine, Task, Underline,
+    UnderlineStyle, View, VisualContext, WeakView, WindowBounds, WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::HashMap;
@@ -18,6 +18,7 @@ use futures::{
     channel::{mpsc, oneshot},
     StreamExt,
 };
+use media::core_video::CVImageBuffer;
 use parking_lot::RwLock;
 use slotmap::SlotMap;
 use smallvec::SmallVec;
@@ -208,7 +209,7 @@ pub struct Window {
     sprite_atlas: Arc<dyn PlatformAtlas>,
     rem_size: Pixels,
     viewport_size: Size<Pixels>,
-    pub(crate) layout_engine: TaffyLayoutEngine,
+    layout_engine: Option<TaffyLayoutEngine>,
     pub(crate) root_view: Option<AnyView>,
     pub(crate) element_id_stack: GlobalElementId,
     pub(crate) previous_frame: Frame,
@@ -326,7 +327,7 @@ impl Window {
             sprite_atlas,
             rem_size: px(16.),
             viewport_size: content_size,
-            layout_engine: TaffyLayoutEngine::new(),
+            layout_engine: Some(TaffyLayoutEngine::new()),
             root_view: None,
             element_id_stack: GlobalElementId::default(),
             previous_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
@@ -605,9 +606,11 @@ impl<'a> WindowContext<'a> {
         self.app.layout_id_buffer.extend(children.into_iter());
         let rem_size = self.rem_size();
 
-        self.window
-            .layout_engine
-            .request_layout(style, rem_size, &self.app.layout_id_buffer)
+        self.window.layout_engine.as_mut().unwrap().request_layout(
+            style,
+            rem_size,
+            &self.app.layout_id_buffer,
+        )
     }
 
     /// Add a node to the layout tree for the current frame. Instead of taking a `Style` and children,
@@ -617,22 +620,25 @@ impl<'a> WindowContext<'a> {
     /// The given closure is invoked at layout time with the known dimensions and available space and
     /// returns a `Size`.
     pub fn request_measured_layout<
-        F: Fn(Size<Option<Pixels>>, Size<AvailableSpace>) -> Size<Pixels> + Send + Sync + 'static,
+        F: FnMut(Size<Option<Pixels>>, Size<AvailableSpace>, &mut WindowContext) -> Size<Pixels>
+            + 'static,
     >(
         &mut self,
         style: Style,
-        rem_size: Pixels,
         measure: F,
     ) -> LayoutId {
+        let rem_size = self.rem_size();
         self.window
             .layout_engine
+            .as_mut()
+            .unwrap()
             .request_measured_layout(style, rem_size, measure)
     }
 
     pub fn compute_layout(&mut self, layout_id: LayoutId, available_space: Size<AvailableSpace>) {
-        self.window
-            .layout_engine
-            .compute_layout(layout_id, available_space)
+        let mut layout_engine = self.window.layout_engine.take().unwrap();
+        layout_engine.compute_layout(layout_id, available_space, self);
+        self.window.layout_engine = Some(layout_engine);
     }
 
     /// Obtain the bounds computed for the given LayoutId relative to the window. This method should not
@@ -642,6 +648,8 @@ impl<'a> WindowContext<'a> {
         let mut bounds = self
             .window
             .layout_engine
+            .as_mut()
+            .unwrap()
             .layout_bounds(layout_id)
             .map(Into::into);
         bounds.origin += self.element_offset();
@@ -675,6 +683,10 @@ impl<'a> WindowContext<'a> {
 
     pub fn zoom_window(&self) {
         self.window.platform_window.zoom();
+    }
+
+    pub fn set_window_title(&mut self, title: &str) {
+        self.window.platform_window.set_title(title);
     }
 
     pub fn display(&self) -> Option<Rc<dyn PlatformDisplay>> {
@@ -1116,6 +1128,23 @@ impl<'a> WindowContext<'a> {
         Ok(())
     }
 
+    /// Paint a surface into the scene for the current frame at the current z-index.
+    pub fn paint_surface(&mut self, bounds: Bounds<Pixels>, image_buffer: CVImageBuffer) {
+        let scale_factor = self.scale_factor();
+        let bounds = bounds.scale(scale_factor);
+        let content_mask = self.content_mask().scale(scale_factor);
+        let window = &mut *self.window;
+        window.current_frame.scene_builder.insert(
+            &window.current_frame.z_index_stack,
+            Surface {
+                order: 0,
+                bounds,
+                content_mask,
+                image_buffer,
+            },
+        );
+    }
+
     /// Draw pixels to the display for this window based on the contents of its scene.
     pub(crate) fn draw(&mut self) {
         let root_view = self.window.root_view.take().unwrap();
@@ -1171,7 +1200,7 @@ impl<'a> WindowContext<'a> {
         self.text_system().start_frame();
 
         let window = &mut *self.window;
-        window.layout_engine.clear();
+        window.layout_engine.as_mut().unwrap().clear();
 
         mem::swap(&mut window.previous_frame, &mut window.current_frame);
         let frame = &mut window.current_frame;
