@@ -209,9 +209,7 @@ impl AnyView {
     ) {
         cx.with_absolute_element_offset(origin, |cx| {
             let (layout_id, rendered_element) = (self.layout)(self, cx);
-            cx.window
-                .layout_engine
-                .compute_layout(layout_id, available_space);
+            cx.compute_layout(layout_id, available_space);
             (self.paint)(self, rendered_element, cx);
         })
     }
