@@ -112,6 +112,8 @@ impl Render for FeedbackModal {
     type Element = Div;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+        let dismiss = cx.listener(|_, _, cx| cx.emit(DismissEvent));
+
         v_stack()
             .elevation_3(cx)
             .min_w(rems(40.))
@@ -135,7 +137,8 @@ impl Render for FeedbackModal {
                     .child(
                         Button::new("cancel_feedback", "Cancel")
                             .style(ButtonStyle::Subtle)
-                            .color(Color::Muted),
+                            .color(Color::Muted)
+                            .on_click(dismiss),
                     )
                     .child(
                         Button::new("send_feedback", "Send Feedback")
