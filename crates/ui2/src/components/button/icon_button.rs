@@ -1,7 +1,9 @@
 use gpui::{Action, AnyView};
 
 use crate::prelude::*;
-use crate::{ButtonCommon, ButtonLike, ButtonSize, ButtonStyle, Icon, IconElement, IconSize};
+use crate::{ButtonCommon, ButtonLike, ButtonSize, ButtonStyle, Icon, IconSize};
+
+use super::button_icon::ButtonIcon;
 
 #[derive(IntoElement)]
 pub struct IconButton {
@@ -92,23 +94,16 @@ impl RenderOnce for IconButton {
     type Rendered = ButtonLike;
 
     fn render(self, _cx: &mut WindowContext) -> Self::Rendered {
-        let icon = self
-            .selected_icon
-            .filter(|_| self.base.selected)
-            .unwrap_or(self.icon);
-
-        let icon_color = if self.base.disabled {
-            Color::Disabled
-        } else if self.base.selected {
-            Color::Selected
-        } else {
-            self.icon_color
-        };
+        let is_disabled = self.base.disabled;
+        let is_selected = self.base.selected;
 
         self.base.child(
-            IconElement::new(icon)
+            ButtonIcon::new(self.icon)
+                .disabled(is_disabled)
+                .selected(is_selected)
+                .selected_icon(self.selected_icon)
                 .size(self.icon_size)
-                .color(icon_color),
+                .color(self.icon_color),
         )
     }
 }
