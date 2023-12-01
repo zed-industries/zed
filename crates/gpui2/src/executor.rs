@@ -128,19 +128,11 @@ impl BackgroundExecutor {
     #[cfg(any(test, feature = "test-support"))]
     #[track_caller]
     pub fn block_test<R>(&self, future: impl Future<Output = R>) -> R {
-        if let Ok(value) = self.block_internal(false, future, usize::MAX) {
-            value
-        } else {
-            unreachable!()
-        }
+        self.block_internal(false, future)
     }
 
     pub fn block<R>(&self, future: impl Future<Output = R>) -> R {
-        if let Ok(value) = self.block_internal(true, future, usize::MAX) {
-            value
-        } else {
-            unreachable!()
-        }
+        self.block_internal(true, future)
     }
 
     #[track_caller]
@@ -148,8 +140,7 @@ impl BackgroundExecutor {
         &self,
         background_only: bool,
         future: impl Future<Output = R>,
-        mut max_ticks: usize,
-    ) -> Result<R, ()> {
+    ) -> R {
         pin_mut!(future);
         let unparker = self.dispatcher.unparker();
         let awoken = Arc::new(AtomicBool::new(false));
@@ -165,13 +156,8 @@ impl BackgroundExecutor {
 
         loop {
             match future.as_mut().poll(&mut cx) {
-                Poll::Ready(result) => return Ok(result),
+                Poll::Ready(result) => return result,
                 Poll::Pending => {
-                    if max_ticks == 0 {
-                        return Err(());
-                    }
-                    max_ticks -= 1;
-
                     if !self.dispatcher.tick(background_only) {
                         if awoken.swap(false, SeqCst) {
                             continue;
@@ -206,24 +192,16 @@ impl BackgroundExecutor {
             return Err(future);
         }
 
-        let max_ticks = if cfg!(any(test, feature = "test-support")) {
-            self.dispatcher
-                .as_test()
-                .map_or(usize::MAX, |dispatcher| dispatcher.gen_block_on_ticks())
-        } else {
-            usize::MAX
-        };
         let mut timer = self.timer(duration).fuse();
-
         let timeout = async {
             futures::select_biased! {
                 value = future => Ok(value),
                 _ = timer => Err(()),
             }
         };
-        match self.block_internal(true, timeout, max_ticks) {
-            Ok(Ok(value)) => Ok(value),
-            _ => Err(future),
+        match self.block(timeout) {
+            Ok(value) => Ok(value),
+            Err(_) => Err(future),
         }
     }
 
@@ -302,11 +280,6 @@ impl BackgroundExecutor {
 
     pub fn is_main_thread(&self) -> bool {
         self.dispatcher.is_main_thread()
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn set_block_on_ticks(&self, range: std::ops::RangeInclusive<usize>) {
-        self.dispatcher.as_test().unwrap().set_block_on_ticks(range);
     }
 }
 

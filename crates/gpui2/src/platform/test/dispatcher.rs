@@ -7,7 +7,6 @@ use parking_lot::Mutex;
 use rand::prelude::*;
 use std::{
     future::Future,
-    ops::RangeInclusive,
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
@@ -37,7 +36,6 @@ struct TestDispatcherState {
     allow_parking: bool,
     waiting_backtrace: Option<Backtrace>,
     deprioritized_task_labels: HashSet<TaskLabel>,
-    block_on_ticks: RangeInclusive<usize>,
 }
 
 impl TestDispatcher {
@@ -55,7 +53,6 @@ impl TestDispatcher {
             allow_parking: false,
             waiting_backtrace: None,
             deprioritized_task_labels: Default::default(),
-            block_on_ticks: 0..=1000,
         };
 
         TestDispatcher {
@@ -85,8 +82,8 @@ impl TestDispatcher {
     }
 
     pub fn simulate_random_delay(&self) -> impl 'static + Send + Future<Output = ()> {
-        struct YieldNow {
-            pub(crate) count: usize,
+        pub struct YieldNow {
+            count: usize,
         }
 
         impl Future for YieldNow {
@@ -144,16 +141,6 @@ impl TestDispatcher {
 
     pub fn rng(&self) -> StdRng {
         self.state.lock().random.clone()
-    }
-
-    pub fn set_block_on_ticks(&self, range: std::ops::RangeInclusive<usize>) {
-        self.state.lock().block_on_ticks = range;
-    }
-
-    pub fn gen_block_on_ticks(&self) -> usize {
-        let mut lock = self.state.lock();
-        let block_on_ticks = lock.block_on_ticks.clone();
-        lock.random.gen_range(block_on_ticks)
     }
 }
 
