@@ -7,7 +7,7 @@ use crate::{
     ViewId, Workspace, WorkspaceId,
 };
 use anyhow::Result;
-use client2::{
+use client::{
     proto::{self, PeerId},
     Client,
 };
@@ -16,10 +16,10 @@ use gpui::{
     HighlightStyle, Model, Pixels, Point, SharedString, Task, View, ViewContext, WeakView,
     WindowContext,
 };
-use project2::{Project, ProjectEntryId, ProjectPath};
+use project::{Project, ProjectEntryId, ProjectPath};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings2::Settings;
+use settings::Settings;
 use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
@@ -33,7 +33,7 @@ use std::{
     },
     time::Duration,
 };
-use theme2::Theme;
+use theme::Theme;
 
 #[derive(Deserialize)]
 pub struct ItemSettings {
@@ -110,7 +110,7 @@ pub trait Item: FocusableView + EventEmitter<ItemEvent> {
     fn for_each_project_item(
         &self,
         _: &AppContext,
-        _: &mut dyn FnMut(EntityId, &dyn project2::Item),
+        _: &mut dyn FnMut(EntityId, &dyn project::Item),
     ) {
     }
     fn is_singleton(&self, _cx: &AppContext) -> bool {
@@ -222,7 +222,7 @@ pub trait ItemHandle: 'static + Send {
     fn for_each_project_item(
         &self,
         _: &AppContext,
-        _: &mut dyn FnMut(EntityId, &dyn project2::Item),
+        _: &mut dyn FnMut(EntityId, &dyn project::Item),
     );
     fn is_singleton(&self, cx: &AppContext) -> bool;
     fn boxed_clone(&self) -> Box<dyn ItemHandle>;
@@ -347,7 +347,7 @@ impl<T: Item> ItemHandle for View<T> {
     fn for_each_project_item(
         &self,
         cx: &AppContext,
-        f: &mut dyn FnMut(EntityId, &dyn project2::Item),
+        f: &mut dyn FnMut(EntityId, &dyn project::Item),
     ) {
         self.read(cx).for_each_project_item(cx, f)
     }
@@ -375,6 +375,7 @@ impl<T: Item> ItemHandle for View<T> {
         pane: View<Pane>,
         cx: &mut ViewContext<Workspace>,
     ) {
+        let weak_item = self.downgrade();
         let history = pane.read(cx).nav_history_for_item(self);
         self.update(cx, |this, cx| {
             this.set_nav_history(history, cx);
@@ -491,16 +492,15 @@ impl<T: Item> ItemHandle for View<T> {
                     }
                 }));
 
-            // todo!()
-            // cx.observe_focus(self, move |workspace, item, focused, cx| {
-            //     if !focused
-            //         && WorkspaceSettings::get_global(cx).autosave == AutosaveSetting::OnFocusChange
-            //     {
-            //         Pane::autosave_item(&item, workspace.project.clone(), cx)
-            //             .detach_and_log_err(cx);
-            //     }
-            // })
-            // .detach();
+            cx.on_blur(&self.focus_handle(cx), move |workspace, cx| {
+                if WorkspaceSettings::get_global(cx).autosave == AutosaveSetting::OnFocusChange {
+                    if let Some(item) = weak_item.upgrade() {
+                        Pane::autosave_item(&item, workspace.project.clone(), cx)
+                            .detach_and_log_err(cx);
+                    }
+                }
+            })
+            .detach();
 
             let item_id = self.item_id();
             cx.observe_release(self, move |workspace, _, _| {
@@ -640,7 +640,7 @@ impl<T: Item> WeakItemHandle for WeakView<T> {
 }
 
 pub trait ProjectItem: Item {
-    type Item: project2::Item;
+    type Item: project::Item;
 
     fn for_project_item(
         project: Model<Project>,
@@ -759,300 +759,310 @@ impl<T: FollowableItem> FollowableItemHandle for View<T> {
     }
 }
 
-// #[cfg(any(test, feature = "test-support"))]
-// pub mod test {
-//     use super::{Item, ItemEvent};
-//     use crate::{ItemId, ItemNavHistory, Pane, Workspace, WorkspaceId};
-//     use gpui::{
-//         elements::Empty, AnyElement, AppContext, Element, Entity, Model, Task, View,
-//         ViewContext, View, WeakViewHandle,
-//     };
-//     use project2::{Project, ProjectEntryId, ProjectPath, WorktreeId};
-//     use smallvec::SmallVec;
-//     use std::{any::Any, borrow::Cow, cell::Cell, path::Path};
+#[cfg(any(test, feature = "test-support"))]
+pub mod test {
+    use super::{Item, ItemEvent};
+    use crate::{ItemId, ItemNavHistory, Pane, Workspace, WorkspaceId};
+    use gpui::{
+        AnyElement, AppContext, Context as _, Div, EntityId, EventEmitter, FocusableView,
+        IntoElement, Model, Render, SharedString, Task, View, ViewContext, VisualContext, WeakView,
+    };
+    use project::{Project, ProjectEntryId, ProjectPath, WorktreeId};
+    use std::{any::Any, cell::Cell, path::Path};
 
-//     pub struct TestProjectItem {
-//         pub entry_id: Option<ProjectEntryId>,
-//         pub project_path: Option<ProjectPath>,
-//     }
+    pub struct TestProjectItem {
+        pub entry_id: Option<ProjectEntryId>,
+        pub project_path: Option<ProjectPath>,
+    }
 
-//     pub struct TestItem {
-//         pub workspace_id: WorkspaceId,
-//         pub state: String,
-//         pub label: String,
-//         pub save_count: usize,
-//         pub save_as_count: usize,
-//         pub reload_count: usize,
-//         pub is_dirty: bool,
-//         pub is_singleton: bool,
-//         pub has_conflict: bool,
-//         pub project_items: Vec<Model<TestProjectItem>>,
-//         pub nav_history: Option<ItemNavHistory>,
-//         pub tab_descriptions: Option<Vec<&'static str>>,
-//         pub tab_detail: Cell<Option<usize>>,
-//     }
+    pub struct TestItem {
+        pub workspace_id: WorkspaceId,
+        pub state: String,
+        pub label: String,
+        pub save_count: usize,
+        pub save_as_count: usize,
+        pub reload_count: usize,
+        pub is_dirty: bool,
+        pub is_singleton: bool,
+        pub has_conflict: bool,
+        pub project_items: Vec<Model<TestProjectItem>>,
+        pub nav_history: Option<ItemNavHistory>,
+        pub tab_descriptions: Option<Vec<&'static str>>,
+        pub tab_detail: Cell<Option<usize>>,
+        focus_handle: gpui::FocusHandle,
+    }
 
-//     impl Entity for TestProjectItem {
-//         type Event = ();
-//     }
+    impl project::Item for TestProjectItem {
+        fn entry_id(&self, _: &AppContext) -> Option<ProjectEntryId> {
+            self.entry_id
+        }
 
-//     impl project2::Item for TestProjectItem {
-//         fn entry_id(&self, _: &AppContext) -> Option<ProjectEntryId> {
-//             self.entry_id
-//         }
+        fn project_path(&self, _: &AppContext) -> Option<ProjectPath> {
+            self.project_path.clone()
+        }
+    }
 
-//         fn project_path(&self, _: &AppContext) -> Option<ProjectPath> {
-//             self.project_path.clone()
-//         }
-//     }
+    pub enum TestItemEvent {
+        Edit,
+    }
 
-//     pub enum TestItemEvent {
-//         Edit,
-//     }
+    // impl Clone for TestItem {
+    //     fn clone(&self) -> Self {
+    //         Self {
+    //             state: self.state.clone(),
+    //             label: self.label.clone(),
+    //             save_count: self.save_count,
+    //             save_as_count: self.save_as_count,
+    //             reload_count: self.reload_count,
+    //             is_dirty: self.is_dirty,
+    //             is_singleton: self.is_singleton,
+    //             has_conflict: self.has_conflict,
+    //             project_items: self.project_items.clone(),
+    //             nav_history: None,
+    //             tab_descriptions: None,
+    //             tab_detail: Default::default(),
+    //             workspace_id: self.workspace_id,
+    //             focus_handle: self.focus_handle.clone(),
+    //         }
+    //     }
+    // }
 
-//     impl Clone for TestItem {
-//         fn clone(&self) -> Self {
-//             Self {
-//                 state: self.state.clone(),
-//                 label: self.label.clone(),
-//                 save_count: self.save_count,
-//                 save_as_count: self.save_as_count,
-//                 reload_count: self.reload_count,
-//                 is_dirty: self.is_dirty,
-//                 is_singleton: self.is_singleton,
-//                 has_conflict: self.has_conflict,
-//                 project_items: self.project_items.clone(),
-//                 nav_history: None,
-//                 tab_descriptions: None,
-//                 tab_detail: Default::default(),
-//                 workspace_id: self.workspace_id,
-//             }
-//         }
-//     }
+    impl TestProjectItem {
+        pub fn new(id: u64, path: &str, cx: &mut AppContext) -> Model<Self> {
+            let entry_id = Some(ProjectEntryId::from_proto(id));
+            let project_path = Some(ProjectPath {
+                worktree_id: WorktreeId::from_usize(0),
+                path: Path::new(path).into(),
+            });
+            cx.build_model(|_| Self {
+                entry_id,
+                project_path,
+            })
+        }
 
-//     impl TestProjectItem {
-//         pub fn new(id: u64, path: &str, cx: &mut AppContext) -> Model<Self> {
-//             let entry_id = Some(ProjectEntryId::from_proto(id));
-//             let project_path = Some(ProjectPath {
-//                 worktree_id: WorktreeId::from_usize(0),
-//                 path: Path::new(path).into(),
-//             });
-//             cx.add_model(|_| Self {
-//                 entry_id,
-//                 project_path,
-//             })
-//         }
+        pub fn new_untitled(cx: &mut AppContext) -> Model<Self> {
+            cx.build_model(|_| Self {
+                project_path: None,
+                entry_id: None,
+            })
+        }
+    }
 
-//         pub fn new_untitled(cx: &mut AppContext) -> Model<Self> {
-//             cx.add_model(|_| Self {
-//                 project_path: None,
-//                 entry_id: None,
-//             })
-//         }
-//     }
+    impl TestItem {
+        pub fn new(cx: &mut ViewContext<Self>) -> Self {
+            Self {
+                state: String::new(),
+                label: String::new(),
+                save_count: 0,
+                save_as_count: 0,
+                reload_count: 0,
+                is_dirty: false,
+                has_conflict: false,
+                project_items: Vec::new(),
+                is_singleton: true,
+                nav_history: None,
+                tab_descriptions: None,
+                tab_detail: Default::default(),
+                workspace_id: 0,
+                focus_handle: cx.focus_handle(),
+            }
+        }
 
-//     impl TestItem {
-//         pub fn new() -> Self {
-//             Self {
-//                 state: String::new(),
-//                 label: String::new(),
-//                 save_count: 0,
-//                 save_as_count: 0,
-//                 reload_count: 0,
-//                 is_dirty: false,
-//                 has_conflict: false,
-//                 project_items: Vec::new(),
-//                 is_singleton: true,
-//                 nav_history: None,
-//                 tab_descriptions: None,
-//                 tab_detail: Default::default(),
-//                 workspace_id: 0,
-//             }
-//         }
+        pub fn new_deserialized(id: WorkspaceId, cx: &mut ViewContext<Self>) -> Self {
+            let mut this = Self::new(cx);
+            this.workspace_id = id;
+            this
+        }
 
-//         pub fn new_deserialized(id: WorkspaceId) -> Self {
-//             let mut this = Self::new();
-//             this.workspace_id = id;
-//             this
-//         }
+        pub fn with_label(mut self, state: &str) -> Self {
+            self.label = state.to_string();
+            self
+        }
 
-//         pub fn with_label(mut self, state: &str) -> Self {
-//             self.label = state.to_string();
-//             self
-//         }
+        pub fn with_singleton(mut self, singleton: bool) -> Self {
+            self.is_singleton = singleton;
+            self
+        }
 
-//         pub fn with_singleton(mut self, singleton: bool) -> Self {
-//             self.is_singleton = singleton;
-//             self
-//         }
+        pub fn with_dirty(mut self, dirty: bool) -> Self {
+            self.is_dirty = dirty;
+            self
+        }
 
-//         pub fn with_dirty(mut self, dirty: bool) -> Self {
-//             self.is_dirty = dirty;
-//             self
-//         }
+        pub fn with_conflict(mut self, has_conflict: bool) -> Self {
+            self.has_conflict = has_conflict;
+            self
+        }
 
-//         pub fn with_conflict(mut self, has_conflict: bool) -> Self {
-//             self.has_conflict = has_conflict;
-//             self
-//         }
+        pub fn with_project_items(mut self, items: &[Model<TestProjectItem>]) -> Self {
+            self.project_items.clear();
+            self.project_items.extend(items.iter().cloned());
+            self
+        }
 
-//         pub fn with_project_items(mut self, items: &[Model<TestProjectItem>]) -> Self {
-//             self.project_items.clear();
-//             self.project_items.extend(items.iter().cloned());
-//             self
-//         }
+        pub fn set_state(&mut self, state: String, cx: &mut ViewContext<Self>) {
+            self.push_to_nav_history(cx);
+            self.state = state;
+        }
 
-//         pub fn set_state(&mut self, state: String, cx: &mut ViewContext<Self>) {
-//             self.push_to_nav_history(cx);
-//             self.state = state;
-//         }
+        fn push_to_nav_history(&mut self, cx: &mut ViewContext<Self>) {
+            if let Some(history) = &mut self.nav_history {
+                history.push(Some(Box::new(self.state.clone())), cx);
+            }
+        }
+    }
 
-//         fn push_to_nav_history(&mut self, cx: &mut ViewContext<Self>) {
-//             if let Some(history) = &mut self.nav_history {
-//                 history.push(Some(Box::new(self.state.clone())), cx);
-//             }
-//         }
-//     }
+    impl Render for TestItem {
+        type Element = Div;
 
-//     impl Entity for TestItem {
-//         type Event = TestItemEvent;
-//     }
+        fn render(&mut self, _: &mut ViewContext<Self>) -> Self::Element {
+            gpui::div()
+        }
+    }
 
-//     impl View for TestItem {
-//         fn ui_name() -> &'static str {
-//             "TestItem"
-//         }
+    impl EventEmitter<ItemEvent> for TestItem {}
 
-//         fn render(&mut self, _: &mut ViewContext<Self>) -> AnyElement<Self> {
-//             Empty::new().into_any()
-//         }
-//     }
+    impl FocusableView for TestItem {
+        fn focus_handle(&self, cx: &AppContext) -> gpui::FocusHandle {
+            self.focus_handle.clone()
+        }
+    }
 
-//     impl Item for TestItem {
-//         fn tab_description(&self, detail: usize, _: &AppContext) -> Option<Cow<str>> {
-//             self.tab_descriptions.as_ref().and_then(|descriptions| {
-//                 let description = *descriptions.get(detail).or_else(|| descriptions.last())?;
-//                 Some(description.into())
-//             })
-//         }
+    impl Item for TestItem {
+        fn tab_description(&self, detail: usize, _: &AppContext) -> Option<SharedString> {
+            self.tab_descriptions.as_ref().and_then(|descriptions| {
+                let description = *descriptions.get(detail).or_else(|| descriptions.last())?;
+                Some(description.into())
+            })
+        }
 
-//         fn tab_content<V: 'static>(
-//             &self,
-//             detail: Option<usize>,
-//             _: &theme2::Tab,
-//             _: &AppContext,
-//         ) -> AnyElement<V> {
-//             self.tab_detail.set(detail);
-//             Empty::new().into_any()
-//         }
+        fn tab_content(
+            &self,
+            detail: Option<usize>,
+            cx: &ui::prelude::WindowContext,
+        ) -> AnyElement {
+            self.tab_detail.set(detail);
+            gpui::div().into_any_element()
+        }
 
-//         fn for_each_project_item(
-//             &self,
-//             cx: &AppContext,
-//             f: &mut dyn FnMut(usize, &dyn project2::Item),
-//         ) {
-//             self.project_items
-//                 .iter()
-//                 .for_each(|item| f(item.id(), item.read(cx)))
-//         }
+        fn for_each_project_item(
+            &self,
+            cx: &AppContext,
+            f: &mut dyn FnMut(EntityId, &dyn project::Item),
+        ) {
+            self.project_items
+                .iter()
+                .for_each(|item| f(item.entity_id(), item.read(cx)))
+        }
 
-// fn is_singleton(&self, _: &AppContext) -> bool {
-//     self.is_singleton
-// }
+        fn is_singleton(&self, _: &AppContext) -> bool {
+            self.is_singleton
+        }
 
-//         fn set_nav_history(&mut self, history: ItemNavHistory, _: &mut ViewContext<Self>) {
-//             self.nav_history = Some(history);
-//         }
+        fn set_nav_history(&mut self, history: ItemNavHistory, _: &mut ViewContext<Self>) {
+            self.nav_history = Some(history);
+        }
 
-//         fn navigate(&mut self, state: Box<dyn Any>, _: &mut ViewContext<Self>) -> bool {
-//             let state = *state.downcast::<String>().unwrap_or_default();
-//             if state != self.state {
-//                 self.state = state;
-//                 true
-//             } else {
-//                 false
-//             }
-//         }
+        fn navigate(&mut self, state: Box<dyn Any>, _: &mut ViewContext<Self>) -> bool {
+            let state = *state.downcast::<String>().unwrap_or_default();
+            if state != self.state {
+                self.state = state;
+                true
+            } else {
+                false
+            }
+        }
 
-//         fn deactivated(&mut self, cx: &mut ViewContext<Self>) {
-//             self.push_to_nav_history(cx);
-//         }
+        fn deactivated(&mut self, cx: &mut ViewContext<Self>) {
+            self.push_to_nav_history(cx);
+        }
 
-//         fn clone_on_split(
-//             &self,
-//             _workspace_id: WorkspaceId,
-//             _: &mut ViewContext<Self>,
-//         ) -> Option<Self>
-//         where
-//             Self: Sized,
-//         {
-//             Some(self.clone())
-//         }
+        fn clone_on_split(
+            &self,
+            _workspace_id: WorkspaceId,
+            cx: &mut ViewContext<Self>,
+        ) -> Option<View<Self>>
+        where
+            Self: Sized,
+        {
+            Some(cx.build_view(|cx| Self {
+                state: self.state.clone(),
+                label: self.label.clone(),
+                save_count: self.save_count,
+                save_as_count: self.save_as_count,
+                reload_count: self.reload_count,
+                is_dirty: self.is_dirty,
+                is_singleton: self.is_singleton,
+                has_conflict: self.has_conflict,
+                project_items: self.project_items.clone(),
+                nav_history: None,
+                tab_descriptions: None,
+                tab_detail: Default::default(),
+                workspace_id: self.workspace_id,
+                focus_handle: cx.focus_handle(),
+            }))
+        }
 
-//         fn is_dirty(&self, _: &AppContext) -> bool {
-//             self.is_dirty
-//         }
+        fn is_dirty(&self, _: &AppContext) -> bool {
+            self.is_dirty
+        }
 
-//         fn has_conflict(&self, _: &AppContext) -> bool {
-//             self.has_conflict
-//         }
+        fn has_conflict(&self, _: &AppContext) -> bool {
+            self.has_conflict
+        }
 
-//         fn can_save(&self, cx: &AppContext) -> bool {
-//             !self.project_items.is_empty()
-//                 && self
-//                     .project_items
-//                     .iter()
-//                     .all(|item| item.read(cx).entry_id.is_some())
-//         }
+        fn can_save(&self, cx: &AppContext) -> bool {
+            !self.project_items.is_empty()
+                && self
+                    .project_items
+                    .iter()
+                    .all(|item| item.read(cx).entry_id.is_some())
+        }
 
-//         fn save(
-//             &mut self,
-//             _: Model<Project>,
-//             _: &mut ViewContext<Self>,
-//         ) -> Task<anyhow::Result<()>> {
-//             self.save_count += 1;
-//             self.is_dirty = false;
-//             Task::ready(Ok(()))
-//         }
+        fn save(
+            &mut self,
+            _: Model<Project>,
+            _: &mut ViewContext<Self>,
+        ) -> Task<anyhow::Result<()>> {
+            self.save_count += 1;
+            self.is_dirty = false;
+            Task::ready(Ok(()))
+        }
 
-//         fn save_as(
-//             &mut self,
-//             _: Model<Project>,
-//             _: std::path::PathBuf,
-//             _: &mut ViewContext<Self>,
-//         ) -> Task<anyhow::Result<()>> {
-//             self.save_as_count += 1;
-//             self.is_dirty = false;
-//             Task::ready(Ok(()))
-//         }
+        fn save_as(
+            &mut self,
+            _: Model<Project>,
+            _: std::path::PathBuf,
+            _: &mut ViewContext<Self>,
+        ) -> Task<anyhow::Result<()>> {
+            self.save_as_count += 1;
+            self.is_dirty = false;
+            Task::ready(Ok(()))
+        }
 
-//         fn reload(
-//             &mut self,
-//             _: Model<Project>,
-//             _: &mut ViewContext<Self>,
-//         ) -> Task<anyhow::Result<()>> {
-//             self.reload_count += 1;
-//             self.is_dirty = false;
-//             Task::ready(Ok(()))
-//         }
+        fn reload(
+            &mut self,
+            _: Model<Project>,
+            _: &mut ViewContext<Self>,
+        ) -> Task<anyhow::Result<()>> {
+            self.reload_count += 1;
+            self.is_dirty = false;
+            Task::ready(Ok(()))
+        }
 
-//         fn to_item_events(_: &Self::Event) -> SmallVec<[ItemEvent; 2]> {
-//             [ItemEvent::UpdateTab, ItemEvent::Edit].into()
-//         }
+        fn serialized_item_kind() -> Option<&'static str> {
+            Some("TestItem")
+        }
 
-//         fn serialized_item_kind() -> Option<&'static str> {
-//             Some("TestItem")
-//         }
-
-//         fn deserialize(
-//             _project: Model<Project>,
-//             _workspace: WeakViewHandle<Workspace>,
-//             workspace_id: WorkspaceId,
-//             _item_id: ItemId,
-//             cx: &mut ViewContext<Pane>,
-//         ) -> Task<anyhow::Result<View<Self>>> {
-//             let view = cx.add_view(|_cx| Self::new_deserialized(workspace_id));
-//             Task::Ready(Some(anyhow::Ok(view)))
-//         }
-//     }
-// }
+        fn deserialize(
+            _project: Model<Project>,
+            _workspace: WeakView<Workspace>,
+            workspace_id: WorkspaceId,
+            _item_id: ItemId,
+            cx: &mut ViewContext<Pane>,
+        ) -> Task<anyhow::Result<View<Self>>> {
+            let view = cx.build_view(|cx| Self::new_deserialized(workspace_id, cx));
+            Task::Ready(Some(anyhow::Ok(view)))
+        }
+    }
+}

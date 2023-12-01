@@ -238,6 +238,10 @@ impl Element for AnyView {
     }
 
     fn paint(self, _: Bounds<Pixels>, state: &mut Self::State, cx: &mut WindowContext) {
+        debug_assert!(
+            state.is_some(),
+            "state is None. Did you include an AnyView twice in the tree?"
+        );
         (self.paint)(&self, state.take().unwrap(), cx)
     }
 }

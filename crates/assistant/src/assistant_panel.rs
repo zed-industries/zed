@@ -1220,6 +1220,31 @@ impl View for AssistantPanel {
             Flex::column()
                 .with_child(
                     Text::new(
+                        "To use the assistant panel or inline assistant, you need to add your OpenAI api key.",
+                        style.api_key_prompt.text.clone(),
+                    ),
+                )
+                .with_child(
+                    Text::new(
+                        " - Having a subscription for another service like GitHub Copilot won't work.",
+                        style.api_key_prompt.text.clone(),
+                    ),
+                )
+                .with_child(
+                    Text::new(
+                        " - You can create a api key at: platform.openai.com/api-keys",
+                        style.api_key_prompt.text.clone(),
+                    ),
+                )
+                .with_child(
+                    Text::new(
+                        " ",
+                        style.api_key_prompt.text.clone(),
+                    )
+                    .aligned(),
+                )
+                .with_child(
+                    Text::new(
                         "Paste your OpenAI API key and press Enter to use the assistant",
                         style.api_key_prompt.text.clone(),
                     )
@@ -1230,6 +1255,20 @@ impl View for AssistantPanel {
                         .contained()
                         .with_style(style.api_key_editor.container)
                         .aligned(),
+                )
+                .with_child(
+                    Text::new(
+                        " ",
+                        style.api_key_prompt.text.clone(),
+                    )
+                    .aligned(),
+                )
+                .with_child(
+                    Text::new(
+                        "Click on the Z button in the status bar to close this panel.",
+                        style.api_key_prompt.text.clone(),
+                    )
+                    .aligned(),
                 )
                 .contained()
                 .with_style(style.api_key_prompt.container)

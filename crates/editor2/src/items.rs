@@ -8,9 +8,10 @@ use anyhow::{anyhow, Context as _, Result};
 use collections::HashSet;
 use futures::future::try_join_all;
 use gpui::{
-    div, point, AnyElement, AppContext, AsyncAppContext, AsyncWindowContext, Context, Entity,
-    EntityId, EventEmitter, FocusHandle, Model, ParentElement, Pixels, SharedString, Styled,
-    Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
+    div, point, AnyElement, AppContext, AsyncAppContext, AsyncWindowContext, Context, Div, Entity,
+    EntityId, EventEmitter, FocusHandle, IntoElement, Model, ParentElement, Pixels, Render,
+    SharedString, Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView,
+    WindowContext,
 };
 use language::{
     proto::serialize_anchor as serialize_text_anchor, Bias, Buffer, CharKind, OffsetRangeExt,
@@ -20,6 +21,7 @@ use project::{search::SearchQuery, FormatTrigger, Item as _, Project, ProjectPat
 use rpc::proto::{self, update_view, PeerId};
 use settings::Settings;
 use smallvec::SmallVec;
+use std::fmt::Write;
 use std::{
     borrow::Cow,
     cmp::{self, Ordering},
@@ -31,8 +33,11 @@ use std::{
 use text::Selection;
 use theme::{ActiveTheme, Theme};
 use ui::{Color, Label};
-use util::{paths::PathExt, ResultExt, TryFutureExt};
-use workspace::item::{BreadcrumbText, FollowEvent, FollowableEvents, FollowableItemHandle};
+use util::{paths::PathExt, paths::FILE_ROW_COLUMN_DELIMITER, ResultExt, TryFutureExt};
+use workspace::{
+    item::{BreadcrumbText, FollowEvent, FollowableEvents, FollowableItemHandle},
+    StatusItemView,
+};
 use workspace::{
     item::{FollowableItem, Item, ItemEvent, ItemHandle, ProjectItem},
     searchable::{Direction, SearchEvent, SearchableItem, SearchableItemHandle},
@@ -1113,86 +1118,78 @@ pub struct CursorPosition {
     _observe_active_editor: Option<Subscription>,
 }
 
-// impl Default for CursorPosition {
-//     fn default() -> Self {
-//         Self::new()
-//     }
-// }
+impl Default for CursorPosition {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
-// impl CursorPosition {
-//     pub fn new() -> Self {
-//         Self {
-//             position: None,
-//             selected_count: 0,
-//             _observe_active_editor: None,
-//         }
-//     }
+impl CursorPosition {
+    pub fn new() -> Self {
+        Self {
+            position: None,
+            selected_count: 0,
+            _observe_active_editor: None,
+        }
+    }
 
-//     fn update_position(&mut self, editor: View<Editor>, cx: &mut ViewContext<Self>) {
-//         let editor = editor.read(cx);
-//         let buffer = editor.buffer().read(cx).snapshot(cx);
+    fn update_position(&mut self, editor: View<Editor>, cx: &mut ViewContext<Self>) {
+        let editor = editor.read(cx);
+        let buffer = editor.buffer().read(cx).snapshot(cx);
 
-//         self.selected_count = 0;
-//         let mut last_selection: Option<Selection<usize>> = None;
-//         for selection in editor.selections.all::<usize>(cx) {
-//             self.selected_count += selection.end - selection.start;
-//             if last_selection
-//                 .as_ref()
-//                 .map_or(true, |last_selection| selection.id > last_selection.id)
-//             {
-//                 last_selection = Some(selection);
-//             }
-//         }
-//         self.position = last_selection.map(|s| s.head().to_point(&buffer));
+        self.selected_count = 0;
+        let mut last_selection: Option<Selection<usize>> = None;
+        for selection in editor.selections.all::<usize>(cx) {
+            self.selected_count += selection.end - selection.start;
+            if last_selection
+                .as_ref()
+                .map_or(true, |last_selection| selection.id > last_selection.id)
+            {
+                last_selection = Some(selection);
+            }
+        }
+        self.position = last_selection.map(|s| s.head().to_point(&buffer));
 
-//         cx.notify();
-//     }
-// }
+        cx.notify();
+    }
+}
 
-// impl Entity for CursorPosition {
-//     type Event = ();
-// }
+impl Render for CursorPosition {
+    type Element = Div;
 
-// impl View for CursorPosition {
-//     fn ui_name() -> &'static str {
-//         "CursorPosition"
-//     }
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+        div().when_some(self.position, |el, position| {
+            let mut text = format!(
+                "{}{FILE_ROW_COLUMN_DELIMITER}{}",
+                position.row + 1,
+                position.column + 1
+            );
+            if self.selected_count > 0 {
+                write!(text, " ({} selected)", self.selected_count).unwrap();
+            }
 
-//     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-//         if let Some(position) = self.position {
-//             let theme = &theme::current(cx).workspace.status_bar;
-//             let mut text = format!(
-//                 "{}{FILE_ROW_COLUMN_DELIMITER}{}",
-//                 position.row + 1,
-//                 position.column + 1
-//             );
-//             if self.selected_count > 0 {
-//                 write!(text, " ({} selected)", self.selected_count).unwrap();
-//             }
-//             Label::new(text, theme.cursor_position.clone()).into_any()
-//         } else {
-//             Empty::new().into_any()
-//         }
-//     }
-// }
+            el.child(Label::new(text))
+        })
+    }
+}
 
-// impl StatusItemView for CursorPosition {
-//     fn set_active_pane_item(
-//         &mut self,
-//         active_pane_item: Option<&dyn ItemHandle>,
-//         cx: &mut ViewContext<Self>,
-//     ) {
-//         if let Some(editor) = active_pane_item.and_then(|item| item.act_as::<Editor>(cx)) {
-//             self._observe_active_editor = Some(cx.observe(&editor, Self::update_position));
-//             self.update_position(editor, cx);
-//         } else {
-//             self.position = None;
-//             self._observe_active_editor = None;
-//         }
+impl StatusItemView for CursorPosition {
+    fn set_active_pane_item(
+        &mut self,
+        active_pane_item: Option<&dyn ItemHandle>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if let Some(editor) = active_pane_item.and_then(|item| item.act_as::<Editor>(cx)) {
+            self._observe_active_editor = Some(cx.observe(&editor, Self::update_position));
+            self.update_position(editor, cx);
+        } else {
+            self.position = None;
+            self._observe_active_editor = None;
+        }
 
-//         cx.notify();
-//     }
-// }
+        cx.notify();
+    }
+}
 
 fn path_for_buffer<'a>(
     buffer: &Model<MultiBuffer>,

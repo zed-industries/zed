@@ -3,12 +3,12 @@ use crate::{
 };
 use anyhow::{Context, Result};
 use async_recursion::async_recursion;
-use db2::sqlez::{
+use db::sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
 };
 use gpui::{AsyncWindowContext, Model, Task, View, WeakView, WindowBounds};
-use project2::Project;
+use project::Project;
 use std::{
     path::{Path, PathBuf},
     sync::Arc,

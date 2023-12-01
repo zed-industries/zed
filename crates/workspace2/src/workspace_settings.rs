@@ -1,6 +1,6 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings2::Settings;
+use settings::Settings;
 
 #[derive(Deserialize)]
 pub struct WorkspaceSettings {

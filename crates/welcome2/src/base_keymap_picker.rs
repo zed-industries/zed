@@ -1,14 +1,14 @@
 use super::base_keymap_setting::BaseKeymap;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, AppContext, DismissEvent, EventEmitter, FocusableView, ParentElement, Render, Task,
-    View, ViewContext, VisualContext, WeakView,
+    actions, AppContext, DismissEvent, EventEmitter, FocusableView, Render, Task, View,
+    ViewContext, VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};
 use project::Fs;
 use settings::{update_settings_file, Settings};
 use std::sync::Arc;
-use ui::ListItem;
+use ui::{prelude::*, ListItem};
 use util::ResultExt;
 use workspace::{ui::HighlightedLabel, Workspace};
 
