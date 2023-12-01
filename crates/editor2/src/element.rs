@@ -51,8 +51,8 @@ use std::{
 };
 use sum_tree::Bias;
 use theme::{ActiveTheme, PlayerColor};
-use ui::prelude::*;
-use ui::{h_stack, IconButton, Tooltip};
+use ui::{h_stack, Disclosure, IconButton, IconSize, Label, Tooltip};
+use ui::{prelude::*, Icon};
 use util::ResultExt;
 use workspace::item::Item;
 
@@ -2234,7 +2234,7 @@ impl EditorElement {
                             .map_or(range.context.start, |primary| primary.start);
                         let jump_position = language::ToPoint::to_point(&jump_anchor, buffer);
 
-                        IconButton::new(block_id, ui::Icon::ArrowUpRight)
+                        IconButton::new(block_id, Icon::ArrowUpRight)
                             .on_click(cx.listener_for(&self.editor, move |editor, e, cx| {
                                 editor.jump(jump_path.clone(), jump_position, jump_anchor, cx);
                             }))
@@ -2253,17 +2253,44 @@ impl EditorElement {
                                 .map(|p| SharedString::from(p.to_string_lossy().to_string() + "/"));
                         }
 
-                        h_stack()
-                            .id("path header block")
-                            .size_full()
-                            .bg(gpui::red())
-                            .child(
-                                filename
-                                    .map(SharedString::from)
-                                    .unwrap_or_else(|| "untitled".into()),
-                            )
-                            .children(parent_path)
-                            .children(jump_icon) // .p_x(gutter_padding)
+                        div().id("path header block").size_full().p_1p5().child(
+                            h_stack()
+                                .py_1p5()
+                                .pl_3()
+                                .pr_2()
+                                .rounded_lg()
+                                .shadow_md()
+                                .border()
+                                .border_color(cx.theme().colors().border)
+                                .bg(cx.theme().colors().editor_subheader_background)
+                                .justify_between()
+                                .cursor_pointer()
+                                .hover(|style| style.bg(cx.theme().colors().element_hover))
+                                .child(
+                                    h_stack()
+                                        .gap_3()
+                                        // TODO: Add open/close state and toggle action
+                                        .child(
+                                            div()
+                                                .border()
+                                                .border_color(gpui::red())
+                                                .child(Disclosure::new(true)),
+                                        )
+                                        .child(
+                                            h_stack()
+                                                .gap_2()
+                                                .child(Label::new(
+                                                    filename
+                                                        .map(SharedString::from)
+                                                        .unwrap_or_else(|| "untitled".into()),
+                                                ))
+                                                .when_some(parent_path, |then, path| {
+                                                    then.child(Label::new(path).color(Color::Muted))
+                                                }),
+                                        ),
+                                )
+                                .children(jump_icon), // .p_x(gutter_padding)
+                        )
                     } else {
                         let text_style = style.text.clone();
                         h_stack()
