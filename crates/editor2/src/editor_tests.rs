@@ -12,7 +12,7 @@ use futures::StreamExt;
 use gpui::{
     div,
     serde_json::{self, json},
-    Div, Flatten, TestAppContext, VisualTestContext, WindowBounds, WindowOptions,
+    Div, Flatten, Platform, TestAppContext, VisualTestContext, WindowBounds, WindowOptions,
 };
 use indoc::indoc;
 use language::{
@@ -3154,88 +3154,92 @@ fn test_move_line_up_down_with_blocks(cx: &mut TestAppContext) {
 //     });
 // }
 
-//todo!(clipboard)
-// #[gpui::test]
-// async fn test_clipboard(cx: &mut gpui::TestAppContext) {
-//     init_test(cx, |_| {});
+#[gpui::test]
+async fn test_clipboard(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
 
-//     let mut cx = EditorTestContext::new(cx).await;
+    let mut cx = EditorTestContext::new(cx).await;
 
-//     cx.set_state("«one✅ ˇ»two «three ˇ»four «five ˇ»six ");
-//     cx.update_editor(|e, cx| e.cut(&Cut, cx));
-//     cx.assert_editor_state("ˇtwo ˇfour ˇsix ");
+    cx.set_state("«one✅ ˇ»two «three ˇ»four «five ˇ»six ");
+    cx.update_editor(|e, cx| e.cut(&Cut, cx));
+    cx.assert_editor_state("ˇtwo ˇfour ˇsix ");
 
-//     // Paste with three cursors. Each cursor pastes one slice of the clipboard text.
-//     cx.set_state("two ˇfour ˇsix ˇ");
-//     cx.update_editor(|e, cx| e.paste(&Paste, cx));
-//     cx.assert_editor_state("two one✅ ˇfour three ˇsix five ˇ");
+    // Paste with three cursors. Each cursor pastes one slice of the clipboard text.
+    cx.set_state("two ˇfour ˇsix ˇ");
+    cx.update_editor(|e, cx| e.paste(&Paste, cx));
+    cx.assert_editor_state("two one✅ ˇfour three ˇsix five ˇ");
 
-//     // Paste again but with only two cursors. Since the number of cursors doesn't
-//     // match the number of slices in the clipboard, the entire clipboard text
-//     // is pasted at each cursor.
-//     cx.set_state("ˇtwo one✅ four three six five ˇ");
-//     cx.update_editor(|e, cx| {
-//         e.handle_input("( ", cx);
-//         e.paste(&Paste, cx);
-//         e.handle_input(") ", cx);
-//     });
-//     cx.assert_editor_state(
-//         &([
-//             "( one✅ ",
-//             "three ",
-//             "five ) ˇtwo one✅ four three six five ( one✅ ",
-//             "three ",
-//             "five ) ˇ",
-//         ]
-//         .join("\n")),
-//     );
+    // Paste again but with only two cursors. Since the number of cursors doesn't
+    // match the number of slices in the clipboard, the entire clipboard text
+    // is pasted at each cursor.
+    cx.set_state("ˇtwo one✅ four three six five ˇ");
+    cx.update_editor(|e, cx| {
+        e.handle_input("( ", cx);
+        e.paste(&Paste, cx);
+        e.handle_input(") ", cx);
+    });
+    cx.assert_editor_state(
+        &([
+            "( one✅ ",
+            "three ",
+            "five ) ˇtwo one✅ four three six five ( one✅ ",
+            "three ",
+            "five ) ˇ",
+        ]
+        .join("\n")),
+    );
 
-//     // Cut with three selections, one of which is full-line.
-//     cx.set_state(indoc! {"
-//         1«2ˇ»3
-//         4ˇ567
-//         «8ˇ»9"});
-//     cx.update_editor(|e, cx| e.cut(&Cut, cx));
-//     cx.assert_editor_state(indoc! {"
-//         1ˇ3
-//         ˇ9"});
+    // Cut with three selections, one of which is full-line.
+    cx.set_state(indoc! {"
+        1«2ˇ»3
+        4ˇ567
+        «8ˇ»9"});
+    cx.update_editor(|e, cx| e.cut(&Cut, cx));
+    cx.assert_editor_state(indoc! {"
+        1ˇ3
+        ˇ9"});
 
-//     // Paste with three selections, noticing how the copied selection that was full-line
-//     // gets inserted before the second cursor.
-//     cx.set_state(indoc! {"
-//         1ˇ3
-//         9ˇ
-//         «oˇ»ne"});
-//     cx.update_editor(|e, cx| e.paste(&Paste, cx));
-//     cx.assert_editor_state(indoc! {"
-//         12ˇ3
-//         4567
-//         9ˇ
-//         8ˇne"});
+    // Paste with three selections, noticing how the copied selection that was full-line
+    // gets inserted before the second cursor.
+    cx.set_state(indoc! {"
+        1ˇ3
+        9ˇ
+        «oˇ»ne"});
+    cx.update_editor(|e, cx| e.paste(&Paste, cx));
+    cx.assert_editor_state(indoc! {"
+        12ˇ3
+        4567
+        9ˇ
+        8ˇne"});
 
-//     // Copy with a single cursor only, which writes the whole line into the clipboard.
-//     cx.set_state(indoc! {"
-//         The quick brown
-//         fox juˇmps over
-//         the lazy dog"});
-//     cx.update_editor(|e, cx| e.copy(&Copy, cx));
-//     cx.cx.assert_clipboard_content(Some("fox jumps over\n"));
+    // Copy with a single cursor only, which writes the whole line into the clipboard.
+    cx.set_state(indoc! {"
+        The quick brown
+        fox juˇmps over
+        the lazy dog"});
+    cx.update_editor(|e, cx| e.copy(&Copy, cx));
+    assert_eq!(
+        cx.test_platform
+            .read_from_clipboard()
+            .map(|item| item.text().to_owned()),
+        Some("fox jumps over\n".to_owned())
+    );
 
-//     // Paste with three selections, noticing how the copied full-line selection is inserted
-//     // before the empty selections but replaces the selection that is non-empty.
-//     cx.set_state(indoc! {"
-//         Tˇhe quick brown
-//         «foˇ»x jumps over
-//         tˇhe lazy dog"});
-//     cx.update_editor(|e, cx| e.paste(&Paste, cx));
-//     cx.assert_editor_state(indoc! {"
-//         fox jumps over
-//         Tˇhe quick brown
-//         fox jumps over
-//         ˇx jumps over
-//         fox jumps over
-//         tˇhe lazy dog"});
-// }
+    // Paste with three selections, noticing how the copied full-line selection is inserted
+    // before the empty selections but replaces the selection that is non-empty.
+    cx.set_state(indoc! {"
+        Tˇhe quick brown
+        «foˇ»x jumps over
+        tˇhe lazy dog"});
+    cx.update_editor(|e, cx| e.paste(&Paste, cx));
+    cx.assert_editor_state(indoc! {"
+        fox jumps over
+        Tˇhe quick brown
+        fox jumps over
+        ˇx jumps over
+        fox jumps over
+        tˇhe lazy dog"});
+}
 
 #[gpui::test]
 async fn test_paste_multiline(cx: &mut gpui::TestAppContext) {
