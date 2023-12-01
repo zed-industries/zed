@@ -267,6 +267,7 @@ impl RenderOnce for ButtonLike {
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         h_stack()
             .id(self.id.clone())
+            .group("")
             .flex_none()
             .h(self.size.height())
             .when_some(self.width, |this, width| this.w(width))

@@ -2225,7 +2225,8 @@ impl EditorElement {
                         .as_ref()
                         .map(|project| project.read(cx).visible_worktrees(cx).count() > 1)
                         .unwrap_or_default();
-                    let jump_icon = project::File::from_dyn(buffer.file()).map(|file| {
+
+                    let jump_handler = project::File::from_dyn(buffer.file()).map(|file| {
                         let jump_path = ProjectPath {
                             worktree_id: file.worktree_id(cx),
                             path: file.path.clone(),
@@ -2236,12 +2237,11 @@ impl EditorElement {
                             .map_or(range.context.start, |primary| primary.start);
                         let jump_position = language::ToPoint::to_point(&jump_anchor, buffer);
 
-                        IconButton::new(block_id, Icon::ArrowUpRight)
-                            .style(ButtonStyle::Subtle)
-                            .on_click(cx.listener_for(&self.editor, move |editor, e, cx| {
-                                editor.jump(jump_path.clone(), jump_position, jump_anchor, cx);
-                            }))
-                            .tooltip(|cx| Tooltip::for_action("Jump to Buffer", &OpenExcerpts, cx))
+                        let jump_handler = cx.listener_for(&self.editor, move |editor, e, cx| {
+                            editor.jump(jump_path.clone(), jump_position, jump_anchor, cx);
+                        });
+
+                        jump_handler
                     });
 
                     let element = if *starts_new_buffer {
@@ -2303,16 +2303,61 @@ impl EditorElement {
                                                 }),
                                         ),
                                 )
-                                .children(jump_icon), // .p_x(gutter_padding)
+                                .children(jump_handler.map(|jump_handler| {
+                                    IconButton::new(block_id, Icon::ArrowUpRight)
+                                        .style(ButtonStyle::Subtle)
+                                        .on_click(jump_handler)
+                                        .tooltip(|cx| {
+                                            Tooltip::for_action("Jump to Buffer", &OpenExcerpts, cx)
+                                        })
+                                })), // .p_x(gutter_padding)
                         )
                     } else {
                         let text_style = style.text.clone();
                         h_stack()
                             .id("collapsed context")
                             .size_full()
-                            .bg(gpui::red())
-                            .child("⋯")
-                            .children(jump_icon) // .p_x(gutter_padding)
+                            .gap(gutter_padding)
+                            .child(
+                                h_stack()
+                                    .justify_end()
+                                    .flex_none()
+                                    .w(gutter_width - gutter_padding)
+                                    .h_full()
+                                    .text_buffer(cx)
+                                    .text_color(cx.theme().colors().editor_line_number)
+                                    .child("..."),
+                            )
+                            .map(|this| {
+                                if let Some(jump_handler) = jump_handler {
+                                    this.child(
+                                        ButtonLike::new("jump to collapsed context")
+                                            .style(ButtonStyle::Transparent)
+                                            .full_width()
+                                            .on_click(jump_handler)
+                                            .tooltip(|cx| {
+                                                Tooltip::for_action(
+                                                    "Jump to Buffer",
+                                                    &OpenExcerpts,
+                                                    cx,
+                                                )
+                                            })
+                                            .child(
+                                                div()
+                                                    .h_px()
+                                                    .w_full()
+                                                    .bg(cx.theme().colors().border_variant)
+                                                    .group_hover("", |style| {
+                                                        style.bg(cx.theme().colors().border)
+                                                    }),
+                                            ),
+                                    )
+                                } else {
+                                    this.child(div().size_full().bg(gpui::green()))
+                                }
+                            })
+                        // .child("⋯")
+                        // .children(jump_icon) // .p_x(gutter_padding)
                     };
                     element.into_any()
                 }
