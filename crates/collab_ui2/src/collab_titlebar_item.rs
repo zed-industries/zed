@@ -38,7 +38,7 @@ use gpui::{
 use project::{Project, RepositoryEntry};
 use theme::ActiveTheme;
 use ui::{
-    h_stack, popover_menu, prelude::*, Avatar, Button, ButtonLike, ButtonStyle2, ContextMenu, Icon,
+    h_stack, popover_menu, prelude::*, Avatar, Button, ButtonLike, ButtonStyle, ContextMenu, Icon,
     IconButton, IconElement, KeyBinding, Tooltip,
 };
 use util::ResultExt;
@@ -204,11 +204,11 @@ impl Render for CollabTitlebarItem {
                                         "toggle_sharing",
                                         if is_shared { "Unshare" } else { "Share" },
                                     )
-                                    .style(ButtonStyle2::Subtle),
+                                    .style(ButtonStyle::Subtle),
                                 )
                                 .child(
                                     IconButton::new("leave-call", ui::Icon::Exit)
-                                        .style(ButtonStyle2::Subtle)
+                                        .style(ButtonStyle::Subtle)
                                         .on_click({
                                             let workspace = workspace.clone();
                                             move |_, cx| {
@@ -233,7 +233,7 @@ impl Render for CollabTitlebarItem {
                                             ui::Icon::Mic
                                         },
                                     )
-                                    .style(ButtonStyle2::Subtle)
+                                    .style(ButtonStyle::Subtle)
                                     .selected(is_muted)
                                     .on_click({
                                         let workspace = workspace.clone();
@@ -248,7 +248,7 @@ impl Render for CollabTitlebarItem {
                                 )
                                 .child(
                                     IconButton::new("mute-sound", speakers_icon)
-                                        .style(ButtonStyle2::Subtle)
+                                        .style(ButtonStyle::Subtle)
                                         .selected(is_deafened.clone())
                                         .tooltip(move |cx| {
                                             Tooltip::with_meta(
@@ -271,7 +271,7 @@ impl Render for CollabTitlebarItem {
                                 )
                                 .child(
                                     IconButton::new("screen-share", ui::Icon::Screen)
-                                        .style(ButtonStyle2::Subtle)
+                                        .style(ButtonStyle::Subtle)
                                         .on_click(move |_, cx| {
                                             workspace
                                                 .update(cx, |this, cx| {
@@ -300,7 +300,7 @@ impl Render for CollabTitlebarItem {
                                                     .color(Color::Muted),
                                             ),
                                         )
-                                        .style(ButtonStyle2::Subtle)
+                                        .style(ButtonStyle::Subtle)
                                         .tooltip(move |cx| Tooltip::text("Toggle User Menu", cx)),
                                 )
                                 .anchor(gpui::AnchorCorner::TopRight),
@@ -312,7 +312,7 @@ impl Render for CollabTitlebarItem {
                         //                 IconElement::new(Icon::ChevronDown).color(Color::Muted),
                         //             ),
                         //         )
-                        //         .style(ButtonStyle2::Subtle)
+                        //         .style(ButtonStyle::Subtle)
                         //         .tooltip(move |cx| Tooltip::text("Toggle User Menu", cx)),
                         // )
                     })
@@ -489,7 +489,7 @@ impl CollabTitlebarItem {
                     format!("{user_name} ({})", !is_shared),
                 )
                 .color(Color::Player(participant_index))
-                .style(ButtonStyle2::Subtle)
+                .style(ButtonStyle::Subtle)
                 .tooltip(move |cx| Tooltip::text("Toggle following", cx)),
             ),
         )
@@ -509,7 +509,7 @@ impl CollabTitlebarItem {
 
         div().border().border_color(gpui::red()).child(
             Button::new("project_name_trigger", name)
-                .style(ButtonStyle2::Subtle)
+                .style(ButtonStyle::Subtle)
                 .tooltip(move |cx| Tooltip::text("Recent Projects", cx)),
         )
     }
@@ -533,7 +533,7 @@ impl CollabTitlebarItem {
         Some(
             div().border().border_color(gpui::red()).child(
                 Button::new("project_branch_trigger", branch_name)
-                    .style(ButtonStyle2::Subtle)
+                    .style(ButtonStyle::Subtle)
                     .tooltip(move |cx| {
                         cx.build_view(|_| {
                             Tooltip::new("Recent Branches")
