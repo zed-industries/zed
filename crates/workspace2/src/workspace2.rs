@@ -209,27 +209,29 @@ pub fn init_settings(cx: &mut AppContext) {
 pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
     init_settings(cx);
     notifications::init(cx);
-    //     cx.add_global_action({
-    //         let app_state = Arc::downgrade(&app_state);
-    //         move |_: &Open, cx: &mut AppContext| {
-    //             let mut paths = cx.prompt_for_paths(PathPromptOptions {
-    //                 files: true,
-    //                 directories: true,
-    //                 multiple: true,
-    //             });
 
-    //             if let Some(app_state) = app_state.upgrade() {
-    //                 cx.spawn(move |mut cx| async move {
-    //                     if let Some(paths) = paths.recv().await.flatten() {
-    //                         cx.update(|cx| {
-    //                             open_paths(&paths, &app_state, None, cx).detach_and_log_err(cx)
-    //                         });
-    //                     }
-    //                 })
-    //                 .detach();
-    //             }
-    //         }
-    //     });
+    cx.on_action({
+        let app_state = Arc::downgrade(&app_state);
+        move |_: &Open, cx: &mut AppContext| {
+            let mut paths = cx.prompt_for_paths(PathPromptOptions {
+                files: true,
+                directories: true,
+                multiple: true,
+            });
+
+            if let Some(app_state) = app_state.upgrade() {
+                cx.spawn(move |mut cx| async move {
+                    if let Some(paths) = paths.await.log_err().flatten() {
+                        cx.update(|cx| {
+                            open_paths(&paths, &app_state, None, cx).detach_and_log_err(cx)
+                        })
+                        .ok();
+                    }
+                })
+                .detach();
+            }
+        }
+    });
 }
 
 type ProjectItemBuilders =
