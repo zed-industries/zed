@@ -6407,169 +6407,169 @@ async fn test_extra_newline_insertion(cx: &mut gpui::TestAppContext) {
 // }
 
 // todo!(following)
-// #[gpui::test]
-// async fn test_following(cx: &mut gpui::TestAppContext) {
-//     init_test(cx, |_| {});
+#[gpui::test]
+async fn test_following(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
 
-//     let fs = FakeFs::new(cx.executor());
-//     let project = Project::test(fs, ["/file.rs".as_ref()], cx).await;
+    let fs = FakeFs::new(cx.executor());
+    let project = Project::test(fs, ["/file.rs".as_ref()], cx).await;
 
-//     let buffer = project.update(cx, |project, cx| {
-//         let buffer = project
-//             .create_buffer(&sample_text(16, 8, 'a'), None, cx)
-//             .unwrap();
-//         cx.build_model(|cx| MultiBuffer::singleton(buffer, cx))
-//     });
-//     let leader = cx.add_window(|cx| build_editor(buffer.clone(), cx));
-//     let follower = cx.update(|cx| {
-//         cx.open_window(
-//             WindowOptions {
-//                 bounds: WindowBounds::Fixed(Bounds::from_corners(
-//                     gpui::Point::new((0. as f64).into(), (0. as f64).into()),
-//                     gpui::Point::new((10. as f64).into(), (80. as f64).into()),
-//                 )),
-//                 ..Default::default()
-//             },
-//             |cx| cx.build_view(|cx| build_editor(buffer.clone(), cx)),
-//         )
-//     });
+    let buffer = project.update(cx, |project, cx| {
+        let buffer = project
+            .create_buffer(&sample_text(16, 8, 'a'), None, cx)
+            .unwrap();
+        cx.build_model(|cx| MultiBuffer::singleton(buffer, cx))
+    });
+    let leader = cx.add_window(|cx| build_editor(buffer.clone(), cx));
+    let follower = cx.update(|cx| {
+        cx.open_window(
+            WindowOptions {
+                bounds: WindowBounds::Fixed(Bounds::from_corners(
+                    gpui::Point::new((0. as f64).into(), (0. as f64).into()),
+                    gpui::Point::new((10. as f64).into(), (80. as f64).into()),
+                )),
+                ..Default::default()
+            },
+            |cx| cx.build_view(|cx| build_editor(buffer.clone(), cx)),
+        )
+    });
 
-//     let is_still_following = Rc::new(RefCell::new(true));
-//     let follower_edit_event_count = Rc::new(RefCell::new(0));
-//     let pending_update = Rc::new(RefCell::new(None));
-//     follower.update(cx, {
-//         let update = pending_update.clone();
-//         let is_still_following = is_still_following.clone();
-//         let follower_edit_event_count = follower_edit_event_count.clone();
-//         |_, cx| {
-//             cx.subscribe(
-//                 &leader.root_view(cx).unwrap(),
-//                 move |_, leader, event, cx| {
-//                     leader
-//                         .read(cx)
-//                         .add_event_to_update_proto(event, &mut *update.borrow_mut(), cx);
-//                 },
-//             )
-//             .detach();
+    let is_still_following = Rc::new(RefCell::new(true));
+    let follower_edit_event_count = Rc::new(RefCell::new(0));
+    let pending_update = Rc::new(RefCell::new(None));
+    follower.update(cx, {
+        let update = pending_update.clone();
+        let is_still_following = is_still_following.clone();
+        let follower_edit_event_count = follower_edit_event_count.clone();
+        |_, cx| {
+            cx.subscribe(
+                &leader.root_view(cx).unwrap(),
+                move |_, leader, event, cx| {
+                    leader
+                        .read(cx)
+                        .add_event_to_update_proto(event, &mut *update.borrow_mut(), cx);
+                },
+            )
+            .detach();
 
-//             cx.subscribe(
-//                 &follower.root_view(cx).unwrap(),
-//                 move |_, _, event: &Event, cx| {
-//                     if matches!(event.to_follow_event(), Some(FollowEvent::Unfollow)) {
-//                         *is_still_following.borrow_mut() = false;
-//                     }
+            cx.subscribe(
+                &follower.root_view(cx).unwrap(),
+                move |_, _, event: &EditorEvent, cx| {
+                    if matches!(event.to_follow_event(), Some(FollowEvent::Unfollow)) {
+                        *is_still_following.borrow_mut() = false;
+                    }
 
-//                     if let Event::BufferEdited = event {
-//                         *follower_edit_event_count.borrow_mut() += 1;
-//                     }
-//                 },
-//             )
-//             .detach();
-//         }
-//     });
+                    if let EditorEvent::BufferEdited = event {
+                        *follower_edit_event_count.borrow_mut() += 1;
+                    }
+                },
+            )
+            .detach();
+        }
+    });
 
-//     // Update the selections only
-//     leader.update(cx, |leader, cx| {
-//         leader.change_selections(None, cx, |s| s.select_ranges([1..1]));
-//     });
-//     follower
-//         .update(cx, |follower, cx| {
-//             follower.apply_update_proto(&project, pending_update.borrow_mut().take().unwrap(), cx)
-//         })
-//         .unwrap()
-//         .await
-//         .unwrap();
-//     follower.update(cx, |follower, cx| {
-//         assert_eq!(follower.selections.ranges(cx), vec![1..1]);
-//     });
-//     assert_eq!(*is_still_following.borrow(), true);
-//     assert_eq!(*follower_edit_event_count.borrow(), 0);
+    // Update the selections only
+    leader.update(cx, |leader, cx| {
+        leader.change_selections(None, cx, |s| s.select_ranges([1..1]));
+    });
+    follower
+        .update(cx, |follower, cx| {
+            follower.apply_update_proto(&project, pending_update.borrow_mut().take().unwrap(), cx)
+        })
+        .unwrap()
+        .await
+        .unwrap();
+    follower.update(cx, |follower, cx| {
+        assert_eq!(follower.selections.ranges(cx), vec![1..1]);
+    });
+    assert_eq!(*is_still_following.borrow(), true);
+    assert_eq!(*follower_edit_event_count.borrow(), 0);
 
-//     // Update the scroll position only
-//     leader.update(cx, |leader, cx| {
-//         leader.set_scroll_position(gpui::Point::new(1.5, 3.5), cx);
-//     });
-//     follower
-//         .update(cx, |follower, cx| {
-//             follower.apply_update_proto(&project, pending_update.borrow_mut().take().unwrap(), cx)
-//         })
-//         .unwrap()
-//         .await
-//         .unwrap();
-//     assert_eq!(
-//         follower
-//             .update(cx, |follower, cx| follower.scroll_position(cx))
-//             .unwrap(),
-//         gpui::Point::new(1.5, 3.5)
-//     );
-//     assert_eq!(*is_still_following.borrow(), true);
-//     assert_eq!(*follower_edit_event_count.borrow(), 0);
+    // Update the scroll position only
+    leader.update(cx, |leader, cx| {
+        leader.set_scroll_position(gpui::Point::new(1.5, 3.5), cx);
+    });
+    follower
+        .update(cx, |follower, cx| {
+            follower.apply_update_proto(&project, pending_update.borrow_mut().take().unwrap(), cx)
+        })
+        .unwrap()
+        .await
+        .unwrap();
+    assert_eq!(
+        follower
+            .update(cx, |follower, cx| follower.scroll_position(cx))
+            .unwrap(),
+        gpui::Point::new(1.5, 3.5)
+    );
+    assert_eq!(*is_still_following.borrow(), true);
+    assert_eq!(*follower_edit_event_count.borrow(), 0);
 
-//     // Update the selections and scroll position. The follower's scroll position is updated
-//     // via autoscroll, not via the leader's exact scroll position.
-//     leader.update(cx, |leader, cx| {
-//         leader.change_selections(None, cx, |s| s.select_ranges([0..0]));
-//         leader.request_autoscroll(Autoscroll::newest(), cx);
-//         leader.set_scroll_position(gpui::Point::new(1.5, 3.5), cx);
-//     });
-//     follower
-//         .update(cx, |follower, cx| {
-//             follower.apply_update_proto(&project, pending_update.borrow_mut().take().unwrap(), cx)
-//         })
-//         .unwrap()
-//         .await
-//         .unwrap();
-//     follower.update(cx, |follower, cx| {
-//         assert_eq!(follower.scroll_position(cx), gpui::Point::new(1.5, 0.0));
-//         assert_eq!(follower.selections.ranges(cx), vec![0..0]);
-//     });
-//     assert_eq!(*is_still_following.borrow(), true);
+    // Update the selections and scroll position. The follower's scroll position is updated
+    // via autoscroll, not via the leader's exact scroll position.
+    leader.update(cx, |leader, cx| {
+        leader.change_selections(None, cx, |s| s.select_ranges([0..0]));
+        leader.request_autoscroll(Autoscroll::newest(), cx);
+        leader.set_scroll_position(gpui::Point::new(1.5, 3.5), cx);
+    });
+    follower
+        .update(cx, |follower, cx| {
+            follower.apply_update_proto(&project, pending_update.borrow_mut().take().unwrap(), cx)
+        })
+        .unwrap()
+        .await
+        .unwrap();
+    follower.update(cx, |follower, cx| {
+        assert_eq!(follower.scroll_position(cx), gpui::Point::new(1.5, 0.0));
+        assert_eq!(follower.selections.ranges(cx), vec![0..0]);
+    });
+    assert_eq!(*is_still_following.borrow(), true);
 
-//     // Creating a pending selection that precedes another selection
-//     leader.update(cx, |leader, cx| {
-//         leader.change_selections(None, cx, |s| s.select_ranges([1..1]));
-//         leader.begin_selection(DisplayPoint::new(0, 0), true, 1, cx);
-//     });
-//     follower
-//         .update(cx, |follower, cx| {
-//             follower.apply_update_proto(&project, pending_update.borrow_mut().take().unwrap(), cx)
-//         })
-//         .unwrap()
-//         .await
-//         .unwrap();
-//     follower.update(cx, |follower, cx| {
-//         assert_eq!(follower.selections.ranges(cx), vec![0..0, 1..1]);
-//     });
-//     assert_eq!(*is_still_following.borrow(), true);
+    // Creating a pending selection that precedes another selection
+    leader.update(cx, |leader, cx| {
+        leader.change_selections(None, cx, |s| s.select_ranges([1..1]));
+        leader.begin_selection(DisplayPoint::new(0, 0), true, 1, cx);
+    });
+    follower
+        .update(cx, |follower, cx| {
+            follower.apply_update_proto(&project, pending_update.borrow_mut().take().unwrap(), cx)
+        })
+        .unwrap()
+        .await
+        .unwrap();
+    follower.update(cx, |follower, cx| {
+        assert_eq!(follower.selections.ranges(cx), vec![0..0, 1..1]);
+    });
+    assert_eq!(*is_still_following.borrow(), true);
 
-//     // Extend the pending selection so that it surrounds another selection
-//     leader.update(cx, |leader, cx| {
-//         leader.extend_selection(DisplayPoint::new(0, 2), 1, cx);
-//     });
-//     follower
-//         .update(cx, |follower, cx| {
-//             follower.apply_update_proto(&project, pending_update.borrow_mut().take().unwrap(), cx)
-//         })
-//         .unwrap()
-//         .await
-//         .unwrap();
-//     follower.update(cx, |follower, cx| {
-//         assert_eq!(follower.selections.ranges(cx), vec![0..2]);
-//     });
+    // Extend the pending selection so that it surrounds another selection
+    leader.update(cx, |leader, cx| {
+        leader.extend_selection(DisplayPoint::new(0, 2), 1, cx);
+    });
+    follower
+        .update(cx, |follower, cx| {
+            follower.apply_update_proto(&project, pending_update.borrow_mut().take().unwrap(), cx)
+        })
+        .unwrap()
+        .await
+        .unwrap();
+    follower.update(cx, |follower, cx| {
+        assert_eq!(follower.selections.ranges(cx), vec![0..2]);
+    });
 
-//     // Scrolling locally breaks the follow
-//     follower.update(cx, |follower, cx| {
-//         let top_anchor = follower.buffer().read(cx).read(cx).anchor_after(0);
-//         follower.set_scroll_anchor(
-//             ScrollAnchor {
-//                 anchor: top_anchor,
-//                 offset: gpui::Point::new(0.0, 0.5),
-//             },
-//             cx,
-//         );
-//     });
-//     assert_eq!(*is_still_following.borrow(), false);
-// }
+    // Scrolling locally breaks the follow
+    follower.update(cx, |follower, cx| {
+        let top_anchor = follower.buffer().read(cx).read(cx).anchor_after(0);
+        follower.set_scroll_anchor(
+            ScrollAnchor {
+                anchor: top_anchor,
+                offset: gpui::Point::new(0.0, 0.5),
+            },
+            cx,
+        );
+    });
+    assert_eq!(*is_still_following.borrow(), false);
+}
 
 // #[gpui::test]
 // async fn test_following_with_multiple_excerpts(cx: &mut gpui::TestAppContext) {
