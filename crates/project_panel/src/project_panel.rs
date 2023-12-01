@@ -1633,13 +1633,9 @@ impl View for ProjectPanel {
 
         if let Some(window) = cx.active_window() {
             window.read_with(cx, |cx| {
-                let identifier = if self.filename_editor.is_focused(cx) {
-                    "editing"
-                } else {
-                    "not_editing"
+                if !self.filename_editor.is_focused(cx) {
+                    keymap.add_identifier("not_editing");
                 };
-
-                keymap.add_identifier(identifier);
             });
         }
     }
