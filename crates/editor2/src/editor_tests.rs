@@ -12,7 +12,7 @@ use futures::StreamExt;
 use gpui::{
     div,
     serde_json::{self, json},
-    Div, TestAppContext, VisualTestContext, WindowBounds, WindowOptions,
+    Div, Flatten, TestAppContext, VisualTestContext, WindowBounds, WindowOptions,
 };
 use indoc::indoc;
 use language::{
@@ -6571,170 +6571,172 @@ async fn test_following(cx: &mut gpui::TestAppContext) {
     assert_eq!(*is_still_following.borrow(), false);
 }
 
-// #[gpui::test]
-// async fn test_following_with_multiple_excerpts(cx: &mut gpui::TestAppContext) {
-//     init_test(cx, |_| {});
+#[gpui::test]
+async fn test_following_with_multiple_excerpts(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
 
-//     let fs = FakeFs::new(cx.executor());
-//     let project = Project::test(fs, ["/file.rs".as_ref()], cx).await;
-//     let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
-//     let pane = workspace
-//         .update(cx, |workspace, _| workspace.active_pane().clone())
-//         .unwrap();
+    let fs = FakeFs::new(cx.executor());
+    let project = Project::test(fs, ["/file.rs".as_ref()], cx).await;
+    let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+    let pane = workspace
+        .update(cx, |workspace, _| workspace.active_pane().clone())
+        .unwrap();
 
-//     let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
+    let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
 
-//     let leader = pane.update(cx, |_, cx| {
-//         let multibuffer = cx.build_model(|_| MultiBuffer::new(0));
-//         cx.build_view(|cx| build_editor(multibuffer.clone(), cx))
-//     });
+    let leader = pane.update(cx, |_, cx| {
+        let multibuffer = cx.build_model(|_| MultiBuffer::new(0));
+        cx.build_view(|cx| build_editor(multibuffer.clone(), cx))
+    });
 
-//     // Start following the editor when it has no excerpts.
-//     let mut state_message = leader.update(cx, |leader, cx| leader.to_state_proto(cx));
-//     let follower_1 = cx
-//         .update(|cx| {
-//             Editor::from_state_proto(
-//                 pane.clone(),
-//                 workspace.root_view(cx).unwrap(),
-//                 ViewId {
-//                     creator: Default::default(),
-//                     id: 0,
-//                 },
-//                 &mut state_message,
-//                 cx,
-//             )
-//         })
-//         .unwrap()
-//         .await
-//         .unwrap();
+    // Start following the editor when it has no excerpts.
+    let mut state_message = leader.update(cx, |leader, cx| leader.to_state_proto(cx));
+    let follower_1 = cx
+        .update_window(*workspace.deref(), |_, cx| {
+            Editor::from_state_proto(
+                pane.clone(),
+                workspace.root_view(cx).unwrap(),
+                ViewId {
+                    creator: Default::default(),
+                    id: 0,
+                },
+                &mut state_message,
+                cx,
+            )
+        })
+        .unwrap()
+        .unwrap()
+        .await
+        .unwrap();
 
-//     let update_message = Rc::new(RefCell::new(None));
-//     follower_1.update(cx, {
-//         let update = update_message.clone();
-//         |_, cx| {
-//             cx.subscribe(&leader, move |_, leader, event, cx| {
-//                 leader
-//                     .read(cx)
-//                     .add_event_to_update_proto(event, &mut *update.borrow_mut(), cx);
-//             })
-//             .detach();
-//         }
-//     });
+    let update_message = Rc::new(RefCell::new(None));
+    follower_1.update(cx, {
+        let update = update_message.clone();
+        |_, cx| {
+            cx.subscribe(&leader, move |_, leader, event, cx| {
+                leader
+                    .read(cx)
+                    .add_event_to_update_proto(event, &mut *update.borrow_mut(), cx);
+            })
+            .detach();
+        }
+    });
 
-//     let (buffer_1, buffer_2) = project.update(cx, |project, cx| {
-//         (
-//             project
-//                 .create_buffer("abc\ndef\nghi\njkl\n", None, cx)
-//                 .unwrap(),
-//             project
-//                 .create_buffer("mno\npqr\nstu\nvwx\n", None, cx)
-//                 .unwrap(),
-//         )
-//     });
+    let (buffer_1, buffer_2) = project.update(cx, |project, cx| {
+        (
+            project
+                .create_buffer("abc\ndef\nghi\njkl\n", None, cx)
+                .unwrap(),
+            project
+                .create_buffer("mno\npqr\nstu\nvwx\n", None, cx)
+                .unwrap(),
+        )
+    });
 
-//     // Insert some excerpts.
-//     leader.update(cx, |leader, cx| {
-//         leader.buffer.update(cx, |multibuffer, cx| {
-//             let excerpt_ids = multibuffer.push_excerpts(
-//                 buffer_1.clone(),
-//                 [
-//                     ExcerptRange {
-//                         context: 1..6,
-//                         primary: None,
-//                     },
-//                     ExcerptRange {
-//                         context: 12..15,
-//                         primary: None,
-//                     },
-//                     ExcerptRange {
-//                         context: 0..3,
-//                         primary: None,
-//                     },
-//                 ],
-//                 cx,
-//             );
-//             multibuffer.insert_excerpts_after(
-//                 excerpt_ids[0],
-//                 buffer_2.clone(),
-//                 [
-//                     ExcerptRange {
-//                         context: 8..12,
-//                         primary: None,
-//                     },
-//                     ExcerptRange {
-//                         context: 0..6,
-//                         primary: None,
-//                     },
-//                 ],
-//                 cx,
-//             );
-//         });
-//     });
+    // Insert some excerpts.
+    leader.update(cx, |leader, cx| {
+        leader.buffer.update(cx, |multibuffer, cx| {
+            let excerpt_ids = multibuffer.push_excerpts(
+                buffer_1.clone(),
+                [
+                    ExcerptRange {
+                        context: 1..6,
+                        primary: None,
+                    },
+                    ExcerptRange {
+                        context: 12..15,
+                        primary: None,
+                    },
+                    ExcerptRange {
+                        context: 0..3,
+                        primary: None,
+                    },
+                ],
+                cx,
+            );
+            multibuffer.insert_excerpts_after(
+                excerpt_ids[0],
+                buffer_2.clone(),
+                [
+                    ExcerptRange {
+                        context: 8..12,
+                        primary: None,
+                    },
+                    ExcerptRange {
+                        context: 0..6,
+                        primary: None,
+                    },
+                ],
+                cx,
+            );
+        });
+    });
 
-//     // Apply the update of adding the excerpts.
-//     follower_1
-//         .update(cx, |follower, cx| {
-//             follower.apply_update_proto(&project, update_message.borrow().clone().unwrap(), cx)
-//         })
-//         .await
-//         .unwrap();
-//     assert_eq!(
-//         follower_1.update(cx, |editor, cx| editor.text(cx)),
-//         leader.update(cx, |editor, cx| editor.text(cx))
-//     );
-//     update_message.borrow_mut().take();
+    // Apply the update of adding the excerpts.
+    follower_1
+        .update(cx, |follower, cx| {
+            follower.apply_update_proto(&project, update_message.borrow().clone().unwrap(), cx)
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        follower_1.update(cx, |editor, cx| editor.text(cx)),
+        leader.update(cx, |editor, cx| editor.text(cx))
+    );
+    update_message.borrow_mut().take();
 
-//     // Start following separately after it already has excerpts.
-//     let mut state_message = leader.update(cx, |leader, cx| leader.to_state_proto(cx));
-//     let follower_2 = cx
-//         .update(|cx| {
-//             Editor::from_state_proto(
-//                 pane.clone(),
-//                 workspace.clone(),
-//                 ViewId {
-//                     creator: Default::default(),
-//                     id: 0,
-//                 },
-//                 &mut state_message,
-//                 cx,
-//             )
-//         })
-//         .unwrap()
-//         .await
-//         .unwrap();
-//     assert_eq!(
-//         follower_2.update(cx, |editor, cx| editor.text(cx)),
-//         leader.update(cx, |editor, cx| editor.text(cx))
-//     );
+    // Start following separately after it already has excerpts.
+    let mut state_message = leader.update(cx, |leader, cx| leader.to_state_proto(cx));
+    let follower_2 = cx
+        .update_window(*workspace.deref(), |_, cx| {
+            Editor::from_state_proto(
+                pane.clone(),
+                workspace.root_view(cx).unwrap().clone(),
+                ViewId {
+                    creator: Default::default(),
+                    id: 0,
+                },
+                &mut state_message,
+                cx,
+            )
+        })
+        .unwrap()
+        .unwrap()
+        .await
+        .unwrap();
+    assert_eq!(
+        follower_2.update(cx, |editor, cx| editor.text(cx)),
+        leader.update(cx, |editor, cx| editor.text(cx))
+    );
 
-//     // Remove some excerpts.
-//     leader.update(cx, |leader, cx| {
-//         leader.buffer.update(cx, |multibuffer, cx| {
-//             let excerpt_ids = multibuffer.excerpt_ids();
-//             multibuffer.remove_excerpts([excerpt_ids[1], excerpt_ids[2]], cx);
-//             multibuffer.remove_excerpts([excerpt_ids[0]], cx);
-//         });
-//     });
+    // Remove some excerpts.
+    leader.update(cx, |leader, cx| {
+        leader.buffer.update(cx, |multibuffer, cx| {
+            let excerpt_ids = multibuffer.excerpt_ids();
+            multibuffer.remove_excerpts([excerpt_ids[1], excerpt_ids[2]], cx);
+            multibuffer.remove_excerpts([excerpt_ids[0]], cx);
+        });
+    });
 
-//     // Apply the update of removing the excerpts.
-//     follower_1
-//         .update(cx, |follower, cx| {
-//             follower.apply_update_proto(&project, update_message.borrow().clone().unwrap(), cx)
-//         })
-//         .await
-//         .unwrap();
-//     follower_2
-//         .update(cx, |follower, cx| {
-//             follower.apply_update_proto(&project, update_message.borrow().clone().unwrap(), cx)
-//         })
-//         .await
-//         .unwrap();
-//     update_message.borrow_mut().take();
-//     assert_eq!(
-//         follower_1.update(cx, |editor, cx| editor.text(cx)),
-//         leader.update(cx, |editor, cx| editor.text(cx))
-//     );
-// }
+    // Apply the update of removing the excerpts.
+    follower_1
+        .update(cx, |follower, cx| {
+            follower.apply_update_proto(&project, update_message.borrow().clone().unwrap(), cx)
+        })
+        .await
+        .unwrap();
+    follower_2
+        .update(cx, |follower, cx| {
+            follower.apply_update_proto(&project, update_message.borrow().clone().unwrap(), cx)
+        })
+        .await
+        .unwrap();
+    update_message.borrow_mut().take();
+    assert_eq!(
+        follower_1.update(cx, |editor, cx| editor.text(cx)),
+        leader.update(cx, |editor, cx| editor.text(cx))
+    );
+}
 
 #[gpui::test]
 async fn go_to_prev_overlapping_diagnostic(
