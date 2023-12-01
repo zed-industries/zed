@@ -51,7 +51,9 @@ use std::{
 };
 use sum_tree::Bias;
 use theme::{ActiveTheme, PlayerColor};
-use ui::{h_stack, Disclosure, IconButton, IconSize, Label, Tooltip};
+use ui::{
+    h_stack, ButtonLike, ButtonStyle, Disclosure, IconButton, IconElement, IconSize, Label, Tooltip,
+};
 use ui::{prelude::*, Icon};
 use util::ResultExt;
 use workspace::item::Item;
@@ -2235,6 +2237,7 @@ impl EditorElement {
                         let jump_position = language::ToPoint::to_point(&jump_anchor, buffer);
 
                         IconButton::new(block_id, Icon::ArrowUpRight)
+                            .style(ButtonStyle::Subtle)
                             .on_click(cx.listener_for(&self.editor, move |editor, e, cx| {
                                 editor.jump(jump_path.clone(), jump_position, jump_anchor, cx);
                             }))
@@ -2253,8 +2256,11 @@ impl EditorElement {
                                 .map(|p| SharedString::from(p.to_string_lossy().to_string() + "/"));
                         }
 
-                        div().id("path header block").size_full().p_1p5().child(
+                        let is_open = true;
+
+                        div().id("path header container").size_full().p_1p5().child(
                             h_stack()
+                                .id("path header block")
                                 .py_1p5()
                                 .pl_3()
                                 .pr_2()
@@ -2266,15 +2272,23 @@ impl EditorElement {
                                 .justify_between()
                                 .cursor_pointer()
                                 .hover(|style| style.bg(cx.theme().colors().element_hover))
+                                .on_click(cx.listener(|_editor, _event, _cx| {
+                                    // TODO: Implement collapsing path headers
+                                    todo!("Clicking path header")
+                                }))
                                 .child(
                                     h_stack()
                                         .gap_3()
                                         // TODO: Add open/close state and toggle action
                                         .child(
-                                            div()
-                                                .border()
-                                                .border_color(gpui::red())
-                                                .child(Disclosure::new(true)),
+                                            div().border().border_color(gpui::red()).child(
+                                                ButtonLike::new("path-header-disclosure-control")
+                                                    .style(ButtonStyle::Subtle)
+                                                    .child(IconElement::new(match is_open {
+                                                        true => Icon::ChevronDown,
+                                                        false => Icon::ChevronRight,
+                                                    })),
+                                            ),
                                         )
                                         .child(
                                             h_stack()
