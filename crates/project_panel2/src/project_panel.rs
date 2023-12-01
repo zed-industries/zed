@@ -10,8 +10,9 @@ use anyhow::{anyhow, Result};
 use gpui::{
     actions, div, px, uniform_list, Action, AppContext, AssetSource, AsyncWindowContext,
     ClipboardItem, Div, EventEmitter, FocusHandle, Focusable, FocusableView, InteractiveElement,
-    Model, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, Stateful, Styled,
-    Task, UniformListScrollHandle, View, ViewContext, VisualContext as _, WeakView, WindowContext,
+    KeyContext, Model, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, Stateful,
+    Styled, Task, UniformListScrollHandle, View, ViewContext, VisualContext as _, WeakView,
+    WindowContext,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
 use project::{
@@ -1403,6 +1404,22 @@ impl ProjectPanel {
         //     );
         // })
     }
+
+    fn dispatch_context(&self, cx: &ViewContext<Self>) -> KeyContext {
+        let mut dispatch_context = KeyContext::default();
+        dispatch_context.add("ProjectPanel");
+        dispatch_context.add("menu");
+
+        let identifier = if self.filename_editor.focus_handle(cx).is_focused(cx) {
+            "editing"
+        } else {
+            "not_editing"
+        };
+
+        dispatch_context.add(identifier);
+
+        dispatch_context
+    }
 }
 
 impl Render for ProjectPanel {
@@ -1415,7 +1432,8 @@ impl Render for ProjectPanel {
             div()
                 .id("project-panel")
                 .size_full()
-                .key_context("ProjectPanel")
+                .relative()
+                .key_context(self.dispatch_context(cx))
                 .on_action(cx.listener(Self::select_next))
                 .on_action(cx.listener(Self::select_prev))
                 .on_action(cx.listener(Self::expand_selected_entry))
