@@ -26,7 +26,7 @@ use std::{
     },
 };
 
-use ui::{menu_handle, prelude::*, Color, Icon, IconButton, IconElement, Tooltip};
+use ui::{prelude::*, right_click_menu, Color, Icon, IconButton, IconElement, Tooltip};
 use ui::{v_stack, ContextMenu};
 use util::truncate_and_remove_front;
 
@@ -1524,7 +1524,7 @@ impl Pane {
                     .children(close_right.then(|| close_icon())),
             );
 
-        menu_handle(ix).child(|_| tab).menu(|cx| {
+        right_click_menu(ix).trigger(tab).menu(|cx| {
             ContextMenu::build(cx, |menu, cx| {
                 menu.action(
                     "Close Active Item",

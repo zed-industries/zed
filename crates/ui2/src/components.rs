@@ -9,6 +9,8 @@ mod keybinding;
 mod label;
 mod list;
 mod popover;
+mod popover_menu;
+mod right_click_menu;
 mod stack;
 mod tooltip;
 
@@ -26,6 +28,8 @@ pub use keybinding::*;
 pub use label::*;
 pub use list::*;
 pub use popover::*;
+pub use popover_menu::*;
+pub use right_click_menu::*;
 pub use stack::*;
 pub use tooltip::*;
 
