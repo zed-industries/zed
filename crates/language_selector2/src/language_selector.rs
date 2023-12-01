@@ -4,50 +4,88 @@ pub use active_buffer_language::ActiveBufferLanguage;
 use anyhow::anyhow;
 use editor::Editor;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
-use gpui::{actions, elements::*, AppContext, ModelHandle, MouseState, ViewContext};
+use gpui::{
+    actions, Action, AppContext, DismissEvent, Div, EventEmitter, FocusHandle, FocusableView,
+    Model, ParentElement, Render, Styled, View, ViewContext, VisualContext, WeakView,
+};
 use language::{Buffer, LanguageRegistry};
-use picker::{Picker, PickerDelegate, PickerEvent};
+use picker::{Picker, PickerDelegate};
 use project::Project;
 use std::sync::Arc;
+use ui::{v_stack, HighlightedLabel, ListItem, Selectable};
 use util::ResultExt;
 use workspace::Workspace;
 
 actions!(Toggle);
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_views(LanguagePicker::register).detach();
+    cx.observe_new_views(LanguageSelector::register).detach();
 }
 
-pub fn init(cx: &mut AppContext) {
-    Picker::<LanguageSelectorDelegate>::init(cx);
-    cx.add_action(toggle);
+pub struct LanguageSelector {
+    picker: View<Picker<LanguageSelectorDelegate>>,
 }
 
-pub fn toggle(
-    workspace: &mut Workspace,
-    _: &Toggle,
-    cx: &mut ViewContext<Workspace>,
-) -> Option<()> {
-    let (_, buffer, _) = workspace
-        .active_item(cx)?
-        .act_as::<Editor>(cx)?
-        .read(cx)
-        .active_excerpt(cx)?;
-    workspace.toggle_modal(cx, |workspace, cx| {
+impl LanguageSelector {
+    fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
+        dbg!("regsiter");
+        workspace.register_action(move |workspace, _: &Toggle, cx| {
+            Self::toggle(workspace, cx);
+        });
+    }
+
+    fn toggle(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) -> Option<()> {
         let registry = workspace.app_state().languages.clone();
-        cx.add_view(|cx| {
-            Picker::new(
-                LanguageSelectorDelegate::new(buffer, workspace.project().clone(), registry),
-                cx,
-            )
-        })
-    });
-    Some(())
+        let (_, buffer, _) = workspace
+            .active_item(cx)?
+            .act_as::<Editor>(cx)?
+            .read(cx)
+            .active_excerpt(cx)?;
+        let project = workspace.project().clone();
+
+        workspace.toggle_modal(cx, move |cx| {
+            LanguageSelector::new(buffer, project, registry, cx)
+        });
+        Some(())
+    }
+
+    fn new(
+        buffer: Model<Buffer>,
+        project: Model<Project>,
+        language_registry: Arc<LanguageRegistry>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
+        let delegate = LanguageSelectorDelegate::new(
+            cx.view().downgrade(),
+            buffer,
+            project,
+            language_registry,
+        );
+
+        let picker = cx.build_view(|cx| Picker::new(delegate, cx));
+        Self { picker }
+    }
 }
+
+impl Render for LanguageSelector {
+    type Element = Div;
+
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
+        v_stack().min_w_96().child(self.picker.clone())
+    }
+}
+
+impl FocusableView for LanguageSelector {
+    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+        self.picker.focus_handle(cx)
+    }
+}
+impl EventEmitter<DismissEvent> for LanguageSelector {}
 
 pub struct LanguageSelectorDelegate {
-    buffer: ModelHandle<Buffer>,
-    project: ModelHandle<Project>,
+    language_selector: WeakView<LanguageSelector>,
+    buffer: Model<Buffer>,
+    project: Model<Project>,
     language_registry: Arc<LanguageRegistry>,
     candidates: Vec<StringMatchCandidate>,
     matches: Vec<StringMatch>,
@@ -56,8 +94,9 @@ pub struct LanguageSelectorDelegate {
 
 impl LanguageSelectorDelegate {
     fn new(
-        buffer: ModelHandle<Buffer>,
-        project: ModelHandle<Project>,
+        language_selector: WeakView<LanguageSelector>,
+        buffer: Model<Buffer>,
+        project: Model<Project>,
         language_registry: Arc<LanguageRegistry>,
     ) -> Self {
         let candidates = language_registry
@@ -78,6 +117,7 @@ impl LanguageSelectorDelegate {
         matches.sort_unstable_by(|mat1, mat2| mat1.string.cmp(&mat2.string));
 
         Self {
+            language_selector,
             buffer,
             project,
             language_registry,
@@ -89,6 +129,8 @@ impl LanguageSelectorDelegate {
 }
 
 impl PickerDelegate for LanguageSelectorDelegate {
+    type ListItem = ListItem;
+
     fn placeholder_text(&self) -> Arc<str> {
         "Select a language...".into()
     }
@@ -106,23 +148,25 @@ impl PickerDelegate for LanguageSelectorDelegate {
             cx.spawn(|_, mut cx| async move {
                 let language = language.await?;
                 let project = project
-                    .upgrade(&cx)
+                    .upgrade()
                     .ok_or_else(|| anyhow!("project was dropped"))?;
                 let buffer = buffer
-                    .upgrade(&cx)
+                    .upgrade()
                     .ok_or_else(|| anyhow!("buffer was dropped"))?;
                 project.update(&mut cx, |project, cx| {
                     project.set_language_for_buffer(&buffer, language, cx);
-                });
-                anyhow::Ok(())
+                })
             })
             .detach_and_log_err(cx);
         }
-
-        cx.emit(PickerEvent::Dismiss);
+        self.dismissed(cx);
     }
 
-    fn dismissed(&mut self, _cx: &mut ViewContext<Picker<Self>>) {}
+    fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>) {
+        self.language_selector
+            .update(cx, |_, cx| cx.emit(DismissEvent))
+            .log_err();
+    }
 
     fn selected_index(&self) -> usize {
         self.selected_index
@@ -137,7 +181,7 @@ impl PickerDelegate for LanguageSelectorDelegate {
         query: String,
         cx: &mut ViewContext<Picker<Self>>,
     ) -> gpui::Task<()> {
-        let background = cx.background().clone();
+        let background = cx.background_executor().clone();
         let candidates = self.candidates.clone();
         cx.spawn(|this, mut cx| async move {
             let matches = if query.is_empty() {
@@ -164,7 +208,7 @@ impl PickerDelegate for LanguageSelectorDelegate {
             };
 
             this.update(&mut cx, |this, cx| {
-                let delegate = this.delegate_mut();
+                let delegate = &mut this.delegate;
                 delegate.matches = matches;
                 delegate.selected_index = delegate
                     .selected_index
@@ -178,23 +222,21 @@ impl PickerDelegate for LanguageSelectorDelegate {
     fn render_match(
         &self,
         ix: usize,
-        mouse_state: &mut MouseState,
         selected: bool,
-        cx: &AppContext,
-    ) -> AnyElement<Picker<Self>> {
-        let theme = theme::current(cx);
+        cx: &mut ViewContext<Picker<Self>>,
+    ) -> Option<Self::ListItem> {
         let mat = &self.matches[ix];
-        let style = theme.picker.item.in_state(selected).style_for(mouse_state);
         let buffer_language_name = self.buffer.read(cx).language().map(|l| l.name());
         let mut label = mat.string.clone();
         if buffer_language_name.as_deref() == Some(mat.string.as_str()) {
             label.push_str(" (current)");
         }
 
-        Label::new(label, style.label.clone())
-            .with_highlights(mat.positions.clone())
-            .contained()
-            .with_style(style.container)
-            .into_any()
+        Some(
+            ListItem::new(ix)
+                .inset(true)
+                .selected(selected)
+                .child(HighlightedLabel::new(label, mat.positions.clone())),
+        )
     }
 }
