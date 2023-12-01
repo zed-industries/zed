@@ -87,7 +87,7 @@ pub trait InteractiveElement: Sized + Element {
                     && event.button == button
                     && bounds.visibly_contains(&event.position, cx)
                 {
-                    (listener.borrowed())(event, cx)
+                    listener.borrowed()(event, cx)
                 }
             },
         ));
@@ -101,7 +101,7 @@ pub trait InteractiveElement: Sized + Element {
         self.interactivity().mouse_down_listeners.push(Box::new(
             move |event, bounds, phase, cx| {
                 if phase == DispatchPhase::Bubble && bounds.visibly_contains(&event.position, cx) {
-                    (listener.borrowed())(event, cx)
+                    listener.borrowed()(event, cx)
                 }
             },
         ));
@@ -120,7 +120,7 @@ pub trait InteractiveElement: Sized + Element {
                     && event.button == button
                     && bounds.visibly_contains(&event.position, cx)
                 {
-                    (listener.borrowed())(event, cx)
+                    listener.borrowed()(event, cx)
                 }
             }));
         self
@@ -134,7 +134,7 @@ pub trait InteractiveElement: Sized + Element {
             .mouse_up_listeners
             .push(Box::new(move |event, bounds, phase, cx| {
                 if phase == DispatchPhase::Bubble && bounds.visibly_contains(&event.position, cx) {
-                    (listener.borrowed())(event, cx)
+                    listener.borrowed()(event, cx)
                 }
             }));
         self
@@ -148,7 +148,7 @@ pub trait InteractiveElement: Sized + Element {
             move |event, bounds, phase, cx| {
                 if phase == DispatchPhase::Capture && !bounds.visibly_contains(&event.position, cx)
                 {
-                    (listener.borrowed())(event, cx)
+                    listener.borrowed()(event, cx)
                 }
             },
         ));
@@ -167,7 +167,7 @@ pub trait InteractiveElement: Sized + Element {
                     && event.button == button
                     && !bounds.visibly_contains(&event.position, cx)
                 {
-                    (listener.borrowed())(event, cx);
+                    listener.borrowed()(event, cx);
                 }
             }));
         self
@@ -180,7 +180,7 @@ pub trait InteractiveElement: Sized + Element {
         self.interactivity().mouse_move_listeners.push(Box::new(
             move |event, bounds, phase, cx| {
                 if phase == DispatchPhase::Bubble && bounds.visibly_contains(&event.position, cx) {
-                    (listener.borrowed())(event, cx);
+                    listener.borrowed()(event, cx);
                 }
             },
         ));
@@ -194,7 +194,7 @@ pub trait InteractiveElement: Sized + Element {
         self.interactivity().scroll_wheel_listeners.push(Box::new(
             move |event, bounds, phase, cx| {
                 if phase == DispatchPhase::Bubble && bounds.visibly_contains(&event.position, cx) {
-                    (listener.borrowed())(event, cx);
+                    listener.borrowed()(event, cx);
                 }
             },
         ));
@@ -211,7 +211,7 @@ pub trait InteractiveElement: Sized + Element {
             Box::new(move |action, phase, cx| {
                 let action = action.downcast_ref().unwrap();
                 if phase == DispatchPhase::Capture {
-                    (listener.borrowed())(action, cx)
+                    listener.borrowed()(action, cx)
                 }
             }),
         ));
@@ -242,7 +242,7 @@ pub trait InteractiveElement: Sized + Element {
             Box::new(move |action, phase, cx| {
                 let action = action.downcast_ref().unwrap();
                 if phase == DispatchPhase::Bubble {
-                    (listener.borrowed())(action, cx)
+                    listener.borrowed()(action, cx)
                 }
             }),
         ));
@@ -257,7 +257,7 @@ pub trait InteractiveElement: Sized + Element {
             .key_down_listeners
             .push(Box::new(move |event, phase, cx| {
                 if phase == DispatchPhase::Bubble {
-                    (listener.borrowed())(event, cx)
+                    listener.borrowed()(event, cx)
                 }
             }));
         self
@@ -271,7 +271,7 @@ pub trait InteractiveElement: Sized + Element {
             .key_down_listeners
             .push(Box::new(move |event, phase, cx| {
                 if phase == DispatchPhase::Capture {
-                    (listener.borrowed())(event, cx)
+                    listener.borrowed()(event, cx)
                 }
             }));
         self
@@ -282,7 +282,7 @@ pub trait InteractiveElement: Sized + Element {
             .key_up_listeners
             .push(Box::new(move |event, phase, cx| {
                 if phase == DispatchPhase::Bubble {
-                    (listener.borrowed())(event, cx)
+                    listener.borrowed()(event, cx)
                 }
             }));
         self
@@ -296,7 +296,7 @@ pub trait InteractiveElement: Sized + Element {
             .key_up_listeners
             .push(Box::new(move |event, phase, cx| {
                 if phase == DispatchPhase::Capture {
-                    (listener.borrowed())(event, cx)
+                    listener.borrowed()(event, cx)
                 }
             }));
         self
@@ -331,7 +331,7 @@ pub trait InteractiveElement: Sized + Element {
         self.interactivity().drop_listeners.push((
             TypeId::of::<W>(),
             Box::new(move |dragged_view, cx| {
-                (listener.borrowed())(&dragged_view.downcast().unwrap(), cx);
+                listener.borrowed()(&dragged_view.downcast().unwrap(), cx);
             }),
         ));
         self
@@ -458,7 +458,7 @@ pub trait FocusableElement: InteractiveElement {
             .focus_listeners
             .push(Box::new(move |focus_handle, event, cx| {
                 if event.focused.as_ref() == Some(focus_handle) {
-                    (listener.borrowed())(event, cx)
+                    listener.borrowed()(event, cx)
                 }
             }));
         self
@@ -472,7 +472,7 @@ pub trait FocusableElement: InteractiveElement {
             .focus_listeners
             .push(Box::new(move |focus_handle, event, cx| {
                 if event.blurred.as_ref() == Some(focus_handle) {
-                    (listener.borrowed())(event, cx)
+                    listener.borrowed()(event, cx)
                 }
             }));
         self
@@ -495,7 +495,7 @@ pub trait FocusableElement: InteractiveElement {
                     .map_or(false, |focused| focus_handle.contains(focused, cx));
 
                 if !descendant_blurred && descendant_focused {
-                    (listener.borrowed())(event, cx)
+                    listener.borrowed()(event, cx)
                 }
             }));
         self
@@ -517,7 +517,7 @@ pub trait FocusableElement: InteractiveElement {
                     .as_ref()
                     .map_or(false, |focused| focus_handle.contains(focused, cx));
                 if descendant_blurred && !descendant_focused {
-                    (listener.borrowed())(event, cx)
+                    listener.borrowed()(event, cx)
                 }
             }));
         self
@@ -891,7 +891,7 @@ impl Interactivity {
                             up: event.clone(),
                         };
                         for listener in &click_listeners {
-                            (listener.borrowed())(&mouse_click, cx);
+                            listener.borrowed()(&mouse_click, cx);
                         }
                     }
                     *pending_mouse_down.borrow_mut() = None;
