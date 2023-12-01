@@ -63,6 +63,7 @@ use language::{
 use lazy_static::lazy_static;
 use link_go_to_definition::{GoToDefinitionLink, InlayHighlight, LinkGoToDefinitionState};
 use lsp::{DiagnosticSeverity, LanguageServerId};
+use mouse_context_menu::MouseContextMenu;
 use movement::TextLayoutDetails;
 use multi_buffer::ToOffsetUtf16;
 pub use multi_buffer::{
@@ -505,8 +506,6 @@ pub struct Editor {
     ime_transaction: Option<TransactionId>,
     active_diagnostics: Option<ActiveDiagnosticGroup>,
     soft_wrap_mode_override: Option<language_settings::SoftWrap>,
-    // get_field_editor_theme: Option<Arc<GetFieldEditorTheme>>,
-    // override_text_style: Option<Box<OverrideTextStyle>>,
     project: Option<Model<Project>>,
     collaboration_hub: Option<Box<dyn CollaborationHub>>,
     blink_manager: Model<BlinkManager>,
@@ -520,7 +519,7 @@ pub struct Editor {
     inlay_background_highlights: TreeMap<Option<TypeId>, InlayBackgroundHighlight>,
     nav_history: Option<ItemNavHistory>,
     context_menu: RwLock<Option<ContextMenu>>,
-    // mouse_context_menu: View<context_menu::ContextMenu>,
+    mouse_context_menu: Option<MouseContextMenu>,
     completion_tasks: Vec<(CompletionId, Task<Option<()>>)>,
     next_completion_id: CompletionId,
     available_code_actions: Option<(Model<Buffer>, Arc<[CodeAction]>)>,
@@ -1719,7 +1718,6 @@ impl Editor {
             ime_transaction: Default::default(),
             active_diagnostics: None,
             soft_wrap_mode_override,
-            // get_field_editor_theme,
             collaboration_hub: project.clone().map(|project| Box::new(project) as _),
             project,
             blink_manager: blink_manager.clone(),
@@ -1733,8 +1731,7 @@ impl Editor {
             inlay_background_highlights: Default::default(),
             nav_history: None,
             context_menu: RwLock::new(None),
-            // mouse_context_menu: cx
-            //     .add_view(|cx| context_menu::ContextMenu::new(editor_view_id, cx)),
+            mouse_context_menu: None,
             completion_tasks: Default::default(),
             next_completion_id: 0,
             next_inlay_id: 0,
@@ -1743,7 +1740,6 @@ impl Editor {
             document_highlights_task: Default::default(),
             pending_rename: Default::default(),
             searchable: true,
-            // override_text_style: None,
             cursor_shape: Default::default(),
             autoindent_mode: Some(AutoindentMode::EachLine),
             collapse_matches: false,

@@ -13,6 +13,7 @@ use crate::{
         update_go_to_definition_link, update_inlay_link_and_hover_points, GoToDefinitionTrigger,
         LinkGoToDefinitionState,
     },
+    mouse_context_menu,
     scroll::scroll_amount::ScrollAmount,
     CursorShape, DisplayPoint, Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle,
     HalfPageDown, HalfPageUp, LineDown, LineUp, MoveDown, OpenExcerpts, PageDown, PageUp, Point,
@@ -22,11 +23,11 @@ use anyhow::Result;
 use collections::{BTreeMap, HashMap};
 use git::diff::DiffHunkStatus;
 use gpui::{
-    div, point, px, relative, size, transparent_black, Action, AnyElement, AsyncWindowContext,
-    AvailableSpace, BorrowWindow, Bounds, ContentMask, Corners, CursorStyle, DispatchPhase, Edges,
-    Element, ElementId, ElementInputHandler, Entity, EntityId, Hsla, InteractiveBounds,
-    InteractiveElement, IntoElement, LineLayout, ModifiersChangedEvent, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, RenderOnce,
+    div, overlay, point, px, relative, size, transparent_black, Action, AnchorCorner, AnyElement,
+    AsyncWindowContext, AvailableSpace, BorrowWindow, Bounds, ContentMask, Corners, CursorStyle,
+    DispatchPhase, Edges, Element, ElementId, ElementInputHandler, Entity, EntityId, Hsla,
+    InteractiveBounds, InteractiveElement, IntoElement, LineLayout, ModifiersChangedEvent,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, RenderOnce,
     ScrollWheelEvent, ShapedLine, SharedString, Size, StackingOrder, StatefulInteractiveElement,
     Style, Styled, TextRun, TextStyle, View, ViewContext, WeakView, WindowContext, WrappedLine,
 };
@@ -362,7 +363,7 @@ impl EditorElement {
         false
     }
 
-    fn mouse_down(
+    fn mouse_left_down(
         editor: &mut Editor,
         event: &MouseDownEvent,
         position_map: &PositionMap,
@@ -415,25 +416,25 @@ impl EditorElement {
         true
     }
 
-    // fn mouse_right_down(
-    //     editor: &mut Editor,
-    //     position: gpui::Point<Pixels>,
-    //     position_map: &PositionMap,
-    //     text_bounds: Bounds<Pixels>,
-    //     cx: &mut EventContext<Editor>,
-    // ) -> bool {
-    //     if !text_bounds.contains_point(position) {
-    //         return false;
-    //     }
-    //     let point_for_position = position_map.point_for_position(text_bounds, position);
-    //     mouse_context_menu::deploy_context_menu(
-    //         editor,
-    //         position,
-    //         point_for_position.previous_valid,
-    //         cx,
-    //     );
-    //     true
-    // }
+    fn mouse_right_down(
+        editor: &mut Editor,
+        event: &MouseDownEvent,
+        position_map: &PositionMap,
+        text_bounds: Bounds<Pixels>,
+        cx: &mut ViewContext<Editor>,
+    ) -> bool {
+        if !text_bounds.contains_point(&event.position) {
+            return false;
+        }
+        let point_for_position = position_map.point_for_position(text_bounds, event.position);
+        mouse_context_menu::deploy_context_menu(
+            editor,
+            event.position,
+            point_for_position.previous_valid,
+            cx,
+        );
+        true
+    }
 
     fn mouse_up(
         editor: &mut Editor,
@@ -1189,6 +1190,22 @@ impl EditorElement {
                                 current_y = popover_origin.y + size.height + HOVER_POPOVER_GAP;
                             }
                         }
+                    }
+
+                    if let Some(mouse_context_menu) =
+                        self.editor.read(cx).mouse_context_menu.as_ref()
+                    {
+                        let element = overlay()
+                            .position(mouse_context_menu.position)
+                            .child(mouse_context_menu.context_menu.clone())
+                            .anchor(AnchorCorner::TopLeft)
+                            .snap_to_window();
+                        element.draw(
+                            gpui::Point::default(),
+                            size(AvailableSpace::MinContent, AvailableSpace::MinContent),
+                            cx,
+                            |_, _| {},
+                        );
                     }
                 })
             },
@@ -2337,10 +2354,10 @@ impl EditorElement {
                     return;
                 }
 
-                let should_cancel = editor.update(cx, |editor, cx| {
+                let handled = editor.update(cx, |editor, cx| {
                     Self::scroll(editor, event, &position_map, &interactive_bounds, cx)
                 });
-                if should_cancel {
+                if handled {
                     cx.stop_propagation();
                 }
             }
@@ -2356,19 +2373,25 @@ impl EditorElement {
                     return;
                 }
 
-                let should_cancel = editor.update(cx, |editor, cx| {
-                    Self::mouse_down(
-                        editor,
-                        event,
-                        &position_map,
-                        text_bounds,
-                        gutter_bounds,
-                        &stacking_order,
-                        cx,
-                    )
-                });
+                let handled = match event.button {
+                    MouseButton::Left => editor.update(cx, |editor, cx| {
+                        Self::mouse_left_down(
+                            editor,
+                            event,
+                            &position_map,
+                            text_bounds,
+                            gutter_bounds,
+                            &stacking_order,
+                            cx,
+                        )
+                    }),
+                    MouseButton::Right => editor.update(cx, |editor, cx| {
+                        Self::mouse_right_down(editor, event, &position_map, text_bounds, cx)
+                    }),
+                    _ => false,
+                };
 
-                if should_cancel {
+                if handled {
                     cx.stop_propagation()
                 }
             }
@@ -2380,7 +2403,7 @@ impl EditorElement {
             let stacking_order = cx.stacking_order().clone();
 
             move |event: &MouseUpEvent, phase, cx| {
-                let should_cancel = editor.update(cx, |editor, cx| {
+                let handled = editor.update(cx, |editor, cx| {
                     Self::mouse_up(
                         editor,
                         event,
@@ -2391,26 +2414,11 @@ impl EditorElement {
                     )
                 });
 
-                if should_cancel {
+                if handled {
                     cx.stop_propagation()
                 }
             }
         });
-        //todo!()
-        // on_down(MouseButton::Right, {
-        //     let position_map = layout.position_map.clone();
-        //     move |event, editor, cx| {
-        //         if !Self::mouse_right_down(
-        //             editor,
-        //             event.position,
-        //             position_map.as_ref(),
-        //             text_bounds,
-        //             cx,
-        //         ) {
-        //             cx.propagate_event();
-        //         }
-        //     }
-        // });
         cx.on_mouse_event({
             let position_map = layout.position_map.clone();
             let editor = self.editor.clone();

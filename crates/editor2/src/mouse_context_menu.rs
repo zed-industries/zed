@@ -1,5 +1,14 @@
-use crate::{DisplayPoint, Editor, EditorMode, SelectMode};
-use gpui::{Pixels, Point, ViewContext};
+use crate::{
+    DisplayPoint, Editor, EditorMode, FindAllReferences, GoToDefinition, GoToTypeDefinition,
+    Rename, RevealInFinder, SelectMode, ToggleCodeActions,
+};
+use gpui::{DismissEvent, Pixels, Point, Subscription, View, ViewContext};
+
+pub struct MouseContextMenu {
+    pub(crate) position: Point<Pixels>,
+    pub(crate) context_menu: View<ui::ContextMenu>,
+    _subscription: Subscription,
+}
 
 pub fn deploy_context_menu(
     editor: &mut Editor,
@@ -7,50 +16,57 @@ pub fn deploy_context_menu(
     point: DisplayPoint,
     cx: &mut ViewContext<Editor>,
 ) {
-    todo!();
+    if !editor.is_focused(cx) {
+        editor.focus(cx);
+    }
 
-    // if !editor.focused {
-    //     cx.focus_self();
-    // }
+    // Don't show context menu for inline editors
+    if editor.mode() != EditorMode::Full {
+        return;
+    }
 
-    // // Don't show context menu for inline editors
-    // if editor.mode() != EditorMode::Full {
-    //     return;
-    // }
+    // Don't show the context menu if there isn't a project associated with this editor
+    if editor.project.is_none() {
+        return;
+    }
 
-    // // Don't show the context menu if there isn't a project associated with this editor
-    // if editor.project.is_none() {
-    //     return;
-    // }
+    // Move the cursor to the clicked location so that dispatched actions make sense
+    editor.change_selections(None, cx, |s| {
+        s.clear_disjoint();
+        s.set_pending_display_range(point..point, SelectMode::Character);
+    });
 
-    // // Move the cursor to the clicked location so that dispatched actions make sense
-    // editor.change_selections(None, cx, |s| {
-    //     s.clear_disjoint();
-    //     s.set_pending_display_range(point..point, SelectMode::Character);
-    // });
+    let context_menu = ui::ContextMenu::build(cx, |menu, cx| {
+        menu.action("Rename Symbol", Box::new(Rename), cx)
+            .action("Go to Definition", Box::new(GoToDefinition), cx)
+            .action("Go to Type Definition", Box::new(GoToTypeDefinition), cx)
+            .action("Find All References", Box::new(FindAllReferences), cx)
+            .action(
+                "Code Actions",
+                Box::new(ToggleCodeActions {
+                    deployed_from_indicator: false,
+                }),
+                cx,
+            )
+            .separator()
+            .action("Reveal in Finder", Box::new(RevealInFinder), cx)
+    });
+    let context_menu_focus = context_menu.focus_handle(cx);
+    cx.focus(&context_menu_focus);
 
-    // editor.mouse_context_menu.update(cx, |menu, cx| {
-    //     menu.show(
-    //         position,
-    //         AnchorCorner::TopLeft,
-    //         vec![
-    //             ContextMenuItem::action("Rename Symbol", Rename),
-    //             ContextMenuItem::action("Go to Definition", GoToDefinition),
-    //             ContextMenuItem::action("Go to Type Definition", GoToTypeDefinition),
-    //             ContextMenuItem::action("Find All References", FindAllReferences),
-    //             ContextMenuItem::action(
-    //                 "Code Actions",
-    //                 ToggleCodeActions {
-    //                     deployed_from_indicator: false,
-    //                 },
-    //             ),
-    //             ContextMenuItem::Separator,
-    //             ContextMenuItem::action("Reveal in Finder", RevealInFinder),
-    //         ],
-    //         cx,
-    //     );
-    // });
-    // cx.notify();
+    let _subscription = cx.subscribe(&context_menu, move |this, _, event: &DismissEvent, cx| {
+        this.mouse_context_menu.take();
+        if context_menu_focus.contains_focused(cx) {
+            this.focus(cx);
+        }
+    });
+
+    editor.mouse_context_menu = Some(MouseContextMenu {
+        position,
+        context_menu,
+        _subscription,
+    });
+    cx.notify();
 }
 
 // #[cfg(test)]
