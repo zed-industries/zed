@@ -8,6 +8,7 @@ pub struct Button {
     base: ButtonLike,
     label: SharedString,
     label_color: Option<Color>,
+    selected_label: Option<SharedString>,
 }
 
 impl Button {
@@ -16,11 +17,17 @@ impl Button {
             base: ButtonLike::new(id),
             label: label.into(),
             label_color: None,
+            selected_label: None,
         }
     }
 
     pub fn color(mut self, label_color: impl Into<Option<Color>>) -> Self {
         self.label_color = label_color.into();
+        self
+    }
+
+    pub fn selected_label<L: Into<SharedString>>(mut self, label: impl Into<Option<L>>) -> Self {
+        self.selected_label = label.into().map(Into::into);
         self
     }
 }
@@ -74,6 +81,11 @@ impl RenderOnce for Button {
     type Rendered = ButtonLike;
 
     fn render(self, _cx: &mut WindowContext) -> Self::Rendered {
+        let label = self
+            .selected_label
+            .filter(|_| self.base.selected)
+            .unwrap_or(self.label);
+
         let label_color = if self.base.disabled {
             Color::Disabled
         } else if self.base.selected {
@@ -83,7 +95,7 @@ impl RenderOnce for Button {
         };
 
         self.base.child(
-            Label::new(self.label)
+            Label::new(label)
                 .color(label_color)
                 .line_height_style(LineHeightStyle::UILabel),
         )
