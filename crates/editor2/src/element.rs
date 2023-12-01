@@ -139,8 +139,6 @@ impl EditorElement {
         register_action(view, cx, Editor::move_right);
         register_action(view, cx, Editor::move_down);
         register_action(view, cx, Editor::move_up);
-        // on_action(cx, Editor::new_file); todo!()
-        // on_action(cx, Editor::new_file_in_direction); todo!()
         register_action(view, cx, Editor::cancel);
         register_action(view, cx, Editor::newline);
         register_action(view, cx, Editor::newline_above);
