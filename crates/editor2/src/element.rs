@@ -9,8 +9,9 @@ use crate::{
         self, hover_at, HOVER_POPOVER_GAP, MIN_POPOVER_CHARACTER_WIDTH, MIN_POPOVER_LINE_HEIGHT,
     },
     link_go_to_definition::{
-        go_to_fetched_definition, go_to_fetched_type_definition, update_go_to_definition_link,
-        update_inlay_link_and_hover_points, GoToDefinitionTrigger,
+        go_to_fetched_definition, go_to_fetched_type_definition, show_link_definition,
+        update_go_to_definition_link, update_inlay_link_and_hover_points, GoToDefinitionTrigger,
+        LinkGoToDefinitionState,
     },
     scroll::scroll_amount::ScrollAmount,
     CursorShape, DisplayPoint, Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle,
@@ -22,12 +23,12 @@ use collections::{BTreeMap, HashMap};
 use git::diff::DiffHunkStatus;
 use gpui::{
     div, point, px, relative, size, transparent_black, Action, AnyElement, AsyncWindowContext,
-    AvailableSpace, BorrowWindow, Bounds, ContentMask, Corners, DispatchPhase, Edges, Element,
-    ElementId, ElementInputHandler, Entity, EntityId, Hsla, InteractiveBounds, InteractiveElement,
-    IntoElement, LineLayout, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    ParentElement, Pixels, RenderOnce, ScrollWheelEvent, ShapedLine, SharedString, Size,
-    StackingOrder, StatefulInteractiveElement, Style, Styled, TextRun, TextStyle, View,
-    ViewContext, WeakView, WindowContext, WrappedLine,
+    AvailableSpace, BorrowWindow, Bounds, ContentMask, Corners, CursorStyle, DispatchPhase, Edges,
+    Element, ElementId, ElementInputHandler, Entity, EntityId, Hsla, InteractiveBounds,
+    InteractiveElement, IntoElement, LineLayout, ModifiersChangedEvent, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, RenderOnce,
+    ScrollWheelEvent, ShapedLine, SharedString, Size, StackingOrder, StatefulInteractiveElement,
+    Style, Styled, TextRun, TextStyle, View, ViewContext, WeakView, WindowContext, WrappedLine,
 };
 use itertools::Itertools;
 use language::language_settings::ShowWhitespaceSetting;
@@ -309,6 +310,56 @@ impl EditorElement {
         register_action(view, cx, Editor::context_menu_prev);
         register_action(view, cx, Editor::context_menu_next);
         register_action(view, cx, Editor::context_menu_last);
+    }
+
+    fn register_key_listeners(&self, cx: &mut WindowContext) {
+        cx.on_key_event({
+            let editor = self.editor.clone();
+            move |event: &ModifiersChangedEvent, phase, cx| {
+                if phase != DispatchPhase::Bubble {
+                    return;
+                }
+
+                if editor.update(cx, |editor, cx| Self::modifiers_changed(editor, event, cx)) {
+                    cx.stop_propagation();
+                }
+            }
+        });
+    }
+
+    fn modifiers_changed(
+        editor: &mut Editor,
+        event: &ModifiersChangedEvent,
+        cx: &mut ViewContext<Editor>,
+    ) -> bool {
+        let pending_selection = editor.has_pending_selection();
+
+        if let Some(point) = &editor.link_go_to_definition_state.last_trigger_point {
+            if event.command && !pending_selection {
+                let point = point.clone();
+                let snapshot = editor.snapshot(cx);
+                let kind = point.definition_kind(event.shift);
+
+                show_link_definition(kind, editor, point, snapshot, cx);
+                return false;
+            }
+        }
+
+        {
+            if editor.link_go_to_definition_state.symbol_range.is_some()
+                || !editor.link_go_to_definition_state.definitions.is_empty()
+            {
+                editor.link_go_to_definition_state.symbol_range.take();
+                editor.link_go_to_definition_state.definitions.clear();
+                cx.notify();
+            }
+
+            editor.link_go_to_definition_state.task = None;
+
+            editor.clear_highlights::<LinkGoToDefinitionState>(cx);
+        }
+
+        false
     }
 
     fn mouse_down(
@@ -828,15 +879,19 @@ impl EditorElement {
                 bounds: text_bounds,
             }),
             |cx| {
-                // todo!("cursor region")
-                // cx.scene().push_cursor_region(CursorRegion {
-                //     bounds,
-                //     style: if !editor.link_go_to_definition_state.definitions.is_empty {
-                //         CursorStyle::PointingHand
-                //     } else {
-                //         CursorStyle::IBeam
-                //     },
-                // });
+                if text_bounds.contains_point(&cx.mouse_position()) {
+                    if self
+                        .editor
+                        .read(cx)
+                        .link_go_to_definition_state
+                        .definitions
+                        .is_empty()
+                    {
+                        cx.set_cursor_style(CursorStyle::IBeam);
+                    } else {
+                        cx.set_cursor_style(CursorStyle::PointingHand);
+                    }
+                }
 
                 let fold_corner_radius = 0.15 * layout.position_map.line_height;
                 cx.with_element_id(Some("folds"), |cx| {
@@ -2656,6 +2711,7 @@ impl Element for EditorElement {
         let dispatch_context = self.editor.read(cx).dispatch_context(cx);
         cx.with_key_dispatch(dispatch_context, Some(focus_handle.clone()), |_, cx| {
             self.register_actions(cx);
+            self.register_key_listeners(cx);
 
             // We call with_z_index to establish a new stacking context.
             cx.with_z_index(0, |cx| {
