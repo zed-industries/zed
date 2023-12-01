@@ -5,7 +5,7 @@ pub mod model;
 use std::path::Path;
 
 use anyhow::{anyhow, bail, Context, Result};
-use db2::{define_connection, query, sqlez::connection::Connection, sqlez_macros::sql};
+use db::{define_connection, query, sqlez::connection::Connection, sqlez_macros::sql};
 use gpui::WindowBounds;
 
 use util::{unzip_option, ResultExt};
@@ -552,7 +552,7 @@ impl WorkspaceDb {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use db2::open_test_db;
+    use db::open_test_db;
     use gpui;
 
     #[gpui::test]

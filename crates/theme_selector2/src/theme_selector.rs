@@ -2,14 +2,14 @@ use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, AppContext, DismissEvent, EventEmitter, FocusableView, ParentElement, Render,
-    SharedString, View, ViewContext, VisualContext, WeakView,
+    actions, AppContext, DismissEvent, EventEmitter, FocusableView, Render, SharedString, View,
+    ViewContext, VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};
 use settings::{update_settings_file, SettingsStore};
 use std::sync::Arc;
-use theme::{ActiveTheme, Theme, ThemeRegistry, ThemeSettings};
-use ui::ListItem;
+use theme::{Theme, ThemeRegistry, ThemeSettings};
+use ui::{prelude::*, ListItem};
 use util::ResultExt;
 use workspace::{ui::HighlightedLabel, Workspace};
 

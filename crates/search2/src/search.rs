@@ -4,7 +4,7 @@ use gpui::{actions, Action, AppContext, IntoElement};
 pub use mode::SearchMode;
 use project::search::SearchQuery;
 use ui::prelude::*;
-use ui::{ButtonStyle2, Icon, IconButton};
+use ui::{ButtonStyle, Icon, IconButton};
 //pub use project_search::{ProjectSearchBar, ProjectSearchView};
 // use theme::components::{
 //     action_button::Button, svg::Svg, ComponentExt, IconButtonStyle, ToggleIconButtonStyle,
@@ -91,8 +91,8 @@ impl SearchOptions {
                     cx.dispatch_action(action.boxed_clone());
                 }
             })
-            .style(ButtonStyle2::Subtle)
-            .when(active, |button| button.style(ButtonStyle2::Filled))
+            .style(ButtonStyle::Subtle)
+            .when(active, |button| button.style(ButtonStyle::Filled))
     }
 }
 
@@ -103,8 +103,8 @@ fn toggle_replace_button(active: bool) -> impl IntoElement {
             cx.dispatch_action(Box::new(ToggleReplace));
             cx.notify();
         })
-        .style(ButtonStyle2::Subtle)
-        .when(active, |button| button.style(ButtonStyle2::Filled))
+        .style(ButtonStyle::Subtle)
+        .when(active, |button| button.style(ButtonStyle::Filled))
 }
 
 fn render_replace_button(

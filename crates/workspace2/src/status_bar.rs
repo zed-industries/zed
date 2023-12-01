@@ -52,22 +52,13 @@ impl Render for StatusBar {
                 h_stack()
                     .gap_4()
                     .child(
-                        h_stack()
-                            .gap_1()
-                            .child(
-                                // TODO: Line / column numbers
-                                div()
-                                    .border()
-                                    .border_color(gpui::red())
-                                    .child(Button::new("status_line_column_numbers", "15:22")),
-                            )
-                            .child(
-                                // TODO: Language picker
-                                div()
-                                    .border()
-                                    .border_color(gpui::red())
-                                    .child(Button::new("status_buffer_language", "Rust")),
-                            ),
+                        h_stack().gap_1().child(
+                            // TODO: Language picker
+                            div()
+                                .border()
+                                .border_color(gpui::red())
+                                .child(Button::new("status_buffer_language", "Rust")),
+                        ),
                     )
                     .child(
                         h_stack()
@@ -133,7 +124,7 @@ impl StatusBar {
         h_stack()
             .items_center()
             .gap_2()
-            .children(self.right_items.iter().map(|item| item.to_any()))
+            .children(self.right_items.iter().rev().map(|item| item.to_any()))
     }
 }
 

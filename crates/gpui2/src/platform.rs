@@ -158,6 +158,11 @@ pub(crate) trait PlatformWindow {
     fn draw(&self, scene: Scene);
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
+
+    #[cfg(any(test, feature = "test-support"))]
+    fn as_test(&self) -> Option<&TestWindow> {
+        None
+    }
 }
 
 pub trait PlatformDispatcher: Send + Sync {

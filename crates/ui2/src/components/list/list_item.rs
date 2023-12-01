@@ -83,11 +83,6 @@ impl ListItem {
         self
     }
 
-    pub fn selected(mut self, selected: bool) -> Self {
-        self.selected = selected;
-        self
-    }
-
     pub fn left_child(mut self, left_content: impl IntoElement) -> Self {
         self.left_slot = Some(left_content.into_any_element());
         self
@@ -105,6 +100,13 @@ impl ListItem {
 
     pub fn left_avatar(mut self, left_avatar: impl Into<ImageSource>) -> Self {
         self.left_slot = Some(Avatar::source(left_avatar.into()).into_any_element());
+        self
+    }
+}
+
+impl Selectable for ListItem {
+    fn selected(mut self, selected: bool) -> Self {
+        self.selected = selected;
         self
     }
 }

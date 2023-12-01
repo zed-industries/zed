@@ -655,6 +655,20 @@ pub struct Corners<T: Clone + Default + Debug> {
     pub bottom_left: T,
 }
 
+impl<T> Corners<T>
+where
+    T: Clone + Default + Debug,
+{
+    pub fn all(value: T) -> Self {
+        Self {
+            top_left: value.clone(),
+            top_right: value.clone(),
+            bottom_right: value.clone(),
+            bottom_left: value,
+        }
+    }
+}
+
 impl Corners<AbsoluteLength> {
     pub fn to_pixels(&self, size: Size<Pixels>, rem_size: Pixels) -> Corners<Pixels> {
         let max = size.width.max(size.height) / 2.;

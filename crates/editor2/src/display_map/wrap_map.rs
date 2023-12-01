@@ -162,7 +162,7 @@ impl WrapMap {
                 {
                     let tab_snapshot = new_snapshot.tab_snapshot.clone();
                     let range = TabPoint::zero()..tab_snapshot.max_point();
-                    let edits = new_snapshot
+                    edits = new_snapshot
                         .update(
                             tab_snapshot,
                             &[TabEdit {

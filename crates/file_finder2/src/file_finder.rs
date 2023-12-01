@@ -15,7 +15,7 @@ use std::{
     },
 };
 use text::Point;
-use ui::{v_stack, HighlightedLabel, ListItem};
+use ui::{prelude::*, v_stack, HighlightedLabel, ListItem};
 use util::{paths::PathLikeWithPosition, post_inc, ResultExt};
 use workspace::Workspace;
 
@@ -1256,7 +1256,7 @@ mod tests {
         //
         // TODO: without closing, the opened items do not propagate their history changes for some reason
         // it does work in real app though, only tests do not propagate.
-        workspace.update(cx, |_, cx| dbg!(cx.focused()));
+        workspace.update(cx, |_, cx| cx.focused());
 
         let initial_history = open_close_queried_buffer("fir", 1, "first.rs", &workspace, cx).await;
         assert!(
