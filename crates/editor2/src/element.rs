@@ -2613,13 +2613,13 @@ impl Element for EditorElement {
                         move |known_dimensions, available_space, cx| {
                             editor_handle
                                 .update(cx, |editor, cx| {
-                                    dbg!(compute_auto_height_layout(
+                                    compute_auto_height_layout(
                                         editor,
                                         max_lines,
                                         max_line_number_width,
                                         known_dimensions,
                                         cx,
-                                    ))
+                                    )
                                 })
                                 .unwrap_or_default()
                         },
