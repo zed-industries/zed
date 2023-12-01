@@ -36,121 +36,120 @@ use workspace::{
     NavigationEntry, ViewId,
 };
 
-// todo(finish edit tests)
-// #[gpui::test]
-// fn test_edit_events(cx: &mut TestAppContext) {
-//     init_test(cx, |_| {});
+#[gpui::test]
+fn test_edit_events(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
 
-//     let buffer = cx.build_model(|cx| {
-//         let mut buffer = language::Buffer::new(0, cx.entity_id().as_u64(), "123456");
-//         buffer.set_group_interval(Duration::from_secs(1));
-//         buffer
-//     });
+    let buffer = cx.build_model(|cx| {
+        let mut buffer = language::Buffer::new(0, cx.entity_id().as_u64(), "123456");
+        buffer.set_group_interval(Duration::from_secs(1));
+        buffer
+    });
 
-//     let events = Rc::new(RefCell::new(Vec::new()));
-//     let editor1 = cx.add_window({
-//         let events = events.clone();
-//         |cx| {
-//             let view = cx.view().clone();
-//             cx.subscribe(&view, move |_, _, event, _| {
-//                 if matches!(event, Event::Edited | Event::BufferEdited) {
-//                     events.borrow_mut().push(("editor1", event.clone()));
-//                 }
-//             })
-//             .detach();
-//             Editor::for_buffer(buffer.clone(), None, cx)
-//         }
-//     });
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let editor1 = cx.add_window({
+        let events = events.clone();
+        |cx| {
+            let view = cx.view().clone();
+            cx.subscribe(&view, move |_, _, event: &EditorEvent, _| {
+                if matches!(event, EditorEvent::Edited | EditorEvent::BufferEdited) {
+                    events.borrow_mut().push(("editor1", event.clone()));
+                }
+            })
+            .detach();
+            Editor::for_buffer(buffer.clone(), None, cx)
+        }
+    });
 
-//     let editor2 = cx.add_window({
-//         let events = events.clone();
-//         |cx| {
-//             cx.subscribe(&cx.view().clone(), move |_, _, event, _| {
-//                 if matches!(event, Event::Edited | Event::BufferEdited) {
-//                     events.borrow_mut().push(("editor2", event.clone()));
-//                 }
-//             })
-//             .detach();
-//             Editor::for_buffer(buffer.clone(), None, cx)
-//         }
-//     });
+    let editor2 = cx.add_window({
+        let events = events.clone();
+        |cx| {
+            cx.subscribe(&cx.view().clone(), move |_, _, event: &EditorEvent, _| {
+                if matches!(event, EditorEvent::Edited | EditorEvent::BufferEdited) {
+                    events.borrow_mut().push(("editor2", event.clone()));
+                }
+            })
+            .detach();
+            Editor::for_buffer(buffer.clone(), None, cx)
+        }
+    });
 
-//     assert_eq!(mem::take(&mut *events.borrow_mut()), []);
+    assert_eq!(mem::take(&mut *events.borrow_mut()), []);
 
-//     // Mutating editor 1 will emit an `Edited` event only for that editor.
-//     editor1.update(cx, |editor, cx| editor.insert("X", cx));
-//     assert_eq!(
-//         mem::take(&mut *events.borrow_mut()),
-//         [
-//             ("editor1", Event::Edited),
-//             ("editor1", Event::BufferEdited),
-//             ("editor2", Event::BufferEdited),
-//         ]
-//     );
+    // Mutating editor 1 will emit an `Edited` event only for that editor.
+    editor1.update(cx, |editor, cx| editor.insert("X", cx));
+    assert_eq!(
+        mem::take(&mut *events.borrow_mut()),
+        [
+            ("editor1", EditorEvent::Edited),
+            ("editor1", EditorEvent::BufferEdited),
+            ("editor2", EditorEvent::BufferEdited),
+        ]
+    );
 
-//     // Mutating editor 2 will emit an `Edited` event only for that editor.
-//     editor2.update(cx, |editor, cx| editor.delete(&Delete, cx));
-//     assert_eq!(
-//         mem::take(&mut *events.borrow_mut()),
-//         [
-//             ("editor2", Event::Edited),
-//             ("editor1", Event::BufferEdited),
-//             ("editor2", Event::BufferEdited),
-//         ]
-//     );
+    // Mutating editor 2 will emit an `Edited` event only for that editor.
+    editor2.update(cx, |editor, cx| editor.delete(&Delete, cx));
+    assert_eq!(
+        mem::take(&mut *events.borrow_mut()),
+        [
+            ("editor2", EditorEvent::Edited),
+            ("editor1", EditorEvent::BufferEdited),
+            ("editor2", EditorEvent::BufferEdited),
+        ]
+    );
 
-//     // Undoing on editor 1 will emit an `Edited` event only for that editor.
-//     editor1.update(cx, |editor, cx| editor.undo(&Undo, cx));
-//     assert_eq!(
-//         mem::take(&mut *events.borrow_mut()),
-//         [
-//             ("editor1", Event::Edited),
-//             ("editor1", Event::BufferEdited),
-//             ("editor2", Event::BufferEdited),
-//         ]
-//     );
+    // Undoing on editor 1 will emit an `Edited` event only for that editor.
+    editor1.update(cx, |editor, cx| editor.undo(&Undo, cx));
+    assert_eq!(
+        mem::take(&mut *events.borrow_mut()),
+        [
+            ("editor1", EditorEvent::Edited),
+            ("editor1", EditorEvent::BufferEdited),
+            ("editor2", EditorEvent::BufferEdited),
+        ]
+    );
 
-//     // Redoing on editor 1 will emit an `Edited` event only for that editor.
-//     editor1.update(cx, |editor, cx| editor.redo(&Redo, cx));
-//     assert_eq!(
-//         mem::take(&mut *events.borrow_mut()),
-//         [
-//             ("editor1", Event::Edited),
-//             ("editor1", Event::BufferEdited),
-//             ("editor2", Event::BufferEdited),
-//         ]
-//     );
+    // Redoing on editor 1 will emit an `Edited` event only for that editor.
+    editor1.update(cx, |editor, cx| editor.redo(&Redo, cx));
+    assert_eq!(
+        mem::take(&mut *events.borrow_mut()),
+        [
+            ("editor1", EditorEvent::Edited),
+            ("editor1", EditorEvent::BufferEdited),
+            ("editor2", EditorEvent::BufferEdited),
+        ]
+    );
 
-//     // Undoing on editor 2 will emit an `Edited` event only for that editor.
-//     editor2.update(cx, |editor, cx| editor.undo(&Undo, cx));
-//     assert_eq!(
-//         mem::take(&mut *events.borrow_mut()),
-//         [
-//             ("editor2", Event::Edited),
-//             ("editor1", Event::BufferEdited),
-//             ("editor2", Event::BufferEdited),
-//         ]
-//     );
+    // Undoing on editor 2 will emit an `Edited` event only for that editor.
+    editor2.update(cx, |editor, cx| editor.undo(&Undo, cx));
+    assert_eq!(
+        mem::take(&mut *events.borrow_mut()),
+        [
+            ("editor2", EditorEvent::Edited),
+            ("editor1", EditorEvent::BufferEdited),
+            ("editor2", EditorEvent::BufferEdited),
+        ]
+    );
 
-//     // Redoing on editor 2 will emit an `Edited` event only for that editor.
-//     editor2.update(cx, |editor, cx| editor.redo(&Redo, cx));
-//     assert_eq!(
-//         mem::take(&mut *events.borrow_mut()),
-//         [
-//             ("editor2", Event::Edited),
-//             ("editor1", Event::BufferEdited),
-//             ("editor2", Event::BufferEdited),
-//         ]
-//     );
+    // Redoing on editor 2 will emit an `Edited` event only for that editor.
+    editor2.update(cx, |editor, cx| editor.redo(&Redo, cx));
+    assert_eq!(
+        mem::take(&mut *events.borrow_mut()),
+        [
+            ("editor2", EditorEvent::Edited),
+            ("editor1", EditorEvent::BufferEdited),
+            ("editor2", EditorEvent::BufferEdited),
+        ]
+    );
 
-//     // No event is emitted when the mutation is a no-op.
-//     editor2.update(cx, |editor, cx| {
-//         editor.change_selections(None, cx, |s| s.select_ranges([0..0]));
+    // No event is emitted when the mutation is a no-op.
+    editor2.update(cx, |editor, cx| {
+        editor.change_selections(None, cx, |s| s.select_ranges([0..0]));
 
-//         editor.backspace(&Backspace, cx);
-//     });
-//     assert_eq!(mem::take(&mut *events.borrow_mut()), []);
-// }
+        editor.backspace(&Backspace, cx);
+    });
+    assert_eq!(mem::take(&mut *events.borrow_mut()), []);
+}
 
 #[gpui::test]
 fn test_undo_redo_with_selection_restoration(cx: &mut TestAppContext) {
