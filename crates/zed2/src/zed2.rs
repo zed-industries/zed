@@ -136,8 +136,8 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
         //         cx.add_view(|cx| CollabTitlebarItem::new(workspace, &workspace_handle, cx));
         //     workspace.set_titlebar_item(collab_titlebar_item.into_any(), cx);
 
-        //     let copilot =
-        //         cx.add_view(|cx| copilot_button::CopilotButton::new(app_state.fs.clone(), cx));
+        let copilot =
+            cx.build_view(|cx| copilot_button::CopilotButton::new(app_state.fs.clone(), cx));
         let diagnostic_summary =
             cx.build_view(|cx| diagnostics::items::DiagnosticIndicator::new(workspace, cx));
         let activity_indicator =
@@ -154,7 +154,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             status_bar.add_left_item(activity_indicator, cx);
 
             // status_bar.add_right_item(feedback_button, cx);
-            // status_bar.add_right_item(copilot, cx);
+            status_bar.add_right_item(copilot, cx);
             status_bar.add_right_item(active_buffer_language, cx);
             // status_bar.add_right_item(vim_mode_indicator, cx);
             status_bar.add_right_item(cursor_position, cx);

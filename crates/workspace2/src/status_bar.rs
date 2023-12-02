@@ -6,7 +6,7 @@ use gpui::{
     WindowContext,
 };
 use ui::prelude::*;
-use ui::{h_stack, Button, Icon, IconButton};
+use ui::{h_stack, Icon, IconButton};
 use util::ResultExt;
 
 pub trait StatusItemView: Render {
@@ -52,22 +52,13 @@ impl Render for StatusBar {
                 h_stack()
                     .gap_4()
                     .child(
-                        h_stack()
-                            .gap_1()
-                            .child(
-                                // Github tool
-                                div()
-                                    .border()
-                                    .border_color(gpui::red())
-                                    .child(IconButton::new("status-copilot", Icon::Copilot)),
-                            )
-                            .child(
-                                // Feedback Tool
-                                div()
-                                    .border()
-                                    .border_color(gpui::red())
-                                    .child(IconButton::new("status-feedback", Icon::Envelope)),
-                            ),
+                        h_stack().gap_1().child(
+                            // Feedback Tool
+                            div()
+                                .border()
+                                .border_color(gpui::red())
+                                .child(IconButton::new("status-feedback", Icon::Envelope)),
+                        ),
                     )
                     .child(
                         // Right Dock

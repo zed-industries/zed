@@ -2144,6 +2144,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "copilot_button2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "copilot2",
+ "editor2",
+ "fs2",
+ "futures 0.3.28",
+ "gpui2",
+ "language2",
+ "settings2",
+ "smol",
+ "theme2",
+ "util",
+ "workspace2",
+ "zed_actions2",
+]
+
+[[package]]
 name = "core-foundation"
 version = "0.9.3"
 source = "git+https://github.com/servo/core-foundation-rs?rev=079665882507dd5e2ff77db3de5070c1f6c0fb85#079665882507dd5e2ff77db3de5070c1f6c0fb85"
@@ -11771,6 +11790,7 @@ dependencies = [
  "collections",
  "command_palette2",
  "copilot2",
+ "copilot_button2",
  "ctor",
  "db2",
  "diagnostics2",
