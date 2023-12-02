@@ -182,7 +182,7 @@ impl TerminalElement {
         // terminal_theme: &TerminalStyle,
         text_system: &TextSystem,
         hyperlink: Option<(HighlightStyle, &RangeInclusive<AlacPoint>)>,
-        cx: &mut WindowContext<'_>,
+        cx: &WindowContext<'_>,
     ) -> (Vec<LayoutCell>, Vec<LayoutRect>) {
         let theme_colors = cx.theme().colors();
         let mut cells = vec![];
@@ -362,35 +362,41 @@ impl TerminalElement {
     }
 
     fn compute_layout(&self, bounds: Bounds<gpui::Pixels>, cx: &mut WindowContext) -> LayoutState {
-        let settings = ThemeSettings::get_global(cx);
-        let terminal_settings = TerminalSettings::get_global(cx);
+        let settings = ThemeSettings::get_global(cx).clone();
 
         //Setup layout information
         // todo!(Terminal tooltips)
         // let link_style = settings.theme.editor.link_definition;
         // let tooltip_style = settings.theme.tooltip.clone();
 
-        let text_system = cx.text_system();
-        let font_size = font_size(&terminal_settings, cx).unwrap_or(settings.buffer_font_size(cx));
-        let font_family: SharedString = terminal_settings
+        let buffer_font_size = settings.buffer_font_size(cx);
+
+        let terminal_settings = TerminalSettings::get_global(cx);
+        let font_family = terminal_settings
             .font_family
             .as_ref()
-            .map(|string| SharedString::from(*string))
+            .map(|string| string.clone().into())
             .unwrap_or(settings.buffer_font.family);
 
         let font_features = terminal_settings
             .font_features
-            .as_ref()
-            .unwrap_or(&settings.buffer_font.features);
+            .clone()
+            .unwrap_or(settings.buffer_font.features.clone());
+
+        let line_height = terminal_settings.line_height.value();
+        let font_size = terminal_settings.font_size.clone();
+
+        let font_size =
+            font_size.map_or(buffer_font_size, |size| theme::adjusted_font_size(size, cx));
 
         let settings = ThemeSettings::get_global(cx);
-        let theme = cx.theme();
+        let theme = cx.theme().clone();
         let text_style = TextStyle {
             font_family,
-            font_features: *font_features,
+            font_features,
             font_size: font_size.into(),
             font_style: FontStyle::Normal,
-            line_height: terminal_settings.line_height.value().into(),
+            line_height: line_height.into(),
             background_color: None,
             white_space: WhiteSpace::Normal,
             // These are going to be overridden per-cell
@@ -399,14 +405,14 @@ impl TerminalElement {
             font_weight: FontWeight::NORMAL,
         };
 
+        let text_system = cx.text_system();
         let selection_color = theme.players().local();
         let match_color = theme.colors().search_match_background;
         let gutter;
         let dimensions = {
             let rem_size = cx.rem_size();
             let font_pixels = text_style.font_size.to_pixels(rem_size);
-            let line_height =
-                font_pixels * terminal_settings.line_height.value().to_pixels(rem_size);
+            let line_height = font_pixels * line_height.to_pixels(rem_size);
             let font_id = cx.text_system().font_id(&text_style.font()).unwrap();
 
             // todo!(do we need to keep this unwrap?)
@@ -475,7 +481,7 @@ impl TerminalElement {
             selection,
             cursor,
             ..
-        } = { &terminal_handle.read(cx).last_content };
+        } = &terminal_handle.read(cx).last_content;
 
         // searches, highlights to a single range representations
         let mut relative_highlighted_ranges = Vec::new();
@@ -516,12 +522,13 @@ impl TerminalElement {
                     theme.players().local().cursor
                 };
 
+                let len = str_trxt.len();
                 cx.text_system()
-                    .layout_line(
-                        &str_trxt,
+                    .shape_line(
+                        str_trxt.into(),
                         text_style.font_size.to_pixels(cx.rem_size()),
                         &[TextRun {
-                            len: str_trxt.len(),
+                            len,
                             font: text_style.font(),
                             color,
                             background_color: None,
@@ -549,7 +556,7 @@ impl TerminalElement {
                         cursor_position,
                         block_width,
                         dimensions.line_height,
-                        terminal_theme.cursor,
+                        theme.players().local().cursor,
                         shape,
                         text,
                     )
@@ -962,12 +969,6 @@ fn to_highlighted_range_lines(
     }
 
     Some((start_y, highlighted_range_lines))
-}
-
-fn font_size(terminal_settings: &TerminalSettings, cx: &mut AppContext) -> Option<Pixels> {
-    terminal_settings
-        .font_size
-        .map(|size| theme::adjusted_font_size(size, cx))
 }
 
 // mappings::colors::convert_color
