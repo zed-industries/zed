@@ -5,8 +5,8 @@ use anyhow::anyhow;
 use editor::Editor;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, Action, AppContext, DismissEvent, Div, EventEmitter, FocusHandle, FocusableView,
-    Model, ParentElement, Render, Styled, View, ViewContext, VisualContext, WeakView,
+    actions, AppContext, DismissEvent, Div, EventEmitter, FocusHandle, FocusableView, Model,
+    ParentElement, Render, Styled, View, ViewContext, VisualContext, WeakView,
 };
 use language::{Buffer, LanguageRegistry};
 use picker::{Picker, PickerDelegate};
@@ -27,8 +27,7 @@ pub struct LanguageSelector {
 }
 
 impl LanguageSelector {
-    fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
-        dbg!("regsiter");
+    fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
         workspace.register_action(move |workspace, _: &Toggle, cx| {
             Self::toggle(workspace, cx);
         });
@@ -105,16 +104,6 @@ impl LanguageSelectorDelegate {
             .enumerate()
             .map(|(candidate_id, name)| StringMatchCandidate::new(candidate_id, name))
             .collect::<Vec<_>>();
-        let mut matches = candidates
-            .iter()
-            .map(|candidate| StringMatch {
-                candidate_id: candidate.id,
-                score: 0.,
-                positions: Default::default(),
-                string: candidate.string.clone(),
-            })
-            .collect::<Vec<_>>();
-        matches.sort_unstable_by(|mat1, mat2| mat1.string.cmp(&mat2.string));
 
         Self {
             language_selector,
@@ -122,7 +111,7 @@ impl LanguageSelectorDelegate {
             project,
             language_registry,
             candidates,
-            matches,
+            matches: vec![],
             selected_index: 0,
         }
     }

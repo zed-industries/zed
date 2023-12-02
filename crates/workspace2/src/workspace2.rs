@@ -2164,10 +2164,7 @@ impl Workspace {
         cx: &mut ViewContext<Self>,
     ) {
         match event {
-            pane::Event::AddItem { item } => {
-                self.handle_pane_focused(pane.clone(), cx);
-                item.added_to_pane(self, pane, cx);
-            }
+            pane::Event::AddItem { item } => item.added_to_pane(self, pane, cx),
             pane::Event::Split(direction) => {
                 self.split_and_clone(pane, *direction, cx);
             }

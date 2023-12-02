@@ -52,15 +52,6 @@ impl Render for StatusBar {
                 h_stack()
                     .gap_4()
                     .child(
-                        h_stack().gap_1().child(
-                            // TODO: Language picker
-                            div()
-                                .border()
-                                .border_color(gpui::red())
-                                .child(Button::new("status_buffer_language", "Rust")),
-                        ),
-                    )
-                    .child(
                         h_stack()
                             .gap_1()
                             .child(
@@ -77,16 +68,6 @@ impl Render for StatusBar {
                                     .border_color(gpui::red())
                                     .child(IconButton::new("status-feedback", Icon::Envelope)),
                             ),
-                    )
-                    .child(
-                        // Bottom Dock
-                        h_stack().gap_1().child(
-                            // Terminal
-                            div()
-                                .border()
-                                .border_color(gpui::red())
-                                .child(IconButton::new("status-terminal", Icon::Terminal)),
-                        ),
                     )
                     .child(
                         // Right Dock
