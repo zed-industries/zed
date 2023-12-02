@@ -1,18 +1,17 @@
 use editor::{Cursor, HighlightedRange, HighlightedRangeLine};
 use gpui::{
-    point, px, relative, rems, transparent_black, AnyElement, AppContext, Bounds, Component,
-    CursorStyle, Element, ElementId, FontStyle, FontWeight, HighlightStyle, Hsla, IntoElement,
-    IsZero, LayoutId, ModelContext, Overlay, Pixels, Point, Quad, ShapedLine, SharedString, Style,
-    Styled, TextRun, TextStyle, TextSystem, Underline, UnderlineStyle, ViewContext, WeakModel,
+    black, point, px, red, relative, transparent_black, AnyElement, Bounds, Element, ElementId,
+    Font, FontStyle, FontWeight, HighlightStyle, Hsla, IntoElement, LayoutId, Pixels, Point, Rgba,
+    ShapedLine, Style, TextRun, TextStyle, TextSystem, UnderlineStyle, ViewContext, WeakModel,
     WhiteSpace, WindowContext,
 };
 use itertools::Itertools;
 use language::CursorShape;
-use ordered_float::OrderedFloat;
 use settings::Settings;
 use terminal::{
+    alacritty_terminal::ansi::NamedColor,
     alacritty_terminal::{
-        ansi::{Color as AnsiColor, Color::Named, CursorShape as AlacCursorShape, NamedColor},
+        ansi::{Color as AnsiColor, Color::Named, CursorShape as AlacCursorShape},
         grid::Dimensions,
         index::Point as AlacPoint,
         term::{cell::Flags, TermMode},
@@ -20,7 +19,7 @@ use terminal::{
     terminal_settings::TerminalSettings,
     IndexedCell, Terminal, TerminalContent, TerminalSize,
 };
-use theme::{ActiveTheme, ThemeColors, ThemeSettings};
+use theme::{ActiveTheme, Theme, ThemeSettings};
 
 use std::mem;
 use std::{fmt::Debug, ops::RangeInclusive};
@@ -80,7 +79,6 @@ impl LayoutCell {
         origin: Point<Pixels>,
         layout: &LayoutState,
         _visible_bounds: Bounds<Pixels>,
-        _view: &mut TerminalView,
         cx: &mut WindowContext,
     ) {
         let pos = {
@@ -92,7 +90,7 @@ impl LayoutCell {
             )
         };
 
-        self.text.paint(pos, layout.size.line_height, cx);
+        self.text.paint(pos, layout.size.line_height, cx).ok();
     }
 }
 
@@ -120,13 +118,7 @@ impl LayoutRect {
         }
     }
 
-    fn paint(
-        &self,
-        origin: Point<Pixels>,
-        layout: &LayoutState,
-        _view: &mut TerminalView,
-        cx: &mut ViewContext<TerminalView>,
-    ) {
+    fn paint(&self, origin: Point<Pixels>, layout: &LayoutState, cx: &mut WindowContext) {
         let position = {
             let alac_point = self.point;
             point(
@@ -184,7 +176,7 @@ impl TerminalElement {
         hyperlink: Option<(HighlightStyle, &RangeInclusive<AlacPoint>)>,
         cx: &WindowContext<'_>,
     ) -> (Vec<LayoutCell>, Vec<LayoutRect>) {
-        let theme_colors = cx.theme().colors();
+        let theme = cx.theme();
         let mut cells = vec![];
         let mut rects = vec![];
 
@@ -225,7 +217,7 @@ impl TerminalElement {
                                             cell.point.column.0 as i32,
                                         ),
                                         1,
-                                        convert_color(&bg, theme_colors),
+                                        convert_color(&bg, theme),
                                     ));
                                 }
                             }
@@ -234,7 +226,7 @@ impl TerminalElement {
                                 cur_rect = Some(LayoutRect::new(
                                     AlacPoint::new(line_index as i32, cell.point.column.0 as i32),
                                     1,
-                                    convert_color(&bg, &theme_colors),
+                                    convert_color(&bg, &theme),
                                 ));
                             }
                         }
@@ -249,7 +241,7 @@ impl TerminalElement {
                             &cell,
                             fg,
                             bg,
-                            theme_colors,
+                            theme,
                             text_style,
                             text_system,
                             hyperlink,
@@ -312,7 +304,7 @@ impl TerminalElement {
         indexed: &IndexedCell,
         fg: terminal::alacritty_terminal::ansi::Color,
         bg: terminal::alacritty_terminal::ansi::Color,
-        colors: &ThemeColors,
+        colors: &Theme,
         text_style: &TextStyle,
         text_system: &TextSystem,
         hyperlink: Option<(HighlightStyle, &RangeInclusive<AlacPoint>)>,
@@ -321,7 +313,7 @@ impl TerminalElement {
         let fg = convert_color(&fg, &colors);
         let bg = convert_color(&bg, &colors);
 
-        let mut underline = (flags.intersects(Flags::ALL_UNDERLINES)
+        let underline = (flags.intersects(Flags::ALL_UNDERLINES)
             || indexed.cell.hyperlink().is_some())
         .then(|| UnderlineStyle {
             color: Some(fg),
@@ -329,20 +321,27 @@ impl TerminalElement {
             wavy: flags.contains(Flags::UNDERCURL),
         });
 
-        //todo!(support bold and italic)
-        // let mut properties = Properties::new();
-        // if indexed.flags.intersects(Flags::BOLD | Flags::DIM_BOLD) {
-        //     properties = *properties.weight(FontWeight::BOLD);
-        // }
-        // if indexed.flags.intersects(Flags::ITALIC) {
-        //     properties = *properties.style(FontStyle::Italic);
-        // }
+        let weight = if flags.intersects(Flags::BOLD | Flags::DIM_BOLD) {
+            FontWeight::BOLD
+        } else {
+            FontWeight::NORMAL
+        };
+
+        let style = if flags.intersects(Flags::ITALIC) {
+            FontStyle::Italic
+        } else {
+            FontStyle::Normal
+        };
 
         let mut result = TextRun {
             len: indexed.c.len_utf8() as usize,
             color: fg,
             background_color: Some(bg),
-            font: text_style.font(),
+            font: Font {
+                weight,
+                style,
+                ..text_style.font()
+            },
             underline,
         };
 
@@ -498,7 +497,6 @@ impl TerminalElement {
         let (cells, rects) = TerminalElement::layout_grid(
             cells,
             &text_style,
-            // &terminal_theme,
             &cx.text_system(),
             // todo!(Terminal tooltips)
             last_hovered_word,
@@ -752,84 +750,54 @@ impl Element for TerminalElement {
 
     fn paint(self, bounds: Bounds<Pixels>, _: &mut Self::State, cx: &mut WindowContext<'_>) {
         let layout = self.compute_layout(bounds, cx);
-        // todo!()
-        // let visible_bounds = bounds.intersection(visible_bounds).unwrap_or_default();
 
-        // //Setup element stuff
-        // let clip_bounds = Some(visible_bounds);
+        let theme = cx.theme();
+        cx.paint_quad(
+            bounds,
+            Default::default(),
+            theme.colors().editor_background,
+            Default::default(),
+            Hsla::default(),
+        );
+        let origin = bounds.origin + Point::new(layout.gutter, px(0.));
 
-        // cx.paint_layer(clip_bounds, |cx| {
-        //     let origin = bounds.origin + point(element_state.gutter, 0.);
+        for rect in &layout.rects {
+            rect.paint(origin, &layout, cx);
+        }
 
-        //     // Elements are ephemeral, only at paint time do we know what could be clicked by a mouse
-        //     self.attach_mouse_handlers(origin, visible_bounds, element_state.mode, cx);
+        cx.with_z_index(1, |cx| {
+            for (relative_highlighted_range, color) in layout.relative_highlighted_ranges.iter() {
+                if let Some((start_y, highlighted_range_lines)) =
+                    to_highlighted_range_lines(relative_highlighted_range, &layout, origin)
+                {
+                    let hr = HighlightedRange {
+                        start_y, //Need to change this
+                        line_height: layout.size.line_height,
+                        lines: highlighted_range_lines,
+                        color: color.clone(),
+                        //Copied from editor. TODO: move to theme or something
+                        corner_radius: 0.15 * layout.size.line_height,
+                    };
+                    hr.paint(bounds, cx);
+                }
+            }
+        });
 
-        //     cx.scene().push_cursor_region(gpui::CursorRegion {
-        //         bounds,
-        //         style: if element_state.hyperlink_tooltip.is_some() {
-        //             CursorStyle::AlacPointingHand
-        //         } else {
-        //             CursorStyle::IBeam
-        //         },
-        //     });
+        cx.with_z_index(2, |cx| {
+            for cell in &layout.cells {
+                cell.paint(origin, &layout, bounds, cx);
+            }
+        });
 
-        //     cx.paint_layer(clip_bounds, |cx| {
-        //         //Start with a background color
-        //         cx.scene().push_quad(Quad {
-        //             bounds,
-        //             background: Some(element_state.background_color),
-        //             border: Default::default(),
-        //             corner_radii: Default::default(),
-        //         });
-
-        //         for rect in &element_state.rects {
-        //             rect.paint(origin, element_state, view_state, cx);
-        //         }
-        //     });
-
-        //     //Draw Highlighted Backgrounds
-        //     cx.paint_layer(clip_bounds, |cx| {
-        //         for (relative_highlighted_range, color) in
-        //             element_state.relative_highlighted_ranges.iter()
-        //         {
-        //             if let Some((start_y, highlighted_range_lines)) = to_highlighted_range_lines(
-        //                 relative_highlighted_range,
-        //                 element_state,
-        //                 origin,
-        //             ) {
-        //                 let hr = HighlightedRange {
-        //                     start_y, //Need to change this
-        //                     line_height: element_state.size.line_height,
-        //                     lines: highlighted_range_lines,
-        //                     color: color.clone(),
-        //                     //Copied from editor. TODO: move to theme or something
-        //                     corner_radius: 0.15 * element_state.size.line_height,
-        //                 };
-        //                 hr.paint(bounds, cx);
-        //             }
-        //         }
-        //     });
-
-        //     //Draw the text cells
-        //     cx.paint_layer(clip_bounds, |cx| {
-        //         for cell in &element_state.cells {
-        //             cell.paint(origin, element_state, visible_bounds, view_state, cx);
-        //         }
-        //     });
-
-        //     //Draw cursor
-        //     if self.cursor_visible {
-        //         if let Some(cursor) = &element_state.cursor {
-        //             cx.paint_layer(clip_bounds, |cx| {
-        //                 cursor.paint(origin, cx);
-        //             })
-        //         }
-        //     }
+        cx.with_z_index(3, |cx| {
+            if let Some(cursor) = &layout.cursor {
+                cursor.paint(origin, cx);
+            }
+        });
 
         //     if let Some(element) = &mut element_state.hyperlink_tooltip {
         //         element.paint(origin, visible_bounds, view_state, cx)
         //     }
-        // });
     }
 
     // todo!() remove?
@@ -877,7 +845,7 @@ impl IntoElement for TerminalElement {
     type Element = Self;
 
     fn element_id(&self) -> Option<ElementId> {
-        todo!()
+        Some("terminal".into())
     }
 
     fn into_element(self) -> Self::Element {
@@ -971,7 +939,147 @@ fn to_highlighted_range_lines(
     Some((start_y, highlighted_range_lines))
 }
 
-// mappings::colors::convert_color
-fn convert_color(fg: &terminal::alacritty_terminal::ansi::Color, colors: &ThemeColors) -> Hsla {
-    todo!()
+///Converts a 2, 8, or 24 bit color ANSI color to the GPUI equivalent
+fn convert_color(fg: &terminal::alacritty_terminal::ansi::Color, theme: &Theme) -> Hsla {
+    let colors = theme.colors();
+    match fg {
+        //Named and theme defined colors
+        terminal::alacritty_terminal::ansi::Color::Named(n) => match n {
+            NamedColor::Black => colors.terminal_ansi_black,
+            NamedColor::Red => colors.terminal_ansi_red,
+            NamedColor::Green => colors.terminal_ansi_green,
+            NamedColor::Yellow => colors.terminal_ansi_yellow,
+            NamedColor::Blue => colors.terminal_ansi_blue,
+            NamedColor::Magenta => colors.terminal_ansi_magenta,
+            NamedColor::Cyan => colors.terminal_ansi_cyan,
+            NamedColor::White => colors.terminal_ansi_white,
+            NamedColor::BrightBlack => colors.terminal_ansi_bright_black,
+            NamedColor::BrightRed => colors.terminal_ansi_bright_red,
+            NamedColor::BrightGreen => colors.terminal_ansi_bright_green,
+            NamedColor::BrightYellow => colors.terminal_ansi_bright_yellow,
+            NamedColor::BrightBlue => colors.terminal_ansi_bright_blue,
+            NamedColor::BrightMagenta => colors.terminal_ansi_bright_magenta,
+            NamedColor::BrightCyan => colors.terminal_ansi_bright_cyan,
+            NamedColor::BrightWhite => colors.terminal_ansi_bright_white,
+            NamedColor::Foreground => colors.text,
+            NamedColor::Background => colors.background,
+            NamedColor::Cursor => theme.players().local().cursor,
+
+            // todo!(more colors)
+            NamedColor::DimBlack => red(),
+            NamedColor::DimRed => red(),
+            NamedColor::DimGreen => red(),
+            NamedColor::DimYellow => red(),
+            NamedColor::DimBlue => red(),
+            NamedColor::DimMagenta => red(),
+            NamedColor::DimCyan => red(),
+            NamedColor::DimWhite => red(),
+            NamedColor::BrightForeground => red(),
+            NamedColor::DimForeground => red(),
+        },
+        //'True' colors
+        terminal::alacritty_terminal::ansi::Color::Spec(rgb) => rgba_color(rgb.r, rgb.g, rgb.b),
+        //8 bit, indexed colors
+        terminal::alacritty_terminal::ansi::Color::Indexed(i) => {
+            get_color_at_index(&(*i as usize), theme)
+        }
+    }
+}
+
+///Converts an 8 bit ANSI color to it's GPUI equivalent.
+///Accepts usize for compatibility with the alacritty::Colors interface,
+///Other than that use case, should only be called with values in the [0,255] range
+pub fn get_color_at_index(index: &usize, theme: &Theme) -> Hsla {
+    let colors = theme.colors();
+
+    match index {
+        //0-15 are the same as the named colors above
+        0 => colors.terminal_ansi_black,
+        1 => colors.terminal_ansi_red,
+        2 => colors.terminal_ansi_green,
+        3 => colors.terminal_ansi_yellow,
+        4 => colors.terminal_ansi_blue,
+        5 => colors.terminal_ansi_magenta,
+        6 => colors.terminal_ansi_cyan,
+        7 => colors.terminal_ansi_white,
+        8 => colors.terminal_ansi_bright_black,
+        9 => colors.terminal_ansi_bright_red,
+        10 => colors.terminal_ansi_bright_green,
+        11 => colors.terminal_ansi_bright_yellow,
+        12 => colors.terminal_ansi_bright_blue,
+        13 => colors.terminal_ansi_bright_magenta,
+        14 => colors.terminal_ansi_bright_cyan,
+        15 => colors.terminal_ansi_bright_white,
+        //16-231 are mapped to their RGB colors on a 0-5 range per channel
+        16..=231 => {
+            let (r, g, b) = rgb_for_index(&(*index as u8)); //Split the index into it's ANSI-RGB components
+            let step = (u8::MAX as f32 / 5.).floor() as u8; //Split the RGB range into 5 chunks, with floor so no overflow
+            rgba_color(r * step, g * step, b * step) //Map the ANSI-RGB components to an RGB color
+        }
+        //232-255 are a 24 step grayscale from black to white
+        232..=255 => {
+            let i = *index as u8 - 232; //Align index to 0..24
+            let step = (u8::MAX as f32 / 24.).floor() as u8; //Split the RGB grayscale values into 24 chunks
+            rgba_color(i * step, i * step, i * step) //Map the ANSI-grayscale components to the RGB-grayscale
+        }
+        //For compatibility with the alacritty::Colors interface
+        256 => colors.text,
+        257 => colors.background,
+        258 => theme.players().local().cursor,
+
+        // todo!(more colors)
+        259 => red(),                      //style.dim_black,
+        260 => red(),                      //style.dim_red,
+        261 => red(),                      //style.dim_green,
+        262 => red(),                      //style.dim_yellow,
+        263 => red(),                      //style.dim_blue,
+        264 => red(),                      //style.dim_magenta,
+        265 => red(),                      //style.dim_cyan,
+        266 => red(),                      //style.dim_white,
+        267 => red(),                      //style.bright_foreground,
+        268 => colors.terminal_ansi_black, //'Dim Background', non-standard color
+
+        _ => black(),
+    }
+}
+
+///Generates the rgb channels in [0, 5] for a given index into the 6x6x6 ANSI color cube
+///See: [8 bit ansi color](https://en.wikipedia.org/wiki/ANSI_escape_code#8-bit).
+///
+///Wikipedia gives a formula for calculating the index for a given color:
+///
+///index = 16 + 36 × r + 6 × g + b (0 ≤ r, g, b ≤ 5)
+///
+///This function does the reverse, calculating the r, g, and b components from a given index.
+fn rgb_for_index(i: &u8) -> (u8, u8, u8) {
+    debug_assert!((&16..=&231).contains(&i));
+    let i = i - 16;
+    let r = (i - (i % 36)) / 36;
+    let g = ((i % 36) - (i % 6)) / 6;
+    let b = (i % 36) % 6;
+    (r, g, b)
+}
+
+fn rgba_color(r: u8, g: u8, b: u8) -> Hsla {
+    Rgba {
+        r: (r as f32 / 255.) as f32,
+        g: (g as f32 / 255.) as f32,
+        b: (b as f32 / 255.) as f32,
+        a: 1.,
+    }
+    .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::terminal_element::rgb_for_index;
+
+    #[test]
+    fn test_rgb_for_index() {
+        //Test every possible value in the color cube
+        for i in 16..=231 {
+            let (r, g, b) = rgb_for_index(&(i as u8));
+            assert_eq!(i, 16 + 36 * r + 6 * g + b);
+        }
+    }
 }

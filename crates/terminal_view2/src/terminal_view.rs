@@ -25,6 +25,7 @@ use terminal::{
     terminal_settings::{TerminalBlink, TerminalSettings, WorkingDirectory},
     Event, MaybeNavigationTarget, Terminal,
 };
+use terminal_element::TerminalElement;
 use util::{paths::PathLikeWithPosition, ResultExt};
 use workspace::{
     item::{BreadcrumbText, Item, ItemEvent},
@@ -305,7 +306,6 @@ impl TerminalView {
                 cx,
             )
         }));
-        dbg!(&position);
         // todo!()
         //     self.context_menu
         //         .show(position, AnchorCorner::TopLeft, menu_entries, cx);
@@ -541,11 +541,13 @@ impl Render for TerminalView {
         let focused = self.focus_handle.is_focused(cx);
 
         div()
+            .size_full()
             .relative()
             .child(
                 div()
                     .z_index(0)
                     .absolute()
+                    .size_full()
                     .on_key_down(cx.listener(Self::key_down))
                     .on_action(cx.listener(TerminalView::send_text))
                     .on_action(cx.listener(TerminalView::send_keystroke))
@@ -554,15 +556,12 @@ impl Render for TerminalView {
                     .on_action(cx.listener(TerminalView::clear))
                     .on_action(cx.listener(TerminalView::show_character_palette))
                     .on_action(cx.listener(TerminalView::select_all))
-                    // todo!()
-                    .child(
-                        "TERMINAL HERE", //     TerminalElement::new(
-                                         //     terminal_handle,
-                                         //     focused,
-                                         //     self.should_show_cursor(focused, cx),
-                                         //     self.can_navigate_to_selected_word,
-                                         // )
-                    )
+                    .child(TerminalElement::new(
+                        terminal_handle,
+                        focused,
+                        self.should_show_cursor(focused, cx),
+                        self.can_navigate_to_selected_word,
+                    ))
                     .on_mouse_down(
                         MouseButton::Right,
                         cx.listener(|this, event: &MouseDownEvent, cx| {

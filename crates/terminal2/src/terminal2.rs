@@ -976,6 +976,7 @@ impl Terminal {
     }
 
     pub fn try_sync(&mut self, cx: &mut ModelContext<Self>) {
+        println!("trying to sync");
         let term = self.term.clone();
 
         let mut terminal = if let Some(term) = term.try_lock_unfair() {
