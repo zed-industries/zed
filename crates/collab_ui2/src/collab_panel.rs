@@ -1,5 +1,5 @@
 #![allow(unused)]
-// mod channel_modal;
+mod channel_modal;
 mod contact_finder;
 
 // use crate::{
@@ -191,6 +191,8 @@ use workspace::{
 };
 
 use crate::{face_pile::FacePile, CollaborationPanelSettings};
+
+use self::channel_modal::ChannelModal;
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(|workspace: &mut Workspace, _| {
@@ -2058,13 +2060,11 @@ impl CollabPanel {
     }
 
     fn invite_members(&mut self, channel_id: ChannelId, cx: &mut ViewContext<Self>) {
-        todo!();
-        // self.show_channel_modal(channel_id, channel_modal::Mode::InviteMembers, cx);
+        self.show_channel_modal(channel_id, channel_modal::Mode::InviteMembers, cx);
     }
 
     fn manage_members(&mut self, channel_id: ChannelId, cx: &mut ViewContext<Self>) {
-        todo!();
-        // self.show_channel_modal(channel_id, channel_modal::Mode::ManageMembers, cx);
+        self.show_channel_modal(channel_id, channel_modal::Mode::ManageMembers, cx);
     }
 
     fn remove_selected_channel(&mut self, _: &Remove, cx: &mut ViewContext<Self>) {
@@ -2156,38 +2156,36 @@ impl CollabPanel {
             })
     }
 
-    //     fn show_channel_modal(
-    //         &mut self,
-    //         channel_id: ChannelId,
-    //         mode: channel_modal::Mode,
-    //         cx: &mut ViewContext<Self>,
-    //     ) {
-    //         let workspace = self.workspace.clone();
-    //         let user_store = self.user_store.clone();
-    //         let channel_store = self.channel_store.clone();
-    //         let members = self.channel_store.update(cx, |channel_store, cx| {
-    //             channel_store.get_channel_member_details(channel_id, cx)
-    //         });
+    fn show_channel_modal(
+        &mut self,
+        channel_id: ChannelId,
+        mode: channel_modal::Mode,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let workspace = self.workspace.clone();
+        let user_store = self.user_store.clone();
+        let channel_store = self.channel_store.clone();
+        let members = self.channel_store.update(cx, |channel_store, cx| {
+            channel_store.get_channel_member_details(channel_id, cx)
+        });
 
-    //         cx.spawn(|_, mut cx| async move {
-    //             let members = members.await?;
-    //             workspace.update(&mut cx, |workspace, cx| {
-    //                 workspace.toggle_modal(cx, |_, cx| {
-    //                     cx.add_view(|cx| {
-    //                         ChannelModal::new(
-    //                             user_store.clone(),
-    //                             channel_store.clone(),
-    //                             channel_id,
-    //                             mode,
-    //                             members,
-    //                             cx,
-    //                         )
-    //                     })
-    //                 });
-    //             })
-    //         })
-    //         .detach();
-    //     }
+        cx.spawn(|_, mut cx| async move {
+            let members = members.await?;
+            workspace.update(&mut cx, |workspace, cx| {
+                workspace.toggle_modal(cx, |cx| {
+                    ChannelModal::new(
+                        user_store.clone(),
+                        channel_store.clone(),
+                        channel_id,
+                        mode,
+                        members,
+                        cx,
+                    )
+                });
+            })
+        })
+        .detach();
+    }
 
     //     fn remove_selected_channel(&mut self, action: &RemoveChannel, cx: &mut ViewContext<Self>) {
     //         self.remove_channel(action.channel_id, cx)

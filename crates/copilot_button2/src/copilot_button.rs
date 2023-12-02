@@ -68,7 +68,7 @@ impl Render for CopilotButton {
 
         if let Status::Error(e) = status {
             return div().child(
-                IconButton::new("github-copilot", icon)
+                IconButton::new("copilot-error", icon)
                     .on_click(cx.listener(move |this, _, cx| {
                         if let Some(workspace) = cx.window_handle().downcast::<Workspace>() {
                             workspace.update(cx, |workspace, cx| {
@@ -98,7 +98,7 @@ impl Render for CopilotButton {
         let this = cx.view().clone();
 
         div().child(
-            popover_menu("github-copilot")
+            popover_menu("copilot")
                 .menu(move |cx| match status {
                     Status::Authorized => this.update(cx, |this, cx| this.build_copilot_menu(cx)),
                     _ => this.update(cx, |this, cx| this.build_copilot_start_menu(cx)),
