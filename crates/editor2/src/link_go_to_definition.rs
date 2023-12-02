@@ -5,7 +5,7 @@ use crate::{
     Anchor, DisplayPoint, Editor, EditorSnapshot, GoToDefinition, GoToTypeDefinition, InlayId,
     SelectPhase,
 };
-use gpui::{Task, ViewContext};
+use gpui::{px, Task, ViewContext};
 use language::{Bias, ToOffset};
 use lsp::LanguageServerId;
 use project::{
@@ -13,6 +13,7 @@ use project::{
     ResolveState,
 };
 use std::ops::Range;
+use theme::ActiveTheme as _;
 use util::TryFutureExt;
 
 #[derive(Debug, Default)]
@@ -485,40 +486,45 @@ pub fn show_link_definition(
                         });
 
                     if any_definition_does_not_contain_current_location {
-                        // todo!()
-                        // // Highlight symbol using theme link definition highlight style
-                        // let style = theme::current(cx).editor.link_definition;
-                        // let highlight_range =
-                        //     symbol_range.unwrap_or_else(|| match &trigger_point {
-                        //         TriggerPoint::Text(trigger_anchor) => {
-                        //             let snapshot = &snapshot.buffer_snapshot;
-                        //             // If no symbol range returned from language server, use the surrounding word.
-                        //             let (offset_range, _) =
-                        //                 snapshot.surrounding_word(*trigger_anchor);
-                        //             RangeInEditor::Text(
-                        //                 snapshot.anchor_before(offset_range.start)
-                        //                     ..snapshot.anchor_after(offset_range.end),
-                        //             )
-                        //         }
-                        //         TriggerPoint::InlayHint(highlight, _, _) => {
-                        //             RangeInEditor::Inlay(highlight.clone())
-                        //         }
-                        //     });
+                        let style = gpui::HighlightStyle {
+                            underline: Some(gpui::UnderlineStyle {
+                                thickness: px(1.),
+                                ..Default::default()
+                            }),
+                            color: Some(gpui::red()),
+                            ..Default::default()
+                        };
+                        let highlight_range =
+                            symbol_range.unwrap_or_else(|| match &trigger_point {
+                                TriggerPoint::Text(trigger_anchor) => {
+                                    let snapshot = &snapshot.buffer_snapshot;
+                                    // If no symbol range returned from language server, use the surrounding word.
+                                    let (offset_range, _) =
+                                        snapshot.surrounding_word(*trigger_anchor);
+                                    RangeInEditor::Text(
+                                        snapshot.anchor_before(offset_range.start)
+                                            ..snapshot.anchor_after(offset_range.end),
+                                    )
+                                }
+                                TriggerPoint::InlayHint(highlight, _, _) => {
+                                    RangeInEditor::Inlay(highlight.clone())
+                                }
+                            });
 
-                        // match highlight_range {
-                        //     RangeInEditor::Text(text_range) => this
-                        //         .highlight_text::<LinkGoToDefinitionState>(
-                        //             vec![text_range],
-                        //             style,
-                        //             cx,
-                        //         ),
-                        //     RangeInEditor::Inlay(highlight) => this
-                        //         .highlight_inlays::<LinkGoToDefinitionState>(
-                        //             vec![highlight],
-                        //             style,
-                        //             cx,
-                        //         ),
-                        // }
+                        match highlight_range {
+                            RangeInEditor::Text(text_range) => this
+                                .highlight_text::<LinkGoToDefinitionState>(
+                                    vec![text_range],
+                                    style,
+                                    cx,
+                                ),
+                            RangeInEditor::Inlay(highlight) => this
+                                .highlight_inlays::<LinkGoToDefinitionState>(
+                                    vec![highlight],
+                                    style,
+                                    cx,
+                                ),
+                        }
                     } else {
                         hide_link_definition(this, cx);
                     }

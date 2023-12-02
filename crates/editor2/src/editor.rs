@@ -63,6 +63,7 @@ use language::{
 use lazy_static::lazy_static;
 use link_go_to_definition::{GoToDefinitionLink, InlayHighlight, LinkGoToDefinitionState};
 use lsp::{DiagnosticSeverity, LanguageServerId};
+use mouse_context_menu::MouseContextMenu;
 use movement::TextLayoutDetails;
 use multi_buffer::ToOffsetUtf16;
 pub use multi_buffer::{
@@ -73,7 +74,7 @@ use ordered_float::OrderedFloat;
 use parking_lot::{Mutex, RwLock};
 use project::{FormatTrigger, Location, Project, ProjectPath, ProjectTransaction};
 use rand::prelude::*;
-use rpc::proto::*;
+use rpc::proto::{self, *};
 use scroll::{
     autoscroll::Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager, ScrollbarAutoHide,
 };
@@ -99,7 +100,8 @@ use text::{OffsetUtf16, Rope};
 use theme::{
     ActiveTheme, DiagnosticStyle, PlayerColor, SyntaxTheme, Theme, ThemeColors, ThemeSettings,
 };
-use ui::{h_stack, v_stack, HighlightedLabel, IconButton, Popover, StyledExt, Tooltip};
+use ui::prelude::*;
+use ui::{h_stack, v_stack, HighlightedLabel, IconButton, Popover, Tooltip};
 use util::{post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::{
     item::{ItemEvent, ItemHandle},
@@ -152,9 +154,7 @@ pub fn render_parsed_markdown(
                 }
             }),
     );
-    let runs = text_runs_for_highlights(&parsed.text, &editor_style.text, highlights);
 
-    // todo!("add the ability to change cursor style for link ranges")
     let mut links = Vec::new();
     let mut link_ranges = Vec::new();
     for (range, region) in parsed.region_ranges.iter().zip(&parsed.regions) {
@@ -166,7 +166,7 @@ pub fn render_parsed_markdown(
 
     InteractiveText::new(
         element_id,
-        StyledText::new(parsed.text.clone()).with_runs(runs),
+        StyledText::new(parsed.text.clone()).with_highlights(&editor_style.text, highlights),
     )
     .on_click(link_ranges, move |clicked_range_ix, cx| {
         match &links[clicked_range_ix] {
@@ -407,133 +407,17 @@ pub fn init_settings(cx: &mut AppContext) {
 
 pub fn init(cx: &mut AppContext) {
     init_settings(cx);
-    // cx.register_action_type(Editor::new_file);
-    // cx.register_action_type(Editor::new_file_in_direction);
-    // cx.register_action_type(Editor::cancel);
-    // cx.register_action_type(Editor::newline);
-    // cx.register_action_type(Editor::newline_above);
-    // cx.register_action_type(Editor::newline_below);
-    // cx.register_action_type(Editor::backspace);
-    // cx.register_action_type(Editor::delete);
-    // cx.register_action_type(Editor::tab);
-    // cx.register_action_type(Editor::tab_prev);
-    // cx.register_action_type(Editor::indent);
-    // cx.register_action_type(Editor::outdent);
-    // cx.register_action_type(Editor::delete_line);
-    // cx.register_action_type(Editor::join_lines);
-    // cx.register_action_type(Editor::sort_lines_case_sensitive);
-    // cx.register_action_type(Editor::sort_lines_case_insensitive);
-    // cx.register_action_type(Editor::reverse_lines);
-    // cx.register_action_type(Editor::shuffle_lines);
-    // cx.register_action_type(Editor::convert_to_upper_case);
-    // cx.register_action_type(Editor::convert_to_lower_case);
-    // cx.register_action_type(Editor::convert_to_title_case);
-    // cx.register_action_type(Editor::convert_to_snake_case);
-    // cx.register_action_type(Editor::convert_to_kebab_case);
-    // cx.register_action_type(Editor::convert_to_upper_camel_case);
-    // cx.register_action_type(Editor::convert_to_lower_camel_case);
-    // cx.register_action_type(Editor::delete_to_previous_word_start);
-    // cx.register_action_type(Editor::delete_to_previous_subword_start);
-    // cx.register_action_type(Editor::delete_to_next_word_end);
-    // cx.register_action_type(Editor::delete_to_next_subword_end);
-    // cx.register_action_type(Editor::delete_to_beginning_of_line);
-    // cx.register_action_type(Editor::delete_to_end_of_line);
-    // cx.register_action_type(Editor::cut_to_end_of_line);
-    // cx.register_action_type(Editor::duplicate_line);
-    // cx.register_action_type(Editor::move_line_up);
-    // cx.register_action_type(Editor::move_line_down);
-    // cx.register_action_type(Editor::transpose);
-    // cx.register_action_type(Editor::cut);
-    // cx.register_action_type(Editor::copy);
-    // cx.register_action_type(Editor::paste);
-    // cx.register_action_type(Editor::undo);
-    // cx.register_action_type(Editor::redo);
-    // cx.register_action_type(Editor::move_page_up);
-    // cx.register_action_type::<MoveDown>();
-    // cx.register_action_type(Editor::move_page_down);
-    // cx.register_action_type(Editor::next_screen);
-    // cx.register_action_type::<MoveLeft>();
-    // cx.register_action_type::<MoveRight>();
-    // cx.register_action_type(Editor::move_to_previous_word_start);
-    // cx.register_action_type(Editor::move_to_previous_subword_start);
-    // cx.register_action_type(Editor::move_to_next_word_end);
-    // cx.register_action_type(Editor::move_to_next_subword_end);
-    // cx.register_action_type(Editor::move_to_beginning_of_line);
-    // cx.register_action_type(Editor::move_to_end_of_line);
-    // cx.register_action_type(Editor::move_to_start_of_paragraph);
-    // cx.register_action_type(Editor::move_to_end_of_paragraph);
-    // cx.register_action_type(Editor::move_to_beginning);
-    // cx.register_action_type(Editor::move_to_end);
-    // cx.register_action_type(Editor::select_up);
-    // cx.register_action_type(Editor::select_down);
-    // cx.register_action_type(Editor::select_left);
-    // cx.register_action_type(Editor::select_right);
-    // cx.register_action_type(Editor::select_to_previous_word_start);
-    // cx.register_action_type(Editor::select_to_previous_subword_start);
-    // cx.register_action_type(Editor::select_to_next_word_end);
-    // cx.register_action_type(Editor::select_to_next_subword_end);
-    // cx.register_action_type(Editor::select_to_beginning_of_line);
-    // cx.register_action_type(Editor::select_to_end_of_line);
-    // cx.register_action_type(Editor::select_to_start_of_paragraph);
-    // cx.register_action_type(Editor::select_to_end_of_paragraph);
-    // cx.register_action_type(Editor::select_to_beginning);
-    // cx.register_action_type(Editor::select_to_end);
-    // cx.register_action_type(Editor::select_all);
-    // cx.register_action_type(Editor::select_all_matches);
-    // cx.register_action_type(Editor::select_line);
-    // cx.register_action_type(Editor::split_selection_into_lines);
-    // cx.register_action_type(Editor::add_selection_above);
-    // cx.register_action_type(Editor::add_selection_below);
-    // cx.register_action_type(Editor::select_next);
-    // cx.register_action_type(Editor::select_previous);
-    // cx.register_action_type(Editor::toggle_comments);
-    // cx.register_action_type(Editor::select_larger_syntax_node);
-    // cx.register_action_type(Editor::select_smaller_syntax_node);
-    // cx.register_action_type(Editor::move_to_enclosing_bracket);
-    // cx.register_action_type(Editor::undo_selection);
-    // cx.register_action_type(Editor::redo_selection);
-    // cx.register_action_type(Editor::go_to_diagnostic);
-    // cx.register_action_type(Editor::go_to_prev_diagnostic);
-    // cx.register_action_type(Editor::go_to_hunk);
-    // cx.register_action_type(Editor::go_to_prev_hunk);
-    // cx.register_action_type(Editor::go_to_definition);
-    // cx.register_action_type(Editor::go_to_definition_split);
-    // cx.register_action_type(Editor::go_to_type_definition);
-    // cx.register_action_type(Editor::go_to_type_definition_split);
-    // cx.register_action_type(Editor::fold);
-    // cx.register_action_type(Editor::fold_at);
-    // cx.register_action_type(Editor::unfold_lines);
-    // cx.register_action_type(Editor::unfold_at);
-    // cx.register_action_type(Editor::gutter_hover);
-    // cx.register_action_type(Editor::fold_selected_ranges);
-    // cx.register_action_type(Editor::show_completions);
-    // cx.register_action_type(Editor::toggle_code_actions);
-    // cx.register_action_type(Editor::open_excerpts);
-    // cx.register_action_type(Editor::toggle_soft_wrap);
-    // cx.register_action_type(Editor::toggle_inlay_hints);
-    // cx.register_action_type(Editor::reveal_in_finder);
-    // cx.register_action_type(Editor::copy_path);
-    // cx.register_action_type(Editor::copy_relative_path);
-    // cx.register_action_type(Editor::copy_highlight_json);
-    // cx.add_async_action(Editor::format);
-    // cx.register_action_type(Editor::restart_language_server);
-    // cx.register_action_type(Editor::show_character_palette);
-    // cx.add_async_action(Editor::confirm_completion);
-    // cx.add_async_action(Editor::confirm_code_action);
-    // cx.add_async_action(Editor::rename);
-    // cx.add_async_action(Editor::confirm_rename);
-    // cx.add_async_action(Editor::find_all_references);
-    // cx.register_action_type(Editor::next_copilot_suggestion);
-    // cx.register_action_type(Editor::previous_copilot_suggestion);
-    // cx.register_action_type(Editor::copilot_suggest);
-    // cx.register_action_type(Editor::context_menu_first);
-    // cx.register_action_type(Editor::context_menu_prev);
-    // cx.register_action_type(Editor::context_menu_next);
-    // cx.register_action_type(Editor::context_menu_last);
 
     workspace::register_project_item::<Editor>(cx);
     workspace::register_followable_item::<Editor>(cx);
     workspace::register_deserializable_item::<Editor>(cx);
+    cx.observe_new_views(
+        |workspace: &mut Workspace, cx: &mut ViewContext<Workspace>| {
+            workspace.register_action(Editor::new_file);
+            workspace.register_action(Editor::new_file_in_direction);
+        },
+    )
+    .detach();
 }
 
 trait InvalidationRegion {
@@ -621,8 +505,6 @@ pub struct Editor {
     ime_transaction: Option<TransactionId>,
     active_diagnostics: Option<ActiveDiagnosticGroup>,
     soft_wrap_mode_override: Option<language_settings::SoftWrap>,
-    // get_field_editor_theme: Option<Arc<GetFieldEditorTheme>>,
-    // override_text_style: Option<Box<OverrideTextStyle>>,
     project: Option<Model<Project>>,
     collaboration_hub: Option<Box<dyn CollaborationHub>>,
     blink_manager: Model<BlinkManager>,
@@ -636,7 +518,7 @@ pub struct Editor {
     inlay_background_highlights: TreeMap<Option<TypeId>, InlayBackgroundHighlight>,
     nav_history: Option<ItemNavHistory>,
     context_menu: RwLock<Option<ContextMenu>>,
-    // mouse_context_menu: View<context_menu::ContextMenu>,
+    mouse_context_menu: Option<MouseContextMenu>,
     completion_tasks: Vec<(CompletionId, Task<Option<()>>)>,
     next_completion_id: CompletionId,
     available_code_actions: Option<(Model<Buffer>, Arc<[CodeAction]>)>,
@@ -971,95 +853,94 @@ impl CompletionsMenu {
 
     fn pre_resolve_completion_documentation(
         &self,
-        _editor: &Editor,
-        _cx: &mut ViewContext<Editor>,
+        editor: &Editor,
+        cx: &mut ViewContext<Editor>,
     ) -> Option<Task<()>> {
-        // todo!("implementation below ");
-        None
+        let settings = EditorSettings::get_global(cx);
+        if !settings.show_completion_documentation {
+            return None;
+        }
+
+        let Some(project) = editor.project.clone() else {
+            return None;
+        };
+
+        let client = project.read(cx).client();
+        let language_registry = project.read(cx).languages().clone();
+
+        let is_remote = project.read(cx).is_remote();
+        let project_id = project.read(cx).remote_id();
+
+        let completions = self.completions.clone();
+        let completion_indices: Vec<_> = self.matches.iter().map(|m| m.candidate_id).collect();
+
+        Some(cx.spawn(move |this, mut cx| async move {
+            if is_remote {
+                let Some(project_id) = project_id else {
+                    log::error!("Remote project without remote_id");
+                    return;
+                };
+
+                for completion_index in completion_indices {
+                    let completions_guard = completions.read();
+                    let completion = &completions_guard[completion_index];
+                    if completion.documentation.is_some() {
+                        continue;
+                    }
+
+                    let server_id = completion.server_id;
+                    let completion = completion.lsp_completion.clone();
+                    drop(completions_guard);
+
+                    Self::resolve_completion_documentation_remote(
+                        project_id,
+                        server_id,
+                        completions.clone(),
+                        completion_index,
+                        completion,
+                        client.clone(),
+                        language_registry.clone(),
+                    )
+                    .await;
+
+                    _ = this.update(&mut cx, |_, cx| cx.notify());
+                }
+            } else {
+                for completion_index in completion_indices {
+                    let completions_guard = completions.read();
+                    let completion = &completions_guard[completion_index];
+                    if completion.documentation.is_some() {
+                        continue;
+                    }
+
+                    let server_id = completion.server_id;
+                    let completion = completion.lsp_completion.clone();
+                    drop(completions_guard);
+
+                    let server = project
+                        .read_with(&mut cx, |project, _| {
+                            project.language_server_for_id(server_id)
+                        })
+                        .ok()
+                        .flatten();
+                    let Some(server) = server else {
+                        return;
+                    };
+
+                    Self::resolve_completion_documentation_local(
+                        server,
+                        completions.clone(),
+                        completion_index,
+                        completion,
+                        language_registry.clone(),
+                    )
+                    .await;
+
+                    _ = this.update(&mut cx, |_, cx| cx.notify());
+                }
+            }
+        }))
     }
-    // {
-    //     let settings = EditorSettings::get_global(cx);
-    //     if !settings.show_completion_documentation {
-    //         return None;
-    //     }
-
-    //     let Some(project) = editor.project.clone() else {
-    //         return None;
-    //     };
-
-    //     let client = project.read(cx).client();
-    //     let language_registry = project.read(cx).languages().clone();
-
-    //     let is_remote = project.read(cx).is_remote();
-    //     let project_id = project.read(cx).remote_id();
-
-    //     let completions = self.completions.clone();
-    //     let completion_indices: Vec<_> = self.matches.iter().map(|m| m.candidate_id).collect();
-
-    //     Some(cx.spawn(move |this, mut cx| async move {
-    //         if is_remote {
-    //             let Some(project_id) = project_id else {
-    //                 log::error!("Remote project without remote_id");
-    //                 return;
-    //             };
-
-    //             for completion_index in completion_indices {
-    //                 let completions_guard = completions.read();
-    //                 let completion = &completions_guard[completion_index];
-    //                 if completion.documentation.is_some() {
-    //                     continue;
-    //                 }
-
-    //                 let server_id = completion.server_id;
-    //                 let completion = completion.lsp_completion.clone();
-    //                 drop(completions_guard);
-
-    //                 Self::resolve_completion_documentation_remote(
-    //                     project_id,
-    //                     server_id,
-    //                     completions.clone(),
-    //                     completion_index,
-    //                     completion,
-    //                     client.clone(),
-    //                     language_registry.clone(),
-    //                 )
-    //                 .await;
-
-    //                 _ = this.update(&mut cx, |_, cx| cx.notify());
-    //             }
-    //         } else {
-    //             for completion_index in completion_indices {
-    //                 let completions_guard = completions.read();
-    //                 let completion = &completions_guard[completion_index];
-    //                 if completion.documentation.is_some() {
-    //                     continue;
-    //                 }
-
-    //                 let server_id = completion.server_id;
-    //                 let completion = completion.lsp_completion.clone();
-    //                 drop(completions_guard);
-
-    //                 let server = project.read_with(&mut cx, |project, _| {
-    //                     project.language_server_for_id(server_id)
-    //                 });
-    //                 let Some(server) = server else {
-    //                     return;
-    //                 };
-
-    //                 Self::resolve_completion_documentation_local(
-    //                     server,
-    //                     completions.clone(),
-    //                     completion_index,
-    //                     completion,
-    //                     language_registry.clone(),
-    //                 )
-    //                 .await;
-
-    //                 _ = this.update(&mut cx, |_, cx| cx.notify());
-    //             }
-    //         }
-    //     }))
-    // }
 
     fn attempt_resolve_selected_completion_documentation(
         &mut self,
@@ -1080,10 +961,9 @@ impl CompletionsMenu {
         let completions = self.completions.clone();
         let completions_guard = completions.read();
         let completion = &completions_guard[completion_index];
-        // todo!()
-        // if completion.documentation.is_some() {
-        //     return;
-        // }
+        if completion.documentation.is_some() {
+            return;
+        }
 
         let server_id = completion.server_id;
         let completion = completion.lsp_completion.clone();
@@ -1142,41 +1022,40 @@ impl CompletionsMenu {
         client: Arc<Client>,
         language_registry: Arc<LanguageRegistry>,
     ) {
-        // todo!()
-        // let request = proto::ResolveCompletionDocumentation {
-        //     project_id,
-        //     language_server_id: server_id.0 as u64,
-        //     lsp_completion: serde_json::to_string(&completion).unwrap().into_bytes(),
-        // };
+        let request = proto::ResolveCompletionDocumentation {
+            project_id,
+            language_server_id: server_id.0 as u64,
+            lsp_completion: serde_json::to_string(&completion).unwrap().into_bytes(),
+        };
 
-        // let Some(response) = client
-        //     .request(request)
-        //     .await
-        //     .context("completion documentation resolve proto request")
-        //     .log_err()
-        // else {
-        //     return;
-        // };
+        let Some(response) = client
+            .request(request)
+            .await
+            .context("completion documentation resolve proto request")
+            .log_err()
+        else {
+            return;
+        };
 
-        // if response.text.is_empty() {
-        //     let mut completions = completions.write();
-        //     let completion = &mut completions[completion_index];
-        //     completion.documentation = Some(Documentation::Undocumented);
-        // }
+        if response.text.is_empty() {
+            let mut completions = completions.write();
+            let completion = &mut completions[completion_index];
+            completion.documentation = Some(Documentation::Undocumented);
+        }
 
-        // let documentation = if response.is_markdown {
-        //     Documentation::MultiLineMarkdown(
-        //         markdown::parse_markdown(&response.text, &language_registry, None).await,
-        //     )
-        // } else if response.text.lines().count() <= 1 {
-        //     Documentation::SingleLine(response.text)
-        // } else {
-        //     Documentation::MultiLinePlainText(response.text)
-        // };
+        let documentation = if response.is_markdown {
+            Documentation::MultiLineMarkdown(
+                markdown::parse_markdown(&response.text, &language_registry, None).await,
+            )
+        } else if response.text.lines().count() <= 1 {
+            Documentation::SingleLine(response.text)
+        } else {
+            Documentation::MultiLinePlainText(response.text)
+        };
 
-        // let mut completions = completions.write();
-        // let completion = &mut completions[completion_index];
-        // completion.documentation = Some(documentation);
+        let mut completions = completions.write();
+        let completion = &mut completions[completion_index];
+        completion.documentation = Some(documentation);
     }
 
     async fn resolve_completion_documentation_local(
@@ -1186,38 +1065,37 @@ impl CompletionsMenu {
         completion: lsp::CompletionItem,
         language_registry: Arc<LanguageRegistry>,
     ) {
-        // todo!()
-        // let can_resolve = server
-        //     .capabilities()
-        //     .completion_provider
-        //     .as_ref()
-        //     .and_then(|options| options.resolve_provider)
-        //     .unwrap_or(false);
-        // if !can_resolve {
-        //     return;
-        // }
+        let can_resolve = server
+            .capabilities()
+            .completion_provider
+            .as_ref()
+            .and_then(|options| options.resolve_provider)
+            .unwrap_or(false);
+        if !can_resolve {
+            return;
+        }
 
-        // let request = server.request::<lsp::request::ResolveCompletionItem>(completion);
-        // let Some(completion_item) = request.await.log_err() else {
-        //     return;
-        // };
+        let request = server.request::<lsp::request::ResolveCompletionItem>(completion);
+        let Some(completion_item) = request.await.log_err() else {
+            return;
+        };
 
-        // if let Some(lsp_documentation) = completion_item.documentation {
-        //     let documentation = language::prepare_completion_documentation(
-        //         &lsp_documentation,
-        //         &language_registry,
-        //         None, // TODO: Try to reasonably work out which language the completion is for
-        //     )
-        //     .await;
+        if let Some(lsp_documentation) = completion_item.documentation {
+            let documentation = language::prepare_completion_documentation(
+                &lsp_documentation,
+                &language_registry,
+                None, // TODO: Try to reasonably work out which language the completion is for
+            )
+            .await;
 
-        //     let mut completions = completions.write();
-        //     let completion = &mut completions[completion_index];
-        //     completion.documentation = Some(documentation);
-        // } else {
-        //     let mut completions = completions.write();
-        //     let completion = &mut completions[completion_index];
-        //     completion.documentation = Some(Documentation::Undocumented);
-        // }
+            let mut completions = completions.write();
+            let completion = &mut completions[completion_index];
+            completion.documentation = Some(documentation);
+        } else {
+            let mut completions = completions.write();
+            let completion = &mut completions[completion_index];
+            completion.documentation = Some(Documentation::Undocumented);
+        }
     }
 
     fn visible(&self) -> bool {
@@ -1320,11 +1198,7 @@ impl CompletionsMenu {
                             ),
                         );
                         let completion_label = StyledText::new(completion.label.text.clone())
-                            .with_runs(text_runs_for_highlights(
-                                &completion.label.text,
-                                &style.text,
-                                highlights,
-                            ));
+                            .with_highlights(&style.text, highlights);
                         let documentation_label =
                             if let Some(Documentation::SingleLine(text)) = documentation {
                                 Some(SharedString::from(text.clone()))
@@ -1738,21 +1612,11 @@ impl Editor {
     //         Self::new(EditorMode::Full, buffer, None, field_editor_style, cx)
     //     }
 
-    //     pub fn auto_height(
-    //         max_lines: usize,
-    //         field_editor_style: Option<Arc<GetFieldEditorTheme>>,
-    //         cx: &mut ViewContext<Self>,
-    //     ) -> Self {
-    //         let buffer = cx.build_model(|cx| Buffer::new(0, cx.model_id() as u64, String::new()));
-    //         let buffer = cx.build_model(|cx| MultiBuffer::singleton(buffer, cx));
-    //         Self::new(
-    //             EditorMode::AutoHeight { max_lines },
-    //             buffer,
-    //             None,
-    //             field_editor_style,
-    //             cx,
-    //         )
-    //     }
+    pub fn auto_height(max_lines: usize, cx: &mut ViewContext<Self>) -> Self {
+        let buffer = cx.build_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), String::new()));
+        let buffer = cx.build_model(|cx| MultiBuffer::singleton(buffer, cx));
+        Self::new(EditorMode::AutoHeight { max_lines }, buffer, None, cx)
+    }
 
     pub fn for_buffer(
         buffer: Model<Buffer>,
@@ -1772,14 +1636,7 @@ impl Editor {
     }
 
     pub fn clone(&self, cx: &mut ViewContext<Self>) -> Self {
-        let mut clone = Self::new(
-            self.mode,
-            self.buffer.clone(),
-            self.project.clone(),
-            // todo!
-            // self.get_field_editor_theme.clone(),
-            cx,
-        );
+        let mut clone = Self::new(self.mode, self.buffer.clone(), self.project.clone(), cx);
         self.display_map.update(cx, |display_map, cx| {
             let snapshot = display_map.snapshot(cx);
             clone.display_map.update(cx, |display_map, cx| {
@@ -1796,17 +1653,11 @@ impl Editor {
         mode: EditorMode,
         buffer: Model<MultiBuffer>,
         project: Option<Model<Project>>,
-        // todo!()
-        // get_field_editor_theme: Option<Arc<GetFieldEditorTheme>>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        // let editor_view_id = cx.view_id();
         let style = cx.text_style();
         let font_size = style.font_size.to_pixels(cx.rem_size());
         let display_map = cx.build_model(|cx| {
-            // todo!()
-            // let settings = settings::get::<ThemeSettings>(cx);
-            // let style = build_style(settings, get_field_editor_theme.as_deref(), None, cx);
             DisplayMap::new(buffer.clone(), style.font(), font_size, None, 2, 1, cx)
         });
 
@@ -1862,7 +1713,6 @@ impl Editor {
             ime_transaction: Default::default(),
             active_diagnostics: None,
             soft_wrap_mode_override,
-            // get_field_editor_theme,
             collaboration_hub: project.clone().map(|project| Box::new(project) as _),
             project,
             blink_manager: blink_manager.clone(),
@@ -1876,8 +1726,7 @@ impl Editor {
             inlay_background_highlights: Default::default(),
             nav_history: None,
             context_menu: RwLock::new(None),
-            // mouse_context_menu: cx
-            //     .add_view(|cx| context_menu::ContextMenu::new(editor_view_id, cx)),
+            mouse_context_menu: None,
             completion_tasks: Default::default(),
             next_completion_id: 0,
             next_inlay_id: 0,
@@ -1886,7 +1735,6 @@ impl Editor {
             document_highlights_task: Default::default(),
             pending_rename: Default::default(),
             searchable: true,
-            // override_text_style: None,
             cursor_shape: Default::default(),
             autoindent_mode: Some(AutoindentMode::EachLine),
             collapse_matches: false,
@@ -2004,25 +1852,25 @@ impl Editor {
         }
     }
 
-    //     pub fn new_file_in_direction(
-    //         workspace: &mut Workspace,
-    //         action: &workspace::NewFileInDirection,
-    //         cx: &mut ViewContext<Workspace>,
-    //     ) {
-    //         let project = workspace.project().clone();
-    //         if project.read(cx).is_remote() {
-    //             cx.propagate();
-    //         } else if let Some(buffer) = project
-    //             .update(cx, |project, cx| project.create_buffer("", None, cx))
-    //             .log_err()
-    //         {
-    //             workspace.split_item(
-    //                 action.0,
-    //                 Box::new(cx.add_view(|cx| Editor::for_buffer(buffer, Some(project.clone()), cx))),
-    //                 cx,
-    //             );
-    //         }
-    //     }
+    pub fn new_file_in_direction(
+        workspace: &mut Workspace,
+        action: &workspace::NewFileInDirection,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        let project = workspace.project().clone();
+        if project.read(cx).is_remote() {
+            cx.propagate();
+        } else if let Some(buffer) = project
+            .update(cx, |project, cx| project.create_buffer("", None, cx))
+            .log_err()
+        {
+            workspace.split_item(
+                action.0,
+                Box::new(cx.build_view(|cx| Editor::for_buffer(buffer, Some(project.clone()), cx))),
+                cx,
+            );
+        }
+    }
 
     pub fn replica_id(&self, cx: &AppContext) -> ReplicaId {
         self.buffer.read(cx).replica_id()
@@ -4391,7 +4239,7 @@ impl Editor {
                                         editor.fold_at(&FoldAt { buffer_row }, cx);
                                     }
                                 }))
-                                .color(ui::Color::Muted)
+                                .icon_color(ui::Color::Muted)
                         })
                     })
                     .flatten()
@@ -8378,6 +8226,18 @@ impl Editor {
         cx.notify();
     }
 
+    pub fn set_style(&mut self, style: EditorStyle, cx: &mut ViewContext<Self>) {
+        let rem_size = cx.rem_size();
+        self.display_map.update(cx, |map, cx| {
+            map.set_font(
+                style.text.font(),
+                style.text.font_size.to_pixels(rem_size),
+                cx,
+            )
+        });
+        self.style = Some(style);
+    }
+
     pub fn set_wrap_width(&self, width: Option<Pixels>, cx: &mut AppContext) -> bool {
         self.display_map
             .update(cx, |map, cx| map.set_wrap_width(width, cx))
@@ -8800,62 +8660,56 @@ impl Editor {
     //         self.searchable
     //     }
 
-    //     fn open_excerpts(workspace: &mut Workspace, _: &OpenExcerpts, cx: &mut ViewContext<Workspace>) {
-    //         let active_item = workspace.active_item(cx);
-    //         let editor_handle = if let Some(editor) = active_item
-    //             .as_ref()
-    //             .and_then(|item| item.act_as::<Self>(cx))
-    //         {
-    //             editor
-    //         } else {
-    //             cx.propagate();
-    //             return;
-    //         };
+    fn open_excerpts(&mut self, _: &OpenExcerpts, cx: &mut ViewContext<Self>) {
+        let buffer = self.buffer.read(cx);
+        if buffer.is_singleton() {
+            cx.propagate();
+            return;
+        }
 
-    //         let editor = editor_handle.read(cx);
-    //         let buffer = editor.buffer.read(cx);
-    //         if buffer.is_singleton() {
-    //             cx.propagate();
-    //             return;
-    //         }
+        let Some(workspace) = self.workspace() else {
+            cx.propagate();
+            return;
+        };
 
-    //         let mut new_selections_by_buffer = HashMap::default();
-    //         for selection in editor.selections.all::<usize>(cx) {
-    //             for (buffer, mut range, _) in
-    //                 buffer.range_to_buffer_ranges(selection.start..selection.end, cx)
-    //             {
-    //                 if selection.reversed {
-    //                     mem::swap(&mut range.start, &mut range.end);
-    //                 }
-    //                 new_selections_by_buffer
-    //                     .entry(buffer)
-    //                     .or_insert(Vec::new())
-    //                     .push(range)
-    //             }
-    //         }
+        let mut new_selections_by_buffer = HashMap::default();
+        for selection in self.selections.all::<usize>(cx) {
+            for (buffer, mut range, _) in
+                buffer.range_to_buffer_ranges(selection.start..selection.end, cx)
+            {
+                if selection.reversed {
+                    mem::swap(&mut range.start, &mut range.end);
+                }
+                new_selections_by_buffer
+                    .entry(buffer)
+                    .or_insert(Vec::new())
+                    .push(range)
+            }
+        }
 
-    //         editor_handle.update(cx, |editor, cx| {
-    //             editor.push_to_nav_history(editor.selections.newest_anchor().head(), None, cx);
-    //         });
-    //         let pane = workspace.active_pane().clone();
-    //         pane.update(cx, |pane, _| pane.disable_history());
+        self.push_to_nav_history(self.selections.newest_anchor().head(), None, cx);
 
-    //         // We defer the pane interaction because we ourselves are a workspace item
-    //         // and activating a new item causes the pane to call a method on us reentrantly,
-    //         // which panics if we're on the stack.
-    //         cx.defer(move |workspace, cx| {
-    //             for (buffer, ranges) in new_selections_by_buffer.into_iter() {
-    //                 let editor = workspace.open_project_item::<Self>(buffer, cx);
-    //                 editor.update(cx, |editor, cx| {
-    //                     editor.change_selections(Some(Autoscroll::newest()), cx, |s| {
-    //                         s.select_ranges(ranges);
-    //                     });
-    //                 });
-    //             }
+        // We defer the pane interaction because we ourselves are a workspace item
+        // and activating a new item causes the pane to call a method on us reentrantly,
+        // which panics if we're on the stack.
+        cx.window_context().defer(move |cx| {
+            workspace.update(cx, |workspace, cx| {
+                let pane = workspace.active_pane().clone();
+                pane.update(cx, |pane, _| pane.disable_history());
 
-    //             pane.update(cx, |pane, _| pane.enable_history());
-    //         });
-    //     }
+                for (buffer, ranges) in new_selections_by_buffer.into_iter() {
+                    let editor = workspace.open_project_item::<Self>(buffer, cx);
+                    editor.update(cx, |editor, cx| {
+                        editor.change_selections(Some(Autoscroll::newest()), cx, |s| {
+                            s.select_ranges(ranges);
+                        });
+                    });
+                }
+
+                pane.update(cx, |pane, _| pane.enable_history());
+            })
+        });
+    }
 
     fn jump(
         &mut self,
@@ -9401,7 +9255,7 @@ impl Render for Editor {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         let settings = ThemeSettings::get_global(cx);
         let text_style = match self.mode {
-            EditorMode::SingleLine => TextStyle {
+            EditorMode::SingleLine | EditorMode::AutoHeight { .. } => TextStyle {
                 color: cx.theme().colors().text,
                 font_family: settings.ui_font.family.clone(),
                 font_features: settings.ui_font.features,
@@ -9413,8 +9267,6 @@ impl Render for Editor {
                 underline: None,
                 white_space: WhiteSpace::Normal,
             },
-
-            EditorMode::AutoHeight { max_lines } => todo!(),
 
             EditorMode::Full => TextStyle {
                 color: cx.theme().colors().text,
@@ -9449,106 +9301,6 @@ impl Render for Editor {
         )
     }
 }
-
-// impl View for Editor {
-//     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-//         let style = self.style(cx);
-//         let font_changed = self.display_map.update(cx, |map, cx| {
-//             map.set_fold_ellipses_color(style.folds.ellipses.text_color);
-//             map.set_font_with_size(style.text.font_id, style.text.font_size, cx)
-//         });
-
-//         if font_changed {
-//             cx.defer(move |editor, cx: &mut ViewContext<Editor>| {
-//                 hide_hover(editor, cx);
-//                 hide_link_definition(editor, cx);
-//             });
-//         }
-
-//         Stack::new()
-//             .with_child(EditorElement::new(style.clone()))
-//             .with_child(ChildView::new(&self.mouse_context_menu, cx))
-//             .into_any()
-//     }
-
-//     fn ui_name() -> &'static str {
-//         "Editor"
-//     }
-
-//     fn focus_in(&mut self, focused: AnyView, cx: &mut ViewContext<Self>) {
-//         if cx.is_self_focused() {
-//             let focused_event = EditorFocused(cx.handle());
-//             cx.emit(Event::Focused);
-//             cx.emit_global(focused_event);
-//         }
-//         if let Some(rename) = self.pending_rename.as_ref() {
-//             cx.focus(&rename.editor);
-//         } else if cx.is_self_focused() || !focused.is::<Editor>() {
-//             if !self.focused {
-//                 self.blink_manager.update(cx, BlinkManager::enable);
-//             }
-//             self.focused = true;
-//             self.buffer.update(cx, |buffer, cx| {
-//                 buffer.finalize_last_transaction(cx);
-//                 if self.leader_peer_id.is_none() {
-//                     buffer.set_active_selections(
-//                         &self.selections.disjoint_anchors(),
-//                         self.selections.line_mode,
-//                         self.cursor_shape,
-//                         cx,
-//                     );
-//                 }
-//             });
-//         }
-//     }
-
-//     fn focus_out(&mut self, _: AnyView, cx: &mut ViewContext<Self>) {
-//         let blurred_event = EditorBlurred(cx.handle());
-//         cx.emit_global(blurred_event);
-//         self.focused = false;
-//         self.blink_manager.update(cx, BlinkManager::disable);
-//         self.buffer
-//             .update(cx, |buffer, cx| buffer.remove_active_selections(cx));
-//         self.hide_context_menu(cx);
-//         hide_hover(self, cx);
-//         cx.emit(Event::Blurred);
-//         cx.notify();
-//     }
-
-//     fn modifiers_changed(
-//         &mut self,
-//         event: &gpui::platform::ModifiersChangedEvent,
-//         cx: &mut ViewContext<Self>,
-//     ) -> bool {
-//         let pending_selection = self.has_pending_selection();
-
-//         if let Some(point) = &self.link_go_to_definition_state.last_trigger_point {
-//             if event.cmd && !pending_selection {
-//                 let point = point.clone();
-//                 let snapshot = self.snapshot(cx);
-//                 let kind = point.definition_kind(event.shift);
-
-//                 show_link_definition(kind, self, point, snapshot, cx);
-//                 return false;
-//             }
-//         }
-
-//         {
-//             if self.link_go_to_definition_state.symbol_range.is_some()
-//                 || !self.link_go_to_definition_state.definitions.is_empty()
-//             {
-//                 self.link_go_to_definition_state.symbol_range.take();
-//                 self.link_go_to_definition_state.definitions.clear();
-//                 cx.notify();
-//             }
-
-//             self.link_go_to_definition_state.task = None;
-
-//             self.clear_highlights::<LinkGoToDefinitionState>(cx);
-//         }
-
-//         false
-//     }
 
 impl InputHandler for Editor {
     fn text_for_range(
@@ -9796,72 +9548,6 @@ impl InputHandler for Editor {
     }
 }
 
-// fn build_style(
-//     settings: &ThemeSettings,
-//     get_field_editor_theme: Option<&GetFieldEditorTheme>,
-//     override_text_style: Option<&OverrideTextStyle>,
-//     cx: &mut AppContext,
-// ) -> EditorStyle {
-//     let font_cache = cx.font_cache();
-//     let line_height_scalar = settings.line_height();
-//     let theme_id = settings.theme.meta.id;
-//     let mut theme = settings.theme.editor.clone();
-//     let mut style = if let Some(get_field_editor_theme) = get_field_editor_theme {
-//         let field_editor_theme = get_field_editor_theme(&settings.theme);
-//         theme.text_color = field_editor_theme.text.color;
-//         theme.selection = field_editor_theme.selection;
-//         theme.background = field_editor_theme
-//             .container
-//             .background_color
-//             .unwrap_or_default();
-//         EditorStyle {
-//             text: field_editor_theme.text,
-//             placeholder_text: field_editor_theme.placeholder_text,
-//             line_height_scalar,
-//             theme,
-//             theme_id,
-//         }
-//     } else {
-//         todo!();
-//         // let font_family_id = settings.buffer_font_family;
-//         // let font_family_name = cx.font_cache().family_name(font_family_id).unwrap();
-//         // let font_properties = Default::default();
-//         // let font_id = font_cache
-//         //     .select_font(font_family_id, &font_properties)
-//         //     .unwrap();
-//         // let font_size = settings.buffer_font_size(cx);
-//         // EditorStyle {
-//         //     text: TextStyle {
-//         //         color: settings.theme.editor.text_color,
-//         //         font_family_name,
-//         //         font_family_id,
-//         //         font_id,
-//         //         font_size,
-//         //         font_properties,
-//         //         underline: Default::default(),
-//         //         soft_wrap: false,
-//         //     },
-//         //     placeholder_text: None,
-//         //     line_height_scalar,
-//         //     theme,
-//         //     theme_id,
-//         // }
-//     };
-
-//     if let Some(highlight_style) = override_text_style.and_then(|build_style| build_style(&style)) {
-//         if let Some(highlighted) = style
-//             .text
-//             .clone()
-//             .highlight(highlight_style, font_cache)
-//             .log_err()
-//         {
-//             style.text = highlighted;
-//         }
-//     }
-
-//     style
-// }
-
 trait SelectionExt {
     fn offset_range(&self, buffer: &MultiBufferSnapshot) -> Range<usize>;
     fn point_range(&self, buffer: &MultiBufferSnapshot) -> Range<Point>;
@@ -10062,31 +9748,6 @@ pub fn diagnostic_style(
         (DiagnosticSeverity::HINT, false) => style.info,
         _ => style.ignored,
     }
-}
-
-pub fn text_runs_for_highlights(
-    text: &str,
-    default_style: &TextStyle,
-    highlights: impl IntoIterator<Item = (Range<usize>, HighlightStyle)>,
-) -> Vec<TextRun> {
-    let mut runs = Vec::new();
-    let mut ix = 0;
-    for (range, highlight) in highlights {
-        if ix < range.start {
-            runs.push(default_style.clone().to_run(range.start - ix));
-        }
-        runs.push(
-            default_style
-                .clone()
-                .highlight(highlight)
-                .to_run(range.len()),
-        );
-        ix = range.end;
-    }
-    if ix < text.len() {
-        runs.push(default_style.to_run(text.len() - ix));
-    }
-    runs
 }
 
 pub fn styled_runs_for_code_label<'a>(

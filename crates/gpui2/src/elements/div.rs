@@ -12,6 +12,7 @@ use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
     cell::RefCell,
+    cmp::Ordering,
     fmt::Debug,
     mem,
     rc::Rc,
@@ -357,6 +358,11 @@ pub trait StatefulInteractiveElement: InteractiveElement {
         self
     }
 
+    fn track_scroll(mut self, scroll_handle: &ScrollHandle) -> Self {
+        self.interactivity().scroll_handle = Some(scroll_handle.clone());
+        self
+    }
+
     fn active(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self
     where
         Self: Sized,
@@ -626,6 +632,26 @@ impl Element for Div {
         let mut child_max = Point::default();
         let content_size = if element_state.child_layout_ids.is_empty() {
             bounds.size
+        } else if let Some(scroll_handle) = self.interactivity.scroll_handle.as_ref() {
+            let mut state = scroll_handle.0.borrow_mut();
+            state.child_bounds = Vec::with_capacity(element_state.child_layout_ids.len());
+            state.bounds = bounds;
+            let requested = state.requested_scroll_top.take();
+
+            for (ix, child_layout_id) in element_state.child_layout_ids.iter().enumerate() {
+                let child_bounds = cx.layout_bounds(*child_layout_id);
+                child_min = child_min.min(&child_bounds.origin);
+                child_max = child_max.max(&child_bounds.lower_right());
+                state.child_bounds.push(child_bounds);
+
+                if let Some(requested) = requested.as_ref() {
+                    if requested.0 == ix {
+                        *state.offset.borrow_mut() =
+                            bounds.origin - (child_bounds.origin - point(px(0.), requested.1));
+                    }
+                }
+            }
+            (child_max - child_min).into()
         } else {
             for child_layout_id in &element_state.child_layout_ids {
                 let child_bounds = cx.layout_bounds(*child_layout_id);
@@ -696,6 +722,7 @@ pub struct Interactivity {
     pub key_context: KeyContext,
     pub focusable: bool,
     pub tracked_focus_handle: Option<FocusHandle>,
+    pub scroll_handle: Option<ScrollHandle>,
     pub focus_listeners: FocusListeners,
     pub group: Option<SharedString>,
     pub base_style: StyleRefinement,
@@ -752,6 +779,10 @@ impl Interactivity {
                     .clone()
                     .unwrap_or_else(|| cx.focus_handle())
             });
+        }
+
+        if let Some(scroll_handle) = self.scroll_handle.as_ref() {
+            element_state.scroll_offset = Some(scroll_handle.0.borrow().offset.clone());
         }
 
         let style = self.compute_style(None, &mut element_state, cx);
@@ -824,7 +855,6 @@ impl Interactivity {
             .and_then(|group_hover| GroupBounds::get(&group_hover.group, cx));
 
         if let Some(group_bounds) = hover_group_bounds {
-            // todo!() needs cx.was_top_layer
             let hovered = group_bounds.contains_point(&cx.mouse_position());
             cx.on_mouse_event(move |event: &MouseMoveEvent, phase, cx| {
                 if phase == DispatchPhase::Capture {
@@ -836,13 +866,13 @@ impl Interactivity {
         }
 
         if self.hover_style.is_some()
-            || (cx.active_drag.is_some() && !self.drag_over_styles.is_empty())
+            || cx.active_drag.is_some() && !self.drag_over_styles.is_empty()
         {
-            let interactive_bounds = interactive_bounds.clone();
-            let hovered = interactive_bounds.visibly_contains(&cx.mouse_position(), cx);
+            let bounds = bounds.intersect(&cx.content_mask().bounds);
+            let hovered = bounds.contains_point(&cx.mouse_position());
             cx.on_mouse_event(move |event: &MouseMoveEvent, phase, cx| {
                 if phase == DispatchPhase::Capture {
-                    if interactive_bounds.visibly_contains(&event.position, cx) != hovered {
+                    if bounds.contains_point(&event.position) != hovered {
                         cx.notify();
                     }
                 }
@@ -1143,7 +1173,9 @@ impl Interactivity {
             let mouse_position = cx.mouse_position();
             if let Some(group_hover) = self.group_hover_style.as_ref() {
                 if let Some(group_bounds) = GroupBounds::get(&group_hover.group, cx) {
-                    if group_bounds.contains_point(&mouse_position) {
+                    if group_bounds.contains_point(&mouse_position)
+                        && cx.was_top_layer(&mouse_position, cx.stacking_order())
+                    {
                         style.refine(&group_hover.style);
                     }
                 }
@@ -1162,7 +1194,6 @@ impl Interactivity {
                 for (state_type, group_drag_style) in &self.group_drag_over_styles {
                     if let Some(group_bounds) = GroupBounds::get(&group_drag_style.group, cx) {
                         if *state_type == drag.view.entity_type()
-                        // todo!() needs to handle cx.content_mask() and cx.is_top()
                             && group_bounds.contains_point(&mouse_position)
                         {
                             style.refine(&group_drag_style.style);
@@ -1175,7 +1206,6 @@ impl Interactivity {
                         && bounds
                             .intersect(&cx.content_mask().bounds)
                             .contains_point(&mouse_position)
-                        && cx.was_top_layer(&mouse_position, cx.stacking_order())
                     {
                         style.refine(drag_over_style);
                     }
@@ -1207,6 +1237,7 @@ impl Default for Interactivity {
             key_context: KeyContext::default(),
             focusable: false,
             tracked_focus_handle: None,
+            scroll_handle: None,
             focus_listeners: SmallVec::default(),
             // scroll_offset: Point::default(),
             group: None,
@@ -1428,5 +1459,85 @@ where
 {
     fn children_mut(&mut self) -> &mut SmallVec<[AnyElement; 2]> {
         self.element.children_mut()
+    }
+}
+
+#[derive(Default)]
+struct ScrollHandleState {
+    // not great to have the nested rc's...
+    offset: Rc<RefCell<Point<Pixels>>>,
+    bounds: Bounds<Pixels>,
+    child_bounds: Vec<Bounds<Pixels>>,
+    requested_scroll_top: Option<(usize, Pixels)>,
+}
+
+#[derive(Clone)]
+pub struct ScrollHandle(Rc<RefCell<ScrollHandleState>>);
+
+impl ScrollHandle {
+    pub fn new() -> Self {
+        Self(Rc::default())
+    }
+
+    pub fn offset(&self) -> Point<Pixels> {
+        self.0.borrow().offset.borrow().clone()
+    }
+
+    pub fn top_item(&self) -> usize {
+        let state = self.0.borrow();
+        let top = state.bounds.top() - state.offset.borrow().y;
+
+        match state.child_bounds.binary_search_by(|bounds| {
+            if top < bounds.top() {
+                Ordering::Greater
+            } else if top > bounds.bottom() {
+                Ordering::Less
+            } else {
+                Ordering::Equal
+            }
+        }) {
+            Ok(ix) => ix,
+            Err(ix) => ix.min(state.child_bounds.len().saturating_sub(1)),
+        }
+    }
+
+    pub fn bounds_for_item(&self, ix: usize) -> Option<Bounds<Pixels>> {
+        self.0.borrow().child_bounds.get(ix).cloned()
+    }
+
+    /// scroll_to_item scrolls the minimal amount to ensure that the item is
+    /// fully visible
+    pub fn scroll_to_item(&self, ix: usize) {
+        let state = self.0.borrow();
+
+        let Some(bounds) = state.child_bounds.get(ix) else {
+            return;
+        };
+
+        let scroll_offset = state.offset.borrow().y;
+
+        if bounds.top() + scroll_offset < state.bounds.top() {
+            state.offset.borrow_mut().y = state.bounds.top() - bounds.top();
+        } else if bounds.bottom() + scroll_offset > state.bounds.bottom() {
+            state.offset.borrow_mut().y = state.bounds.bottom() - bounds.bottom();
+        }
+    }
+
+    pub fn logical_scroll_top(&self) -> (usize, Pixels) {
+        let ix = self.top_item();
+        let state = self.0.borrow();
+
+        if let Some(child_bounds) = state.child_bounds.get(ix) {
+            (
+                ix,
+                child_bounds.top() + state.offset.borrow().y - state.bounds.top(),
+            )
+        } else {
+            (ix, px(0.))
+        }
+    }
+
+    pub fn set_logical_scroll_top(&self, ix: usize, px: Pixels) {
+        self.0.borrow_mut().requested_scroll_top = Some((ix, px));
     }
 }

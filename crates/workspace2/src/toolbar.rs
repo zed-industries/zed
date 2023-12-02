@@ -4,7 +4,7 @@ use gpui::{
     ViewContext, WindowContext,
 };
 use ui::prelude::*;
-use ui::{h_stack, v_stack, Button, Color, Icon, IconButton, Label};
+use ui::{h_stack, v_stack, Icon, IconButton};
 
 pub enum ToolbarItemEvent {
     ChangeLocation(ToolbarItemLocation),
@@ -80,7 +80,6 @@ impl Render for Toolbar {
     type Element = Div;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-        //dbg!(&self.items.len());
         v_stack()
             .border_b()
             .border_color(cx.theme().colors().border_variant)
@@ -88,16 +87,8 @@ impl Render for Toolbar {
             .child(
                 h_stack()
                     .justify_between()
-                    .child(
-                        // Toolbar left side
-                        h_stack()
-                            .border()
-                            .border_color(gpui::red())
-                            .p_1()
-                            .child(Button::new("crates"))
-                            .child(Label::new("/").color(Color::Muted))
-                            .child(Button::new("workspace2")),
-                    )
+                    // Toolbar left side
+                    .children(self.items.iter().map(|(child, _)| child.to_any()))
                     // Toolbar right side
                     .child(
                         h_stack()
@@ -116,7 +107,6 @@ impl Render for Toolbar {
                             ),
                     ),
             )
-            .children(self.items.iter().map(|(child, _)| child.to_any()))
     }
 }
 

@@ -592,31 +592,32 @@ impl<'a> MutableSelectionsCollection<'a> {
         self.select(selections)
     }
 
-    pub fn select_anchor_ranges<I: IntoIterator<Item = Range<Anchor>>>(&mut self, ranges: I) {
-        todo!()
-        // let buffer = self.buffer.read(self.cx).snapshot(self.cx);
-        // let selections = ranges
-        //     .into_iter()
-        //     .map(|range| {
-        //         let mut start = range.start;
-        //         let mut end = range.end;
-        //         let reversed = if start.cmp(&end, &buffer).is_gt() {
-        //             mem::swap(&mut start, &mut end);
-        //             true
-        //         } else {
-        //             false
-        //         };
-        //         Selection {
-        //             id: post_inc(&mut self.collection.next_selection_id),
-        //             start,
-        //             end,
-        //             reversed,
-        //             goal: SelectionGoal::None,
-        //         }
-        //     })
-        //     .collect::<Vec<_>>();
-
-        // self.select_anchors(selections)
+    pub fn select_anchor_ranges<I>(&mut self, ranges: I)
+    where
+        I: IntoIterator<Item = Range<Anchor>>,
+    {
+        let buffer = self.buffer.read(self.cx).snapshot(self.cx);
+        let selections = ranges
+            .into_iter()
+            .map(|range| {
+                let mut start = range.start;
+                let mut end = range.end;
+                let reversed = if start.cmp(&end, &buffer).is_gt() {
+                    mem::swap(&mut start, &mut end);
+                    true
+                } else {
+                    false
+                };
+                Selection {
+                    id: post_inc(&mut self.collection.next_selection_id),
+                    start,
+                    end,
+                    reversed,
+                    goal: SelectionGoal::None,
+                }
+            })
+            .collect::<Vec<_>>();
+        self.select_anchors(selections)
     }
 
     pub fn new_selection_id(&mut self) -> usize {

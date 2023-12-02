@@ -109,7 +109,6 @@ impl Element for UniformList {
         cx: &mut WindowContext,
     ) -> (LayoutId, Self::State) {
         let max_items = self.item_count;
-        let rem_size = cx.rem_size();
         let item_size = state
             .as_ref()
             .map(|s| s.item_size)
@@ -120,9 +119,7 @@ impl Element for UniformList {
                 .layout(state.map(|s| s.interactive), cx, |style, cx| {
                     cx.request_measured_layout(
                         style,
-                        rem_size,
-                        move |known_dimensions: Size<Option<Pixels>>,
-                              available_space: Size<AvailableSpace>| {
+                        move |known_dimensions, available_space, _cx| {
                             let desired_height = item_size.height * max_items;
                             let width =
                                 known_dimensions

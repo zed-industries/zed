@@ -105,6 +105,7 @@ impl LspAdapter for JsonLspAdapter {
 
     fn workspace_configuration(
         &self,
+        _workspace_root: &Path,
         cx: &mut AppContext,
     ) -> BoxFuture<'static, serde_json::Value> {
         let action_names = cx.all_action_names();

@@ -350,6 +350,7 @@ impl Telemetry {
             milliseconds_since_first_event: self.milliseconds_since_first_event(),
         };
 
+        dbg!(telemetry_settings);
         self.report_clickhouse_event(event, telemetry_settings, true)
     }
 

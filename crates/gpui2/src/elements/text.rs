@@ -1,6 +1,7 @@
 use crate::{
-    Bounds, DispatchPhase, Element, ElementId, IntoElement, LayoutId, MouseDownEvent, MouseUpEvent,
-    Pixels, Point, SharedString, Size, TextRun, WhiteSpace, WindowContext, WrappedLine,
+    Bounds, DispatchPhase, Element, ElementId, HighlightStyle, IntoElement, LayoutId,
+    MouseDownEvent, MouseUpEvent, Pixels, Point, SharedString, Size, TextRun, TextStyle,
+    WhiteSpace, WindowContext, WrappedLine,
 };
 use anyhow::anyhow;
 use parking_lot::{Mutex, MutexGuard};
@@ -87,7 +88,28 @@ impl StyledText {
         }
     }
 
-    pub fn with_runs(mut self, runs: Vec<TextRun>) -> Self {
+    pub fn with_highlights(
+        mut self,
+        default_style: &TextStyle,
+        highlights: impl IntoIterator<Item = (Range<usize>, HighlightStyle)>,
+    ) -> Self {
+        let mut runs = Vec::new();
+        let mut ix = 0;
+        for (range, highlight) in highlights {
+            if ix < range.start {
+                runs.push(default_style.clone().to_run(range.start - ix));
+            }
+            runs.push(
+                default_style
+                    .clone()
+                    .highlight(highlight)
+                    .to_run(range.len()),
+            );
+            ix = range.end;
+        }
+        if ix < self.text.len() {
+            runs.push(default_style.to_run(self.text.len() - ix));
+        }
         self.runs = Some(runs);
         self
     }
@@ -144,7 +166,6 @@ impl TextState {
         runs: Option<Vec<TextRun>>,
         cx: &mut WindowContext,
     ) -> LayoutId {
-        let text_system = cx.text_system().clone();
         let text_style = cx.text_style();
         let font_size = text_style.font_size.to_pixels(cx.rem_size());
         let line_height = text_style
@@ -152,18 +173,16 @@ impl TextState {
             .to_pixels(font_size.into(), cx.rem_size());
         let text = SharedString::from(text);
 
-        let rem_size = cx.rem_size();
-
         let runs = if let Some(runs) = runs {
             runs
         } else {
             vec![text_style.to_run(text.len())]
         };
 
-        let layout_id = cx.request_measured_layout(Default::default(), rem_size, {
+        let layout_id = cx.request_measured_layout(Default::default(), {
             let element_state = self.clone();
 
-            move |known_dimensions, available_space| {
+            move |known_dimensions, available_space, cx| {
                 let wrap_width = if text_style.white_space == WhiteSpace::Normal {
                     known_dimensions.width.or(match available_space.width {
                         crate::AvailableSpace::Definite(x) => Some(x),
@@ -181,7 +200,8 @@ impl TextState {
                     }
                 }
 
-                let Some(lines) = text_system
+                let Some(lines) = cx
+                    .text_system()
                     .shape_text(
                         &text, font_size, &runs, wrap_width, // Wrap if we know the width.
                     )
@@ -265,7 +285,9 @@ impl TextState {
 pub struct InteractiveText {
     element_id: ElementId,
     text: StyledText,
-    click_listener: Option<Box<dyn Fn(InteractiveTextClickEvent, &mut WindowContext<'_>)>>,
+    click_listener:
+        Option<Box<dyn Fn(&[Range<usize>], InteractiveTextClickEvent, &mut WindowContext<'_>)>>,
+    clickable_ranges: Vec<Range<usize>>,
 }
 
 struct InteractiveTextClickEvent {
@@ -284,6 +306,7 @@ impl InteractiveText {
             element_id: id.into(),
             text,
             click_listener: None,
+            clickable_ranges: Vec::new(),
         }
     }
 
@@ -292,7 +315,7 @@ impl InteractiveText {
         ranges: Vec<Range<usize>>,
         listener: impl Fn(usize, &mut WindowContext<'_>) + 'static,
     ) -> Self {
-        self.click_listener = Some(Box::new(move |event, cx| {
+        self.click_listener = Some(Box::new(move |ranges, event, cx| {
             for (range_ix, range) in ranges.iter().enumerate() {
                 if range.contains(&event.mouse_down_index) && range.contains(&event.mouse_up_index)
                 {
@@ -300,6 +323,7 @@ impl InteractiveText {
                 }
             }
         }));
+        self.clickable_ranges = ranges;
         self
     }
 }
@@ -334,6 +358,19 @@ impl Element for InteractiveText {
 
     fn paint(self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut WindowContext) {
         if let Some(click_listener) = self.click_listener {
+            if let Some(ix) = state
+                .text_state
+                .index_for_position(bounds, cx.mouse_position())
+            {
+                if self
+                    .clickable_ranges
+                    .iter()
+                    .any(|range| range.contains(&ix))
+                {
+                    cx.set_cursor_style(crate::CursorStyle::PointingHand)
+                }
+            }
+
             let text_state = state.text_state.clone();
             let mouse_down = state.mouse_down_index.clone();
             if let Some(mouse_down_index) = mouse_down.get() {
@@ -343,6 +380,7 @@ impl Element for InteractiveText {
                             text_state.index_for_position(bounds, event.position)
                         {
                             click_listener(
+                                &self.clickable_ranges,
                                 InteractiveTextClickEvent {
                                     mouse_down_index,
                                     mouse_up_index,

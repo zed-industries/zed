@@ -1,7 +1,7 @@
 use crate::{
     point, size, AtlasTextureId, AtlasTextureKind, AtlasTile, Bounds, ContentMask, DevicePixels,
     Hsla, MetalAtlas, MonochromeSprite, Path, PathId, PathVertex, PolychromeSprite, PrimitiveBatch,
-    Quad, ScaledPixels, Scene, Shadow, Size, Underline,
+    Quad, ScaledPixels, Scene, Shadow, Size, Surface, Underline,
 };
 use cocoa::{
     base::{NO, YES},
@@ -9,6 +9,9 @@ use cocoa::{
     quartzcore::AutoresizingMask,
 };
 use collections::HashMap;
+use core_foundation::base::TCFType;
+use foreign_types::ForeignType;
+use media::core_video::CVMetalTextureCache;
 use metal::{CommandQueue, MTLPixelFormat, MTLResourceOptions, NSRange};
 use objc::{self, msg_send, sel, sel_impl};
 use smallvec::SmallVec;
@@ -27,9 +30,11 @@ pub(crate) struct MetalRenderer {
     underlines_pipeline_state: metal::RenderPipelineState,
     monochrome_sprites_pipeline_state: metal::RenderPipelineState,
     polychrome_sprites_pipeline_state: metal::RenderPipelineState,
+    surfaces_pipeline_state: metal::RenderPipelineState,
     unit_vertices: metal::Buffer,
     instances: metal::Buffer,
     sprite_atlas: Arc<MetalAtlas>,
+    core_video_texture_cache: CVMetalTextureCache,
 }
 
 impl MetalRenderer {
@@ -143,6 +148,14 @@ impl MetalRenderer {
             "polychrome_sprite_fragment",
             MTLPixelFormat::BGRA8Unorm,
         );
+        let surfaces_pipeline_state = build_pipeline_state(
+            &device,
+            &library,
+            "surfaces",
+            "surface_vertex",
+            "surface_fragment",
+            MTLPixelFormat::BGRA8Unorm,
+        );
 
         let command_queue = device.new_command_queue();
         let sprite_atlas = Arc::new(MetalAtlas::new(device.clone()));
@@ -157,9 +170,11 @@ impl MetalRenderer {
             underlines_pipeline_state,
             monochrome_sprites_pipeline_state,
             polychrome_sprites_pipeline_state,
+            surfaces_pipeline_state,
             unit_vertices,
             instances,
             sprite_atlas,
+            core_video_texture_cache: CVMetalTextureCache::new(device.as_ptr()).unwrap(),
         }
     }
 
@@ -263,6 +278,14 @@ impl MetalRenderer {
                     self.draw_polychrome_sprites(
                         texture_id,
                         sprites,
+                        &mut instance_offset,
+                        viewport_size,
+                        command_encoder,
+                    );
+                }
+                PrimitiveBatch::Surfaces(surfaces) => {
+                    self.draw_surfaces(
+                        surfaces,
                         &mut instance_offset,
                         viewport_size,
                         command_encoder,
@@ -793,6 +816,102 @@ impl MetalRenderer {
         );
         *offset = next_offset;
     }
+
+    fn draw_surfaces(
+        &mut self,
+        surfaces: &[Surface],
+        offset: &mut usize,
+        viewport_size: Size<DevicePixels>,
+        command_encoder: &metal::RenderCommandEncoderRef,
+    ) {
+        command_encoder.set_render_pipeline_state(&self.surfaces_pipeline_state);
+        command_encoder.set_vertex_buffer(
+            SurfaceInputIndex::Vertices as u64,
+            Some(&self.unit_vertices),
+            0,
+        );
+        command_encoder.set_vertex_bytes(
+            SurfaceInputIndex::ViewportSize as u64,
+            mem::size_of_val(&viewport_size) as u64,
+            &viewport_size as *const Size<DevicePixels> as *const _,
+        );
+
+        for surface in surfaces {
+            let texture_size = size(
+                DevicePixels::from(surface.image_buffer.width() as i32),
+                DevicePixels::from(surface.image_buffer.height() as i32),
+            );
+
+            assert_eq!(
+                surface.image_buffer.pixel_format_type(),
+                media::core_video::kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
+            );
+
+            let y_texture = self
+                .core_video_texture_cache
+                .create_texture_from_image(
+                    surface.image_buffer.as_concrete_TypeRef(),
+                    ptr::null(),
+                    MTLPixelFormat::R8Unorm,
+                    surface.image_buffer.plane_width(0),
+                    surface.image_buffer.plane_height(0),
+                    0,
+                )
+                .unwrap();
+            let cb_cr_texture = self
+                .core_video_texture_cache
+                .create_texture_from_image(
+                    surface.image_buffer.as_concrete_TypeRef(),
+                    ptr::null(),
+                    MTLPixelFormat::RG8Unorm,
+                    surface.image_buffer.plane_width(1),
+                    surface.image_buffer.plane_height(1),
+                    1,
+                )
+                .unwrap();
+
+            align_offset(offset);
+            let next_offset = *offset + mem::size_of::<Surface>();
+            assert!(
+                next_offset <= INSTANCE_BUFFER_SIZE,
+                "instance buffer exhausted"
+            );
+
+            command_encoder.set_vertex_buffer(
+                SurfaceInputIndex::Surfaces as u64,
+                Some(&self.instances),
+                *offset as u64,
+            );
+            command_encoder.set_vertex_bytes(
+                SurfaceInputIndex::TextureSize as u64,
+                mem::size_of_val(&texture_size) as u64,
+                &texture_size as *const Size<DevicePixels> as *const _,
+            );
+            command_encoder.set_fragment_texture(
+                SurfaceInputIndex::YTexture as u64,
+                Some(y_texture.as_texture_ref()),
+            );
+            command_encoder.set_fragment_texture(
+                SurfaceInputIndex::CbCrTexture as u64,
+                Some(cb_cr_texture.as_texture_ref()),
+            );
+
+            unsafe {
+                let buffer_contents =
+                    (self.instances.contents() as *mut u8).add(*offset) as *mut SurfaceBounds;
+                ptr::write(
+                    buffer_contents,
+                    SurfaceBounds {
+                        bounds: surface.bounds,
+                        content_mask: surface.content_mask.clone(),
+                    },
+                );
+            }
+
+            command_encoder.draw_primitives(metal::MTLPrimitiveType::Triangle, 0, 6);
+            *offset = next_offset;
+        }
+    }
 }
 
 fn build_pipeline_state(
@@ -899,6 +1018,16 @@ enum SpriteInputIndex {
 }
 
 #[repr(C)]
+enum SurfaceInputIndex {
+    Vertices = 0,
+    Surfaces = 1,
+    ViewportSize = 2,
+    TextureSize = 3,
+    YTexture = 4,
+    CbCrTexture = 5,
+}
+
+#[repr(C)]
 enum PathRasterizationInputIndex {
     Vertices = 0,
     AtlasTextureSize = 1,
@@ -910,4 +1039,11 @@ pub struct PathSprite {
     pub bounds: Bounds<ScaledPixels>,
     pub color: Hsla,
     pub tile: AtlasTile,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[repr(C)]
+pub struct SurfaceBounds {
+    pub bounds: Bounds<ScaledPixels>,
+    pub content_mask: ContentMask<ScaledPixels>,
 }
