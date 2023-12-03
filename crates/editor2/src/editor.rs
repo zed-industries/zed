@@ -1920,14 +1920,14 @@ impl Editor {
     //         self.buffer.read(cx).read(cx).file_at(point).cloned()
     //     }
 
-    //     pub fn active_excerpt(
-    //         &self,
-    //         cx: &AppContext,
-    //     ) -> Option<(ExcerptId, Model<Buffer>, Range<text::Anchor>)> {
-    //         self.buffer
-    //             .read(cx)
-    //             .excerpt_containing(self.selections.newest_anchor().head(), cx)
-    //     }
+    pub fn active_excerpt(
+        &self,
+        cx: &AppContext,
+    ) -> Option<(ExcerptId, Model<Buffer>, Range<text::Anchor>)> {
+        self.buffer
+            .read(cx)
+            .excerpt_containing(self.selections.newest_anchor().head(), cx)
+    }
 
     //     pub fn style(&self, cx: &AppContext) -> EditorStyle {
     //         build_style(

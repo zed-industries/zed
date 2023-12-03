@@ -1,5 +1,6 @@
 use crate::{
-    h_stack, prelude::*, v_stack, KeyBinding, Label, List, ListItem, ListSeparator, ListSubHeader,
+    h_stack, prelude::*, v_stack, Icon, IconElement, KeyBinding, Label, List, ListItem,
+    ListSeparator, ListSubHeader,
 };
 use gpui::{
     px, Action, AppContext, DismissEvent, Div, EventEmitter, FocusHandle, FocusableView,
@@ -13,6 +14,7 @@ pub enum ContextMenuItem {
     Header(SharedString),
     Entry {
         label: SharedString,
+        icon: Option<Icon>,
         handler: Rc<dyn Fn(&mut WindowContext)>,
         key_binding: Option<KeyBinding>,
     },
@@ -69,6 +71,7 @@ impl ContextMenu {
             label: label.into(),
             handler: Rc::new(on_click),
             key_binding: None,
+            icon: None,
         });
         self
     }
@@ -83,6 +86,22 @@ impl ContextMenu {
             label: label.into(),
             key_binding: KeyBinding::for_action(&*action, cx),
             handler: Rc::new(move |cx| cx.dispatch_action(action.boxed_clone())),
+            icon: None,
+        });
+        self
+    }
+
+    pub fn link(
+        mut self,
+        label: impl Into<SharedString>,
+        action: Box<dyn Action>,
+        cx: &mut WindowContext,
+    ) -> Self {
+        self.items.push(ContextMenuItem::Entry {
+            label: label.into(),
+            key_binding: KeyBinding::for_action(&*action, cx),
+            handler: Rc::new(move |cx| cx.dispatch_action(action.boxed_clone())),
+            icon: Some(Icon::Link),
         });
         self
     }
@@ -175,19 +194,30 @@ impl Render for ContextMenu {
                                 ListSubHeader::new(header.clone()).into_any_element()
                             }
                             ContextMenuItem::Entry {
-                                label: entry,
-                                handler: callback,
+                                label,
+                                handler,
                                 key_binding,
+                                icon,
                             } => {
-                                let callback = callback.clone();
+                                let handler = handler.clone();
                                 let dismiss = cx.listener(|_, _, cx| cx.emit(DismissEvent));
 
-                                ListItem::new(entry.clone())
+                                let label_element = if let Some(icon) = icon {
+                                    h_stack()
+                                        .gap_1()
+                                        .child(Label::new(label.clone()))
+                                        .child(IconElement::new(*icon))
+                                        .into_any_element()
+                                } else {
+                                    Label::new(label.clone()).into_any_element()
+                                };
+
+                                ListItem::new(label.clone())
                                     .child(
                                         h_stack()
                                             .w_full()
                                             .justify_between()
-                                            .child(Label::new(entry.clone()))
+                                            .child(label_element)
                                             .children(
                                                 key_binding
                                                     .clone()
@@ -196,7 +226,7 @@ impl Render for ContextMenu {
                                     )
                                     .selected(Some(ix) == self.selected_index)
                                     .on_click(move |event, cx| {
-                                        callback(cx);
+                                        handler(cx);
                                         dismiss(event, cx)
                                     })
                                     .into_any_element()

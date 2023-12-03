@@ -178,6 +178,15 @@ impl<D: PickerDelegate> Picker<D> {
         }
         cx.notify();
     }
+
+    pub fn query(&self, cx: &AppContext) -> String {
+        self.editor.read(cx).text(cx)
+    }
+
+    pub fn set_query(&self, query: impl Into<Arc<str>>, cx: &mut ViewContext<Self>) {
+        self.editor
+            .update(cx, |editor, cx| editor.set_text(query, cx));
+    }
 }
 
 impl<D: PickerDelegate> Render for Picker<D> {
