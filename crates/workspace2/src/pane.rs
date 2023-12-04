@@ -7,7 +7,7 @@ use crate::{
 use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
 use gpui::{
-    actions, overlay, prelude::*, Action, AnchorCorner, AnyWeakView, AppContext,
+    actions, overlay, prelude::*, rems, Action, AnchorCorner, AnyWeakView, AppContext,
     AsyncWindowContext, DismissEvent, Div, EntityId, EventEmitter, FocusHandle, Focusable,
     FocusableView, Model, Pixels, Point, PromptLevel, Render, Task, View, ViewContext,
     VisualContext, WeakView, WindowContext,
@@ -1556,11 +1556,15 @@ impl Pane {
 
     fn render_tab_bar(&mut self, cx: &mut ViewContext<'_, Pane>) -> impl IntoElement {
         div()
-            .group("tab_bar")
             .id("tab_bar")
+            .group("tab_bar")
             .track_focus(&self.tab_bar_focus_handle)
             .w_full()
+            // 30px @ 16px/rem
+            .h(rems(1.875))
+            .overflow_hidden()
             .flex()
+            .flex_none()
             .bg(cx.theme().colors().tab_bar_background)
             // Left Side
             .child(
