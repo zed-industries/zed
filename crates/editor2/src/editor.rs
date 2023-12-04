@@ -9692,8 +9692,7 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, is_valid: bool) -> Rend
     Arc::new(move |cx: &mut BlockContext| {
         let message = message.clone();
         let copy_id: SharedString = format!("copy-{}", cx.block_id.clone()).to_string().into();
-        // TODO: `cx.write_to_clipboard` is not implemented in tests.
-        // let write_to_clipboard = cx.write_to_clipboard(ClipboardItem::new(message.clone()));
+        let write_to_clipboard = cx.write_to_clipboard(ClipboardItem::new(message.clone()));
 
         // TODO: Nate: We should tint the background of the block with the severity color
         // We need to extend the theme before we can do this
@@ -9723,8 +9722,7 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, is_valid: bool) -> Rend
                                     .icon_color(Color::Muted)
                                     .size(ButtonSize::Compact)
                                     .style(ButtonStyle::Transparent)
-                                    // TODO: `cx.write_to_clipboard` is not implemented in tests.
-                                    // .on_click(cx.listener(move |_, _, cx| write_to_clipboard))
+                                    .on_click(cx.listener(move |_, _, cx| write_to_clipboard))
                                     .tooltip(|cx| Tooltip::text("Copy diagnostic message", cx)),
                             ),
                     )
