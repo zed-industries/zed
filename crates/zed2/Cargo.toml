@@ -50,7 +50,7 @@ menu = { package = "menu2", path = "../menu2" }
 # language_tools = { path = "../language_tools" }
 node_runtime = { path = "../node_runtime" }
 # assistant = { path = "../assistant" }
-# outline = { path = "../outline" }
+outline = { package = "outline2", path = "../outline2" }
 # plugin_runtime = { path = "../plugin_runtime",optional = true }
 project = { package = "project2", path = "../project2" }
 project_panel = { package = "project_panel2", path = "../project_panel2" }

@@ -76,6 +76,7 @@ members = [
     "crates/notifications",
     "crates/notifications2",
     "crates/outline",
+    "crates/outline2",
     "crates/picker",
     "crates/picker2",
     "crates/plugin",

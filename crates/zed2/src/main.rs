@@ -205,7 +205,7 @@ fn main() {
 
         go_to_line::init(cx);
         file_finder::init(cx);
-        // outline::init(cx);
+        outline::init(cx);
         // project_symbols::init(cx);
         project_panel::init(Assets, cx);
         channel::init(&client, user_store.clone(), cx);
