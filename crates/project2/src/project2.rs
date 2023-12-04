@@ -1691,14 +1691,15 @@ impl Project {
         path: impl Into<ProjectPath>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<(ProjectEntryId, AnyModel)>> {
-        let task = self.open_buffer(path, cx);
+        let project_path = path.into();
+        let task = self.open_buffer(project_path.clone(), cx);
         cx.spawn(move |_, mut cx| async move {
             let buffer = task.await?;
             let project_entry_id = buffer
                 .update(&mut cx, |buffer, cx| {
                     File::from_dyn(buffer.file()).and_then(|file| file.project_entry_id(cx))
                 })?
-                .ok_or_else(|| anyhow!("no project entry"))?;
+                .with_context(|| format!("no project entry for {project_path:?}"))?;
 
             let buffer: &AnyModel = &buffer;
             Ok((project_entry_id, buffer.clone()))
