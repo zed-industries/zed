@@ -1492,10 +1492,28 @@ impl<'a> WindowContext<'a> {
     }
 
     pub fn bindings_for_action(&self, action: &dyn Action) -> Vec<KeyBinding> {
-        self.window
-            .current_frame
-            .dispatch_tree
-            .bindings_for_action(action)
+        self.window.current_frame.dispatch_tree.bindings_for_action(
+            action,
+            &self.window.current_frame.dispatch_tree.context_stack,
+        )
+    }
+
+    pub fn bindings_for_action_in(
+        &self,
+        action: &dyn Action,
+        focus_handle: &FocusHandle,
+    ) -> Vec<KeyBinding> {
+        let dispatch_tree = &self.window.previous_frame.dispatch_tree;
+
+        let Some(node_id) = dispatch_tree.focusable_node_id(focus_handle.id) else {
+            return vec![];
+        };
+        let context_stack = dispatch_tree
+            .dispatch_path(node_id)
+            .into_iter()
+            .map(|node_id| dispatch_tree.node(node_id).context.clone())
+            .collect();
+        dispatch_tree.bindings_for_action(action, &context_stack)
     }
 
     pub fn listener_for<V: Render, E>(

@@ -16,7 +16,7 @@ pub struct DispatchNodeId(usize);
 
 pub(crate) struct DispatchTree {
     node_stack: Vec<DispatchNodeId>,
-    context_stack: Vec<KeyContext>,
+    pub(crate) context_stack: Vec<KeyContext>,
     nodes: Vec<DispatchNode>,
     focusable_node_ids: HashMap<FocusId, DispatchNodeId>,
     keystroke_matchers: HashMap<SmallVec<[KeyContext; 4]>, KeystrokeMatcher>,
@@ -163,13 +163,24 @@ impl DispatchTree {
         actions
     }
 
-    pub fn bindings_for_action(&self, action: &dyn Action) -> Vec<KeyBinding> {
+    pub fn bindings_for_action(
+        &self,
+        action: &dyn Action,
+        context_stack: &Vec<KeyContext>,
+    ) -> Vec<KeyBinding> {
         self.keymap
             .lock()
             .bindings_for_action(action.type_id())
             .filter(|candidate| {
-                candidate.action.partial_eq(action)
-                    && candidate.matches_context(&self.context_stack)
+                if !candidate.action.partial_eq(action) {
+                    return false;
+                }
+                for i in 1..context_stack.len() {
+                    if candidate.matches_context(&context_stack[0..i]) {
+                        return true;
+                    }
+                }
+                return false;
             })
             .cloned()
             .collect()
