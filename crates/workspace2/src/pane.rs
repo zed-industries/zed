@@ -27,8 +27,8 @@ use std::{
 };
 
 use ui::{
-    h_stack, prelude::*, right_click_menu, ButtonLike, Color, Icon, IconButton, IconElement,
-    IconSize, Label, Tooltip,
+    h_stack, prelude::*, right_click_menu, Color, Icon, IconButton, IconElement, IconSize, Label,
+    Tooltip,
 };
 use ui::{v_stack, ContextMenu};
 use util::truncate_and_remove_front;
@@ -1486,13 +1486,6 @@ impl Pane {
             .items_center()
             .justify_center()
             .px_5()
-            // .map(|this| {
-            //     if close_right {
-            //         this.pl_3().pr_1()
-            //     } else {
-            //         this.pr_1().pr_3()
-            //     }
-            // })
             .h(rems(1.875))
             .bg(tab_bg)
             .border_color(cx.theme().colors().border)
@@ -1502,9 +1495,16 @@ impl Pane {
                 cx.theme().colors().text_muted
             })
             .map(|this| {
+                let is_first_item = ix == 0;
                 let is_last_item = ix == self.items.len() - 1;
                 match ix.cmp(&self.active_item_index) {
-                    cmp::Ordering::Less => this.border_l().mr_px().border_b(),
+                    cmp::Ordering::Less => {
+                        if is_first_item {
+                            this.ml_px().mr_px().border_b()
+                        } else {
+                            this.border_l().mr_px().border_b()
+                        }
+                    }
                     cmp::Ordering::Greater => {
                         if is_last_item {
                             this.mr_px().ml_px().border_b()
@@ -1542,24 +1542,18 @@ impl Pane {
         right_click_menu(ix).trigger(tab).menu(|cx| {
             ContextMenu::build(cx, |menu, cx| {
                 menu.action(
-                    "Close Active Item",
+                    "Close",
                     CloseActiveItem { save_intent: None }.boxed_clone(),
                     cx,
                 )
-                .action("Close Inactive Items", CloseInactiveItems.boxed_clone(), cx)
-                .action("Close Clean Items", CloseCleanItems.boxed_clone(), cx)
+                .action("Close Others", CloseInactiveItems.boxed_clone(), cx)
+                .separator()
+                .action("Close Left", CloseItemsToTheLeft.boxed_clone(), cx)
+                .action("Close Right", CloseItemsToTheRight.boxed_clone(), cx)
+                .separator()
+                .action("Close Clean", CloseCleanItems.boxed_clone(), cx)
                 .action(
-                    "Close Items To The Left",
-                    CloseItemsToTheLeft.boxed_clone(),
-                    cx,
-                )
-                .action(
-                    "Close Items To The Right",
-                    CloseItemsToTheRight.boxed_clone(),
-                    cx,
-                )
-                .action(
-                    "Close All Items",
+                    "Close All",
                     CloseAllItems { save_intent: None }.boxed_clone(),
                     cx,
                 )
@@ -1582,30 +1576,29 @@ impl Pane {
             // Left Side
             .child(
                 h_stack()
-                    .px_2()
                     .flex()
                     .flex_none()
                     .gap_1()
+                    .px_1()
+                    .border_b()
+                    .border_r()
+                    .border_color(cx.theme().colors().border)
                     // Nav Buttons
                     .child(
-                        div().border().border_color(gpui::red()).child(
-                            IconButton::new("navigate_backward", Icon::ArrowLeft)
-                                .on_click({
-                                    let view = cx.view().clone();
-                                    move |_, cx| view.update(cx, Self::navigate_backward)
-                                })
-                                .disabled(!self.can_navigate_backward()),
-                        ),
+                        IconButton::new("navigate_backward", Icon::ArrowLeft)
+                            .on_click({
+                                let view = cx.view().clone();
+                                move |_, cx| view.update(cx, Self::navigate_backward)
+                            })
+                            .disabled(!self.can_navigate_backward()),
                     )
                     .child(
-                        div().border().border_color(gpui::red()).child(
-                            IconButton::new("navigate_forward", Icon::ArrowRight)
-                                .on_click({
-                                    let view = cx.view().clone();
-                                    move |_, cx| view.update(cx, Self::navigate_backward)
-                                })
-                                .disabled(!self.can_navigate_forward()),
-                        ),
+                        IconButton::new("navigate_forward", Icon::ArrowRight)
+                            .on_click({
+                                let view = cx.view().clone();
+                                move |_, cx| view.update(cx, Self::navigate_backward)
+                            })
+                            .disabled(!self.can_navigate_forward()),
                     ),
             )
             .child(
@@ -1621,86 +1614,60 @@ impl Pane {
             )
             // Right Side
             .child(
-                div()
-                    .px_1()
+                h_stack()
                     .flex()
                     .flex_none()
-                    .gap_2()
-                    // Nav Buttons
+                    .gap_1()
+                    .px_1()
+                    .border_b()
+                    .border_l()
+                    .border_color(cx.theme().colors().border)
                     .child(
                         div()
                             .flex()
                             .items_center()
                             .gap_px()
-                            .child(
-                                div()
-                                    .bg(gpui::blue())
-                                    .border()
-                                    .border_color(gpui::red())
-                                    .child(IconButton::new("plus", Icon::Plus).on_click(
-                                        cx.listener(|this, _, cx| {
-                                            let menu = ContextMenu::build(cx, |menu, cx| {
-                                                menu.action("New File", NewFile.boxed_clone(), cx)
-                                                    .action(
-                                                        "New Terminal",
-                                                        NewCenterTerminal.boxed_clone(),
-                                                        cx,
-                                                    )
-                                                    .action(
-                                                        "New Search",
-                                                        NewSearch.boxed_clone(),
-                                                        cx,
-                                                    )
-                                            });
-                                            cx.subscribe(
-                                                &menu,
-                                                |this, _, event: &DismissEvent, cx| {
-                                                    this.focus(cx);
-                                                    this.new_item_menu = None;
-                                                },
+                            .child(IconButton::new("plus", Icon::Plus).on_click(cx.listener(
+                                |this, _, cx| {
+                                    let menu = ContextMenu::build(cx, |menu, cx| {
+                                        menu.action("New File", NewFile.boxed_clone(), cx)
+                                            .action(
+                                                "New Terminal",
+                                                NewCenterTerminal.boxed_clone(),
+                                                cx,
                                             )
-                                            .detach();
-                                            this.new_item_menu = Some(menu);
-                                        }),
-                                    ))
-                                    .when_some(self.new_item_menu.as_ref(), |el, new_item_menu| {
-                                        el.child(Self::render_menu_overlay(new_item_menu))
-                                    }),
-                            )
-                            .child(
-                                div()
-                                    .border()
-                                    .border_color(gpui::red())
-                                    .child(IconButton::new("split", Icon::Split).on_click(
-                                        cx.listener(|this, _, cx| {
-                                            let menu = ContextMenu::build(cx, |menu, cx| {
-                                                menu.action(
-                                                    "Split Right",
-                                                    SplitRight.boxed_clone(),
-                                                    cx,
-                                                )
-                                                .action("Split Left", SplitLeft.boxed_clone(), cx)
-                                                .action("Split Up", SplitUp.boxed_clone(), cx)
-                                                .action("Split Down", SplitDown.boxed_clone(), cx)
-                                            });
-                                            cx.subscribe(
-                                                &menu,
-                                                |this, _, event: &DismissEvent, cx| {
-                                                    this.focus(cx);
-                                                    this.split_item_menu = None;
-                                                },
-                                            )
-                                            .detach();
-                                            this.split_item_menu = Some(menu);
-                                        }),
-                                    ))
-                                    .when_some(
-                                        self.split_item_menu.as_ref(),
-                                        |el, split_item_menu| {
-                                            el.child(Self::render_menu_overlay(split_item_menu))
-                                        },
-                                    ),
-                            ),
+                                            .action("New Search", NewSearch.boxed_clone(), cx)
+                                    });
+                                    cx.subscribe(&menu, |this, _, event: &DismissEvent, cx| {
+                                        this.focus(cx);
+                                        this.new_item_menu = None;
+                                    })
+                                    .detach();
+                                    this.new_item_menu = Some(menu);
+                                },
+                            )))
+                            .when_some(self.new_item_menu.as_ref(), |el, new_item_menu| {
+                                el.child(Self::render_menu_overlay(new_item_menu))
+                            })
+                            .child(IconButton::new("split", Icon::Split).on_click(cx.listener(
+                                |this, _, cx| {
+                                    let menu = ContextMenu::build(cx, |menu, cx| {
+                                        menu.action("Split Right", SplitRight.boxed_clone(), cx)
+                                            .action("Split Left", SplitLeft.boxed_clone(), cx)
+                                            .action("Split Up", SplitUp.boxed_clone(), cx)
+                                            .action("Split Down", SplitDown.boxed_clone(), cx)
+                                    });
+                                    cx.subscribe(&menu, |this, _, event: &DismissEvent, cx| {
+                                        this.focus(cx);
+                                        this.split_item_menu = None;
+                                    })
+                                    .detach();
+                                    this.split_item_menu = Some(menu);
+                                },
+                            )))
+                            .when_some(self.split_item_menu.as_ref(), |el, split_item_menu| {
+                                el.child(Self::render_menu_overlay(split_item_menu))
+                            }),
                     ),
             )
     }
