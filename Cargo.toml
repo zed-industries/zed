@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/activity_indicator",
+    "crates/activity_indicator2",
     "crates/ai",
     "crates/assistant",
     "crates/audio",
@@ -8,6 +9,7 @@ members = [
     "crates/auto_update",
     "crates/auto_update2",
     "crates/breadcrumbs",
+    "crates/breadcrumbs2",
     "crates/call",
     "crates/call2",
     "crates/channel",
@@ -59,6 +61,7 @@ members = [
     "crates/language",
     "crates/language2",
     "crates/language_selector",
+    "crates/language_selector2",
     "crates/language_tools",
     "crates/live_kit_client",
     "crates/live_kit_server",
@@ -200,7 +203,7 @@ tree-sitter-vue = {git = "https://github.com/zed-industries/tree-sitter-vue", re
 tree-sitter-uiua = {git = "https://github.com/shnarazk/tree-sitter-uiua", rev = "9260f11be5900beda4ee6d1a24ab8ddfaf5a19b2"}
 
 [patch.crates-io]
-tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "3b0159d25559b603af566ade3c83d930bf466db1" }
+tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "b5f461a69bf3df7298b1903574d506179e6390b0" }
 async-task = { git = "https://github.com/zed-industries/async-task", rev = "341b57d6de98cdfd7b418567b8de2022ca993a6e" }
 
 # TODO - Remove when a version is released with this PR: https://github.com/servo/core-foundation-rs/pull/457

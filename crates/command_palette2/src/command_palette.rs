@@ -11,7 +11,7 @@ use gpui::{
 };
 use picker::{Picker, PickerDelegate};
 
-use ui::{h_stack, v_stack, HighlightedLabel, KeyBinding, ListItem};
+use ui::{h_stack, prelude::*, v_stack, HighlightedLabel, KeyBinding, ListItem};
 use util::{
     channel::{parse_zed_link, ReleaseChannel, RELEASE_CHANNEL},
     ResultExt,

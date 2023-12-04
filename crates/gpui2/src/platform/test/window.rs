@@ -11,19 +11,20 @@ use std::{
 };
 
 #[derive(Default)]
-struct Handlers {
-    active_status_change: Vec<Box<dyn FnMut(bool)>>,
-    input: Vec<Box<dyn FnMut(crate::InputEvent) -> bool>>,
-    moved: Vec<Box<dyn FnMut()>>,
-    resize: Vec<Box<dyn FnMut(Size<Pixels>, f32)>>,
+pub(crate) struct TestWindowHandlers {
+    pub(crate) active_status_change: Vec<Box<dyn FnMut(bool)>>,
+    pub(crate) input: Vec<Box<dyn FnMut(crate::InputEvent) -> bool>>,
+    pub(crate) moved: Vec<Box<dyn FnMut()>>,
+    pub(crate) resize: Vec<Box<dyn FnMut(Size<Pixels>, f32)>>,
 }
 
 pub struct TestWindow {
     bounds: WindowBounds,
     current_scene: Mutex<Option<Scene>>,
     display: Rc<dyn PlatformDisplay>,
+    pub(crate) window_title: Option<String>,
     pub(crate) input_handler: Option<Arc<Mutex<Box<dyn PlatformInputHandler>>>>,
-    handlers: Mutex<Handlers>,
+    pub(crate) handlers: Arc<Mutex<TestWindowHandlers>>,
     platform: Weak<TestPlatform>,
     sprite_atlas: Arc<dyn PlatformAtlas>,
 }
@@ -42,6 +43,7 @@ impl TestWindow {
             input_handler: None,
             sprite_atlas: Arc::new(TestAtlas::new()),
             handlers: Default::default(),
+            window_title: Default::default(),
         }
     }
 }
@@ -100,8 +102,8 @@ impl PlatformWindow for TestWindow {
         todo!()
     }
 
-    fn set_title(&mut self, _title: &str) {
-        todo!()
+    fn set_title(&mut self, title: &str) {
+        self.window_title = Some(title.to_owned());
     }
 
     fn set_edited(&mut self, _edited: bool) {
@@ -166,6 +168,10 @@ impl PlatformWindow for TestWindow {
 
     fn sprite_atlas(&self) -> sync::Arc<dyn crate::PlatformAtlas> {
         self.sprite_atlas.clone()
+    }
+
+    fn as_test(&self) -> Option<&TestWindow> {
+        Some(self)
     }
 }
 

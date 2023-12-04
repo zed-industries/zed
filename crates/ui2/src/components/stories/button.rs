@@ -1,8 +1,8 @@
 use gpui::{Div, Render};
 use story::Story;
 
-use crate::prelude::*;
-use crate::{h_stack, Button, Icon, IconPosition};
+use crate::{prelude::*, Icon};
+use crate::{Button, ButtonStyle};
 
 pub struct ButtonStory;
 
@@ -12,66 +12,29 @@ impl Render for ButtonStory {
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
         Story::container()
             .child(Story::title_for::<Button>())
+            .child(Story::label("Default"))
+            .child(Button::new("default_filled", "Click me"))
+            .child(Story::label("Selected"))
+            .child(Button::new("selected_filled", "Click me").selected(true))
+            .child(Story::label("Selected with `selected_label`"))
             .child(
-                div()
-                    .flex()
-                    .gap_8()
-                    .child(
-                        div().child(Story::label("Ghost (Default)")).child(
-                            h_stack()
-                                .gap_2()
-                                .child(Button::new("Label").variant(ButtonVariant::Ghost)),
-                        ),
-                    )
-                    .child(Story::label("Ghost – Left Icon"))
-                    .child(
-                        h_stack().gap_2().child(
-                            Button::new("Label")
-                                .variant(ButtonVariant::Ghost)
-                                .icon(Icon::Plus)
-                                .icon_position(IconPosition::Left),
-                        ),
-                    ),
+                Button::new("selected_label_filled", "Click me")
+                    .selected(true)
+                    .selected_label("I have been selected"),
             )
-            .child(Story::label("Ghost – Right Icon"))
+            .child(Story::label("With `label_color`"))
+            .child(Button::new("filled_with_label_color", "Click me").color(Color::Created))
+            .child(Story::label("With `icon`"))
+            .child(Button::new("filled_with_icon", "Click me").icon(Icon::FileGit))
+            .child(Story::label("Selected with `icon`"))
             .child(
-                h_stack().gap_2().child(
-                    Button::new("Label")
-                        .variant(ButtonVariant::Ghost)
-                        .icon(Icon::Plus)
-                        .icon_position(IconPosition::Right),
-                ),
+                Button::new("filled_and_selected_with_icon", "Click me")
+                    .selected(true)
+                    .icon(Icon::FileGit),
             )
-            .child(
-                div().child(Story::label("Filled")).child(
-                    h_stack()
-                        .gap_2()
-                        .child(Button::new("Label").variant(ButtonVariant::Filled)),
-                ),
-            )
-            .child(Story::label("Filled – Left Button"))
-            .child(
-                h_stack().gap_2().child(
-                    Button::new("Label")
-                        .variant(ButtonVariant::Filled)
-                        .icon(Icon::Plus)
-                        .icon_position(IconPosition::Left),
-                ),
-            )
-            .child(Story::label("Filled – Right Button"))
-            .child(
-                h_stack().gap_2().child(
-                    Button::new("Label")
-                        .variant(ButtonVariant::Filled)
-                        .icon(Icon::Plus)
-                        .icon_position(IconPosition::Right),
-                ),
-            )
-            .child(Story::label("Button with `on_click`"))
-            .child(
-                Button::new("Label")
-                    .variant(ButtonVariant::Ghost)
-                    .on_click(|_: &_, _: &mut WindowContext| println!("Button clicked.")),
-            )
+            .child(Story::label("Default (Subtle)"))
+            .child(Button::new("default_subtle", "Click me").style(ButtonStyle::Subtle))
+            .child(Story::label("Default (Transparent)"))
+            .child(Button::new("default_transparent", "Click me").style(ButtonStyle::Transparent))
     }
 }

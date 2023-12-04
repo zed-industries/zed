@@ -19,5 +19,13 @@ impl Render for AvatarStory {
             .child(Avatar::uri(
                 "https://avatars.githubusercontent.com/u/326587?v=4",
             ))
+            .child(
+                Avatar::uri("https://avatars.githubusercontent.com/u/326587?v=4")
+                    .availability_indicator(true),
+            )
+            .child(
+                Avatar::uri("https://avatars.githubusercontent.com/u/326587?v=4")
+                    .availability_indicator(false),
+            )
     }
 }

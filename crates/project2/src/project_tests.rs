@@ -823,7 +823,7 @@ async fn test_single_file_worktrees_diagnostics(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_hidden_worktrees_diagnostics(cx: &mut gpui::TestAppContext) {
+async fn test_omitted_diagnostics(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
     let fs = FakeFs::new(cx.executor());
@@ -831,7 +831,12 @@ async fn test_hidden_worktrees_diagnostics(cx: &mut gpui::TestAppContext) {
         "/root",
         json!({
             "dir": {
+                ".git": {
+                    "HEAD": "ref: refs/heads/main",
+                },
+                ".gitignore": "b.rs",
                 "a.rs": "let a = 1;",
+                "b.rs": "let b = 2;",
             },
             "other.rs": "let b = c;"
         }),
@@ -839,6 +844,13 @@ async fn test_hidden_worktrees_diagnostics(cx: &mut gpui::TestAppContext) {
     .await;
 
     let project = Project::test(fs, ["/root/dir".as_ref()], cx).await;
+    let (worktree, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_local_worktree("/root/dir", true, cx)
+        })
+        .await
+        .unwrap();
+    let main_worktree_id = worktree.read_with(cx, |tree, _| tree.id());
 
     let (worktree, _) = project
         .update(cx, |project, cx| {
@@ -846,12 +858,30 @@ async fn test_hidden_worktrees_diagnostics(cx: &mut gpui::TestAppContext) {
         })
         .await
         .unwrap();
-    let worktree_id = worktree.update(cx, |tree, _| tree.id());
+    let other_worktree_id = worktree.update(cx, |tree, _| tree.id());
 
+    let server_id = LanguageServerId(0);
     project.update(cx, |project, cx| {
         project
             .update_diagnostics(
-                LanguageServerId(0),
+                server_id,
+                lsp::PublishDiagnosticsParams {
+                    uri: Url::from_file_path("/root/dir/b.rs").unwrap(),
+                    version: None,
+                    diagnostics: vec![lsp::Diagnostic {
+                        range: lsp::Range::new(lsp::Position::new(0, 4), lsp::Position::new(0, 5)),
+                        severity: Some(lsp::DiagnosticSeverity::ERROR),
+                        message: "unused variable 'b'".to_string(),
+                        ..Default::default()
+                    }],
+                },
+                &[],
+                cx,
+            )
+            .unwrap();
+        project
+            .update_diagnostics(
+                server_id,
                 lsp::PublishDiagnosticsParams {
                     uri: Url::from_file_path("/root/other.rs").unwrap(),
                     version: None,
@@ -868,11 +898,34 @@ async fn test_hidden_worktrees_diagnostics(cx: &mut gpui::TestAppContext) {
             .unwrap();
     });
 
-    let buffer = project
-        .update(cx, |project, cx| project.open_buffer((worktree_id, ""), cx))
+    let main_ignored_buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((main_worktree_id, "b.rs"), cx)
+        })
         .await
         .unwrap();
-    buffer.update(cx, |buffer, _| {
+    main_ignored_buffer.update(cx, |buffer, _| {
+        let chunks = chunks_with_diagnostics(buffer, 0..buffer.len());
+        assert_eq!(
+            chunks
+                .iter()
+                .map(|(s, d)| (s.as_str(), *d))
+                .collect::<Vec<_>>(),
+            &[
+                ("let ", None),
+                ("b", Some(DiagnosticSeverity::ERROR)),
+                (" = 2;", None),
+            ],
+            "Gigitnored buffers should still get in-buffer diagnostics",
+        );
+    });
+    let other_buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((other_worktree_id, ""), cx)
+        })
+        .await
+        .unwrap();
+    other_buffer.update(cx, |buffer, _| {
         let chunks = chunks_with_diagnostics(buffer, 0..buffer.len());
         assert_eq!(
             chunks
@@ -883,13 +936,29 @@ async fn test_hidden_worktrees_diagnostics(cx: &mut gpui::TestAppContext) {
                 ("let b = ", None),
                 ("c", Some(DiagnosticSeverity::ERROR)),
                 (";", None),
-            ]
+            ],
+            "Buffers from hidden projects should still get in-buffer diagnostics"
         );
     });
 
     project.update(cx, |project, cx| {
-        assert_eq!(project.diagnostic_summaries(cx).next(), None);
-        assert_eq!(project.diagnostic_summary(cx).error_count, 0);
+        assert_eq!(project.diagnostic_summaries(false, cx).next(), None);
+        assert_eq!(
+            project.diagnostic_summaries(true, cx).collect::<Vec<_>>(),
+            vec![(
+                ProjectPath {
+                    worktree_id: main_worktree_id,
+                    path: Arc::from(Path::new("b.rs")),
+                },
+                server_id,
+                DiagnosticSummary {
+                    error_count: 1,
+                    warning_count: 0,
+                }
+            )]
+        );
+        assert_eq!(project.diagnostic_summary(false, cx).error_count, 0);
+        assert_eq!(project.diagnostic_summary(true, cx).error_count, 1);
     });
 }
 
@@ -1162,7 +1231,7 @@ async fn test_restarting_server_with_diagnostics_published(cx: &mut gpui::TestAp
     });
     project.update(cx, |project, cx| {
         assert_eq!(
-            project.diagnostic_summary(cx),
+            project.diagnostic_summary(false, cx),
             DiagnosticSummary {
                 error_count: 1,
                 warning_count: 0,
@@ -1188,7 +1257,7 @@ async fn test_restarting_server_with_diagnostics_published(cx: &mut gpui::TestAp
     });
     project.update(cx, |project, cx| {
         assert_eq!(
-            project.diagnostic_summary(cx),
+            project.diagnostic_summary(false, cx),
             DiagnosticSummary {
                 error_count: 0,
                 warning_count: 0,
@@ -1777,7 +1846,7 @@ async fn test_diagnostics_from_multiple_language_servers(cx: &mut gpui::TestAppC
             .unwrap();
 
         assert_eq!(
-            project.diagnostic_summary(cx),
+            project.diagnostic_summary(false, cx),
             DiagnosticSummary {
                 error_count: 2,
                 warning_count: 0,

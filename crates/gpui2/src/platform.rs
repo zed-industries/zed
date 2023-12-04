@@ -158,6 +158,11 @@ pub(crate) trait PlatformWindow {
     fn draw(&self, scene: Scene);
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
+
+    #[cfg(any(test, feature = "test-support"))]
+    fn as_test(&self) -> Option<&TestWindow> {
+        None
+    }
 }
 
 pub trait PlatformDispatcher: Send + Sync {
@@ -467,13 +472,27 @@ pub enum PromptLevel {
     Critical,
 }
 
+/// The style of the cursor (pointer)
 #[derive(Copy, Clone, Debug)]
 pub enum CursorStyle {
     Arrow,
-    ResizeLeftRight,
-    ResizeUpDown,
-    PointingHand,
     IBeam,
+    Crosshair,
+    ClosedHand,
+    OpenHand,
+    PointingHand,
+    ResizeLeft,
+    ResizeRight,
+    ResizeLeftRight,
+    ResizeUp,
+    ResizeDown,
+    ResizeUpDown,
+    DisappearingItem,
+    IBeamCursorForVerticalLayout,
+    OperationNotAllowed,
+    DragLink,
+    DragCopy,
+    ContextualMenu,
 }
 
 impl Default for CursorStyle {

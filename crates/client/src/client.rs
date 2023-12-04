@@ -346,7 +346,7 @@ impl<T: Entity> Drop for PendingEntitySubscription<T> {
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Debug, Copy, Clone)]
 pub struct TelemetrySettings {
     pub diagnostics: bool,
     pub metrics: bool,

@@ -1,4 +1,6 @@
 use gpui::{px, Styled, WindowContext};
+use settings::Settings;
+use theme::ThemeSettings;
 
 use crate::prelude::*;
 use crate::{ElevationIndex, UITextSize};
@@ -58,6 +60,18 @@ pub trait StyledExt: Styled + Sized {
         let size = UITextSize::Small.rems();
 
         self.text_size(size)
+    }
+
+    /// The font size for buffer text.
+    ///
+    /// Retrieves the default font size, or the user's custom font size if set.
+    ///
+    /// This should only be used for text that is displayed in a buffer,
+    /// or other places that text needs to match the user's buffer font size.
+    fn text_buffer(self, cx: &mut WindowContext) -> Self {
+        let settings = ThemeSettings::get_global(cx);
+
+        self.text_size(settings.buffer_font_size)
     }
 
     /// The [`Surface`](ui2::ElevationIndex::Surface) elevation level, located above the app background, is the standard level for all elements

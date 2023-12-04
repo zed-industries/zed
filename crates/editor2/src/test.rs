@@ -27,7 +27,7 @@ pub fn marked_display_snapshot(
     let (unmarked_text, markers) = marked_text_offsets(text);
 
     let font = cx.text_style().font();
-    let font_size: Pixels = 14.into();
+    let font_size: Pixels = 14usize.into();
 
     let buffer = MultiBuffer::build_simple(&unmarked_text, cx);
     let display_map = cx.build_model(|cx| DisplayMap::new(buffer, font, font_size, None, 1, 1, cx));

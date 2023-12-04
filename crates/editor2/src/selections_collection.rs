@@ -315,14 +315,11 @@ impl SelectionsCollection {
 
         let line = display_map.layout_row(row, &text_layout_details);
 
-        dbg!("****START COL****");
         let start_col = line.closest_index_for_x(positions.start) as u32;
         if start_col < line_len || (is_empty && positions.start == line.width) {
             let start = DisplayPoint::new(row, start_col);
-            dbg!("****END COL****");
             let end_col = line.closest_index_for_x(positions.end) as u32;
             let end = DisplayPoint::new(row, end_col);
-            dbg!(start_col, end_col);
 
             Some(Selection {
                 id: post_inc(&mut self.next_selection_id),
@@ -595,31 +592,32 @@ impl<'a> MutableSelectionsCollection<'a> {
         self.select(selections)
     }
 
-    pub fn select_anchor_ranges<I: IntoIterator<Item = Range<Anchor>>>(&mut self, ranges: I) {
-        todo!()
-        // let buffer = self.buffer.read(self.cx).snapshot(self.cx);
-        // let selections = ranges
-        //     .into_iter()
-        //     .map(|range| {
-        //         let mut start = range.start;
-        //         let mut end = range.end;
-        //         let reversed = if start.cmp(&end, &buffer).is_gt() {
-        //             mem::swap(&mut start, &mut end);
-        //             true
-        //         } else {
-        //             false
-        //         };
-        //         Selection {
-        //             id: post_inc(&mut self.collection.next_selection_id),
-        //             start,
-        //             end,
-        //             reversed,
-        //             goal: SelectionGoal::None,
-        //         }
-        //     })
-        //     .collect::<Vec<_>>();
-
-        // self.select_anchors(selections)
+    pub fn select_anchor_ranges<I>(&mut self, ranges: I)
+    where
+        I: IntoIterator<Item = Range<Anchor>>,
+    {
+        let buffer = self.buffer.read(self.cx).snapshot(self.cx);
+        let selections = ranges
+            .into_iter()
+            .map(|range| {
+                let mut start = range.start;
+                let mut end = range.end;
+                let reversed = if start.cmp(&end, &buffer).is_gt() {
+                    mem::swap(&mut start, &mut end);
+                    true
+                } else {
+                    false
+                };
+                Selection {
+                    id: post_inc(&mut self.collection.next_selection_id),
+                    start,
+                    end,
+                    reversed,
+                    goal: SelectionGoal::None,
+                }
+            })
+            .collect::<Vec<_>>();
+        self.select_anchors(selections)
     }
 
     pub fn new_selection_id(&mut self) -> usize {

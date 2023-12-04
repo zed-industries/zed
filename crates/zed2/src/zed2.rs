@@ -7,6 +7,7 @@ mod only_instance;
 mod open_listener;
 
 pub use assets::*;
+use breadcrumbs::Breadcrumbs;
 use collections::VecDeque;
 use editor::{Editor, MultiBuffer};
 use gpui::{
@@ -95,11 +96,11 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 if let workspace::Event::PaneAdded(pane) = event {
                     pane.update(cx, |pane, cx| {
                         pane.toolbar().update(cx, |toolbar, cx| {
-                            // todo!()
-                            //     let breadcrumbs = cx.add_view(|_| Breadcrumbs::new(workspace));
-                            //     toolbar.add_item(breadcrumbs, cx);
+                            let breadcrumbs = cx.build_view(|_| Breadcrumbs::new(workspace));
+                            toolbar.add_item(breadcrumbs, cx);
                             let buffer_search_bar = cx.build_view(search::BufferSearchBar::new);
                             toolbar.add_item(buffer_search_bar.clone(), cx);
+                            // todo!()
                             //     let quick_action_bar = cx.add_view(|_| {
                             //         QuickActionBar::new(buffer_search_bar, workspace)
                             //     });
@@ -135,31 +136,28 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
         //         cx.add_view(|cx| CollabTitlebarItem::new(workspace, &workspace_handle, cx));
         //     workspace.set_titlebar_item(collab_titlebar_item.into_any(), cx);
 
-        //     let copilot =
-        //         cx.add_view(|cx| copilot_button::CopilotButton::new(app_state.fs.clone(), cx));
+        let copilot =
+            cx.build_view(|cx| copilot_button::CopilotButton::new(app_state.fs.clone(), cx));
         let diagnostic_summary =
             cx.build_view(|cx| diagnostics::items::DiagnosticIndicator::new(workspace, cx));
-        //     let activity_indicator = activity_indicator::ActivityIndicator::new(
-        //         workspace,
-        //         app_state.languages.clone(),
-        //         cx,
-        //     );
-        //     let active_buffer_language =
-        //         cx.add_view(|_| language_selector::ActiveBufferLanguage::new(workspace));
+        let activity_indicator =
+            activity_indicator::ActivityIndicator::new(workspace, app_state.languages.clone(), cx);
+        let active_buffer_language =
+            cx.build_view(|_| language_selector::ActiveBufferLanguage::new(workspace));
         //     let vim_mode_indicator = cx.add_view(|cx| vim::ModeIndicator::new(cx));
         //     let feedback_button = cx.add_view(|_| {
         //         feedback::deploy_feedback_button::DeployFeedbackButton::new(workspace)
         //     });
-        //     let cursor_position = cx.add_view(|_| editor::items::CursorPosition::new());
+        let cursor_position = cx.build_view(|_| editor::items::CursorPosition::new());
         workspace.status_bar().update(cx, |status_bar, cx| {
             status_bar.add_left_item(diagnostic_summary, cx);
-            // status_bar.add_left_item(activity_indicator, cx);
+            status_bar.add_left_item(activity_indicator, cx);
 
             // status_bar.add_right_item(feedback_button, cx);
-            // status_bar.add_right_item(copilot, cx);
-            // status_bar.add_right_item(active_buffer_language, cx);
+            status_bar.add_right_item(copilot, cx);
+            status_bar.add_right_item(active_buffer_language, cx);
             // status_bar.add_right_item(vim_mode_indicator, cx);
-            // status_bar.add_right_item(cursor_position, cx);
+            status_bar.add_right_item(cursor_position, cx);
         });
 
         auto_update::notify_of_any_new_update(cx);

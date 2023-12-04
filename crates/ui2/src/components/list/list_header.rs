@@ -1,22 +1,18 @@
-use gpui::{ClickEvent, Div, IntoListener, Listener};
+use std::rc::Rc;
+
+use gpui::{AnyElement, ClickEvent, Div};
+use smallvec::SmallVec;
 
 use crate::prelude::*;
-use crate::{disclosure_control, h_stack, Icon, IconButton, IconElement, IconSize, Label, Toggle};
-
-pub enum ListHeaderMeta {
-    Tools(Vec<IconButton>),
-    // TODO: This should be a button
-    Button(Label),
-    Text(Label),
-}
+use crate::{h_stack, Disclosure, Icon, IconElement, IconSize, Label};
 
 #[derive(IntoElement)]
 pub struct ListHeader {
     label: SharedString,
     left_icon: Option<Icon>,
-    meta: Option<ListHeaderMeta>,
-    toggle: Toggle,
-    on_toggle: Option<Listener<ClickEvent>>,
+    meta: SmallVec<[AnyElement; 2]>,
+    toggle: Option<bool>,
+    on_toggle: Option<Rc<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
     inset: bool,
     selected: bool,
 }
@@ -26,16 +22,16 @@ impl ListHeader {
         Self {
             label: label.into(),
             left_icon: None,
-            meta: None,
+            meta: SmallVec::new(),
             inset: false,
-            toggle: Toggle::NotToggleable,
+            toggle: None,
             on_toggle: None,
             selected: false,
         }
     }
 
-    pub fn toggle(mut self, toggle: Toggle) -> Self {
-        self.toggle = toggle;
+    pub fn toggle(mut self, toggle: impl Into<Option<bool>>) -> Self {
+        self.toggle = toggle.into();
         self
     }
 
@@ -44,21 +40,19 @@ impl ListHeader {
         self
     }
 
-    pub fn left_icon(mut self, left_icon: Option<Icon>) -> Self {
-        self.left_icon = left_icon;
+    pub fn left_icon(mut self, left_icon: impl Into<Option<Icon>>) -> Self {
+        self.left_icon = left_icon.into();
         self
     }
 
-    pub fn right_button(self, button: IconButton) -> Self {
-        self.meta(Some(ListHeaderMeta::Tools(vec![button])))
-    }
-
-    pub fn meta(mut self, meta: Option<ListHeaderMeta>) -> Self {
-        self.meta = meta;
+    pub fn meta(mut self, meta: impl IntoElement) -> Self {
+        self.meta.push(meta.into_any_element());
         self
     }
+}
 
-    pub fn selected(mut self, selected: bool) -> Self {
+impl Selectable for ListHeader {
+    fn selected(mut self, selected: bool) -> Self {
         self.selected = selected;
         self
     }
@@ -68,20 +62,6 @@ impl RenderOnce for ListHeader {
     type Rendered = Div;
 
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {
-        let disclosure_control = disclosure_control(self.toggle, self.on_toggle);
-
-        let meta = match self.meta {
-            Some(ListHeaderMeta::Tools(icons)) => div().child(
-                h_stack()
-                    .gap_2()
-                    .items_center()
-                    .children(icons.into_iter().map(|i| i.color(Color::Muted))),
-            ),
-            Some(ListHeaderMeta::Button(label)) => div().child(label),
-            Some(ListHeaderMeta::Text(label)) => div().child(label),
-            None => div(),
-        };
-
         h_stack().w_full().relative().child(
             div()
                 .h_5()
@@ -110,9 +90,12 @@ impl RenderOnce for ListHeader {
                                 }))
                                 .child(Label::new(self.label.clone()).color(Color::Muted)),
                         )
-                        .child(disclosure_control),
+                        .children(
+                            self.toggle
+                                .map(|is_open| Disclosure::new(is_open).on_toggle(self.on_toggle)),
+                        ),
                 )
-                .child(meta),
+                .child(h_stack().gap_2().items_center().children(self.meta)),
         )
     }
 }

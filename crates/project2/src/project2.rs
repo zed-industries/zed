@@ -1691,14 +1691,15 @@ impl Project {
         path: impl Into<ProjectPath>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<(ProjectEntryId, AnyModel)>> {
-        let task = self.open_buffer(path, cx);
+        let project_path = path.into();
+        let task = self.open_buffer(project_path.clone(), cx);
         cx.spawn(move |_, mut cx| async move {
             let buffer = task.await?;
             let project_entry_id = buffer
                 .update(&mut cx, |buffer, cx| {
                     File::from_dyn(buffer.file()).and_then(|file| file.project_entry_id(cx))
                 })?
-                .ok_or_else(|| anyhow!("no project entry"))?;
+                .with_context(|| format!("no project entry for {project_path:?}"))?;
 
             let buffer: &AnyModel = &buffer;
             Ok((project_entry_id, buffer.clone()))
@@ -2677,8 +2678,9 @@ impl Project {
                 })?;
 
                 for (adapter, server) in servers {
-                    let workspace_config =
-                        cx.update(|cx| adapter.workspace_configuration(cx))?.await;
+                    let workspace_config = cx
+                        .update(|cx| adapter.workspace_configuration(server.root_path(), cx))?
+                        .await;
                     server
                         .notify::<lsp::notification::DidChangeConfiguration>(
                             lsp::DidChangeConfigurationParams {
@@ -2790,7 +2792,7 @@ impl Project {
             stderr_capture.clone(),
             language.clone(),
             adapter.clone(),
-            worktree_path,
+            Arc::clone(&worktree_path),
             ProjectLspAdapterDelegate::new(self, cx),
             cx,
         ) {
@@ -2822,6 +2824,7 @@ impl Project {
             cx.spawn(move |this, mut cx| async move {
                 let result = Self::setup_and_insert_language_server(
                     this.clone(),
+                    &worktree_path,
                     initialization_options,
                     pending_server,
                     adapter.clone(),
@@ -2942,6 +2945,7 @@ impl Project {
 
     async fn setup_and_insert_language_server(
         this: WeakModel<Self>,
+        worktree_path: &Path,
         initialization_options: Option<serde_json::Value>,
         pending_server: PendingLanguageServer,
         adapter: Arc<CachedLspAdapter>,
@@ -2954,6 +2958,7 @@ impl Project {
             this.clone(),
             initialization_options,
             pending_server,
+            worktree_path,
             adapter.clone(),
             server_id,
             cx,
@@ -2983,11 +2988,14 @@ impl Project {
         this: WeakModel<Self>,
         initialization_options: Option<serde_json::Value>,
         pending_server: PendingLanguageServer,
+        worktree_path: &Path,
         adapter: Arc<CachedLspAdapter>,
         server_id: LanguageServerId,
         cx: &mut AsyncAppContext,
     ) -> Result<Arc<LanguageServer>> {
-        let workspace_config = cx.update(|cx| adapter.workspace_configuration(cx))?.await;
+        let workspace_config = cx
+            .update(|cx| adapter.workspace_configuration(worktree_path, cx))?
+            .await;
         let language_server = pending_server.task.await?;
 
         language_server
@@ -3016,11 +3024,14 @@ impl Project {
         language_server
             .on_request::<lsp::request::WorkspaceConfiguration, _, _>({
                 let adapter = adapter.clone();
+                let worktree_path = worktree_path.to_path_buf();
                 move |params, cx| {
                     let adapter = adapter.clone();
+                    let worktree_path = worktree_path.clone();
                     async move {
-                        let workspace_config =
-                            cx.update(|cx| adapter.workspace_configuration(cx))?.await;
+                        let workspace_config = cx
+                            .update(|cx| adapter.workspace_configuration(&worktree_path, cx))?
+                            .await;
                         Ok(params
                             .items
                             .into_iter()
@@ -6596,9 +6607,15 @@ impl Project {
             })
     }
 
-    pub fn diagnostic_summary(&self, cx: &AppContext) -> DiagnosticSummary {
+    pub fn diagnostic_summary(&self, include_ignored: bool, cx: &AppContext) -> DiagnosticSummary {
         let mut summary = DiagnosticSummary::default();
-        for (_, _, path_summary) in self.diagnostic_summaries(cx) {
+        for (_, _, path_summary) in
+            self.diagnostic_summaries(include_ignored, cx)
+                .filter(|(path, _, _)| {
+                    let worktree = self.entry_for_path(&path, cx).map(|entry| entry.is_ignored);
+                    include_ignored || worktree == Some(false)
+                })
+        {
             summary.error_count += path_summary.error_count;
             summary.warning_count += path_summary.warning_count;
         }
@@ -6607,17 +6624,23 @@ impl Project {
 
     pub fn diagnostic_summaries<'a>(
         &'a self,
+        include_ignored: bool,
         cx: &'a AppContext,
     ) -> impl Iterator<Item = (ProjectPath, LanguageServerId, DiagnosticSummary)> + 'a {
-        self.visible_worktrees(cx).flat_map(move |worktree| {
-            let worktree = worktree.read(cx);
-            let worktree_id = worktree.id();
-            worktree
-                .diagnostic_summaries()
-                .map(move |(path, server_id, summary)| {
-                    (ProjectPath { worktree_id, path }, server_id, summary)
-                })
-        })
+        self.visible_worktrees(cx)
+            .flat_map(move |worktree| {
+                let worktree = worktree.read(cx);
+                let worktree_id = worktree.id();
+                worktree
+                    .diagnostic_summaries()
+                    .map(move |(path, server_id, summary)| {
+                        (ProjectPath { worktree_id, path }, server_id, summary)
+                    })
+            })
+            .filter(move |(path, _, _)| {
+                let worktree = self.entry_for_path(&path, cx).map(|entry| entry.is_ignored);
+                include_ignored || worktree == Some(false)
+            })
     }
 
     pub fn disk_based_diagnostics_started(

@@ -717,8 +717,9 @@ async fn location_links_from_lsp(
             })?
             .await?;
 
-        buffer.update(&mut cx, |origin_buffer, cx| {
+        cx.update(|cx| {
             let origin_location = origin_range.map(|origin_range| {
+                let origin_buffer = buffer.read(cx);
                 let origin_start =
                     origin_buffer.clip_point_utf16(point_from_lsp(origin_range.start), Bias::Left);
                 let origin_end =

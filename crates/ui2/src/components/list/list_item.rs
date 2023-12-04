@@ -5,7 +5,7 @@ use gpui::{
 use smallvec::SmallVec;
 
 use crate::prelude::*;
-use crate::{disclosure_control, Avatar, GraphicSlot, Icon, IconElement, IconSize, Toggle};
+use crate::{Avatar, Disclosure, Icon, IconElement, IconSize};
 
 #[derive(IntoElement)]
 pub struct ListItem {
@@ -15,8 +15,8 @@ pub struct ListItem {
     // disclosure_control_style: DisclosureControlVisibility,
     indent_level: usize,
     indent_step_size: Pixels,
-    left_slot: Option<GraphicSlot>,
-    toggle: Toggle,
+    left_slot: Option<AnyElement>,
+    toggle: Option<bool>,
     inset: bool,
     on_click: Option<Listener<ClickEvent>>,
     on_toggle: Option<Listener<ClickEvent>>,
@@ -32,7 +32,7 @@ impl ListItem {
             indent_level: 0,
             indent_step_size: px(12.),
             left_slot: None,
-            toggle: Toggle::NotToggleable,
+            toggle: None,
             inset: false,
             on_click: None,
             on_secondary_mouse_down: None,
@@ -66,8 +66,8 @@ impl ListItem {
         self
     }
 
-    pub fn toggle(mut self, toggle: Toggle) -> Self {
-        self.toggle = toggle;
+    pub fn toggle(mut self, toggle: impl Into<Option<bool>>) -> Self {
+        self.toggle = toggle.into();
         self
     }
 
@@ -76,23 +76,30 @@ impl ListItem {
         self
     }
 
-    pub fn selected(mut self, selected: bool) -> Self {
-        self.selected = selected;
-        self
-    }
-
-    pub fn left_content(mut self, left_content: GraphicSlot) -> Self {
-        self.left_slot = Some(left_content);
+    pub fn left_child(mut self, left_content: impl IntoElement) -> Self {
+        self.left_slot = Some(left_content.into_any_element());
         self
     }
 
     pub fn left_icon(mut self, left_icon: Icon) -> Self {
-        self.left_slot = Some(GraphicSlot::Icon(left_icon));
+        self.left_slot = Some(
+            IconElement::new(left_icon)
+                .size(IconSize::Small)
+                .color(Color::Muted)
+                .into_any_element(),
+        );
         self
     }
 
     pub fn left_avatar(mut self, left_avatar: impl Into<ImageSource>) -> Self {
-        self.left_slot = Some(GraphicSlot::Avatar(left_avatar.into()));
+        self.left_slot = Some(Avatar::source(left_avatar.into()).into_any_element());
+        self
+    }
+}
+
+impl Selectable for ListItem {
+    fn selected(mut self, selected: bool) -> Self {
+        self.selected = selected;
         self
     }
 }
@@ -142,17 +149,11 @@ impl RenderOnce for ListItem {
                     .gap_1()
                     .items_center()
                     .relative()
-                    .child(disclosure_control(self.toggle, self.on_toggle))
-                    .map(|this| match self.left_slot {
-                        Some(GraphicSlot::Icon(i)) => this.child(
-                            IconElement::new(i)
-                                .size(IconSize::Small)
-                                .color(Color::Muted),
-                        ),
-                        Some(GraphicSlot::Avatar(src)) => this.child(Avatar::source(src)),
-                        Some(GraphicSlot::PublicActor(src)) => this.child(Avatar::uri(src)),
-                        None => this,
-                    })
+                    .children(
+                        self.toggle
+                            .map(|is_open| Disclosure::new(is_open).on_toggle(self.on_toggle)),
+                    )
+                    .children(self.left_slot)
                     .children(self.children),
             )
     }

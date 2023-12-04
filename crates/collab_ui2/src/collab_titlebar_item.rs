@@ -35,19 +35,19 @@ use gpui::{
     MouseButton, ParentElement, Render, RenderOnce, Stateful, StatefulInteractiveElement, Styled,
     Subscription, ViewContext, VisualContext, WeakView, WindowBounds, WindowContext,
 };
-use project::Project;
+use project::{Project, RepositoryEntry};
 use theme::ActiveTheme;
 use ui::{
-    h_stack, Avatar, Button, ButtonCommon, ButtonLike, ButtonVariant, Clickable, Color, IconButton,
-    IconElement, IconSize, KeyBinding, Tooltip,
+    h_stack, popover_menu, prelude::*, Avatar, Button, ButtonLike, ButtonStyle, ContextMenu, Icon,
+    IconButton, IconElement, KeyBinding, Tooltip,
 };
 use util::ResultExt;
 use workspace::{notifications::NotifyResultExt, Workspace};
 
 use crate::face_pile::FacePile;
 
-// const MAX_PROJECT_NAME_LENGTH: usize = 40;
-// const MAX_BRANCH_NAME_LENGTH: usize = 40;
+const MAX_PROJECT_NAME_LENGTH: usize = 40;
+const MAX_BRANCH_NAME_LENGTH: usize = 40;
 
 // actions!(
 //     collab,
@@ -103,17 +103,18 @@ impl Render for CollabTitlebarItem {
             .update(cx, |this, cx| this.call_state().remote_participants(cx))
             .log_err()
             .flatten();
-        let mic_icon = if self
+        let is_muted = self
             .workspace
             .update(cx, |this, cx| this.call_state().is_muted(cx))
             .log_err()
             .flatten()
-            .unwrap_or_default()
-        {
-            ui::Icon::MicMute
-        } else {
-            ui::Icon::Mic
-        };
+            .unwrap_or_default();
+        let is_deafened = self
+            .workspace
+            .update(cx, |this, cx| this.call_state().is_deafened(cx))
+            .log_err()
+            .flatten()
+            .unwrap_or_default();
         let speakers_icon = if self
             .workspace
             .update(cx, |this, cx| this.call_state().is_deafened(cx))
@@ -149,57 +150,11 @@ impl Render for CollabTitlebarItem {
             .child(
                 h_stack()
                     .gap_1()
-                    // TODO - Add player menu
-                    .child(
-                        div()
-                            .border()
-                            .border_color(gpui::red())
-                            .id("project_owner_indicator")
-                            .child(
-                                Button::new("player")
-                                    .variant(ButtonVariant::Ghost)
-                                    .color(Some(Color::Player(0))),
-                            )
-                            .tooltip(move |cx: &mut WindowContext| {
-                                Tooltip::text("Toggle following", cx)
-                            }),
-                    )
-                    // TODO - Add project menu
-                    .child(
-                        div()
-                            .border()
-                            .border_color(gpui::red())
-                            .id("titlebar_project_menu_button")
-                            .child(Button::new("project_name").variant(ButtonVariant::Ghost))
-                            .tooltip(move |cx: &mut WindowContext| {
-                                Tooltip::text("Recent Projects", cx)
-                            }),
-                    )
-                    // TODO - Add git menu
-                    .child(
-                        div()
-                            .border()
-                            .border_color(gpui::red())
-                            .id("titlebar_git_menu_button")
-                            .child(
-                                Button::new("branch_name")
-                                    .variant(ButtonVariant::Ghost)
-                                    .color(Some(Color::Muted)),
-                            )
-                            .tooltip(move |cx: &mut WindowContext| {
-                                cx.build_view(|_| {
-                                    Tooltip::new("Recent Branches")
-                                        .key_binding(KeyBinding::new(gpui::KeyBinding::new(
-                                            "cmd-b",
-                                            // todo!() Replace with real action.
-                                            gpui::NoAction,
-                                            None,
-                                        )))
-                                        .meta("Only local branches shown")
-                                })
-                                .into()
-                            }),
-                    ),
+                    .when(is_in_room, |this| {
+                        this.children(self.render_project_owner(cx))
+                    })
+                    .child(self.render_project_name(cx))
+                    .children(self.render_project_branch(cx)),
             )
             .when_some(
                 users.zip(current_user.clone()),
@@ -240,98 +195,140 @@ impl Render for CollabTitlebarItem {
             .when(is_in_room, |this| {
                 this.child(
                     h_stack()
+                        .gap_1()
                         .child(
                             h_stack()
-                                .child(Button::new(if is_shared { "Unshare" } else { "Share" }))
-                                .child(IconButton::new("leave-call", ui::Icon::Exit).on_click({
-                                    let workspace = workspace.clone();
-                                    move |_: &_, cx: &mut WindowContext| {
-                                        workspace
-                                            .update(cx, |this, cx| {
-                                                this.call_state().hang_up(cx).detach();
-                                            })
-                                            .log_err();
-                                    }
-                                })),
+                                .gap_1()
+                                .child(
+                                    Button::new(
+                                        "toggle_sharing",
+                                        if is_shared { "Unshare" } else { "Share" },
+                                    )
+                                    .style(ButtonStyle::Subtle),
+                                )
+                                .child(
+                                    IconButton::new("leave-call", ui::Icon::Exit)
+                                        .style(ButtonStyle::Subtle)
+                                        .on_click({
+                                            let workspace = workspace.clone();
+                                            move |_, cx| {
+                                                workspace
+                                                    .update(cx, |this, cx| {
+                                                        this.call_state().hang_up(cx).detach();
+                                                    })
+                                                    .log_err();
+                                            }
+                                        }),
+                                ),
                         )
                         .child(
                             h_stack()
-                                .child(IconButton::new("mute-microphone", mic_icon).on_click({
-                                    let workspace = workspace.clone();
-                                    move |_: &_, cx: &mut WindowContext| {
-                                        workspace
-                                            .update(cx, |this, cx| {
-                                                this.call_state().toggle_mute(cx);
-                                            })
-                                            .log_err();
-                                    }
-                                }))
-                                .child(IconButton::new("mute-sound", speakers_icon).on_click({
-                                    let workspace = workspace.clone();
-                                    move |_: &_, cx: &mut WindowContext| {
-                                        workspace
-                                            .update(cx, |this, cx| {
-                                                this.call_state().toggle_deafen(cx);
-                                            })
-                                            .log_err();
-                                    }
-                                }))
-                                .child(IconButton::new("screen-share", ui::Icon::Screen).on_click(
-                                    move |_: &_, cx: &mut WindowContext| {
-                                        workspace
-                                            .update(cx, |this, cx| {
-                                                this.call_state().toggle_screen_share(cx);
-                                            })
-                                            .log_err();
-                                    },
-                                ))
+                                .gap_1()
+                                .child(
+                                    IconButton::new(
+                                        "mute-microphone",
+                                        if is_muted {
+                                            ui::Icon::MicMute
+                                        } else {
+                                            ui::Icon::Mic
+                                        },
+                                    )
+                                    .style(ButtonStyle::Subtle)
+                                    .selected(is_muted)
+                                    .on_click({
+                                        let workspace = workspace.clone();
+                                        move |_, cx| {
+                                            workspace
+                                                .update(cx, |this, cx| {
+                                                    this.call_state().toggle_mute(cx);
+                                                })
+                                                .log_err();
+                                        }
+                                    }),
+                                )
+                                .child(
+                                    IconButton::new("mute-sound", speakers_icon)
+                                        .style(ButtonStyle::Subtle)
+                                        .selected(is_deafened.clone())
+                                        .tooltip(move |cx| {
+                                            Tooltip::with_meta(
+                                                "Deafen Audio",
+                                                None,
+                                                "Mic will be muted",
+                                                cx,
+                                            )
+                                        })
+                                        .on_click({
+                                            let workspace = workspace.clone();
+                                            move |_, cx| {
+                                                workspace
+                                                    .update(cx, |this, cx| {
+                                                        this.call_state().toggle_deafen(cx);
+                                                    })
+                                                    .log_err();
+                                            }
+                                        }),
+                                )
+                                .child(
+                                    IconButton::new("screen-share", ui::Icon::Screen)
+                                        .style(ButtonStyle::Subtle)
+                                        .on_click(move |_, cx| {
+                                            workspace
+                                                .update(cx, |this, cx| {
+                                                    this.call_state().toggle_screen_share(cx);
+                                                })
+                                                .log_err();
+                                        }),
+                                )
                                 .pl_2(),
                         ),
                 )
             })
-            .map(|this| {
+            .child(h_stack().px_1p5().map(|this| {
                 if let Some(user) = current_user {
                     this.when_some(user.avatar.clone(), |this, avatar| {
-                        this.child(ui::Avatar::data(avatar))
+                        // TODO: Finish implementing user menu popover
+                        //
+                        this.child(
+                            popover_menu("user-menu")
+                                .menu(|cx| ContextMenu::build(cx, |menu, _| menu.header("ADADA")))
+                                .trigger(
+                                    ButtonLike::new("user-menu")
+                                        .child(
+                                            h_stack().gap_0p5().child(Avatar::data(avatar)).child(
+                                                IconElement::new(Icon::ChevronDown)
+                                                    .color(Color::Muted),
+                                            ),
+                                        )
+                                        .style(ButtonStyle::Subtle)
+                                        .tooltip(move |cx| Tooltip::text("Toggle User Menu", cx)),
+                                )
+                                .anchor(gpui::AnchorCorner::TopRight),
+                        )
+                        // this.child(
+                        //     ButtonLike::new("user-menu")
+                        //         .child(
+                        //             h_stack().gap_0p5().child(Avatar::data(avatar)).child(
+                        //                 IconElement::new(Icon::ChevronDown).color(Color::Muted),
+                        //             ),
+                        //         )
+                        //         .style(ButtonStyle::Subtle)
+                        //         .tooltip(move |cx| Tooltip::text("Toggle User Menu", cx)),
+                        // )
                     })
                 } else {
-                    this.child(Button::new("Sign in").on_click(
-                        move |_: &_, cx: &mut WindowContext| {
-                            let client = client.clone();
-                            cx.spawn(move |mut cx| async move {
-                                client
-                                    .authenticate_and_connect(true, &cx)
-                                    .await
-                                    .notify_async_err(&mut cx);
-                            })
-                            .detach();
-                        },
-                    ))
-                    // Temporary, will be removed when the last part of button2 is merged
-                    .child(
-                        div().border().border_color(gpui::blue()).child(
-                            ButtonLike::new("test-button")
-                                .children([
-                                    Avatar::uri(
-                                        "https://avatars.githubusercontent.com/u/1714999?v=4",
-                                    )
-                                    .into_element()
-                                    .into_any(),
-                                    IconElement::new(ui::Icon::ChevronDown)
-                                        .size(IconSize::Small)
-                                        .into_element()
-                                        .into_any(),
-                                ])
-                                .on_click(move |event: &ClickEvent, _cx: &mut WindowContext| {
-                                    dbg!(format!("clicked: {:?}", event.down.position));
-                                })
-                                .tooltip(|cx: &mut WindowContext| {
-                                    Tooltip::text("Test tooltip", cx)
-                                }),
-                        ),
-                    )
+                    this.child(Button::new("sign_in", "Sign in").on_click(move |_, cx| {
+                        let client = client.clone();
+                        cx.spawn(move |mut cx| async move {
+                            client
+                                .authenticate_and_connect(true, &cx)
+                                .await
+                                .notify_async_err(&mut cx);
+                        })
+                        .detach();
+                    }))
                 }
-            })
+            }))
     }
 }
 
@@ -448,6 +445,110 @@ impl CollabTitlebarItem {
             //         project_popover: None,
             _subscriptions: subscriptions,
         }
+    }
+
+    // resolve if you are in a room -> render_project_owner
+    // render_project_owner -> resolve if you are in a room -> Option<foo>
+
+    pub fn render_project_owner(&self, cx: &mut ViewContext<Self>) -> Option<impl Element> {
+        // TODO: We can't finish implementing this until project sharing works
+        // - [ ] Show the project owner when the project is remote (maybe done)
+        // - [x] Show the project owner when the project is local
+        // - [ ] Show the project owner with a lock icon when the project is local and unshared
+
+        let remote_id = self.project.read(cx).remote_id();
+        let is_local = remote_id.is_none();
+        let is_shared = self.project.read(cx).is_shared();
+        let (user_name, participant_index) = {
+            if let Some(host) = self.project.read(cx).host() {
+                debug_assert!(!is_local);
+                let (Some(host_user), Some(participant_index)) = (
+                    self.user_store.read(cx).get_cached_user(host.user_id),
+                    self.user_store
+                        .read(cx)
+                        .participant_indices()
+                        .get(&host.user_id),
+                ) else {
+                    return None;
+                };
+                (host_user.github_login.clone(), participant_index.0)
+            } else {
+                debug_assert!(is_local);
+                let name = self
+                    .user_store
+                    .read(cx)
+                    .current_user()
+                    .map(|user| user.github_login.clone())?;
+                (name, 0)
+            }
+        };
+        Some(
+            div().border().border_color(gpui::red()).child(
+                Button::new(
+                    "project_owner_trigger",
+                    format!("{user_name} ({})", !is_shared),
+                )
+                .color(Color::Player(participant_index))
+                .style(ButtonStyle::Subtle)
+                .tooltip(move |cx| Tooltip::text("Toggle following", cx)),
+            ),
+        )
+    }
+
+    pub fn render_project_name(&self, cx: &mut ViewContext<Self>) -> impl Element {
+        let name = {
+            let mut names = self.project.read(cx).visible_worktrees(cx).map(|worktree| {
+                let worktree = worktree.read(cx);
+                worktree.root_name()
+            });
+
+            names.next().unwrap_or("")
+        };
+
+        let name = util::truncate_and_trailoff(name, MAX_PROJECT_NAME_LENGTH);
+
+        div().border().border_color(gpui::red()).child(
+            Button::new("project_name_trigger", name)
+                .style(ButtonStyle::Subtle)
+                .tooltip(move |cx| Tooltip::text("Recent Projects", cx)),
+        )
+    }
+
+    pub fn render_project_branch(&self, cx: &mut ViewContext<Self>) -> Option<impl Element> {
+        let entry = {
+            let mut names_and_branches =
+                self.project.read(cx).visible_worktrees(cx).map(|worktree| {
+                    let worktree = worktree.read(cx);
+                    worktree.root_git_entry()
+                });
+
+            names_and_branches.next().flatten()
+        };
+
+        let branch_name = entry
+            .as_ref()
+            .and_then(RepositoryEntry::branch)
+            .map(|branch| util::truncate_and_trailoff(&branch, MAX_BRANCH_NAME_LENGTH))?;
+
+        Some(
+            div().border().border_color(gpui::red()).child(
+                Button::new("project_branch_trigger", branch_name)
+                    .style(ButtonStyle::Subtle)
+                    .tooltip(move |cx| {
+                        cx.build_view(|_| {
+                            Tooltip::new("Recent Branches")
+                                .key_binding(KeyBinding::new(gpui::KeyBinding::new(
+                                    "cmd-b",
+                                    // todo!() Replace with real action.
+                                    gpui::NoAction,
+                                    None,
+                                )))
+                                .meta("Local branches only")
+                        })
+                        .into()
+                    }),
+            ),
+        )
     }
 
     // fn collect_title_root_names(
