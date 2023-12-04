@@ -1602,15 +1602,32 @@ impl Pane {
                     ),
             )
             .child(
-                div().flex_1().h_full().child(
-                    div().id("tabs").flex().overflow_x_scroll().children(
-                        self.items
-                            .iter()
-                            .enumerate()
-                            .zip(self.tab_details(cx))
-                            .map(|((ix, item), detail)| self.render_tab(ix, item, detail, cx)),
+                div()
+                    .relative()
+                    .flex_1()
+                    .h_full()
+                    .child(
+                        div()
+                            .absolute()
+                            .top_0()
+                            .left_0()
+                            .z_index(1)
+                            .size_full()
+                            .border_b()
+                            .border_color(cx.theme().colors().border),
+                    )
+                    .child(
+                        div()
+                            .id("tabs")
+                            .z_index(2)
+                            .flex()
+                            .overflow_x_scroll()
+                            .children(
+                                self.items.iter().enumerate().zip(self.tab_details(cx)).map(
+                                    |((ix, item), detail)| self.render_tab(ix, item, detail, cx),
+                                ),
+                            ),
                     ),
-                ),
             )
             // Right Side
             .child(
