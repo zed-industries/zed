@@ -1,7 +1,9 @@
 use gpui::{Action, AnyView, DefiniteLength};
 
 use crate::prelude::*;
-use crate::{ButtonCommon, ButtonLike, ButtonSize, ButtonStyle, Icon, IconElement, IconSize};
+use crate::{ButtonCommon, ButtonLike, ButtonSize, ButtonStyle, Icon, IconSize};
+
+use super::button_icon::ButtonIcon;
 
 #[derive(IntoElement)]
 pub struct IconButton {
@@ -9,6 +11,7 @@ pub struct IconButton {
     icon: Icon,
     icon_size: IconSize,
     icon_color: Color,
+    selected_icon: Option<Icon>,
 }
 
 impl IconButton {
@@ -18,6 +21,7 @@ impl IconButton {
             icon,
             icon_size: IconSize::default(),
             icon_color: Color::Default,
+            selected_icon: None,
         }
     }
 
@@ -28,6 +32,11 @@ impl IconButton {
 
     pub fn icon_color(mut self, icon_color: Color) -> Self {
         self.icon_color = icon_color;
+        self
+    }
+
+    pub fn selected_icon(mut self, icon: impl Into<Option<Icon>>) -> Self {
+        self.selected_icon = icon.into();
         self
     }
 
@@ -97,18 +106,16 @@ impl RenderOnce for IconButton {
     type Rendered = ButtonLike;
 
     fn render(self, _cx: &mut WindowContext) -> Self::Rendered {
-        let icon_color = if self.base.disabled {
-            Color::Disabled
-        } else if self.base.selected {
-            Color::Selected
-        } else {
-            self.icon_color
-        };
+        let is_disabled = self.base.disabled;
+        let is_selected = self.base.selected;
 
         self.base.child(
-            IconElement::new(self.icon)
+            ButtonIcon::new(self.icon)
+                .disabled(is_disabled)
+                .selected(is_selected)
+                .selected_icon(self.selected_icon)
                 .size(self.icon_size)
-                .color(icon_color),
+                .color(self.icon_color),
         )
     }
 }

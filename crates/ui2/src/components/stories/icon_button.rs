@@ -20,6 +20,14 @@ impl Render for IconButtonStory {
                     .w_8()
                     .child(IconButton::new("icon_a", Icon::Hash).selected(true)),
             )
+            .child(Story::label("Selected with `selected_icon`"))
+            .child(
+                div().w_8().child(
+                    IconButton::new("icon_a", Icon::AudioOn)
+                        .selected(true)
+                        .selected_icon(Icon::AudioOff),
+                ),
+            )
             .child(Story::label("Disabled"))
             .child(
                 div()

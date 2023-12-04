@@ -1,6 +1,7 @@
 use crate::{
-    Bounds, DispatchPhase, Element, ElementId, IntoElement, LayoutId, MouseDownEvent, MouseUpEvent,
-    Pixels, Point, SharedString, Size, TextRun, WhiteSpace, WindowContext, WrappedLine,
+    Bounds, DispatchPhase, Element, ElementId, HighlightStyle, IntoElement, LayoutId,
+    MouseDownEvent, MouseUpEvent, Pixels, Point, SharedString, Size, TextRun, TextStyle,
+    WhiteSpace, WindowContext, WrappedLine,
 };
 use anyhow::anyhow;
 use parking_lot::{Mutex, MutexGuard};
@@ -87,7 +88,28 @@ impl StyledText {
         }
     }
 
-    pub fn with_runs(mut self, runs: Vec<TextRun>) -> Self {
+    pub fn with_highlights(
+        mut self,
+        default_style: &TextStyle,
+        highlights: impl IntoIterator<Item = (Range<usize>, HighlightStyle)>,
+    ) -> Self {
+        let mut runs = Vec::new();
+        let mut ix = 0;
+        for (range, highlight) in highlights {
+            if ix < range.start {
+                runs.push(default_style.clone().to_run(range.start - ix));
+            }
+            runs.push(
+                default_style
+                    .clone()
+                    .highlight(highlight)
+                    .to_run(range.len()),
+            );
+            ix = range.end;
+        }
+        if ix < self.text.len() {
+            runs.push(default_style.to_run(self.text.len() - ix));
+        }
         self.runs = Some(runs);
         self
     }

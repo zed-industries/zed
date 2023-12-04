@@ -1220,6 +1220,13 @@ impl Database {
                 self.check_user_is_channel_admin(&new_parent, admin_id, &*tx)
                     .await?;
 
+                if new_parent
+                    .ancestors_including_self()
+                    .any(|id| id == channel.id)
+                {
+                    Err(anyhow!("cannot move a channel into one of its descendants"))?;
+                }
+
                 new_parent_path = new_parent.path();
                 new_parent_channel = Some(new_parent);
             } else {
