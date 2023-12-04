@@ -27,7 +27,8 @@ use std::{
 };
 
 use ui::{
-    h_stack, prelude::*, right_click_menu, Color, Icon, IconButton, IconElement, Label, Tooltip,
+    h_stack, prelude::*, right_click_menu, ButtonLike, Color, Icon, IconButton, IconElement,
+    IconSize, Label, Tooltip,
 };
 use ui::{v_stack, ContextMenu};
 use util::truncate_and_remove_front;
@@ -1415,20 +1416,38 @@ impl Pane {
         cx: &mut ViewContext<'_, Pane>,
     ) -> impl IntoElement {
         let label = item.tab_content(Some(detail), cx);
+        let close_right = ItemSettings::get_global(cx).close_position.right();
+
         let close_icon = || {
             let id = item.item_id();
 
             div()
                 .id(ix)
+                .w_3p5()
+                .h_3p5()
+                .rounded_sm()
+                .border()
+                .border_color(cx.theme().colors().border_variant)
+                .absolute()
+                .map(|this| {
+                    if close_right {
+                        this.right_1()
+                    } else {
+                        this.left_1()
+                    }
+                })
                 .invisible()
                 .group_hover("", |style| style.visible())
+                .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
+                .active(|style| style.bg(cx.theme().colors().ghost_element_active))
+                .on_click(cx.listener(move |pane, _, cx| {
+                    pane.close_item_by_id(id, SaveIntent::Close, cx)
+                        .detach_and_log_err(cx);
+                }))
                 .child(
-                    IconButton::new("close_tab", Icon::Close).on_click(cx.listener(
-                        move |pane, _, cx| {
-                            pane.close_item_by_id(id, SaveIntent::Close, cx)
-                                .detach_and_log_err(cx);
-                        },
-                    )),
+                    IconElement::new(Icon::Close)
+                        .color(Color::Muted)
+                        .size(IconSize::Small),
                 )
         };
 
@@ -1447,12 +1466,12 @@ impl Pane {
             ),
         };
 
-        let close_right = ItemSettings::get_global(cx).close_position.right();
         let is_active = ix == self.active_item_index;
 
-        let tab = div()
+        let tab = h_stack()
             .group("")
             .id(ix)
+            .relative()
             .cursor_pointer()
             .when_some(item.tab_tooltip_text(cx), |div, text| {
                 div.tooltip(move |cx| cx.build_view(|cx| Tooltip::new(text.clone())).into())
@@ -1466,15 +1485,15 @@ impl Pane {
             .flex()
             .items_center()
             .justify_center()
-            // todo!("Nate - I need to do some work to balance all the items in the tab once things stablize")
-            .map(|this| {
-                if close_right {
-                    this.pl_3().pr_1()
-                } else {
-                    this.pr_1().pr_3()
-                }
-            })
-            .py_1()
+            .px_5()
+            // .map(|this| {
+            //     if close_right {
+            //         this.pl_3().pr_1()
+            //     } else {
+            //         this.pr_1().pr_3()
+            //     }
+            // })
+            .h(rems(1.875))
             .bg(tab_bg)
             .border_color(cx.theme().colors().border)
             .text_color(if is_active {
@@ -1485,46 +1504,40 @@ impl Pane {
             .map(|this| {
                 let is_last_item = ix == self.items.len() - 1;
                 match ix.cmp(&self.active_item_index) {
-                    cmp::Ordering::Less => this.border_l().mr_px(),
+                    cmp::Ordering::Less => this.border_l().mr_px().border_b(),
                     cmp::Ordering::Greater => {
                         if is_last_item {
-                            this.mr_px().ml_px()
+                            this.mr_px().ml_px().border_b()
                         } else {
-                            this.border_r().ml_px()
+                            this.border_r().ml_px().border_b()
                         }
                     }
-                    cmp::Ordering::Equal => this.border_l().border_r(),
+                    cmp::Ordering::Equal => this.border_l().border_r().mb_px(),
                 }
             })
             // .hover(|h| h.bg(tab_hover_bg))
             // .active(|a| a.bg(tab_active_bg))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_1()
-                    .text_color(text_color)
-                    .children(
-                        item.has_conflict(cx)
-                            .then(|| {
-                                div().border().border_color(gpui::red()).child(
-                                    IconElement::new(Icon::ExclamationTriangle)
-                                        .size(ui::IconSize::Small)
-                                        .color(Color::Warning),
-                                )
-                            })
-                            .or(item.is_dirty(cx).then(|| {
-                                div().border().border_color(gpui::red()).child(
-                                    IconElement::new(Icon::ExclamationTriangle)
-                                        .size(ui::IconSize::Small)
-                                        .color(Color::Info),
-                                )
-                            })),
-                    )
-                    .children((!close_right).then(|| close_icon()))
-                    .child(label)
-                    .children(close_right.then(|| close_icon())),
-            );
+            .gap_1()
+            .text_color(text_color)
+            .children(
+                item.has_conflict(cx)
+                    .then(|| {
+                        div().border().border_color(gpui::red()).child(
+                            IconElement::new(Icon::ExclamationTriangle)
+                                .size(ui::IconSize::Small)
+                                .color(Color::Warning),
+                        )
+                    })
+                    .or(item.is_dirty(cx).then(|| {
+                        div().border().border_color(gpui::red()).child(
+                            IconElement::new(Icon::ExclamationTriangle)
+                                .size(ui::IconSize::Small)
+                                .color(Color::Info),
+                        )
+                    })),
+            )
+            .child(label)
+            .child(close_icon());
 
         right_click_menu(ix).trigger(tab).menu(|cx| {
             ContextMenu::build(cx, |menu, cx| {

@@ -171,7 +171,7 @@ impl RenderOnce for IconElement {
 
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         let svg_size = match self.size {
-            IconSize::Small => rems(14. / 16.),
+            IconSize::Small => rems(12. / 16.),
             IconSize::Medium => rems(16. / 16.),
         };
 
