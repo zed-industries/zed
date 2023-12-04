@@ -7387,106 +7387,105 @@ async fn test_copilot_completion_invalidation(
     });
 }
 
-//todo!()
-// #[gpui::test]
-// async fn test_copilot_multibuffer(executor: BackgroundExecutor, cx: &mut gpui::TestAppContext) {
-//     init_test(cx, |_| {});
+#[gpui::test]
+async fn test_copilot_multibuffer(executor: BackgroundExecutor, cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
 
-//     let (copilot, copilot_lsp) = Copilot::fake(cx);
-//     cx.update(|cx| cx.set_global(copilot));
+    let (copilot, copilot_lsp) = Copilot::fake(cx);
+    cx.update(|cx| cx.set_global(copilot));
 
-//     let buffer_1 = cx.build_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), "a = 1\nb = 2\n"));
-//     let buffer_2 = cx.build_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), "c = 3\nd = 4\n"));
-//     let multibuffer = cx.build_model(|cx| {
-//         let mut multibuffer = MultiBuffer::new(0);
-//         multibuffer.push_excerpts(
-//             buffer_1.clone(),
-//             [ExcerptRange {
-//                 context: Point::new(0, 0)..Point::new(2, 0),
-//                 primary: None,
-//             }],
-//             cx,
-//         );
-//         multibuffer.push_excerpts(
-//             buffer_2.clone(),
-//             [ExcerptRange {
-//                 context: Point::new(0, 0)..Point::new(2, 0),
-//                 primary: None,
-//             }],
-//             cx,
-//         );
-//         multibuffer
-//     });
-//     let editor = cx.add_window(|cx| build_editor(multibuffer, cx));
+    let buffer_1 = cx.build_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), "a = 1\nb = 2\n"));
+    let buffer_2 = cx.build_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), "c = 3\nd = 4\n"));
+    let multibuffer = cx.build_model(|cx| {
+        let mut multibuffer = MultiBuffer::new(0);
+        multibuffer.push_excerpts(
+            buffer_1.clone(),
+            [ExcerptRange {
+                context: Point::new(0, 0)..Point::new(2, 0),
+                primary: None,
+            }],
+            cx,
+        );
+        multibuffer.push_excerpts(
+            buffer_2.clone(),
+            [ExcerptRange {
+                context: Point::new(0, 0)..Point::new(2, 0),
+                primary: None,
+            }],
+            cx,
+        );
+        multibuffer
+    });
+    let editor = cx.add_window(|cx| build_editor(multibuffer, cx));
 
-//     handle_copilot_completion_request(
-//         &copilot_lsp,
-//         vec![copilot::request::Completion {
-//             text: "b = 2 + a".into(),
-//             range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(1, 5)),
-//             ..Default::default()
-//         }],
-//         vec![],
-//     );
-//     editor.update(cx, |editor, cx| {
-//         // Ensure copilot suggestions are shown for the first excerpt.
-//         editor.change_selections(None, cx, |s| {
-//             s.select_ranges([Point::new(1, 5)..Point::new(1, 5)])
-//         });
-//         editor.next_copilot_suggestion(&Default::default(), cx);
-//     });
-//     executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
-//     editor.update(cx, |editor, cx| {
-//         assert!(editor.has_active_copilot_suggestion(cx));
-//         assert_eq!(
-//             editor.display_text(cx),
-//             "\n\na = 1\nb = 2 + a\n\n\n\nc = 3\nd = 4\n"
-//         );
-//         assert_eq!(editor.text(cx), "a = 1\nb = 2\n\nc = 3\nd = 4\n");
-//     });
+    handle_copilot_completion_request(
+        &copilot_lsp,
+        vec![copilot::request::Completion {
+            text: "b = 2 + a".into(),
+            range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(1, 5)),
+            ..Default::default()
+        }],
+        vec![],
+    );
+    editor.update(cx, |editor, cx| {
+        // Ensure copilot suggestions are shown for the first excerpt.
+        editor.change_selections(None, cx, |s| {
+            s.select_ranges([Point::new(1, 5)..Point::new(1, 5)])
+        });
+        editor.next_copilot_suggestion(&Default::default(), cx);
+    });
+    executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+    editor.update(cx, |editor, cx| {
+        assert!(editor.has_active_copilot_suggestion(cx));
+        assert_eq!(
+            editor.display_text(cx),
+            "\n\na = 1\nb = 2 + a\n\n\n\nc = 3\nd = 4\n"
+        );
+        assert_eq!(editor.text(cx), "a = 1\nb = 2\n\nc = 3\nd = 4\n");
+    });
 
-//     handle_copilot_completion_request(
-//         &copilot_lsp,
-//         vec![copilot::request::Completion {
-//             text: "d = 4 + c".into(),
-//             range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(1, 6)),
-//             ..Default::default()
-//         }],
-//         vec![],
-//     );
-//     editor.update(cx, |editor, cx| {
-//         // Move to another excerpt, ensuring the suggestion gets cleared.
-//         editor.change_selections(None, cx, |s| {
-//             s.select_ranges([Point::new(4, 5)..Point::new(4, 5)])
-//         });
-//         assert!(!editor.has_active_copilot_suggestion(cx));
-//         assert_eq!(
-//             editor.display_text(cx),
-//             "\n\na = 1\nb = 2\n\n\n\nc = 3\nd = 4\n"
-//         );
-//         assert_eq!(editor.text(cx), "a = 1\nb = 2\n\nc = 3\nd = 4\n");
+    handle_copilot_completion_request(
+        &copilot_lsp,
+        vec![copilot::request::Completion {
+            text: "d = 4 + c".into(),
+            range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(1, 6)),
+            ..Default::default()
+        }],
+        vec![],
+    );
+    editor.update(cx, |editor, cx| {
+        // Move to another excerpt, ensuring the suggestion gets cleared.
+        editor.change_selections(None, cx, |s| {
+            s.select_ranges([Point::new(4, 5)..Point::new(4, 5)])
+        });
+        assert!(!editor.has_active_copilot_suggestion(cx));
+        assert_eq!(
+            editor.display_text(cx),
+            "\n\na = 1\nb = 2\n\n\n\nc = 3\nd = 4\n"
+        );
+        assert_eq!(editor.text(cx), "a = 1\nb = 2\n\nc = 3\nd = 4\n");
 
-//         // Type a character, ensuring we don't even try to interpolate the previous suggestion.
-//         editor.handle_input(" ", cx);
-//         assert!(!editor.has_active_copilot_suggestion(cx));
-//         assert_eq!(
-//             editor.display_text(cx),
-//             "\n\na = 1\nb = 2\n\n\n\nc = 3\nd = 4 \n"
-//         );
-//         assert_eq!(editor.text(cx), "a = 1\nb = 2\n\nc = 3\nd = 4 \n");
-//     });
+        // Type a character, ensuring we don't even try to interpolate the previous suggestion.
+        editor.handle_input(" ", cx);
+        assert!(!editor.has_active_copilot_suggestion(cx));
+        assert_eq!(
+            editor.display_text(cx),
+            "\n\na = 1\nb = 2\n\n\n\nc = 3\nd = 4 \n"
+        );
+        assert_eq!(editor.text(cx), "a = 1\nb = 2\n\nc = 3\nd = 4 \n");
+    });
 
-//     // Ensure the new suggestion is displayed when the debounce timeout expires.
-//     executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
-//     editor.update(cx, |editor, cx| {
-//         assert!(editor.has_active_copilot_suggestion(cx));
-//         assert_eq!(
-//             editor.display_text(cx),
-//             "\n\na = 1\nb = 2\n\n\n\nc = 3\nd = 4 + c\n"
-//         );
-//         assert_eq!(editor.text(cx), "a = 1\nb = 2\n\nc = 3\nd = 4 \n");
-//     });
-// }
+    // Ensure the new suggestion is displayed when the debounce timeout expires.
+    executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+    editor.update(cx, |editor, cx| {
+        assert!(editor.has_active_copilot_suggestion(cx));
+        assert_eq!(
+            editor.display_text(cx),
+            "\n\na = 1\nb = 2\n\n\n\nc = 3\nd = 4 + c\n"
+        );
+        assert_eq!(editor.text(cx), "a = 1\nb = 2\n\nc = 3\nd = 4 \n");
+    });
+}
 
 #[gpui::test]
 async fn test_copilot_disabled_globs(executor: BackgroundExecutor, cx: &mut gpui::TestAppContext) {
