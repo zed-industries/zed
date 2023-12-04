@@ -1348,6 +1348,8 @@ impl<'a> WindowContext<'a> {
                 .dispatch_tree
                 .dispatch_path(node_id);
 
+            let mut actions: Vec<Box<dyn Action>> = Vec::new();
+
             // Capture phase
             let mut context_stack: SmallVec<[KeyContext; 16]> = SmallVec::new();
             self.propagate_event = true;
@@ -1382,20 +1384,24 @@ impl<'a> WindowContext<'a> {
                 let node = self.window.current_frame.dispatch_tree.node(*node_id);
                 if !node.context.is_empty() {
                     if let Some(key_down_event) = event.downcast_ref::<KeyDownEvent>() {
-                        if let Some(action) = self
+                        if let Some(found) = self
                             .window
                             .current_frame
                             .dispatch_tree
                             .dispatch_key(&key_down_event.keystroke, &context_stack)
                         {
-                            self.dispatch_action_on_node(*node_id, action);
-                            if !self.propagate_event {
-                                return;
-                            }
+                            actions.push(found.boxed_clone())
                         }
                     }
 
                     context_stack.pop();
+                }
+            }
+
+            for action in actions {
+                self.dispatch_action_on_node(node_id, action);
+                if !self.propagate_event {
+                    return;
                 }
             }
         }
@@ -1425,7 +1431,6 @@ impl<'a> WindowContext<'a> {
                 }
             }
         }
-
         // Bubble phase
         for node_id in dispatch_path.iter().rev() {
             let node = self.window.current_frame.dispatch_tree.node(*node_id);
