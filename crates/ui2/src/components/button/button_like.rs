@@ -327,8 +327,20 @@ impl RenderOnce for ButtonLike {
             .gap_1()
             .px_1()
             .bg(self.style.enabled(cx).background)
-            .hover(|hover| hover.bg(self.style.hovered(cx).background))
-            .active(|active| active.bg(self.style.active(cx).background))
+            .hover(|hover| {
+                hover.bg(if self.disabled {
+                    self.style.disabled(cx).background
+                } else {
+                    self.style.hovered(cx).background
+                })
+            })
+            .active(|active| {
+                active.bg(if self.disabled {
+                    self.style.disabled(cx).background
+                } else {
+                    self.style.active(cx).background
+                })
+            })
             .when_some(
                 self.on_click.filter(|_| !self.disabled),
                 |this, on_click| {
