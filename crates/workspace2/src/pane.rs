@@ -1555,6 +1555,12 @@ impl Pane {
     }
 
     fn render_tab_bar(&mut self, cx: &mut ViewContext<'_, Pane>) -> impl IntoElement {
+        dbg!(format!(
+            "Can navigate forwards: {}, can navigate backwards: {}",
+            self.can_navigate_forward(),
+            self.can_navigate_backward()
+        ));
+
         div()
             .id("tab_bar")
             .group("tab_bar")
@@ -1568,39 +1574,31 @@ impl Pane {
             .bg(cx.theme().colors().tab_bar_background)
             // Left Side
             .child(
-                div()
-                    .relative()
-                    .px_1()
+                h_stack()
+                    .px_2()
                     .flex()
                     .flex_none()
-                    .gap_2()
+                    .gap_1()
                     // Nav Buttons
                     .child(
-                        div()
-                            .right_0()
-                            .flex()
-                            .items_center()
-                            .gap_px()
-                            .child(
-                                div().border().border_color(gpui::red()).child(
-                                    IconButton::new("navigate_backward", Icon::ArrowLeft)
-                                        .on_click({
-                                            let view = cx.view().clone();
-                                            move |_, cx| view.update(cx, Self::navigate_backward)
-                                        })
-                                        .disabled(!self.can_navigate_backward()),
-                                ),
-                            )
-                            .child(
-                                div().border().border_color(gpui::red()).child(
-                                    IconButton::new("navigate_forward", Icon::ArrowRight)
-                                        .on_click({
-                                            let view = cx.view().clone();
-                                            move |_, cx| view.update(cx, Self::navigate_backward)
-                                        })
-                                        .disabled(!self.can_navigate_forward()),
-                                ),
-                            ),
+                        div().border().border_color(gpui::red()).child(
+                            IconButton::new("navigate_backward", Icon::ArrowLeft)
+                                .on_click({
+                                    let view = cx.view().clone();
+                                    move |_, cx| view.update(cx, Self::navigate_backward)
+                                })
+                                .disabled(!self.can_navigate_backward()),
+                        ),
+                    )
+                    .child(
+                        div().border().border_color(gpui::red()).child(
+                            IconButton::new("navigate_forward", Icon::ArrowRight)
+                                .on_click({
+                                    let view = cx.view().clone();
+                                    move |_, cx| view.update(cx, Self::navigate_backward)
+                                })
+                                .disabled(!self.can_navigate_forward()),
+                        ),
                     ),
             )
             .child(
