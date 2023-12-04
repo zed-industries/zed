@@ -1199,6 +1199,7 @@ impl CollabPanel {
             .on_click(cx.listener(move |this, _, cx| {
                 this.workspace.update(cx, |workspace, cx| {
                     let app_state = workspace.app_state().clone();
+                    let call = workspace.call_state();
                     workspace::join_remote_project(project_id, host_user_id, app_state, cx)
                         .detach_and_log_err(cx);
                 });

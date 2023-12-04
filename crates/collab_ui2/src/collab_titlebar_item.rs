@@ -31,9 +31,9 @@ use std::sync::Arc;
 use call::ActiveCall;
 use client::{Client, UserStore};
 use gpui::{
-    div, px, rems, AppContext, Div, Element, InteractiveElement, IntoElement, Model, MouseButton,
-    ParentElement, Render, RenderOnce, Stateful, StatefulInteractiveElement, Styled, Subscription,
-    ViewContext, VisualContext, WeakView, WindowBounds,
+    actions, div, px, rems, AppContext, Div, Element, InteractiveElement, IntoElement, Model,
+    MouseButton, ParentElement, Render, RenderOnce, Stateful, StatefulInteractiveElement, Styled,
+    Subscription, ViewContext, VisualContext, WeakView, WindowBounds,
 };
 use project::{Project, RepositoryEntry};
 use theme::ActiveTheme;
@@ -48,6 +48,14 @@ use crate::face_pile::FacePile;
 
 const MAX_PROJECT_NAME_LENGTH: usize = 40;
 const MAX_BRANCH_NAME_LENGTH: usize = 40;
+
+actions!(
+    ShareProject,
+    UnshareProject,
+    ToggleUserMenu,
+    ToggleProjectMenu,
+    SwitchBranch
+);
 
 // actions!(
 //     collab,
@@ -204,7 +212,16 @@ impl Render for CollabTitlebarItem {
                                         "toggle_sharing",
                                         if is_shared { "Unshare" } else { "Share" },
                                     )
-                                    .style(ButtonStyle::Subtle),
+                                    .style(ButtonStyle::Subtle)
+                                    .on_click(cx.listener(
+                                        move |this, _, cx| {
+                                            if is_shared {
+                                                this.unshare_project(&Default::default(), cx);
+                                            } else {
+                                                this.share_project(&Default::default(), cx);
+                                            }
+                                        },
+                                    )),
                                 )
                                 .child(
                                     IconButton::new("leave-call", ui::Icon::Exit)
@@ -451,46 +468,19 @@ impl CollabTitlebarItem {
     // render_project_owner -> resolve if you are in a room -> Option<foo>
 
     pub fn render_project_owner(&self, cx: &mut ViewContext<Self>) -> Option<impl Element> {
-        // TODO: We can't finish implementing this until project sharing works
-        // - [ ] Show the project owner when the project is remote (maybe done)
-        // - [x] Show the project owner when the project is local
-        // - [ ] Show the project owner with a lock icon when the project is local and unshared
-
-        let remote_id = self.project.read(cx).remote_id();
-        let is_local = remote_id.is_none();
-        let is_shared = self.project.read(cx).is_shared();
-        let (user_name, participant_index) = {
-            if let Some(host) = self.project.read(cx).host() {
-                debug_assert!(!is_local);
-                let (Some(host_user), Some(participant_index)) = (
-                    self.user_store.read(cx).get_cached_user(host.user_id),
-                    self.user_store
-                        .read(cx)
-                        .participant_indices()
-                        .get(&host.user_id),
-                ) else {
-                    return None;
-                };
-                (host_user.github_login.clone(), participant_index.0)
-            } else {
-                debug_assert!(is_local);
-                let name = self
-                    .user_store
-                    .read(cx)
-                    .current_user()
-                    .map(|user| user.github_login.clone())?;
-                (name, 0)
-            }
-        };
+        let host = self.project.read(cx).host()?;
+        let host = self.user_store.read(cx).get_cached_user(host.user_id)?;
+        let participant_index = self
+            .user_store
+            .read(cx)
+            .participant_indices()
+            .get(&host.id)?;
         Some(
             div().border().border_color(gpui::red()).child(
-                Button::new(
-                    "project_owner_trigger",
-                    format!("{user_name} ({})", !is_shared),
-                )
-                .color(Color::Player(participant_index))
-                .style(ButtonStyle::Subtle)
-                .tooltip(move |cx| Tooltip::text("Toggle following", cx)),
+                Button::new("project_owner_trigger", host.github_login.clone())
+                    .color(Color::Player(participant_index.0))
+                    .style(ButtonStyle::Subtle)
+                    .tooltip(move |cx| Tooltip::text("Toggle following", cx)),
             ),
         )
     }
@@ -730,21 +720,21 @@ impl CollabTitlebarItem {
         cx.notify();
     }
 
-    // fn share_project(&mut self, _: &ShareProject, cx: &mut ViewContext<Self>) {
-    //     let active_call = ActiveCall::global(cx);
-    //     let project = self.project.clone();
-    //     active_call
-    //         .update(cx, |call, cx| call.share_project(project, cx))
-    //         .detach_and_log_err(cx);
-    // }
+    fn share_project(&mut self, _: &ShareProject, cx: &mut ViewContext<Self>) {
+        let active_call = ActiveCall::global(cx);
+        let project = self.project.clone();
+        active_call
+            .update(cx, |call, cx| call.share_project(project, cx))
+            .detach_and_log_err(cx);
+    }
 
-    // fn unshare_project(&mut self, _: &UnshareProject, cx: &mut ViewContext<Self>) {
-    //     let active_call = ActiveCall::global(cx);
-    //     let project = self.project.clone();
-    //     active_call
-    //         .update(cx, |call, cx| call.unshare_project(project, cx))
-    //         .log_err();
-    // }
+    fn unshare_project(&mut self, _: &UnshareProject, cx: &mut ViewContext<Self>) {
+        let active_call = ActiveCall::global(cx);
+        let project = self.project.clone();
+        active_call
+            .update(cx, |call, cx| call.unshare_project(project, cx))
+            .log_err();
+    }
 
     // pub fn toggle_user_menu(&mut self, _: &ToggleUserMenu, cx: &mut ViewContext<Self>) {
     //     self.user_menu.update(cx, |user_menu, cx| {
