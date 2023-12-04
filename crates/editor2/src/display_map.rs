@@ -1467,12 +1467,10 @@ pub mod tests {
 
         cx.update(|cx| init_test(cx, |s| s.defaults.tab_size = Some(2.try_into().unwrap())));
 
-        let buffer = cx.build_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), text));
-        let condition = cx.condition(&buffer, |buf, _| !buf.is_parsing());
-        cx.update_model(&buffer, |this, cx| {
-            this.set_language(Some(language), cx);
+        let buffer = cx.build_model(|cx| {
+            Buffer::new(0, cx.entity_id().as_u64(), text).with_language(language, cx)
         });
-        condition.await;
+        cx.condition(&buffer, |buf, _| !buf.is_parsing()).await;
         let buffer = cx.build_model(|cx| MultiBuffer::singleton(buffer, cx));
 
         let font_size = px(14.0);
@@ -1556,12 +1554,10 @@ pub mod tests {
 
         cx.update(|cx| init_test(cx, |_| {}));
 
-        let buffer = cx.build_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), text));
-        let condition = cx.condition(&buffer, |buf, _| !buf.is_parsing());
-        buffer.update(cx, |this, cx| {
-            this.set_language(Some(language), cx);
+        let buffer = cx.build_model(|cx| {
+            Buffer::new(0, cx.entity_id().as_u64(), text).with_language(language, cx)
         });
-        condition.await;
+        cx.condition(&buffer, |buf, _| !buf.is_parsing()).await;
         let buffer = cx.build_model(|cx| MultiBuffer::singleton(buffer, cx));
 
         let font_size = px(16.0);
@@ -1625,10 +1621,10 @@ pub mod tests {
 
         let (text, highlighted_ranges) = marked_text_ranges(r#"constˇ «a»: B = "c «d»""#, false);
 
-        let buffer = cx.build_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), text));
-        let condition = cx.condition(&buffer, |buf, _| !buf.is_parsing());
-        buffer.update(cx, |this, cx| this.set_language(Some(language), cx));
-        condition.await;
+        let buffer = cx.build_model(|cx| {
+            Buffer::new(0, cx.entity_id().as_u64(), text).with_language(language, cx)
+        });
+        cx.condition(&buffer, |buf, _| !buf.is_parsing()).await;
 
         let buffer = cx.build_model(|cx| MultiBuffer::singleton(buffer, cx));
         let buffer_snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));

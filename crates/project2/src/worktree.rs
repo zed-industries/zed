@@ -4187,7 +4187,7 @@ impl WorktreeModelHandle for Model<Worktree> {
         &self,
         cx: &'a mut gpui::TestAppContext,
     ) -> futures::future::LocalBoxFuture<'a, ()> {
-        let file_name: &'static str = "fs-event-sentinel";
+        let file_name = "fs-event-sentinel";
 
         let tree = self.clone();
         let (fs, root_path) = self.update(cx, |tree, _| {
@@ -4200,18 +4200,14 @@ impl WorktreeModelHandle for Model<Worktree> {
                 .await
                 .unwrap();
 
-            cx.condition(&tree, move |tree, _| {
-                tree.entry_for_path(file_name).is_some()
-            })
-            .await;
+            cx.condition(&tree, |tree, _| tree.entry_for_path(file_name).is_some())
+                .await;
 
             fs.remove_file(&root_path.join(file_name), Default::default())
                 .await
                 .unwrap();
-            cx.condition(&tree, move |tree, _| {
-                tree.entry_for_path(file_name).is_none()
-            })
-            .await;
+            cx.condition(&tree, |tree, _| tree.entry_for_path(file_name).is_none())
+                .await;
 
             cx.update(|cx| tree.read(cx).as_local().unwrap().scan_complete())
                 .await;
