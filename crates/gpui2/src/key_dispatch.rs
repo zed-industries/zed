@@ -176,7 +176,7 @@ impl DispatchTree {
                     return false;
                 }
                 for i in 1..context_stack.len() {
-                    if candidate.matches_context(&context_stack[0..i]) {
+                    if candidate.matches_context(&context_stack[0..=i]) {
                         return true;
                     }
                 }
