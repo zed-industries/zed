@@ -1549,7 +1549,6 @@ impl Workspace {
                     let abs_path = abs_path.clone();
                     async move {
                         let (worktree, project_path) = project_path?;
-                        // TODO kb consider excluded files here?
                         if fs.is_file(&abs_path).await {
                             Some(
                                 this.update(&mut cx, |this, cx| {

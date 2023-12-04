@@ -1174,6 +1174,7 @@ async fn test_create_directory_during_initial_scan(cx: &mut TestAppContext) {
                 .create_entry("a/e".as_ref(), true, cx)
         })
         .await
+        .unwrap()
         .unwrap();
     assert!(entry.is_dir());
 
@@ -1222,6 +1223,7 @@ async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
                 .create_entry("a/b/c/d.txt".as_ref(), false, cx)
         })
         .await
+        .unwrap()
         .unwrap();
     assert!(entry.is_file());
 
@@ -1257,6 +1259,7 @@ async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
                 .create_entry("a/b/c/d.txt".as_ref(), false, cx)
         })
         .await
+        .unwrap()
         .unwrap();
     assert!(entry.is_file());
 
@@ -1275,6 +1278,7 @@ async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
                 .create_entry("a/b/c/e.txt".as_ref(), false, cx)
         })
         .await
+        .unwrap()
         .unwrap();
     assert!(entry.is_file());
 
@@ -1291,6 +1295,7 @@ async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
                 .create_entry("d/e/f/g.txt".as_ref(), false, cx)
         })
         .await
+        .unwrap()
         .unwrap();
     assert!(entry.is_file());
 
@@ -1616,14 +1621,14 @@ fn randomly_mutate_worktree(
                 entry.id.0,
                 new_path
             );
-            let task = worktree.rename_entry(entry.id, new_path, cx).unwrap();
+            let task = worktree.rename_entry(entry.id, new_path, cx);
             cx.foreground().spawn(async move {
-                task.await?;
+                task.await?.unwrap();
                 Ok(())
             })
         }
         _ => {
-            let task = if entry.is_dir() {
+            if entry.is_dir() {
                 let child_path = entry.path.join(random_filename(rng));
                 let is_dir = rng.gen_bool(0.3);
                 log::info!(
@@ -1631,15 +1636,20 @@ fn randomly_mutate_worktree(
                     if is_dir { "dir" } else { "file" },
                     child_path,
                 );
-                worktree.create_entry(child_path, is_dir, cx)
+                let task = worktree.create_entry(child_path, is_dir, cx);
+                cx.foreground().spawn(async move {
+                    task.await?;
+                    Ok(())
+                })
             } else {
                 log::info!("overwriting file {:?} ({})", entry.path, entry.id.0);
-                worktree.write_file(entry.path.clone(), "".into(), Default::default(), cx)
-            };
-            cx.foreground().spawn(async move {
-                task.await?;
-                Ok(())
-            })
+                let task =
+                    worktree.write_file(entry.path.clone(), "".into(), Default::default(), cx);
+                cx.foreground().spawn(async move {
+                    task.await?;
+                    Ok(())
+                })
+            }
         }
     }
 }

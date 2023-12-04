@@ -955,13 +955,8 @@ impl LocalWorktree {
     ) -> Task<Result<(File, String, Option<String>)>> {
         let path = Arc::from(path);
         let abs_path = self.absolutize(&path);
-        let is_excluded = self.is_path_excluded(abs_path.clone());
         let fs = self.fs.clone();
-        let entry = if is_excluded {
-            None
-        } else {
-            Some(self.refresh_entry(path.clone(), None, cx))
-        };
+        let entry = self.refresh_entry(path.clone(), None, cx);
 
         cx.spawn(|this, cx| async move {
             let text = fs.load(&abs_path).await?;
@@ -984,22 +979,19 @@ impl LocalWorktree {
                 None
             };
 
-            match entry {
-                Some(entry) => {
-                    let entry = entry.await?;
-                    Ok((
-                        File {
-                            entry_id: Some(entry.id),
-                            worktree: this,
-                            path: entry.path,
-                            mtime: entry.mtime,
-                            is_local: true,
-                            is_deleted: false,
-                        },
-                        text,
-                        diff_base,
-                    ))
-                }
+            match entry.await? {
+                Some(entry) => Ok((
+                    File {
+                        entry_id: Some(entry.id),
+                        worktree: this,
+                        path: entry.path,
+                        mtime: entry.mtime,
+                        is_local: true,
+                        is_deleted: false,
+                    },
+                    text,
+                    diff_base,
+                )),
                 None => {
                     let metadata = fs
                         .metadata(&abs_path)
@@ -1044,17 +1036,37 @@ impl LocalWorktree {
         let text = buffer.as_rope().clone();
         let fingerprint = text.fingerprint();
         let version = buffer.version();
-        let save = self.write_file(path, text, buffer.line_ending(), cx);
+        let save = self.write_file(path.as_ref(), text, buffer.line_ending(), cx);
+        let fs = Arc::clone(&self.fs);
+        let abs_path = self.absolutize(&path);
 
         cx.as_mut().spawn(|mut cx| async move {
             let entry = save.await?;
 
+            let (entry_id, mtime, path) = match entry {
+                Some(entry) => (Some(entry.id), entry.mtime, entry.path),
+                None => {
+                    let metadata = fs
+                        .metadata(&abs_path)
+                        .await
+                        .with_context(|| {
+                            format!(
+                                "Fetching metadata after saving the excluded buffer {abs_path:?}"
+                            )
+                        })?
+                        .with_context(|| {
+                            format!("Excluded buffer {path:?} got removed during saving")
+                        })?;
+                    (None, metadata.mtime, path)
+                }
+            };
+
             if has_changed_file {
                 let new_file = Arc::new(File {
-                    entry_id: Some(entry.id),
+                    entry_id,
                     worktree: handle,
-                    path: entry.path,
-                    mtime: entry.mtime,
+                    path,
+                    mtime,
                     is_local: true,
                     is_deleted: false,
                 });
@@ -1080,13 +1092,13 @@ impl LocalWorktree {
                     project_id,
                     buffer_id,
                     version: serialize_version(&version),
-                    mtime: Some(entry.mtime.into()),
+                    mtime: Some(mtime.into()),
                     fingerprint: serialize_fingerprint(fingerprint),
                 })?;
             }
 
             buffer_handle.update(&mut cx, |buffer, cx| {
-                buffer.did_save(version.clone(), fingerprint, entry.mtime, cx);
+                buffer.did_save(version.clone(), fingerprint, mtime, cx);
             });
 
             Ok(())
@@ -1111,7 +1123,7 @@ impl LocalWorktree {
         path: impl Into<Arc<Path>>,
         is_dir: bool,
         cx: &mut ModelContext<Worktree>,
-    ) -> Task<Result<Entry>> {
+    ) -> Task<Result<Option<Entry>>> {
         let path = path.into();
         let lowest_ancestor = self.lowest_ancestor(&path);
         let abs_path = self.absolutize(&path);
@@ -1128,7 +1140,7 @@ impl LocalWorktree {
         cx.spawn(|this, mut cx| async move {
             write.await?;
             let (result, refreshes) = this.update(&mut cx, |this, cx| {
-                let mut refreshes = Vec::<Task<anyhow::Result<Entry>>>::new();
+                let mut refreshes = Vec::new();
                 let refresh_paths = path.strip_prefix(&lowest_ancestor).unwrap();
                 for refresh_path in refresh_paths.ancestors() {
                     if refresh_path == Path::new("") {
@@ -1155,14 +1167,14 @@ impl LocalWorktree {
         })
     }
 
-    pub fn write_file(
+    pub(crate) fn write_file(
         &self,
         path: impl Into<Arc<Path>>,
         text: Rope,
         line_ending: LineEnding,
         cx: &mut ModelContext<Worktree>,
-    ) -> Task<Result<Entry>> {
-        let path = path.into();
+    ) -> Task<Result<Option<Entry>>> {
+        let path: Arc<Path> = path.into();
         let abs_path = self.absolutize(&path);
         let fs = self.fs.clone();
         let write = cx
@@ -1221,8 +1233,11 @@ impl LocalWorktree {
         entry_id: ProjectEntryId,
         new_path: impl Into<Arc<Path>>,
         cx: &mut ModelContext<Worktree>,
-    ) -> Option<Task<Result<Entry>>> {
-        let old_path = self.entry_for_id(entry_id)?.path.clone();
+    ) -> Task<Result<Option<Entry>>> {
+        let old_path = match self.entry_for_id(entry_id) {
+            Some(entry) => entry.path.clone(),
+            None => return Task::ready(Ok(None)),
+        };
         let new_path = new_path.into();
         let abs_old_path = self.absolutize(&old_path);
         let abs_new_path = self.absolutize(&new_path);
@@ -1232,7 +1247,7 @@ impl LocalWorktree {
                 .await
         });
 
-        Some(cx.spawn(|this, mut cx| async move {
+        cx.spawn(|this, mut cx| async move {
             rename.await?;
             this.update(&mut cx, |this, cx| {
                 this.as_local_mut()
@@ -1240,7 +1255,7 @@ impl LocalWorktree {
                     .refresh_entry(new_path.clone(), Some(old_path), cx)
             })
             .await
-        }))
+        })
     }
 
     pub fn copy_entry(
@@ -1248,8 +1263,11 @@ impl LocalWorktree {
         entry_id: ProjectEntryId,
         new_path: impl Into<Arc<Path>>,
         cx: &mut ModelContext<Worktree>,
-    ) -> Option<Task<Result<Entry>>> {
-        let old_path = self.entry_for_id(entry_id)?.path.clone();
+    ) -> Task<Result<Option<Entry>>> {
+        let old_path = match self.entry_for_id(entry_id) {
+            Some(entry) => entry.path.clone(),
+            None => return Task::ready(Ok(None)),
+        };
         let new_path = new_path.into();
         let abs_old_path = self.absolutize(&old_path);
         let abs_new_path = self.absolutize(&new_path);
@@ -1264,7 +1282,7 @@ impl LocalWorktree {
             .await
         });
 
-        Some(cx.spawn(|this, mut cx| async move {
+        cx.spawn(|this, mut cx| async move {
             copy.await?;
             this.update(&mut cx, |this, cx| {
                 this.as_local_mut()
@@ -1272,7 +1290,7 @@ impl LocalWorktree {
                     .refresh_entry(new_path.clone(), None, cx)
             })
             .await
-        }))
+        })
     }
 
     pub fn expand_entry(
@@ -1308,7 +1326,10 @@ impl LocalWorktree {
         path: Arc<Path>,
         old_path: Option<Arc<Path>>,
         cx: &mut ModelContext<Worktree>,
-    ) -> Task<Result<Entry>> {
+    ) -> Task<Result<Option<Entry>>> {
+        if self.is_path_excluded(self.absolutize(&path)) {
+            return Task::ready(Ok(None));
+        }
         let paths = if let Some(old_path) = old_path.as_ref() {
             vec![old_path.clone(), path.clone()]
         } else {
@@ -1317,13 +1338,15 @@ impl LocalWorktree {
         let mut refresh = self.refresh_entries_for_paths(paths);
         cx.spawn_weak(move |this, mut cx| async move {
             refresh.recv().await;
-            this.upgrade(&cx)
+            let new_entry = this
+                .upgrade(&cx)
                 .ok_or_else(|| anyhow!("worktree was dropped"))?
                 .update(&mut cx, |this, _| {
                     this.entry_for_path(path)
                         .cloned()
                         .ok_or_else(|| anyhow!("failed to read path after update"))
-                })
+                })?;
+            Ok(Some(new_entry))
         })
     }
 

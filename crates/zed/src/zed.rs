@@ -615,8 +615,8 @@ fn open_local_settings_file(
                         .update(&mut cx, |project, cx| {
                             project.create_entry((tree_id, dir_path), true, cx)
                         })
-                        .ok_or_else(|| anyhow!("worktree was removed"))?
-                        .await?;
+                        .await
+                        .context("worktree was removed")?;
                 }
             }
 
@@ -625,8 +625,8 @@ fn open_local_settings_file(
                     .update(&mut cx, |project, cx| {
                         project.create_entry((tree_id, file_path), false, cx)
                     })
-                    .ok_or_else(|| anyhow!("worktree was removed"))?
-                    .await?;
+                    .await
+                    .context("worktree was removed")?;
             }
 
             let editor = workspace
@@ -1309,7 +1309,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_opening_ignored_and_excluded_paths(cx: &mut TestAppContext) {
+    async fn test_opening_excluded_paths(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
         cx.update(|cx| {
             cx.update_global::<SettingsStore, _, _>(|store, cx| {
@@ -1319,7 +1319,6 @@ mod tests {
                 });
             });
         });
-        // TODO kb also test external excluded dirs opening
         app_state
             .fs
             .as_fake()
@@ -1334,6 +1333,9 @@ mod tests {
                         "file": "regular file contents",
                     },
                     "ignored_dir": {
+                        "ignored_subdir": {
+                            "file": "ignored subfile contents",
+                        },
                         "file": "ignored file contents",
                     },
                     "excluded_dir": {
@@ -1347,58 +1349,79 @@ mod tests {
         let window = cx.add_window(|cx| Workspace::test_new(project, cx));
         let workspace = window.root(cx);
 
-        let entries = cx.read(|cx| workspace.file_project_paths(cx));
-        // dbg!(&entries);
-
+        let initial_entries = cx.read(|cx| workspace.file_project_paths(cx));
+        let paths_to_open = [
+            Path::new("/root/excluded_dir/file").to_path_buf(),
+            Path::new("/root/.git/HEAD").to_path_buf(),
+            Path::new("/root/excluded_dir/ignored_subdir").to_path_buf(),
+        ];
         let (opened_workspace, new_items) = cx
-            .update(|cx| {
-                workspace::open_paths(
-                    &[Path::new("/root/excluded_dir/file").to_path_buf()],
-                    &app_state,
-                    None,
-                    cx,
-                )
-            })
+            .update(|cx| workspace::open_paths(&paths_to_open, &app_state, None, cx))
             .await
             .unwrap();
-        // dbg!(
-        //     &workspace,
-        //     &opened_workspace,
-        //     new_items
-        //         .iter()
-        //         .map(|i| i
-        //             .as_ref()
-        //             .expect("should be present")
-        //             .as_ref()
-        //             .expect("should not error"))
-        //         .map(|i| cx.read(|cx| i.project_path(cx)))
-        //         .collect::<Vec<_>>()
-        // );
+
+        assert_eq!(
+            opened_workspace.id(),
+            workspace.id(),
+            "Excluded files in subfolders of a workspace root should be opened in the workspace"
+        );
+        let mut opened_paths = cx.read(|cx| {
+            assert_eq!(
+                new_items.len(),
+                paths_to_open.len(),
+                "Expect to get the same number of opened items as submitted paths to open"
+            );
+            new_items
+                .iter()
+                .zip(paths_to_open.iter())
+                .map(|(i, path)| {
+                    match i {
+                        Some(Ok(i)) => {
+                            Some(i.project_path(cx).map(|p| p.path.display().to_string()))
+                        }
+                        Some(Err(e)) => panic!("Excluded file {path:?} failed to open: {e:?}"),
+                        None => None,
+                    }
+                    .flatten()
+                })
+                .collect::<Vec<_>>()
+        });
+        opened_paths.sort();
+        assert_eq!(
+            opened_paths,
+            vec![
+                None,
+                Some(".git/HEAD".to_string()),
+                Some("excluded_dir/file".to_string()),
+            ],
+            "Excluded files should get opened, excluded dir should not get opened"
+        );
 
         let entries = cx.read(|cx| workspace.file_project_paths(cx));
-        dbg!(&entries);
-        // #[rustfmt::skip]
-        // workspace.update(cx, |w, cx| {
-        // dbg!(w.open_paths(vec!["/root/regular_dir/file".into()], true, cx));
-        // dbg!(w.open_paths(vec!["/root/ignored_dir/file".into()], true, cx));
-        // dbg!(w.open_paths(vec!["/root/excluded_dir/file".into()], true, cx));
-        // dbg!(w.open_paths(vec!["/root/excluded_dir/file".into()], false, cx));
-        //
-        // });
+        assert_eq!(
+            initial_entries, entries,
+            "Workspace entries should not change after opening excluded files and directories paths"
+        );
 
-        // // Open the first entry
-        // let entry_1 = workspace
-        //     .update(cx, |w, cx| w.open_path(file1.clone(), None, true, cx))
-        //     .await
-        //     .unwrap();
-        // cx.read(|cx| {
-        //     let pane = workspace.read(cx).active_pane().read(cx);
-        //     assert_eq!(
-        //         pane.active_item().unwrap().project_path(cx),
-        //         Some(file1.clone())
-        //     );
-        //     assert_eq!(pane.items_len(), 1);
-        // });
+        cx.read(|cx| {
+            let pane = workspace.read(cx).active_pane().read(cx);
+            let mut opened_buffer_paths = pane
+                .items()
+                .map(|i| {
+                    i.project_path(cx)
+                        .expect("all excluded files that got open should have a path")
+                        .path
+                        .display()
+                        .to_string()
+                })
+                .collect::<Vec<_>>();
+            opened_buffer_paths.sort();
+            assert_eq!(
+                opened_buffer_paths,
+                vec![".git/HEAD".to_string(), "excluded_dir/file".to_string()],
+                "Despite not being present in the worktrees, buffers for excluded files are opened and added to the pane"
+            );
+        });
     }
 
     #[gpui::test]
