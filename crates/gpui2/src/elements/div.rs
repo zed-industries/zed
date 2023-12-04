@@ -866,6 +866,7 @@ impl Interactivity {
         }
 
         if self.hover_style.is_some()
+            || self.base_style.mouse_cursor.is_some()
             || cx.active_drag.is_some() && !self.drag_over_styles.is_empty()
         {
             let bounds = bounds.intersect(&cx.content_mask().bounds);
