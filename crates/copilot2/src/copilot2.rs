@@ -1108,14 +1108,14 @@ mod tests {
             lsp.receive_notification::<lsp::notification::DidCloseTextDocument>()
                 .await,
             lsp::DidCloseTextDocumentParams {
-                text_document: lsp::TextDocumentIdentifier::new(buffer_2_uri.clone()),
+                text_document: lsp::TextDocumentIdentifier::new(buffer_1_uri.clone()),
             }
         );
         assert_eq!(
             lsp.receive_notification::<lsp::notification::DidCloseTextDocument>()
                 .await,
             lsp::DidCloseTextDocumentParams {
-                text_document: lsp::TextDocumentIdentifier::new(buffer_1_uri.clone()),
+                text_document: lsp::TextDocumentIdentifier::new(buffer_2_uri.clone()),
             }
         );
 
@@ -1129,18 +1129,7 @@ mod tests {
             .update(cx, |copilot, cx| copilot.sign_in(cx))
             .await
             .unwrap();
-        assert_eq!(
-            lsp.receive_notification::<lsp::notification::DidOpenTextDocument>()
-                .await,
-            lsp::DidOpenTextDocumentParams {
-                text_document: lsp::TextDocumentItem::new(
-                    buffer_2_uri.clone(),
-                    "plaintext".into(),
-                    0,
-                    "Goodbye".into()
-                ),
-            }
-        );
+
         assert_eq!(
             lsp.receive_notification::<lsp::notification::DidOpenTextDocument>()
                 .await,
@@ -1153,7 +1142,18 @@ mod tests {
                 ),
             }
         );
-
+        assert_eq!(
+            lsp.receive_notification::<lsp::notification::DidOpenTextDocument>()
+                .await,
+            lsp::DidOpenTextDocumentParams {
+                text_document: lsp::TextDocumentItem::new(
+                    buffer_2_uri.clone(),
+                    "plaintext".into(),
+                    0,
+                    "Goodbye".into()
+                ),
+            }
+        );
         // Dropping a buffer causes it to be closed on the LSP side as well.
         cx.update(|_| drop(buffer_2));
         assert_eq!(
