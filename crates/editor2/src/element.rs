@@ -1753,7 +1753,7 @@ impl EditorElement {
             let gutter_width;
             let gutter_margin;
             if snapshot.show_gutter {
-                let descent = cx.text_system().descent(font_id, font_size).unwrap();
+                let descent = cx.text_system().descent(font_id, font_size);
 
                 let gutter_padding_factor = 3.5;
                 gutter_padding = (em_width * gutter_padding_factor).round();
@@ -3628,7 +3628,7 @@ fn compute_auto_height_layout(
     let gutter_width;
     let gutter_margin;
     if snapshot.show_gutter {
-        let descent = cx.text_system().descent(font_id, font_size).unwrap();
+        let descent = cx.text_system().descent(font_id, font_size);
         let gutter_padding_factor = 3.5;
         gutter_padding = (em_width * gutter_padding_factor).round();
         gutter_width = max_line_number_width + gutter_padding * 2.0;

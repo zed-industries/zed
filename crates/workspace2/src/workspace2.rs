@@ -4314,101 +4314,102 @@ pub fn create_and_open_local_file(
     })
 }
 
-// pub fn join_remote_project(
-//     project_id: u64,
-//     follow_user_id: u64,
-//     app_state: Arc<AppState>,
-//     cx: &mut AppContext,
-// ) -> Task<Result<()>> {
-//     cx.spawn(|mut cx| async move {
-//         let windows = cx.windows();
-//         let existing_workspace = windows.into_iter().find_map(|window| {
-//             window.downcast::<Workspace>().and_then(|window| {
-//                 window
-//                     .read_root_with(&cx, |workspace, cx| {
-//                         if workspace.project().read(cx).remote_id() == Some(project_id) {
-//                             Some(cx.handle().downgrade())
-//                         } else {
-//                             None
-//                         }
-//                     })
-//                     .unwrap_or(None)
-//             })
-//         });
+pub fn join_remote_project(
+    project_id: u64,
+    follow_user_id: u64,
+    app_state: Arc<AppState>,
+    cx: &mut AppContext,
+) -> Task<Result<()>> {
+    todo!()
+    // let windows = cx.windows();
+    // cx.spawn(|mut cx| async move {
+    //     let existing_workspace = windows.into_iter().find_map(|window| {
+    //         window.downcast::<Workspace>().and_then(|window| {
+    //             window
+    //                 .update(&mut cx, |workspace, cx| {
+    //                     if workspace.project().read(cx).remote_id() == Some(project_id) {
+    //                         Some(cx.view().downgrade())
+    //                     } else {
+    //                         None
+    //                     }
+    //                 })
+    //                 .unwrap_or(None)
+    //         })
+    //     });
 
-//         let workspace = if let Some(existing_workspace) = existing_workspace {
-//             existing_workspace
-//         } else {
-//             let active_call = cx.read(ActiveCall::global);
-//             let room = active_call
-//                 .read_with(&cx, |call, _| call.room().cloned())
-//                 .ok_or_else(|| anyhow!("not in a call"))?;
-//             let project = room
-//                 .update(&mut cx, |room, cx| {
-//                     room.join_project(
-//                         project_id,
-//                         app_state.languages.clone(),
-//                         app_state.fs.clone(),
-//                         cx,
-//                     )
-//                 })
-//                 .await?;
+    //     let workspace = if let Some(existing_workspace) = existing_workspace {
+    //         existing_workspace
+    //     } else {
+    //         let active_call = cx.update(ActiveCall::global);
+    //         let room = active_call
+    //             .read_with(&cx, |call, _| call.room().cloned())
+    //             .ok_or_else(|| anyhow!("not in a call"))?;
+    //         let project = room
+    //             .update(&mut cx, |room, cx| {
+    //                 room.join_project(
+    //                     project_id,
+    //                     app_state.languages.clone(),
+    //                     app_state.fs.clone(),
+    //                     cx,
+    //                 )
+    //             })
+    //             .await?;
 
-//             let window_bounds_override = window_bounds_env_override(&cx);
-//             let window = cx.add_window(
-//                 (app_state.build_window_options)(
-//                     window_bounds_override,
-//                     None,
-//                     cx.platform().as_ref(),
-//                 ),
-//                 |cx| Workspace::new(0, project, app_state.clone(), cx),
-//             );
-//             let workspace = window.root(&cx).unwrap();
-//             (app_state.initialize_workspace)(
-//                 workspace.downgrade(),
-//                 false,
-//                 app_state.clone(),
-//                 cx.clone(),
-//             )
-//             .await
-//             .log_err();
+    //         let window_bounds_override = window_bounds_env_override(&cx);
+    //         let window = cx.add_window(
+    //             (app_state.build_window_options)(
+    //                 window_bounds_override,
+    //                 None,
+    //                 cx.platform().as_ref(),
+    //             ),
+    //             |cx| Workspace::new(0, project, app_state.clone(), cx),
+    //         );
+    //         let workspace = window.root(&cx).unwrap();
+    //         (app_state.initialize_workspace)(
+    //             workspace.downgrade(),
+    //             false,
+    //             app_state.clone(),
+    //             cx.clone(),
+    //         )
+    //         .await
+    //         .log_err();
 
-//             workspace.downgrade()
-//         };
+    //         workspace.downgrade()
+    //     };
 
-//         workspace.window().activate(&mut cx);
-//         cx.platform().activate(true);
+    //     workspace.window().activate(&mut cx);
+    //     cx.platform().activate(true);
 
-//         workspace.update(&mut cx, |workspace, cx| {
-//             if let Some(room) = ActiveCall::global(cx).read(cx).room().cloned() {
-//                 let follow_peer_id = room
-//                     .read(cx)
-//                     .remote_participants()
-//                     .iter()
-//                     .find(|(_, participant)| participant.user.id == follow_user_id)
-//                     .map(|(_, p)| p.peer_id)
-//                     .or_else(|| {
-//                         // If we couldn't follow the given user, follow the host instead.
-//                         let collaborator = workspace
-//                             .project()
-//                             .read(cx)
-//                             .collaborators()
-//                             .values()
-//                             .find(|collaborator| collaborator.replica_id == 0)?;
-//                         Some(collaborator.peer_id)
-//                     });
+    //     workspace.update(&mut cx, |workspace, cx| {
+    //         if let Some(room) = ActiveCall::global(cx).read(cx).room().cloned() {
+    //             let follow_peer_id = room
+    //                 .read(cx)
+    //                 .remote_participants()
+    //                 .iter()
+    //                 .find(|(_, participant)| participant.user.id == follow_user_id)
+    //                 .map(|(_, p)| p.peer_id)
+    //                 .or_else(|| {
+    //                     // If we couldn't follow the given user, follow the host instead.
+    //                     let collaborator = workspace
+    //                         .project()
+    //                         .read(cx)
+    //                         .collaborators()
+    //                         .values()
+    //                         .find(|collaborator| collaborator.replica_id == 0)?;
+    //                     Some(collaborator.peer_id)
+    //                 });
 
-//                 if let Some(follow_peer_id) = follow_peer_id {
-//                     workspace
-//                         .follow(follow_peer_id, cx)
-//                         .map(|follow| follow.detach_and_log_err(cx));
-//                 }
-//             }
-//         })?;
+    //             if let Some(follow_peer_id) = follow_peer_id {
+    //                 workspace
+    //                     .follow(follow_peer_id, cx)
+    //                     .map(|follow| follow.detach_and_log_err(cx));
+    //             }
+    //         }
+    //     })?;
 
-//         anyhow::Ok(())
-//     })
-// }
+    //     anyhow::Ok(())
+    // })
+}
 
 pub fn restart(_: &Restart, cx: &mut AppContext) {
     let should_confirm = WorkspaceSettings::get_global(cx).confirm_quit;
