@@ -167,7 +167,10 @@ impl DispatchTree {
         self.keymap
             .lock()
             .bindings_for_action(action.type_id())
-            .filter(|candidate| candidate.action.partial_eq(action))
+            .filter(|candidate| {
+                candidate.action.partial_eq(action)
+                    && candidate.matches_context(&self.context_stack)
+            })
             .cloned()
             .collect()
     }
