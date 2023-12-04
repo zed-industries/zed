@@ -1555,12 +1555,6 @@ impl Pane {
     }
 
     fn render_tab_bar(&mut self, cx: &mut ViewContext<'_, Pane>) -> impl IntoElement {
-        dbg!(format!(
-            "Can navigate forwards: {}, can navigate backwards: {}",
-            self.can_navigate_forward(),
-            self.can_navigate_backward()
-        ));
-
         div()
             .id("tab_bar")
             .group("tab_bar")
