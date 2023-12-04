@@ -218,10 +218,13 @@ impl PathMatcher {
         })
     }
 
+    // TODO kb tests
     pub fn is_match<P: AsRef<Path>>(&self, other: P) -> bool {
-        other.as_ref().starts_with(&self.maybe_path)
-            || self.glob.is_match(&other)
-            || self.check_with_end_separator(other.as_ref())
+        let other_path = other.as_ref();
+        other_path.starts_with(&self.maybe_path)
+            || other_path.file_name() == Some(self.maybe_path.as_os_str())
+            || self.glob.is_match(other_path)
+            || self.check_with_end_separator(other_path)
     }
 
     fn check_with_end_separator(&self, path: &Path) -> bool {

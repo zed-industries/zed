@@ -763,7 +763,7 @@ mod tests {
         AppContext, AssetSource, Element, Entity, TestAppContext, View, ViewHandle,
     };
     use language::LanguageRegistry;
-    use project::{Project, ProjectPath};
+    use project::{project_settings::ProjectSettings, Project, ProjectPath};
     use serde_json::json;
     use settings::{handle_settings_file_changes, watch_config_file, SettingsStore};
     use std::{
@@ -1306,6 +1306,99 @@ mod tests {
                 "d.txt"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_opening_ignored_and_excluded_paths(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _, _>(|store, cx| {
+                store.update_user_settings::<ProjectSettings>(cx, |project_settings| {
+                    project_settings.file_scan_exclusions =
+                        Some(vec!["excluded_dir".to_string(), "**/.git".to_string()]);
+                });
+            });
+        });
+        // TODO kb also test external excluded dirs opening
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                "/root",
+                json!({
+                    ".gitignore": "ignored_dir\n",
+                    ".git": {
+                        "HEAD": "ref: refs/heads/main",
+                    },
+                    "regular_dir": {
+                        "file": "regular file contents",
+                    },
+                    "ignored_dir": {
+                        "file": "ignored file contents",
+                    },
+                    "excluded_dir": {
+                        "file": "excluded file contents",
+                    },
+                }),
+            )
+            .await;
+
+        let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
+        let window = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let workspace = window.root(cx);
+
+        let entries = cx.read(|cx| workspace.file_project_paths(cx));
+        // dbg!(&entries);
+
+        let (opened_workspace, new_items) = cx
+            .update(|cx| {
+                workspace::open_paths(
+                    &[Path::new("/root/excluded_dir/file").to_path_buf()],
+                    &app_state,
+                    None,
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        // dbg!(
+        //     &workspace,
+        //     &opened_workspace,
+        //     new_items
+        //         .iter()
+        //         .map(|i| i
+        //             .as_ref()
+        //             .expect("should be present")
+        //             .as_ref()
+        //             .expect("should not error"))
+        //         .map(|i| cx.read(|cx| i.project_path(cx)))
+        //         .collect::<Vec<_>>()
+        // );
+
+        let entries = cx.read(|cx| workspace.file_project_paths(cx));
+        dbg!(&entries);
+        // #[rustfmt::skip]
+        // workspace.update(cx, |w, cx| {
+        // dbg!(w.open_paths(vec!["/root/regular_dir/file".into()], true, cx));
+        // dbg!(w.open_paths(vec!["/root/ignored_dir/file".into()], true, cx));
+        // dbg!(w.open_paths(vec!["/root/excluded_dir/file".into()], true, cx));
+        // dbg!(w.open_paths(vec!["/root/excluded_dir/file".into()], false, cx));
+        //
+        // });
+
+        // // Open the first entry
+        // let entry_1 = workspace
+        //     .update(cx, |w, cx| w.open_path(file1.clone(), None, true, cx))
+        //     .await
+        //     .unwrap();
+        // cx.read(|cx| {
+        //     let pane = workspace.read(cx).active_pane().read(cx);
+        //     assert_eq!(
+        //         pane.active_item().unwrap().project_path(cx),
+        //         Some(file1.clone())
+        //     );
+        //     assert_eq!(pane.items_len(), 1);
+        // });
     }
 
     #[gpui::test]

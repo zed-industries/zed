@@ -955,13 +955,16 @@ impl LocalWorktree {
     ) -> Task<Result<(File, String, Option<String>)>> {
         let path = Arc::from(path);
         let abs_path = self.absolutize(&path);
+        let is_excluded = self.is_path_excluded(abs_path.clone());
         let fs = self.fs.clone();
-        let entry = self.refresh_entry(path.clone(), None, cx);
+        let entry = if is_excluded {
+            None
+        } else {
+            Some(self.refresh_entry(path.clone(), None, cx))
+        };
 
         cx.spawn(|this, cx| async move {
             let text = fs.load(&abs_path).await?;
-            let entry = entry.await?;
-
             let mut index_task = None;
             let snapshot = this.read_with(&cx, |this, _| this.as_local().unwrap().snapshot());
             if let Some(repo) = snapshot.repository_for_path(&path) {
@@ -981,18 +984,46 @@ impl LocalWorktree {
                 None
             };
 
-            Ok((
-                File {
-                    entry_id: entry.id,
-                    worktree: this,
-                    path: entry.path,
-                    mtime: entry.mtime,
-                    is_local: true,
-                    is_deleted: false,
-                },
-                text,
-                diff_base,
-            ))
+            match entry {
+                Some(entry) => {
+                    let entry = entry.await?;
+                    Ok((
+                        File {
+                            entry_id: Some(entry.id),
+                            worktree: this,
+                            path: entry.path,
+                            mtime: entry.mtime,
+                            is_local: true,
+                            is_deleted: false,
+                        },
+                        text,
+                        diff_base,
+                    ))
+                }
+                None => {
+                    let metadata = fs
+                        .metadata(&abs_path)
+                        .await
+                        .with_context(|| {
+                            format!("Loading metadata for excluded file {abs_path:?}")
+                        })?
+                        .with_context(|| {
+                            format!("Excluded file {abs_path:?} got removed during loading")
+                        })?;
+                    Ok((
+                        File {
+                            entry_id: None,
+                            worktree: this,
+                            path,
+                            mtime: metadata.mtime,
+                            is_local: true,
+                            is_deleted: false,
+                        },
+                        text,
+                        diff_base,
+                    ))
+                }
+            }
         })
     }
 
@@ -1020,7 +1051,7 @@ impl LocalWorktree {
 
             if has_changed_file {
                 let new_file = Arc::new(File {
-                    entry_id: entry.id,
+                    entry_id: Some(entry.id),
                     worktree: handle,
                     path: entry.path,
                     mtime: entry.mtime,
@@ -2226,10 +2257,20 @@ impl LocalSnapshot {
         paths
     }
 
-    pub fn is_path_excluded(&self, abs_path: &Path) -> bool {
-        self.file_scan_exclusions
-            .iter()
-            .any(|exclude_matcher| exclude_matcher.is_match(abs_path))
+    pub fn is_path_excluded(&self, mut path: PathBuf) -> bool {
+        loop {
+            if self
+                .file_scan_exclusions
+                .iter()
+                .any(|exclude_matcher| exclude_matcher.is_match(&path))
+            {
+                return true;
+            }
+            if !path.pop() {
+                break;
+            }
+        }
+        false
     }
 }
 
@@ -2458,8 +2499,7 @@ impl BackgroundScannerState {
                 ids_to_preserve.insert(work_directory_id);
             } else {
                 let git_dir_abs_path = snapshot.abs_path().join(&entry.git_dir_path);
-                let git_dir_excluded = snapshot.is_path_excluded(&entry.git_dir_path)
-                    || snapshot.is_path_excluded(&git_dir_abs_path);
+                let git_dir_excluded = snapshot.is_path_excluded(git_dir_abs_path.clone());
                 if git_dir_excluded
                     && !matches!(smol::block_on(fs.metadata(&git_dir_abs_path)), Ok(None))
                 {
@@ -2666,7 +2706,7 @@ pub struct File {
     pub worktree: ModelHandle<Worktree>,
     pub path: Arc<Path>,
     pub mtime: SystemTime,
-    pub(crate) entry_id: ProjectEntryId,
+    pub(crate) entry_id: Option<ProjectEntryId>,
     pub(crate) is_local: bool,
     pub(crate) is_deleted: bool,
 }
@@ -2735,7 +2775,7 @@ impl language::File for File {
     fn to_proto(&self) -> rpc::proto::File {
         rpc::proto::File {
             worktree_id: self.worktree.id() as u64,
-            entry_id: self.entry_id.to_proto(),
+            entry_id: self.entry_id.map(|id| id.to_proto()),
             path: self.path.to_string_lossy().into(),
             mtime: Some(self.mtime.into()),
             is_deleted: self.is_deleted,
@@ -2793,7 +2833,7 @@ impl File {
             worktree,
             path: entry.path.clone(),
             mtime: entry.mtime,
-            entry_id: entry.id,
+            entry_id: Some(entry.id),
             is_local: true,
             is_deleted: false,
         })
@@ -2818,7 +2858,7 @@ impl File {
             worktree,
             path: Path::new(&proto.path).into(),
             mtime: proto.mtime.ok_or_else(|| anyhow!("no timestamp"))?.into(),
-            entry_id: ProjectEntryId::from_proto(proto.entry_id),
+            entry_id: proto.entry_id.map(ProjectEntryId::from_proto),
             is_local: false,
             is_deleted: proto.is_deleted,
         })
@@ -2836,7 +2876,7 @@ impl File {
         if self.is_deleted {
             None
         } else {
-            Some(self.entry_id)
+            self.entry_id
         }
     }
 }
@@ -3338,16 +3378,7 @@ impl BackgroundScanner {
                     return false;
                 }
 
-                // FS events may come for files which parent directory is excluded, need to check ignore those.
-                let mut path_to_test = abs_path.clone();
-                let mut excluded_file_event = snapshot.is_path_excluded(abs_path)
-                    || snapshot.is_path_excluded(&relative_path);
-                while !excluded_file_event && path_to_test.pop() {
-                    if snapshot.is_path_excluded(&path_to_test) {
-                        excluded_file_event = true;
-                    }
-                }
-                if excluded_file_event {
+                if snapshot.is_path_excluded(abs_path.clone()) {
                     if !is_git_related {
                         log::debug!("ignoring FS event for excluded path {relative_path:?}");
                     }
@@ -3531,7 +3562,7 @@ impl BackgroundScanner {
             let state = self.state.lock();
             let snapshot = &state.snapshot;
             root_abs_path = snapshot.abs_path().clone();
-            if snapshot.is_path_excluded(&job.abs_path) {
+            if snapshot.is_path_excluded(job.abs_path.to_path_buf()) {
                 log::error!("skipping excluded directory {:?}", job.path);
                 return Ok(());
             }
@@ -3603,7 +3634,10 @@ impl BackgroundScanner {
 
             {
                 let mut state = self.state.lock();
-                if state.snapshot.is_path_excluded(&child_abs_path) {
+                if state
+                    .snapshot
+                    .is_path_excluded(child_abs_path.to_path_buf())
+                {
                     let relative_path = job.path.join(child_name);
                     log::debug!("skipping excluded child entry {relative_path:?}");
                     state.remove_path(&relative_path);

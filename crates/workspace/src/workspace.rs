@@ -1549,6 +1549,7 @@ impl Workspace {
                     let abs_path = abs_path.clone();
                     async move {
                         let (worktree, project_path) = project_path?;
+                        // TODO kb consider excluded files here?
                         if fs.is_file(&abs_path).await {
                             Some(
                                 this.update(&mut cx, |this, cx| {
@@ -2129,13 +2130,13 @@ impl Workspace {
         })
     }
 
-    pub(crate) fn load_path(
+    fn load_path(
         &mut self,
         path: ProjectPath,
         cx: &mut ViewContext<Self>,
     ) -> Task<
         Result<(
-            ProjectEntryId,
+            Option<ProjectEntryId>,
             impl 'static + FnOnce(&mut ViewContext<Pane>) -> Box<dyn ItemHandle>,
         )>,
     > {

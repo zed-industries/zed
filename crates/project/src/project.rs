@@ -1658,19 +1658,15 @@ impl Project {
 
     pub fn open_path(
         &mut self,
-        path: impl Into<ProjectPath>,
+        path: ProjectPath,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<(ProjectEntryId, AnyModelHandle)>> {
-        let project_path = path.into();
-        let task = self.open_buffer(project_path.clone(), cx);
+    ) -> Task<Result<(Option<ProjectEntryId>, AnyModelHandle)>> {
+        let task = self.open_buffer(path.clone(), cx);
         cx.spawn_weak(|_, cx| async move {
             let buffer = task.await?;
-            let project_entry_id = buffer
-                .read_with(&cx, |buffer, cx| {
-                    File::from_dyn(buffer.file()).and_then(|file| file.project_entry_id(cx))
-                })
-                .with_context(|| format!("no project entry for {project_path:?}"))?;
-
+            let project_entry_id = buffer.read_with(&cx, |buffer, cx| {
+                File::from_dyn(buffer.file()).and_then(|file| file.project_entry_id(cx))
+            });
             let buffer: &AnyModelHandle = &buffer;
             Ok((project_entry_id, buffer.clone()))
         })
@@ -1985,8 +1981,10 @@ impl Project {
                     remote_id,
                 );
 
-                self.local_buffer_ids_by_entry_id
-                    .insert(file.entry_id, remote_id);
+                if let Some(entry_id) = file.entry_id {
+                    self.local_buffer_ids_by_entry_id
+                        .insert(entry_id, remote_id);
+                }
             }
         }
 
@@ -2441,24 +2439,25 @@ impl Project {
                     return None;
                 };
 
-                match self.local_buffer_ids_by_entry_id.get(&file.entry_id) {
-                    Some(_) => {
-                        return None;
+                let remote_id = buffer.read(cx).remote_id();
+                if let Some(entry_id) = file.entry_id {
+                    match self.local_buffer_ids_by_entry_id.get(&entry_id) {
+                        Some(_) => {
+                            return None;
+                        }
+                        None => {
+                            self.local_buffer_ids_by_entry_id
+                                .insert(entry_id, remote_id);
+                        }
                     }
-                    None => {
-                        let remote_id = buffer.read(cx).remote_id();
-                        self.local_buffer_ids_by_entry_id
-                            .insert(file.entry_id, remote_id);
-
-                        self.local_buffer_ids_by_path.insert(
-                            ProjectPath {
-                                worktree_id: file.worktree_id(cx),
-                                path: file.path.clone(),
-                            },
-                            remote_id,
-                        );
-                    }
-                }
+                };
+                self.local_buffer_ids_by_path.insert(
+                    ProjectPath {
+                        worktree_id: file.worktree_id(cx),
+                        path: file.path.clone(),
+                    },
+                    remote_id,
+                );
             }
             _ => {}
         }
@@ -5777,7 +5776,7 @@ impl Project {
                                     ignored_paths_to_process.pop_front()
                                 {
                                     if !query.file_matches(Some(&ignored_abs_path))
-                                        || snapshot.is_path_excluded(&ignored_abs_path)
+                                        || snapshot.is_path_excluded(ignored_abs_path.clone())
                                     {
                                         continue;
                                     }
@@ -6208,10 +6207,13 @@ impl Project {
                         return;
                     }
 
-                    let new_file = if let Some(entry) = snapshot.entry_for_id(old_file.entry_id) {
+                    let new_file = if let Some(entry) = old_file
+                        .entry_id
+                        .and_then(|entry_id| snapshot.entry_for_id(entry_id))
+                    {
                         File {
                             is_local: true,
-                            entry_id: entry.id,
+                            entry_id: Some(entry.id),
                             mtime: entry.mtime,
                             path: entry.path.clone(),
                             worktree: worktree_handle.clone(),
@@ -6220,7 +6222,7 @@ impl Project {
                     } else if let Some(entry) = snapshot.entry_for_path(old_file.path().as_ref()) {
                         File {
                             is_local: true,
-                            entry_id: entry.id,
+                            entry_id: Some(entry.id),
                             mtime: entry.mtime,
                             path: entry.path.clone(),
                             worktree: worktree_handle.clone(),
@@ -6250,10 +6252,12 @@ impl Project {
                         );
                     }
 
-                    if new_file.entry_id != *entry_id {
+                    if new_file.entry_id != Some(*entry_id) {
                         self.local_buffer_ids_by_entry_id.remove(entry_id);
-                        self.local_buffer_ids_by_entry_id
-                            .insert(new_file.entry_id, buffer_id);
+                        if let Some(entry_id) = new_file.entry_id {
+                            self.local_buffer_ids_by_entry_id
+                                .insert(entry_id, buffer_id);
+                        }
                     }
 
                     if new_file != *old_file {
