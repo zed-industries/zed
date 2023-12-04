@@ -724,7 +724,7 @@ impl Platform for MacPlatform {
         }
     }
 
-    /// Match cusor style to to one of the styles available
+    /// Match cursor style to one of the styles available
     /// in macOS's [NSCursor](https://developer.apple.com/documentation/appkit/nscursor).
     fn set_cursor_style(&self, style: CursorStyle) {
         unsafe {

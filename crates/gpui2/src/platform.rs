@@ -472,7 +472,7 @@ pub enum PromptLevel {
     Critical,
 }
 
-/// Change the style of the cursor (pointer)
+/// The style of the cursor (pointer)
 #[derive(Copy, Clone, Debug)]
 pub enum CursorStyle {
     Arrow,
