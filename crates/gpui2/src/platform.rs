@@ -472,13 +472,27 @@ pub enum PromptLevel {
     Critical,
 }
 
+/// Change the style of the cursor (pointer)
 #[derive(Copy, Clone, Debug)]
 pub enum CursorStyle {
     Arrow,
-    ResizeLeftRight,
-    ResizeUpDown,
-    PointingHand,
     IBeam,
+    Crosshair,
+    ClosedHand,
+    OpenHand,
+    PointingHand,
+    ResizeLeft,
+    ResizeRight,
+    ResizeLeftRight,
+    ResizeUp,
+    ResizeDown,
+    ResizeUpDown,
+    DisappearingItem,
+    IBeamCursorForVerticalLayout,
+    OperationNotAllowed,
+    DragLink,
+    DragCopy,
+    ContextualMenu,
 }
 
 impl Default for CursorStyle {
