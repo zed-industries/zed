@@ -100,7 +100,9 @@ use text::{OffsetUtf16, Rope};
 use theme::{
     ActiveTheme, DiagnosticStyle, PlayerColor, SyntaxTheme, Theme, ThemeColors, ThemeSettings,
 };
-use ui::{h_stack, v_stack, ButtonSize, HighlightedLabel, Icon, IconButton, Popover, Tooltip, ButtonStyle};
+use ui::{
+    h_stack, v_stack, ButtonSize, ButtonStyle, HighlightedLabel, Icon, IconButton, Popover, Tooltip,
+};
 use ui::{prelude::*, IconSize};
 use util::{post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::{
@@ -9715,14 +9717,16 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, is_valid: bool) -> Rend
                             .border()
                             .border_color(gpui::red())
                             .invisible()
-                            .group_hover(group_id, |style| style.visible()).child(
-                        IconButton::new(copy_id.clone(), Icon::Copy)
-                            .icon_color(Color::Muted)
-                            .size(ButtonSize::Compact)
-                            .style(ButtonStyle::Transparent)
-                            // TODO: `cx.write_to_clipboard` is not implemented in tests.
-                            // .on_click(cx.listener(move |_, _, cx| write_to_clipboard))
-                            .tooltip(|cx| Tooltip::text("Copy diagnostic message", cx))),
+                            .group_hover(group_id, |style| style.visible())
+                            .child(
+                                IconButton::new(copy_id.clone(), Icon::Copy)
+                                    .icon_color(Color::Muted)
+                                    .size(ButtonSize::Compact)
+                                    .style(ButtonStyle::Transparent)
+                                    // TODO: `cx.write_to_clipboard` is not implemented in tests.
+                                    // .on_click(cx.listener(move |_, _, cx| write_to_clipboard))
+                                    .tooltip(|cx| Tooltip::text("Copy diagnostic message", cx)),
+                            ),
                     )
             }))
             .into_any_element()
