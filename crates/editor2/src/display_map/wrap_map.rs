@@ -741,49 +741,48 @@ impl WrapSnapshot {
     }
 
     fn check_invariants(&self) {
-        // todo!()
-        // #[cfg(test)]
-        // {
-        //     assert_eq!(
-        //         TabPoint::from(self.transforms.summary().input.lines),
-        //         self.tab_snapshot.max_point()
-        //     );
+        #[cfg(test)]
+        {
+            assert_eq!(
+                TabPoint::from(self.transforms.summary().input.lines),
+                self.tab_snapshot.max_point()
+            );
 
-        //     {
-        //         let mut transforms = self.transforms.cursor::<()>().peekable();
-        //         while let Some(transform) = transforms.next() {
-        //             if let Some(next_transform) = transforms.peek() {
-        //                 assert!(transform.is_isomorphic() != next_transform.is_isomorphic());
-        //             }
-        //         }
-        //     }
+            {
+                let mut transforms = self.transforms.cursor::<()>().peekable();
+                while let Some(transform) = transforms.next() {
+                    if let Some(next_transform) = transforms.peek() {
+                        assert!(transform.is_isomorphic() != next_transform.is_isomorphic());
+                    }
+                }
+            }
 
-        //     let text = language::Rope::from(self.text().as_str());
-        //     let mut input_buffer_rows = self.tab_snapshot.buffer_rows(0);
-        //     let mut expected_buffer_rows = Vec::new();
-        //     let mut prev_tab_row = 0;
-        //     for display_row in 0..=self.max_point().row() {
-        //         let tab_point = self.to_tab_point(WrapPoint::new(display_row, 0));
-        //         if tab_point.row() == prev_tab_row && display_row != 0 {
-        //             expected_buffer_rows.push(None);
-        //         } else {
-        //             expected_buffer_rows.push(input_buffer_rows.next().unwrap());
-        //         }
+            let text = language::Rope::from(self.text().as_str());
+            let mut input_buffer_rows = self.tab_snapshot.buffer_rows(0);
+            let mut expected_buffer_rows = Vec::new();
+            let mut prev_tab_row = 0;
+            for display_row in 0..=self.max_point().row() {
+                let tab_point = self.to_tab_point(WrapPoint::new(display_row, 0));
+                if tab_point.row() == prev_tab_row && display_row != 0 {
+                    expected_buffer_rows.push(None);
+                } else {
+                    expected_buffer_rows.push(input_buffer_rows.next().unwrap());
+                }
 
-        //         prev_tab_row = tab_point.row();
-        //         assert_eq!(self.line_len(display_row), text.line_len(display_row));
-        //     }
+                prev_tab_row = tab_point.row();
+                assert_eq!(self.line_len(display_row), text.line_len(display_row));
+            }
 
-        //     for start_display_row in 0..expected_buffer_rows.len() {
-        //         assert_eq!(
-        //             self.buffer_rows(start_display_row as u32)
-        //                 .collect::<Vec<_>>(),
-        //             &expected_buffer_rows[start_display_row..],
-        //             "invalid buffer_rows({}..)",
-        //             start_display_row
-        //         );
-        //     }
-        // }
+            for start_display_row in 0..expected_buffer_rows.len() {
+                assert_eq!(
+                    self.buffer_rows(start_display_row as u32)
+                        .collect::<Vec<_>>(),
+                    &expected_buffer_rows[start_display_row..],
+                    "invalid buffer_rows({}..)",
+                    start_display_row
+                );
+            }
+        }
     }
 }
 
@@ -1051,7 +1050,7 @@ mod tests {
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
             .unwrap_or(10);
 
-        let text_system = cx.test_platform.text_system();
+        let text_system = cx.read(|cx| cx.text_system().clone());
         let mut wrap_width = if rng.gen_bool(0.1) {
             None
         } else {
@@ -1086,7 +1085,7 @@ mod tests {
         let tabs_snapshot = tab_map.set_max_expansion_column(32);
         log::info!("TabMap text: {:?}", tabs_snapshot.text());
 
-        let mut line_wrapper = LineWrapper::new(font_id, font_size, text_system);
+        let mut line_wrapper = text_system.line_wrapper(font.clone(), font_size).unwrap();
         let unwrapped_text = tabs_snapshot.text();
         let expected_text = wrap_text(&unwrapped_text, wrap_width, &mut line_wrapper);
 
