@@ -1283,357 +1283,376 @@ fn test_prev_next_word_bounds_with_soft_wrap(cx: &mut TestAppContext) {
 }
 
 //todo!(simulate_resize)
-// #[gpui::test]
-// async fn test_move_start_of_paragraph_end_of_paragraph(cx: &mut gpui::TestAppContext) {
-//     init_test(cx, |_| {});
-//     let mut cx = EditorTestContext::new(cx).await;
+#[gpui::test]
+async fn test_move_start_of_paragraph_end_of_paragraph(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
 
-//     let line_height = cx.editor(|editor, cx| editor.style(cx).text.line_height(cx.font_cache()));
-//     let window = cx.window;
-//     window.simulate_resize(gpui::Point::new(100., 4. * line_height), &mut cx);
+    let line_height = cx.editor(|editor, cx| {
+        editor
+            .style()
+            .unwrap()
+            .text
+            .line_height_in_pixels(cx.rem_size())
+    });
+    cx.simulate_window_resize(cx.window, size(px(100.), 4. * line_height));
 
-//     cx.set_state(
-//         &r#"ˇone
-//         two
+    cx.set_state(
+        &r#"ˇone
+        two
 
-//         three
-//         fourˇ
-//         five
+        three
+        fourˇ
+        five
 
-//         six"#
-//             .unindent(),
-//     );
+        six"#
+            .unindent(),
+    );
 
-//     cx.update_editor(|editor, cx| editor.move_to_end_of_paragraph(&MoveToEndOfParagraph, cx));
-//     cx.assert_editor_state(
-//         &r#"one
-//         two
-//         ˇ
-//         three
-//         four
-//         five
-//         ˇ
-//         six"#
-//             .unindent(),
-//     );
+    cx.update_editor(|editor, cx| editor.move_to_end_of_paragraph(&MoveToEndOfParagraph, cx));
+    cx.assert_editor_state(
+        &r#"one
+        two
+        ˇ
+        three
+        four
+        five
+        ˇ
+        six"#
+            .unindent(),
+    );
 
-//     cx.update_editor(|editor, cx| editor.move_to_end_of_paragraph(&MoveToEndOfParagraph, cx));
-//     cx.assert_editor_state(
-//         &r#"one
-//         two
+    cx.update_editor(|editor, cx| editor.move_to_end_of_paragraph(&MoveToEndOfParagraph, cx));
+    cx.assert_editor_state(
+        &r#"one
+        two
 
-//         three
-//         four
-//         five
-//         ˇ
-//         sixˇ"#
-//             .unindent(),
-//     );
+        three
+        four
+        five
+        ˇ
+        sixˇ"#
+            .unindent(),
+    );
 
-//     cx.update_editor(|editor, cx| editor.move_to_end_of_paragraph(&MoveToEndOfParagraph, cx));
-//     cx.assert_editor_state(
-//         &r#"one
-//         two
+    cx.update_editor(|editor, cx| editor.move_to_end_of_paragraph(&MoveToEndOfParagraph, cx));
+    cx.assert_editor_state(
+        &r#"one
+        two
 
-//         three
-//         four
-//         five
+        three
+        four
+        five
 
-//         sixˇ"#
-//             .unindent(),
-//     );
+        sixˇ"#
+            .unindent(),
+    );
 
-//     cx.update_editor(|editor, cx| editor.move_to_start_of_paragraph(&MoveToStartOfParagraph, cx));
-//     cx.assert_editor_state(
-//         &r#"one
-//         two
+    cx.update_editor(|editor, cx| editor.move_to_start_of_paragraph(&MoveToStartOfParagraph, cx));
+    cx.assert_editor_state(
+        &r#"one
+        two
 
-//         three
-//         four
-//         five
-//         ˇ
-//         six"#
-//             .unindent(),
-//     );
+        three
+        four
+        five
+        ˇ
+        six"#
+            .unindent(),
+    );
 
-//     cx.update_editor(|editor, cx| editor.move_to_start_of_paragraph(&MoveToStartOfParagraph, cx));
-//     cx.assert_editor_state(
-//         &r#"one
-//         two
-//         ˇ
-//         three
-//         four
-//         five
+    cx.update_editor(|editor, cx| editor.move_to_start_of_paragraph(&MoveToStartOfParagraph, cx));
+    cx.assert_editor_state(
+        &r#"one
+        two
+        ˇ
+        three
+        four
+        five
 
-//         six"#
-//             .unindent(),
-//     );
+        six"#
+            .unindent(),
+    );
 
-//     cx.update_editor(|editor, cx| editor.move_to_start_of_paragraph(&MoveToStartOfParagraph, cx));
-//     cx.assert_editor_state(
-//         &r#"ˇone
-//         two
+    cx.update_editor(|editor, cx| editor.move_to_start_of_paragraph(&MoveToStartOfParagraph, cx));
+    cx.assert_editor_state(
+        &r#"ˇone
+        two
 
-//         three
-//         four
-//         five
+        three
+        four
+        five
 
-//         six"#
-//             .unindent(),
-//     );
-// }
+        six"#
+            .unindent(),
+    );
+}
 
-// #[gpui::test]
-// async fn test_scroll_page_up_page_down(cx: &mut gpui::TestAppContext) {
-//     init_test(cx, |_| {});
-//     let mut cx = EditorTestContext::new(cx).await;
-//     let line_height = cx.editor(|editor, cx| editor.style(cx).text.line_height(cx.font_cache()));
-//     let window = cx.window;
-//     window.simulate_resize(Point::new(1000., 4. * line_height + 0.5), &mut cx);
+#[gpui::test]
+async fn test_scroll_page_up_page_down(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    let line_height = cx.editor(|editor, cx| {
+        editor
+            .style()
+            .unwrap()
+            .text
+            .line_height_in_pixels(cx.rem_size())
+    });
+    let window = cx.window;
+    cx.simulate_window_resize(window, size(px(1000.), 4. * line_height + px(0.5)));
 
-//     cx.set_state(
-//         &r#"ˇone
-//         two
-//         three
-//         four
-//         five
-//         six
-//         seven
-//         eight
-//         nine
-//         ten
-//         "#,
-//     );
+    cx.set_state(
+        &r#"ˇone
+        two
+        three
+        four
+        five
+        six
+        seven
+        eight
+        nine
+        ten
+        "#,
+    );
 
-//     cx.update_editor(|editor, cx| {
-//         assert_eq!(
-//             editor.snapshot(cx).scroll_position(),
-//             gpui::Point::new(0., 0.)
-//         );
-//         editor.scroll_screen(&ScrollAmount::Page(1.), cx);
-//         assert_eq!(
-//             editor.snapshot(cx).scroll_position(),
-//             gpui::Point::new(0., 3.)
-//         );
-//         editor.scroll_screen(&ScrollAmount::Page(1.), cx);
-//         assert_eq!(
-//             editor.snapshot(cx).scroll_position(),
-//             gpui::Point::new(0., 6.)
-//         );
-//         editor.scroll_screen(&ScrollAmount::Page(-1.), cx);
-//         assert_eq!(
-//             editor.snapshot(cx).scroll_position(),
-//             gpui::Point::new(0., 3.)
-//         );
+    cx.update_editor(|editor, cx| {
+        assert_eq!(
+            editor.snapshot(cx).scroll_position(),
+            gpui::Point::new(0., 0.)
+        );
+        editor.scroll_screen(&ScrollAmount::Page(1.), cx);
+        assert_eq!(
+            editor.snapshot(cx).scroll_position(),
+            gpui::Point::new(0., 3.)
+        );
+        editor.scroll_screen(&ScrollAmount::Page(1.), cx);
+        assert_eq!(
+            editor.snapshot(cx).scroll_position(),
+            gpui::Point::new(0., 6.)
+        );
+        editor.scroll_screen(&ScrollAmount::Page(-1.), cx);
+        assert_eq!(
+            editor.snapshot(cx).scroll_position(),
+            gpui::Point::new(0., 3.)
+        );
 
-//         editor.scroll_screen(&ScrollAmount::Page(-0.5), cx);
-//         assert_eq!(
-//             editor.snapshot(cx).scroll_position(),
-//             gpui::Point::new(0., 1.)
-//         );
-//         editor.scroll_screen(&ScrollAmount::Page(0.5), cx);
-//         assert_eq!(
-//             editor.snapshot(cx).scroll_position(),
-//             gpui::Point::new(0., 3.)
-//         );
-//     });
-// }
+        editor.scroll_screen(&ScrollAmount::Page(-0.5), cx);
+        assert_eq!(
+            editor.snapshot(cx).scroll_position(),
+            gpui::Point::new(0., 1.)
+        );
+        editor.scroll_screen(&ScrollAmount::Page(0.5), cx);
+        assert_eq!(
+            editor.snapshot(cx).scroll_position(),
+            gpui::Point::new(0., 3.)
+        );
+    });
+}
 
-// #[gpui::test]
-// async fn test_autoscroll(cx: &mut gpui::TestAppContext) {
-//     init_test(cx, |_| {});
-//     let mut cx = EditorTestContext::new(cx).await;
+#[gpui::test]
+async fn test_autoscroll(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
 
-//     let line_height = cx.update_editor(|editor, cx| {
-//         editor.set_vertical_scroll_margin(2, cx);
-//         editor.style(cx).text.line_height(cx.font_cache())
-//     });
+    let line_height = cx.update_editor(|editor, cx| {
+        editor.set_vertical_scroll_margin(2, cx);
+        editor
+            .style()
+            .unwrap()
+            .text
+            .line_height_in_pixels(cx.rem_size())
+    });
+    let window = cx.window;
+    cx.simulate_window_resize(window, size(px(1000.), 6. * line_height));
 
-//     let window = cx.window;
-//     window.simulate_resize(gpui::Point::new(1000., 6.0 * line_height), &mut cx);
+    cx.set_state(
+        &r#"ˇone
+            two
+            three
+            four
+            five
+            six
+            seven
+            eight
+            nine
+            ten
+        "#,
+    );
+    cx.update_editor(|editor, cx| {
+        assert_eq!(
+            editor.snapshot(cx).scroll_position(),
+            gpui::Point::new(0., 0.0)
+        );
+    });
 
-//     cx.set_state(
-//         &r#"ˇone
-//             two
-//             three
-//             four
-//             five
-//             six
-//             seven
-//             eight
-//             nine
-//             ten
-//         "#,
-//     );
-//     cx.update_editor(|editor, cx| {
-//         assert_eq!(
-//             editor.snapshot(cx).scroll_position(),
-//             gpui::Point::new(0., 0.0)
-//         );
-//     });
+    // Add a cursor below the visible area. Since both cursors cannot fit
+    // on screen, the editor autoscrolls to reveal the newest cursor, and
+    // allows the vertical scroll margin below that cursor.
+    cx.update_editor(|editor, cx| {
+        editor.change_selections(Some(Autoscroll::fit()), cx, |selections| {
+            selections.select_ranges([
+                Point::new(0, 0)..Point::new(0, 0),
+                Point::new(6, 0)..Point::new(6, 0),
+            ]);
+        })
+    });
+    cx.update_editor(|editor, cx| {
+        assert_eq!(
+            editor.snapshot(cx).scroll_position(),
+            gpui::Point::new(0., 3.0)
+        );
+    });
 
-//     // Add a cursor below the visible area. Since both cursors cannot fit
-//     // on screen, the editor autoscrolls to reveal the newest cursor, and
-//     // allows the vertical scroll margin below that cursor.
-//     cx.update_editor(|editor, cx| {
-//         editor.change_selections(Some(Autoscroll::fit()), cx, |selections| {
-//             selections.select_ranges([
-//                 Point::new(0, 0)..Point::new(0, 0),
-//                 Point::new(6, 0)..Point::new(6, 0),
-//             ]);
-//         })
-//     });
-//     cx.update_editor(|editor, cx| {
-//         assert_eq!(
-//             editor.snapshot(cx).scroll_position(),
-//             gpui::Point::new(0., 3.0)
-//         );
-//     });
+    // Move down. The editor cursor scrolls down to track the newest cursor.
+    cx.update_editor(|editor, cx| {
+        editor.move_down(&Default::default(), cx);
+    });
+    cx.update_editor(|editor, cx| {
+        assert_eq!(
+            editor.snapshot(cx).scroll_position(),
+            gpui::Point::new(0., 4.0)
+        );
+    });
 
-//     // Move down. The editor cursor scrolls down to track the newest cursor.
-//     cx.update_editor(|editor, cx| {
-//         editor.move_down(&Default::default(), cx);
-//     });
-//     cx.update_editor(|editor, cx| {
-//         assert_eq!(
-//             editor.snapshot(cx).scroll_position(),
-//             gpui::Point::new(0., 4.0)
-//         );
-//     });
+    // Add a cursor above the visible area. Since both cursors fit on screen,
+    // the editor scrolls to show both.
+    cx.update_editor(|editor, cx| {
+        editor.change_selections(Some(Autoscroll::fit()), cx, |selections| {
+            selections.select_ranges([
+                Point::new(1, 0)..Point::new(1, 0),
+                Point::new(6, 0)..Point::new(6, 0),
+            ]);
+        })
+    });
+    cx.update_editor(|editor, cx| {
+        assert_eq!(
+            editor.snapshot(cx).scroll_position(),
+            gpui::Point::new(0., 1.0)
+        );
+    });
+}
 
-//     // Add a cursor above the visible area. Since both cursors fit on screen,
-//     // the editor scrolls to show both.
-//     cx.update_editor(|editor, cx| {
-//         editor.change_selections(Some(Autoscroll::fit()), cx, |selections| {
-//             selections.select_ranges([
-//                 Point::new(1, 0)..Point::new(1, 0),
-//                 Point::new(6, 0)..Point::new(6, 0),
-//             ]);
-//         })
-//     });
-//     cx.update_editor(|editor, cx| {
-//         assert_eq!(
-//             editor.snapshot(cx).scroll_position(),
-//             gpui::Point::new(0., 1.0)
-//         );
-//     });
-// }
+#[gpui::test]
+async fn test_move_page_up_page_down(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
 
-// #[gpui::test]
-// async fn test_move_page_up_page_down(cx: &mut gpui::TestAppContext) {
-//     init_test(cx, |_| {});
-//     let mut cx = EditorTestContext::new(cx).await;
+    let line_height = cx.editor(|editor, cx| {
+        editor
+            .style()
+            .unwrap()
+            .text
+            .line_height_in_pixels(cx.rem_size())
+    });
+    let window = cx.window;
+    cx.simulate_window_resize(window, size(px(100.), 4. * line_height));
+    cx.set_state(
+        &r#"
+        ˇone
+        two
+        threeˇ
+        four
+        five
+        six
+        seven
+        eight
+        nine
+        ten
+        "#
+        .unindent(),
+    );
 
-//     let line_height = cx.editor(|editor, cx| editor.style(cx).text.line_height(cx.font_cache()));
-//     let window = cx.window;
-//     window.simulate_resize(gpui::Point::new(100., 4. * line_height), &mut cx);
+    cx.update_editor(|editor, cx| editor.move_page_down(&MovePageDown::default(), cx));
+    cx.assert_editor_state(
+        &r#"
+        one
+        two
+        three
+        ˇfour
+        five
+        sixˇ
+        seven
+        eight
+        nine
+        ten
+        "#
+        .unindent(),
+    );
 
-//     cx.set_state(
-//         &r#"
-//         ˇone
-//         two
-//         threeˇ
-//         four
-//         five
-//         six
-//         seven
-//         eight
-//         nine
-//         ten
-//         "#
-//         .unindent(),
-//     );
+    cx.update_editor(|editor, cx| editor.move_page_down(&MovePageDown::default(), cx));
+    cx.assert_editor_state(
+        &r#"
+        one
+        two
+        three
+        four
+        five
+        six
+        ˇseven
+        eight
+        nineˇ
+        ten
+        "#
+        .unindent(),
+    );
 
-//     cx.update_editor(|editor, cx| editor.move_page_down(&MovePageDown::default(), cx));
-//     cx.assert_editor_state(
-//         &r#"
-//         one
-//         two
-//         three
-//         ˇfour
-//         five
-//         sixˇ
-//         seven
-//         eight
-//         nine
-//         ten
-//         "#
-//         .unindent(),
-//     );
+    cx.update_editor(|editor, cx| editor.move_page_up(&MovePageUp::default(), cx));
+    cx.assert_editor_state(
+        &r#"
+        one
+        two
+        three
+        ˇfour
+        five
+        sixˇ
+        seven
+        eight
+        nine
+        ten
+        "#
+        .unindent(),
+    );
 
-//     cx.update_editor(|editor, cx| editor.move_page_down(&MovePageDown::default(), cx));
-//     cx.assert_editor_state(
-//         &r#"
-//         one
-//         two
-//         three
-//         four
-//         five
-//         six
-//         ˇseven
-//         eight
-//         nineˇ
-//         ten
-//         "#
-//         .unindent(),
-//     );
+    cx.update_editor(|editor, cx| editor.move_page_up(&MovePageUp::default(), cx));
+    cx.assert_editor_state(
+        &r#"
+        ˇone
+        two
+        threeˇ
+        four
+        five
+        six
+        seven
+        eight
+        nine
+        ten
+        "#
+        .unindent(),
+    );
 
-//     cx.update_editor(|editor, cx| editor.move_page_up(&MovePageUp::default(), cx));
-//     cx.assert_editor_state(
-//         &r#"
-//         one
-//         two
-//         three
-//         ˇfour
-//         five
-//         sixˇ
-//         seven
-//         eight
-//         nine
-//         ten
-//         "#
-//         .unindent(),
-//     );
-
-//     cx.update_editor(|editor, cx| editor.move_page_up(&MovePageUp::default(), cx));
-//     cx.assert_editor_state(
-//         &r#"
-//         ˇone
-//         two
-//         threeˇ
-//         four
-//         five
-//         six
-//         seven
-//         eight
-//         nine
-//         ten
-//         "#
-//         .unindent(),
-//     );
-
-//     // Test select collapsing
-//     cx.update_editor(|editor, cx| {
-//         editor.move_page_down(&MovePageDown::default(), cx);
-//         editor.move_page_down(&MovePageDown::default(), cx);
-//         editor.move_page_down(&MovePageDown::default(), cx);
-//     });
-//     cx.assert_editor_state(
-//         &r#"
-//         one
-//         two
-//         three
-//         four
-//         five
-//         six
-//         seven
-//         eight
-//         nine
-//         ˇten
-//         ˇ"#
-//         .unindent(),
-//     );
-// }
+    // Test select collapsing
+    cx.update_editor(|editor, cx| {
+        editor.move_page_down(&MovePageDown::default(), cx);
+        editor.move_page_down(&MovePageDown::default(), cx);
+        editor.move_page_down(&MovePageDown::default(), cx);
+    });
+    cx.assert_editor_state(
+        &r#"
+        one
+        two
+        three
+        four
+        five
+        six
+        seven
+        eight
+        nine
+        ˇten
+        ˇ"#
+        .unindent(),
+    );
+}
 
 #[gpui::test]
 async fn test_delete_to_beginning_of_line(cx: &mut gpui::TestAppContext) {

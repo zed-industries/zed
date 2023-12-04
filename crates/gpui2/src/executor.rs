@@ -206,13 +206,14 @@ impl BackgroundExecutor {
             return Err(future);
         }
 
-        let max_ticks = if cfg!(any(test, feature = "test-support")) {
-            self.dispatcher
-                .as_test()
-                .map_or(usize::MAX, |dispatcher| dispatcher.gen_block_on_ticks())
-        } else {
-            usize::MAX
-        };
+        #[cfg(any(test, feature = "test-support"))]
+        let max_ticks = self
+            .dispatcher
+            .as_test()
+            .map_or(usize::MAX, |dispatcher| dispatcher.gen_block_on_ticks());
+        #[cfg(not(any(test, feature = "test-support")))]
+        let max_ticks = usize::MAX;
+
         let mut timer = self.timer(duration).fuse();
 
         let timeout = async {

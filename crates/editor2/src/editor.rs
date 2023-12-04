@@ -8243,6 +8243,11 @@ impl Editor {
         self.style = Some(style);
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn style(&self) -> Option<&EditorStyle> {
+        self.style.as_ref()
+    }
+
     pub fn set_wrap_width(&self, width: Option<Pixels>, cx: &mut AppContext) -> bool {
         self.display_map
             .update(cx, |map, cx| map.set_wrap_width(width, cx))

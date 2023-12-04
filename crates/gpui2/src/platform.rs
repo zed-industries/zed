@@ -160,7 +160,7 @@ pub trait PlatformWindow {
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
 
     #[cfg(any(test, feature = "test-support"))]
-    fn as_test(&self) -> Option<&TestWindow> {
+    fn as_test(&mut self) -> Option<&mut TestWindow> {
         None
     }
 }
