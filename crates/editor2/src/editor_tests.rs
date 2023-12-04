@@ -6327,88 +6327,88 @@ async fn test_extra_newline_insertion(cx: &mut gpui::TestAppContext) {
     });
 }
 
-// #[gpui::test]
-// fn test_highlighted_ranges(cx: &mut TestAppContext) {
-//     init_test(cx, |_| {});
+#[gpui::test]
+fn test_highlighted_ranges(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
 
-//     let editor = cx.add_window(|cx| {
-//         let buffer = MultiBuffer::build_simple(&sample_text(16, 8, 'a'), cx);
-//         build_editor(buffer.clone(), cx)
-//     });
+    let editor = cx.add_window(|cx| {
+        let buffer = MultiBuffer::build_simple(&sample_text(16, 8, 'a'), cx);
+        build_editor(buffer.clone(), cx)
+    });
 
-//     editor.update(cx, |editor, cx| {
-//         struct Type1;
-//         struct Type2;
+    editor.update(cx, |editor, cx| {
+        struct Type1;
+        struct Type2;
 
-//         let buffer = editor.buffer.read(cx).snapshot(cx);
+        let buffer = editor.buffer.read(cx).snapshot(cx);
 
-//         let anchor_range =
-//             |range: Range<Point>| buffer.anchor_after(range.start)..buffer.anchor_after(range.end);
+        let anchor_range =
+            |range: Range<Point>| buffer.anchor_after(range.start)..buffer.anchor_after(range.end);
 
-//         editor.highlight_background::<Type1>(
-//             vec![
-//                 anchor_range(Point::new(2, 1)..Point::new(2, 3)),
-//                 anchor_range(Point::new(4, 2)..Point::new(4, 4)),
-//                 anchor_range(Point::new(6, 3)..Point::new(6, 5)),
-//                 anchor_range(Point::new(8, 4)..Point::new(8, 6)),
-//             ],
-//             |_| Hsla::red(),
-//             cx,
-//         );
-//         editor.highlight_background::<Type2>(
-//             vec![
-//                 anchor_range(Point::new(3, 2)..Point::new(3, 5)),
-//                 anchor_range(Point::new(5, 3)..Point::new(5, 6)),
-//                 anchor_range(Point::new(7, 4)..Point::new(7, 7)),
-//                 anchor_range(Point::new(9, 5)..Point::new(9, 8)),
-//             ],
-//             |_| Hsla::green(),
-//             cx,
-//         );
+        editor.highlight_background::<Type1>(
+            vec![
+                anchor_range(Point::new(2, 1)..Point::new(2, 3)),
+                anchor_range(Point::new(4, 2)..Point::new(4, 4)),
+                anchor_range(Point::new(6, 3)..Point::new(6, 5)),
+                anchor_range(Point::new(8, 4)..Point::new(8, 6)),
+            ],
+            |_| Hsla::red(),
+            cx,
+        );
+        editor.highlight_background::<Type2>(
+            vec![
+                anchor_range(Point::new(3, 2)..Point::new(3, 5)),
+                anchor_range(Point::new(5, 3)..Point::new(5, 6)),
+                anchor_range(Point::new(7, 4)..Point::new(7, 7)),
+                anchor_range(Point::new(9, 5)..Point::new(9, 8)),
+            ],
+            |_| Hsla::green(),
+            cx,
+        );
 
-//         let snapshot = editor.snapshot(cx);
-//         let mut highlighted_ranges = editor.background_highlights_in_range(
-//             anchor_range(Point::new(3, 4)..Point::new(7, 4)),
-//             &snapshot,
-//             cx.theme().colors(),
-//         );
-//         // Enforce a consistent ordering based on color without relying on the ordering of the
-//         // highlight's `TypeId` which is non-executor.
-//         highlighted_ranges.sort_unstable_by_key(|(_, color)| *color);
-//         assert_eq!(
-//             highlighted_ranges,
-//             &[
-//                 (
-//                     DisplayPoint::new(3, 2)..DisplayPoint::new(3, 5),
-//                     Hsla::green(),
-//                 ),
-//                 (
-//                     DisplayPoint::new(5, 3)..DisplayPoint::new(5, 6),
-//                     Hsla::green(),
-//                 ),
-//                 (
-//                     DisplayPoint::new(4, 2)..DisplayPoint::new(4, 4),
-//                     Hsla::red(),
-//                 ),
-//                 (
-//                     DisplayPoint::new(6, 3)..DisplayPoint::new(6, 5),
-//                     Hsla::red(),
-//                 ),
-//             ]
-//         );
-//         assert_eq!(
-//             editor.background_highlights_in_range(
-//                 anchor_range(Point::new(5, 6)..Point::new(6, 4)),
-//                 &snapshot,
-//                 cx.theme().colors(),
-//             ),
-//             &[(
-//                 DisplayPoint::new(6, 3)..DisplayPoint::new(6, 5),
-//                 Hsla::red(),
-//             )]
-//         );
-//     });
-// }
+        let snapshot = editor.snapshot(cx);
+        let mut highlighted_ranges = editor.background_highlights_in_range(
+            anchor_range(Point::new(3, 4)..Point::new(7, 4)),
+            &snapshot,
+            cx.theme().colors(),
+        );
+        // Enforce a consistent ordering based on color without relying on the ordering of the
+        // highlight's `TypeId` which is non-executor.
+        highlighted_ranges.sort_unstable_by_key(|(_, color)| *color);
+        assert_eq!(
+            highlighted_ranges,
+            &[
+                (
+                    DisplayPoint::new(4, 2)..DisplayPoint::new(4, 4),
+                    Hsla::red(),
+                ),
+                (
+                    DisplayPoint::new(6, 3)..DisplayPoint::new(6, 5),
+                    Hsla::red(),
+                ),
+                (
+                    DisplayPoint::new(3, 2)..DisplayPoint::new(3, 5),
+                    Hsla::green(),
+                ),
+                (
+                    DisplayPoint::new(5, 3)..DisplayPoint::new(5, 6),
+                    Hsla::green(),
+                ),
+            ]
+        );
+        assert_eq!(
+            editor.background_highlights_in_range(
+                anchor_range(Point::new(5, 6)..Point::new(6, 4)),
+                &snapshot,
+                cx.theme().colors(),
+            ),
+            &[(
+                DisplayPoint::new(6, 3)..DisplayPoint::new(6, 5),
+                Hsla::red(),
+            )]
+        );
+    });
+}
 
 // todo!(following)
 #[gpui::test]
