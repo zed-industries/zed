@@ -7,7 +7,7 @@ use crate::{
 use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
 use gpui::{
-    actions, overlay, prelude::*, Action, AnchorCorner, AnyWeakView, AppContext,
+    actions, overlay, prelude::*, rems, Action, AnchorCorner, AnyWeakView, AppContext,
     AsyncWindowContext, DismissEvent, Div, EntityId, EventEmitter, FocusHandle, Focusable,
     FocusableView, Model, Pixels, Point, PromptLevel, Render, Task, View, ViewContext,
     VisualContext, WeakView, WindowContext,
@@ -26,7 +26,9 @@ use std::{
     },
 };
 
-use ui::{prelude::*, right_click_menu, Color, Icon, IconButton, IconElement, Tooltip};
+use ui::{
+    h_stack, prelude::*, right_click_menu, Color, Icon, IconButton, IconElement, Label, Tooltip,
+};
 use ui::{v_stack, ContextMenu};
 use util::truncate_and_remove_front;
 
@@ -1554,47 +1556,43 @@ impl Pane {
 
     fn render_tab_bar(&mut self, cx: &mut ViewContext<'_, Pane>) -> impl IntoElement {
         div()
-            .group("tab_bar")
             .id("tab_bar")
+            .group("tab_bar")
             .track_focus(&self.tab_bar_focus_handle)
             .w_full()
+            // 30px @ 16px/rem
+            .h(rems(1.875))
+            .overflow_hidden()
             .flex()
+            .flex_none()
             .bg(cx.theme().colors().tab_bar_background)
             // Left Side
             .child(
-                div()
-                    .relative()
-                    .px_1()
+                h_stack()
+                    .px_2()
                     .flex()
                     .flex_none()
-                    .gap_2()
+                    .gap_1()
                     // Nav Buttons
                     .child(
-                        div()
-                            .right_0()
-                            .flex()
-                            .items_center()
-                            .gap_px()
-                            .child(
-                                div().border().border_color(gpui::red()).child(
-                                    IconButton::new("navigate_backward", Icon::ArrowLeft)
-                                        .on_click({
-                                            let view = cx.view().clone();
-                                            move |_, cx| view.update(cx, Self::navigate_backward)
-                                        })
-                                        .disabled(!self.can_navigate_backward()),
-                                ),
-                            )
-                            .child(
-                                div().border().border_color(gpui::red()).child(
-                                    IconButton::new("navigate_forward", Icon::ArrowRight)
-                                        .on_click({
-                                            let view = cx.view().clone();
-                                            move |_, cx| view.update(cx, Self::navigate_backward)
-                                        })
-                                        .disabled(!self.can_navigate_forward()),
-                                ),
-                            ),
+                        div().border().border_color(gpui::red()).child(
+                            IconButton::new("navigate_backward", Icon::ArrowLeft)
+                                .on_click({
+                                    let view = cx.view().clone();
+                                    move |_, cx| view.update(cx, Self::navigate_backward)
+                                })
+                                .disabled(!self.can_navigate_backward()),
+                        ),
+                    )
+                    .child(
+                        div().border().border_color(gpui::red()).child(
+                            IconButton::new("navigate_forward", Icon::ArrowRight)
+                                .on_click({
+                                    let view = cx.view().clone();
+                                    move |_, cx| view.update(cx, Self::navigate_backward)
+                                })
+                                .disabled(!self.can_navigate_forward()),
+                        ),
                     ),
             )
             .child(
@@ -2186,8 +2184,11 @@ impl Render for Pane {
             .child(if let Some(item) = self.active_item() {
                 div().flex().flex_1().child(item.to_any())
             } else {
-                // todo!()
-                div().child("Empty Pane")
+                h_stack()
+                    .items_center()
+                    .size_full()
+                    .justify_center()
+                    .child(Label::new("Open a file or project to get started.").color(Color::Muted))
             })
 
         // enum MouseNavigationHandler {}
