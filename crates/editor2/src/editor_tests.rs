@@ -3060,99 +3060,99 @@ fn test_move_line_up_down_with_blocks(cx: &mut TestAppContext) {
 }
 
 //todo!(test_transpose)
-// #[gpui::test]
-// fn test_transpose(cx: &mut TestAppContext) {
-//     init_test(cx, |_| {});
+#[gpui::test]
+fn test_transpose(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
 
-//     _ = cx.add_window(|cx| {
-//         let mut editor = build_editor(MultiBuffer::build_simple("abc", cx), cx);
+    _ = cx.add_window(|cx| {
+        let mut editor = build_editor(MultiBuffer::build_simple("abc", cx), cx);
+        editor.set_style(EditorStyle::default(), cx);
+        editor.change_selections(None, cx, |s| s.select_ranges([1..1]));
+        editor.transpose(&Default::default(), cx);
+        assert_eq!(editor.text(cx), "bac");
+        assert_eq!(editor.selections.ranges(cx), [2..2]);
 
-//         editor.change_selections(None, cx, |s| s.select_ranges([1..1]));
-//         editor.transpose(&Default::default(), cx);
-//         assert_eq!(editor.text(cx), "bac");
-//         assert_eq!(editor.selections.ranges(cx), [2..2]);
+        editor.transpose(&Default::default(), cx);
+        assert_eq!(editor.text(cx), "bca");
+        assert_eq!(editor.selections.ranges(cx), [3..3]);
 
-//         editor.transpose(&Default::default(), cx);
-//         assert_eq!(editor.text(cx), "bca");
-//         assert_eq!(editor.selections.ranges(cx), [3..3]);
+        editor.transpose(&Default::default(), cx);
+        assert_eq!(editor.text(cx), "bac");
+        assert_eq!(editor.selections.ranges(cx), [3..3]);
 
-//         editor.transpose(&Default::default(), cx);
-//         assert_eq!(editor.text(cx), "bac");
-//         assert_eq!(editor.selections.ranges(cx), [3..3]);
+        editor
+    });
 
-//         editor
-//     });
+    _ = cx.add_window(|cx| {
+        let mut editor = build_editor(MultiBuffer::build_simple("abc\nde", cx), cx);
+        editor.set_style(EditorStyle::default(), cx);
+        editor.change_selections(None, cx, |s| s.select_ranges([3..3]));
+        editor.transpose(&Default::default(), cx);
+        assert_eq!(editor.text(cx), "acb\nde");
+        assert_eq!(editor.selections.ranges(cx), [3..3]);
 
-//     _ = cx.add_window(|cx| {
-//         let mut editor = build_editor(MultiBuffer::build_simple("abc\nde", cx), cx);
+        editor.change_selections(None, cx, |s| s.select_ranges([4..4]));
+        editor.transpose(&Default::default(), cx);
+        assert_eq!(editor.text(cx), "acbd\ne");
+        assert_eq!(editor.selections.ranges(cx), [5..5]);
 
-//         editor.change_selections(None, cx, |s| s.select_ranges([3..3]));
-//         editor.transpose(&Default::default(), cx);
-//         assert_eq!(editor.text(cx), "acb\nde");
-//         assert_eq!(editor.selections.ranges(cx), [3..3]);
+        editor.transpose(&Default::default(), cx);
+        assert_eq!(editor.text(cx), "acbde\n");
+        assert_eq!(editor.selections.ranges(cx), [6..6]);
 
-//         editor.change_selections(None, cx, |s| s.select_ranges([4..4]));
-//         editor.transpose(&Default::default(), cx);
-//         assert_eq!(editor.text(cx), "acbd\ne");
-//         assert_eq!(editor.selections.ranges(cx), [5..5]);
+        editor.transpose(&Default::default(), cx);
+        assert_eq!(editor.text(cx), "acbd\ne");
+        assert_eq!(editor.selections.ranges(cx), [6..6]);
 
-//         editor.transpose(&Default::default(), cx);
-//         assert_eq!(editor.text(cx), "acbde\n");
-//         assert_eq!(editor.selections.ranges(cx), [6..6]);
+        editor
+    });
 
-//         editor.transpose(&Default::default(), cx);
-//         assert_eq!(editor.text(cx), "acbd\ne");
-//         assert_eq!(editor.selections.ranges(cx), [6..6]);
+    _ = cx.add_window(|cx| {
+        let mut editor = build_editor(MultiBuffer::build_simple("abc\nde", cx), cx);
+        editor.set_style(EditorStyle::default(), cx);
+        editor.change_selections(None, cx, |s| s.select_ranges([1..1, 2..2, 4..4]));
+        editor.transpose(&Default::default(), cx);
+        assert_eq!(editor.text(cx), "bacd\ne");
+        assert_eq!(editor.selections.ranges(cx), [2..2, 3..3, 5..5]);
 
-//         editor
-//     });
+        editor.transpose(&Default::default(), cx);
+        assert_eq!(editor.text(cx), "bcade\n");
+        assert_eq!(editor.selections.ranges(cx), [3..3, 4..4, 6..6]);
 
-//     _ = cx.add_window(|cx| {
-//         let mut editor = build_editor(MultiBuffer::build_simple("abc\nde", cx), cx);
+        editor.transpose(&Default::default(), cx);
+        assert_eq!(editor.text(cx), "bcda\ne");
+        assert_eq!(editor.selections.ranges(cx), [4..4, 6..6]);
 
-//         editor.change_selections(None, cx, |s| s.select_ranges([1..1, 2..2, 4..4]));
-//         editor.transpose(&Default::default(), cx);
-//         assert_eq!(editor.text(cx), "bacd\ne");
-//         assert_eq!(editor.selections.ranges(cx), [2..2, 3..3, 5..5]);
+        editor.transpose(&Default::default(), cx);
+        assert_eq!(editor.text(cx), "bcade\n");
+        assert_eq!(editor.selections.ranges(cx), [4..4, 6..6]);
 
-//         editor.transpose(&Default::default(), cx);
-//         assert_eq!(editor.text(cx), "bcade\n");
-//         assert_eq!(editor.selections.ranges(cx), [3..3, 4..4, 6..6]);
+        editor.transpose(&Default::default(), cx);
+        assert_eq!(editor.text(cx), "bcaed\n");
+        assert_eq!(editor.selections.ranges(cx), [5..5, 6..6]);
 
-//         editor.transpose(&Default::default(), cx);
-//         assert_eq!(editor.text(cx), "bcda\ne");
-//         assert_eq!(editor.selections.ranges(cx), [4..4, 6..6]);
+        editor
+    });
 
-//         editor.transpose(&Default::default(), cx);
-//         assert_eq!(editor.text(cx), "bcade\n");
-//         assert_eq!(editor.selections.ranges(cx), [4..4, 6..6]);
+    _ = cx.add_window(|cx| {
+        let mut editor = build_editor(MultiBuffer::build_simple("🍐🏀✋", cx), cx);
+        editor.set_style(EditorStyle::default(), cx);
+        editor.change_selections(None, cx, |s| s.select_ranges([4..4]));
+        editor.transpose(&Default::default(), cx);
+        assert_eq!(editor.text(cx), "🏀🍐✋");
+        assert_eq!(editor.selections.ranges(cx), [8..8]);
 
-//         editor.transpose(&Default::default(), cx);
-//         assert_eq!(editor.text(cx), "bcaed\n");
-//         assert_eq!(editor.selections.ranges(cx), [5..5, 6..6]);
+        editor.transpose(&Default::default(), cx);
+        assert_eq!(editor.text(cx), "🏀✋🍐");
+        assert_eq!(editor.selections.ranges(cx), [11..11]);
 
-//         editor
-//     });
+        editor.transpose(&Default::default(), cx);
+        assert_eq!(editor.text(cx), "🏀🍐✋");
+        assert_eq!(editor.selections.ranges(cx), [11..11]);
 
-//     _ = cx.add_window(|cx| {
-//         let mut editor = build_editor(MultiBuffer::build_simple("🍐🏀✋", cx), cx);
-
-//         editor.change_selections(None, cx, |s| s.select_ranges([4..4]));
-//         editor.transpose(&Default::default(), cx);
-//         assert_eq!(editor.text(cx), "🏀🍐✋");
-//         assert_eq!(editor.selections.ranges(cx), [8..8]);
-
-//         editor.transpose(&Default::default(), cx);
-//         assert_eq!(editor.text(cx), "🏀✋🍐");
-//         assert_eq!(editor.selections.ranges(cx), [11..11]);
-
-//         editor.transpose(&Default::default(), cx);
-//         assert_eq!(editor.text(cx), "🏀🍐✋");
-//         assert_eq!(editor.selections.ranges(cx), [11..11]);
-
-//         editor
-//     });
-// }
+        editor
+    });
+}
 
 #[gpui::test]
 async fn test_clipboard(cx: &mut gpui::TestAppContext) {
