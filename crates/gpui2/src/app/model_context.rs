@@ -88,13 +88,15 @@ impl<'a, T: 'static> ModelContext<'a, T> {
     where
         T: 'static,
     {
-        self.app.release_listeners.insert(
+        let (subscription, activate) = self.app.release_listeners.insert(
             self.model_state.entity_id,
             Box::new(move |this, cx| {
                 let this = this.downcast_mut().expect("invalid entity type");
                 on_release(this, cx);
             }),
-        )
+        );
+        activate();
+        subscription
     }
 
     pub fn observe_release<T2, E>(
@@ -109,7 +111,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
     {
         let entity_id = entity.entity_id();
         let this = self.weak_model();
-        self.app.release_listeners.insert(
+        let (subscription, activate) = self.app.release_listeners.insert(
             entity_id,
             Box::new(move |entity, cx| {
                 let entity = entity.downcast_mut().expect("invalid entity type");
@@ -117,7 +119,9 @@ impl<'a, T: 'static> ModelContext<'a, T> {
                     this.update(cx, |this, cx| on_release(this, entity, cx));
                 }
             }),
-        )
+        );
+        activate();
+        subscription
     }
 
     pub fn observe_global<G: 'static>(
@@ -128,10 +132,12 @@ impl<'a, T: 'static> ModelContext<'a, T> {
         T: 'static,
     {
         let handle = self.weak_model();
-        self.global_observers.insert(
+        let (subscription, activate) = self.global_observers.insert(
             TypeId::of::<G>(),
             Box::new(move |cx| handle.update(cx, |view, cx| f(view, cx)).is_ok()),
-        )
+        );
+        self.defer(move |_| activate());
+        subscription
     }
 
     pub fn on_app_quit<Fut>(
@@ -143,7 +149,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
         T: 'static,
     {
         let handle = self.weak_model();
-        self.app.quit_observers.insert(
+        let (subscription, activate) = self.app.quit_observers.insert(
             (),
             Box::new(move |cx| {
                 let future = handle.update(cx, |entity, cx| on_quit(entity, cx)).ok();
@@ -154,7 +160,9 @@ impl<'a, T: 'static> ModelContext<'a, T> {
                 }
                 .boxed_local()
             }),
-        )
+        );
+        activate();
+        subscription
     }
 
     pub fn notify(&mut self) {

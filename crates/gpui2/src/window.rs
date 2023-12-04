@@ -490,7 +490,7 @@ impl<'a> WindowContext<'a> {
         let entity_id = entity.entity_id();
         let entity = entity.downgrade();
         let window_handle = self.window.handle;
-        self.app.event_listeners.insert(
+        let (subscription, activate) = self.app.event_listeners.insert(
             entity_id,
             (
                 TypeId::of::<Evt>(),
@@ -508,7 +508,9 @@ impl<'a> WindowContext<'a> {
                         .unwrap_or(false)
                 }),
             ),
-        )
+        );
+        self.app.defer(move |_| activate());
+        subscription
     }
 
     /// Create an `AsyncWindowContext`, which has a static lifetime and can be held across
@@ -1453,10 +1455,12 @@ impl<'a> WindowContext<'a> {
         f: impl Fn(&mut WindowContext<'_>) + 'static,
     ) -> Subscription {
         let window_handle = self.window.handle;
-        self.global_observers.insert(
+        let (subscription, activate) = self.global_observers.insert(
             TypeId::of::<G>(),
             Box::new(move |cx| window_handle.update(cx, |_, cx| f(cx)).is_ok()),
-        )
+        );
+        self.app.defer(move |_| activate());
+        subscription
     }
 
     pub fn activate_window(&self) {
@@ -2096,7 +2100,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         let entity_id = entity.entity_id();
         let entity = entity.downgrade();
         let window_handle = self.window.handle;
-        self.app.observers.insert(
+        let (subscription, activate) = self.app.observers.insert(
             entity_id,
             Box::new(move |cx| {
                 window_handle
@@ -2110,7 +2114,9 @@ impl<'a, V: 'static> ViewContext<'a, V> {
                     })
                     .unwrap_or(false)
             }),
-        )
+        );
+        self.app.defer(move |_| activate());
+        subscription
     }
 
     pub fn subscribe<V2, E, Evt>(
@@ -2127,7 +2133,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         let entity_id = entity.entity_id();
         let handle = entity.downgrade();
         let window_handle = self.window.handle;
-        self.app.event_listeners.insert(
+        let (subscription, activate) = self.app.event_listeners.insert(
             entity_id,
             (
                 TypeId::of::<Evt>(),
@@ -2145,7 +2151,9 @@ impl<'a, V: 'static> ViewContext<'a, V> {
                         .unwrap_or(false)
                 }),
             ),
-        )
+        );
+        self.app.defer(move |_| activate());
+        subscription
     }
 
     pub fn on_release(
@@ -2153,13 +2161,15 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         on_release: impl FnOnce(&mut V, &mut WindowContext) + 'static,
     ) -> Subscription {
         let window_handle = self.window.handle;
-        self.app.release_listeners.insert(
+        let (subscription, activate) = self.app.release_listeners.insert(
             self.view.model.entity_id,
             Box::new(move |this, cx| {
                 let this = this.downcast_mut().expect("invalid entity type");
                 let _ = window_handle.update(cx, |_, cx| on_release(this, cx));
             }),
-        )
+        );
+        activate();
+        subscription
     }
 
     pub fn observe_release<V2, E>(
@@ -2175,7 +2185,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         let view = self.view().downgrade();
         let entity_id = entity.entity_id();
         let window_handle = self.window.handle;
-        self.app.release_listeners.insert(
+        let (subscription, activate) = self.app.release_listeners.insert(
             entity_id,
             Box::new(move |entity, cx| {
                 let entity = entity.downcast_mut().expect("invalid entity type");
@@ -2183,7 +2193,9 @@ impl<'a, V: 'static> ViewContext<'a, V> {
                     view.update(cx, |this, cx| on_release(this, entity, cx))
                 });
             }),
-        )
+        );
+        activate();
+        subscription
     }
 
     pub fn notify(&mut self) {
@@ -2198,10 +2210,12 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         mut callback: impl FnMut(&mut V, &mut ViewContext<V>) + 'static,
     ) -> Subscription {
         let view = self.view.downgrade();
-        self.window.bounds_observers.insert(
+        let (subscription, activate) = self.window.bounds_observers.insert(
             (),
             Box::new(move |cx| view.update(cx, |view, cx| callback(view, cx)).is_ok()),
-        )
+        );
+        activate();
+        subscription
     }
 
     pub fn observe_window_activation(
@@ -2209,10 +2223,12 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         mut callback: impl FnMut(&mut V, &mut ViewContext<V>) + 'static,
     ) -> Subscription {
         let view = self.view.downgrade();
-        self.window.activation_observers.insert(
+        let (subscription, activate) = self.window.activation_observers.insert(
             (),
             Box::new(move |cx| view.update(cx, |view, cx| callback(view, cx)).is_ok()),
-        )
+        );
+        activate();
+        subscription
     }
 
     /// Register a listener to be called when the given focus handle receives focus.
@@ -2225,7 +2241,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     ) -> Subscription {
         let view = self.view.downgrade();
         let focus_id = handle.id;
-        self.window.focus_listeners.insert(
+        let (subscription, activate) = self.window.focus_listeners.insert(
             (),
             Box::new(move |event, cx| {
                 view.update(cx, |view, cx| {
@@ -2235,7 +2251,9 @@ impl<'a, V: 'static> ViewContext<'a, V> {
                 })
                 .is_ok()
             }),
-        )
+        );
+        self.app.defer(move |_| activate());
+        subscription
     }
 
     /// Register a listener to be called when the given focus handle or one of its descendants receives focus.
@@ -2248,7 +2266,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     ) -> Subscription {
         let view = self.view.downgrade();
         let focus_id = handle.id;
-        self.window.focus_listeners.insert(
+        let (subscription, activate) = self.window.focus_listeners.insert(
             (),
             Box::new(move |event, cx| {
                 view.update(cx, |view, cx| {
@@ -2262,7 +2280,9 @@ impl<'a, V: 'static> ViewContext<'a, V> {
                 })
                 .is_ok()
             }),
-        )
+        );
+        self.app.defer(move |_| activate());
+        subscription
     }
 
     /// Register a listener to be called when the given focus handle loses focus.
@@ -2275,7 +2295,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     ) -> Subscription {
         let view = self.view.downgrade();
         let focus_id = handle.id;
-        self.window.focus_listeners.insert(
+        let (subscription, activate) = self.window.focus_listeners.insert(
             (),
             Box::new(move |event, cx| {
                 view.update(cx, |view, cx| {
@@ -2285,7 +2305,9 @@ impl<'a, V: 'static> ViewContext<'a, V> {
                 })
                 .is_ok()
             }),
-        )
+        );
+        self.app.defer(move |_| activate());
+        subscription
     }
 
     /// Register a listener to be called when the given focus handle or one of its descendants loses focus.
@@ -2298,7 +2320,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     ) -> Subscription {
         let view = self.view.downgrade();
         let focus_id = handle.id;
-        self.window.focus_listeners.insert(
+        let (subscription, activate) = self.window.focus_listeners.insert(
             (),
             Box::new(move |event, cx| {
                 view.update(cx, |view, cx| {
@@ -2312,7 +2334,9 @@ impl<'a, V: 'static> ViewContext<'a, V> {
                 })
                 .is_ok()
             }),
-        )
+        );
+        self.app.defer(move |_| activate());
+        subscription
     }
 
     pub fn spawn<Fut, R>(
@@ -2343,14 +2367,16 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     ) -> Subscription {
         let window_handle = self.window.handle;
         let view = self.view().downgrade();
-        self.global_observers.insert(
+        let (subscription, activate) = self.global_observers.insert(
             TypeId::of::<G>(),
             Box::new(move |cx| {
                 window_handle
                     .update(cx, |_, cx| view.update(cx, |view, cx| f(view, cx)).is_ok())
                     .unwrap_or(false)
             }),
-        )
+        );
+        self.app.defer(move |_| activate());
+        subscription
     }
 
     pub fn on_mouse_event<Event: 'static>(
