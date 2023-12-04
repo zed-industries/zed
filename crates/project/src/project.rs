@@ -5784,11 +5784,6 @@ impl Project {
                                 while let Some(ignored_abs_path) =
                                     ignored_paths_to_process.pop_front()
                                 {
-                                    if !query.file_matches(Some(&ignored_abs_path))
-                                        || snapshot.is_path_excluded(ignored_abs_path.clone())
-                                    {
-                                        continue;
-                                    }
                                     if let Some(fs_metadata) = fs
                                         .metadata(&ignored_abs_path)
                                         .await
@@ -5816,6 +5811,12 @@ impl Project {
                                                 }
                                             }
                                         } else if !fs_metadata.is_symlink {
+                                            if !query.file_matches(Some(&ignored_abs_path))
+                                                || snapshot
+                                                    .is_path_excluded(ignored_abs_path.clone())
+                                            {
+                                                continue;
+                                            }
                                             let matches = if let Some(file) = fs
                                                 .open_sync(&ignored_abs_path)
                                                 .await

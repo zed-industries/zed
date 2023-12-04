@@ -223,7 +223,7 @@ impl PathMatcher {
     pub fn is_match<P: AsRef<Path>>(&self, other: P) -> bool {
         let other_path = other.as_ref();
         other_path.starts_with(&self.maybe_path)
-            || other_path.file_name() == Some(self.maybe_path.as_os_str())
+            || other_path.ends_with(&self.maybe_path)
             || self.glob.is_match(other_path)
             || self.check_with_end_separator(other_path)
     }
@@ -416,6 +416,16 @@ mod tests {
     #[test]
     fn edge_of_glob() {
         let path = Path::new("/work/node_modules");
+        let path_matcher = PathMatcher::new("**/node_modules/**").unwrap();
+        assert!(
+            path_matcher.is_match(&path),
+            "Path matcher {path_matcher} should match {path:?}"
+        );
+    }
+
+    #[test]
+    fn project_search() {
+        let path = Path::new("/Users/someonetoignore/work/zed/zed.dev/node_modules");
         let path_matcher = PathMatcher::new("**/node_modules/**").unwrap();
         assert!(
             path_matcher.is_match(&path),

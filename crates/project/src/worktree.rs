@@ -2290,10 +2290,9 @@ impl LocalSnapshot {
                 return true;
             }
             if !path.pop() {
-                break;
+                return false;
             }
         }
-        false
     }
 }
 
