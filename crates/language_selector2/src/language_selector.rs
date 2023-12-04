@@ -79,6 +79,7 @@ impl FocusableView for LanguageSelector {
         self.picker.focus_handle(cx)
     }
 }
+
 impl EventEmitter<DismissEvent> for LanguageSelector {}
 
 pub struct LanguageSelectorDelegate {
