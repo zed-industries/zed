@@ -76,12 +76,7 @@ impl ContextMenu {
         self
     }
 
-    pub fn action(
-        mut self,
-        label: impl Into<SharedString>,
-        action: Box<dyn Action>,
-        cx: &mut WindowContext,
-    ) -> Self {
+    pub fn action(mut self, label: impl Into<SharedString>, action: Box<dyn Action>) -> Self {
         self.items.push(ContextMenuItem::Entry {
             label: label.into(),
             action: Some(action.boxed_clone()),
@@ -91,12 +86,7 @@ impl ContextMenu {
         self
     }
 
-    pub fn link(
-        mut self,
-        label: impl Into<SharedString>,
-        action: Box<dyn Action>,
-        cx: &mut WindowContext,
-    ) -> Self {
+    pub fn link(mut self, label: impl Into<SharedString>, action: Box<dyn Action>) -> Self {
         self.items.push(ContextMenuItem::Entry {
             label: label.into(),
             action: Some(action.boxed_clone()),

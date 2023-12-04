@@ -3640,7 +3640,6 @@ impl Editor {
     }
 
     pub fn toggle_code_actions(&mut self, action: &ToggleCodeActions, cx: &mut ViewContext<Self>) {
-        dbg!("TOGGLE CODE ACTIONS");
         let mut context_menu = self.context_menu.write();
         if matches!(context_menu.as_ref(), Some(ContextMenu::CodeActions(_))) {
             *context_menu = None;
