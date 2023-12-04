@@ -8,6 +8,7 @@ use crate::{
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt};
 use std::{future::Future, ops::Deref, rc::Rc, sync::Arc, time::Duration};
+use util::ResultExt;
 
 #[derive(Clone)]
 pub struct TestAppContext {
@@ -297,7 +298,7 @@ impl TestAppContext {
             .unwrap()
     }
 
-    pub fn notifications<T: 'static>(&mut self, entity: &impl Entity<T>) -> impl Stream<Item = ()> {
+    pub fn notifications<T: 'static>(&self, entity: &impl Entity<T>) -> impl Stream<Item = ()> {
         let (tx, rx) = futures::channel::mpsc::unbounded();
         self.update(|cx| {
             cx.observe(entity, {
@@ -307,7 +308,7 @@ impl TestAppContext {
                 }
             })
             .detach();
-            cx.observe_release(entity, move |_, _| tx.close_channel())
+            cx.observe_release(entity, move |_, _| dbg!(tx.close_channel()))
                 .detach()
         });
         rx
@@ -331,28 +332,30 @@ impl TestAppContext {
         rx
     }
 
-    pub async fn condition<T: 'static>(
-        &mut self,
+    pub fn condition<T: 'static>(
+        &self,
         model: &Model<T>,
-        mut predicate: impl FnMut(&mut T, &mut ModelContext<T>) -> bool,
-    ) {
+        mut predicate: impl FnMut(&mut T, &mut ModelContext<T>) -> bool + Send + 'static,
+    ) -> Task<()> {
         let timer = self.executor().timer(Duration::from_secs(3));
         let mut notifications = self.notifications(model);
 
         use futures::FutureExt as _;
         use smol::future::FutureExt as _;
-
-        async {
-            while notifications.next().await.is_some() {
-                if model.update(self, &mut predicate) {
-                    return Ok(());
+        let model = model.clone();
+        self.spawn(move |mut cx| async move {
+            async move {
+                while notifications.next().await.is_some() {
+                    if model.update(&mut cx, &mut predicate).log_err().unwrap() {
+                        return Ok(());
+                    }
                 }
+                bail!("model dropped")
             }
-            bail!("model dropped")
-        }
-        .race(timer.map(|_| Err(anyhow!("condition timed out"))))
-        .await
-        .unwrap();
+            .race(timer.map(|_| Err(anyhow!("condition timed out"))))
+            .await
+            .unwrap()
+        })
     }
 }
 
