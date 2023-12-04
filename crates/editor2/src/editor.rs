@@ -3489,7 +3489,7 @@ impl Editor {
                         drop(context_menu);
                         this.discard_copilot_suggestion(cx);
                         cx.notify();
-                    } else if this.completion_tasks.is_empty() {
+                    } else if this.completion_tasks.len() <= 1 {
                         // If there are no more completion tasks and the last menu was
                         // empty, we should hide it. If it was already hidden, we should
                         // also show the copilot suggestion when available.
