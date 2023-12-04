@@ -26,7 +26,9 @@ use std::{
     },
 };
 
-use ui::{prelude::*, right_click_menu, Color, Icon, IconButton, IconElement, Tooltip};
+use ui::{
+    h_stack, prelude::*, right_click_menu, Color, Icon, IconButton, IconElement, Label, Tooltip,
+};
 use ui::{v_stack, ContextMenu};
 use util::truncate_and_remove_front;
 
@@ -2186,8 +2188,11 @@ impl Render for Pane {
             .child(if let Some(item) = self.active_item() {
                 div().flex().flex_1().child(item.to_any())
             } else {
-                // todo!()
-                div().child("Empty Pane")
+                h_stack()
+                    .items_center()
+                    .size_full()
+                    .justify_center()
+                    .child(Label::new("Open a file or project to get started.").color(Color::Muted))
             })
 
         // enum MouseNavigationHandler {}
