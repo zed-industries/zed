@@ -88,7 +88,7 @@ pub fn diff_hunk_to_display(hunk: DiffHunk<u32>, snapshot: &DisplaySnapshot) -> 
     }
 }
 
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(test)]
 mod tests {
     use crate::editor_tests::init_test;
     use crate::Point;
