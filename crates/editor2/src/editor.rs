@@ -9717,6 +9717,8 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, is_valid: bool) -> Rend
                     .child(HighlightedLabel::new(line.clone(), highlights.clone()))
                     .child(
                         div()
+                            .border()
+                            .border_color(gpui::red())
                             .invisible()
                             .group_hover(group_id, |style| style.visible()).child(
                         IconButton::new(copy_id.clone(), Icon::Copy)
