@@ -238,11 +238,11 @@ impl Platform for TestPlatform {
         true
     }
 
-    fn write_to_clipboard(&self, item: crate::ClipboardItem) {
+    fn write_to_clipboard(&self, item: ClipboardItem) {
         *self.current_clipboard_item.lock() = Some(item);
     }
 
-    fn read_from_clipboard(&self) -> Option<crate::ClipboardItem> {
+    fn read_from_clipboard(&self) -> Option<ClipboardItem> {
         self.current_clipboard_item.lock().clone()
     }
 

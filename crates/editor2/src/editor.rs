@@ -100,8 +100,10 @@ use text::{OffsetUtf16, Rope};
 use theme::{
     ActiveTheme, DiagnosticStyle, PlayerColor, SyntaxTheme, Theme, ThemeColors, ThemeSettings,
 };
-use ui::prelude::*;
-use ui::{h_stack, v_stack, HighlightedLabel, IconButton, Popover, Tooltip};
+use ui::{
+    h_stack, v_stack, ButtonSize, ButtonStyle, HighlightedLabel, Icon, IconButton, Popover, Tooltip,
+};
+use ui::{prelude::*, IconSize};
 use util::{post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::{
     item::{ItemEvent, ItemHandle},
@@ -154,7 +156,6 @@ pub fn render_parsed_markdown(
                 }
             }),
     );
-    let runs = text_runs_for_highlights(&parsed.text, &editor_style.text, highlights);
 
     let mut links = Vec::new();
     let mut link_ranges = Vec::new();
@@ -167,7 +168,7 @@ pub fn render_parsed_markdown(
 
     InteractiveText::new(
         element_id,
-        StyledText::new(parsed.text.clone()).with_runs(runs),
+        StyledText::new(parsed.text.clone()).with_highlights(&editor_style.text, highlights),
     )
     .on_click(link_ranges, move |clicked_range_ix, cx| {
         match &links[clicked_range_ix] {
@@ -1199,11 +1200,7 @@ impl CompletionsMenu {
                             ),
                         );
                         let completion_label = StyledText::new(completion.label.text.clone())
-                            .with_runs(text_runs_for_highlights(
-                                &completion.label.text,
-                                &style.text,
-                                highlights,
-                            ));
+                            .with_highlights(&style.text, highlights);
                         let documentation_label =
                             if let Some(Documentation::SingleLine(text)) = documentation {
                                 Some(SharedString::from(text.clone()))
@@ -1925,14 +1922,14 @@ impl Editor {
     //         self.buffer.read(cx).read(cx).file_at(point).cloned()
     //     }
 
-    //     pub fn active_excerpt(
-    //         &self,
-    //         cx: &AppContext,
-    //     ) -> Option<(ExcerptId, Model<Buffer>, Range<text::Anchor>)> {
-    //         self.buffer
-    //             .read(cx)
-    //             .excerpt_containing(self.selections.newest_anchor().head(), cx)
-    //     }
+    pub fn active_excerpt(
+        &self,
+        cx: &AppContext,
+    ) -> Option<(ExcerptId, Model<Buffer>, Range<text::Anchor>)> {
+        self.buffer
+            .read(cx)
+            .excerpt_containing(self.selections.newest_anchor().head(), cx)
+    }
 
     //     pub fn style(&self, cx: &AppContext) -> EditorStyle {
     //         build_style(
@@ -9699,20 +9696,42 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, is_valid: bool) -> Rend
     let message = diagnostic.message;
     Arc::new(move |cx: &mut BlockContext| {
         let message = message.clone();
+        let copy_id: SharedString = format!("copy-{}", cx.block_id.clone()).to_string().into();
+        let write_to_clipboard = cx.write_to_clipboard(ClipboardItem::new(message.clone()));
+
+        // TODO: Nate: We should tint the background of the block with the severity color
+        // We need to extend the theme before we can do this
         v_stack()
             .id(cx.block_id)
+            .relative()
             .size_full()
             .bg(gpui::red())
             .children(highlighted_lines.iter().map(|(line, highlights)| {
-                div()
+                let group_id = cx.block_id.to_string();
+
+                h_stack()
+                    .group(group_id.clone())
+                    .gap_2()
+                    .absolute()
+                    .left(cx.anchor_x)
+                    .px_1p5()
                     .child(HighlightedLabel::new(line.clone(), highlights.clone()))
-                    .ml(cx.anchor_x)
+                    .child(
+                        div()
+                            .border()
+                            .border_color(gpui::red())
+                            .invisible()
+                            .group_hover(group_id, |style| style.visible())
+                            .child(
+                                IconButton::new(copy_id.clone(), Icon::Copy)
+                                    .icon_color(Color::Muted)
+                                    .size(ButtonSize::Compact)
+                                    .style(ButtonStyle::Transparent)
+                                    .on_click(cx.listener(move |_, _, cx| write_to_clipboard))
+                                    .tooltip(|cx| Tooltip::text("Copy diagnostic message", cx)),
+                            ),
+                    )
             }))
-            .cursor_pointer()
-            .on_click(cx.listener(move |_, _, cx| {
-                cx.write_to_clipboard(ClipboardItem::new(message.clone()));
-            }))
-            .tooltip(|cx| Tooltip::text("Copy diagnostic message", cx))
             .into_any_element()
     })
 }
@@ -9758,31 +9777,6 @@ pub fn diagnostic_style(
         (DiagnosticSeverity::HINT, false) => style.info,
         _ => style.ignored,
     }
-}
-
-pub fn text_runs_for_highlights(
-    text: &str,
-    default_style: &TextStyle,
-    highlights: impl IntoIterator<Item = (Range<usize>, HighlightStyle)>,
-) -> Vec<TextRun> {
-    let mut runs = Vec::new();
-    let mut ix = 0;
-    for (range, highlight) in highlights {
-        if ix < range.start {
-            runs.push(default_style.clone().to_run(range.start - ix));
-        }
-        runs.push(
-            default_style
-                .clone()
-                .highlight(highlight)
-                .to_run(range.len()),
-        );
-        ix = range.end;
-    }
-    if ix < text.len() {
-        runs.push(default_style.to_run(text.len() - ix));
-    }
-    runs
 }
 
 pub fn styled_runs_for_code_label<'a>(

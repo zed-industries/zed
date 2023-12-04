@@ -1,4 +1,5 @@
 mod button;
+pub(self) mod button_icon;
 mod button_like;
 mod icon_button;
 

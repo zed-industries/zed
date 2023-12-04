@@ -1096,6 +1096,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "breadcrumbs2"
+version = "0.1.0"
+dependencies = [
+ "collections",
+ "editor2",
+ "gpui2",
+ "itertools 0.10.5",
+ "language2",
+ "project2",
+ "search2",
+ "settings2",
+ "theme2",
+ "ui2",
+ "workspace2",
+]
+
+[[package]]
 name = "bromberg_sl2"
 version = "0.6.0"
 source = "git+https://github.com/zed-industries/bromberg_sl2?rev=950bc5482c216c395049ae33ae4501e08975f17f#950bc5482c216c395049ae33ae4501e08975f17f"
@@ -1688,7 +1705,7 @@ dependencies = [
 
 [[package]]
 name = "collab"
-version = "0.29.0"
+version = "0.29.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2124,6 +2141,25 @@ dependencies = [
  "theme",
  "util",
  "workspace",
+]
+
+[[package]]
+name = "copilot_button2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "copilot2",
+ "editor2",
+ "fs2",
+ "futures 0.3.28",
+ "gpui2",
+ "language2",
+ "settings2",
+ "smol",
+ "theme2",
+ "util",
+ "workspace2",
+ "zed_actions2",
 ]
 
 [[package]]
@@ -4772,6 +4808,24 @@ dependencies = [
  "theme",
  "util",
  "workspace",
+]
+
+[[package]]
+name = "language_selector2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "editor2",
+ "fuzzy2",
+ "gpui2",
+ "language2",
+ "picker2",
+ "project2",
+ "settings2",
+ "theme2",
+ "ui2",
+ "util",
+ "workspace2",
 ]
 
 [[package]]
@@ -11726,6 +11780,7 @@ dependencies = [
  "audio2",
  "auto_update2",
  "backtrace",
+ "breadcrumbs2",
  "call2",
  "channel2",
  "chrono",
@@ -11735,6 +11790,7 @@ dependencies = [
  "collections",
  "command_palette2",
  "copilot2",
+ "copilot_button2",
  "ctor",
  "db2",
  "diagnostics2",
@@ -11754,6 +11810,7 @@ dependencies = [
  "isahc",
  "journal2",
  "language2",
+ "language_selector2",
  "lazy_static",
  "libc",
  "log",

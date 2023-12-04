@@ -102,7 +102,7 @@ pub fn init(http_client: Arc<dyn HttpClient>, server_url: String, cx: &mut AppCo
     })
     .detach();
 
-    if let Some(version) = *ZED_APP_VERSION {
+    if let Some(version) = ZED_APP_VERSION.or_else(|| cx.app_metadata().app_version) {
         let auto_updater = cx.build_model(|cx| {
             let updater = AutoUpdater::new(version, http_client, server_url);
 

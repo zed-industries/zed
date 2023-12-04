@@ -992,14 +992,14 @@ impl Interactivity {
             let interactive_bounds = interactive_bounds.clone();
 
             cx.on_mouse_event(move |event: &MouseMoveEvent, phase, cx| {
-                if phase != DispatchPhase::Bubble {
-                    return;
-                }
-
                 let is_hovered = interactive_bounds.visibly_contains(&event.position, cx)
                     && pending_mouse_down.borrow().is_none();
                 if !is_hovered {
                     active_tooltip.borrow_mut().take();
+                    return;
+                }
+
+                if phase != DispatchPhase::Bubble {
                     return;
                 }
 

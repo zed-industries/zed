@@ -51,8 +51,10 @@ use std::{
 };
 use sum_tree::Bias;
 use theme::{ActiveTheme, PlayerColor};
-use ui::prelude::*;
-use ui::{h_stack, IconButton, Tooltip};
+use ui::{
+    h_stack, ButtonLike, ButtonStyle, Disclosure, IconButton, IconElement, IconSize, Label, Tooltip,
+};
+use ui::{prelude::*, Icon};
 use util::ResultExt;
 use workspace::item::Item;
 
@@ -2223,7 +2225,8 @@ impl EditorElement {
                         .as_ref()
                         .map(|project| project.read(cx).visible_worktrees(cx).count() > 1)
                         .unwrap_or_default();
-                    let jump_icon = project::File::from_dyn(buffer.file()).map(|file| {
+
+                    let jump_handler = project::File::from_dyn(buffer.file()).map(|file| {
                         let jump_path = ProjectPath {
                             worktree_id: file.worktree_id(cx),
                             path: file.path.clone(),
@@ -2234,11 +2237,11 @@ impl EditorElement {
                             .map_or(range.context.start, |primary| primary.start);
                         let jump_position = language::ToPoint::to_point(&jump_anchor, buffer);
 
-                        IconButton::new(block_id, ui::Icon::ArrowUpRight)
-                            .on_click(cx.listener_for(&self.editor, move |editor, e, cx| {
-                                editor.jump(jump_path.clone(), jump_position, jump_anchor, cx);
-                            }))
-                            .tooltip(|cx| Tooltip::for_action("Jump to Buffer", &OpenExcerpts, cx))
+                        let jump_handler = cx.listener_for(&self.editor, move |editor, e, cx| {
+                            editor.jump(jump_path.clone(), jump_position, jump_anchor, cx);
+                        });
+
+                        jump_handler
                     });
 
                     let element = if *starts_new_buffer {
@@ -2253,25 +2256,108 @@ impl EditorElement {
                                 .map(|p| SharedString::from(p.to_string_lossy().to_string() + "/"));
                         }
 
-                        h_stack()
-                            .id("path header block")
-                            .size_full()
-                            .bg(gpui::red())
-                            .child(
-                                filename
-                                    .map(SharedString::from)
-                                    .unwrap_or_else(|| "untitled".into()),
-                            )
-                            .children(parent_path)
-                            .children(jump_icon) // .p_x(gutter_padding)
+                        let is_open = true;
+
+                        div().id("path header container").size_full().p_1p5().child(
+                            h_stack()
+                                .id("path header block")
+                                .py_1p5()
+                                .pl_3()
+                                .pr_2()
+                                .rounded_lg()
+                                .shadow_md()
+                                .border()
+                                .border_color(cx.theme().colors().border)
+                                .bg(cx.theme().colors().editor_subheader_background)
+                                .justify_between()
+                                .cursor_pointer()
+                                .hover(|style| style.bg(cx.theme().colors().element_hover))
+                                .on_click(cx.listener(|_editor, _event, _cx| {
+                                    // TODO: Implement collapsing path headers
+                                    todo!("Clicking path header")
+                                }))
+                                .child(
+                                    h_stack()
+                                        .gap_3()
+                                        // TODO: Add open/close state and toggle action
+                                        .child(
+                                            div().border().border_color(gpui::red()).child(
+                                                ButtonLike::new("path-header-disclosure-control")
+                                                    .style(ButtonStyle::Subtle)
+                                                    .child(IconElement::new(match is_open {
+                                                        true => Icon::ChevronDown,
+                                                        false => Icon::ChevronRight,
+                                                    })),
+                                            ),
+                                        )
+                                        .child(
+                                            h_stack()
+                                                .gap_2()
+                                                .child(Label::new(
+                                                    filename
+                                                        .map(SharedString::from)
+                                                        .unwrap_or_else(|| "untitled".into()),
+                                                ))
+                                                .when_some(parent_path, |then, path| {
+                                                    then.child(Label::new(path).color(Color::Muted))
+                                                }),
+                                        ),
+                                )
+                                .children(jump_handler.map(|jump_handler| {
+                                    IconButton::new(block_id, Icon::ArrowUpRight)
+                                        .style(ButtonStyle::Subtle)
+                                        .on_click(jump_handler)
+                                        .tooltip(|cx| {
+                                            Tooltip::for_action("Jump to Buffer", &OpenExcerpts, cx)
+                                        })
+                                })), // .p_x(gutter_padding)
+                        )
                     } else {
                         let text_style = style.text.clone();
                         h_stack()
                             .id("collapsed context")
                             .size_full()
-                            .bg(gpui::red())
-                            .child("⋯")
-                            .children(jump_icon) // .p_x(gutter_padding)
+                            .gap(gutter_padding)
+                            .child(
+                                h_stack()
+                                    .justify_end()
+                                    .flex_none()
+                                    .w(gutter_width - gutter_padding)
+                                    .h_full()
+                                    .text_buffer(cx)
+                                    .text_color(cx.theme().colors().editor_line_number)
+                                    .child("..."),
+                            )
+                            .map(|this| {
+                                if let Some(jump_handler) = jump_handler {
+                                    this.child(
+                                        ButtonLike::new("jump to collapsed context")
+                                            .style(ButtonStyle::Transparent)
+                                            .full_width()
+                                            .on_click(jump_handler)
+                                            .tooltip(|cx| {
+                                                Tooltip::for_action(
+                                                    "Jump to Buffer",
+                                                    &OpenExcerpts,
+                                                    cx,
+                                                )
+                                            })
+                                            .child(
+                                                div()
+                                                    .h_px()
+                                                    .w_full()
+                                                    .bg(cx.theme().colors().border_variant)
+                                                    .group_hover("", |style| {
+                                                        style.bg(cx.theme().colors().border)
+                                                    }),
+                                            ),
+                                    )
+                                } else {
+                                    this.child(div().size_full().bg(gpui::green()))
+                                }
+                            })
+                        // .child("⋯")
+                        // .children(jump_icon) // .p_x(gutter_padding)
                     };
                     element.into_any()
                 }
