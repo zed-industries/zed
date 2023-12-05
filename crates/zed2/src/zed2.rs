@@ -22,6 +22,7 @@ pub use open_listener::*;
 use anyhow::{anyhow, Context as _};
 use futures::{channel::mpsc, StreamExt};
 use project_panel::ProjectPanel;
+use quick_action_bar::QuickActionBar;
 use settings::{initial_local_settings_content, load_default_keymap, KeymapFile, Settings};
 use std::{borrow::Cow, ops::Deref, sync::Arc};
 use terminal_view::terminal_panel::TerminalPanel;
@@ -103,11 +104,10 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                             toolbar.add_item(breadcrumbs, cx);
                             let buffer_search_bar = cx.build_view(search::BufferSearchBar::new);
                             toolbar.add_item(buffer_search_bar.clone(), cx);
-                            // todo!()
-                            //     let quick_action_bar = cx.add_view(|_| {
-                            //         QuickActionBar::new(buffer_search_bar, workspace)
-                            //     });
-                            //     toolbar.add_item(quick_action_bar, cx);
+
+                            let quick_action_bar = cx
+                                .build_view(|_| QuickActionBar::new(buffer_search_bar, workspace));
+                            toolbar.add_item(quick_action_bar, cx);
                             let diagnostic_editor_controls =
                                 cx.build_view(|_| diagnostics::ToolbarControls::new());
                             //     toolbar.add_item(diagnostic_editor_controls, cx);
@@ -171,9 +171,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
         cx.on_window_should_close(move |cx| {
             handle
                 .update(cx, |workspace, cx| {
-                    if let Some(task) = workspace.close(&Default::default(), cx) {
-                        task.detach_and_log_err(cx);
-                    }
+                    workspace.close_window(&Default::default(), cx);
                     false
                 })
                 .unwrap_or(true)

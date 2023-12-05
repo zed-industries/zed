@@ -1,10 +1,10 @@
 use crate::ItemHandle;
 use gpui::{
-    div, AnyView, Div, Entity, EntityId, EventEmitter, ParentElement as _, Render, Styled, View,
+    AnyView, Div, Entity, EntityId, EventEmitter, ParentElement as _, Render, Styled, View,
     ViewContext, WindowContext,
 };
 use ui::prelude::*;
-use ui::{h_stack, v_stack, Icon, IconButton};
+use ui::{h_stack, v_stack};
 
 pub enum ToolbarItemEvent {
     ChangeLocation(ToolbarItemLocation),
@@ -87,25 +87,7 @@ impl Render for Toolbar {
             .child(
                 h_stack()
                     .justify_between()
-                    // Toolbar left side
-                    .children(self.items.iter().map(|(child, _)| child.to_any()))
-                    // Toolbar right side
-                    .child(
-                        h_stack()
-                            .p_1()
-                            .child(
-                                div()
-                                    .border()
-                                    .border_color(gpui::red())
-                                    .child(IconButton::new("buffer-search", Icon::MagnifyingGlass)),
-                            )
-                            .child(
-                                div()
-                                    .border()
-                                    .border_color(gpui::red())
-                                    .child(IconButton::new("inline-assist", Icon::MagicWand)),
-                            ),
-                    ),
+                    .children(self.items.iter().map(|(child, _)| child.to_any())),
             )
     }
 }

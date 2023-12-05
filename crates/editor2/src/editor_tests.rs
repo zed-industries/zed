@@ -32,7 +32,7 @@ use util::{
     test::{marked_text_ranges, marked_text_ranges_by, sample_text, TextRangeMarker},
 };
 use workspace::{
-    item::{FollowEvent, FollowableEvents, FollowableItem, Item, ItemHandle},
+    item::{FollowEvent, FollowableItem, Item, ItemHandle},
     NavigationEntry, ViewId,
 };
 
@@ -6476,7 +6476,7 @@ async fn test_following(cx: &mut gpui::TestAppContext) {
             cx.subscribe(
                 &follower.root_view(cx).unwrap(),
                 move |_, _, event: &EditorEvent, cx| {
-                    if matches!(event.to_follow_event(), Some(FollowEvent::Unfollow)) {
+                    if matches!(Editor::to_follow_event(event), Some(FollowEvent::Unfollow)) {
                         *is_still_following.borrow_mut() = false;
                     }
 
