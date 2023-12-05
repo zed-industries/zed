@@ -19,7 +19,7 @@ pub(crate) struct TestWindowHandlers {
 }
 
 pub struct TestWindow {
-    bounds: WindowBounds,
+    pub(crate) bounds: WindowBounds,
     current_scene: Mutex<Option<Scene>>,
     display: Rc<dyn PlatformDisplay>,
     pub(crate) window_title: Option<String>,
@@ -170,7 +170,7 @@ impl PlatformWindow for TestWindow {
         self.sprite_atlas.clone()
     }
 
-    fn as_test(&self) -> Option<&TestWindow> {
+    fn as_test(&mut self) -> Option<&mut TestWindow> {
         Some(self)
     }
 }

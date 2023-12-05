@@ -3486,7 +3486,7 @@ impl Editor {
                         drop(context_menu);
                         this.discard_copilot_suggestion(cx);
                         cx.notify();
-                    } else if this.completion_tasks.is_empty() {
+                    } else if this.completion_tasks.len() <= 1 {
                         // If there are no more completion tasks and the last menu was
                         // empty, we should hide it. If it was already hidden, we should
                         // also show the copilot suggestion when available.
@@ -8238,6 +8238,11 @@ impl Editor {
             )
         });
         self.style = Some(style);
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn style(&self) -> Option<&EditorStyle> {
+        self.style.as_ref()
     }
 
     pub fn set_wrap_width(&self, width: Option<Pixels>, cx: &mut AppContext) -> bool {

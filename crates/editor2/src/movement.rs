@@ -452,483 +452,475 @@ pub fn split_display_range_by_lines(
     result
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     use crate::{
-//         display_map::Inlay,
-//         test::{},
-//         Buffer, DisplayMap, ExcerptRange, InlayId, MultiBuffer,
-//     };
-//     use project::Project;
-//     use settings::SettingsStore;
-//     use util::post_inc;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        display_map::Inlay,
+        test::{editor_test_context::EditorTestContext, marked_display_snapshot},
+        Buffer, DisplayMap, ExcerptRange, InlayId, MultiBuffer,
+    };
+    use gpui::{font, Context as _};
+    use project::Project;
+    use settings::SettingsStore;
+    use util::post_inc;
 
-//     #[gpui::test]
-//     fn test_previous_word_start(cx: &mut gpui::AppContext) {
-//         init_test(cx);
+    #[gpui::test]
+    fn test_previous_word_start(cx: &mut gpui::AppContext) {
+        init_test(cx);
 
-//         fn assert(marked_text: &str, cx: &mut gpui::AppContext) {
-//             let (snapshot, display_points) = marked_display_snapshot(marked_text, cx);
-//             assert_eq!(
-//                 previous_word_start(&snapshot, display_points[1]),
-//                 display_points[0]
-//             );
-//         }
+        fn assert(marked_text: &str, cx: &mut gpui::AppContext) {
+            let (snapshot, display_points) = marked_display_snapshot(marked_text, cx);
+            assert_eq!(
+                previous_word_start(&snapshot, display_points[1]),
+                display_points[0]
+            );
+        }
 
-//         assert("\nˇ   ˇlorem", cx);
-//         assert("ˇ\nˇ   lorem", cx);
-//         assert("    ˇloremˇ", cx);
-//         assert("ˇ    ˇlorem", cx);
-//         assert("    ˇlorˇem", cx);
-//         assert("\nlorem\nˇ   ˇipsum", cx);
-//         assert("\n\nˇ\nˇ", cx);
-//         assert("    ˇlorem  ˇipsum", cx);
-//         assert("loremˇ-ˇipsum", cx);
-//         assert("loremˇ-#$@ˇipsum", cx);
-//         assert("ˇlorem_ˇipsum", cx);
-//         assert(" ˇdefγˇ", cx);
-//         assert(" ˇbcΔˇ", cx);
-//         assert(" abˇ——ˇcd", cx);
-//     }
+        assert("\nˇ   ˇlorem", cx);
+        assert("ˇ\nˇ   lorem", cx);
+        assert("    ˇloremˇ", cx);
+        assert("ˇ    ˇlorem", cx);
+        assert("    ˇlorˇem", cx);
+        assert("\nlorem\nˇ   ˇipsum", cx);
+        assert("\n\nˇ\nˇ", cx);
+        assert("    ˇlorem  ˇipsum", cx);
+        assert("loremˇ-ˇipsum", cx);
+        assert("loremˇ-#$@ˇipsum", cx);
+        assert("ˇlorem_ˇipsum", cx);
+        assert(" ˇdefγˇ", cx);
+        assert(" ˇbcΔˇ", cx);
+        assert(" abˇ——ˇcd", cx);
+    }
 
-//     #[gpui::test]
-//     fn test_previous_subword_start(cx: &mut gpui::AppContext) {
-//         init_test(cx);
+    #[gpui::test]
+    fn test_previous_subword_start(cx: &mut gpui::AppContext) {
+        init_test(cx);
 
-//         fn assert(marked_text: &str, cx: &mut gpui::AppContext) {
-//             let (snapshot, display_points) = marked_display_snapshot(marked_text, cx);
-//             assert_eq!(
-//                 previous_subword_start(&snapshot, display_points[1]),
-//                 display_points[0]
-//             );
-//         }
+        fn assert(marked_text: &str, cx: &mut gpui::AppContext) {
+            let (snapshot, display_points) = marked_display_snapshot(marked_text, cx);
+            assert_eq!(
+                previous_subword_start(&snapshot, display_points[1]),
+                display_points[0]
+            );
+        }
 
-//         // Subword boundaries are respected
-//         assert("lorem_ˇipˇsum", cx);
-//         assert("lorem_ˇipsumˇ", cx);
-//         assert("ˇlorem_ˇipsum", cx);
-//         assert("lorem_ˇipsum_ˇdolor", cx);
-//         assert("loremˇIpˇsum", cx);
-//         assert("loremˇIpsumˇ", cx);
+        // Subword boundaries are respected
+        assert("lorem_ˇipˇsum", cx);
+        assert("lorem_ˇipsumˇ", cx);
+        assert("ˇlorem_ˇipsum", cx);
+        assert("lorem_ˇipsum_ˇdolor", cx);
+        assert("loremˇIpˇsum", cx);
+        assert("loremˇIpsumˇ", cx);
 
-//         // Word boundaries are still respected
-//         assert("\nˇ   ˇlorem", cx);
-//         assert("    ˇloremˇ", cx);
-//         assert("    ˇlorˇem", cx);
-//         assert("\nlorem\nˇ   ˇipsum", cx);
-//         assert("\n\nˇ\nˇ", cx);
-//         assert("    ˇlorem  ˇipsum", cx);
-//         assert("loremˇ-ˇipsum", cx);
-//         assert("loremˇ-#$@ˇipsum", cx);
-//         assert(" ˇdefγˇ", cx);
-//         assert(" bcˇΔˇ", cx);
-//         assert(" ˇbcδˇ", cx);
-//         assert(" abˇ——ˇcd", cx);
-//     }
+        // Word boundaries are still respected
+        assert("\nˇ   ˇlorem", cx);
+        assert("    ˇloremˇ", cx);
+        assert("    ˇlorˇem", cx);
+        assert("\nlorem\nˇ   ˇipsum", cx);
+        assert("\n\nˇ\nˇ", cx);
+        assert("    ˇlorem  ˇipsum", cx);
+        assert("loremˇ-ˇipsum", cx);
+        assert("loremˇ-#$@ˇipsum", cx);
+        assert(" ˇdefγˇ", cx);
+        assert(" bcˇΔˇ", cx);
+        assert(" ˇbcδˇ", cx);
+        assert(" abˇ——ˇcd", cx);
+    }
 
-//     #[gpui::test]
-//     fn test_find_preceding_boundary(cx: &mut gpui::AppContext) {
-//         init_test(cx);
+    #[gpui::test]
+    fn test_find_preceding_boundary(cx: &mut gpui::AppContext) {
+        init_test(cx);
 
-//         fn assert(
-//             marked_text: &str,
-//             cx: &mut gpui::AppContext,
-//             is_boundary: impl FnMut(char, char) -> bool,
-//         ) {
-//             let (snapshot, display_points) = marked_display_snapshot(marked_text, cx);
-//             assert_eq!(
-//                 find_preceding_boundary(
-//                     &snapshot,
-//                     display_points[1],
-//                     FindRange::MultiLine,
-//                     is_boundary
-//                 ),
-//                 display_points[0]
-//             );
-//         }
+        fn assert(
+            marked_text: &str,
+            cx: &mut gpui::AppContext,
+            is_boundary: impl FnMut(char, char) -> bool,
+        ) {
+            let (snapshot, display_points) = marked_display_snapshot(marked_text, cx);
+            assert_eq!(
+                find_preceding_boundary(
+                    &snapshot,
+                    display_points[1],
+                    FindRange::MultiLine,
+                    is_boundary
+                ),
+                display_points[0]
+            );
+        }
 
-//         assert("abcˇdef\ngh\nijˇk", cx, |left, right| {
-//             left == 'c' && right == 'd'
-//         });
-//         assert("abcdef\nˇgh\nijˇk", cx, |left, right| {
-//             left == '\n' && right == 'g'
-//         });
-//         let mut line_count = 0;
-//         assert("abcdef\nˇgh\nijˇk", cx, |left, _| {
-//             if left == '\n' {
-//                 line_count += 1;
-//                 line_count == 2
-//             } else {
-//                 false
-//             }
-//         });
-//     }
+        assert("abcˇdef\ngh\nijˇk", cx, |left, right| {
+            left == 'c' && right == 'd'
+        });
+        assert("abcdef\nˇgh\nijˇk", cx, |left, right| {
+            left == '\n' && right == 'g'
+        });
+        let mut line_count = 0;
+        assert("abcdef\nˇgh\nijˇk", cx, |left, _| {
+            if left == '\n' {
+                line_count += 1;
+                line_count == 2
+            } else {
+                false
+            }
+        });
+    }
 
-//     #[gpui::test]
-//     fn test_find_preceding_boundary_with_inlays(cx: &mut gpui::AppContext) {
-//         init_test(cx);
+    #[gpui::test]
+    fn test_find_preceding_boundary_with_inlays(cx: &mut gpui::AppContext) {
+        init_test(cx);
 
-//         let input_text = "abcdefghijklmnopqrstuvwxys";
-//         let family_id = cx
-//             .font_cache()
-//             .load_family(&["Helvetica"], &Default::default())
-//             .unwrap();
-//         let font_id = cx
-//             .font_cache()
-//             .select_font(family_id, &Default::default())
-//             .unwrap();
-//         let font_size = 14.0;
-//         let buffer = MultiBuffer::build_simple(input_text, cx);
-//         let buffer_snapshot = buffer.read(cx).snapshot(cx);
-//         let display_map =
-//             cx.add_model(|cx| DisplayMap::new(buffer, font_id, font_size, None, 1, 1, cx));
+        let input_text = "abcdefghijklmnopqrstuvwxys";
+        let font = font("Helvetica");
+        let font_size = px(14.0);
+        let buffer = MultiBuffer::build_simple(input_text, cx);
+        let buffer_snapshot = buffer.read(cx).snapshot(cx);
+        let display_map =
+            cx.build_model(|cx| DisplayMap::new(buffer, font, font_size, None, 1, 1, cx));
 
-//         // add all kinds of inlays between two word boundaries: we should be able to cross them all, when looking for another boundary
-//         let mut id = 0;
-//         let inlays = (0..buffer_snapshot.len())
-//             .map(|offset| {
-//                 [
-//                     Inlay {
-//                         id: InlayId::Suggestion(post_inc(&mut id)),
-//                         position: buffer_snapshot.anchor_at(offset, Bias::Left),
-//                         text: format!("test").into(),
-//                     },
-//                     Inlay {
-//                         id: InlayId::Suggestion(post_inc(&mut id)),
-//                         position: buffer_snapshot.anchor_at(offset, Bias::Right),
-//                         text: format!("test").into(),
-//                     },
-//                     Inlay {
-//                         id: InlayId::Hint(post_inc(&mut id)),
-//                         position: buffer_snapshot.anchor_at(offset, Bias::Left),
-//                         text: format!("test").into(),
-//                     },
-//                     Inlay {
-//                         id: InlayId::Hint(post_inc(&mut id)),
-//                         position: buffer_snapshot.anchor_at(offset, Bias::Right),
-//                         text: format!("test").into(),
-//                     },
-//                 ]
-//             })
-//             .flatten()
-//             .collect();
-//         let snapshot = display_map.update(cx, |map, cx| {
-//             map.splice_inlays(Vec::new(), inlays, cx);
-//             map.snapshot(cx)
-//         });
+        // add all kinds of inlays between two word boundaries: we should be able to cross them all, when looking for another boundary
+        let mut id = 0;
+        let inlays = (0..buffer_snapshot.len())
+            .map(|offset| {
+                [
+                    Inlay {
+                        id: InlayId::Suggestion(post_inc(&mut id)),
+                        position: buffer_snapshot.anchor_at(offset, Bias::Left),
+                        text: format!("test").into(),
+                    },
+                    Inlay {
+                        id: InlayId::Suggestion(post_inc(&mut id)),
+                        position: buffer_snapshot.anchor_at(offset, Bias::Right),
+                        text: format!("test").into(),
+                    },
+                    Inlay {
+                        id: InlayId::Hint(post_inc(&mut id)),
+                        position: buffer_snapshot.anchor_at(offset, Bias::Left),
+                        text: format!("test").into(),
+                    },
+                    Inlay {
+                        id: InlayId::Hint(post_inc(&mut id)),
+                        position: buffer_snapshot.anchor_at(offset, Bias::Right),
+                        text: format!("test").into(),
+                    },
+                ]
+            })
+            .flatten()
+            .collect();
+        let snapshot = display_map.update(cx, |map, cx| {
+            map.splice_inlays(Vec::new(), inlays, cx);
+            map.snapshot(cx)
+        });
 
-//         assert_eq!(
-//             find_preceding_boundary(
-//                 &snapshot,
-//                 buffer_snapshot.len().to_display_point(&snapshot),
-//                 FindRange::MultiLine,
-//                 |left, _| left == 'e',
-//             ),
-//             snapshot
-//                 .buffer_snapshot
-//                 .offset_to_point(5)
-//                 .to_display_point(&snapshot),
-//             "Should not stop at inlays when looking for boundaries"
-//         );
-//     }
+        assert_eq!(
+            find_preceding_boundary(
+                &snapshot,
+                buffer_snapshot.len().to_display_point(&snapshot),
+                FindRange::MultiLine,
+                |left, _| left == 'e',
+            ),
+            snapshot
+                .buffer_snapshot
+                .offset_to_point(5)
+                .to_display_point(&snapshot),
+            "Should not stop at inlays when looking for boundaries"
+        );
+    }
 
-//     #[gpui::test]
-//     fn test_next_word_end(cx: &mut gpui::AppContext) {
-//         init_test(cx);
+    #[gpui::test]
+    fn test_next_word_end(cx: &mut gpui::AppContext) {
+        init_test(cx);
 
-//         fn assert(marked_text: &str, cx: &mut gpui::AppContext) {
-//             let (snapshot, display_points) = marked_display_snapshot(marked_text, cx);
-//             assert_eq!(
-//                 next_word_end(&snapshot, display_points[0]),
-//                 display_points[1]
-//             );
-//         }
+        fn assert(marked_text: &str, cx: &mut gpui::AppContext) {
+            let (snapshot, display_points) = marked_display_snapshot(marked_text, cx);
+            assert_eq!(
+                next_word_end(&snapshot, display_points[0]),
+                display_points[1]
+            );
+        }
 
-//         assert("\nˇ   loremˇ", cx);
-//         assert("    ˇloremˇ", cx);
-//         assert("    lorˇemˇ", cx);
-//         assert("    loremˇ    ˇ\nipsum\n", cx);
-//         assert("\nˇ\nˇ\n\n", cx);
-//         assert("loremˇ    ipsumˇ   ", cx);
-//         assert("loremˇ-ˇipsum", cx);
-//         assert("loremˇ#$@-ˇipsum", cx);
-//         assert("loremˇ_ipsumˇ", cx);
-//         assert(" ˇbcΔˇ", cx);
-//         assert(" abˇ——ˇcd", cx);
-//     }
+        assert("\nˇ   loremˇ", cx);
+        assert("    ˇloremˇ", cx);
+        assert("    lorˇemˇ", cx);
+        assert("    loremˇ    ˇ\nipsum\n", cx);
+        assert("\nˇ\nˇ\n\n", cx);
+        assert("loremˇ    ipsumˇ   ", cx);
+        assert("loremˇ-ˇipsum", cx);
+        assert("loremˇ#$@-ˇipsum", cx);
+        assert("loremˇ_ipsumˇ", cx);
+        assert(" ˇbcΔˇ", cx);
+        assert(" abˇ——ˇcd", cx);
+    }
 
-//     #[gpui::test]
-//     fn test_next_subword_end(cx: &mut gpui::AppContext) {
-//         init_test(cx);
+    #[gpui::test]
+    fn test_next_subword_end(cx: &mut gpui::AppContext) {
+        init_test(cx);
 
-//         fn assert(marked_text: &str, cx: &mut gpui::AppContext) {
-//             let (snapshot, display_points) = marked_display_snapshot(marked_text, cx);
-//             assert_eq!(
-//                 next_subword_end(&snapshot, display_points[0]),
-//                 display_points[1]
-//             );
-//         }
+        fn assert(marked_text: &str, cx: &mut gpui::AppContext) {
+            let (snapshot, display_points) = marked_display_snapshot(marked_text, cx);
+            assert_eq!(
+                next_subword_end(&snapshot, display_points[0]),
+                display_points[1]
+            );
+        }
 
-//         // Subword boundaries are respected
-//         assert("loˇremˇ_ipsum", cx);
-//         assert("ˇloremˇ_ipsum", cx);
-//         assert("loremˇ_ipsumˇ", cx);
-//         assert("loremˇ_ipsumˇ_dolor", cx);
-//         assert("loˇremˇIpsum", cx);
-//         assert("loremˇIpsumˇDolor", cx);
+        // Subword boundaries are respected
+        assert("loˇremˇ_ipsum", cx);
+        assert("ˇloremˇ_ipsum", cx);
+        assert("loremˇ_ipsumˇ", cx);
+        assert("loremˇ_ipsumˇ_dolor", cx);
+        assert("loˇremˇIpsum", cx);
+        assert("loremˇIpsumˇDolor", cx);
 
-//         // Word boundaries are still respected
-//         assert("\nˇ   loremˇ", cx);
-//         assert("    ˇloremˇ", cx);
-//         assert("    lorˇemˇ", cx);
-//         assert("    loremˇ    ˇ\nipsum\n", cx);
-//         assert("\nˇ\nˇ\n\n", cx);
-//         assert("loremˇ    ipsumˇ   ", cx);
-//         assert("loremˇ-ˇipsum", cx);
-//         assert("loremˇ#$@-ˇipsum", cx);
-//         assert("loremˇ_ipsumˇ", cx);
-//         assert(" ˇbcˇΔ", cx);
-//         assert(" abˇ——ˇcd", cx);
-//     }
+        // Word boundaries are still respected
+        assert("\nˇ   loremˇ", cx);
+        assert("    ˇloremˇ", cx);
+        assert("    lorˇemˇ", cx);
+        assert("    loremˇ    ˇ\nipsum\n", cx);
+        assert("\nˇ\nˇ\n\n", cx);
+        assert("loremˇ    ipsumˇ   ", cx);
+        assert("loremˇ-ˇipsum", cx);
+        assert("loremˇ#$@-ˇipsum", cx);
+        assert("loremˇ_ipsumˇ", cx);
+        assert(" ˇbcˇΔ", cx);
+        assert(" abˇ——ˇcd", cx);
+    }
 
-//     #[gpui::test]
-//     fn test_find_boundary(cx: &mut gpui::AppContext) {
-//         init_test(cx);
+    #[gpui::test]
+    fn test_find_boundary(cx: &mut gpui::AppContext) {
+        init_test(cx);
 
-//         fn assert(
-//             marked_text: &str,
-//             cx: &mut gpui::AppContext,
-//             is_boundary: impl FnMut(char, char) -> bool,
-//         ) {
-//             let (snapshot, display_points) = marked_display_snapshot(marked_text, cx);
-//             assert_eq!(
-//                 find_boundary(
-//                     &snapshot,
-//                     display_points[0],
-//                     FindRange::MultiLine,
-//                     is_boundary
-//                 ),
-//                 display_points[1]
-//             );
-//         }
+        fn assert(
+            marked_text: &str,
+            cx: &mut gpui::AppContext,
+            is_boundary: impl FnMut(char, char) -> bool,
+        ) {
+            let (snapshot, display_points) = marked_display_snapshot(marked_text, cx);
+            assert_eq!(
+                find_boundary(
+                    &snapshot,
+                    display_points[0],
+                    FindRange::MultiLine,
+                    is_boundary
+                ),
+                display_points[1]
+            );
+        }
 
-//         assert("abcˇdef\ngh\nijˇk", cx, |left, right| {
-//             left == 'j' && right == 'k'
-//         });
-//         assert("abˇcdef\ngh\nˇijk", cx, |left, right| {
-//             left == '\n' && right == 'i'
-//         });
-//         let mut line_count = 0;
-//         assert("abcˇdef\ngh\nˇijk", cx, |left, _| {
-//             if left == '\n' {
-//                 line_count += 1;
-//                 line_count == 2
-//             } else {
-//                 false
-//             }
-//         });
-//     }
+        assert("abcˇdef\ngh\nijˇk", cx, |left, right| {
+            left == 'j' && right == 'k'
+        });
+        assert("abˇcdef\ngh\nˇijk", cx, |left, right| {
+            left == '\n' && right == 'i'
+        });
+        let mut line_count = 0;
+        assert("abcˇdef\ngh\nˇijk", cx, |left, _| {
+            if left == '\n' {
+                line_count += 1;
+                line_count == 2
+            } else {
+                false
+            }
+        });
+    }
 
-//     #[gpui::test]
-//     fn test_surrounding_word(cx: &mut gpui::AppContext) {
-//         init_test(cx);
+    #[gpui::test]
+    fn test_surrounding_word(cx: &mut gpui::AppContext) {
+        init_test(cx);
 
-//         fn assert(marked_text: &str, cx: &mut gpui::AppContext) {
-//             let (snapshot, display_points) = marked_display_snapshot(marked_text, cx);
-//             assert_eq!(
-//                 surrounding_word(&snapshot, display_points[1]),
-//                 display_points[0]..display_points[2],
-//                 "{}",
-//                 marked_text.to_string()
-//             );
-//         }
+        fn assert(marked_text: &str, cx: &mut gpui::AppContext) {
+            let (snapshot, display_points) = marked_display_snapshot(marked_text, cx);
+            assert_eq!(
+                surrounding_word(&snapshot, display_points[1]),
+                display_points[0]..display_points[2],
+                "{}",
+                marked_text.to_string()
+            );
+        }
 
-//         assert("ˇˇloremˇ  ipsum", cx);
-//         assert("ˇloˇremˇ  ipsum", cx);
-//         assert("ˇloremˇˇ  ipsum", cx);
-//         assert("loremˇ ˇ  ˇipsum", cx);
-//         assert("lorem\nˇˇˇ\nipsum", cx);
-//         assert("lorem\nˇˇipsumˇ", cx);
-//         assert("loremˇ,ˇˇ ipsum", cx);
-//         assert("ˇloremˇˇ, ipsum", cx);
-//     }
+        assert("ˇˇloremˇ  ipsum", cx);
+        assert("ˇloˇremˇ  ipsum", cx);
+        assert("ˇloremˇˇ  ipsum", cx);
+        assert("loremˇ ˇ  ˇipsum", cx);
+        assert("lorem\nˇˇˇ\nipsum", cx);
+        assert("lorem\nˇˇipsumˇ", cx);
+        assert("loremˇ,ˇˇ ipsum", cx);
+        assert("ˇloremˇˇ, ipsum", cx);
+    }
 
-//     #[gpui::test]
-//     async fn test_move_up_and_down_with_excerpts(cx: &mut gpui::TestAppContext) {
-//         cx.update(|cx| {
-//             init_test(cx);
-//         });
+    #[gpui::test]
+    async fn test_move_up_and_down_with_excerpts(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            init_test(cx);
+        });
 
-//         let mut cx = EditorTestContext::new(cx).await;
-//         let editor = cx.editor.clone();
-//         let window = cx.window.clone();
-//         cx.update_window(window, |cx| {
-//             let text_layout_details =
-//                 editor.read_with(cx, |editor, cx| editor.text_layout_details(cx));
+        let mut cx = EditorTestContext::new(cx).await;
+        let editor = cx.editor.clone();
+        let window = cx.window.clone();
+        cx.update_window(window, |_, cx| {
+            let text_layout_details =
+                editor.update(cx, |editor, cx| editor.text_layout_details(cx));
 
-//             let family_id = cx
-//                 .font_cache()
-//                 .load_family(&["Helvetica"], &Default::default())
-//                 .unwrap();
-//             let font_id = cx
-//                 .font_cache()
-//                 .select_font(family_id, &Default::default())
-//                 .unwrap();
+            let font = font("Helvetica");
 
-//             let buffer =
-//                 cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, "abc\ndefg\nhijkl\nmn"));
-//             let multibuffer = cx.add_model(|cx| {
-//                 let mut multibuffer = MultiBuffer::new(0);
-//                 multibuffer.push_excerpts(
-//                     buffer.clone(),
-//                     [
-//                         ExcerptRange {
-//                             context: Point::new(0, 0)..Point::new(1, 4),
-//                             primary: None,
-//                         },
-//                         ExcerptRange {
-//                             context: Point::new(2, 0)..Point::new(3, 2),
-//                             primary: None,
-//                         },
-//                     ],
-//                     cx,
-//                 );
-//                 multibuffer
-//             });
-//             let display_map =
-//                 cx.add_model(|cx| DisplayMap::new(multibuffer, font_id, 14.0, None, 2, 2, cx));
-//             let snapshot = display_map.update(cx, |map, cx| map.snapshot(cx));
+            let buffer = cx
+                .build_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), "abc\ndefg\nhijkl\nmn"));
+            let multibuffer = cx.build_model(|cx| {
+                let mut multibuffer = MultiBuffer::new(0);
+                multibuffer.push_excerpts(
+                    buffer.clone(),
+                    [
+                        ExcerptRange {
+                            context: Point::new(0, 0)..Point::new(1, 4),
+                            primary: None,
+                        },
+                        ExcerptRange {
+                            context: Point::new(2, 0)..Point::new(3, 2),
+                            primary: None,
+                        },
+                    ],
+                    cx,
+                );
+                multibuffer
+            });
+            let display_map =
+                cx.build_model(|cx| DisplayMap::new(multibuffer, font, px(14.0), None, 2, 2, cx));
+            let snapshot = display_map.update(cx, |map, cx| map.snapshot(cx));
 
-//             assert_eq!(snapshot.text(), "\n\nabc\ndefg\n\n\nhijkl\nmn");
+            assert_eq!(snapshot.text(), "\n\nabc\ndefg\n\n\nhijkl\nmn");
 
-//             let col_2_x = snapshot.x_for_point(DisplayPoint::new(2, 2), &text_layout_details);
+            let col_2_x =
+                snapshot.x_for_display_point(DisplayPoint::new(2, 2), &text_layout_details);
 
-//             // Can't move up into the first excerpt's header
-//             assert_eq!(
-//                 up(
-//                     &snapshot,
-//                     DisplayPoint::new(2, 2),
-//                     SelectionGoal::HorizontalPosition(col_2_x),
-//                     false,
-//                     &text_layout_details
-//                 ),
-//                 (
-//                     DisplayPoint::new(2, 0),
-//                     SelectionGoal::HorizontalPosition(0.0)
-//                 ),
-//             );
-//             assert_eq!(
-//                 up(
-//                     &snapshot,
-//                     DisplayPoint::new(2, 0),
-//                     SelectionGoal::None,
-//                     false,
-//                     &text_layout_details
-//                 ),
-//                 (
-//                     DisplayPoint::new(2, 0),
-//                     SelectionGoal::HorizontalPosition(0.0)
-//                 ),
-//             );
+            // Can't move up into the first excerpt's header
+            assert_eq!(
+                up(
+                    &snapshot,
+                    DisplayPoint::new(2, 2),
+                    SelectionGoal::HorizontalPosition(col_2_x.0),
+                    false,
+                    &text_layout_details
+                ),
+                (
+                    DisplayPoint::new(2, 0),
+                    SelectionGoal::HorizontalPosition(0.0)
+                ),
+            );
+            assert_eq!(
+                up(
+                    &snapshot,
+                    DisplayPoint::new(2, 0),
+                    SelectionGoal::None,
+                    false,
+                    &text_layout_details
+                ),
+                (
+                    DisplayPoint::new(2, 0),
+                    SelectionGoal::HorizontalPosition(0.0)
+                ),
+            );
 
-//             let col_4_x = snapshot.x_for_point(DisplayPoint::new(3, 4), &text_layout_details);
+            let col_4_x =
+                snapshot.x_for_display_point(DisplayPoint::new(3, 4), &text_layout_details);
 
-//             // Move up and down within first excerpt
-//             assert_eq!(
-//                 up(
-//                     &snapshot,
-//                     DisplayPoint::new(3, 4),
-//                     SelectionGoal::HorizontalPosition(col_4_x),
-//                     false,
-//                     &text_layout_details
-//                 ),
-//                 (
-//                     DisplayPoint::new(2, 3),
-//                     SelectionGoal::HorizontalPosition(col_4_x)
-//                 ),
-//             );
-//             assert_eq!(
-//                 down(
-//                     &snapshot,
-//                     DisplayPoint::new(2, 3),
-//                     SelectionGoal::HorizontalPosition(col_4_x),
-//                     false,
-//                     &text_layout_details
-//                 ),
-//                 (
-//                     DisplayPoint::new(3, 4),
-//                     SelectionGoal::HorizontalPosition(col_4_x)
-//                 ),
-//             );
+            // Move up and down within first excerpt
+            assert_eq!(
+                up(
+                    &snapshot,
+                    DisplayPoint::new(3, 4),
+                    SelectionGoal::HorizontalPosition(col_4_x.0),
+                    false,
+                    &text_layout_details
+                ),
+                (
+                    DisplayPoint::new(2, 3),
+                    SelectionGoal::HorizontalPosition(col_4_x.0)
+                ),
+            );
+            assert_eq!(
+                down(
+                    &snapshot,
+                    DisplayPoint::new(2, 3),
+                    SelectionGoal::HorizontalPosition(col_4_x.0),
+                    false,
+                    &text_layout_details
+                ),
+                (
+                    DisplayPoint::new(3, 4),
+                    SelectionGoal::HorizontalPosition(col_4_x.0)
+                ),
+            );
 
-//             let col_5_x = snapshot.x_for_point(DisplayPoint::new(6, 5), &text_layout_details);
+            let col_5_x =
+                snapshot.x_for_display_point(DisplayPoint::new(6, 5), &text_layout_details);
 
-//             // Move up and down across second excerpt's header
-//             assert_eq!(
-//                 up(
-//                     &snapshot,
-//                     DisplayPoint::new(6, 5),
-//                     SelectionGoal::HorizontalPosition(col_5_x),
-//                     false,
-//                     &text_layout_details
-//                 ),
-//                 (
-//                     DisplayPoint::new(3, 4),
-//                     SelectionGoal::HorizontalPosition(col_5_x)
-//                 ),
-//             );
-//             assert_eq!(
-//                 down(
-//                     &snapshot,
-//                     DisplayPoint::new(3, 4),
-//                     SelectionGoal::HorizontalPosition(col_5_x),
-//                     false,
-//                     &text_layout_details
-//                 ),
-//                 (
-//                     DisplayPoint::new(6, 5),
-//                     SelectionGoal::HorizontalPosition(col_5_x)
-//                 ),
-//             );
+            // Move up and down across second excerpt's header
+            assert_eq!(
+                up(
+                    &snapshot,
+                    DisplayPoint::new(6, 5),
+                    SelectionGoal::HorizontalPosition(col_5_x.0),
+                    false,
+                    &text_layout_details
+                ),
+                (
+                    DisplayPoint::new(3, 4),
+                    SelectionGoal::HorizontalPosition(col_5_x.0)
+                ),
+            );
+            assert_eq!(
+                down(
+                    &snapshot,
+                    DisplayPoint::new(3, 4),
+                    SelectionGoal::HorizontalPosition(col_5_x.0),
+                    false,
+                    &text_layout_details
+                ),
+                (
+                    DisplayPoint::new(6, 5),
+                    SelectionGoal::HorizontalPosition(col_5_x.0)
+                ),
+            );
 
-//             let max_point_x = snapshot.x_for_point(DisplayPoint::new(7, 2), &text_layout_details);
+            let max_point_x =
+                snapshot.x_for_display_point(DisplayPoint::new(7, 2), &text_layout_details);
 
-//             // Can't move down off the end
-//             assert_eq!(
-//                 down(
-//                     &snapshot,
-//                     DisplayPoint::new(7, 0),
-//                     SelectionGoal::HorizontalPosition(0.0),
-//                     false,
-//                     &text_layout_details
-//                 ),
-//                 (
-//                     DisplayPoint::new(7, 2),
-//                     SelectionGoal::HorizontalPosition(max_point_x)
-//                 ),
-//             );
-//             assert_eq!(
-//                 down(
-//                     &snapshot,
-//                     DisplayPoint::new(7, 2),
-//                     SelectionGoal::HorizontalPosition(max_point_x),
-//                     false,
-//                     &text_layout_details
-//                 ),
-//                 (
-//                     DisplayPoint::new(7, 2),
-//                     SelectionGoal::HorizontalPosition(max_point_x)
-//                 ),
-//             );
-//         });
-//     }
+            // Can't move down off the end
+            assert_eq!(
+                down(
+                    &snapshot,
+                    DisplayPoint::new(7, 0),
+                    SelectionGoal::HorizontalPosition(0.0),
+                    false,
+                    &text_layout_details
+                ),
+                (
+                    DisplayPoint::new(7, 2),
+                    SelectionGoal::HorizontalPosition(max_point_x.0)
+                ),
+            );
+            assert_eq!(
+                down(
+                    &snapshot,
+                    DisplayPoint::new(7, 2),
+                    SelectionGoal::HorizontalPosition(max_point_x.0),
+                    false,
+                    &text_layout_details
+                ),
+                (
+                    DisplayPoint::new(7, 2),
+                    SelectionGoal::HorizontalPosition(max_point_x.0)
+                ),
+            );
+        });
+    }
 
-//     fn init_test(cx: &mut gpui::AppContext) {
-//         cx.set_global(SettingsStore::test(cx));
-//         theme::init(cx);
-//         language::init(cx);
-//         crate::init(cx);
-//         Project::init_settings(cx);
-//     }
-// }
+    fn init_test(cx: &mut gpui::AppContext) {
+        let settings_store = SettingsStore::test(cx);
+        cx.set_global(settings_store);
+        theme::init(theme::LoadThemes::JustBase, cx);
+        language::init(cx);
+        crate::init(cx);
+        Project::init_settings(cx);
+    }
+}

@@ -538,18 +538,21 @@ impl Pane {
 
     pub(crate) fn open_item(
         &mut self,
-        project_entry_id: ProjectEntryId,
+        project_entry_id: Option<ProjectEntryId>,
         focus_item: bool,
         cx: &mut ViewContext<Self>,
         build_item: impl FnOnce(&mut ViewContext<Pane>) -> Box<dyn ItemHandle>,
     ) -> Box<dyn ItemHandle> {
         let mut existing_item = None;
-        for (index, item) in self.items.iter().enumerate() {
-            if item.is_singleton(cx) && item.project_entry_ids(cx).as_slice() == [project_entry_id]
-            {
-                let item = item.boxed_clone();
-                existing_item = Some((index, item));
-                break;
+        if let Some(project_entry_id) = project_entry_id {
+            for (index, item) in self.items.iter().enumerate() {
+                if item.is_singleton(cx)
+                    && item.project_entry_ids(cx).as_slice() == [project_entry_id]
+                {
+                    let item = item.boxed_clone();
+                    existing_item = Some((index, item));
+                    break;
+                }
             }
         }
 
@@ -1545,22 +1548,17 @@ impl Pane {
 
         right_click_menu(ix).trigger(tab).menu(|cx| {
             ContextMenu::build(cx, |menu, cx| {
-                menu.action(
-                    "Close",
-                    CloseActiveItem { save_intent: None }.boxed_clone(),
-                    cx,
-                )
-                .action("Close Others", CloseInactiveItems.boxed_clone(), cx)
-                .separator()
-                .action("Close Left", CloseItemsToTheLeft.boxed_clone(), cx)
-                .action("Close Right", CloseItemsToTheRight.boxed_clone(), cx)
-                .separator()
-                .action("Close Clean", CloseCleanItems.boxed_clone(), cx)
-                .action(
-                    "Close All",
-                    CloseAllItems { save_intent: None }.boxed_clone(),
-                    cx,
-                )
+                menu.action("Close", CloseActiveItem { save_intent: None }.boxed_clone())
+                    .action("Close Others", CloseInactiveItems.boxed_clone())
+                    .separator()
+                    .action("Close Left", CloseItemsToTheLeft.boxed_clone())
+                    .action("Close Right", CloseItemsToTheRight.boxed_clone())
+                    .separator()
+                    .action("Close Clean", CloseCleanItems.boxed_clone())
+                    .action(
+                        "Close All",
+                        CloseAllItems { save_intent: None }.boxed_clone(),
+                    )
             })
         })
     }
@@ -1653,13 +1651,12 @@ impl Pane {
                                     .icon_size(IconSize::Small)
                                     .on_click(cx.listener(|this, _, cx| {
                                         let menu = ContextMenu::build(cx, |menu, cx| {
-                                            menu.action("New File", NewFile.boxed_clone(), cx)
+                                            menu.action("New File", NewFile.boxed_clone())
                                                 .action(
                                                     "New Terminal",
                                                     NewCenterTerminal.boxed_clone(),
-                                                    cx,
                                                 )
-                                                .action("New Search", NewSearch.boxed_clone(), cx)
+                                                .action("New Search", NewSearch.boxed_clone())
                                         });
                                         cx.subscribe(&menu, |this, _, event: &DismissEvent, cx| {
                                             this.focus(cx);
@@ -1677,10 +1674,10 @@ impl Pane {
                                     .icon_size(IconSize::Small)
                                     .on_click(cx.listener(|this, _, cx| {
                                         let menu = ContextMenu::build(cx, |menu, cx| {
-                                            menu.action("Split Right", SplitRight.boxed_clone(), cx)
-                                                .action("Split Left", SplitLeft.boxed_clone(), cx)
-                                                .action("Split Up", SplitUp.boxed_clone(), cx)
-                                                .action("Split Down", SplitDown.boxed_clone(), cx)
+                                            menu.action("Split Right", SplitRight.boxed_clone())
+                                                .action("Split Left", SplitLeft.boxed_clone())
+                                                .action("Split Up", SplitUp.boxed_clone())
+                                                .action("Split Down", SplitDown.boxed_clone())
                                         });
                                         cx.subscribe(&menu, |this, _, event: &DismissEvent, cx| {
                                             this.focus(cx);

@@ -44,7 +44,7 @@ pub(crate) fn current_platform() -> Rc<dyn Platform> {
     Rc::new(MacPlatform::new())
 }
 
-pub(crate) trait Platform: 'static {
+pub trait Platform: 'static {
     fn background_executor(&self) -> BackgroundExecutor;
     fn foreground_executor(&self) -> ForegroundExecutor;
     fn text_system(&self) -> Arc<dyn PlatformTextSystem>;
@@ -128,7 +128,7 @@ impl Debug for DisplayId {
 
 unsafe impl Send for DisplayId {}
 
-pub(crate) trait PlatformWindow {
+pub trait PlatformWindow {
     fn bounds(&self) -> WindowBounds;
     fn content_size(&self) -> Size<Pixels>;
     fn scale_factor(&self) -> f32;
@@ -160,7 +160,7 @@ pub(crate) trait PlatformWindow {
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
 
     #[cfg(any(test, feature = "test-support"))]
-    fn as_test(&self) -> Option<&TestWindow> {
+    fn as_test(&mut self) -> Option<&mut TestWindow> {
         None
     }
 }

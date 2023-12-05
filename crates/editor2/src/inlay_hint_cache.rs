@@ -2432,13 +2432,13 @@ pub mod tests {
         let language = Arc::new(language);
         let fs = FakeFs::new(cx.background_executor.clone());
         fs.insert_tree(
-            "/a",
-            json!({
-                "main.rs": format!("fn main() {{\n{}\n}}", (0..501).map(|i| format!("let i = {i};\n")).collect::<Vec<_>>().join("")),
-                "other.rs": format!("fn main() {{\n{}\n}}", (0..501).map(|j| format!("let j = {j};\n")).collect::<Vec<_>>().join("")),
-            }),
-        )
-        .await;
+                "/a",
+                json!({
+                    "main.rs": format!("fn main() {{\n{}\n}}", (0..501).map(|i| format!("let i = {i};\n")).collect::<Vec<_>>().join("")),
+                    "other.rs": format!("fn main() {{\n{}\n}}", (0..501).map(|j| format!("let j = {j};\n")).collect::<Vec<_>>().join("")),
+                }),
+            )
+            .await;
         let project = Project::test(fs, ["/a".as_ref()], cx).await;
         project.update(cx, |project, _| {
             project.languages().add(Arc::clone(&language))
@@ -2598,24 +2598,22 @@ pub mod tests {
         cx.executor().run_until_parked();
 
         editor.update(cx, |editor, cx| {
-            let expected_hints = vec![
-                "main hint #0".to_string(),
-                "main hint #1".to_string(),
-                "main hint #2".to_string(),
-                "main hint #3".to_string(),
-                // todo!() there used to be no these hints, but new gpui2 presumably scrolls a bit farther
-                // (or renders less?) note that tests below pass
-                "main hint #4".to_string(),
-                "main hint #5".to_string(),
-            ];
-            assert_eq!(
-                expected_hints,
-                cached_hint_labels(editor),
-                "When scroll is at the edge of a multibuffer, its visible excerpts only should be queried for inlay hints"
-            );
-            assert_eq!(expected_hints, visible_hint_labels(editor, cx));
-            assert_eq!(editor.inlay_hint_cache().version, expected_hints.len(), "Every visible excerpt hints should bump the verison");
-        });
+                let expected_hints = vec![
+                    "main hint #0".to_string(),
+                    "main hint #1".to_string(),
+                    "main hint #2".to_string(),
+                    "main hint #3".to_string(),
+                    "main hint #4".to_string(),
+                    "main hint #5".to_string(),
+                ];
+                assert_eq!(
+                    expected_hints,
+                    cached_hint_labels(editor),
+                    "When scroll is at the edge of a multibuffer, its visible excerpts only should be queried for inlay hints"
+                );
+                assert_eq!(expected_hints, visible_hint_labels(editor, cx));
+                assert_eq!(editor.inlay_hint_cache().version, expected_hints.len(), "Every visible excerpt hints should bump the verison");
+            });
 
         editor.update(cx, |editor, cx| {
             editor.change_selections(Some(Autoscroll::Next), cx, |s| {
@@ -2630,23 +2628,23 @@ pub mod tests {
         });
         cx.executor().run_until_parked();
         editor.update(cx, |editor, cx| {
-            let expected_hints = vec![
-                "main hint #0".to_string(),
-                "main hint #1".to_string(),
-                "main hint #2".to_string(),
-                "main hint #3".to_string(),
-                "main hint #4".to_string(),
-                "main hint #5".to_string(),
-                "other hint #0".to_string(),
-                "other hint #1".to_string(),
-                "other hint #2".to_string(),
-            ];
-            assert_eq!(expected_hints, cached_hint_labels(editor),
-                "With more scrolls of the multibuffer, more hints should be added into the cache and nothing invalidated without edits");
-            assert_eq!(expected_hints, visible_hint_labels(editor, cx));
-            assert_eq!(editor.inlay_hint_cache().version, expected_hints.len(),
-                "Due to every excerpt having one hint, we update cache per new excerpt scrolled");
-        });
+                let expected_hints = vec![
+                    "main hint #0".to_string(),
+                    "main hint #1".to_string(),
+                    "main hint #2".to_string(),
+                    "main hint #3".to_string(),
+                    "main hint #4".to_string(),
+                    "main hint #5".to_string(),
+                    "other hint #0".to_string(),
+                    "other hint #1".to_string(),
+                    "other hint #2".to_string(),
+                ];
+                assert_eq!(expected_hints, cached_hint_labels(editor),
+                    "With more scrolls of the multibuffer, more hints should be added into the cache and nothing invalidated without edits");
+                assert_eq!(expected_hints, visible_hint_labels(editor, cx));
+                assert_eq!(editor.inlay_hint_cache().version, expected_hints.len(),
+                    "Due to every excerpt having one hint, we update cache per new excerpt scrolled");
+            });
 
         editor.update(cx, |editor, cx| {
             editor.change_selections(Some(Autoscroll::Next), cx, |s| {
@@ -2658,26 +2656,26 @@ pub mod tests {
         ));
         cx.executor().run_until_parked();
         let last_scroll_update_version = editor.update(cx, |editor, cx| {
-            let expected_hints = vec![
-                "main hint #0".to_string(),
-                "main hint #1".to_string(),
-                "main hint #2".to_string(),
-                "main hint #3".to_string(),
-                "main hint #4".to_string(),
-                "main hint #5".to_string(),
-                "other hint #0".to_string(),
-                "other hint #1".to_string(),
-                "other hint #2".to_string(),
-                "other hint #3".to_string(),
-                "other hint #4".to_string(),
-                "other hint #5".to_string(),
-            ];
-            assert_eq!(expected_hints, cached_hint_labels(editor),
-                "After multibuffer was scrolled to the end, all hints for all excerpts should be fetched");
-            assert_eq!(expected_hints, visible_hint_labels(editor, cx));
-            assert_eq!(editor.inlay_hint_cache().version, expected_hints.len());
-            expected_hints.len()
-        }).unwrap();
+                let expected_hints = vec![
+                    "main hint #0".to_string(),
+                    "main hint #1".to_string(),
+                    "main hint #2".to_string(),
+                    "main hint #3".to_string(),
+                    "main hint #4".to_string(),
+                    "main hint #5".to_string(),
+                    "other hint #0".to_string(),
+                    "other hint #1".to_string(),
+                    "other hint #2".to_string(),
+                    "other hint #3".to_string(),
+                    "other hint #4".to_string(),
+                    "other hint #5".to_string(),
+                ];
+                assert_eq!(expected_hints, cached_hint_labels(editor),
+                    "After multibuffer was scrolled to the end, all hints for all excerpts should be fetched");
+                assert_eq!(expected_hints, visible_hint_labels(editor, cx));
+                assert_eq!(editor.inlay_hint_cache().version, expected_hints.len());
+                expected_hints.len()
+            }).unwrap();
 
         editor.update(cx, |editor, cx| {
             editor.change_selections(Some(Autoscroll::Next), cx, |s| {
@@ -2686,30 +2684,31 @@ pub mod tests {
         });
         cx.executor().run_until_parked();
         editor.update(cx, |editor, cx| {
-            let expected_hints = vec![
-                "main hint #0".to_string(),
-                "main hint #1".to_string(),
-                "main hint #2".to_string(),
-                "main hint #3".to_string(),
-                "main hint #4".to_string(),
-                "main hint #5".to_string(),
-                "other hint #0".to_string(),
-                "other hint #1".to_string(),
-                "other hint #2".to_string(),
-                "other hint #3".to_string(),
-                "other hint #4".to_string(),
-                "other hint #5".to_string(),
-            ];
-            assert_eq!(expected_hints, cached_hint_labels(editor),
-                "After multibuffer was scrolled to the end, further scrolls up should not bring more hints");
-            assert_eq!(expected_hints, visible_hint_labels(editor, cx));
-            assert_eq!(editor.inlay_hint_cache().version, last_scroll_update_version, "No updates should happen during scrolling already scolled buffer");
-        });
+                let expected_hints = vec![
+                    "main hint #0".to_string(),
+                    "main hint #1".to_string(),
+                    "main hint #2".to_string(),
+                    "main hint #3".to_string(),
+                    "main hint #4".to_string(),
+                    "main hint #5".to_string(),
+                    "other hint #0".to_string(),
+                    "other hint #1".to_string(),
+                    "other hint #2".to_string(),
+                    "other hint #3".to_string(),
+                    "other hint #4".to_string(),
+                    "other hint #5".to_string(),
+                ];
+                assert_eq!(expected_hints, cached_hint_labels(editor),
+                    "After multibuffer was scrolled to the end, further scrolls up should not bring more hints");
+                assert_eq!(expected_hints, visible_hint_labels(editor, cx));
+                assert_eq!(editor.inlay_hint_cache().version, last_scroll_update_version, "No updates should happen during scrolling already scolled buffer");
+            });
 
         editor_edited.store(true, Ordering::Release);
         editor.update(cx, |editor, cx| {
             editor.change_selections(None, cx, |s| {
-                s.select_ranges([Point::new(56, 0)..Point::new(56, 0)])
+                // TODO if this gets set to hint boundary (e.g. 56) we sometimes get an extra cache version bump, why?
+                s.select_ranges([Point::new(57, 0)..Point::new(57, 0)])
             });
             editor.handle_input("++++more text++++", cx);
         });
@@ -2729,15 +2728,15 @@ pub mod tests {
                 expected_hints,
                 cached_hint_labels(editor),
                 "After multibuffer edit, editor gets scolled back to the last selection; \
-all hints should be invalidated and requeried for all of its visible excerpts"
+    all hints should be invalidated and requeried for all of its visible excerpts"
             );
             assert_eq!(expected_hints, visible_hint_labels(editor, cx));
 
             let current_cache_version = editor.inlay_hint_cache().version;
-            let minimum_expected_version = last_scroll_update_version + expected_hints.len();
-            assert!(
-                current_cache_version == minimum_expected_version || current_cache_version == minimum_expected_version + 1,
-                "Due to every excerpt having one hint, cache should update per new excerpt received + 1 potential sporadic update"
+            assert_eq!(
+                current_cache_version,
+                last_scroll_update_version + expected_hints.len(),
+                "We should have updated cache N times == N of new hints arrived (separately from each excerpt)"
             );
         });
     }

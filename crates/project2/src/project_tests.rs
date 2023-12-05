@@ -4182,6 +4182,94 @@ async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContex
     );
 }
 
+#[gpui::test]
+async fn test_search_in_gitignored_dirs(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            ".git": {},
+            ".gitignore": "**/target\n/node_modules\n",
+            "target": {
+                "index.txt": "index_key:index_value"
+            },
+            "node_modules": {
+                "eslint": {
+                    "index.ts": "const eslint_key = 'eslint value'",
+                    "package.json": r#"{ "some_key": "some value" }"#,
+                },
+                "prettier": {
+                    "index.ts": "const prettier_key = 'prettier value'",
+                    "package.json": r#"{ "other_key": "other value" }"#,
+                },
+            },
+            "package.json": r#"{ "main_key": "main value" }"#,
+        }),
+    )
+    .await;
+    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+
+    let query = "key";
+    assert_eq!(
+        search(
+            &project,
+            SearchQuery::text(query, false, false, false, Vec::new(), Vec::new()).unwrap(),
+            cx
+        )
+        .await
+        .unwrap(),
+        HashMap::from_iter([("package.json".to_string(), vec![8..11])]),
+        "Only one non-ignored file should have the query"
+    );
+
+    assert_eq!(
+        search(
+            &project,
+            SearchQuery::text(query, false, false, true, Vec::new(), Vec::new()).unwrap(),
+            cx
+        )
+        .await
+        .unwrap(),
+        HashMap::from_iter([
+            ("package.json".to_string(), vec![8..11]),
+            ("target/index.txt".to_string(), vec![6..9]),
+            (
+                "node_modules/prettier/package.json".to_string(),
+                vec![9..12]
+            ),
+            ("node_modules/prettier/index.ts".to_string(), vec![15..18]),
+            ("node_modules/eslint/index.ts".to_string(), vec![13..16]),
+            ("node_modules/eslint/package.json".to_string(), vec![8..11]),
+        ]),
+        "Unrestricted search with ignored directories should find every file with the query"
+    );
+
+    assert_eq!(
+        search(
+            &project,
+            SearchQuery::text(
+                query,
+                false,
+                false,
+                true,
+                vec![PathMatcher::new("node_modules/prettier/**").unwrap()],
+                vec![PathMatcher::new("*.ts").unwrap()],
+            )
+            .unwrap(),
+            cx
+        )
+        .await
+        .unwrap(),
+        HashMap::from_iter([(
+            "node_modules/prettier/package.json".to_string(),
+            vec![9..12]
+        )]),
+        "With search including ignored prettier directory and excluding TS files, only one file should be found"
+    );
+}
+
 #[test]
 fn test_glob_literal_prefix() {
     assert_eq!(glob_literal_prefix("**/*.js"), "");

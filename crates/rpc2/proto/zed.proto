@@ -430,7 +430,7 @@ message ExpandProjectEntryResponse {
 }
 
 message ProjectEntryResponse {
-    Entry entry = 1;
+    optional Entry entry = 1;
     uint64 worktree_scan_id = 2;
 }
 
@@ -1357,7 +1357,7 @@ message User {
 
 message File {
     uint64 worktree_id = 1;
-    uint64 entry_id = 2;
+    optional uint64 entry_id = 2;
     string path = 3;
     Timestamp mtime = 4;
     bool is_deleted = 5;
