@@ -1052,11 +1052,12 @@ async fn test_fs_events_in_exclusions(cx: &mut TestAppContext) {
             &[
                 ".git/HEAD",
                 ".git/foo",
+                "node_modules",
                 "node_modules/.DS_Store",
                 "node_modules/prettier",
                 "node_modules/prettier/package.json",
             ],
-            &["target", "node_modules"],
+            &["target"],
             &[
                 ".DS_Store",
                 "src/.DS_Store",
@@ -1106,6 +1107,7 @@ async fn test_fs_events_in_exclusions(cx: &mut TestAppContext) {
                 ".git/HEAD",
                 ".git/foo",
                 ".git/new_file",
+                "node_modules",
                 "node_modules/.DS_Store",
                 "node_modules/prettier",
                 "node_modules/prettier/package.json",
@@ -1114,7 +1116,7 @@ async fn test_fs_events_in_exclusions(cx: &mut TestAppContext) {
                 "build_output/new_file",
                 "test_output/new_file",
             ],
-            &["target", "node_modules", "test_output"],
+            &["target", "test_output"],
             &[
                 ".DS_Store",
                 "src/.DS_Store",
