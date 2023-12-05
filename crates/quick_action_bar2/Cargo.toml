@@ -1,0 +1,22 @@
+[package]
+name = "quick_action_bar2"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+path = "src/quick_action_bar.rs"
+doctest = false
+
+[dependencies]
+#assistant = { path = "../assistant" }
+editor = { package = "editor2", path = "../editor2" }
+gpui = { package = "gpui2", path = "../gpui2" }
+search = { package = "search2", path = "../search2" }
+workspace = { package = "workspace2", path = "../workspace2" }
+ui = { package = "ui2", path = "../ui2" }
+
+[dev-dependencies]
+editor = { package = "editor2", path = "../editor2", features = ["test-support"] }
+gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"] }
+workspace = { package = "workspace2", path = "../workspace2", features = ["test-support"] }

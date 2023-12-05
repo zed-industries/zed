@@ -88,7 +88,7 @@ struct DiagnosticGroupState {
     block_count: usize,
 }
 
-impl EventEmitter<ItemEvent> for ProjectDiagnosticsEditor {}
+impl EventEmitter<EditorEvent> for ProjectDiagnosticsEditor {}
 
 impl Render for ProjectDiagnosticsEditor {
     type Element = Focusable<Div>;
@@ -158,7 +158,7 @@ impl ProjectDiagnosticsEditor {
         });
         let editor_event_subscription =
             cx.subscribe(&editor, |this, _editor, event: &EditorEvent, cx| {
-                Self::emit_item_event_for_editor_event(event, cx);
+                cx.emit(event.clone());
                 if event == &EditorEvent::Focused && this.path_states.is_empty() {
                     cx.focus(&this.focus_handle);
                 }
@@ -181,40 +181,6 @@ impl ProjectDiagnosticsEditor {
         };
         this.update_excerpts(None, cx);
         this
-    }
-
-    fn emit_item_event_for_editor_event(event: &EditorEvent, cx: &mut ViewContext<Self>) {
-        match event {
-            EditorEvent::Closed => cx.emit(ItemEvent::CloseItem),
-
-            EditorEvent::Saved | EditorEvent::TitleChanged => {
-                cx.emit(ItemEvent::UpdateTab);
-                cx.emit(ItemEvent::UpdateBreadcrumbs);
-            }
-
-            EditorEvent::Reparsed => {
-                cx.emit(ItemEvent::UpdateBreadcrumbs);
-            }
-
-            EditorEvent::SelectionsChanged { local } if *local => {
-                cx.emit(ItemEvent::UpdateBreadcrumbs);
-            }
-
-            EditorEvent::DirtyChanged => {
-                cx.emit(ItemEvent::UpdateTab);
-            }
-
-            EditorEvent::BufferEdited => {
-                cx.emit(ItemEvent::Edit);
-                cx.emit(ItemEvent::UpdateBreadcrumbs);
-            }
-
-            EditorEvent::ExcerptsAdded { .. } | EditorEvent::ExcerptsRemoved { .. } => {
-                cx.emit(ItemEvent::Edit);
-            }
-
-            _ => {}
-        }
     }
 
     fn deploy(workspace: &mut Workspace, _: &Deploy, cx: &mut ViewContext<Workspace>) {
@@ -333,8 +299,7 @@ impl ProjectDiagnosticsEditor {
 
                 this.update(&mut cx, |this, cx| {
                     this.summary = this.project.read(cx).diagnostic_summary(false, cx);
-                    cx.emit(ItemEvent::UpdateTab);
-                    cx.emit(ItemEvent::UpdateBreadcrumbs);
+                    cx.emit(EditorEvent::TitleChanged);
                 })?;
                 anyhow::Ok(())
             }
@@ -649,6 +614,12 @@ impl FocusableView for ProjectDiagnosticsEditor {
 }
 
 impl Item for ProjectDiagnosticsEditor {
+    type Event = EditorEvent;
+
+    fn to_item_events(event: &EditorEvent, f: impl FnMut(ItemEvent)) {
+        Editor::to_item_events(event, f)
+    }
+
     fn deactivated(&mut self, cx: &mut ViewContext<Self>) {
         self.editor.update(cx, |editor, cx| editor.deactivated(cx));
     }
@@ -774,24 +745,39 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
     Arc::new(move |_| {
         h_stack()
             .id("diagnostic header")
-            .gap_3()
-            .bg(gpui::red())
-            .map(|stack| {
-                let icon = if diagnostic.severity == DiagnosticSeverity::ERROR {
-                    IconElement::new(Icon::XCircle).color(Color::Error)
-                } else {
-                    IconElement::new(Icon::ExclamationTriangle).color(Color::Warning)
-                };
-
-                stack.child(div().pl_8().child(icon))
-            })
-            .when_some(diagnostic.source.as_ref(), |stack, source| {
-                stack.child(Label::new(format!("{source}:")).color(Color::Accent))
-            })
-            .child(HighlightedLabel::new(message.clone(), highlights.clone()))
-            .when_some(diagnostic.code.as_ref(), |stack, code| {
-                stack.child(Label::new(code.clone()))
-            })
+            .py_2()
+            .pl_10()
+            .pr_5()
+            .w_full()
+            .justify_between()
+            .gap_2()
+            .child(
+                h_stack()
+                    .gap_3()
+                    .map(|stack| {
+                        let icon = if diagnostic.severity == DiagnosticSeverity::ERROR {
+                            IconElement::new(Icon::XCircle).color(Color::Error)
+                        } else {
+                            IconElement::new(Icon::ExclamationTriangle).color(Color::Warning)
+                        };
+                        stack.child(icon)
+                    })
+                    .child(
+                        h_stack()
+                            .gap_1()
+                            .child(HighlightedLabel::new(message.clone(), highlights.clone()))
+                            .when_some(diagnostic.code.as_ref(), |stack, code| {
+                                stack.child(Label::new(format!("({code})")).color(Color::Muted))
+                            }),
+                    ),
+            )
+            .child(
+                h_stack()
+                    .gap_1()
+                    .when_some(diagnostic.source.as_ref(), |stack, source| {
+                        stack.child(Label::new(format!("{source}")).color(Color::Muted))
+                    }),
+            )
             .into_any_element()
     })
 }
@@ -802,11 +788,22 @@ pub(crate) fn render_summary(summary: &DiagnosticSummary) -> AnyElement {
         label.into_any_element()
     } else {
         h_stack()
-            .bg(gpui::red())
-            .child(IconElement::new(Icon::XCircle))
-            .child(Label::new(summary.error_count.to_string()))
-            .child(IconElement::new(Icon::ExclamationTriangle))
-            .child(Label::new(summary.warning_count.to_string()))
+            .gap_1()
+            .when(summary.error_count > 0, |then| {
+                then.child(
+                    h_stack()
+                        .gap_1()
+                        .child(IconElement::new(Icon::XCircle).color(Color::Error))
+                        .child(Label::new(summary.error_count.to_string())),
+                )
+            })
+            .when(summary.warning_count > 0, |then| {
+                then.child(
+                    h_stack()
+                        .child(IconElement::new(Icon::ExclamationTriangle).color(Color::Warning))
+                        .child(Label::new(summary.warning_count.to_string())),
+                )
+            })
             .into_any_element()
     }
 }

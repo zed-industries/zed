@@ -1,3 +1,4 @@
+use gpui::{relative, DefiniteLength};
 use gpui::{rems, transparent_black, AnyElement, AnyView, ClickEvent, Div, Hsla, Rems, Stateful};
 use smallvec::SmallVec;
 
@@ -246,6 +247,7 @@ pub struct ButtonLike {
     pub(super) style: ButtonStyle,
     pub(super) disabled: bool,
     pub(super) selected: bool,
+    pub(super) width: Option<DefiniteLength>,
     size: ButtonSize,
     tooltip: Option<Box<dyn Fn(&mut WindowContext) -> AnyView>>,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
@@ -259,6 +261,7 @@ impl ButtonLike {
             style: ButtonStyle::default(),
             disabled: false,
             selected: false,
+            width: None,
             size: ButtonSize::Default,
             tooltip: None,
             children: SmallVec::new(),
@@ -284,6 +287,18 @@ impl Selectable for ButtonLike {
 impl Clickable for ButtonLike {
     fn on_click(mut self, handler: impl Fn(&ClickEvent, &mut WindowContext) + 'static) -> Self {
         self.on_click = Some(Box::new(handler));
+        self
+    }
+}
+
+impl FixedWidth for ButtonLike {
+    fn width(mut self, width: DefiniteLength) -> Self {
+        self.width = Some(width);
+        self
+    }
+
+    fn full_width(mut self) -> Self {
+        self.width = Some(relative(1.));
         self
     }
 }
@@ -321,14 +336,19 @@ impl RenderOnce for ButtonLike {
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         h_stack()
             .id(self.id.clone())
+            .group("")
+            .flex_none()
             .h(self.size.height())
+            .when_some(self.width, |this, width| this.w(width))
             .rounded_md()
-            .when(!self.disabled, |el| el.cursor_pointer())
             .gap_1()
             .px_1()
             .bg(self.style.enabled(cx).background)
-            .hover(|hover| hover.bg(self.style.hovered(cx).background))
-            .active(|active| active.bg(self.style.active(cx).background))
+            .when(!self.disabled, |this| {
+                this.cursor_pointer()
+                    .hover(|hover| hover.bg(self.style.hovered(cx).background))
+                    .active(|active| active.bg(self.style.active(cx).background))
+            })
             .when_some(
                 self.on_click.filter(|_| !self.disabled),
                 |this, on_click| {

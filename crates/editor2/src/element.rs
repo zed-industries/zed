@@ -51,8 +51,10 @@ use std::{
 };
 use sum_tree::Bias;
 use theme::{ActiveTheme, PlayerColor};
-use ui::prelude::*;
-use ui::{h_stack, IconButton, Tooltip};
+use ui::{
+    h_stack, ButtonLike, ButtonStyle, Disclosure, IconButton, IconElement, IconSize, Label, Tooltip,
+};
+use ui::{prelude::*, Icon};
 use util::ResultExt;
 use workspace::item::Item;
 
@@ -328,7 +330,7 @@ impl EditorElement {
         });
     }
 
-    fn modifiers_changed(
+    pub(crate) fn modifiers_changed(
         editor: &mut Editor,
         event: &ModifiersChangedEvent,
         cx: &mut ViewContext<Editor>,
@@ -1753,7 +1755,7 @@ impl EditorElement {
             let gutter_width;
             let gutter_margin;
             if snapshot.show_gutter {
-                let descent = cx.text_system().descent(font_id, font_size).unwrap();
+                let descent = cx.text_system().descent(font_id, font_size);
 
                 let gutter_padding_factor = 3.5;
                 gutter_padding = (em_width * gutter_padding_factor).round();
@@ -2223,7 +2225,8 @@ impl EditorElement {
                         .as_ref()
                         .map(|project| project.read(cx).visible_worktrees(cx).count() > 1)
                         .unwrap_or_default();
-                    let jump_icon = project::File::from_dyn(buffer.file()).map(|file| {
+
+                    let jump_handler = project::File::from_dyn(buffer.file()).map(|file| {
                         let jump_path = ProjectPath {
                             worktree_id: file.worktree_id(cx),
                             path: file.path.clone(),
@@ -2234,11 +2237,11 @@ impl EditorElement {
                             .map_or(range.context.start, |primary| primary.start);
                         let jump_position = language::ToPoint::to_point(&jump_anchor, buffer);
 
-                        IconButton::new(block_id, ui::Icon::ArrowUpRight)
-                            .on_click(cx.listener_for(&self.editor, move |editor, e, cx| {
-                                editor.jump(jump_path.clone(), jump_position, jump_anchor, cx);
-                            }))
-                            .tooltip(|cx| Tooltip::for_action("Jump to Buffer", &OpenExcerpts, cx))
+                        let jump_handler = cx.listener_for(&self.editor, move |editor, e, cx| {
+                            editor.jump(jump_path.clone(), jump_position, jump_anchor, cx);
+                        });
+
+                        jump_handler
                     });
 
                     let element = if *starts_new_buffer {
@@ -2253,25 +2256,108 @@ impl EditorElement {
                                 .map(|p| SharedString::from(p.to_string_lossy().to_string() + "/"));
                         }
 
-                        h_stack()
-                            .id("path header block")
-                            .size_full()
-                            .bg(gpui::red())
-                            .child(
-                                filename
-                                    .map(SharedString::from)
-                                    .unwrap_or_else(|| "untitled".into()),
-                            )
-                            .children(parent_path)
-                            .children(jump_icon) // .p_x(gutter_padding)
+                        let is_open = true;
+
+                        div().id("path header container").size_full().p_1p5().child(
+                            h_stack()
+                                .id("path header block")
+                                .py_1p5()
+                                .pl_3()
+                                .pr_2()
+                                .rounded_lg()
+                                .shadow_md()
+                                .border()
+                                .border_color(cx.theme().colors().border)
+                                .bg(cx.theme().colors().editor_subheader_background)
+                                .justify_between()
+                                .cursor_pointer()
+                                .hover(|style| style.bg(cx.theme().colors().element_hover))
+                                .on_click(cx.listener(|_editor, _event, _cx| {
+                                    // TODO: Implement collapsing path headers
+                                    todo!("Clicking path header")
+                                }))
+                                .child(
+                                    h_stack()
+                                        .gap_3()
+                                        // TODO: Add open/close state and toggle action
+                                        .child(
+                                            div().border().border_color(gpui::red()).child(
+                                                ButtonLike::new("path-header-disclosure-control")
+                                                    .style(ButtonStyle::Subtle)
+                                                    .child(IconElement::new(match is_open {
+                                                        true => Icon::ChevronDown,
+                                                        false => Icon::ChevronRight,
+                                                    })),
+                                            ),
+                                        )
+                                        .child(
+                                            h_stack()
+                                                .gap_2()
+                                                .child(Label::new(
+                                                    filename
+                                                        .map(SharedString::from)
+                                                        .unwrap_or_else(|| "untitled".into()),
+                                                ))
+                                                .when_some(parent_path, |then, path| {
+                                                    then.child(Label::new(path).color(Color::Muted))
+                                                }),
+                                        ),
+                                )
+                                .children(jump_handler.map(|jump_handler| {
+                                    IconButton::new(block_id, Icon::ArrowUpRight)
+                                        .style(ButtonStyle::Subtle)
+                                        .on_click(jump_handler)
+                                        .tooltip(|cx| {
+                                            Tooltip::for_action("Jump to Buffer", &OpenExcerpts, cx)
+                                        })
+                                })), // .p_x(gutter_padding)
+                        )
                     } else {
                         let text_style = style.text.clone();
                         h_stack()
                             .id("collapsed context")
                             .size_full()
-                            .bg(gpui::red())
-                            .child("⋯")
-                            .children(jump_icon) // .p_x(gutter_padding)
+                            .gap(gutter_padding)
+                            .child(
+                                h_stack()
+                                    .justify_end()
+                                    .flex_none()
+                                    .w(gutter_width - gutter_padding)
+                                    .h_full()
+                                    .text_buffer(cx)
+                                    .text_color(cx.theme().colors().editor_line_number)
+                                    .child("..."),
+                            )
+                            .map(|this| {
+                                if let Some(jump_handler) = jump_handler {
+                                    this.child(
+                                        ButtonLike::new("jump to collapsed context")
+                                            .style(ButtonStyle::Transparent)
+                                            .full_width()
+                                            .on_click(jump_handler)
+                                            .tooltip(|cx| {
+                                                Tooltip::for_action(
+                                                    "Jump to Buffer",
+                                                    &OpenExcerpts,
+                                                    cx,
+                                                )
+                                            })
+                                            .child(
+                                                div()
+                                                    .h_px()
+                                                    .w_full()
+                                                    .bg(cx.theme().colors().border_variant)
+                                                    .group_hover("", |style| {
+                                                        style.bg(cx.theme().colors().border)
+                                                    }),
+                                            ),
+                                    )
+                                } else {
+                                    this.child(div().size_full().bg(gpui::green()))
+                                }
+                            })
+                        // .child("⋯")
+                        // .children(jump_icon) // .p_x(gutter_padding)
                     };
                     element.into_any()
                 }
@@ -3141,448 +3227,491 @@ fn scale_horizontal_mouse_autoscroll_delta(delta: Pixels) -> f32 {
     (delta.pow(1.2) / 300.0).into()
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     use crate::{
-//         display_map::{BlockDisposition, BlockProperties},
-//         editor_tests::{init_test, update_test_language_settings},
-//         Editor, MultiBuffer,
-//     };
-//     use gpui::TestAppContext;
-//     use language::language_settings;
-//     use log::info;
-//     use std::{num::NonZeroU32, sync::Arc};
-//     use util::test::sample_text;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        display_map::{BlockDisposition, BlockProperties},
+        editor_tests::{init_test, update_test_language_settings},
+        Editor, MultiBuffer,
+    };
+    use gpui::{EmptyView, TestAppContext};
+    use language::language_settings;
+    use log::info;
+    use std::{num::NonZeroU32, sync::Arc};
+    use util::test::sample_text;
 
-//     #[gpui::test]
-//     fn test_layout_line_numbers(cx: &mut TestAppContext) {
-//         init_test(cx, |_| {});
-//         let editor = cx
-//             .add_window(|cx| {
-//                 let buffer = MultiBuffer::build_simple(&sample_text(6, 6, 'a'), cx);
-//                 Editor::new(EditorMode::Full, buffer, None, None, cx)
-//             })
-//             .root(cx);
-//         let element = EditorElement::new(editor.read_with(cx, |editor, cx| editor.style(cx)));
+    #[gpui::test]
+    fn test_shape_line_numbers(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+        let window = cx.add_window(|cx| {
+            let buffer = MultiBuffer::build_simple(&sample_text(6, 6, 'a'), cx);
+            Editor::new(EditorMode::Full, buffer, None, cx)
+        });
 
-//         let layouts = editor.update(cx, |editor, cx| {
-//             let snapshot = editor.snapshot(cx);
-//             element
-//                 .layout_line_numbers(
-//                     0..6,
-//                     &Default::default(),
-//                     DisplayPoint::new(0, 0),
-//                     false,
-//                     &snapshot,
-//                     cx,
-//                 )
-//                 .0
-//         });
-//         assert_eq!(layouts.len(), 6);
+        let editor = window.root(cx).unwrap();
+        let style = cx.update(|cx| editor.read(cx).style().unwrap().clone());
+        let element = EditorElement::new(&editor, style);
 
-//         let relative_rows = editor.update(cx, |editor, cx| {
-//             let snapshot = editor.snapshot(cx);
-//             element.calculate_relative_line_numbers(&snapshot, &(0..6), Some(3))
-//         });
-//         assert_eq!(relative_rows[&0], 3);
-//         assert_eq!(relative_rows[&1], 2);
-//         assert_eq!(relative_rows[&2], 1);
-//         // current line has no relative number
-//         assert_eq!(relative_rows[&4], 1);
-//         assert_eq!(relative_rows[&5], 2);
+        let layouts = window
+            .update(cx, |editor, cx| {
+                let snapshot = editor.snapshot(cx);
+                element
+                    .shape_line_numbers(
+                        0..6,
+                        &Default::default(),
+                        DisplayPoint::new(0, 0),
+                        false,
+                        &snapshot,
+                        cx,
+                    )
+                    .0
+            })
+            .unwrap();
+        assert_eq!(layouts.len(), 6);
 
-//         // works if cursor is before screen
-//         let relative_rows = editor.update(cx, |editor, cx| {
-//             let snapshot = editor.snapshot(cx);
+        let relative_rows = window
+            .update(cx, |editor, cx| {
+                let snapshot = editor.snapshot(cx);
+                element.calculate_relative_line_numbers(&snapshot, &(0..6), Some(3))
+            })
+            .unwrap();
+        assert_eq!(relative_rows[&0], 3);
+        assert_eq!(relative_rows[&1], 2);
+        assert_eq!(relative_rows[&2], 1);
+        // current line has no relative number
+        assert_eq!(relative_rows[&4], 1);
+        assert_eq!(relative_rows[&5], 2);
 
-//             element.calculate_relative_line_numbers(&snapshot, &(3..6), Some(1))
-//         });
-//         assert_eq!(relative_rows.len(), 3);
-//         assert_eq!(relative_rows[&3], 2);
-//         assert_eq!(relative_rows[&4], 3);
-//         assert_eq!(relative_rows[&5], 4);
+        // works if cursor is before screen
+        let relative_rows = window
+            .update(cx, |editor, cx| {
+                let snapshot = editor.snapshot(cx);
 
-//         // works if cursor is after screen
-//         let relative_rows = editor.update(cx, |editor, cx| {
-//             let snapshot = editor.snapshot(cx);
+                element.calculate_relative_line_numbers(&snapshot, &(3..6), Some(1))
+            })
+            .unwrap();
+        assert_eq!(relative_rows.len(), 3);
+        assert_eq!(relative_rows[&3], 2);
+        assert_eq!(relative_rows[&4], 3);
+        assert_eq!(relative_rows[&5], 4);
 
-//             element.calculate_relative_line_numbers(&snapshot, &(0..3), Some(6))
-//         });
-//         assert_eq!(relative_rows.len(), 3);
-//         assert_eq!(relative_rows[&0], 5);
-//         assert_eq!(relative_rows[&1], 4);
-//         assert_eq!(relative_rows[&2], 3);
-//     }
+        // works if cursor is after screen
+        let relative_rows = window
+            .update(cx, |editor, cx| {
+                let snapshot = editor.snapshot(cx);
 
-//     #[gpui::test]
-//     async fn test_vim_visual_selections(cx: &mut TestAppContext) {
-//         init_test(cx, |_| {});
+                element.calculate_relative_line_numbers(&snapshot, &(0..3), Some(6))
+            })
+            .unwrap();
+        assert_eq!(relative_rows.len(), 3);
+        assert_eq!(relative_rows[&0], 5);
+        assert_eq!(relative_rows[&1], 4);
+        assert_eq!(relative_rows[&2], 3);
+    }
 
-//         let editor = cx
-//             .add_window(|cx| {
-//                 let buffer = MultiBuffer::build_simple(&(sample_text(6, 6, 'a') + "\n"), cx);
-//                 Editor::new(EditorMode::Full, buffer, None, None, cx)
-//             })
-//             .root(cx);
-//         let mut element = EditorElement::new(editor.read_with(cx, |editor, cx| editor.style(cx)));
-//         let (_, state) = editor.update(cx, |editor, cx| {
-//             editor.cursor_shape = CursorShape::Block;
-//             editor.change_selections(None, cx, |s| {
-//                 s.select_ranges([
-//                     Point::new(0, 0)..Point::new(1, 0),
-//                     Point::new(3, 2)..Point::new(3, 3),
-//                     Point::new(5, 6)..Point::new(6, 0),
-//                 ]);
-//             });
-//             element.layout(
-//                 SizeConstraint::new(point(500., 500.), point(500., 500.)),
-//                 editor,
-//                 cx,
-//             )
-//         });
-//         assert_eq!(state.selections.len(), 1);
-//         let local_selections = &state.selections[0].1;
-//         assert_eq!(local_selections.len(), 3);
-//         // moves cursor back one line
-//         assert_eq!(local_selections[0].head, DisplayPoint::new(0, 6));
-//         assert_eq!(
-//             local_selections[0].range,
-//             DisplayPoint::new(0, 0)..DisplayPoint::new(1, 0)
-//         );
+    #[gpui::test]
+    async fn test_vim_visual_selections(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
 
-//         // moves cursor back one column
-//         assert_eq!(
-//             local_selections[1].range,
-//             DisplayPoint::new(3, 2)..DisplayPoint::new(3, 3)
-//         );
-//         assert_eq!(local_selections[1].head, DisplayPoint::new(3, 2));
+        let window = cx.add_window(|cx| {
+            let buffer = MultiBuffer::build_simple(&(sample_text(6, 6, 'a') + "\n"), cx);
+            Editor::new(EditorMode::Full, buffer, None, cx)
+        });
+        let editor = window.root(cx).unwrap();
+        let style = cx.update(|cx| editor.read(cx).style().unwrap().clone());
+        let mut element = EditorElement::new(&editor, style);
 
-//         // leaves cursor on the max point
-//         assert_eq!(
-//             local_selections[2].range,
-//             DisplayPoint::new(5, 6)..DisplayPoint::new(6, 0)
-//         );
-//         assert_eq!(local_selections[2].head, DisplayPoint::new(6, 0));
+        window
+            .update(cx, |editor, cx| {
+                editor.cursor_shape = CursorShape::Block;
+                editor.change_selections(None, cx, |s| {
+                    s.select_ranges([
+                        Point::new(0, 0)..Point::new(1, 0),
+                        Point::new(3, 2)..Point::new(3, 3),
+                        Point::new(5, 6)..Point::new(6, 0),
+                    ]);
+                });
+            })
+            .unwrap();
+        let state = cx
+            .update_window(window.into(), |_, cx| {
+                element.compute_layout(
+                    Bounds {
+                        origin: point(px(500.), px(500.)),
+                        size: size(px(500.), px(500.)),
+                    },
+                    cx,
+                )
+            })
+            .unwrap();
 
-//         // active lines does not include 1 (even though the range of the selection does)
-//         assert_eq!(
-//             state.active_rows.keys().cloned().collect::<Vec<u32>>(),
-//             vec![0, 3, 5, 6]
-//         );
+        assert_eq!(state.selections.len(), 1);
+        let local_selections = &state.selections[0].1;
+        assert_eq!(local_selections.len(), 3);
+        // moves cursor back one line
+        assert_eq!(local_selections[0].head, DisplayPoint::new(0, 6));
+        assert_eq!(
+            local_selections[0].range,
+            DisplayPoint::new(0, 0)..DisplayPoint::new(1, 0)
+        );
 
-//         // multi-buffer support
-//         // in DisplayPoint co-ordinates, this is what we're dealing with:
-//         //  0: [[file
-//         //  1:   header]]
-//         //  2: aaaaaa
-//         //  3: bbbbbb
-//         //  4: cccccc
-//         //  5:
-//         //  6: ...
-//         //  7: ffffff
-//         //  8: gggggg
-//         //  9: hhhhhh
-//         // 10:
-//         // 11: [[file
-//         // 12:   header]]
-//         // 13: bbbbbb
-//         // 14: cccccc
-//         // 15: dddddd
-//         let editor = cx
-//             .add_window(|cx| {
-//                 let buffer = MultiBuffer::build_multi(
-//                     [
-//                         (
-//                             &(sample_text(8, 6, 'a') + "\n"),
-//                             vec![
-//                                 Point::new(0, 0)..Point::new(3, 0),
-//                                 Point::new(4, 0)..Point::new(7, 0),
-//                             ],
-//                         ),
-//                         (
-//                             &(sample_text(8, 6, 'a') + "\n"),
-//                             vec![Point::new(1, 0)..Point::new(3, 0)],
-//                         ),
-//                     ],
-//                     cx,
-//                 );
-//                 Editor::new(EditorMode::Full, buffer, None, None, cx)
-//             })
-//             .root(cx);
-//         let mut element = EditorElement::new(editor.read_with(cx, |editor, cx| editor.style(cx)));
-//         let (_, state) = editor.update(cx, |editor, cx| {
-//             editor.cursor_shape = CursorShape::Block;
-//             editor.change_selections(None, cx, |s| {
-//                 s.select_display_ranges([
-//                     DisplayPoint::new(4, 0)..DisplayPoint::new(7, 0),
-//                     DisplayPoint::new(10, 0)..DisplayPoint::new(13, 0),
-//                 ]);
-//             });
-//             element.layout(
-//                 SizeConstraint::new(point(500., 500.), point(500., 500.)),
-//                 editor,
-//                 cx,
-//             )
-//         });
+        // moves cursor back one column
+        assert_eq!(
+            local_selections[1].range,
+            DisplayPoint::new(3, 2)..DisplayPoint::new(3, 3)
+        );
+        assert_eq!(local_selections[1].head, DisplayPoint::new(3, 2));
 
-//         assert_eq!(state.selections.len(), 1);
-//         let local_selections = &state.selections[0].1;
-//         assert_eq!(local_selections.len(), 2);
+        // leaves cursor on the max point
+        assert_eq!(
+            local_selections[2].range,
+            DisplayPoint::new(5, 6)..DisplayPoint::new(6, 0)
+        );
+        assert_eq!(local_selections[2].head, DisplayPoint::new(6, 0));
 
-//         // moves cursor on excerpt boundary back a line
-//         // and doesn't allow selection to bleed through
-//         assert_eq!(
-//             local_selections[0].range,
-//             DisplayPoint::new(4, 0)..DisplayPoint::new(6, 0)
-//         );
-//         assert_eq!(local_selections[0].head, DisplayPoint::new(5, 0));
+        // active lines does not include 1 (even though the range of the selection does)
+        assert_eq!(
+            state.active_rows.keys().cloned().collect::<Vec<u32>>(),
+            vec![0, 3, 5, 6]
+        );
 
-//         // moves cursor on buffer boundary back two lines
-//         // and doesn't allow selection to bleed through
-//         assert_eq!(
-//             local_selections[1].range,
-//             DisplayPoint::new(10, 0)..DisplayPoint::new(11, 0)
-//         );
-//         assert_eq!(local_selections[1].head, DisplayPoint::new(10, 0));
-//     }
+        // multi-buffer support
+        // in DisplayPoint co-ordinates, this is what we're dealing with:
+        //  0: [[file
+        //  1:   header]]
+        //  2: aaaaaa
+        //  3: bbbbbb
+        //  4: cccccc
+        //  5:
+        //  6: ...
+        //  7: ffffff
+        //  8: gggggg
+        //  9: hhhhhh
+        // 10:
+        // 11: [[file
+        // 12:   header]]
+        // 13: bbbbbb
+        // 14: cccccc
+        // 15: dddddd
+        let window = cx.add_window(|cx| {
+            let buffer = MultiBuffer::build_multi(
+                [
+                    (
+                        &(sample_text(8, 6, 'a') + "\n"),
+                        vec![
+                            Point::new(0, 0)..Point::new(3, 0),
+                            Point::new(4, 0)..Point::new(7, 0),
+                        ],
+                    ),
+                    (
+                        &(sample_text(8, 6, 'a') + "\n"),
+                        vec![Point::new(1, 0)..Point::new(3, 0)],
+                    ),
+                ],
+                cx,
+            );
+            Editor::new(EditorMode::Full, buffer, None, cx)
+        });
+        let editor = window.root(cx).unwrap();
+        let style = cx.update(|cx| editor.read(cx).style().unwrap().clone());
+        let mut element = EditorElement::new(&editor, style);
+        let state = window.update(cx, |editor, cx| {
+            editor.cursor_shape = CursorShape::Block;
+            editor.change_selections(None, cx, |s| {
+                s.select_display_ranges([
+                    DisplayPoint::new(4, 0)..DisplayPoint::new(7, 0),
+                    DisplayPoint::new(10, 0)..DisplayPoint::new(13, 0),
+                ]);
+            });
+        });
 
-//     #[gpui::test]
-//     fn test_layout_with_placeholder_text_and_blocks(cx: &mut TestAppContext) {
-//         init_test(cx, |_| {});
+        let state = cx
+            .update_window(window.into(), |_, cx| {
+                element.compute_layout(
+                    Bounds {
+                        origin: point(px(500.), px(500.)),
+                        size: size(px(500.), px(500.)),
+                    },
+                    cx,
+                )
+            })
+            .unwrap();
+        assert_eq!(state.selections.len(), 1);
+        let local_selections = &state.selections[0].1;
+        assert_eq!(local_selections.len(), 2);
 
-//         let editor = cx
-//             .add_window(|cx| {
-//                 let buffer = MultiBuffer::build_simple("", cx);
-//                 Editor::new(EditorMode::Full, buffer, None, None, cx)
-//             })
-//             .root(cx);
+        // moves cursor on excerpt boundary back a line
+        // and doesn't allow selection to bleed through
+        assert_eq!(
+            local_selections[0].range,
+            DisplayPoint::new(4, 0)..DisplayPoint::new(6, 0)
+        );
+        assert_eq!(local_selections[0].head, DisplayPoint::new(5, 0));
+        dbg!("Hi");
+        // moves cursor on buffer boundary back two lines
+        // and doesn't allow selection to bleed through
+        assert_eq!(
+            local_selections[1].range,
+            DisplayPoint::new(10, 0)..DisplayPoint::new(11, 0)
+        );
+        assert_eq!(local_selections[1].head, DisplayPoint::new(10, 0));
+    }
 
-//         editor.update(cx, |editor, cx| {
-//             editor.set_placeholder_text("hello", cx);
-//             editor.insert_blocks(
-//                 [BlockProperties {
-//                     style: BlockStyle::Fixed,
-//                     disposition: BlockDisposition::Above,
-//                     height: 3,
-//                     position: Anchor::min(),
-//                     render: Arc::new(|_| Empty::new().into_any),
-//                 }],
-//                 None,
-//                 cx,
-//             );
+    #[gpui::test]
+    fn test_layout_with_placeholder_text_and_blocks(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
 
-//             // Blur the editor so that it displays placeholder text.
-//             cx.blur();
-//         });
+        let window = cx.add_window(|cx| {
+            let buffer = MultiBuffer::build_simple("", cx);
+            Editor::new(EditorMode::Full, buffer, None, cx)
+        });
+        let editor = window.root(cx).unwrap();
+        let style = cx.update(|cx| editor.read(cx).style().unwrap().clone());
+        window
+            .update(cx, |editor, cx| {
+                editor.set_placeholder_text("hello", cx);
+                editor.insert_blocks(
+                    [BlockProperties {
+                        style: BlockStyle::Fixed,
+                        disposition: BlockDisposition::Above,
+                        height: 3,
+                        position: Anchor::min(),
+                        render: Arc::new(|_| div().into_any()),
+                    }],
+                    None,
+                    cx,
+                );
 
-//         let mut element = EditorElement::new(editor.read_with(cx, |editor, cx| editor.style(cx)));
-//         let (size, mut state) = editor.update(cx, |editor, cx| {
-//             element.layout(
-//                 SizeConstraint::new(point(500., 500.), point(500., 500.)),
-//                 editor,
-//                 cx,
-//             )
-//         });
+                // Blur the editor so that it displays placeholder text.
+                cx.blur();
+            })
+            .unwrap();
 
-//         assert_eq!(state.position_map.line_layouts.len(), 4);
-//         assert_eq!(
-//             state
-//                 .line_number_layouts
-//                 .iter()
-//                 .map(Option::is_some)
-//                 .collect::<Vec<_>>(),
-//             &[false, false, false, true]
-//         );
+        let mut element = EditorElement::new(&editor, style);
+        let mut state = cx
+            .update_window(window.into(), |_, cx| {
+                element.compute_layout(
+                    Bounds {
+                        origin: point(px(500.), px(500.)),
+                        size: size(px(500.), px(500.)),
+                    },
+                    cx,
+                )
+            })
+            .unwrap();
+        let size = state.position_map.size;
 
-//         // Don't panic.
-//         let bounds = Bounds::<Pixels>::new(Default::default(), size);
-//         editor.update(cx, |editor, cx| {
-//             element.paint(bounds, bounds, &mut state, editor, cx);
-//         });
-//     }
+        assert_eq!(state.position_map.line_layouts.len(), 4);
+        assert_eq!(
+            state
+                .line_numbers
+                .iter()
+                .map(Option::is_some)
+                .collect::<Vec<_>>(),
+            &[false, false, false, true]
+        );
 
-//     #[gpui::test]
-//     fn test_all_invisibles_drawing(cx: &mut TestAppContext) {
-//         const TAB_SIZE: u32 = 4;
+        // Don't panic.
+        let bounds = Bounds::<Pixels>::new(Default::default(), size);
+        cx.update_window(window.into(), |_, cx| {
+            element.paint(bounds, &mut (), cx);
+        })
+        .unwrap()
+    }
 
-//         let input_text = "\t \t|\t| a b";
-//         let expected_invisibles = vec![
-//             Invisible::Tab {
-//                 line_start_offset: 0,
-//             },
-//             Invisible::Whitespace {
-//                 line_offset: TAB_SIZE as usize,
-//             },
-//             Invisible::Tab {
-//                 line_start_offset: TAB_SIZE as usize + 1,
-//             },
-//             Invisible::Tab {
-//                 line_start_offset: TAB_SIZE as usize * 2 + 1,
-//             },
-//             Invisible::Whitespace {
-//                 line_offset: TAB_SIZE as usize * 3 + 1,
-//             },
-//             Invisible::Whitespace {
-//                 line_offset: TAB_SIZE as usize * 3 + 3,
-//             },
-//         ];
-//         assert_eq!(
-//             expected_invisibles.len(),
-//             input_text
-//                 .chars()
-//                 .filter(|initial_char| initial_char.is_whitespace())
-//                 .count(),
-//             "Hardcoded expected invisibles differ from the actual ones in '{input_text}'"
-//         );
+    #[gpui::test]
+    fn test_all_invisibles_drawing(cx: &mut TestAppContext) {
+        const TAB_SIZE: u32 = 4;
 
-//         init_test(cx, |s| {
-//             s.defaults.show_whitespaces = Some(ShowWhitespaceSetting::All);
-//             s.defaults.tab_size = NonZeroU32::new(TAB_SIZE);
-//         });
+        let input_text = "\t \t|\t| a b";
+        let expected_invisibles = vec![
+            Invisible::Tab {
+                line_start_offset: 0,
+            },
+            Invisible::Whitespace {
+                line_offset: TAB_SIZE as usize,
+            },
+            Invisible::Tab {
+                line_start_offset: TAB_SIZE as usize + 1,
+            },
+            Invisible::Tab {
+                line_start_offset: TAB_SIZE as usize * 2 + 1,
+            },
+            Invisible::Whitespace {
+                line_offset: TAB_SIZE as usize * 3 + 1,
+            },
+            Invisible::Whitespace {
+                line_offset: TAB_SIZE as usize * 3 + 3,
+            },
+        ];
+        assert_eq!(
+            expected_invisibles.len(),
+            input_text
+                .chars()
+                .filter(|initial_char| initial_char.is_whitespace())
+                .count(),
+            "Hardcoded expected invisibles differ from the actual ones in '{input_text}'"
+        );
 
-//         let actual_invisibles =
-//             collect_invisibles_from_new_editor(cx, EditorMode::Full, &input_text, 500.0);
+        init_test(cx, |s| {
+            s.defaults.show_whitespaces = Some(ShowWhitespaceSetting::All);
+            s.defaults.tab_size = NonZeroU32::new(TAB_SIZE);
+        });
 
-//         assert_eq!(expected_invisibles, actual_invisibles);
-//     }
+        let actual_invisibles =
+            collect_invisibles_from_new_editor(cx, EditorMode::Full, &input_text, px(500.0));
 
-//     #[gpui::test]
-//     fn test_invisibles_dont_appear_in_certain_editors(cx: &mut TestAppContext) {
-//         init_test(cx, |s| {
-//             s.defaults.show_whitespaces = Some(ShowWhitespaceSetting::All);
-//             s.defaults.tab_size = NonZeroU32::new(4);
-//         });
+        assert_eq!(expected_invisibles, actual_invisibles);
+    }
 
-//         for editor_mode_without_invisibles in [
-//             EditorMode::SingleLine,
-//             EditorMode::AutoHeight { max_lines: 100 },
-//         ] {
-//             let invisibles = collect_invisibles_from_new_editor(
-//                 cx,
-//                 editor_mode_without_invisibles,
-//                 "\t\t\t| | a b",
-//                 500.0,
-//             );
-//             assert!(invisibles.is_empty,
-//                 "For editor mode {editor_mode_without_invisibles:?} no invisibles was expected but got {invisibles:?}");
-//         }
-//     }
+    #[gpui::test]
+    fn test_invisibles_dont_appear_in_certain_editors(cx: &mut TestAppContext) {
+        init_test(cx, |s| {
+            s.defaults.show_whitespaces = Some(ShowWhitespaceSetting::All);
+            s.defaults.tab_size = NonZeroU32::new(4);
+        });
 
-//     #[gpui::test]
-//     fn test_wrapped_invisibles_drawing(cx: &mut TestAppContext) {
-//         let tab_size = 4;
-//         let input_text = "a\tbcd   ".repeat(9);
-//         let repeated_invisibles = [
-//             Invisible::Tab {
-//                 line_start_offset: 1,
-//             },
-//             Invisible::Whitespace {
-//                 line_offset: tab_size as usize + 3,
-//             },
-//             Invisible::Whitespace {
-//                 line_offset: tab_size as usize + 4,
-//             },
-//             Invisible::Whitespace {
-//                 line_offset: tab_size as usize + 5,
-//             },
-//         ];
-//         let expected_invisibles = std::iter::once(repeated_invisibles)
-//             .cycle()
-//             .take(9)
-//             .flatten()
-//             .collect::<Vec<_>>();
-//         assert_eq!(
-//             expected_invisibles.len(),
-//             input_text
-//                 .chars()
-//                 .filter(|initial_char| initial_char.is_whitespace())
-//                 .count(),
-//             "Hardcoded expected invisibles differ from the actual ones in '{input_text}'"
-//         );
-//         info!("Expected invisibles: {expected_invisibles:?}");
+        for editor_mode_without_invisibles in [
+            EditorMode::SingleLine,
+            EditorMode::AutoHeight { max_lines: 100 },
+        ] {
+            let invisibles = collect_invisibles_from_new_editor(
+                cx,
+                editor_mode_without_invisibles,
+                "\t\t\t| | a b",
+                px(500.0),
+            );
+            assert!(invisibles.is_empty(),
+                    "For editor mode {editor_mode_without_invisibles:?} no invisibles was expected but got {invisibles:?}");
+        }
+    }
 
-//         init_test(cx, |_| {});
+    #[gpui::test]
+    fn test_wrapped_invisibles_drawing(cx: &mut TestAppContext) {
+        let tab_size = 4;
+        let input_text = "a\tbcd   ".repeat(9);
+        let repeated_invisibles = [
+            Invisible::Tab {
+                line_start_offset: 1,
+            },
+            Invisible::Whitespace {
+                line_offset: tab_size as usize + 3,
+            },
+            Invisible::Whitespace {
+                line_offset: tab_size as usize + 4,
+            },
+            Invisible::Whitespace {
+                line_offset: tab_size as usize + 5,
+            },
+        ];
+        let expected_invisibles = std::iter::once(repeated_invisibles)
+            .cycle()
+            .take(9)
+            .flatten()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            expected_invisibles.len(),
+            input_text
+                .chars()
+                .filter(|initial_char| initial_char.is_whitespace())
+                .count(),
+            "Hardcoded expected invisibles differ from the actual ones in '{input_text}'"
+        );
+        info!("Expected invisibles: {expected_invisibles:?}");
 
-//         // Put the same string with repeating whitespace pattern into editors of various size,
-//         // take deliberately small steps during resizing, to put all whitespace kinds near the wrap point.
-//         let resize_step = 10.0;
-//         let mut editor_width = 200.0;
-//         while editor_width <= 1000.0 {
-//             update_test_language_settings(cx, |s| {
-//                 s.defaults.tab_size = NonZeroU32::new(tab_size);
-//                 s.defaults.show_whitespaces = Some(ShowWhitespaceSetting::All);
-//                 s.defaults.preferred_line_length = Some(editor_width as u32);
-//                 s.defaults.soft_wrap = Some(language_settings::SoftWrap::PreferredLineLength);
-//             });
+        init_test(cx, |_| {});
 
-//             let actual_invisibles =
-//                 collect_invisibles_from_new_editor(cx, EditorMode::Full, &input_text, editor_width);
+        // Put the same string with repeating whitespace pattern into editors of various size,
+        // take deliberately small steps during resizing, to put all whitespace kinds near the wrap point.
+        let resize_step = 10.0;
+        let mut editor_width = 200.0;
+        while editor_width <= 1000.0 {
+            update_test_language_settings(cx, |s| {
+                s.defaults.tab_size = NonZeroU32::new(tab_size);
+                s.defaults.show_whitespaces = Some(ShowWhitespaceSetting::All);
+                s.defaults.preferred_line_length = Some(editor_width as u32);
+                s.defaults.soft_wrap = Some(language_settings::SoftWrap::PreferredLineLength);
+            });
 
-//             // Whatever the editor size is, ensure it has the same invisible kinds in the same order
-//             // (no good guarantees about the offsets: wrapping could trigger padding and its tests should check the offsets).
-//             let mut i = 0;
-//             for (actual_index, actual_invisible) in actual_invisibles.iter().enumerate() {
-//                 i = actual_index;
-//                 match expected_invisibles.get(i) {
-//                     Some(expected_invisible) => match (expected_invisible, actual_invisible) {
-//                         (Invisible::Whitespace { .. }, Invisible::Whitespace { .. })
-//                         | (Invisible::Tab { .. }, Invisible::Tab { .. }) => {}
-//                         _ => {
-//                             panic!("At index {i}, expected invisible {expected_invisible:?} does not match actual {actual_invisible:?} by kind. Actual invisibles: {actual_invisibles:?}")
-//                         }
-//                     },
-//                     None => panic!("Unexpected extra invisible {actual_invisible:?} at index {i}"),
-//                 }
-//             }
-//             let missing_expected_invisibles = &expected_invisibles[i + 1..];
-//             assert!(
-//                 missing_expected_invisibles.is_empty,
-//                 "Missing expected invisibles after index {i}: {missing_expected_invisibles:?}"
-//             );
+            let actual_invisibles = collect_invisibles_from_new_editor(
+                cx,
+                EditorMode::Full,
+                &input_text,
+                px(editor_width),
+            );
 
-//             editor_width += resize_step;
-//         }
-//     }
+            // Whatever the editor size is, ensure it has the same invisible kinds in the same order
+            // (no good guarantees about the offsets: wrapping could trigger padding and its tests should check the offsets).
+            let mut i = 0;
+            for (actual_index, actual_invisible) in actual_invisibles.iter().enumerate() {
+                i = actual_index;
+                match expected_invisibles.get(i) {
+                    Some(expected_invisible) => match (expected_invisible, actual_invisible) {
+                        (Invisible::Whitespace { .. }, Invisible::Whitespace { .. })
+                        | (Invisible::Tab { .. }, Invisible::Tab { .. }) => {}
+                        _ => {
+                            panic!("At index {i}, expected invisible {expected_invisible:?} does not match actual {actual_invisible:?} by kind. Actual invisibles: {actual_invisibles:?}")
+                        }
+                    },
+                    None => panic!("Unexpected extra invisible {actual_invisible:?} at index {i}"),
+                }
+            }
+            let missing_expected_invisibles = &expected_invisibles[i + 1..];
+            assert!(
+                missing_expected_invisibles.is_empty(),
+                "Missing expected invisibles after index {i}: {missing_expected_invisibles:?}"
+            );
 
-//     fn collect_invisibles_from_new_editor(
-//         cx: &mut TestAppContext,
-//         editor_mode: EditorMode,
-//         input_text: &str,
-//         editor_width: f32,
-//     ) -> Vec<Invisible> {
-//         info!(
-//             "Creating editor with mode {editor_mode:?}, width {editor_width} and text '{input_text}'"
-//         );
-//         let editor = cx
-//             .add_window(|cx| {
-//                 let buffer = MultiBuffer::build_simple(&input_text, cx);
-//                 Editor::new(editor_mode, buffer, None, None, cx)
-//             })
-//             .root(cx);
+            editor_width += resize_step;
+        }
+    }
 
-//         let mut element = EditorElement::new(editor.read_with(cx, |editor, cx| editor.style(cx)));
-//         let (_, layout_state) = editor.update(cx, |editor, cx| {
-//             editor.set_soft_wrap_mode(language_settings::SoftWrap::EditorWidth, cx);
-//             editor.set_wrap_width(Some(editor_width), cx);
+    fn collect_invisibles_from_new_editor(
+        cx: &mut TestAppContext,
+        editor_mode: EditorMode,
+        input_text: &str,
+        editor_width: Pixels,
+    ) -> Vec<Invisible> {
+        info!(
+            "Creating editor with mode {editor_mode:?}, width {}px and text '{input_text}'",
+            editor_width.0
+        );
+        let window = cx.add_window(|cx| {
+            let buffer = MultiBuffer::build_simple(&input_text, cx);
+            Editor::new(editor_mode, buffer, None, cx)
+        });
+        let editor = window.root(cx).unwrap();
+        let style = cx.update(|cx| editor.read(cx).style().unwrap().clone());
+        let mut element = EditorElement::new(&editor, style);
+        window
+            .update(cx, |editor, cx| {
+                editor.set_soft_wrap_mode(language_settings::SoftWrap::EditorWidth, cx);
+                editor.set_wrap_width(Some(editor_width), cx);
+            })
+            .unwrap();
+        let layout_state = cx
+            .update_window(window.into(), |_, cx| {
+                element.compute_layout(
+                    Bounds {
+                        origin: point(px(500.), px(500.)),
+                        size: size(px(500.), px(500.)),
+                    },
+                    cx,
+                )
+            })
+            .unwrap();
 
-//             element.layout(
-//                 SizeConstraint::new(point(editor_width, 500.), point(editor_width, 500.)),
-//                 editor,
-//                 cx,
-//             )
-//         });
-
-//         layout_state
-//             .position_map
-//             .line_layouts
-//             .iter()
-//             .map(|line_with_invisibles| &line_with_invisibles.invisibles)
-//             .flatten()
-//             .cloned()
-//             .collect()
-//     }
-// }
+        layout_state
+            .position_map
+            .line_layouts
+            .iter()
+            .map(|line_with_invisibles| &line_with_invisibles.invisibles)
+            .flatten()
+            .cloned()
+            .collect()
+    }
+}
 
 pub fn register_action<T: Action>(
     view: &View<Editor>,
@@ -3628,7 +3757,7 @@ fn compute_auto_height_layout(
     let gutter_width;
     let gutter_margin;
     if snapshot.show_gutter {
-        let descent = cx.text_system().descent(font_id, font_size).unwrap();
+        let descent = cx.text_system().descent(font_id, font_size);
         let gutter_padding_factor = 3.5;
         gutter_padding = (em_width * gutter_padding_factor).round();
         gutter_width = max_line_number_width + gutter_padding * 2.0;

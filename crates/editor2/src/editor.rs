@@ -100,8 +100,10 @@ use text::{OffsetUtf16, Rope};
 use theme::{
     ActiveTheme, DiagnosticStyle, PlayerColor, SyntaxTheme, Theme, ThemeColors, ThemeSettings,
 };
-use ui::prelude::*;
-use ui::{h_stack, v_stack, HighlightedLabel, IconButton, Popover, Tooltip};
+use ui::{
+    h_stack, v_stack, ButtonSize, ButtonStyle, HighlightedLabel, Icon, IconButton, Popover, Tooltip,
+};
+use ui::{prelude::*, IconSize};
 use util::{post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::{
     item::{ItemEvent, ItemHandle},
@@ -1673,8 +1675,7 @@ impl Editor {
             if let Some(project) = project.as_ref() {
                 if buffer.read(cx).is_singleton() {
                     project_subscriptions.push(cx.observe(project, |_, _, cx| {
-                        cx.emit(ItemEvent::UpdateTab);
-                        cx.emit(ItemEvent::UpdateBreadcrumbs);
+                        cx.emit(EditorEvent::TitleChanged);
                     }));
                 }
                 project_subscriptions.push(cx.subscribe(project, |editor, _, event, cx| {
@@ -1920,14 +1921,14 @@ impl Editor {
     //         self.buffer.read(cx).read(cx).file_at(point).cloned()
     //     }
 
-    //     pub fn active_excerpt(
-    //         &self,
-    //         cx: &AppContext,
-    //     ) -> Option<(ExcerptId, Model<Buffer>, Range<text::Anchor>)> {
-    //         self.buffer
-    //             .read(cx)
-    //             .excerpt_containing(self.selections.newest_anchor().head(), cx)
-    //     }
+    pub fn active_excerpt(
+        &self,
+        cx: &AppContext,
+    ) -> Option<(ExcerptId, Model<Buffer>, Range<text::Anchor>)> {
+        self.buffer
+            .read(cx)
+            .excerpt_containing(self.selections.newest_anchor().head(), cx)
+    }
 
     //     pub fn style(&self, cx: &AppContext) -> EditorStyle {
     //         build_style(
@@ -2137,10 +2138,6 @@ impl Editor {
 
         if self.selections.disjoint_anchors().len() == 1 {
             cx.emit(SearchEvent::ActiveMatchChanged)
-        }
-
-        if local {
-            cx.emit(ItemEvent::UpdateBreadcrumbs);
         }
 
         cx.notify();
@@ -3484,7 +3481,7 @@ impl Editor {
                         drop(context_menu);
                         this.discard_copilot_suggestion(cx);
                         cx.notify();
-                    } else if this.completion_tasks.is_empty() {
+                    } else if this.completion_tasks.len() <= 1 {
                         // If there are no more completion tasks and the last menu was
                         // empty, we should hide it. If it was already hidden, we should
                         // also show the copilot suggestion when available.
@@ -8238,6 +8235,11 @@ impl Editor {
         self.style = Some(style);
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn style(&self) -> Option<&EditorStyle> {
+        self.style.as_ref()
+    }
+
     pub fn set_wrap_width(&self, width: Option<Pixels>, cx: &mut AppContext) -> bool {
         self.display_map
             .update(cx, |map, cx| map.set_wrap_width(width, cx))
@@ -8566,8 +8568,6 @@ impl Editor {
                     self.update_visible_copilot_suggestion(cx);
                 }
                 cx.emit(EditorEvent::BufferEdited);
-                cx.emit(ItemEvent::Edit);
-                cx.emit(ItemEvent::UpdateBreadcrumbs);
                 cx.emit(SearchEvent::MatchesInvalidated);
 
                 if *sigleton_buffer_edited {
@@ -8615,20 +8615,14 @@ impl Editor {
                 self.refresh_inlay_hints(InlayHintRefreshReason::ExcerptsRemoved(ids.clone()), cx);
                 cx.emit(EditorEvent::ExcerptsRemoved { ids: ids.clone() })
             }
-            multi_buffer::Event::Reparsed => {
-                cx.emit(ItemEvent::UpdateBreadcrumbs);
-            }
-            multi_buffer::Event::DirtyChanged => {
-                cx.emit(ItemEvent::UpdateTab);
-            }
-            multi_buffer::Event::Saved
-            | multi_buffer::Event::FileHandleChanged
-            | multi_buffer::Event::Reloaded => {
-                cx.emit(ItemEvent::UpdateTab);
-                cx.emit(ItemEvent::UpdateBreadcrumbs);
+            multi_buffer::Event::Reparsed => cx.emit(EditorEvent::Reparsed),
+            multi_buffer::Event::DirtyChanged => cx.emit(EditorEvent::DirtyChanged),
+            multi_buffer::Event::Saved => cx.emit(EditorEvent::Saved),
+            multi_buffer::Event::FileHandleChanged | multi_buffer::Event::Reloaded => {
+                cx.emit(EditorEvent::TitleChanged)
             }
             multi_buffer::Event::DiffBaseChanged => cx.emit(EditorEvent::DiffBaseChanged),
-            multi_buffer::Event::Closed => cx.emit(ItemEvent::CloseItem),
+            multi_buffer::Event::Closed => cx.emit(EditorEvent::Closed),
             multi_buffer::Event::DiagnosticsUpdated => {
                 self.refresh_active_diagnostics(cx);
             }
@@ -9689,20 +9683,42 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, is_valid: bool) -> Rend
     let message = diagnostic.message;
     Arc::new(move |cx: &mut BlockContext| {
         let message = message.clone();
+        let copy_id: SharedString = format!("copy-{}", cx.block_id.clone()).to_string().into();
+        let write_to_clipboard = cx.write_to_clipboard(ClipboardItem::new(message.clone()));
+
+        // TODO: Nate: We should tint the background of the block with the severity color
+        // We need to extend the theme before we can do this
         v_stack()
             .id(cx.block_id)
+            .relative()
             .size_full()
             .bg(gpui::red())
             .children(highlighted_lines.iter().map(|(line, highlights)| {
-                div()
+                let group_id = cx.block_id.to_string();
+
+                h_stack()
+                    .group(group_id.clone())
+                    .gap_2()
+                    .absolute()
+                    .left(cx.anchor_x)
+                    .px_1p5()
                     .child(HighlightedLabel::new(line.clone(), highlights.clone()))
-                    .ml(cx.anchor_x)
+                    .child(
+                        div()
+                            .border()
+                            .border_color(gpui::red())
+                            .invisible()
+                            .group_hover(group_id, |style| style.visible())
+                            .child(
+                                IconButton::new(copy_id.clone(), Icon::Copy)
+                                    .icon_color(Color::Muted)
+                                    .size(ButtonSize::Compact)
+                                    .style(ButtonStyle::Transparent)
+                                    .on_click(cx.listener(move |_, _, cx| write_to_clipboard))
+                                    .tooltip(|cx| Tooltip::text("Copy diagnostic message", cx)),
+                            ),
+                    )
             }))
-            .cursor_pointer()
-            .on_click(cx.listener(move |_, _, cx| {
-                cx.write_to_clipboard(ClipboardItem::new(message.clone()));
-            }))
-            .tooltip(|cx| Tooltip::text("Copy diagnostic message", cx))
             .into_any_element()
     })
 }

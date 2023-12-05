@@ -482,10 +482,6 @@ impl<T: 'static> WeakModel<T> {
     /// Update the entity referenced by this model with the given function if
     /// the referenced entity still exists. Returns an error if the entity has
     /// been released.
-    ///
-    /// The update function receives a context appropriate for its environment.
-    /// When updating in an `AppContext`, it receives a `ModelContext`.
-    /// When updating an a `WindowContext`, it receives a `ViewContext`.
     pub fn update<C, R>(
         &self,
         cx: &mut C,
@@ -499,6 +495,21 @@ impl<T: 'static> WeakModel<T> {
             self.upgrade()
                 .ok_or_else(|| anyhow!("entity release"))
                 .map(|this| cx.update_model(&this, update)),
+        )
+    }
+
+    /// Reads the entity referenced by this model with the given function if
+    /// the referenced entity still exists. Returns an error if the entity has
+    /// been released.
+    pub fn read_with<C, R>(&self, cx: &C, read: impl FnOnce(&T, &AppContext) -> R) -> Result<R>
+    where
+        C: Context,
+        Result<C::Result<R>>: crate::Flatten<R>,
+    {
+        crate::Flatten::flatten(
+            self.upgrade()
+                .ok_or_else(|| anyhow!("entity release"))
+                .map(|this| cx.read_model(&this, read)),
         )
     }
 }

@@ -724,16 +724,35 @@ impl Platform for MacPlatform {
         }
     }
 
+    /// Match cursor style to one of the styles available
+    /// in macOS's [NSCursor](https://developer.apple.com/documentation/appkit/nscursor).
     fn set_cursor_style(&self, style: CursorStyle) {
         unsafe {
             let new_cursor: id = match style {
                 CursorStyle::Arrow => msg_send![class!(NSCursor), arrowCursor],
-                CursorStyle::ResizeLeftRight => {
-                    msg_send![class!(NSCursor), resizeLeftRightCursor]
-                }
-                CursorStyle::ResizeUpDown => msg_send![class!(NSCursor), resizeUpDownCursor],
-                CursorStyle::PointingHand => msg_send![class!(NSCursor), pointingHandCursor],
                 CursorStyle::IBeam => msg_send![class!(NSCursor), IBeamCursor],
+                CursorStyle::Crosshair => msg_send![class!(NSCursor), crosshairCursor],
+                CursorStyle::ClosedHand => msg_send![class!(NSCursor), closedHandCursor],
+                CursorStyle::OpenHand => msg_send![class!(NSCursor), openHandCursor],
+                CursorStyle::PointingHand => msg_send![class!(NSCursor), pointingHandCursor],
+                CursorStyle::ResizeLeft => msg_send![class!(NSCursor), resizeLeftCursor],
+                CursorStyle::ResizeRight => msg_send![class!(NSCursor), resizeRightCursor],
+                CursorStyle::ResizeLeftRight => msg_send![class!(NSCursor), resizeLeftRightCursor],
+                CursorStyle::ResizeUp => msg_send![class!(NSCursor), resizeUpCursor],
+                CursorStyle::ResizeDown => msg_send![class!(NSCursor), resizeDownCursor],
+                CursorStyle::ResizeUpDown => msg_send![class!(NSCursor), resizeUpDownCursor],
+                CursorStyle::DisappearingItem => {
+                    msg_send![class!(NSCursor), disappearingItemCursor]
+                }
+                CursorStyle::IBeamCursorForVerticalLayout => {
+                    msg_send![class!(NSCursor), IBeamCursorForVerticalLayout]
+                }
+                CursorStyle::OperationNotAllowed => {
+                    msg_send![class!(NSCursor), operationNotAllowedCursor]
+                }
+                CursorStyle::DragLink => msg_send![class!(NSCursor), dragLinkCursor],
+                CursorStyle::DragCopy => msg_send![class!(NSCursor), dragCopyCursor],
+                CursorStyle::ContextualMenu => msg_send![class!(NSCursor), contextualMenuCursor],
             };
 
             let old_cursor: id = msg_send![class!(NSCursor), currentCursor];

@@ -2129,13 +2129,13 @@ impl Workspace {
         })
     }
 
-    pub(crate) fn load_path(
+    fn load_path(
         &mut self,
         path: ProjectPath,
         cx: &mut ViewContext<Self>,
     ) -> Task<
         Result<(
-            ProjectEntryId,
+            Option<ProjectEntryId>,
             impl 'static + FnOnce(&mut ViewContext<Pane>) -> Box<dyn ItemHandle>,
         )>,
     > {

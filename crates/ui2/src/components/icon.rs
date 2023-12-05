@@ -1,13 +1,24 @@
-use gpui::{rems, svg, IntoElement, Svg};
+use gpui::{rems, svg, IntoElement, Rems, Svg};
 use strum::EnumIter;
 
 use crate::prelude::*;
 
 #[derive(Default, PartialEq, Copy, Clone)]
 pub enum IconSize {
+    XSmall,
     Small,
     #[default]
     Medium,
+}
+
+impl IconSize {
+    pub fn rems(self) -> Rems {
+        match self {
+            IconSize::XSmall => rems(12. / 16.),
+            IconSize::Small => rems(14. / 16.),
+            IconSize::Medium => rems(16. / 16.),
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Copy, Clone, EnumIter)]
@@ -27,6 +38,7 @@ pub enum Icon {
     Bolt,
     CaseSensitive,
     Check,
+    Copy,
     ChevronDown,
     ChevronLeft,
     ChevronRight,
@@ -54,6 +66,7 @@ pub enum Icon {
     FolderX,
     Hash,
     InlayHint,
+    Link,
     MagicWand,
     MagnifyingGlass,
     MailOpen,
@@ -99,6 +112,7 @@ impl Icon {
             Icon::Bolt => "icons/bolt.svg",
             Icon::CaseSensitive => "icons/case_insensitive.svg",
             Icon::Check => "icons/check.svg",
+            Icon::Copy => "icons/copy.svg",
             Icon::ChevronDown => "icons/chevron_down.svg",
             Icon::ChevronLeft => "icons/chevron_left.svg",
             Icon::ChevronRight => "icons/chevron_right.svg",
@@ -126,6 +140,7 @@ impl Icon {
             Icon::FolderX => "icons/stop_sharing.svg",
             Icon::Hash => "icons/hash.svg",
             Icon::InlayHint => "icons/inlay_hint.svg",
+            Icon::Link => "icons/link.svg",
             Icon::MagicWand => "icons/magic-wand.svg",
             Icon::MagnifyingGlass => "icons/magnifying_glass.svg",
             Icon::MailOpen => "icons/mail-open.svg",
@@ -166,13 +181,8 @@ impl RenderOnce for IconElement {
     type Rendered = Svg;
 
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {
-        let svg_size = match self.size {
-            IconSize::Small => rems(14. / 16.),
-            IconSize::Medium => rems(16. / 16.),
-        };
-
         svg()
-            .size(svg_size)
+            .size(self.size.rems())
             .flex_none()
             .path(self.path)
             .text_color(self.color.color(cx))

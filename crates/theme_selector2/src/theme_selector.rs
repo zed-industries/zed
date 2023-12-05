@@ -2,14 +2,14 @@ use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, AppContext, DismissEvent, EventEmitter, FocusableView, Render, SharedString, View,
-    ViewContext, VisualContext, WeakView,
+    actions, AppContext, DismissEvent, Div, EventEmitter, FocusableView, Render, SharedString,
+    View, ViewContext, VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};
 use settings::{update_settings_file, SettingsStore};
 use std::sync::Arc;
 use theme::{Theme, ThemeRegistry, ThemeSettings};
-use ui::{prelude::*, ListItem};
+use ui::{prelude::*, v_stack, ListItem};
 use util::ResultExt;
 use workspace::{ui::HighlightedLabel, Workspace};
 
@@ -65,10 +65,10 @@ impl FocusableView for ThemeSelector {
 }
 
 impl Render for ThemeSelector {
-    type Element = View<Picker<ThemeSelectorDelegate>>;
+    type Element = Div;
 
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
-        self.picker.clone()
+        v_stack().min_w_96().child(self.picker.clone())
     }
 }
 
@@ -98,7 +98,7 @@ impl ThemeSelectorDelegate {
         let original_theme = cx.theme().clone();
 
         let staff_mode = cx.is_staff();
-        let registry = cx.global::<Arc<ThemeRegistry>>();
+        let registry = cx.global::<ThemeRegistry>();
         let theme_names = registry.list(staff_mode).collect::<Vec<_>>();
         //todo!(theme sorting)
         // theme_names.sort_unstable_by(|a, b| a.is_light.cmp(&b.is_light).then(a.name.cmp(&b.name)));
@@ -126,7 +126,7 @@ impl ThemeSelectorDelegate {
 
     fn show_selected_theme(&mut self, cx: &mut ViewContext<Picker<ThemeSelectorDelegate>>) {
         if let Some(mat) = self.matches.get(self.selected_index) {
-            let registry = cx.global::<Arc<ThemeRegistry>>();
+            let registry = cx.global::<ThemeRegistry>();
             match registry.get(&mat.string) {
                 Ok(theme) => {
                     Self::set_theme(theme, cx);

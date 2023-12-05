@@ -101,6 +101,125 @@ pub trait Styled: Sized {
         self
     }
 
+    /// Sets cursor style when hovering over an element to `text`.
+    /// [Docs](https://tailwindcss.com/docs/cursor)
+    fn cursor_text(mut self) -> Self {
+        self.style().mouse_cursor = Some(CursorStyle::IBeam);
+        self
+    }
+
+    /// Sets cursor style when hovering over an element to `move`.
+    /// [Docs](https://tailwindcss.com/docs/cursor)
+    fn cursor_move(mut self) -> Self {
+        self.style().mouse_cursor = Some(CursorStyle::ClosedHand);
+        self
+    }
+
+    /// Sets cursor style when hovering over an element to `not-allowed`.
+    /// [Docs](https://tailwindcss.com/docs/cursor)
+    fn cursor_not_allowed(mut self) -> Self {
+        self.style().mouse_cursor = Some(CursorStyle::OperationNotAllowed);
+        self
+    }
+
+    /// Sets cursor style when hovering over an element to `context-menu`.
+    /// [Docs](https://tailwindcss.com/docs/cursor)
+    fn cursor_context_menu(mut self) -> Self {
+        self.style().mouse_cursor = Some(CursorStyle::ContextualMenu);
+        self
+    }
+
+    /// Sets cursor style when hovering over an element to `crosshair`.
+    /// [Docs](https://tailwindcss.com/docs/cursor)
+    fn cursor_crosshair(mut self) -> Self {
+        self.style().mouse_cursor = Some(CursorStyle::Crosshair);
+        self
+    }
+
+    /// Sets cursor style when hovering over an element to `vertical-text`.
+    /// [Docs](https://tailwindcss.com/docs/cursor)
+    fn cursor_vertical_text(mut self) -> Self {
+        self.style().mouse_cursor = Some(CursorStyle::IBeamCursorForVerticalLayout);
+        self
+    }
+
+    /// Sets cursor style when hovering over an element to `alias`.
+    /// [Docs](https://tailwindcss.com/docs/cursor)
+    fn cursor_alias(mut self) -> Self {
+        self.style().mouse_cursor = Some(CursorStyle::DragLink);
+        self
+    }
+
+    /// Sets cursor style when hovering over an element to `copy`.
+    /// [Docs](https://tailwindcss.com/docs/cursor)
+    fn cursor_copy(mut self) -> Self {
+        self.style().mouse_cursor = Some(CursorStyle::DragCopy);
+        self
+    }
+
+    /// Sets cursor style when hovering over an element to `no-drop`.
+    /// [Docs](https://tailwindcss.com/docs/cursor)
+    fn cursor_no_drop(mut self) -> Self {
+        self.style().mouse_cursor = Some(CursorStyle::OperationNotAllowed);
+        self
+    }
+
+    /// Sets cursor style when hovering over an element to `grab`.
+    /// [Docs](https://tailwindcss.com/docs/cursor)
+    fn cursor_grab(mut self) -> Self {
+        self.style().mouse_cursor = Some(CursorStyle::OpenHand);
+        self
+    }
+
+    /// Sets cursor style when hovering over an element to `grabbing`.
+    /// [Docs](https://tailwindcss.com/docs/cursor)
+    fn cursor_grabbing(mut self) -> Self {
+        self.style().mouse_cursor = Some(CursorStyle::ClosedHand);
+        self
+    }
+
+    /// Sets cursor style when hovering over an element to `col-resize`.
+    /// [Docs](https://tailwindcss.com/docs/cursor)
+    fn cursor_col_resize(mut self) -> Self {
+        self.style().mouse_cursor = Some(CursorStyle::ResizeLeftRight);
+        self
+    }
+
+    /// Sets cursor style when hovering over an element to `row-resize`.
+    /// [Docs](https://tailwindcss.com/docs/cursor)
+    fn cursor_row_resize(mut self) -> Self {
+        self.style().mouse_cursor = Some(CursorStyle::ResizeUpDown);
+        self
+    }
+
+    /// Sets cursor style when hovering over an element to `n-resize`.
+    /// [Docs](https://tailwindcss.com/docs/cursor)
+    fn cursor_n_resize(mut self) -> Self {
+        self.style().mouse_cursor = Some(CursorStyle::ResizeUp);
+        self
+    }
+
+    /// Sets cursor style when hovering over an element to `e-resize`.
+    /// [Docs](https://tailwindcss.com/docs/cursor)
+    fn cursor_e_resize(mut self) -> Self {
+        self.style().mouse_cursor = Some(CursorStyle::ResizeRight);
+        self
+    }
+
+    /// Sets cursor style when hovering over an element to `s-resize`.
+    /// [Docs](https://tailwindcss.com/docs/cursor)
+    fn cursor_s_resize(mut self) -> Self {
+        self.style().mouse_cursor = Some(CursorStyle::ResizeDown);
+        self
+    }
+
+    /// Sets cursor style when hovering over an element to `w-resize`.
+    /// [Docs](https://tailwindcss.com/docs/cursor)
+    fn cursor_w_resize(mut self) -> Self {
+        self.style().mouse_cursor = Some(CursorStyle::ResizeLeft);
+        self
+    }
+
     /// Sets the whitespace of the element to `normal`.
     /// [Docs](https://tailwindcss.com/docs/whitespace#normal)
     fn whitespace_normal(mut self) -> Self {

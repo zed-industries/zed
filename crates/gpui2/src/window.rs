@@ -490,7 +490,7 @@ impl<'a> WindowContext<'a> {
         let entity_id = entity.entity_id();
         let entity = entity.downgrade();
         let window_handle = self.window.handle;
-        self.app.event_listeners.insert(
+        let (subscription, activate) = self.app.event_listeners.insert(
             entity_id,
             (
                 TypeId::of::<Evt>(),
@@ -508,7 +508,9 @@ impl<'a> WindowContext<'a> {
                         .unwrap_or(false)
                 }),
             ),
-        )
+        );
+        self.app.defer(move |_| activate());
+        subscription
     }
 
     /// Create an `AsyncWindowContext`, which has a static lifetime and can be held across
@@ -1348,6 +1350,8 @@ impl<'a> WindowContext<'a> {
                 .dispatch_tree
                 .dispatch_path(node_id);
 
+            let mut actions: Vec<Box<dyn Action>> = Vec::new();
+
             // Capture phase
             let mut context_stack: SmallVec<[KeyContext; 16]> = SmallVec::new();
             self.propagate_event = true;
@@ -1382,20 +1386,24 @@ impl<'a> WindowContext<'a> {
                 let node = self.window.current_frame.dispatch_tree.node(*node_id);
                 if !node.context.is_empty() {
                     if let Some(key_down_event) = event.downcast_ref::<KeyDownEvent>() {
-                        if let Some(action) = self
+                        if let Some(found) = self
                             .window
                             .current_frame
                             .dispatch_tree
                             .dispatch_key(&key_down_event.keystroke, &context_stack)
                         {
-                            self.dispatch_action_on_node(*node_id, action);
-                            if !self.propagate_event {
-                                return;
-                            }
+                            actions.push(found.boxed_clone())
                         }
                     }
 
                     context_stack.pop();
+                }
+            }
+
+            for action in actions {
+                self.dispatch_action_on_node(node_id, action);
+                if !self.propagate_event {
+                    return;
                 }
             }
         }
@@ -1425,7 +1433,6 @@ impl<'a> WindowContext<'a> {
                 }
             }
         }
-
         // Bubble phase
         for node_id in dispatch_path.iter().rev() {
             let node = self.window.current_frame.dispatch_tree.node(*node_id);
@@ -1453,10 +1460,12 @@ impl<'a> WindowContext<'a> {
         f: impl Fn(&mut WindowContext<'_>) + 'static,
     ) -> Subscription {
         let window_handle = self.window.handle;
-        self.global_observers.insert(
+        let (subscription, activate) = self.global_observers.insert(
             TypeId::of::<G>(),
             Box::new(move |cx| window_handle.update(cx, |_, cx| f(cx)).is_ok()),
-        )
+        );
+        self.app.defer(move |_| activate());
+        subscription
     }
 
     pub fn activate_window(&self) {
@@ -1493,9 +1502,30 @@ impl<'a> WindowContext<'a> {
 
     pub fn bindings_for_action(&self, action: &dyn Action) -> Vec<KeyBinding> {
         self.window
-            .current_frame
+            .previous_frame
             .dispatch_tree
-            .bindings_for_action(action)
+            .bindings_for_action(
+                action,
+                &self.window.previous_frame.dispatch_tree.context_stack,
+            )
+    }
+
+    pub fn bindings_for_action_in(
+        &self,
+        action: &dyn Action,
+        focus_handle: &FocusHandle,
+    ) -> Vec<KeyBinding> {
+        let dispatch_tree = &self.window.previous_frame.dispatch_tree;
+
+        let Some(node_id) = dispatch_tree.focusable_node_id(focus_handle.id) else {
+            return vec![];
+        };
+        let context_stack = dispatch_tree
+            .dispatch_path(node_id)
+            .into_iter()
+            .map(|node_id| dispatch_tree.node(node_id).context.clone())
+            .collect();
+        dispatch_tree.bindings_for_action(action, &context_stack)
     }
 
     pub fn listener_for<V: Render, E>(
@@ -2096,7 +2126,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         let entity_id = entity.entity_id();
         let entity = entity.downgrade();
         let window_handle = self.window.handle;
-        self.app.observers.insert(
+        let (subscription, activate) = self.app.observers.insert(
             entity_id,
             Box::new(move |cx| {
                 window_handle
@@ -2110,7 +2140,9 @@ impl<'a, V: 'static> ViewContext<'a, V> {
                     })
                     .unwrap_or(false)
             }),
-        )
+        );
+        self.app.defer(move |_| activate());
+        subscription
     }
 
     pub fn subscribe<V2, E, Evt>(
@@ -2127,7 +2159,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         let entity_id = entity.entity_id();
         let handle = entity.downgrade();
         let window_handle = self.window.handle;
-        self.app.event_listeners.insert(
+        let (subscription, activate) = self.app.event_listeners.insert(
             entity_id,
             (
                 TypeId::of::<Evt>(),
@@ -2145,7 +2177,9 @@ impl<'a, V: 'static> ViewContext<'a, V> {
                         .unwrap_or(false)
                 }),
             ),
-        )
+        );
+        self.app.defer(move |_| activate());
+        subscription
     }
 
     pub fn on_release(
@@ -2153,13 +2187,15 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         on_release: impl FnOnce(&mut V, &mut WindowContext) + 'static,
     ) -> Subscription {
         let window_handle = self.window.handle;
-        self.app.release_listeners.insert(
+        let (subscription, activate) = self.app.release_listeners.insert(
             self.view.model.entity_id,
             Box::new(move |this, cx| {
                 let this = this.downcast_mut().expect("invalid entity type");
                 let _ = window_handle.update(cx, |_, cx| on_release(this, cx));
             }),
-        )
+        );
+        activate();
+        subscription
     }
 
     pub fn observe_release<V2, E>(
@@ -2175,7 +2211,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         let view = self.view().downgrade();
         let entity_id = entity.entity_id();
         let window_handle = self.window.handle;
-        self.app.release_listeners.insert(
+        let (subscription, activate) = self.app.release_listeners.insert(
             entity_id,
             Box::new(move |entity, cx| {
                 let entity = entity.downcast_mut().expect("invalid entity type");
@@ -2183,7 +2219,9 @@ impl<'a, V: 'static> ViewContext<'a, V> {
                     view.update(cx, |this, cx| on_release(this, entity, cx))
                 });
             }),
-        )
+        );
+        activate();
+        subscription
     }
 
     pub fn notify(&mut self) {
@@ -2198,10 +2236,12 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         mut callback: impl FnMut(&mut V, &mut ViewContext<V>) + 'static,
     ) -> Subscription {
         let view = self.view.downgrade();
-        self.window.bounds_observers.insert(
+        let (subscription, activate) = self.window.bounds_observers.insert(
             (),
             Box::new(move |cx| view.update(cx, |view, cx| callback(view, cx)).is_ok()),
-        )
+        );
+        activate();
+        subscription
     }
 
     pub fn observe_window_activation(
@@ -2209,10 +2249,12 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         mut callback: impl FnMut(&mut V, &mut ViewContext<V>) + 'static,
     ) -> Subscription {
         let view = self.view.downgrade();
-        self.window.activation_observers.insert(
+        let (subscription, activate) = self.window.activation_observers.insert(
             (),
             Box::new(move |cx| view.update(cx, |view, cx| callback(view, cx)).is_ok()),
-        )
+        );
+        activate();
+        subscription
     }
 
     /// Register a listener to be called when the given focus handle receives focus.
@@ -2225,7 +2267,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     ) -> Subscription {
         let view = self.view.downgrade();
         let focus_id = handle.id;
-        self.window.focus_listeners.insert(
+        let (subscription, activate) = self.window.focus_listeners.insert(
             (),
             Box::new(move |event, cx| {
                 view.update(cx, |view, cx| {
@@ -2235,7 +2277,9 @@ impl<'a, V: 'static> ViewContext<'a, V> {
                 })
                 .is_ok()
             }),
-        )
+        );
+        self.app.defer(move |_| activate());
+        subscription
     }
 
     /// Register a listener to be called when the given focus handle or one of its descendants receives focus.
@@ -2248,7 +2292,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     ) -> Subscription {
         let view = self.view.downgrade();
         let focus_id = handle.id;
-        self.window.focus_listeners.insert(
+        let (subscription, activate) = self.window.focus_listeners.insert(
             (),
             Box::new(move |event, cx| {
                 view.update(cx, |view, cx| {
@@ -2262,7 +2306,9 @@ impl<'a, V: 'static> ViewContext<'a, V> {
                 })
                 .is_ok()
             }),
-        )
+        );
+        self.app.defer(move |_| activate());
+        subscription
     }
 
     /// Register a listener to be called when the given focus handle loses focus.
@@ -2275,7 +2321,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     ) -> Subscription {
         let view = self.view.downgrade();
         let focus_id = handle.id;
-        self.window.focus_listeners.insert(
+        let (subscription, activate) = self.window.focus_listeners.insert(
             (),
             Box::new(move |event, cx| {
                 view.update(cx, |view, cx| {
@@ -2285,7 +2331,9 @@ impl<'a, V: 'static> ViewContext<'a, V> {
                 })
                 .is_ok()
             }),
-        )
+        );
+        self.app.defer(move |_| activate());
+        subscription
     }
 
     /// Register a listener to be called when the given focus handle or one of its descendants loses focus.
@@ -2298,7 +2346,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     ) -> Subscription {
         let view = self.view.downgrade();
         let focus_id = handle.id;
-        self.window.focus_listeners.insert(
+        let (subscription, activate) = self.window.focus_listeners.insert(
             (),
             Box::new(move |event, cx| {
                 view.update(cx, |view, cx| {
@@ -2312,7 +2360,9 @@ impl<'a, V: 'static> ViewContext<'a, V> {
                 })
                 .is_ok()
             }),
-        )
+        );
+        self.app.defer(move |_| activate());
+        subscription
     }
 
     pub fn spawn<Fut, R>(
@@ -2343,14 +2393,16 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     ) -> Subscription {
         let window_handle = self.window.handle;
         let view = self.view().downgrade();
-        self.global_observers.insert(
+        let (subscription, activate) = self.global_observers.insert(
             TypeId::of::<G>(),
             Box::new(move |cx| {
                 window_handle
                     .update(cx, |_, cx| view.update(cx, |view, cx| f(view, cx)).is_ok())
                     .unwrap_or(false)
             }),
-        )
+        );
+        self.app.defer(move |_| activate());
+        subscription
     }
 
     pub fn on_mouse_event<Event: 'static>(
@@ -2708,6 +2760,7 @@ pub enum ElementId {
     Integer(usize),
     Name(SharedString),
     FocusHandle(FocusId),
+    NamedInteger(SharedString, usize),
 }
 
 impl ElementId {
@@ -2755,5 +2808,17 @@ impl From<&'static str> for ElementId {
 impl<'a> From<&'a FocusHandle> for ElementId {
     fn from(handle: &'a FocusHandle) -> Self {
         ElementId::FocusHandle(handle.id)
+    }
+}
+
+impl From<(&'static str, EntityId)> for ElementId {
+    fn from((name, id): (&'static str, EntityId)) -> Self {
+        ElementId::NamedInteger(name.into(), id.as_u64() as usize)
+    }
+}
+
+impl From<(&'static str, usize)> for ElementId {
+    fn from((name, id): (&'static str, usize)) -> Self {
+        ElementId::NamedInteger(name.into(), id)
     }
 }

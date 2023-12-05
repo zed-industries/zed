@@ -37,19 +37,18 @@ pub fn deploy_context_menu(
     });
 
     let context_menu = ui::ContextMenu::build(cx, |menu, cx| {
-        menu.action("Rename Symbol", Box::new(Rename), cx)
-            .action("Go to Definition", Box::new(GoToDefinition), cx)
-            .action("Go to Type Definition", Box::new(GoToTypeDefinition), cx)
-            .action("Find All References", Box::new(FindAllReferences), cx)
+        menu.action("Rename Symbol", Box::new(Rename))
+            .action("Go to Definition", Box::new(GoToDefinition))
+            .action("Go to Type Definition", Box::new(GoToTypeDefinition))
+            .action("Find All References", Box::new(FindAllReferences))
             .action(
                 "Code Actions",
                 Box::new(ToggleCodeActions {
                     deployed_from_indicator: false,
                 }),
-                cx,
             )
             .separator()
-            .action("Reveal in Finder", Box::new(RevealInFinder), cx)
+            .action("Reveal in Finder", Box::new(RevealInFinder))
     });
     let context_menu_focus = context_menu.focus_handle(cx);
     cx.focus(&context_menu_focus);
@@ -69,42 +68,43 @@ pub fn deploy_context_menu(
     cx.notify();
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     use crate::{editor_tests::init_test, test::editor_lsp_test_context::EditorLspTestContext};
-//     use indoc::indoc;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{editor_tests::init_test, test::editor_lsp_test_context::EditorLspTestContext};
+    use indoc::indoc;
 
-//     #[gpui::test]
-//     async fn test_mouse_context_menu(cx: &mut gpui::TestAppContext) {
-//         init_test(cx, |_| {});
+    #[gpui::test]
+    async fn test_mouse_context_menu(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
 
-//         let mut cx = EditorLspTestContext::new_rust(
-//             lsp::ServerCapabilities {
-//                 hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
-//                 ..Default::default()
-//             },
-//             cx,
-//         )
-//         .await;
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
 
-//         cx.set_state(indoc! {"
-//             fn teˇst() {
-//                 do_work();
-//             }
-//         "});
-//         let point = cx.display_point(indoc! {"
-//             fn test() {
-//                 do_wˇork();
-//             }
-//         "});
-//         cx.update_editor(|editor, cx| deploy_context_menu(editor, Default::default(), point, cx));
+        cx.set_state(indoc! {"
+            fn teˇst() {
+                do_work();
+            }
+        "});
+        let point = cx.display_point(indoc! {"
+            fn test() {
+                do_wˇork();
+            }
+        "});
+        cx.editor(|editor, app| assert!(editor.mouse_context_menu.is_none()));
+        cx.update_editor(|editor, cx| deploy_context_menu(editor, Default::default(), point, cx));
 
-//         cx.assert_editor_state(indoc! {"
-//             fn test() {
-//                 do_wˇork();
-//             }
-//         "});
-//         cx.editor(|editor, app| assert!(editor.mouse_context_menu.read(app).visible()));
-//     }
-// }
+        cx.assert_editor_state(indoc! {"
+            fn test() {
+                do_wˇork();
+            }
+        "});
+        cx.editor(|editor, app| assert!(editor.mouse_context_menu.is_some()));
+    }
+}

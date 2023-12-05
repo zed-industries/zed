@@ -1,6 +1,6 @@
 use crate::{
-    AnyWindowHandle, BackgroundExecutor, CursorStyle, DisplayId, ForegroundExecutor, Platform,
-    PlatformDisplay, PlatformTextSystem, TestDisplay, TestWindow, WindowOptions,
+    AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId, ForegroundExecutor,
+    Platform, PlatformDisplay, PlatformTextSystem, TestDisplay, TestWindow, WindowOptions,
 };
 use anyhow::{anyhow, Result};
 use collections::VecDeque;
@@ -20,6 +20,7 @@ pub struct TestPlatform {
     active_window: Arc<Mutex<Option<AnyWindowHandle>>>,
     active_display: Rc<dyn PlatformDisplay>,
     active_cursor: Mutex<CursorStyle>,
+    current_clipboard_item: Mutex<Option<ClipboardItem>>,
     pub(crate) prompts: RefCell<TestPrompts>,
     weak: Weak<Self>,
 }
@@ -39,6 +40,7 @@ impl TestPlatform {
             active_cursor: Default::default(),
             active_display: Rc::new(TestDisplay::new()),
             active_window: Default::default(),
+            current_clipboard_item: Mutex::new(None),
             weak: weak.clone(),
         })
     }
@@ -145,18 +147,25 @@ impl Platform for TestPlatform {
     fn set_display_link_output_callback(
         &self,
         _display_id: DisplayId,
-        _callback: Box<dyn FnMut(&crate::VideoTimestamp, &crate::VideoTimestamp) + Send>,
+        mut callback: Box<dyn FnMut(&crate::VideoTimestamp, &crate::VideoTimestamp) + Send>,
     ) {
-        unimplemented!()
+        let timestamp = crate::VideoTimestamp {
+            version: 0,
+            video_time_scale: 0,
+            video_time: 0,
+            host_time: 0,
+            rate_scalar: 0.0,
+            video_refresh_period: 0,
+            smpte_time: crate::SmtpeTime::default(),
+            flags: 0,
+            reserved: 0,
+        };
+        callback(&timestamp, &timestamp)
     }
 
-    fn start_display_link(&self, _display_id: DisplayId) {
-        unimplemented!()
-    }
+    fn start_display_link(&self, _display_id: DisplayId) {}
 
-    fn stop_display_link(&self, _display_id: DisplayId) {
-        unimplemented!()
-    }
+    fn stop_display_link(&self, _display_id: DisplayId) {}
 
     fn open_url(&self, _url: &str) {
         unimplemented!()
@@ -236,12 +245,12 @@ impl Platform for TestPlatform {
         true
     }
 
-    fn write_to_clipboard(&self, _item: crate::ClipboardItem) {
-        unimplemented!()
+    fn write_to_clipboard(&self, item: ClipboardItem) {
+        *self.current_clipboard_item.lock() = Some(item);
     }
 
-    fn read_from_clipboard(&self) -> Option<crate::ClipboardItem> {
-        unimplemented!()
+    fn read_from_clipboard(&self) -> Option<ClipboardItem> {
+        self.current_clipboard_item.lock().clone()
     }
 
     fn write_credentials(&self, _url: &str, _username: &str, _password: &[u8]) -> Result<()> {

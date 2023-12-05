@@ -72,7 +72,7 @@ impl TextSystem {
         }
     }
 
-    pub fn bounding_box(&self, font_id: FontId, font_size: Pixels) -> Result<Bounds<Pixels>> {
+    pub fn bounding_box(&self, font_id: FontId, font_size: Pixels) -> Bounds<Pixels> {
         self.read_metrics(font_id, |metrics| metrics.bounding_box(font_size))
     }
 
@@ -89,9 +89,9 @@ impl TextSystem {
         let bounds = self
             .platform_text_system
             .typographic_bounds(font_id, glyph_id)?;
-        self.read_metrics(font_id, |metrics| {
+        Ok(self.read_metrics(font_id, |metrics| {
             (bounds / metrics.units_per_em as f32 * font_size.0).map(px)
-        })
+        }))
     }
 
     pub fn advance(&self, font_id: FontId, font_size: Pixels, ch: char) -> Result<Size<Pixels>> {
@@ -100,28 +100,28 @@ impl TextSystem {
             .glyph_for_char(font_id, ch)
             .ok_or_else(|| anyhow!("glyph not found for character '{}'", ch))?;
         let result = self.platform_text_system.advance(font_id, glyph_id)?
-            / self.units_per_em(font_id)? as f32;
+            / self.units_per_em(font_id) as f32;
 
         Ok(result * font_size)
     }
 
-    pub fn units_per_em(&self, font_id: FontId) -> Result<u32> {
+    pub fn units_per_em(&self, font_id: FontId) -> u32 {
         self.read_metrics(font_id, |metrics| metrics.units_per_em as u32)
     }
 
-    pub fn cap_height(&self, font_id: FontId, font_size: Pixels) -> Result<Pixels> {
+    pub fn cap_height(&self, font_id: FontId, font_size: Pixels) -> Pixels {
         self.read_metrics(font_id, |metrics| metrics.cap_height(font_size))
     }
 
-    pub fn x_height(&self, font_id: FontId, font_size: Pixels) -> Result<Pixels> {
+    pub fn x_height(&self, font_id: FontId, font_size: Pixels) -> Pixels {
         self.read_metrics(font_id, |metrics| metrics.x_height(font_size))
     }
 
-    pub fn ascent(&self, font_id: FontId, font_size: Pixels) -> Result<Pixels> {
+    pub fn ascent(&self, font_id: FontId, font_size: Pixels) -> Pixels {
         self.read_metrics(font_id, |metrics| metrics.ascent(font_size))
     }
 
-    pub fn descent(&self, font_id: FontId, font_size: Pixels) -> Result<Pixels> {
+    pub fn descent(&self, font_id: FontId, font_size: Pixels) -> Pixels {
         self.read_metrics(font_id, |metrics| metrics.descent(font_size))
     }
 
@@ -130,24 +130,24 @@ impl TextSystem {
         font_id: FontId,
         font_size: Pixels,
         line_height: Pixels,
-    ) -> Result<Pixels> {
-        let ascent = self.ascent(font_id, font_size)?;
-        let descent = self.descent(font_id, font_size)?;
+    ) -> Pixels {
+        let ascent = self.ascent(font_id, font_size);
+        let descent = self.descent(font_id, font_size);
         let padding_top = (line_height - ascent - descent) / 2.;
-        Ok(padding_top + ascent)
+        padding_top + ascent
     }
 
-    fn read_metrics<T>(&self, font_id: FontId, read: impl FnOnce(&FontMetrics) -> T) -> Result<T> {
+    fn read_metrics<T>(&self, font_id: FontId, read: impl FnOnce(&FontMetrics) -> T) -> T {
         let lock = self.font_metrics.upgradable_read();
 
         if let Some(metrics) = lock.get(&font_id) {
-            Ok(read(metrics))
+            read(metrics)
         } else {
             let mut lock = RwLockUpgradableReadGuard::upgrade(lock);
             let metrics = lock
                 .entry(font_id)
                 .or_insert_with(|| self.platform_text_system.font_metrics(font_id));
-            Ok(read(metrics))
+            read(metrics)
         }
     }
 
