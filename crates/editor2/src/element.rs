@@ -3513,50 +3513,50 @@ mod tests {
     //         });
     //     }
 
-    //     #[gpui::test]
-    //     fn test_all_invisibles_drawing(cx: &mut TestAppContext) {
-    //         const TAB_SIZE: u32 = 4;
+    #[gpui::test]
+    fn test_all_invisibles_drawing(cx: &mut TestAppContext) {
+        const TAB_SIZE: u32 = 4;
 
-    //         let input_text = "\t \t|\t| a b";
-    //         let expected_invisibles = vec![
-    //             Invisible::Tab {
-    //                 line_start_offset: 0,
-    //             },
-    //             Invisible::Whitespace {
-    //                 line_offset: TAB_SIZE as usize,
-    //             },
-    //             Invisible::Tab {
-    //                 line_start_offset: TAB_SIZE as usize + 1,
-    //             },
-    //             Invisible::Tab {
-    //                 line_start_offset: TAB_SIZE as usize * 2 + 1,
-    //             },
-    //             Invisible::Whitespace {
-    //                 line_offset: TAB_SIZE as usize * 3 + 1,
-    //             },
-    //             Invisible::Whitespace {
-    //                 line_offset: TAB_SIZE as usize * 3 + 3,
-    //             },
-    //         ];
-    //         assert_eq!(
-    //             expected_invisibles.len(),
-    //             input_text
-    //                 .chars()
-    //                 .filter(|initial_char| initial_char.is_whitespace())
-    //                 .count(),
-    //             "Hardcoded expected invisibles differ from the actual ones in '{input_text}'"
-    //         );
+        let input_text = "\t \t|\t| a b";
+        let expected_invisibles = vec![
+            Invisible::Tab {
+                line_start_offset: 0,
+            },
+            Invisible::Whitespace {
+                line_offset: TAB_SIZE as usize,
+            },
+            Invisible::Tab {
+                line_start_offset: TAB_SIZE as usize + 1,
+            },
+            Invisible::Tab {
+                line_start_offset: TAB_SIZE as usize * 2 + 1,
+            },
+            Invisible::Whitespace {
+                line_offset: TAB_SIZE as usize * 3 + 1,
+            },
+            Invisible::Whitespace {
+                line_offset: TAB_SIZE as usize * 3 + 3,
+            },
+        ];
+        assert_eq!(
+            expected_invisibles.len(),
+            input_text
+                .chars()
+                .filter(|initial_char| initial_char.is_whitespace())
+                .count(),
+            "Hardcoded expected invisibles differ from the actual ones in '{input_text}'"
+        );
 
-    //         init_test(cx, |s| {
-    //             s.defaults.show_whitespaces = Some(ShowWhitespaceSetting::All);
-    //             s.defaults.tab_size = NonZeroU32::new(TAB_SIZE);
-    //         });
+        init_test(cx, |s| {
+            s.defaults.show_whitespaces = Some(ShowWhitespaceSetting::All);
+            s.defaults.tab_size = NonZeroU32::new(TAB_SIZE);
+        });
 
-    //         let actual_invisibles =
-    //             collect_invisibles_from_new_editor(cx, EditorMode::Full, &input_text, 500.0);
+        let actual_invisibles =
+            collect_invisibles_from_new_editor(cx, EditorMode::Full, &input_text, px(500.0));
 
-    //         assert_eq!(expected_invisibles, actual_invisibles);
-    //     }
+        assert_eq!(expected_invisibles, actual_invisibles);
+    }
 
     //     #[gpui::test]
     //     fn test_invisibles_dont_appear_in_certain_editors(cx: &mut TestAppContext) {
@@ -3656,43 +3656,50 @@ mod tests {
     //         }
     //     }
 
-    //     fn collect_invisibles_from_new_editor(
-    //         cx: &mut TestAppContext,
-    //         editor_mode: EditorMode,
-    //         input_text: &str,
-    //         editor_width: f32,
-    //     ) -> Vec<Invisible> {
-    //         info!(
-    //             "Creating editor with mode {editor_mode:?}, width {editor_width} and text '{input_text}'"
-    //         );
-    //         let editor = cx
-    //             .add_window(|cx| {
-    //                 let buffer = MultiBuffer::build_simple(&input_text, cx);
-    //                 Editor::new(editor_mode, buffer, None, None, cx)
-    //             })
-    //             .root(cx);
+    fn collect_invisibles_from_new_editor(
+        cx: &mut TestAppContext,
+        editor_mode: EditorMode,
+        input_text: &str,
+        editor_width: Pixels,
+    ) -> Vec<Invisible> {
+        info!(
+            "Creating editor with mode {editor_mode:?}, width {}px and text '{input_text}'",
+            editor_width.0
+        );
+        let window = cx.add_window(|cx| {
+            let buffer = MultiBuffer::build_simple(&input_text, cx);
+            Editor::new(editor_mode, buffer, None, cx)
+        });
+        let editor = window.root(cx).unwrap();
+        let style = cx.update(|cx| editor.read(cx).style().unwrap().clone());
+        let mut element = EditorElement::new(&editor, style);
+        window
+            .update(cx, |editor, cx| {
+                editor.set_soft_wrap_mode(language_settings::SoftWrap::EditorWidth, cx);
+                editor.set_wrap_width(Some(editor_width), cx);
+            })
+            .unwrap();
+        let layout_state = cx
+            .update_window(window.into(), |_, cx| {
+                element.compute_layout(
+                    Bounds {
+                        origin: point(px(500.), px(500.)),
+                        size: size(px(500.), px(500.)),
+                    },
+                    cx,
+                )
+            })
+            .unwrap();
 
-    //         let mut element = EditorElement::new(editor.read_with(cx, |editor, cx| editor.style(cx)));
-    //         let (_, layout_state) = editor.update(cx, |editor, cx| {
-    //             editor.set_soft_wrap_mode(language_settings::SoftWrap::EditorWidth, cx);
-    //             editor.set_wrap_width(Some(editor_width), cx);
-
-    //             element.layout(
-    //                 SizeConstraint::new(point(editor_width, 500.), point(editor_width, 500.)),
-    //                 editor,
-    //                 cx,
-    //             )
-    //         });
-
-    //         layout_state
-    //             .position_map
-    //             .line_layouts
-    //             .iter()
-    //             .map(|line_with_invisibles| &line_with_invisibles.invisibles)
-    //             .flatten()
-    //             .cloned()
-    //             .collect()
-    //     }
+        layout_state
+            .position_map
+            .line_layouts
+            .iter()
+            .map(|line_with_invisibles| &line_with_invisibles.invisibles)
+            .flatten()
+            .cloned()
+            .collect()
+    }
 }
 
 pub fn register_action<T: Action>(
