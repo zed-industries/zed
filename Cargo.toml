@@ -4,6 +4,7 @@ members = [
     "crates/activity_indicator2",
     "crates/ai",
     "crates/assistant",
+    "crates/assistant2",
     "crates/audio",
     "crates/audio2",
     "crates/auto_update",

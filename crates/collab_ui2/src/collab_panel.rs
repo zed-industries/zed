@@ -3344,10 +3344,6 @@ impl Panel for CollabPanel {
         Box::new(ToggleFocus)
     }
 
-    fn has_focus(&self, cx: &gpui::WindowContext) -> bool {
-        self.focus_handle.contains_focused(cx)
-    }
-
     fn persistent_name() -> &'static str {
         "CollabPanel"
     }

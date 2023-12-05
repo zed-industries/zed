@@ -377,6 +377,47 @@ dependencies = [
 ]
 
 [[package]]
+name = "assistant2"
+version = "0.1.0"
+dependencies = [
+ "ai2",
+ "anyhow",
+ "chrono",
+ "client2",
+ "collections",
+ "ctor",
+ "editor2",
+ "env_logger 0.9.3",
+ "fs2",
+ "futures 0.3.28",
+ "gpui2",
+ "indoc",
+ "isahc",
+ "language2",
+ "log",
+ "menu2",
+ "multi_buffer2",
+ "ordered-float 2.10.0",
+ "parking_lot 0.11.2",
+ "project2",
+ "rand 0.8.5",
+ "regex",
+ "schemars",
+ "search2",
+ "semantic_index2",
+ "serde",
+ "serde_json",
+ "settings2",
+ "smol",
+ "theme2",
+ "tiktoken-rs",
+ "ui2",
+ "util",
+ "uuid 1.4.1",
+ "workspace2",
+]
+
+[[package]]
 name = "async-broadcast"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

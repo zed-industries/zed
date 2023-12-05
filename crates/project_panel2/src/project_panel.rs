@@ -55,7 +55,6 @@ pub struct ProjectPanel {
     clipboard_entry: Option<ClipboardEntry>,
     _dragged_entry_destination: Option<Arc<Path>>,
     _workspace: WeakView<Workspace>,
-    has_focus: bool,
     width: Option<f32>,
     pending_serialization: Task<Option<()>>,
 }
@@ -172,7 +171,6 @@ impl ProjectPanel {
             let focus_handle = cx.focus_handle();
 
             cx.on_focus(&focus_handle, Self::focus_in).detach();
-            cx.on_blur(&focus_handle, Self::focus_out).detach();
 
             cx.subscribe(&project, |this, project, event, cx| match event {
                 project::Event::ActiveEntryChanged(Some(entry_id)) => {
@@ -238,7 +236,6 @@ impl ProjectPanel {
                 // context_menu: cx.add_view(|cx| ContextMenu::new(view_id, cx)),
                 _dragged_entry_destination: None,
                 _workspace: workspace.weak_handle(),
-                has_focus: false,
                 width: None,
                 pending_serialization: Task::ready(None),
             };
@@ -356,14 +353,9 @@ impl ProjectPanel {
     }
 
     fn focus_in(&mut self, cx: &mut ViewContext<Self>) {
-        if !self.has_focus {
-            self.has_focus = true;
+        if !self.focus_handle.contains_focused(cx) {
             cx.emit(Event::Focus);
         }
-    }
-
-    fn focus_out(&mut self, _: &mut ViewContext<Self>) {
-        self.has_focus = false;
     }
 
     fn deploy_context_menu(
@@ -1552,10 +1544,6 @@ impl Panel for ProjectPanel {
 
     fn toggle_action(&self) -> Box<dyn Action> {
         Box::new(ToggleFocus)
-    }
-
-    fn has_focus(&self, _: &WindowContext) -> bool {
-        self.has_focus
     }
 
     fn persistent_name() -> &'static str {

@@ -65,7 +65,7 @@ use std::{
     time::Duration,
 };
 use theme::{ActiveTheme, ThemeSettings};
-pub use toolbar::{ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
+pub use toolbar::{Toolbar, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 pub use ui;
 use util::ResultExt;
 use uuid::Uuid;
@@ -1542,7 +1542,7 @@ impl Workspace {
 
             if let Some(active_panel) = dock.active_panel() {
                 if was_visible {
-                    if active_panel.has_focus(cx) {
+                    if active_panel.focus_handle(cx).contains_focused(cx) {
                         focus_center = true;
                     }
                 } else {
@@ -1589,7 +1589,9 @@ impl Workspace {
     /// Focus the panel of the given type if it isn't already focused. If it is
     /// already focused, then transfer focus back to the workspace center.
     pub fn toggle_panel_focus<T: Panel>(&mut self, cx: &mut ViewContext<Self>) {
-        self.focus_or_unfocus_panel::<T>(cx, |panel, cx| !panel.has_focus(cx));
+        self.focus_or_unfocus_panel::<T>(cx, |panel, cx| {
+            !panel.focus_handle(cx).contains_focused(cx)
+        });
     }
 
     /// Focus or unfocus the given panel type, depending on the given callback.
@@ -1681,7 +1683,7 @@ impl Workspace {
                 if Some(dock.position()) != dock_to_reveal {
                     if let Some(panel) = dock.active_panel() {
                         if panel.is_zoomed(cx) {
-                            focus_center |= panel.has_focus(cx);
+                            focus_center |= panel.focus_handle(cx).contains_focused(cx);
                             dock.set_open(false, cx);
                         }
                     }
