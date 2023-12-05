@@ -32,7 +32,7 @@ use std::{
 };
 use text::Selection;
 use theme::{ActiveTheme, Theme};
-use ui::{Color, Label};
+use ui::{h_stack, Color, Label};
 use util::{paths::PathExt, paths::FILE_ROW_COLUMN_DELIMITER, ResultExt, TryFutureExt};
 use workspace::{
     item::{BreadcrumbText, FollowEvent, FollowableEvents, FollowableItemHandle},
@@ -586,28 +586,25 @@ impl Item for Editor {
     fn tab_content(&self, detail: Option<usize>, cx: &WindowContext) -> AnyElement {
         let theme = cx.theme();
 
-        AnyElement::new(
-            div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap_2()
-                .child(Label::new(self.title(cx).to_string()))
-                .children(detail.and_then(|detail| {
-                    let path = path_for_buffer(&self.buffer, detail, false, cx)?;
-                    let description = path.to_string_lossy();
+        let description = detail.and_then(|detail| {
+            let path = path_for_buffer(&self.buffer, detail, false, cx)?;
+            let description = path.to_string_lossy();
+            let description = description.trim();
 
-                    Some(
-                        div().child(
-                            Label::new(util::truncate_and_trailoff(
-                                &description,
-                                MAX_TAB_TITLE_LEN,
-                            ))
-                            .color(Color::Muted),
-                        ),
-                    )
-                })),
-        )
+            if description.is_empty() {
+                return None;
+            }
+
+            Some(util::truncate_and_trailoff(&description, MAX_TAB_TITLE_LEN))
+        });
+
+        h_stack()
+            .gap_2()
+            .child(Label::new(self.title(cx).to_string()))
+            .when_some(description, |this, description| {
+                this.child(Label::new(description).color(Color::Muted))
+            })
+            .into_any_element()
     }
 
     fn for_each_project_item(
