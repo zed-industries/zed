@@ -1,5 +1,5 @@
 use crate::{
-    item::{Item, ItemHandle, ItemSettings, WeakItemHandle},
+    item::{ClosePosition, Item, ItemHandle, ItemSettings, WeakItemHandle},
     toolbar::Toolbar,
     workspace_settings::{AutosaveSetting, WorkspaceSettings},
     NewCenterTerminal, NewFile, NewSearch, SplitDirection, ToggleZoom, Workspace,
@@ -27,8 +27,8 @@ use std::{
 };
 
 use ui::{
-    h_stack, prelude::*, right_click_menu, Color, Icon, IconButton, IconElement, IconSize, Label,
-    Tooltip,
+    h_stack, prelude::*, right_click_menu, ButtonSize, Color, Icon, IconButton, IconSize,
+    Indicator, Label, Tooltip,
 };
 use ui::{v_stack, ContextMenu};
 use util::truncate_and_remove_front;
@@ -1416,39 +1416,7 @@ impl Pane {
         cx: &mut ViewContext<'_, Pane>,
     ) -> impl IntoElement {
         let label = item.tab_content(Some(detail), cx);
-        let close_right = ItemSettings::get_global(cx).close_position.right();
-
-        let close_icon = || {
-            let id = item.item_id();
-
-            h_stack()
-                .id(ix)
-                .justify_center()
-                .w_4()
-                .h_4()
-                .rounded_md()
-                .absolute()
-                .map(|this| {
-                    if close_right {
-                        this.right_1()
-                    } else {
-                        this.left_1()
-                    }
-                })
-                .invisible()
-                .group_hover("", |style| style.visible())
-                .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
-                .active(|style| style.bg(cx.theme().colors().ghost_element_active))
-                .on_click(cx.listener(move |pane, _, cx| {
-                    pane.close_item_by_id(id, SaveIntent::Close, cx)
-                        .detach_and_log_err(cx);
-                }))
-                .child(
-                    IconElement::new(Icon::Close)
-                        .color(Color::Muted)
-                        .size(IconSize::XSmall),
-                )
-        };
+        let close_side = &ItemSettings::get_global(cx).close_position;
 
         let (text_color, tab_bg, tab_hover_bg, tab_active_bg) = match ix == self.active_item_index {
             false => (
@@ -1467,82 +1435,114 @@ impl Pane {
 
         let is_active = ix == self.active_item_index;
 
-        let tab = h_stack()
-            .group("")
-            .id(ix)
-            .relative()
-            .cursor_pointer()
-            .when_some(item.tab_tooltip_text(cx), |div, text| {
-                div.tooltip(move |cx| cx.build_view(|cx| Tooltip::new(text.clone())).into())
-            })
-            .on_click(cx.listener(move |v: &mut Self, e, cx| v.activate_item(ix, true, true, cx)))
-            // .on_drag(move |pane, cx| pane.render_tab(ix, item.boxed_clone(), detail, cx))
-            // .drag_over::<DraggedTab>(|d| d.bg(cx.theme().colors().element_drop_target))
-            // .on_drop(|_view, state: View<DraggedTab>, cx| {
-            //     eprintln!("{:?}", state.read(cx));
-            // })
-            .flex()
-            .items_center()
-            .justify_center()
-            .px_5()
-            .h(rems(1.875))
-            .bg(tab_bg)
+        let indicator = {
+            let indicator_color = match (item.has_conflict(cx), item.is_dirty(cx)) {
+                (true, _) => Some(Color::Warning),
+                (_, true) => Some(Color::Accent),
+                (false, false) => None,
+            };
+
+            h_stack()
+                .w_3()
+                .h_3()
+                .justify_center()
+                .absolute()
+                .bg(gpui::red())
+                .map(|this| match close_side {
+                    ClosePosition::Left => this.right_1(),
+                    ClosePosition::Right => this.left_1(),
+                })
+                .when_some(indicator_color, |this, indicator_color| {
+                    this.child(Indicator::dot().color(indicator_color))
+                })
+        };
+
+        let close_button = {
+            let id = item.item_id();
+
+            h_stack()
+                .invisible()
+                .w_3()
+                .h_3()
+                .justify_center()
+                .absolute()
+                .map(|this| match close_side {
+                    ClosePosition::Left => this.left_1(),
+                    ClosePosition::Right => this.right_1(),
+                })
+                .group_hover("", |style| style.visible())
+                .child(
+                    // TODO: Fix button size
+                    IconButton::new("close tab", Icon::Close)
+                        .icon_color(Color::Muted)
+                        .size(ButtonSize::None)
+                        .icon_size(IconSize::XSmall)
+                        .on_click(cx.listener(move |pane, _, cx| {
+                            pane.close_item_by_id(id, SaveIntent::Close, cx)
+                                .detach_and_log_err(cx);
+                        })),
+                )
+        };
+
+        let tab = div()
             .border_color(cx.theme().colors().border)
-            .text_color(if is_active {
-                cx.theme().colors().text
-            } else {
-                cx.theme().colors().text_muted
-            })
+            .bg(tab_bg)
+            // 30px @ 16px/rem
+            .h(rems(1.875))
             .map(|this| {
                 let is_first_item = ix == 0;
                 let is_last_item = ix == self.items.len() - 1;
                 match ix.cmp(&self.active_item_index) {
                     cmp::Ordering::Less => {
                         if is_first_item {
-                            this.ml_px().mr_px().border_b()
+                            this.pl_px().pr_px().border_b()
                         } else {
-                            this.border_l().mr_px().border_b()
+                            this.border_l().pr_px().border_b()
                         }
                     }
                     cmp::Ordering::Greater => {
                         if is_last_item {
-                            this.mr_px().ml_px().border_b()
+                            this.pr_px().pl_px().border_b()
                         } else {
-                            this.border_r().ml_px().border_b()
+                            this.border_r().pl_px().border_b()
                         }
                     }
                     cmp::Ordering::Equal => {
                         if is_first_item {
-                            this.ml_px().border_r().mb_px()
+                            this.pl_px().border_r().pb_px()
                         } else {
-                            this.border_l().border_r().mb_px()
+                            this.border_l().border_r().pb_px()
                         }
                     }
                 }
             })
-            // .hover(|h| h.bg(tab_hover_bg))
-            // .active(|a| a.bg(tab_active_bg))
-            .gap_1()
-            .text_color(text_color)
-            .children(
-                item.has_conflict(cx)
-                    .then(|| {
-                        div().border().border_color(gpui::red()).child(
-                            IconElement::new(Icon::ExclamationTriangle)
-                                .size(ui::IconSize::Small)
-                                .color(Color::Warning),
-                        )
+            .child(
+                h_stack()
+                    .group("")
+                    .id(ix)
+                    .relative()
+                    .h_full()
+                    .cursor_pointer()
+                    .when_some(item.tab_tooltip_text(cx), |div, text| {
+                        div.tooltip(move |cx| cx.build_view(|cx| Tooltip::new(text.clone())).into())
                     })
-                    .or(item.is_dirty(cx).then(|| {
-                        div().border().border_color(gpui::red()).child(
-                            IconElement::new(Icon::ExclamationTriangle)
-                                .size(ui::IconSize::Small)
-                                .color(Color::Info),
-                        )
-                    })),
-            )
-            .child(label)
-            .child(close_icon());
+                    .on_click(
+                        cx.listener(move |v: &mut Self, e, cx| v.activate_item(ix, true, true, cx)),
+                    )
+                    // .on_drag(move |pane, cx| pane.render_tab(ix, item.boxed_clone(), detail, cx))
+                    // .drag_over::<DraggedTab>(|d| d.bg(cx.theme().colors().element_drop_target))
+                    // .on_drop(|_view, state: View<DraggedTab>, cx| {
+                    //     eprintln!("{:?}", state.read(cx));
+                    // })
+                    .px_5()
+                    // .hover(|h| h.bg(tab_hover_bg))
+                    // .active(|a| a.bg(tab_active_bg))
+                    .gap_1()
+                    .text_color(text_color)
+                    .child(indicator)
+                    .child(close_button)
+                    .child(div().bg(gpui::green()).child(label)),
+            );
 
         right_click_menu(ix).trigger(tab).menu(|cx| {
             ContextMenu::build(cx, |menu, cx| {

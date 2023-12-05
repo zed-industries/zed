@@ -1,4 +1,4 @@
-use gpui::{AnyView, Div, Position};
+use gpui::{Div, Position};
 
 use crate::prelude::*;
 
@@ -49,6 +49,7 @@ impl RenderOnce for Indicator {
 
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         div()
+            .flex_none()
             .map(|this| match self.style {
                 IndicatorStyle::Dot => this.w_1p5().h_1p5().rounded_full(),
                 IndicatorStyle::Bar => this.w_full().h_1p5().rounded_t_md(),

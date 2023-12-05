@@ -1,10 +1,10 @@
 use crate::ItemHandle;
 use gpui::{
-    div, AnyView, Div, Entity, EntityId, EventEmitter, ParentElement as _, Render, Styled, View,
+    AnyView, Div, Entity, EntityId, EventEmitter, ParentElement as _, Render, Styled, View,
     ViewContext, WindowContext,
 };
-use ui::{h_stack, v_stack, Icon, IconButton};
-use ui::{prelude::*, Tooltip};
+use ui::prelude::*;
+use ui::{h_stack, v_stack};
 
 pub enum ToolbarItemEvent {
     ChangeLocation(ToolbarItemLocation),
