@@ -501,7 +501,7 @@ impl Default for CursorStyle {
     }
 }
 
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct SemanticVersion {
     major: usize,
     minor: usize,

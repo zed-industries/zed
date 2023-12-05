@@ -1,4 +1,3 @@
-use editor::Editor;
 use gpui::{
     div, rems, AppContext, DismissEvent, Div, EventEmitter, FocusHandle, FocusableView, Render,
     ViewContext,
@@ -9,7 +8,7 @@ use workspace::Workspace;
 use crate::feedback_editor::GiveFeedback;
 
 pub struct FeedbackModal {
-    editor: View<Editor>,
+    // editor: View<Editor>,
     tmp_focus_handle: FocusHandle, // TODO: should be editor.focus_handle(cx)
 }
 
@@ -29,8 +28,8 @@ impl FeedbackModal {
     }
 
     pub fn new(cx: &mut ViewContext<Self>) -> Self {
-        let line_editor = cx.build_view(|cx| Editor::single_line(cx));
-        let line_editor_change = cx.subscribe(&line_editor, Self::on_line_editor_event);
+        // let line_editor = cx.build_view(|cx| Editor::single_line(cx));
+        // let line_editor_change = cx.subscribe(&line_editor, Self::on_line_editor_event);
 
         // let editor = active_editor.read(cx);
         // let cursor = editor.selections.last::<Point>(cx).head();
@@ -44,7 +43,7 @@ impl FeedbackModal {
         //     cursor.column + 1,
         // );
         Self {
-            editor: line_editor,
+            // editor: line_editor,
             tmp_focus_handle: cx.focus_handle(),
         }
     }

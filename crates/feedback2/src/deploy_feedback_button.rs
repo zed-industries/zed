@@ -1,18 +1,18 @@
-use gpui::{Action, AnyElement, Render, ViewContext, WeakView};
+use gpui::{AnyElement, Render, ViewContext, WeakView};
 use ui::{prelude::*, ButtonCommon, Icon, IconButton, Tooltip};
 use workspace::{StatusItemView, Workspace};
 
-use crate::{feedback_editor::GiveFeedback, feedback_modal::FeedbackModal};
+use crate::feedback_modal::FeedbackModal;
 
 pub struct DeployFeedbackButton {
-    active: bool,
+    _active: bool,
     workspace: WeakView<Workspace>,
 }
 
 impl DeployFeedbackButton {
     pub fn new(workspace: &Workspace) -> Self {
         DeployFeedbackButton {
-            active: false,
+            _active: false,
             workspace: workspace.weak_handle(),
         }
     }

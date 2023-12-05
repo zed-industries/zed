@@ -67,7 +67,7 @@ use std::{
 use theme::{ActiveTheme, ThemeSettings};
 pub use toolbar::{ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 pub use ui;
-use ui::{h_stack, v_stack, StyledExt};
+// use ui::{h_stack, v_stack, StyledExt};
 use util::ResultExt;
 use uuid::Uuid;
 pub use workspace_settings::{AutosaveSetting, WorkspaceSettings};
