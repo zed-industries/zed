@@ -1,6 +1,5 @@
 use gpui::{actions, AppContext, ClipboardItem, PromptLevel};
 use system_specs::SystemSpecs;
-// use system_specs::SystemSpecs;
 use workspace::Workspace;
 
 pub mod deploy_feedback_button;
@@ -48,15 +47,11 @@ pub fn init(cx: &mut AppContext) {
                     urlencoding::encode(&SystemSpecs::new(&cx).to_string())
                 );
                 cx.open_url(&url);
-            });
+            })
+            .register_action(move |_, _: &OpenZedCommunityRepo, cx| {
+                let url = "https://github.com/zed-industries/community";
+                cx.open_url(&url);
+        });
     })
     .detach();
-
-    // TODO
-    // cx.add_global_action(open_zed_community_repo);
-}
-
-pub fn open_zed_community_repo(_: &OpenZedCommunityRepo, cx: &mut AppContext) {
-    let url = "https://github.com/zed-industries/community";
-    cx.open_url(&url);
 }
