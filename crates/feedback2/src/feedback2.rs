@@ -18,7 +18,7 @@ actions!(
 );
 
 pub fn init(cx: &mut AppContext) {
-    // feedback_editor::init(cx);
+    feedback_editor::init(cx);
 
     cx.observe_new_views(|workspace: &mut Workspace, _cx| {
         workspace

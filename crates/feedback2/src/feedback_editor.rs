@@ -1,236 +1,238 @@
-// use crate::system_specs::SystemSpecs;
-// use anyhow::bail;
-// use client::{Client, ZED_SECRET_CLIENT_TOKEN, ZED_SERVER_URL};
-// use editor::{Anchor, Editor};
-// use futures::AsyncReadExt;
-// use gpui::{actions, serde_json, AppContext, Model, PromptLevel, Task, View, ViewContext};
-// use isahc::Request;
-// use language::Buffer;
-// use postage::prelude::Stream;
-// use project::{search::SearchQuery, Project};
-// use regex::Regex;
-// use serde::Serialize;
-// use std::{
-//     ops::{Range, RangeInclusive},
-//     sync::Arc,
-// };
-// use util::ResultExt;
-// use workspace::{searchable::SearchableItem, Workspace};
+use std::{ops::RangeInclusive, sync::Arc};
 
-// const FEEDBACK_CHAR_LIMIT: RangeInclusive<usize> = 10..=5000;
-// const FEEDBACK_SUBMISSION_ERROR_TEXT: &str =
-//     "Feedback failed to submit, see error log for details.";
+use anyhow::bail;
+use client::{Client, ZED_SECRET_CLIENT_TOKEN, ZED_SERVER_URL};
+use editor::Editor;
+use futures::AsyncReadExt;
+use gpui::{
+    actions, serde_json, AppContext, Model, PromptLevel, Task, View, ViewContext, VisualContext,
+};
+use isahc::Request;
+use language::Buffer;
+use project::Project;
+use regex::Regex;
+use serde_derive::Serialize;
+use util::ResultExt;
+use workspace::Workspace;
 
-use gpui::actions;
+use crate::system_specs::SystemSpecs;
+
+const FEEDBACK_CHAR_LIMIT: RangeInclusive<usize> = 10..=5000;
+const FEEDBACK_SUBMISSION_ERROR_TEXT: &str =
+    "Feedback failed to submit, see error log for details.";
 
 actions!(GiveFeedback, SubmitFeedback);
 
-// pub fn init(cx: &mut AppContext) {
-//     cx.add_action({
-//         move |workspace: &mut Workspace, _: &GiveFeedback, cx: &mut ViewContext<Workspace>| {
-//             FeedbackEditor::deploy(workspace, cx);
-//         }
-//     });
-// }
+pub fn init(cx: &mut AppContext) {
+    cx.observe_new_views(|workspace: &mut Workspace, cx| {
+        workspace.register_action(
+            move |workspace: &mut Workspace, _: &GiveFeedback, cx: &mut ViewContext<Workspace>| {
+                FeedbackEditor::deploy(workspace, cx);
+            },
+        );
+    })
+    .detach();
+}
 
-// #[derive(Serialize)]
-// struct FeedbackRequestBody<'a> {
-//     feedback_text: &'a str,
-//     email: Option<String>,
-//     metrics_id: Option<Arc<str>>,
-//     installation_id: Option<Arc<str>>,
-//     system_specs: SystemSpecs,
-//     is_staff: bool,
-//     token: &'a str,
-// }
+#[derive(Serialize)]
+struct FeedbackRequestBody<'a> {
+    feedback_text: &'a str,
+    email: Option<String>,
+    metrics_id: Option<Arc<str>>,
+    installation_id: Option<Arc<str>>,
+    system_specs: SystemSpecs,
+    is_staff: bool,
+    token: &'a str,
+}
 
-// #[derive(Clone)]
-// pub(crate) struct FeedbackEditor {
-//     system_specs: SystemSpecs,
-//     editor: View<Editor>,
-//     project: Model<Project>,
-//     pub allow_submission: bool,
-// }
+#[derive(Clone)]
+pub(crate) struct FeedbackEditor {
+    system_specs: SystemSpecs,
+    editor: View<Editor>,
+    project: Model<Project>,
+    pub allow_submission: bool,
+}
 
-// impl FeedbackEditor {
-//     fn new(
-//         system_specs: SystemSpecs,
-//         project: Model<Project>,
-//         buffer: Model<Buffer>,
-//         cx: &mut ViewContext<Self>,
-//     ) -> Self {
-//         let editor = cx.add_view(|cx| {
-//             let mut editor = Editor::for_buffer(buffer, Some(project.clone()), cx);
-//             editor.set_vertical_scroll_margin(5, cx);
-//             editor
-//         });
+impl FeedbackEditor {
+    fn new(
+        system_specs: SystemSpecs,
+        project: Model<Project>,
+        buffer: Model<Buffer>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
+        let editor = cx.build_view(|cx| {
+            let mut editor = Editor::for_buffer(buffer, Some(project.clone()), cx);
+            editor.set_vertical_scroll_margin(5, cx);
+            editor
+        });
 
-//         cx.subscribe(&editor, |_, _, e, cx| cx.emit(e.clone()))
-//             .detach();
+        cx.subscribe(&editor, |_, _, e, cx| cx.emit(e.clone()))
+            .detach();
 
-//         Self {
-//             system_specs: system_specs.clone(),
-//             editor,
-//             project,
-//             allow_submission: true,
-//         }
-//     }
+        Self {
+            system_specs: system_specs.clone(),
+            editor,
+            project,
+            allow_submission: true,
+        }
+    }
 
-//     pub fn submit(&mut self, cx: &mut ViewContext<Self>) -> Task<anyhow::Result<()>> {
-//         if !self.allow_submission {
-//             return Task::ready(Ok(()));
-//         }
+    pub fn submit(&mut self, cx: &mut ViewContext<Self>) -> Task<anyhow::Result<()>> {
+        if !self.allow_submission {
+            return Task::ready(Ok(()));
+        }
 
-//         let feedback_text = self.editor.read(cx).text(cx);
-//         let feedback_char_count = feedback_text.chars().count();
-//         let feedback_text = feedback_text.trim().to_string();
+        let feedback_text = self.editor.read(cx).text(cx);
+        let feedback_char_count = feedback_text.chars().count();
+        let feedback_text = feedback_text.trim().to_string();
 
-//         let error = if feedback_char_count < *FEEDBACK_CHAR_LIMIT.start() {
-//             Some(format!(
-//                 "Feedback can't be shorter than {} characters.",
-//                 FEEDBACK_CHAR_LIMIT.start()
-//             ))
-//         } else if feedback_char_count > *FEEDBACK_CHAR_LIMIT.end() {
-//             Some(format!(
-//                 "Feedback can't be longer than {} characters.",
-//                 FEEDBACK_CHAR_LIMIT.end()
-//             ))
-//         } else {
-//             None
-//         };
+        let error = if feedback_char_count < *FEEDBACK_CHAR_LIMIT.start() {
+            Some(format!(
+                "Feedback can't be shorter than {} characters.",
+                FEEDBACK_CHAR_LIMIT.start()
+            ))
+        } else if feedback_char_count > *FEEDBACK_CHAR_LIMIT.end() {
+            Some(format!(
+                "Feedback can't be longer than {} characters.",
+                FEEDBACK_CHAR_LIMIT.end()
+            ))
+        } else {
+            None
+        };
 
-//         if let Some(error) = error {
-//             cx.prompt(PromptLevel::Critical, &error, &["OK"]);
-//             return Task::ready(Ok(()));
-//         }
+        if let Some(error) = error {
+            cx.prompt(PromptLevel::Critical, &error, &["OK"]);
+            return Task::ready(Ok(()));
+        }
 
-//         let mut answer = cx.prompt(
-//             PromptLevel::Info,
-//             "Ready to submit your feedback?",
-//             &["Yes, Submit!", "No"],
-//         );
+        let mut answer = cx.prompt(
+            PromptLevel::Info,
+            "Ready to submit your feedback?",
+            &["Yes, Submit!", "No"],
+        );
 
-//         let client = cx.global::<Arc<Client>>().clone();
-//         let specs = self.system_specs.clone();
+        let client = cx.global::<Arc<Client>>().clone();
+        let specs = self.system_specs.clone();
 
-//         cx.spawn(|this, mut cx| async move {
-//             let answer = answer.recv().await;
+        cx.spawn(|this, mut cx| async move {
+            let answer = answer.recv().await;
 
-//             if answer == Some(0) {
-//                 this.update(&mut cx, |feedback_editor, cx| {
-//                     feedback_editor.set_allow_submission(false, cx);
-//                 })
-//                 .log_err();
+            if answer == Some(0) {
+                this.update(&mut cx, |feedback_editor, cx| {
+                    feedback_editor.set_allow_submission(false, cx);
+                })
+                .log_err();
 
-//                 match FeedbackEditor::submit_feedback(&feedback_text, client, specs).await {
-//                     Ok(_) => {
-//                         this.update(&mut cx, |_, cx| cx.emit(editor::EditorEvent::Closed))
-//                             .log_err();
-//                     }
+                match FeedbackEditor::submit_feedback(&feedback_text, client, specs).await {
+                    Ok(_) => {
+                        this.update(&mut cx, |_, cx| cx.emit(editor::EditorEvent::Closed))
+                            .log_err();
+                    }
 
-//                     Err(error) => {
-//                         log::error!("{}", error);
-//                         this.update(&mut cx, |feedback_editor, cx| {
-//                             cx.prompt(
-//                                 PromptLevel::Critical,
-//                                 FEEDBACK_SUBMISSION_ERROR_TEXT,
-//                                 &["OK"],
-//                             );
-//                             feedback_editor.set_allow_submission(true, cx);
-//                         })
-//                         .log_err();
-//                     }
-//                 }
-//             }
-//         })
-//         .detach();
+                    Err(error) => {
+                        log::error!("{}", error);
+                        this.update(&mut cx, |feedback_editor, cx| {
+                            cx.prompt(
+                                PromptLevel::Critical,
+                                FEEDBACK_SUBMISSION_ERROR_TEXT,
+                                &["OK"],
+                            );
+                            feedback_editor.set_allow_submission(true, cx);
+                        })
+                        .log_err();
+                    }
+                }
+            }
+        })
+        .detach();
 
-//         Task::ready(Ok(()))
-//     }
+        Task::ready(Ok(()))
+    }
 
-//     fn set_allow_submission(&mut self, allow_submission: bool, cx: &mut ViewContext<Self>) {
-//         self.allow_submission = allow_submission;
-//         cx.notify();
-//     }
+    fn set_allow_submission(&mut self, allow_submission: bool, cx: &mut ViewContext<Self>) {
+        self.allow_submission = allow_submission;
+        cx.notify();
+    }
 
-//     async fn submit_feedback(
-//         feedback_text: &str,
-//         zed_client: Arc<Client>,
-//         system_specs: SystemSpecs,
-//     ) -> anyhow::Result<()> {
-//         let feedback_endpoint = format!("{}/api/feedback", *ZED_SERVER_URL);
+    async fn submit_feedback(
+        feedback_text: &str,
+        zed_client: Arc<Client>,
+        system_specs: SystemSpecs,
+    ) -> anyhow::Result<()> {
+        let feedback_endpoint = format!("{}/api/feedback", *ZED_SERVER_URL);
 
-//         let telemetry = zed_client.telemetry();
-//         let metrics_id = telemetry.metrics_id();
-//         let installation_id = telemetry.installation_id();
-//         let is_staff = telemetry.is_staff();
-//         let http_client = zed_client.http_client();
+        let telemetry = zed_client.telemetry();
+        let metrics_id = telemetry.metrics_id();
+        let installation_id = telemetry.installation_id();
+        let is_staff = telemetry.is_staff();
+        let http_client = zed_client.http_client();
 
-//         let re = Regex::new(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b").unwrap();
+        let re = Regex::new(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b").unwrap();
 
-//         let emails: Vec<&str> = re
-//             .captures_iter(feedback_text)
-//             .map(|capture| capture.get(0).unwrap().as_str())
-//             .collect();
+        let emails: Vec<&str> = re
+            .captures_iter(feedback_text)
+            .map(|capture| capture.get(0).unwrap().as_str())
+            .collect();
 
-//         let email = emails.first().map(|e| e.to_string());
+        let email = emails.first().map(|e| e.to_string());
 
-//         let request = FeedbackRequestBody {
-//             feedback_text: &feedback_text,
-//             email,
-//             metrics_id,
-//             installation_id,
-//             system_specs,
-//             is_staff: is_staff.unwrap_or(false),
-//             token: ZED_SECRET_CLIENT_TOKEN,
-//         };
+        let request = FeedbackRequestBody {
+            feedback_text: &feedback_text,
+            email,
+            metrics_id,
+            installation_id,
+            system_specs,
+            is_staff: is_staff.unwrap_or(false),
+            token: ZED_SECRET_CLIENT_TOKEN,
+        };
 
-//         let json_bytes = serde_json::to_vec(&request)?;
+        let json_bytes = serde_json::to_vec(&request)?;
 
-//         let request = Request::post(feedback_endpoint)
-//             .header("content-type", "application/json")
-//             .body(json_bytes.into())?;
+        let request = Request::post(feedback_endpoint)
+            .header("content-type", "application/json")
+            .body(json_bytes.into())?;
 
-//         let mut response = http_client.send(request).await?;
-//         let mut body = String::new();
-//         response.body_mut().read_to_string(&mut body).await?;
+        let mut response = http_client.send(request).await?;
+        let mut body = String::new();
+        response.body_mut().read_to_string(&mut body).await?;
 
-//         let response_status = response.status();
+        let response_status = response.status();
 
-//         if !response_status.is_success() {
-//             bail!("Feedback API failed with error: {}", response_status)
-//         }
+        if !response_status.is_success() {
+            bail!("Feedback API failed with error: {}", response_status)
+        }
 
-//         Ok(())
-//     }
-// }
+        Ok(())
+    }
+}
 
-// impl FeedbackEditor {
-//     pub fn deploy(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
-//         let markdown = workspace
-//             .app_state()
-//             .languages
-//             .language_for_name("Markdown");
-//         cx.spawn(|workspace, mut cx| async move {
-//             let markdown = markdown.await.log_err();
-//             workspace
-//                 .update(&mut cx, |workspace, cx| {
-//                     workspace.with_local_workspace(cx, |workspace, cx| {
-//                         let project = workspace.project().clone();
-//                         let buffer = project
-//                             .update(cx, |project, cx| project.create_buffer("", markdown, cx))
-//                             .expect("creating buffers on a local workspace always succeeds");
-//                         let system_specs = SystemSpecs::new(cx);
-//                         let feedback_editor = cx
-//                             .add_view(|cx| FeedbackEditor::new(system_specs, project, buffer, cx));
-//                         workspace.add_item(Box::new(feedback_editor), cx);
-//                     })
-//                 })?
-//                 .await
-//         })
-//         .detach_and_log_err(cx);
-//     }
-// }
+impl FeedbackEditor {
+    pub fn deploy(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
+        let markdown = workspace
+            .app_state()
+            .languages
+            .language_for_name("Markdown");
+        cx.spawn(|workspace, mut cx| async move {
+            let markdown = markdown.await.log_err();
+            workspace
+                .update(&mut cx, |workspace, cx| {
+                    workspace.with_local_workspace(cx, |workspace, cx| {
+                        let project = workspace.project().clone();
+                        let buffer = project
+                            .update(cx, |project, cx| project.create_buffer("", markdown, cx))
+                            .expect("creating buffers on a local workspace always succeeds");
+                        let system_specs = SystemSpecs::new(cx);
+                        let feedback_editor = cx.build_view(|cx| {
+                            FeedbackEditor::new(system_specs, project, buffer, cx)
+                        });
+                        workspace.add_item(Box::new(feedback_editor), cx);
+                    })
+                })?
+                .await
+        })
+        .detach_and_log_err(cx);
+    }
+}
 
 // impl View for FeedbackEditor {
 //     fn ui_name() -> &'static str {
