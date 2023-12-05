@@ -169,7 +169,7 @@ use editor::Editor;
 use feature_flags::{ChannelsAlpha, FeatureFlagAppExt, FeatureFlagViewExt};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
-    actions, canvas, div, img, overlay, point, prelude::*, px, rems, serde_json, Action,
+    actions, canvas, div, img, overlay, point, prelude::*, px, rems, serde_json, size, Action,
     AppContext, AsyncWindowContext, Bounds, ClipboardItem, DismissEvent, Div, EventEmitter,
     FocusHandle, Focusable, FocusableView, Hsla, InteractiveElement, IntoElement, Length, Model,
     MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Quad, Render, RenderOnce,
@@ -1204,14 +1204,9 @@ impl CollabPanel {
                         .detach_and_log_err(cx);
                 });
             }))
-            .left_child(IconButton::new(0, Icon::Folder))
-            .child(
-                h_stack()
-                    .w_full()
-                    .justify_between()
-                    .child(render_tree_branch(is_last, cx))
-                    .child(Label::new(project_name.clone())),
-            )
+            .left_child(render_tree_branch(is_last, cx))
+            .child(IconButton::new(0, Icon::Folder))
+            .child(Label::new(project_name.clone()))
             .tooltip(move |cx| Tooltip::text(format!("Open {}", project_name), cx))
 
         //         enum JoinProject {}
@@ -3119,30 +3114,24 @@ impl CollabPanel {
 }
 
 fn render_tree_branch(is_last: bool, cx: &mut WindowContext) -> impl IntoElement {
-    let text_style = cx.text_style();
     let rem_size = cx.rem_size();
-    let text_system = cx.text_system();
-    let font_id = text_system.font_id(&text_style.font()).unwrap();
-    let font_size = text_style.font_size.to_pixels(rem_size);
-    let line_height = text_style.line_height_in_pixels(rem_size);
-    let cap_height = text_system.cap_height(font_id, font_size);
-    let baseline_offset = text_system.baseline_offset(font_id, font_size, line_height);
-    let width = cx.rem_size() * 2.5;
+    let line_height = cx.text_style().line_height_in_pixels(rem_size);
+    let width = rem_size * 1.5;
     let thickness = px(2.);
     let color = cx.theme().colors().text;
 
     canvas(move |bounds, cx| {
-        let start_x = bounds.left() + (bounds.size.width / 2.) - (width / 2.);
-        let end_x = bounds.right();
-        let start_y = bounds.top();
-        let end_y = bounds.top() + baseline_offset - (cap_height / 2.);
+        let start_x = (bounds.left() + bounds.right() - thickness) / 2.;
+        let start_y = (bounds.top() + bounds.bottom() - thickness) / 2.;
+        let right = bounds.right();
+        let top = bounds.top();
 
         cx.paint_quad(
             Bounds::from_corners(
-                point(start_x, start_y),
+                point(start_x, top),
                 point(
                     start_x + thickness,
-                    if is_last { end_y } else { bounds.bottom() },
+                    if is_last { start_y } else { bounds.bottom() },
                 ),
             ),
             Default::default(),
@@ -3151,7 +3140,7 @@ fn render_tree_branch(is_last: bool, cx: &mut WindowContext) -> impl IntoElement
             Hsla::transparent_black(),
         );
         cx.paint_quad(
-            Bounds::from_corners(point(start_x, end_y), point(end_x, end_y + thickness)),
+            Bounds::from_corners(point(start_x, start_y), point(right, start_y + thickness)),
             Default::default(),
             color,
             Default::default(),
