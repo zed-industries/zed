@@ -1447,7 +1447,6 @@ impl Pane {
                 .h_3()
                 .justify_center()
                 .absolute()
-                .bg(gpui::red())
                 .map(|this| match close_side {
                     ClosePosition::Left => this.right_1(),
                     ClosePosition::Right => this.left_1(),
@@ -1541,7 +1540,7 @@ impl Pane {
                     .text_color(text_color)
                     .child(indicator)
                     .child(close_button)
-                    .child(div().bg(gpui::green()).child(label)),
+                    .child(label),
             );
 
         right_click_menu(ix).trigger(tab).menu(|cx| {
@@ -1588,7 +1587,6 @@ impl Pane {
                     .border_b()
                     .border_r()
                     .border_color(cx.theme().colors().border)
-                    .bg(gpui::red())
                     // Nav Buttons
                     .child(
                         IconButton::new("navigate_backward", Icon::ArrowLeft)
@@ -1615,7 +1613,6 @@ impl Pane {
                     .flex_1()
                     .h_full()
                     .overflow_hidden_x()
-                    .bg(gpui::green())
                     .child(
                         div()
                             .absolute()
@@ -1639,7 +1636,6 @@ impl Pane {
             // Right Side
             .child(
                 h_stack()
-                    .bg(gpui::blue())
                     .flex()
                     .flex_none()
                     .gap_1()
