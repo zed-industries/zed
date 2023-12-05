@@ -27,9 +27,10 @@ use editor::{
 use fs::Fs;
 use futures::StreamExt;
 use gpui::{
-    actions, point, uniform_list, Action, AnyElement, AppContext, AsyncAppContext, ClipboardItem,
-    Div, Element, Entity, EventEmitter, FocusHandle, FocusableView, HighlightStyle,
-    InteractiveElement, IntoElement, Model, ModelContext, Render, Styled, Subscription, Task,
+    actions, div, point, uniform_list, Action, AnyElement, AppContext, AsyncAppContext,
+    ClipboardItem, Div, Element, Entity, EventEmitter, FocusHandle, Focusable, FocusableView,
+    HighlightStyle, InteractiveElement, IntoElement, Model, ModelContext, ParentElement, Pixels,
+    PromptLevel, Render, StatefulInteractiveElement, Styled, Subscription, Task,
     UniformListScrollHandle, View, ViewContext, VisualContext, WeakModel, WeakView, WindowContext,
 };
 use language::{language_settings::SoftWrap, Buffer, LanguageRegistry, ToOffset as _};
@@ -48,7 +49,10 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use ui::{h_stack, v_stack, ButtonCommon, ButtonLike, Clickable, IconButton, Label};
+use ui::{
+    h_stack, v_stack, Button, ButtonCommon, ButtonLike, Clickable, Color, Icon, IconButton,
+    IconElement, Label, Selectable, StyledExt, Tooltip,
+};
 use util::{paths::CONVERSATIONS_DIR, post_inc, ResultExt, TryFutureExt};
 use uuid::Uuid;
 use workspace::{
@@ -958,7 +962,7 @@ impl AssistantPanel {
     }
 
     fn render_hamburger_button(cx: &mut ViewContext<Self>) -> impl IntoElement {
-        IconButton::new("hamburger_button", ui::Icon::Menu)
+        IconButton::new("hamburger_button", Icon::Menu)
             .on_click(cx.listener(|this, _event, cx| {
                 if this.active_editor().is_some() {
                     this.set_active_editor_index(None, cx);
@@ -966,7 +970,7 @@ impl AssistantPanel {
                     this.set_active_editor_index(this.prev_active_editor_index, cx);
                 }
             }))
-            .tooltip(|cx| ui::Tooltip::text("History", cx))
+            .tooltip(|cx| Tooltip::text("History", cx))
     }
 
     fn render_editor_tools(&self, cx: &mut ViewContext<Self>) -> Vec<AnyElement> {
@@ -982,27 +986,27 @@ impl AssistantPanel {
     }
 
     fn render_split_button(cx: &mut ViewContext<Self>) -> impl IntoElement {
-        IconButton::new("split_button", ui::Icon::Menu)
+        IconButton::new("split_button", Icon::Menu)
             .on_click(cx.listener(|this, _event, cx| {
                 if let Some(active_editor) = this.active_editor() {
                     active_editor.update(cx, |editor, cx| editor.split(&Default::default(), cx));
                 }
             }))
-            .tooltip(|cx| ui::Tooltip::for_action("Split Message", &Split, cx))
+            .tooltip(|cx| Tooltip::for_action("Split Message", &Split, cx))
     }
 
     fn render_assist_button(cx: &mut ViewContext<Self>) -> impl IntoElement {
-        IconButton::new("assist_button", ui::Icon::Menu)
+        IconButton::new("assist_button", Icon::Menu)
             .on_click(cx.listener(|this, _event, cx| {
                 if let Some(active_editor) = this.active_editor() {
                     active_editor.update(cx, |editor, cx| editor.assist(&Default::default(), cx));
                 }
             }))
-            .tooltip(|cx| ui::Tooltip::for_action("Assist", &Assist, cx))
+            .tooltip(|cx| Tooltip::for_action("Assist", &Assist, cx))
     }
 
     fn render_quote_button(cx: &mut ViewContext<Self>) -> impl IntoElement {
-        IconButton::new("quote_button", ui::Icon::Menu)
+        IconButton::new("quote_button", Icon::Menu)
             .on_click(cx.listener(|this, _event, cx| {
                 if let Some(workspace) = this.workspace.upgrade() {
                     cx.window_context().defer(move |cx| {
@@ -1012,24 +1016,24 @@ impl AssistantPanel {
                     });
                 }
             }))
-            .tooltip(|cx| ui::Tooltip::for_action("Quote Seleciton", &QuoteSelection, cx))
+            .tooltip(|cx| Tooltip::for_action("Quote Seleciton", &QuoteSelection, cx))
     }
 
     fn render_plus_button(cx: &mut ViewContext<Self>) -> impl IntoElement {
-        IconButton::new("plus_button", ui::Icon::Menu)
+        IconButton::new("plus_button", Icon::Menu)
             .on_click(cx.listener(|this, _event, cx| {
                 this.new_conversation(cx);
             }))
-            .tooltip(|cx| ui::Tooltip::for_action("New Conversation", &NewConversation, cx))
+            .tooltip(|cx| Tooltip::for_action("New Conversation", &NewConversation, cx))
     }
 
     fn render_zoom_button(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        IconButton::new("zoom_button", ui::Icon::Menu)
+        IconButton::new("zoom_button", Icon::Menu)
             .on_click(cx.listener(|this, _event, cx| {
                 this.toggle_zoom(&ToggleZoom, cx);
             }))
             .tooltip(|cx| {
-                ui::Tooltip::for_action(
+                Tooltip::for_action(
                     if self.zoomed { "Zoom Out" } else { "Zoom In" },
                     &ToggleZoom,
                     cx,
@@ -1111,9 +1115,9 @@ fn build_api_key_editor(cx: &mut ViewContext<AssistantPanel>) -> View<Editor> {
 }
 
 impl Render for AssistantPanel {
-    type Element = Div;
+    type Element = Focusable<Div>;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         if let Some(api_key_editor) = self.api_key_editor.clone() {
             v_stack()
                 .track_focus(&self.focus_handle)
@@ -1249,8 +1253,8 @@ impl Panel for AssistantPanel {
         }
     }
 
-    fn icon(&self, cx: &WindowContext) -> Option<ui::Icon> {
-        Some(ui::Icon::Ai)
+    fn icon(&self, cx: &WindowContext) -> Option<Icon> {
+        Some(Icon::Ai)
     }
 
     fn toggle_action(&self) -> Box<dyn Action> {
@@ -2052,6 +2056,7 @@ struct ConversationEditor {
     editor: View<Editor>,
     blocks: HashSet<BlockId>,
     scroll_position: Option<ScrollPosition>,
+    focus_handle: FocusHandle,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -2082,10 +2087,13 @@ impl ConversationEditor {
             editor
         });
 
+        let focus_handle = cx.focus_handle();
+
         let _subscriptions = vec![
             cx.observe(&conversation, |_, _, cx| cx.notify()),
             cx.subscribe(&conversation, Self::handle_conversation_event),
             cx.subscribe(&editor, Self::handle_editor_event),
+            cx.on_focus(&focus_handle, |this, _, cx| cx.focus(&this.editor)),
         ];
 
         let mut this = Self {
@@ -2095,6 +2103,7 @@ impl ConversationEditor {
             scroll_position: None,
             fs,
             workspace,
+            focus_handle,
             _subscriptions,
         };
         this.update_message_headers(cx);
@@ -2265,88 +2274,47 @@ impl ConversationEditor {
                     style: BlockStyle::Sticky,
                     render: Arc::new({
                         let conversation = self.conversation.clone();
-                        // let metadata = message.metadata.clone();
-                        // let message = message.clone();
                         move |cx| {
-                            enum Sender {}
-                            enum ErrorTooltip {}
-
                             let message_id = message.id;
-                            let sender = MouseEventHandler::new::<Sender, _>(
-                                message_id.0,
-                                cx,
-                                |state, _| match message.role {
-                                    Role::User => {
-                                        let style = style.user_sender.style_for(state);
-                                        Label::new("You", style.text.clone())
-                                            .contained()
-                                            .with_style(style.container)
-                                    }
+                            let sender = ButtonLike::new("role")
+                                .child(match message.role {
+                                    Role::User => Label::new("You").color(Color::Default),
                                     Role::Assistant => {
-                                        let style = style.assistant_sender.style_for(state);
-                                        Label::new("Assistant", style.text.clone())
-                                            .contained()
-                                            .with_style(style.container)
+                                        Label::new("Assistant").color(Color::Modified)
                                     }
-                                    Role::System => {
-                                        let style = style.system_sender.style_for(state);
-                                        Label::new("System", style.text.clone())
-                                            .contained()
-                                            .with_style(style.container)
+                                    Role::System => Label::new("System").color(Color::Warning),
+                                })
+                                .on_click({
+                                    let conversation = conversation.clone();
+                                    move |_, _, cx| {
+                                        conversation.update(cx, |conversation, cx| {
+                                            conversation.cycle_message_roles(
+                                                HashSet::from_iter(Some(message_id)),
+                                                cx,
+                                            )
+                                        })
                                     }
-                                },
-                            )
-                            .with_cursor_style(CursorStyle::PointingHand)
-                            .on_down(MouseButton::Left, {
-                                let conversation = conversation.clone();
-                                move |_, _, cx| {
-                                    conversation.update(cx, |conversation, cx| {
-                                        conversation.cycle_message_roles(
-                                            HashSet::from_iter(Some(message_id)),
-                                            cx,
-                                        )
-                                    })
-                                }
-                            });
+                                });
 
-                            Flex::row()
-                                .with_child(sender.aligned())
-                                .with_child(
-                                    Label::new(
-                                        message.sent_at.format("%I:%M%P").to_string(),
-                                        style.sent_at.text.clone(),
-                                    )
-                                    .contained()
-                                    .with_style(style.sent_at.container)
-                                    .aligned(),
-                                )
+                            h_stack()
+                                .id(("message_header", message_id.0))
+                                .border()
+                                .border_color(gpui::red())
+                                .child(sender)
+                                .child(Label::new(message.sent_at.format("%I:%M%P").to_string()))
                                 .with_children(
                                     if let MessageStatus::Error(error) = &message.status {
                                         Some(
-                                            Svg::new("icons/error.svg")
-                                                .with_color(style.error_icon.color)
-                                                .constrained()
-                                                .with_width(style.error_icon.width)
-                                                .contained()
-                                                .with_style(style.error_icon.container)
-                                                .with_tooltip::<ErrorTooltip>(
-                                                    message_id.0,
-                                                    error.to_string(),
-                                                    None,
-                                                    theme.tooltip.clone(),
-                                                    cx,
-                                                )
-                                                .aligned(),
+                                            div()
+                                                .id("error")
+                                                .tooltip(|cx| Tooltip::text(error, cx))
+                                                .child(IconElement::new(Icon::XCircle)),
                                         )
                                     } else {
                                         None
                                     },
                                 )
-                                .aligned()
-                                .left()
-                                .contained()
-                                .with_style(style.message_header)
-                                .into_any()
+                                .into_any_element()
                         }
                     }),
                     disposition: BlockDisposition::Above,
@@ -2491,78 +2459,48 @@ impl ConversationEditor {
             .unwrap_or_else(|| "New Conversation".into())
     }
 
-    fn render_current_model(
-        &self,
-        style: &AssistantStyle,
-        cx: &mut ViewContext<Self>,
-    ) -> impl Element<Self> {
-        enum Model {}
-
-        MouseEventHandler::new::<Model, _>(0, cx, |state, cx| {
-            let style = style.model.style_for(state);
-            let model_display_name = self.conversation.read(cx).model.short_name();
-            Label::new(model_display_name, style.text.clone())
-                .contained()
-                .with_style(style.container)
-        })
-        .with_cursor_style(CursorStyle::PointingHand)
-        .on_click(MouseButton::Left, |_, this, cx| this.cycle_model(cx))
+    fn render_current_model(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        Button::new(
+            "current_model",
+            self.conversation.read(cx).model.short_name(),
+        )
+        .tooltip(move |cx| Tooltip::text("Change Model", cx))
+        .on_click(cx.listener(|this, _, cx| this.cycle_model(cx)))
     }
 
-    fn render_remaining_tokens(
-        &self,
-        style: &AssistantStyle,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<impl Element<Self>> {
+    fn render_remaining_tokens(&self, cx: &mut ViewContext<Self>) -> Option<impl IntoElement> {
         let remaining_tokens = self.conversation.read(cx).remaining_tokens()?;
-        let remaining_tokens_style = if remaining_tokens <= 0 {
-            &style.no_remaining_tokens
+        let remaining_tokens_color = if remaining_tokens <= 0 {
+            Color::Error
         } else if remaining_tokens <= 500 {
-            &style.low_remaining_tokens
+            Color::Warning
         } else {
-            &style.remaining_tokens
+            Color::Default
         };
         Some(
-            Label::new(
-                remaining_tokens.to_string(),
-                remaining_tokens_style.text.clone(),
-            )
-            .contained()
-            .with_style(remaining_tokens_style.container),
+            div()
+                .border()
+                .border_color(gpui::red())
+                .child(Label::new(remaining_tokens.to_string()).color(remaining_tokens_color)),
         )
     }
 }
 
 impl EventEmitter<ConversationEditorEvent> for ConversationEditor {}
 
-impl View for ConversationEditor {
-    fn ui_name() -> &'static str {
-        "ConversationEditor"
-    }
+impl Render for ConversationEditor {
+    type Element = Div;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-        let theme = &theme::current(cx).assistant;
-        Stack::new()
-            .with_child(
-                ChildView::new(&self.editor, cx)
-                    .contained()
-                    .with_style(theme.container),
-            )
-            .with_child(
-                Flex::row()
-                    .with_child(self.render_current_model(theme, cx))
-                    .with_children(self.render_remaining_tokens(theme, cx))
-                    .aligned()
-                    .top()
-                    .right(),
-            )
-            .into_any()
-    }
-
-    fn focus_in(&mut self, _: gpui::AnyViewHandle, cx: &mut ViewContext<Self>) {
-        if cx.is_self_focused() {
-            cx.focus(&self.editor);
-        }
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+        div().relative().child(self.editor.clone()).child(
+            h_stack()
+                .absolute()
+                .gap_1()
+                .top_3()
+                .right_5()
+                .child(self.render_current_model(cx))
+                .children(self.render_remaining_tokens(cx)),
+        )
     }
 }
 
@@ -2616,7 +2554,7 @@ struct InlineAssistant {
     prompt_editor: View<Editor>,
     workspace: WeakView<Workspace>,
     confirmed: bool,
-    has_focus: bool,
+    focus_handle: FocusHandle,
     include_conversation: bool,
     measurements: Rc<Cell<BlockMeasurements>>,
     prompt_history: VecDeque<String>,
@@ -2631,124 +2569,63 @@ struct InlineAssistant {
     maintain_rate_limit: Option<Task<()>>,
 }
 
-impl Entity for InlineAssistant {
-    type Event = InlineAssistantEvent;
-}
+impl EventEmitter<InlineAssistantEvent> for InlineAssistant {}
 
-impl View for InlineAssistant {
-    fn ui_name() -> &'static str {
-        "InlineAssistant"
-    }
+impl Render for InlineAssistant {
+    type Element = Div;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-        enum ErrorIcon {}
-        let theme = theme::current(cx);
-
-        Flex::row()
-            .with_children([Flex::row()
-                .with_child(
-                    Button::action(ToggleIncludeConversation)
-                        .with_tooltip("Include Conversation", theme.tooltip.clone())
-                        .with_id(self.id)
-                        .with_contents(theme::components::svg::Svg::new("icons/ai.svg"))
-                        .toggleable(self.include_conversation)
-                        .with_style(theme.assistant.inline.include_conversation.clone())
-                        .element()
-                        .aligned(),
-                )
-                .with_children(if SemanticIndex::enabled(cx) {
-                    Some(
-                        Button::action(ToggleRetrieveContext)
-                            .with_tooltip("Retrieve Context", theme.tooltip.clone())
-                            .with_id(self.id)
-                            .with_contents(theme::components::svg::Svg::new(
-                                "icons/magnifying_glass.svg",
-                            ))
-                            .toggleable(self.retrieve_context)
-                            .with_style(theme.assistant.inline.retrieve_context.clone())
-                            .element()
-                            .aligned(),
-                    )
-                } else {
-                    None
-                })
-                .with_children(if let Some(error) = self.codegen.read(cx).error() {
-                    Some(
-                        Svg::new("icons/error.svg")
-                            .with_color(theme.assistant.error_icon.color)
-                            .constrained()
-                            .with_width(theme.assistant.error_icon.width)
-                            .contained()
-                            .with_style(theme.assistant.error_icon.container)
-                            .with_tooltip::<ErrorIcon>(
-                                self.id,
-                                error.to_string(),
-                                None,
-                                theme.tooltip.clone(),
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+        let measurements = self.measurements.get();
+        h_stack()
+            .child(
+                h_stack()
+                    .justify_center()
+                    .w(measurements.gutter_width)
+                    .child(
+                        IconButton::new("include_conversation", Icon::Ai)
+                            .action(ToggleIncludeConversation)
+                            .selected(self.include_conversation)
+                            .tooltip(Tooltip::for_action(
+                                "Include Conversation",
+                                &ToggleIncludeConversation,
                                 cx,
-                            )
-                            .aligned(),
+                            )),
                     )
-                } else {
-                    None
-                })
-                .aligned()
-                .constrained()
-                .dynamically({
-                    let measurements = self.measurements.clone();
-                    move |constraint, _, _| {
-                        let measurements = measurements.get();
-                        SizeConstraint {
-                            min: vec2f(measurements.gutter_width, constraint.min.y()),
-                            max: vec2f(measurements.gutter_width, constraint.max.y()),
-                        }
-                    }
-                })])
-            .with_child(Empty::new().constrained().dynamically({
-                let measurements = self.measurements.clone();
-                move |constraint, _, _| {
-                    let measurements = measurements.get();
-                    SizeConstraint {
-                        min: vec2f(
-                            measurements.anchor_x - measurements.gutter_width,
-                            constraint.min.y(),
-                        ),
-                        max: vec2f(
-                            measurements.anchor_x - measurements.gutter_width,
-                            constraint.max.y(),
-                        ),
-                    }
-                }
-            }))
-            .with_child(
-                ChildView::new(&self.prompt_editor, cx)
-                    .aligned()
-                    .left()
-                    .flex(1., true),
+                    .children(if SemanticIndex::enabled(cx) {
+                        Some(
+                            IconButton::new("retrieve_context", Icon::MagnifyingGlass)
+                                .action(ToggleRetrieveContext)
+                                .selected(self.retrieve_context)
+                                .tooltip(Tooltip::for_action(
+                                    "Retrieve Context",
+                                    &ToggleRetrieveContext,
+                                    cx,
+                                )),
+                        )
+                    } else {
+                        None
+                    })
+                    .children(if let Some(error) = self.codegen.read(cx).error() {
+                        Some(
+                            div()
+                                .id("error")
+                                .tooltip(|cx| Tooltip::text(error.to_string(), cx))
+                                .child(IconElement::new(Icon::XCircle).color(Color::Error)),
+                        )
+                    } else {
+                        None
+                    }),
             )
-            .with_children(if self.retrieve_context {
-                Some(
-                    Flex::row()
-                        .with_children(self.retrieve_context_status(cx))
-                        .flex(1., true)
-                        .aligned(),
-                )
+            .child(
+                div()
+                    .ml(measurements.anchor_x - measurements.gutter_width)
+                    .child(self.prompt_editor.clone()),
+            )
+            .children(if self.retrieve_context {
+                self.retrieve_context_status(cx)
             } else {
                 None
             })
-            .contained()
-            .with_style(theme.assistant.inline.container)
-            .into_any()
-            .into_any()
-    }
-
-    fn focus_in(&mut self, _: gpui::AnyViewHandle, cx: &mut ViewContext<Self>) {
-        cx.focus(&self.prompt_editor);
-        self.has_focus = true;
-    }
-
-    fn focus_out(&mut self, _: gpui::AnyViewHandle, _: &mut ViewContext<Self>) {
-        self.has_focus = false;
     }
 }
 
@@ -2765,11 +2642,8 @@ impl InlineAssistant {
         semantic_index: Option<Model<SemanticIndex>>,
         project: Model<Project>,
     ) -> Self {
-        let prompt_editor = cx.add_view(|cx| {
-            let mut editor = Editor::single_line(
-                Some(Arc::new(|theme| theme.assistant.inline.editor.clone())),
-                cx,
-            );
+        let prompt_editor = cx.build_view(|cx| {
+            let mut editor = Editor::single_line(cx);
             let placeholder = match codegen.read(cx).kind() {
                 CodegenKind::Transform { .. } => "Enter transformation prompt…",
                 CodegenKind::Generate { .. } => "Enter generation prompt…",
@@ -2777,9 +2651,15 @@ impl InlineAssistant {
             editor.set_placeholder_text(placeholder, cx);
             editor
         });
+
+        let focus_handle = cx.focus_handle();
         let mut subscriptions = vec![
             cx.observe(&codegen, Self::handle_codegen_changed),
             cx.subscribe(&prompt_editor, Self::handle_prompt_editor_events),
+            cx.on_focus(
+                &focus_handle,
+                cx.listener(|this, _, cx| cx.focus(&this.prompt_editor)),
+            ),
         ];
 
         if let Some(semantic_index) = semantic_index.clone() {
@@ -2791,7 +2671,7 @@ impl InlineAssistant {
             prompt_editor,
             workspace,
             confirmed: false,
-            has_focus: false,
+            focus_handle,
             include_conversation,
             measurements,
             prompt_history,
@@ -3008,10 +2888,7 @@ impl InlineAssistant {
         anyhow::Ok(())
     }
 
-    fn retrieve_context_status(
-        &self,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<AnyElement<InlineAssistant>> {
+    fn retrieve_context_status(&self, cx: &mut ViewContext<Self>) -> Option<AnyElement> {
         enum ContextStatusIcon {}
 
         let Some(project) = self.project.upgrade() else {
@@ -3020,47 +2897,27 @@ impl InlineAssistant {
 
         if let Some(semantic_index) = SemanticIndex::global(cx) {
             let status = semantic_index.update(cx, |index, _| index.status(&project));
-            let theme = theme::current(cx);
             match status {
                 SemanticIndexStatus::NotAuthenticated {} => Some(
-                    Svg::new("icons/error.svg")
-                        .with_color(theme.assistant.error_icon.color)
-                        .constrained()
-                        .with_width(theme.assistant.error_icon.width)
-                        .contained()
-                        .with_style(theme.assistant.error_icon.container)
-                        .with_tooltip::<ContextStatusIcon>(
-                            self.id,
-                            "Not Authenticated. Please ensure you have a valid 'OPENAI_API_KEY' in your environment variables.",
-                            None,
-                            theme.tooltip.clone(),
-                            cx,
-                        )
-                        .aligned()
-                        .into_any(),
+                    div()
+                        .id("error")
+                        .tooltip(|cx| Tooltip::text("Not Authenticated. Please ensure you have a valid 'OPENAI_API_KEY' in your environment variables.", cx))
+                        .child(IconElement::new(Icon::XCircle))
+                        .into_any_element()
                 ),
+
                 SemanticIndexStatus::NotIndexed {} => Some(
-                    Svg::new("icons/error.svg")
-                        .with_color(theme.assistant.inline.context_status.error_icon.color)
-                        .constrained()
-                        .with_width(theme.assistant.inline.context_status.error_icon.width)
-                        .contained()
-                        .with_style(theme.assistant.inline.context_status.error_icon.container)
-                        .with_tooltip::<ContextStatusIcon>(
-                            self.id,
-                            "Not Indexed",
-                            None,
-                            theme.tooltip.clone(),
-                            cx,
-                        )
-                        .aligned()
-                        .into_any(),
+                    div()
+                        .id("error")
+                        .tooltip(|cx| Tooltip::text("Not Indexed", cx))
+                        .child(IconElement::new(Icon::XCircle))
+                        .into_any_element()
                 ),
+
                 SemanticIndexStatus::Indexing {
                     remaining_files,
                     rate_limit_expiry,
                 } => {
-
                     let mut status_text = if remaining_files == 0 {
                         "Indexing...".to_string()
                     } else {
@@ -3079,6 +2936,11 @@ impl InlineAssistant {
                         }
                     }
                     Some(
+                        div()
+                            .id("update")
+                            .tooltip(|cx| Tooltip::text(status_text, cx))
+                            .child(IconElement::new(Icon::Update).color(color))
+                            .into_any_element()
                         Svg::new("icons/update.svg")
                             .with_color(theme.assistant.inline.context_status.in_progress_icon.color)
                             .constrained()
@@ -3096,6 +2958,7 @@ impl InlineAssistant {
                             .into_any(),
                     )
                 }
+
                 SemanticIndexStatus::Indexed {} => Some(
                     Svg::new("icons/check.svg")
                         .with_color(theme.assistant.inline.context_status.complete_icon.color)
@@ -3118,42 +2981,6 @@ impl InlineAssistant {
             None
         }
     }
-
-    // fn retrieve_context_status(&self, cx: &mut ViewContext<Self>) -> String {
-    //     let project = self.project.clone();
-    //     if let Some(semantic_index) = self.semantic_index.clone() {
-    //         let status = semantic_index.update(cx, |index, cx| index.status(&project));
-    //         return match status {
-    //             // This theoretically shouldnt be a valid code path
-    //             // As the inline assistant cant be launched without an API key
-    //             // We keep it here for safety
-    //             semantic_index::SemanticIndexStatus::NotAuthenticated => {
-    //                 "Not Authenticated!\nPlease ensure you have an `OPENAI_API_KEY` in your environment variables.".to_string()
-    //             }
-    //             semantic_index::SemanticIndexStatus::Indexed => {
-    //                 "Indexing Complete!".to_string()
-    //             }
-    //             semantic_index::SemanticIndexStatus::Indexing { remaining_files, rate_limit_expiry } => {
-
-    //                 let mut status = format!("Remaining files to index for Context Retrieval: {remaining_files}");
-
-    //                 if let Some(rate_limit_expiry) = rate_limit_expiry {
-    //                     let remaining_seconds =
-    //                             rate_limit_expiry.duration_since(Instant::now());
-    //                     if remaining_seconds > Duration::from_secs(0) {
-    //                         write!(status, " (rate limit resets in {}s)", remaining_seconds.as_secs()).unwrap();
-    //                     }
-    //                 }
-    //                 status
-    //             }
-    //             semantic_index::SemanticIndexStatus::NotIndexed => {
-    //                 "Not Indexed for Context Retrieval".to_string()
-    //             }
-    //         };
-    //     }
-
-    //     "".to_string()
-    // }
 
     fn toggle_include_conversation(
         &mut self,
@@ -3208,8 +3035,8 @@ impl InlineAssistant {
 // This wouldn't need to exist if we could pass parameters when rendering child views.
 #[derive(Copy, Clone, Default)]
 struct BlockMeasurements {
-    anchor_x: f32,
-    gutter_width: f32,
+    anchor_x: Pixels,
+    gutter_width: Pixels,
 }
 
 struct PendingInlineAssist {

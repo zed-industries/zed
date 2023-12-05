@@ -81,6 +81,7 @@ pub enum Icon {
     Shift,
     Option,
     Return,
+    Update,
 }
 
 impl Icon {
@@ -155,6 +156,7 @@ impl Icon {
             Icon::Shift => "icons/shift.svg",
             Icon::Option => "icons/option.svg",
             Icon::Return => "icons/return.svg",
+            Icon::Update => "icons/update.svg",
         }
     }
 }
