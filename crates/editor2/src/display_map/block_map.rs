@@ -988,680 +988,664 @@ fn offset_for_row(s: &str, target: u32) -> (u32, usize) {
     (row, offset)
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     use crate::display_map::inlay_map::InlayMap;
-//     use crate::display_map::{fold_map::FoldMap, tab_map::TabMap, wrap_map::WrapMap};
-//     use gpui::Element;
-//     use multi_buffer::MultiBuffer;
-//     use rand::prelude::*;
-//     use settings::SettingsStore;
-//     use std::env;
-//     use util::RandomCharIter;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::display_map::inlay_map::InlayMap;
+    use crate::display_map::{fold_map::FoldMap, tab_map::TabMap, wrap_map::WrapMap};
+    use gpui::{div, font, px, Element, Platform as _};
+    use multi_buffer::MultiBuffer;
+    use rand::prelude::*;
+    use settings::SettingsStore;
+    use std::env;
+    use util::RandomCharIter;
 
-//     #[gpui::test]
-//     fn test_offset_for_row() {
-//         assert_eq!(offset_for_row("", 0), (0, 0));
-//         assert_eq!(offset_for_row("", 1), (0, 0));
-//         assert_eq!(offset_for_row("abcd", 0), (0, 0));
-//         assert_eq!(offset_for_row("abcd", 1), (0, 4));
-//         assert_eq!(offset_for_row("\n", 0), (0, 0));
-//         assert_eq!(offset_for_row("\n", 1), (1, 1));
-//         assert_eq!(offset_for_row("abc\ndef\nghi", 0), (0, 0));
-//         assert_eq!(offset_for_row("abc\ndef\nghi", 1), (1, 4));
-//         assert_eq!(offset_for_row("abc\ndef\nghi", 2), (2, 8));
-//         assert_eq!(offset_for_row("abc\ndef\nghi", 3), (2, 11));
-//     }
+    #[gpui::test]
+    fn test_offset_for_row() {
+        assert_eq!(offset_for_row("", 0), (0, 0));
+        assert_eq!(offset_for_row("", 1), (0, 0));
+        assert_eq!(offset_for_row("abcd", 0), (0, 0));
+        assert_eq!(offset_for_row("abcd", 1), (0, 4));
+        assert_eq!(offset_for_row("\n", 0), (0, 0));
+        assert_eq!(offset_for_row("\n", 1), (1, 1));
+        assert_eq!(offset_for_row("abc\ndef\nghi", 0), (0, 0));
+        assert_eq!(offset_for_row("abc\ndef\nghi", 1), (1, 4));
+        assert_eq!(offset_for_row("abc\ndef\nghi", 2), (2, 8));
+        assert_eq!(offset_for_row("abc\ndef\nghi", 3), (2, 11));
+    }
 
-//     #[gpui::test]
-//     fn test_basic_blocks(cx: &mut gpui::AppContext) {
-//         init_test(cx);
+    #[gpui::test]
+    fn test_basic_blocks(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| init_test(cx));
 
-//         let family_id = cx
-//             .font_cache()
-//             .load_family(&["Helvetica"], &Default::default())
-//             .unwrap();
-//         let font_id = cx
-//             .font_cache()
-//             .select_font(family_id, &Default::default())
-//             .unwrap();
+        let text = "aaa\nbbb\nccc\nddd";
 
-//         let text = "aaa\nbbb\nccc\nddd";
+        let buffer = cx.update(|cx| MultiBuffer::build_simple(text, cx));
+        let buffer_snapshot = cx.update(|cx| buffer.read(cx).snapshot(cx));
+        let subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
+        let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (mut fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
+        let (mut tab_map, tab_snapshot) = TabMap::new(fold_snapshot, 1.try_into().unwrap());
+        let (wrap_map, wraps_snapshot) =
+            cx.update(|cx| WrapMap::new(tab_snapshot, font("Helvetica"), px(14.0), None, cx));
+        let mut block_map = BlockMap::new(wraps_snapshot.clone(), 1, 1);
 
-//         let buffer = MultiBuffer::build_simple(text, cx);
-//         let buffer_snapshot = buffer.read(cx).snapshot(cx);
-//         let subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
-//         let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
-//         let (mut fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
-//         let (mut tab_map, tab_snapshot) = TabMap::new(fold_snapshot, 1.try_into().unwrap());
-//         let (wrap_map, wraps_snapshot) = WrapMap::new(tab_snapshot, font_id, 14.0, None, cx);
-//         let mut block_map = BlockMap::new(wraps_snapshot.clone(), 1, 1);
+        let mut writer = block_map.write(wraps_snapshot.clone(), Default::default());
+        let block_ids = writer.insert(vec![
+            BlockProperties {
+                style: BlockStyle::Fixed,
+                position: buffer_snapshot.anchor_after(Point::new(1, 0)),
+                height: 1,
+                disposition: BlockDisposition::Above,
+                render: Arc::new(|_| div().into_any()),
+            },
+            BlockProperties {
+                style: BlockStyle::Fixed,
+                position: buffer_snapshot.anchor_after(Point::new(1, 2)),
+                height: 2,
+                disposition: BlockDisposition::Above,
+                render: Arc::new(|_| div().into_any()),
+            },
+            BlockProperties {
+                style: BlockStyle::Fixed,
+                position: buffer_snapshot.anchor_after(Point::new(3, 3)),
+                height: 3,
+                disposition: BlockDisposition::Below,
+                render: Arc::new(|_| div().into_any()),
+            },
+        ]);
 
-//         let mut writer = block_map.write(wraps_snapshot.clone(), Default::default());
-//         let block_ids = writer.insert(vec![
-//             BlockProperties {
-//                 style: BlockStyle::Fixed,
-//                 position: buffer_snapshot.anchor_after(Point::new(1, 0)),
-//                 height: 1,
-//                 disposition: BlockDisposition::Above,
-//                 render: Arc::new(|_| Empty::new().into_any_named("block 1")),
-//             },
-//             BlockProperties {
-//                 style: BlockStyle::Fixed,
-//                 position: buffer_snapshot.anchor_after(Point::new(1, 2)),
-//                 height: 2,
-//                 disposition: BlockDisposition::Above,
-//                 render: Arc::new(|_| Empty::new().into_any_named("block 2")),
-//             },
-//             BlockProperties {
-//                 style: BlockStyle::Fixed,
-//                 position: buffer_snapshot.anchor_after(Point::new(3, 3)),
-//                 height: 3,
-//                 disposition: BlockDisposition::Below,
-//                 render: Arc::new(|_| Empty::new().into_any_named("block 3")),
-//             },
-//         ]);
+        let snapshot = block_map.read(wraps_snapshot, Default::default());
+        assert_eq!(snapshot.text(), "aaa\n\n\n\nbbb\nccc\nddd\n\n\n");
 
-//         let snapshot = block_map.read(wraps_snapshot, Default::default());
-//         assert_eq!(snapshot.text(), "aaa\n\n\n\nbbb\nccc\nddd\n\n\n");
+        let blocks = snapshot
+            .blocks_in_range(0..8)
+            .map(|(start_row, block)| {
+                let block = block.as_custom().unwrap();
+                (start_row..start_row + block.height as u32, block.id)
+            })
+            .collect::<Vec<_>>();
 
-//         let blocks = snapshot
-//             .blocks_in_range(0..8)
-//             .map(|(start_row, block)| {
-//                 let block = block.as_custom().unwrap();
-//                 (start_row..start_row + block.height as u32, block.id)
-//             })
-//             .collect::<Vec<_>>();
+        // When multiple blocks are on the same line, the newer blocks appear first.
+        assert_eq!(
+            blocks,
+            &[
+                (1..2, block_ids[0]),
+                (2..4, block_ids[1]),
+                (7..10, block_ids[2]),
+            ]
+        );
 
-//         // When multiple blocks are on the same line, the newer blocks appear first.
-//         assert_eq!(
-//             blocks,
-//             &[
-//                 (1..2, block_ids[0]),
-//                 (2..4, block_ids[1]),
-//                 (7..10, block_ids[2]),
-//             ]
-//         );
+        assert_eq!(
+            snapshot.to_block_point(WrapPoint::new(0, 3)),
+            BlockPoint::new(0, 3)
+        );
+        assert_eq!(
+            snapshot.to_block_point(WrapPoint::new(1, 0)),
+            BlockPoint::new(4, 0)
+        );
+        assert_eq!(
+            snapshot.to_block_point(WrapPoint::new(3, 3)),
+            BlockPoint::new(6, 3)
+        );
 
-//         assert_eq!(
-//             snapshot.to_block_point(WrapPoint::new(0, 3)),
-//             BlockPoint::new(0, 3)
-//         );
-//         assert_eq!(
-//             snapshot.to_block_point(WrapPoint::new(1, 0)),
-//             BlockPoint::new(4, 0)
-//         );
-//         assert_eq!(
-//             snapshot.to_block_point(WrapPoint::new(3, 3)),
-//             BlockPoint::new(6, 3)
-//         );
+        assert_eq!(
+            snapshot.to_wrap_point(BlockPoint::new(0, 3)),
+            WrapPoint::new(0, 3)
+        );
+        assert_eq!(
+            snapshot.to_wrap_point(BlockPoint::new(1, 0)),
+            WrapPoint::new(1, 0)
+        );
+        assert_eq!(
+            snapshot.to_wrap_point(BlockPoint::new(3, 0)),
+            WrapPoint::new(1, 0)
+        );
+        assert_eq!(
+            snapshot.to_wrap_point(BlockPoint::new(7, 0)),
+            WrapPoint::new(3, 3)
+        );
 
-//         assert_eq!(
-//             snapshot.to_wrap_point(BlockPoint::new(0, 3)),
-//             WrapPoint::new(0, 3)
-//         );
-//         assert_eq!(
-//             snapshot.to_wrap_point(BlockPoint::new(1, 0)),
-//             WrapPoint::new(1, 0)
-//         );
-//         assert_eq!(
-//             snapshot.to_wrap_point(BlockPoint::new(3, 0)),
-//             WrapPoint::new(1, 0)
-//         );
-//         assert_eq!(
-//             snapshot.to_wrap_point(BlockPoint::new(7, 0)),
-//             WrapPoint::new(3, 3)
-//         );
+        assert_eq!(
+            snapshot.clip_point(BlockPoint::new(1, 0), Bias::Left),
+            BlockPoint::new(0, 3)
+        );
+        assert_eq!(
+            snapshot.clip_point(BlockPoint::new(1, 0), Bias::Right),
+            BlockPoint::new(4, 0)
+        );
+        assert_eq!(
+            snapshot.clip_point(BlockPoint::new(1, 1), Bias::Left),
+            BlockPoint::new(0, 3)
+        );
+        assert_eq!(
+            snapshot.clip_point(BlockPoint::new(1, 1), Bias::Right),
+            BlockPoint::new(4, 0)
+        );
+        assert_eq!(
+            snapshot.clip_point(BlockPoint::new(4, 0), Bias::Left),
+            BlockPoint::new(4, 0)
+        );
+        assert_eq!(
+            snapshot.clip_point(BlockPoint::new(4, 0), Bias::Right),
+            BlockPoint::new(4, 0)
+        );
+        assert_eq!(
+            snapshot.clip_point(BlockPoint::new(6, 3), Bias::Left),
+            BlockPoint::new(6, 3)
+        );
+        assert_eq!(
+            snapshot.clip_point(BlockPoint::new(6, 3), Bias::Right),
+            BlockPoint::new(6, 3)
+        );
+        assert_eq!(
+            snapshot.clip_point(BlockPoint::new(7, 0), Bias::Left),
+            BlockPoint::new(6, 3)
+        );
+        assert_eq!(
+            snapshot.clip_point(BlockPoint::new(7, 0), Bias::Right),
+            BlockPoint::new(6, 3)
+        );
 
-//         assert_eq!(
-//             snapshot.clip_point(BlockPoint::new(1, 0), Bias::Left),
-//             BlockPoint::new(0, 3)
-//         );
-//         assert_eq!(
-//             snapshot.clip_point(BlockPoint::new(1, 0), Bias::Right),
-//             BlockPoint::new(4, 0)
-//         );
-//         assert_eq!(
-//             snapshot.clip_point(BlockPoint::new(1, 1), Bias::Left),
-//             BlockPoint::new(0, 3)
-//         );
-//         assert_eq!(
-//             snapshot.clip_point(BlockPoint::new(1, 1), Bias::Right),
-//             BlockPoint::new(4, 0)
-//         );
-//         assert_eq!(
-//             snapshot.clip_point(BlockPoint::new(4, 0), Bias::Left),
-//             BlockPoint::new(4, 0)
-//         );
-//         assert_eq!(
-//             snapshot.clip_point(BlockPoint::new(4, 0), Bias::Right),
-//             BlockPoint::new(4, 0)
-//         );
-//         assert_eq!(
-//             snapshot.clip_point(BlockPoint::new(6, 3), Bias::Left),
-//             BlockPoint::new(6, 3)
-//         );
-//         assert_eq!(
-//             snapshot.clip_point(BlockPoint::new(6, 3), Bias::Right),
-//             BlockPoint::new(6, 3)
-//         );
-//         assert_eq!(
-//             snapshot.clip_point(BlockPoint::new(7, 0), Bias::Left),
-//             BlockPoint::new(6, 3)
-//         );
-//         assert_eq!(
-//             snapshot.clip_point(BlockPoint::new(7, 0), Bias::Right),
-//             BlockPoint::new(6, 3)
-//         );
+        assert_eq!(
+            snapshot.buffer_rows(0).collect::<Vec<_>>(),
+            &[
+                Some(0),
+                None,
+                None,
+                None,
+                Some(1),
+                Some(2),
+                Some(3),
+                None,
+                None,
+                None
+            ]
+        );
 
-//         assert_eq!(
-//             snapshot.buffer_rows(0).collect::<Vec<_>>(),
-//             &[
-//                 Some(0),
-//                 None,
-//                 None,
-//                 None,
-//                 Some(1),
-//                 Some(2),
-//                 Some(3),
-//                 None,
-//                 None,
-//                 None
-//             ]
-//         );
+        // Insert a line break, separating two block decorations into separate lines.
+        let buffer_snapshot = buffer.update(cx, |buffer, cx| {
+            buffer.edit([(Point::new(1, 1)..Point::new(1, 1), "!!!\n")], None, cx);
+            buffer.snapshot(cx)
+        });
 
-//         // Insert a line break, separating two block decorations into separate lines.
-//         let buffer_snapshot = buffer.update(cx, |buffer, cx| {
-//             buffer.edit([(Point::new(1, 1)..Point::new(1, 1), "!!!\n")], None, cx);
-//             buffer.snapshot(cx)
-//         });
+        let (inlay_snapshot, inlay_edits) =
+            inlay_map.sync(buffer_snapshot, subscription.consume().into_inner());
+        let (fold_snapshot, fold_edits) = fold_map.read(inlay_snapshot, inlay_edits);
+        let (tab_snapshot, tab_edits) =
+            tab_map.sync(fold_snapshot, fold_edits, 4.try_into().unwrap());
+        let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
+            wrap_map.sync(tab_snapshot, tab_edits, cx)
+        });
+        let snapshot = block_map.read(wraps_snapshot, wrap_edits);
+        assert_eq!(snapshot.text(), "aaa\n\nb!!!\n\n\nbb\nccc\nddd\n\n\n");
+    }
 
-//         let (inlay_snapshot, inlay_edits) =
-//             inlay_map.sync(buffer_snapshot, subscription.consume().into_inner());
-//         let (fold_snapshot, fold_edits) = fold_map.read(inlay_snapshot, inlay_edits);
-//         let (tab_snapshot, tab_edits) =
-//             tab_map.sync(fold_snapshot, fold_edits, 4.try_into().unwrap());
-//         let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
-//             wrap_map.sync(tab_snapshot, tab_edits, cx)
-//         });
-//         let snapshot = block_map.read(wraps_snapshot, wrap_edits);
-//         assert_eq!(snapshot.text(), "aaa\n\nb!!!\n\n\nbb\nccc\nddd\n\n\n");
-//     }
+    #[gpui::test]
+    fn test_blocks_on_wrapped_lines(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| init_test(cx));
 
-//     #[gpui::test]
-//     fn test_blocks_on_wrapped_lines(cx: &mut gpui::AppContext) {
-//         init_test(cx);
+        let font_id = cx
+            .test_platform
+            .text_system()
+            .font_id(&font("Helvetica"))
+            .unwrap();
 
-//         let family_id = cx
-//             .font_cache()
-//             .load_family(&["Helvetica"], &Default::default())
-//             .unwrap();
-//         let font_id = cx
-//             .font_cache()
-//             .select_font(family_id, &Default::default())
-//             .unwrap();
+        let text = "one two three\nfour five six\nseven eight";
 
-//         let text = "one two three\nfour five six\nseven eight";
+        let buffer = cx.update(|cx| MultiBuffer::build_simple(text, cx));
+        let buffer_snapshot = cx.update(|cx| buffer.read(cx).snapshot(cx));
+        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
+        let (_, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
+        let (_, wraps_snapshot) = cx.update(|cx| {
+            WrapMap::new(tab_snapshot, font("Helvetica"), px(14.0), Some(px(60.)), cx)
+        });
+        let mut block_map = BlockMap::new(wraps_snapshot.clone(), 1, 1);
 
-//         let buffer = MultiBuffer::build_simple(text, cx);
-//         let buffer_snapshot = buffer.read(cx).snapshot(cx);
-//         let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
-//         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
-//         let (_, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
-//         let (_, wraps_snapshot) = WrapMap::new(tab_snapshot, font_id, 14.0, Some(60.), cx);
-//         let mut block_map = BlockMap::new(wraps_snapshot.clone(), 1, 1);
+        let mut writer = block_map.write(wraps_snapshot.clone(), Default::default());
+        writer.insert(vec![
+            BlockProperties {
+                style: BlockStyle::Fixed,
+                position: buffer_snapshot.anchor_after(Point::new(1, 12)),
+                disposition: BlockDisposition::Above,
+                render: Arc::new(|_| div().into_any()),
+                height: 1,
+            },
+            BlockProperties {
+                style: BlockStyle::Fixed,
+                position: buffer_snapshot.anchor_after(Point::new(1, 1)),
+                disposition: BlockDisposition::Below,
+                render: Arc::new(|_| div().into_any()),
+                height: 1,
+            },
+        ]);
 
-//         let mut writer = block_map.write(wraps_snapshot.clone(), Default::default());
-//         writer.insert(vec![
-//             BlockProperties {
-//                 style: BlockStyle::Fixed,
-//                 position: buffer_snapshot.anchor_after(Point::new(1, 12)),
-//                 disposition: BlockDisposition::Above,
-//                 render: Arc::new(|_| Empty::new().into_any_named("block 1")),
-//                 height: 1,
-//             },
-//             BlockProperties {
-//                 style: BlockStyle::Fixed,
-//                 position: buffer_snapshot.anchor_after(Point::new(1, 1)),
-//                 disposition: BlockDisposition::Below,
-//                 render: Arc::new(|_| Empty::new().into_any_named("block 2")),
-//                 height: 1,
-//             },
-//         ]);
+        // Blocks with an 'above' disposition go above their corresponding buffer line.
+        // Blocks with a 'below' disposition go below their corresponding buffer line.
+        let snapshot = block_map.read(wraps_snapshot, Default::default());
+        assert_eq!(
+            snapshot.text(),
+            "one two \nthree\n\nfour five \nsix\n\nseven \neight"
+        );
+    }
 
-//         // Blocks with an 'above' disposition go above their corresponding buffer line.
-//         // Blocks with a 'below' disposition go below their corresponding buffer line.
-//         let snapshot = block_map.read(wraps_snapshot, Default::default());
-//         assert_eq!(
-//             snapshot.text(),
-//             "one two \nthree\n\nfour five \nsix\n\nseven \neight"
-//         );
-//     }
+    #[gpui::test(iterations = 100)]
+    fn test_random_blocks(cx: &mut gpui::TestAppContext, mut rng: StdRng) {
+        cx.update(|cx| init_test(cx));
 
-//     #[gpui::test(iterations = 100)]
-//     fn test_random_blocks(cx: &mut gpui::AppContext, mut rng: StdRng) {
-//         init_test(cx);
+        let operations = env::var("OPERATIONS")
+            .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
+            .unwrap_or(10);
 
-//         let operations = env::var("OPERATIONS")
-//             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
-//             .unwrap_or(10);
+        let wrap_width = if rng.gen_bool(0.2) {
+            None
+        } else {
+            Some(px(rng.gen_range(0.0..=100.0)))
+        };
+        let tab_size = 1.try_into().unwrap();
+        let font_size = px(14.0);
+        let buffer_start_header_height = rng.gen_range(1..=5);
+        let excerpt_header_height = rng.gen_range(1..=5);
 
-//         let wrap_width = if rng.gen_bool(0.2) {
-//             None
-//         } else {
-//             Some(rng.gen_range(0.0..=100.0))
-//         };
-//         let tab_size = 1.try_into().unwrap();
-//         let family_id = cx
-//             .font_cache()
-//             .load_family(&["Helvetica"], &Default::default())
-//             .unwrap();
-//         let font_id = cx
-//             .font_cache()
-//             .select_font(family_id, &Default::default())
-//             .unwrap();
-//         let font_size = 14.0;
-//         let buffer_start_header_height = rng.gen_range(1..=5);
-//         let excerpt_header_height = rng.gen_range(1..=5);
+        log::info!("Wrap width: {:?}", wrap_width);
+        log::info!("Excerpt Header Height: {:?}", excerpt_header_height);
 
-//         log::info!("Wrap width: {:?}", wrap_width);
-//         log::info!("Excerpt Header Height: {:?}", excerpt_header_height);
+        let buffer = if rng.gen() {
+            let len = rng.gen_range(0..10);
+            let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
+            log::info!("initial buffer text: {:?}", text);
+            cx.update(|cx| MultiBuffer::build_simple(&text, cx))
+        } else {
+            cx.update(|cx| MultiBuffer::build_random(&mut rng, cx))
+        };
 
-//         let buffer = if rng.gen() {
-//             let len = rng.gen_range(0..10);
-//             let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
-//             log::info!("initial buffer text: {:?}", text);
-//             MultiBuffer::build_simple(&text, cx)
-//         } else {
-//             MultiBuffer::build_random(&mut rng, cx)
-//         };
+        let mut buffer_snapshot = cx.update(|cx| buffer.read(cx).snapshot(cx));
+        let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (mut fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
+        let (mut tab_map, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
+        let (wrap_map, wraps_snapshot) = cx
+            .update(|cx| WrapMap::new(tab_snapshot, font("Helvetica"), font_size, wrap_width, cx));
+        let mut block_map = BlockMap::new(
+            wraps_snapshot,
+            buffer_start_header_height,
+            excerpt_header_height,
+        );
+        let mut custom_blocks = Vec::new();
 
-//         let mut buffer_snapshot = buffer.read(cx).snapshot(cx);
-//         let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
-//         let (mut fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
-//         let (mut tab_map, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
-//         let (wrap_map, wraps_snapshot) =
-//             WrapMap::new(tab_snapshot, font_id, font_size, wrap_width, cx);
-//         let mut block_map = BlockMap::new(
-//             wraps_snapshot,
-//             buffer_start_header_height,
-//             excerpt_header_height,
-//         );
-//         let mut custom_blocks = Vec::new();
+        for _ in 0..operations {
+            let mut buffer_edits = Vec::new();
+            match rng.gen_range(0..=100) {
+                0..=19 => {
+                    let wrap_width = if rng.gen_bool(0.2) {
+                        None
+                    } else {
+                        Some(px(rng.gen_range(0.0..=100.0)))
+                    };
+                    log::info!("Setting wrap width to {:?}", wrap_width);
+                    wrap_map.update(cx, |map, cx| map.set_wrap_width(wrap_width, cx));
+                }
+                20..=39 => {
+                    let block_count = rng.gen_range(1..=5);
+                    let block_properties = (0..block_count)
+                        .map(|_| {
+                            let buffer = cx.update(|cx| buffer.read(cx).read(cx).clone());
+                            let position = buffer.anchor_after(
+                                buffer.clip_offset(rng.gen_range(0..=buffer.len()), Bias::Left),
+                            );
 
-//         for _ in 0..operations {
-//             let mut buffer_edits = Vec::new();
-//             match rng.gen_range(0..=100) {
-//                 0..=19 => {
-//                     let wrap_width = if rng.gen_bool(0.2) {
-//                         None
-//                     } else {
-//                         Some(rng.gen_range(0.0..=100.0))
-//                     };
-//                     log::info!("Setting wrap width to {:?}", wrap_width);
-//                     wrap_map.update(cx, |map, cx| map.set_wrap_width(wrap_width, cx));
-//                 }
-//                 20..=39 => {
-//                     let block_count = rng.gen_range(1..=5);
-//                     let block_properties = (0..block_count)
-//                         .map(|_| {
-//                             let buffer = buffer.read(cx).read(cx);
-//                             let position = buffer.anchor_after(
-//                                 buffer.clip_offset(rng.gen_range(0..=buffer.len()), Bias::Left),
-//                             );
+                            let disposition = if rng.gen() {
+                                BlockDisposition::Above
+                            } else {
+                                BlockDisposition::Below
+                            };
+                            let height = rng.gen_range(1..5);
+                            log::info!(
+                                "inserting block {:?} {:?} with height {}",
+                                disposition,
+                                position.to_point(&buffer),
+                                height
+                            );
+                            BlockProperties {
+                                style: BlockStyle::Fixed,
+                                position,
+                                height,
+                                disposition,
+                                render: Arc::new(|_| div().into_any()),
+                            }
+                        })
+                        .collect::<Vec<_>>();
 
-//                             let disposition = if rng.gen() {
-//                                 BlockDisposition::Above
-//                             } else {
-//                                 BlockDisposition::Below
-//                             };
-//                             let height = rng.gen_range(1..5);
-//                             log::info!(
-//                                 "inserting block {:?} {:?} with height {}",
-//                                 disposition,
-//                                 position.to_point(&buffer),
-//                                 height
-//                             );
-//                             BlockProperties {
-//                                 style: BlockStyle::Fixed,
-//                                 position,
-//                                 height,
-//                                 disposition,
-//                                 render: Arc::new(|_| Empty::new().into_any()),
-//                             }
-//                         })
-//                         .collect::<Vec<_>>();
+                    let (inlay_snapshot, inlay_edits) =
+                        inlay_map.sync(buffer_snapshot.clone(), vec![]);
+                    let (fold_snapshot, fold_edits) = fold_map.read(inlay_snapshot, inlay_edits);
+                    let (tab_snapshot, tab_edits) =
+                        tab_map.sync(fold_snapshot, fold_edits, tab_size);
+                    let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
+                        wrap_map.sync(tab_snapshot, tab_edits, cx)
+                    });
+                    let mut block_map = block_map.write(wraps_snapshot, wrap_edits);
+                    let block_ids = block_map.insert(block_properties.clone());
+                    for (block_id, props) in block_ids.into_iter().zip(block_properties) {
+                        custom_blocks.push((block_id, props));
+                    }
+                }
+                40..=59 if !custom_blocks.is_empty() => {
+                    let block_count = rng.gen_range(1..=4.min(custom_blocks.len()));
+                    let block_ids_to_remove = (0..block_count)
+                        .map(|_| {
+                            custom_blocks
+                                .remove(rng.gen_range(0..custom_blocks.len()))
+                                .0
+                        })
+                        .collect();
 
-//                     let (inlay_snapshot, inlay_edits) =
-//                         inlay_map.sync(buffer_snapshot.clone(), vec![]);
-//                     let (fold_snapshot, fold_edits) = fold_map.read(inlay_snapshot, inlay_edits);
-//                     let (tab_snapshot, tab_edits) =
-//                         tab_map.sync(fold_snapshot, fold_edits, tab_size);
-//                     let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
-//                         wrap_map.sync(tab_snapshot, tab_edits, cx)
-//                     });
-//                     let mut block_map = block_map.write(wraps_snapshot, wrap_edits);
-//                     let block_ids = block_map.insert(block_properties.clone());
-//                     for (block_id, props) in block_ids.into_iter().zip(block_properties) {
-//                         custom_blocks.push((block_id, props));
-//                     }
-//                 }
-//                 40..=59 if !custom_blocks.is_empty() => {
-//                     let block_count = rng.gen_range(1..=4.min(custom_blocks.len()));
-//                     let block_ids_to_remove = (0..block_count)
-//                         .map(|_| {
-//                             custom_blocks
-//                                 .remove(rng.gen_range(0..custom_blocks.len()))
-//                                 .0
-//                         })
-//                         .collect();
+                    let (inlay_snapshot, inlay_edits) =
+                        inlay_map.sync(buffer_snapshot.clone(), vec![]);
+                    let (fold_snapshot, fold_edits) = fold_map.read(inlay_snapshot, inlay_edits);
+                    let (tab_snapshot, tab_edits) =
+                        tab_map.sync(fold_snapshot, fold_edits, tab_size);
+                    let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
+                        wrap_map.sync(tab_snapshot, tab_edits, cx)
+                    });
+                    let mut block_map = block_map.write(wraps_snapshot, wrap_edits);
+                    block_map.remove(block_ids_to_remove);
+                }
+                _ => {
+                    buffer.update(cx, |buffer, cx| {
+                        let mutation_count = rng.gen_range(1..=5);
+                        let subscription = buffer.subscribe();
+                        buffer.randomly_mutate(&mut rng, mutation_count, cx);
+                        buffer_snapshot = buffer.snapshot(cx);
+                        buffer_edits.extend(subscription.consume());
+                        log::info!("buffer text: {:?}", buffer_snapshot.text());
+                    });
+                }
+            }
 
-//                     let (inlay_snapshot, inlay_edits) =
-//                         inlay_map.sync(buffer_snapshot.clone(), vec![]);
-//                     let (fold_snapshot, fold_edits) = fold_map.read(inlay_snapshot, inlay_edits);
-//                     let (tab_snapshot, tab_edits) =
-//                         tab_map.sync(fold_snapshot, fold_edits, tab_size);
-//                     let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
-//                         wrap_map.sync(tab_snapshot, tab_edits, cx)
-//                     });
-//                     let mut block_map = block_map.write(wraps_snapshot, wrap_edits);
-//                     block_map.remove(block_ids_to_remove);
-//                 }
-//                 _ => {
-//                     buffer.update(cx, |buffer, cx| {
-//                         let mutation_count = rng.gen_range(1..=5);
-//                         let subscription = buffer.subscribe();
-//                         buffer.randomly_mutate(&mut rng, mutation_count, cx);
-//                         buffer_snapshot = buffer.snapshot(cx);
-//                         buffer_edits.extend(subscription.consume());
-//                         log::info!("buffer text: {:?}", buffer_snapshot.text());
-//                     });
-//                 }
-//             }
+            let (inlay_snapshot, inlay_edits) =
+                inlay_map.sync(buffer_snapshot.clone(), buffer_edits);
+            let (fold_snapshot, fold_edits) = fold_map.read(inlay_snapshot, inlay_edits);
+            let (tab_snapshot, tab_edits) = tab_map.sync(fold_snapshot, fold_edits, tab_size);
+            let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
+                wrap_map.sync(tab_snapshot, tab_edits, cx)
+            });
+            let blocks_snapshot = block_map.read(wraps_snapshot.clone(), wrap_edits);
+            assert_eq!(
+                blocks_snapshot.transforms.summary().input_rows,
+                wraps_snapshot.max_point().row() + 1
+            );
+            log::info!("blocks text: {:?}", blocks_snapshot.text());
 
-//             let (inlay_snapshot, inlay_edits) =
-//                 inlay_map.sync(buffer_snapshot.clone(), buffer_edits);
-//             let (fold_snapshot, fold_edits) = fold_map.read(inlay_snapshot, inlay_edits);
-//             let (tab_snapshot, tab_edits) = tab_map.sync(fold_snapshot, fold_edits, tab_size);
-//             let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
-//                 wrap_map.sync(tab_snapshot, tab_edits, cx)
-//             });
-//             let blocks_snapshot = block_map.read(wraps_snapshot.clone(), wrap_edits);
-//             assert_eq!(
-//                 blocks_snapshot.transforms.summary().input_rows,
-//                 wraps_snapshot.max_point().row() + 1
-//             );
-//             log::info!("blocks text: {:?}", blocks_snapshot.text());
+            let mut expected_blocks = Vec::new();
+            expected_blocks.extend(custom_blocks.iter().map(|(id, block)| {
+                let mut position = block.position.to_point(&buffer_snapshot);
+                match block.disposition {
+                    BlockDisposition::Above => {
+                        position.column = 0;
+                    }
+                    BlockDisposition::Below => {
+                        position.column = buffer_snapshot.line_len(position.row);
+                    }
+                };
+                let row = wraps_snapshot.make_wrap_point(position, Bias::Left).row();
+                (
+                    row,
+                    ExpectedBlock::Custom {
+                        disposition: block.disposition,
+                        id: *id,
+                        height: block.height,
+                    },
+                )
+            }));
+            expected_blocks.extend(buffer_snapshot.excerpt_boundaries_in_range(0..).map(
+                |boundary| {
+                    let position =
+                        wraps_snapshot.make_wrap_point(Point::new(boundary.row, 0), Bias::Left);
+                    (
+                        position.row(),
+                        ExpectedBlock::ExcerptHeader {
+                            height: if boundary.starts_new_buffer {
+                                buffer_start_header_height
+                            } else {
+                                excerpt_header_height
+                            },
+                            starts_new_buffer: boundary.starts_new_buffer,
+                        },
+                    )
+                },
+            ));
+            expected_blocks.sort_unstable();
+            let mut sorted_blocks_iter = expected_blocks.into_iter().peekable();
 
-//             let mut expected_blocks = Vec::new();
-//             expected_blocks.extend(custom_blocks.iter().map(|(id, block)| {
-//                 let mut position = block.position.to_point(&buffer_snapshot);
-//                 match block.disposition {
-//                     BlockDisposition::Above => {
-//                         position.column = 0;
-//                     }
-//                     BlockDisposition::Below => {
-//                         position.column = buffer_snapshot.line_len(position.row);
-//                     }
-//                 };
-//                 let row = wraps_snapshot.make_wrap_point(position, Bias::Left).row();
-//                 (
-//                     row,
-//                     ExpectedBlock::Custom {
-//                         disposition: block.disposition,
-//                         id: *id,
-//                         height: block.height,
-//                     },
-//                 )
-//             }));
-//             expected_blocks.extend(buffer_snapshot.excerpt_boundaries_in_range(0..).map(
-//                 |boundary| {
-//                     let position =
-//                         wraps_snapshot.make_wrap_point(Point::new(boundary.row, 0), Bias::Left);
-//                     (
-//                         position.row(),
-//                         ExpectedBlock::ExcerptHeader {
-//                             height: if boundary.starts_new_buffer {
-//                                 buffer_start_header_height
-//                             } else {
-//                                 excerpt_header_height
-//                             },
-//                             starts_new_buffer: boundary.starts_new_buffer,
-//                         },
-//                     )
-//                 },
-//             ));
-//             expected_blocks.sort_unstable();
-//             let mut sorted_blocks_iter = expected_blocks.into_iter().peekable();
+            let input_buffer_rows = buffer_snapshot.buffer_rows(0).collect::<Vec<_>>();
+            let mut expected_buffer_rows = Vec::new();
+            let mut expected_text = String::new();
+            let mut expected_block_positions = Vec::new();
+            let input_text = wraps_snapshot.text();
+            for (row, input_line) in input_text.split('\n').enumerate() {
+                let row = row as u32;
+                if row > 0 {
+                    expected_text.push('\n');
+                }
 
-//             let input_buffer_rows = buffer_snapshot.buffer_rows(0).collect::<Vec<_>>();
-//             let mut expected_buffer_rows = Vec::new();
-//             let mut expected_text = String::new();
-//             let mut expected_block_positions = Vec::new();
-//             let input_text = wraps_snapshot.text();
-//             for (row, input_line) in input_text.split('\n').enumerate() {
-//                 let row = row as u32;
-//                 if row > 0 {
-//                     expected_text.push('\n');
-//                 }
+                let buffer_row = input_buffer_rows[wraps_snapshot
+                    .to_point(WrapPoint::new(row, 0), Bias::Left)
+                    .row as usize];
 
-//                 let buffer_row = input_buffer_rows[wraps_snapshot
-//                     .to_point(WrapPoint::new(row, 0), Bias::Left)
-//                     .row as usize];
+                while let Some((block_row, block)) = sorted_blocks_iter.peek() {
+                    if *block_row == row && block.disposition() == BlockDisposition::Above {
+                        let (_, block) = sorted_blocks_iter.next().unwrap();
+                        let height = block.height() as usize;
+                        expected_block_positions
+                            .push((expected_text.matches('\n').count() as u32, block));
+                        let text = "\n".repeat(height);
+                        expected_text.push_str(&text);
+                        for _ in 0..height {
+                            expected_buffer_rows.push(None);
+                        }
+                    } else {
+                        break;
+                    }
+                }
 
-//                 while let Some((block_row, block)) = sorted_blocks_iter.peek() {
-//                     if *block_row == row && block.disposition() == BlockDisposition::Above {
-//                         let (_, block) = sorted_blocks_iter.next().unwrap();
-//                         let height = block.height() as usize;
-//                         expected_block_positions
-//                             .push((expected_text.matches('\n').count() as u32, block));
-//                         let text = "\n".repeat(height);
-//                         expected_text.push_str(&text);
-//                         for _ in 0..height {
-//                             expected_buffer_rows.push(None);
-//                         }
-//                     } else {
-//                         break;
-//                     }
-//                 }
+                let soft_wrapped = wraps_snapshot.to_tab_point(WrapPoint::new(row, 0)).column() > 0;
+                expected_buffer_rows.push(if soft_wrapped { None } else { buffer_row });
+                expected_text.push_str(input_line);
 
-//                 let soft_wrapped = wraps_snapshot.to_tab_point(WrapPoint::new(row, 0)).column() > 0;
-//                 expected_buffer_rows.push(if soft_wrapped { None } else { buffer_row });
-//                 expected_text.push_str(input_line);
+                while let Some((block_row, block)) = sorted_blocks_iter.peek() {
+                    if *block_row == row && block.disposition() == BlockDisposition::Below {
+                        let (_, block) = sorted_blocks_iter.next().unwrap();
+                        let height = block.height() as usize;
+                        expected_block_positions
+                            .push((expected_text.matches('\n').count() as u32 + 1, block));
+                        let text = "\n".repeat(height);
+                        expected_text.push_str(&text);
+                        for _ in 0..height {
+                            expected_buffer_rows.push(None);
+                        }
+                    } else {
+                        break;
+                    }
+                }
+            }
 
-//                 while let Some((block_row, block)) = sorted_blocks_iter.peek() {
-//                     if *block_row == row && block.disposition() == BlockDisposition::Below {
-//                         let (_, block) = sorted_blocks_iter.next().unwrap();
-//                         let height = block.height() as usize;
-//                         expected_block_positions
-//                             .push((expected_text.matches('\n').count() as u32 + 1, block));
-//                         let text = "\n".repeat(height);
-//                         expected_text.push_str(&text);
-//                         for _ in 0..height {
-//                             expected_buffer_rows.push(None);
-//                         }
-//                     } else {
-//                         break;
-//                     }
-//                 }
-//             }
+            let expected_lines = expected_text.split('\n').collect::<Vec<_>>();
+            let expected_row_count = expected_lines.len();
+            for start_row in 0..expected_row_count {
+                let expected_text = expected_lines[start_row..].join("\n");
+                let actual_text = blocks_snapshot
+                    .chunks(
+                        start_row as u32..blocks_snapshot.max_point().row + 1,
+                        false,
+                        Highlights::default(),
+                    )
+                    .map(|chunk| chunk.text)
+                    .collect::<String>();
+                assert_eq!(
+                    actual_text, expected_text,
+                    "incorrect text starting from row {}",
+                    start_row
+                );
+                assert_eq!(
+                    blocks_snapshot
+                        .buffer_rows(start_row as u32)
+                        .collect::<Vec<_>>(),
+                    &expected_buffer_rows[start_row..]
+                );
+            }
 
-//             let expected_lines = expected_text.split('\n').collect::<Vec<_>>();
-//             let expected_row_count = expected_lines.len();
-//             for start_row in 0..expected_row_count {
-//                 let expected_text = expected_lines[start_row..].join("\n");
-//                 let actual_text = blocks_snapshot
-//                     .chunks(
-//                         start_row as u32..blocks_snapshot.max_point().row + 1,
-//                         false,
-//                         Highlights::default(),
-//                     )
-//                     .map(|chunk| chunk.text)
-//                     .collect::<String>();
-//                 assert_eq!(
-//                     actual_text, expected_text,
-//                     "incorrect text starting from row {}",
-//                     start_row
-//                 );
-//                 assert_eq!(
-//                     blocks_snapshot
-//                         .buffer_rows(start_row as u32)
-//                         .collect::<Vec<_>>(),
-//                     &expected_buffer_rows[start_row..]
-//                 );
-//             }
+            assert_eq!(
+                blocks_snapshot
+                    .blocks_in_range(0..(expected_row_count as u32))
+                    .map(|(row, block)| (row, block.clone().into()))
+                    .collect::<Vec<_>>(),
+                expected_block_positions
+            );
 
-//             assert_eq!(
-//                 blocks_snapshot
-//                     .blocks_in_range(0..(expected_row_count as u32))
-//                     .map(|(row, block)| (row, block.clone().into()))
-//                     .collect::<Vec<_>>(),
-//                 expected_block_positions
-//             );
+            let mut expected_longest_rows = Vec::new();
+            let mut longest_line_len = -1_isize;
+            for (row, line) in expected_lines.iter().enumerate() {
+                let row = row as u32;
 
-//             let mut expected_longest_rows = Vec::new();
-//             let mut longest_line_len = -1_isize;
-//             for (row, line) in expected_lines.iter().enumerate() {
-//                 let row = row as u32;
+                assert_eq!(
+                    blocks_snapshot.line_len(row),
+                    line.len() as u32,
+                    "invalid line len for row {}",
+                    row
+                );
 
-//                 assert_eq!(
-//                     blocks_snapshot.line_len(row),
-//                     line.len() as u32,
-//                     "invalid line len for row {}",
-//                     row
-//                 );
+                let line_char_count = line.chars().count() as isize;
+                match line_char_count.cmp(&longest_line_len) {
+                    Ordering::Less => {}
+                    Ordering::Equal => expected_longest_rows.push(row),
+                    Ordering::Greater => {
+                        longest_line_len = line_char_count;
+                        expected_longest_rows.clear();
+                        expected_longest_rows.push(row);
+                    }
+                }
+            }
 
-//                 let line_char_count = line.chars().count() as isize;
-//                 match line_char_count.cmp(&longest_line_len) {
-//                     Ordering::Less => {}
-//                     Ordering::Equal => expected_longest_rows.push(row),
-//                     Ordering::Greater => {
-//                         longest_line_len = line_char_count;
-//                         expected_longest_rows.clear();
-//                         expected_longest_rows.push(row);
-//                     }
-//                 }
-//             }
+            let longest_row = blocks_snapshot.longest_row();
+            assert!(
+                expected_longest_rows.contains(&longest_row),
+                "incorrect longest row {}. expected {:?} with length {}",
+                longest_row,
+                expected_longest_rows,
+                longest_line_len,
+            );
 
-//             let longest_row = blocks_snapshot.longest_row();
-//             assert!(
-//                 expected_longest_rows.contains(&longest_row),
-//                 "incorrect longest row {}. expected {:?} with length {}",
-//                 longest_row,
-//                 expected_longest_rows,
-//                 longest_line_len,
-//             );
+            for row in 0..=blocks_snapshot.wrap_snapshot.max_point().row() {
+                let wrap_point = WrapPoint::new(row, 0);
+                let block_point = blocks_snapshot.to_block_point(wrap_point);
+                assert_eq!(blocks_snapshot.to_wrap_point(block_point), wrap_point);
+            }
 
-//             for row in 0..=blocks_snapshot.wrap_snapshot.max_point().row() {
-//                 let wrap_point = WrapPoint::new(row, 0);
-//                 let block_point = blocks_snapshot.to_block_point(wrap_point);
-//                 assert_eq!(blocks_snapshot.to_wrap_point(block_point), wrap_point);
-//             }
+            let mut block_point = BlockPoint::new(0, 0);
+            for c in expected_text.chars() {
+                let left_point = blocks_snapshot.clip_point(block_point, Bias::Left);
+                let left_buffer_point = blocks_snapshot.to_point(left_point, Bias::Left);
+                assert_eq!(
+                    blocks_snapshot.to_block_point(blocks_snapshot.to_wrap_point(left_point)),
+                    left_point
+                );
+                assert_eq!(
+                    left_buffer_point,
+                    buffer_snapshot.clip_point(left_buffer_point, Bias::Right),
+                    "{:?} is not valid in buffer coordinates",
+                    left_point
+                );
 
-//             let mut block_point = BlockPoint::new(0, 0);
-//             for c in expected_text.chars() {
-//                 let left_point = blocks_snapshot.clip_point(block_point, Bias::Left);
-//                 let left_buffer_point = blocks_snapshot.to_point(left_point, Bias::Left);
-//                 assert_eq!(
-//                     blocks_snapshot.to_block_point(blocks_snapshot.to_wrap_point(left_point)),
-//                     left_point
-//                 );
-//                 assert_eq!(
-//                     left_buffer_point,
-//                     buffer_snapshot.clip_point(left_buffer_point, Bias::Right),
-//                     "{:?} is not valid in buffer coordinates",
-//                     left_point
-//                 );
+                let right_point = blocks_snapshot.clip_point(block_point, Bias::Right);
+                let right_buffer_point = blocks_snapshot.to_point(right_point, Bias::Right);
+                assert_eq!(
+                    blocks_snapshot.to_block_point(blocks_snapshot.to_wrap_point(right_point)),
+                    right_point
+                );
+                assert_eq!(
+                    right_buffer_point,
+                    buffer_snapshot.clip_point(right_buffer_point, Bias::Left),
+                    "{:?} is not valid in buffer coordinates",
+                    right_point
+                );
 
-//                 let right_point = blocks_snapshot.clip_point(block_point, Bias::Right);
-//                 let right_buffer_point = blocks_snapshot.to_point(right_point, Bias::Right);
-//                 assert_eq!(
-//                     blocks_snapshot.to_block_point(blocks_snapshot.to_wrap_point(right_point)),
-//                     right_point
-//                 );
-//                 assert_eq!(
-//                     right_buffer_point,
-//                     buffer_snapshot.clip_point(right_buffer_point, Bias::Left),
-//                     "{:?} is not valid in buffer coordinates",
-//                     right_point
-//                 );
+                if c == '\n' {
+                    block_point.0 += Point::new(1, 0);
+                } else {
+                    block_point.column += c.len_utf8() as u32;
+                }
+            }
+        }
 
-//                 if c == '\n' {
-//                     block_point.0 += Point::new(1, 0);
-//                 } else {
-//                     block_point.column += c.len_utf8() as u32;
-//                 }
-//             }
-//         }
+        #[derive(Debug, Eq, PartialEq, Ord, PartialOrd)]
+        enum ExpectedBlock {
+            ExcerptHeader {
+                height: u8,
+                starts_new_buffer: bool,
+            },
+            Custom {
+                disposition: BlockDisposition,
+                id: BlockId,
+                height: u8,
+            },
+        }
 
-//         #[derive(Debug, Eq, PartialEq, Ord, PartialOrd)]
-//         enum ExpectedBlock {
-//             ExcerptHeader {
-//                 height: u8,
-//                 starts_new_buffer: bool,
-//             },
-//             Custom {
-//                 disposition: BlockDisposition,
-//                 id: BlockId,
-//                 height: u8,
-//             },
-//         }
+        impl ExpectedBlock {
+            fn height(&self) -> u8 {
+                match self {
+                    ExpectedBlock::ExcerptHeader { height, .. } => *height,
+                    ExpectedBlock::Custom { height, .. } => *height,
+                }
+            }
 
-//         impl ExpectedBlock {
-//             fn height(&self) -> u8 {
-//                 match self {
-//                     ExpectedBlock::ExcerptHeader { height, .. } => *height,
-//                     ExpectedBlock::Custom { height, .. } => *height,
-//                 }
-//             }
+            fn disposition(&self) -> BlockDisposition {
+                match self {
+                    ExpectedBlock::ExcerptHeader { .. } => BlockDisposition::Above,
+                    ExpectedBlock::Custom { disposition, .. } => *disposition,
+                }
+            }
+        }
 
-//             fn disposition(&self) -> BlockDisposition {
-//                 match self {
-//                     ExpectedBlock::ExcerptHeader { .. } => BlockDisposition::Above,
-//                     ExpectedBlock::Custom { disposition, .. } => *disposition,
-//                 }
-//             }
-//         }
+        impl From<TransformBlock> for ExpectedBlock {
+            fn from(block: TransformBlock) -> Self {
+                match block {
+                    TransformBlock::Custom(block) => ExpectedBlock::Custom {
+                        id: block.id,
+                        disposition: block.disposition,
+                        height: block.height,
+                    },
+                    TransformBlock::ExcerptHeader {
+                        height,
+                        starts_new_buffer,
+                        ..
+                    } => ExpectedBlock::ExcerptHeader {
+                        height,
+                        starts_new_buffer,
+                    },
+                }
+            }
+        }
+    }
 
-//         impl From<TransformBlock> for ExpectedBlock {
-//             fn from(block: TransformBlock) -> Self {
-//                 match block {
-//                     TransformBlock::Custom(block) => ExpectedBlock::Custom {
-//                         id: block.id,
-//                         disposition: block.disposition,
-//                         height: block.height,
-//                     },
-//                     TransformBlock::ExcerptHeader {
-//                         height,
-//                         starts_new_buffer,
-//                         ..
-//                     } => ExpectedBlock::ExcerptHeader {
-//                         height,
-//                         starts_new_buffer,
-//                     },
-//                 }
-//             }
-//         }
-//     }
+    fn init_test(cx: &mut gpui::AppContext) {
+        let settings = SettingsStore::test(cx);
+        cx.set_global(settings);
+        theme::init(theme::LoadThemes::JustBase, cx);
+    }
 
-//     fn init_test(cx: &mut gpui::AppContext) {
-//         cx.set_global(SettingsStore::test(cx));
-//         theme::init(cx);
-//     }
+    impl TransformBlock {
+        fn as_custom(&self) -> Option<&Block> {
+            match self {
+                TransformBlock::Custom(block) => Some(block),
+                TransformBlock::ExcerptHeader { .. } => None,
+            }
+        }
+    }
 
-//     impl TransformBlock {
-//         fn as_custom(&self) -> Option<&Block> {
-//             match self {
-//                 TransformBlock::Custom(block) => Some(block),
-//                 TransformBlock::ExcerptHeader { .. } => None,
-//             }
-//         }
-//     }
-
-//     impl BlockSnapshot {
-//         fn to_point(&self, point: BlockPoint, bias: Bias) -> Point {
-//             self.wrap_snapshot.to_point(self.to_wrap_point(point), bias)
-//         }
-//     }
-// }
+    impl BlockSnapshot {
+        fn to_point(&self, point: BlockPoint, bias: Bias) -> Point {
+            self.wrap_snapshot.to_point(self.to_wrap_point(point), bias)
+        }
+    }
+}

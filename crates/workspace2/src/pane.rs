@@ -7,7 +7,7 @@ use crate::{
 use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
 use gpui::{
-    actions, overlay, prelude::*, Action, AnchorCorner, AnyWeakView, AppContext,
+    actions, overlay, prelude::*, rems, Action, AnchorCorner, AnyWeakView, AppContext,
     AsyncWindowContext, DismissEvent, Div, EntityId, EventEmitter, FocusHandle, Focusable,
     FocusableView, Model, Pixels, Point, PromptLevel, Render, Task, View, ViewContext,
     VisualContext, WeakView, WindowContext,
@@ -26,7 +26,9 @@ use std::{
     },
 };
 
-use ui::{prelude::*, right_click_menu, Color, Icon, IconButton, IconElement, Tooltip};
+use ui::{
+    h_stack, prelude::*, right_click_menu, Color, Icon, IconButton, IconElement, Label, Tooltip,
+};
 use ui::{v_stack, ContextMenu};
 use util::truncate_and_remove_front;
 
@@ -535,18 +537,21 @@ impl Pane {
 
     pub(crate) fn open_item(
         &mut self,
-        project_entry_id: ProjectEntryId,
+        project_entry_id: Option<ProjectEntryId>,
         focus_item: bool,
         cx: &mut ViewContext<Self>,
         build_item: impl FnOnce(&mut ViewContext<Pane>) -> Box<dyn ItemHandle>,
     ) -> Box<dyn ItemHandle> {
         let mut existing_item = None;
-        for (index, item) in self.items.iter().enumerate() {
-            if item.is_singleton(cx) && item.project_entry_ids(cx).as_slice() == [project_entry_id]
-            {
-                let item = item.boxed_clone();
-                existing_item = Some((index, item));
-                break;
+        if let Some(project_entry_id) = project_entry_id {
+            for (index, item) in self.items.iter().enumerate() {
+                if item.is_singleton(cx)
+                    && item.project_entry_ids(cx).as_slice() == [project_entry_id]
+                {
+                    let item = item.boxed_clone();
+                    existing_item = Some((index, item));
+                    break;
+                }
             }
         }
 
@@ -1529,24 +1534,17 @@ impl Pane {
                 menu.action(
                     "Close Active Item",
                     CloseActiveItem { save_intent: None }.boxed_clone(),
-                    cx,
                 )
-                .action("Close Inactive Items", CloseInactiveItems.boxed_clone(), cx)
-                .action("Close Clean Items", CloseCleanItems.boxed_clone(), cx)
-                .action(
-                    "Close Items To The Left",
-                    CloseItemsToTheLeft.boxed_clone(),
-                    cx,
-                )
+                .action("Close Inactive Items", CloseInactiveItems.boxed_clone())
+                .action("Close Clean Items", CloseCleanItems.boxed_clone())
+                .action("Close Items To The Left", CloseItemsToTheLeft.boxed_clone())
                 .action(
                     "Close Items To The Right",
                     CloseItemsToTheRight.boxed_clone(),
-                    cx,
                 )
                 .action(
                     "Close All Items",
                     CloseAllItems { save_intent: None }.boxed_clone(),
-                    cx,
                 )
             })
         })
@@ -1554,47 +1552,43 @@ impl Pane {
 
     fn render_tab_bar(&mut self, cx: &mut ViewContext<'_, Pane>) -> impl IntoElement {
         div()
-            .group("tab_bar")
             .id("tab_bar")
+            .group("tab_bar")
             .track_focus(&self.tab_bar_focus_handle)
             .w_full()
+            // 30px @ 16px/rem
+            .h(rems(1.875))
+            .overflow_hidden()
             .flex()
+            .flex_none()
             .bg(cx.theme().colors().tab_bar_background)
             // Left Side
             .child(
-                div()
-                    .relative()
-                    .px_1()
+                h_stack()
+                    .px_2()
                     .flex()
                     .flex_none()
-                    .gap_2()
+                    .gap_1()
                     // Nav Buttons
                     .child(
-                        div()
-                            .right_0()
-                            .flex()
-                            .items_center()
-                            .gap_px()
-                            .child(
-                                div().border().border_color(gpui::red()).child(
-                                    IconButton::new("navigate_backward", Icon::ArrowLeft)
-                                        .on_click({
-                                            let view = cx.view().clone();
-                                            move |_, cx| view.update(cx, Self::navigate_backward)
-                                        })
-                                        .disabled(!self.can_navigate_backward()),
-                                ),
-                            )
-                            .child(
-                                div().border().border_color(gpui::red()).child(
-                                    IconButton::new("navigate_forward", Icon::ArrowRight)
-                                        .on_click({
-                                            let view = cx.view().clone();
-                                            move |_, cx| view.update(cx, Self::navigate_backward)
-                                        })
-                                        .disabled(!self.can_navigate_forward()),
-                                ),
-                            ),
+                        div().border().border_color(gpui::red()).child(
+                            IconButton::new("navigate_backward", Icon::ArrowLeft)
+                                .on_click({
+                                    let view = cx.view().clone();
+                                    move |_, cx| view.update(cx, Self::navigate_backward)
+                                })
+                                .disabled(!self.can_navigate_backward()),
+                        ),
+                    )
+                    .child(
+                        div().border().border_color(gpui::red()).child(
+                            IconButton::new("navigate_forward", Icon::ArrowRight)
+                                .on_click({
+                                    let view = cx.view().clone();
+                                    move |_, cx| view.update(cx, Self::navigate_backward)
+                                })
+                                .disabled(!self.can_navigate_forward()),
+                        ),
                     ),
             )
             .child(
@@ -1629,17 +1623,12 @@ impl Pane {
                                     .child(IconButton::new("plus", Icon::Plus).on_click(
                                         cx.listener(|this, _, cx| {
                                             let menu = ContextMenu::build(cx, |menu, cx| {
-                                                menu.action("New File", NewFile.boxed_clone(), cx)
+                                                menu.action("New File", NewFile.boxed_clone())
                                                     .action(
                                                         "New Terminal",
                                                         NewCenterTerminal.boxed_clone(),
-                                                        cx,
                                                     )
-                                                    .action(
-                                                        "New Search",
-                                                        NewSearch.boxed_clone(),
-                                                        cx,
-                                                    )
+                                                    .action("New Search", NewSearch.boxed_clone())
                                             });
                                             cx.subscribe(
                                                 &menu,
@@ -1663,14 +1652,10 @@ impl Pane {
                                     .child(IconButton::new("split", Icon::Split).on_click(
                                         cx.listener(|this, _, cx| {
                                             let menu = ContextMenu::build(cx, |menu, cx| {
-                                                menu.action(
-                                                    "Split Right",
-                                                    SplitRight.boxed_clone(),
-                                                    cx,
-                                                )
-                                                .action("Split Left", SplitLeft.boxed_clone(), cx)
-                                                .action("Split Up", SplitUp.boxed_clone(), cx)
-                                                .action("Split Down", SplitDown.boxed_clone(), cx)
+                                                menu.action("Split Right", SplitRight.boxed_clone())
+                                                    .action("Split Left", SplitLeft.boxed_clone())
+                                                    .action("Split Up", SplitUp.boxed_clone())
+                                                    .action("Split Down", SplitDown.boxed_clone())
                                             });
                                             cx.subscribe(
                                                 &menu,
@@ -2186,8 +2171,11 @@ impl Render for Pane {
             .child(if let Some(item) = self.active_item() {
                 div().flex().flex_1().child(item.to_any())
             } else {
-                // todo!()
-                div().child("Empty Pane")
+                h_stack()
+                    .items_center()
+                    .size_full()
+                    .justify_center()
+                    .child(Label::new("Open a file or project to get started.").color(Color::Muted))
             })
 
         // enum MouseNavigationHandler {}

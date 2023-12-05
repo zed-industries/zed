@@ -1,5 +1,5 @@
 #![allow(unused)]
-// mod channel_modal;
+mod channel_modal;
 mod contact_finder;
 
 // use crate::{
@@ -18,7 +18,7 @@ mod contact_finder;
 // };
 use contact_finder::ContactFinder;
 use menu::{Cancel, Confirm, SelectNext, SelectPrev};
-use rpc::proto;
+use rpc::proto::{self, PeerId};
 use theme::{ActiveTheme, ThemeSettings};
 // use context_menu::{ContextMenu, ContextMenuItem};
 // use db::kvp::KEY_VALUE_STORE;
@@ -169,11 +169,12 @@ use editor::Editor;
 use feature_flags::{ChannelsAlpha, FeatureFlagAppExt, FeatureFlagViewExt};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
-    actions, div, img, overlay, prelude::*, px, rems, serde_json, Action, AppContext,
-    AsyncWindowContext, Bounds, ClipboardItem, DismissEvent, Div, EventEmitter, FocusHandle,
-    Focusable, FocusableView, InteractiveElement, IntoElement, Model, MouseDownEvent,
-    ParentElement, Pixels, Point, PromptLevel, Render, RenderOnce, ScrollHandle, SharedString,
-    Stateful, Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView,
+    actions, canvas, div, img, overlay, point, prelude::*, px, rems, serde_json, Action,
+    AppContext, AsyncWindowContext, Bounds, ClipboardItem, DismissEvent, Div, EventEmitter,
+    FocusHandle, Focusable, FocusableView, Hsla, InteractiveElement, IntoElement, Length, Model,
+    MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Quad, Render, RenderOnce,
+    ScrollHandle, SharedString, Size, Stateful, Styled, Subscription, Task, View, ViewContext,
+    VisualContext, WeakView,
 };
 use project::{Fs, Project};
 use serde_derive::{Deserialize, Serialize};
@@ -191,6 +192,8 @@ use workspace::{
 };
 
 use crate::{face_pile::FacePile, CollaborationPanelSettings};
+
+use self::channel_modal::ChannelModal;
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(|workspace: &mut Workspace, _| {
@@ -345,21 +348,21 @@ enum Section {
 #[derive(Clone, Debug)]
 enum ListEntry {
     Header(Section),
-    //     CallParticipant {
-    //         user: Arc<User>,
-    //         peer_id: Option<PeerId>,
-    //         is_pending: bool,
-    //     },
-    //     ParticipantProject {
-    //         project_id: u64,
-    //         worktree_root_names: Vec<String>,
-    //         host_user_id: u64,
-    //         is_last: bool,
-    //     },
-    //     ParticipantScreen {
-    //         peer_id: Option<PeerId>,
-    //         is_last: bool,
-    //     },
+    CallParticipant {
+        user: Arc<User>,
+        peer_id: Option<PeerId>,
+        is_pending: bool,
+    },
+    ParticipantProject {
+        project_id: u64,
+        worktree_root_names: Vec<String>,
+        host_user_id: u64,
+        is_last: bool,
+    },
+    ParticipantScreen {
+        peer_id: Option<PeerId>,
+        is_last: bool,
+    },
     IncomingRequest(Arc<User>),
     OutgoingRequest(Arc<User>),
     //     ChannelInvite(Arc<Channel>),
@@ -368,12 +371,12 @@ enum ListEntry {
         depth: usize,
         has_children: bool,
     },
-    //     ChannelNotes {
-    //         channel_id: ChannelId,
-    //     },
-    //     ChannelChat {
-    //         channel_id: ChannelId,
-    //     },
+    ChannelNotes {
+        channel_id: ChannelId,
+    },
+    ChannelChat {
+        channel_id: ChannelId,
+    },
     ChannelEditor {
         depth: usize,
     },
@@ -706,136 +709,136 @@ impl CollabPanel {
 
         let prev_selected_entry = self.selection.and_then(|ix| self.entries.get(ix).cloned());
         let old_entries = mem::take(&mut self.entries);
-        let scroll_to_top = false;
+        let mut scroll_to_top = false;
 
-        //         if let Some(room) = ActiveCall::global(cx).read(cx).room() {
-        //             self.entries.push(ListEntry::Header(Section::ActiveCall));
-        //             if !old_entries
-        //                 .iter()
-        //                 .any(|entry| matches!(entry, ListEntry::Header(Section::ActiveCall)))
-        //             {
-        //                 scroll_to_top = true;
-        //             }
+        if let Some(room) = ActiveCall::global(cx).read(cx).room() {
+            self.entries.push(ListEntry::Header(Section::ActiveCall));
+            if !old_entries
+                .iter()
+                .any(|entry| matches!(entry, ListEntry::Header(Section::ActiveCall)))
+            {
+                scroll_to_top = true;
+            }
 
-        //             if !self.collapsed_sections.contains(&Section::ActiveCall) {
-        //                 let room = room.read(cx);
+            if !self.collapsed_sections.contains(&Section::ActiveCall) {
+                let room = room.read(cx);
 
-        //                 if let Some(channel_id) = room.channel_id() {
-        //                     self.entries.push(ListEntry::ChannelNotes { channel_id });
-        //                     self.entries.push(ListEntry::ChannelChat { channel_id })
-        //                 }
+                if let Some(channel_id) = room.channel_id() {
+                    self.entries.push(ListEntry::ChannelNotes { channel_id });
+                    self.entries.push(ListEntry::ChannelChat { channel_id })
+                }
 
-        //                 // Populate the active user.
-        //                 if let Some(user) = user_store.current_user() {
-        //                     self.match_candidates.clear();
-        //                     self.match_candidates.push(StringMatchCandidate {
-        //                         id: 0,
-        //                         string: user.github_login.clone(),
-        //                         char_bag: user.github_login.chars().collect(),
-        //                     });
-        //                     let matches = executor.block(match_strings(
-        //                         &self.match_candidates,
-        //                         &query,
-        //                         true,
-        //                         usize::MAX,
-        //                         &Default::default(),
-        //                         executor.clone(),
-        //                     ));
-        //                     if !matches.is_empty() {
-        //                         let user_id = user.id;
-        //                         self.entries.push(ListEntry::CallParticipant {
-        //                             user,
-        //                             peer_id: None,
-        //                             is_pending: false,
-        //                         });
-        //                         let mut projects = room.local_participant().projects.iter().peekable();
-        //                         while let Some(project) = projects.next() {
-        //                             self.entries.push(ListEntry::ParticipantProject {
-        //                                 project_id: project.id,
-        //                                 worktree_root_names: project.worktree_root_names.clone(),
-        //                                 host_user_id: user_id,
-        //                                 is_last: projects.peek().is_none() && !room.is_screen_sharing(),
-        //                             });
-        //                         }
-        //                         if room.is_screen_sharing() {
-        //                             self.entries.push(ListEntry::ParticipantScreen {
-        //                                 peer_id: None,
-        //                                 is_last: true,
-        //                             });
-        //                         }
-        //                     }
-        //                 }
+                // Populate the active user.
+                if let Some(user) = user_store.current_user() {
+                    self.match_candidates.clear();
+                    self.match_candidates.push(StringMatchCandidate {
+                        id: 0,
+                        string: user.github_login.clone(),
+                        char_bag: user.github_login.chars().collect(),
+                    });
+                    let matches = executor.block(match_strings(
+                        &self.match_candidates,
+                        &query,
+                        true,
+                        usize::MAX,
+                        &Default::default(),
+                        executor.clone(),
+                    ));
+                    if !matches.is_empty() {
+                        let user_id = user.id;
+                        self.entries.push(ListEntry::CallParticipant {
+                            user,
+                            peer_id: None,
+                            is_pending: false,
+                        });
+                        let mut projects = room.local_participant().projects.iter().peekable();
+                        while let Some(project) = projects.next() {
+                            self.entries.push(ListEntry::ParticipantProject {
+                                project_id: project.id,
+                                worktree_root_names: project.worktree_root_names.clone(),
+                                host_user_id: user_id,
+                                is_last: projects.peek().is_none() && !room.is_screen_sharing(),
+                            });
+                        }
+                        if room.is_screen_sharing() {
+                            self.entries.push(ListEntry::ParticipantScreen {
+                                peer_id: None,
+                                is_last: true,
+                            });
+                        }
+                    }
+                }
 
-        //                 // Populate remote participants.
-        //                 self.match_candidates.clear();
-        //                 self.match_candidates
-        //                     .extend(room.remote_participants().iter().map(|(_, participant)| {
-        //                         StringMatchCandidate {
-        //                             id: participant.user.id as usize,
-        //                             string: participant.user.github_login.clone(),
-        //                             char_bag: participant.user.github_login.chars().collect(),
-        //                         }
-        //                     }));
-        //                 let matches = executor.block(match_strings(
-        //                     &self.match_candidates,
-        //                     &query,
-        //                     true,
-        //                     usize::MAX,
-        //                     &Default::default(),
-        //                     executor.clone(),
-        //                 ));
-        //                 for mat in matches {
-        //                     let user_id = mat.candidate_id as u64;
-        //                     let participant = &room.remote_participants()[&user_id];
-        //                     self.entries.push(ListEntry::CallParticipant {
-        //                         user: participant.user.clone(),
-        //                         peer_id: Some(participant.peer_id),
-        //                         is_pending: false,
-        //                     });
-        //                     let mut projects = participant.projects.iter().peekable();
-        //                     while let Some(project) = projects.next() {
-        //                         self.entries.push(ListEntry::ParticipantProject {
-        //                             project_id: project.id,
-        //                             worktree_root_names: project.worktree_root_names.clone(),
-        //                             host_user_id: participant.user.id,
-        //                             is_last: projects.peek().is_none()
-        //                                 && participant.video_tracks.is_empty(),
-        //                         });
-        //                     }
-        //                     if !participant.video_tracks.is_empty() {
-        //                         self.entries.push(ListEntry::ParticipantScreen {
-        //                             peer_id: Some(participant.peer_id),
-        //                             is_last: true,
-        //                         });
-        //                     }
-        //                 }
+                // Populate remote participants.
+                self.match_candidates.clear();
+                self.match_candidates
+                    .extend(room.remote_participants().iter().map(|(_, participant)| {
+                        StringMatchCandidate {
+                            id: participant.user.id as usize,
+                            string: participant.user.github_login.clone(),
+                            char_bag: participant.user.github_login.chars().collect(),
+                        }
+                    }));
+                let matches = executor.block(match_strings(
+                    &self.match_candidates,
+                    &query,
+                    true,
+                    usize::MAX,
+                    &Default::default(),
+                    executor.clone(),
+                ));
+                for mat in matches {
+                    let user_id = mat.candidate_id as u64;
+                    let participant = &room.remote_participants()[&user_id];
+                    self.entries.push(ListEntry::CallParticipant {
+                        user: participant.user.clone(),
+                        peer_id: Some(participant.peer_id),
+                        is_pending: false,
+                    });
+                    let mut projects = participant.projects.iter().peekable();
+                    while let Some(project) = projects.next() {
+                        self.entries.push(ListEntry::ParticipantProject {
+                            project_id: project.id,
+                            worktree_root_names: project.worktree_root_names.clone(),
+                            host_user_id: participant.user.id,
+                            is_last: projects.peek().is_none()
+                                && participant.video_tracks.is_empty(),
+                        });
+                    }
+                    if !participant.video_tracks.is_empty() {
+                        self.entries.push(ListEntry::ParticipantScreen {
+                            peer_id: Some(participant.peer_id),
+                            is_last: true,
+                        });
+                    }
+                }
 
-        //                 // Populate pending participants.
-        //                 self.match_candidates.clear();
-        //                 self.match_candidates
-        //                     .extend(room.pending_participants().iter().enumerate().map(
-        //                         |(id, participant)| StringMatchCandidate {
-        //                             id,
-        //                             string: participant.github_login.clone(),
-        //                             char_bag: participant.github_login.chars().collect(),
-        //                         },
-        //                     ));
-        //                 let matches = executor.block(match_strings(
-        //                     &self.match_candidates,
-        //                     &query,
-        //                     true,
-        //                     usize::MAX,
-        //                     &Default::default(),
-        //                     executor.clone(),
-        //                 ));
-        //                 self.entries
-        //                     .extend(matches.iter().map(|mat| ListEntry::CallParticipant {
-        //                         user: room.pending_participants()[mat.candidate_id].clone(),
-        //                         peer_id: None,
-        //                         is_pending: true,
-        //                     }));
-        //             }
-        //         }
+                // Populate pending participants.
+                self.match_candidates.clear();
+                self.match_candidates
+                    .extend(room.pending_participants().iter().enumerate().map(
+                        |(id, participant)| StringMatchCandidate {
+                            id,
+                            string: participant.github_login.clone(),
+                            char_bag: participant.github_login.chars().collect(),
+                        },
+                    ));
+                let matches = executor.block(match_strings(
+                    &self.match_candidates,
+                    &query,
+                    true,
+                    usize::MAX,
+                    &Default::default(),
+                    executor.clone(),
+                ));
+                self.entries
+                    .extend(matches.iter().map(|mat| ListEntry::CallParticipant {
+                        user: room.pending_participants()[mat.candidate_id].clone(),
+                        peer_id: None,
+                        is_pending: true,
+                    }));
+            }
+        }
 
         let mut request_entries = Vec::new();
 
@@ -1133,290 +1136,234 @@ impl CollabPanel {
         cx.notify();
     }
 
-    //     fn render_call_participant(
-    //         user: &User,
-    //         peer_id: Option<PeerId>,
-    //         user_store: ModelHandle<UserStore>,
-    //         is_pending: bool,
-    //         is_selected: bool,
-    //         theme: &theme::Theme,
-    //         cx: &mut ViewContext<Self>,
-    //     ) -> AnyElement<Self> {
-    //         enum CallParticipant {}
-    //         enum CallParticipantTooltip {}
-    //         enum LeaveCallButton {}
-    //         enum LeaveCallTooltip {}
+    fn render_call_participant(
+        &self,
+        user: Arc<User>,
+        peer_id: Option<PeerId>,
+        is_pending: bool,
+        cx: &mut ViewContext<Self>,
+    ) -> impl IntoElement {
+        let is_current_user =
+            self.user_store.read(cx).current_user().map(|user| user.id) == Some(user.id);
+        let tooltip = format!("Follow {}", user.github_login);
 
-    //         let collab_theme = &theme.collab_panel;
+        ListItem::new(SharedString::from(user.github_login.clone()))
+            .left_child(Avatar::data(user.avatar.clone().unwrap()))
+            .child(
+                h_stack()
+                    .w_full()
+                    .justify_between()
+                    .child(Label::new(user.github_login.clone()))
+                    .child(if is_pending {
+                        Label::new("Calling").color(Color::Muted).into_any_element()
+                    } else if is_current_user {
+                        IconButton::new("leave-call", Icon::ArrowRight)
+                            .on_click(cx.listener(move |this, _, cx| {
+                                Self::leave_call(cx);
+                            }))
+                            .tooltip(|cx| Tooltip::text("Leave Call", cx))
+                            .into_any_element()
+                    } else {
+                        div().into_any_element()
+                    }),
+            )
+            .when_some(peer_id, |this, peer_id| {
+                this.tooltip(move |cx| Tooltip::text(tooltip.clone(), cx))
+                    .on_click(cx.listener(move |this, _, cx| {
+                        this.workspace
+                            .update(cx, |workspace, cx| workspace.follow(peer_id, cx));
+                    }))
+            })
+    }
 
-    //         let is_current_user =
-    //             user_store.read(cx).current_user().map(|user| user.id) == Some(user.id);
+    fn render_participant_project(
+        &self,
+        project_id: u64,
+        worktree_root_names: &[String],
+        host_user_id: u64,
+        //         is_current: bool,
+        is_last: bool,
+        //         is_selected: bool,
+        //         theme: &theme::Theme,
+        cx: &mut ViewContext<Self>,
+    ) -> impl IntoElement {
+        let project_name: SharedString = if worktree_root_names.is_empty() {
+            "untitled".to_string()
+        } else {
+            worktree_root_names.join(", ")
+        }
+        .into();
 
-    //         let content = MouseEventHandler::new::<CallParticipant, _>(
-    //             user.id as usize,
-    //             cx,
-    //             |mouse_state, cx| {
-    //                 let style = if is_current_user {
-    //                     *collab_theme
-    //                         .contact_row
-    //                         .in_state(is_selected)
-    //                         .style_for(&mut Default::default())
-    //                 } else {
-    //                     *collab_theme
-    //                         .contact_row
-    //                         .in_state(is_selected)
-    //                         .style_for(mouse_state)
-    //                 };
+        let theme = cx.theme();
 
-    //                 Flex::row()
-    //                     .with_children(user.avatar.clone().map(|avatar| {
-    //                         Image::from_data(avatar)
-    //                             .with_style(collab_theme.contact_avatar)
-    //                             .aligned()
-    //                             .left()
-    //                     }))
-    //                     .with_child(
-    //                         Label::new(
-    //                             user.github_login.clone(),
-    //                             collab_theme.contact_username.text.clone(),
-    //                         )
-    //                         .contained()
-    //                         .with_style(collab_theme.contact_username.container)
-    //                         .aligned()
-    //                         .left()
-    //                         .flex(1., true),
-    //                     )
-    //                     .with_children(if is_pending {
-    //                         Some(
-    //                             Label::new("Calling", collab_theme.calling_indicator.text.clone())
-    //                                 .contained()
-    //                                 .with_style(collab_theme.calling_indicator.container)
-    //                                 .aligned()
-    //                                 .into_any(),
-    //                         )
-    //                     } else if is_current_user {
-    //                         Some(
-    //                             MouseEventHandler::new::<LeaveCallButton, _>(0, cx, |state, _| {
-    //                                 render_icon_button(
-    //                                     theme
-    //                                         .collab_panel
-    //                                         .leave_call_button
-    //                                         .style_for(is_selected, state),
-    //                                     "icons/exit.svg",
-    //                                 )
-    //                             })
-    //                             .with_cursor_style(CursorStyle::PointingHand)
-    //                             .on_click(MouseButton::Left, |_, _, cx| {
-    //                                 Self::leave_call(cx);
-    //                             })
-    //                             .with_tooltip::<LeaveCallTooltip>(
-    //                                 0,
-    //                                 "Leave call",
-    //                                 None,
-    //                                 theme.tooltip.clone(),
-    //                                 cx,
-    //                             )
-    //                             .into_any(),
-    //                         )
-    //                     } else {
-    //                         None
-    //                     })
-    //                     .constrained()
-    //                     .with_height(collab_theme.row_height)
-    //                     .contained()
-    //                     .with_style(style)
-    //             },
-    //         );
+        ListItem::new(project_id as usize)
+            .on_click(cx.listener(move |this, _, cx| {
+                this.workspace.update(cx, |workspace, cx| {
+                    let app_state = workspace.app_state().clone();
+                    workspace::join_remote_project(project_id, host_user_id, app_state, cx)
+                        .detach_and_log_err(cx);
+                });
+            }))
+            .left_child(IconButton::new(0, Icon::Folder))
+            .child(
+                h_stack()
+                    .w_full()
+                    .justify_between()
+                    .child(render_tree_branch(is_last, cx))
+                    .child(Label::new(project_name.clone())),
+            )
+            .tooltip(move |cx| Tooltip::text(format!("Open {}", project_name), cx))
 
-    //         if is_current_user || is_pending || peer_id.is_none() {
-    //             return content.into_any();
-    //         }
+        //         enum JoinProject {}
+        //         enum JoinProjectTooltip {}
 
-    //         let tooltip = format!("Follow {}", user.github_login);
+        //         let collab_theme = &theme.collab_panel;
+        //         let host_avatar_width = collab_theme
+        //             .contact_avatar
+        //             .width
+        //             .or(collab_theme.contact_avatar.height)
+        //             .unwrap_or(0.);
+        //         let tree_branch = collab_theme.tree_branch;
 
-    //         content
-    //             .on_click(MouseButton::Left, move |_, this, cx| {
-    //                 if let Some(workspace) = this.workspace.upgrade(cx) {
-    //                     workspace
-    //                         .update(cx, |workspace, cx| workspace.follow(peer_id.unwrap(), cx))
-    //                         .map(|task| task.detach_and_log_err(cx));
-    //                 }
-    //             })
-    //             .with_cursor_style(CursorStyle::PointingHand)
-    //             .with_tooltip::<CallParticipantTooltip>(
-    //                 user.id as usize,
-    //                 tooltip,
-    //                 Some(Box::new(FollowNextCollaborator)),
-    //                 theme.tooltip.clone(),
-    //                 cx,
-    //             )
-    //             .into_any()
-    //     }
+        //         let content =
+        //             MouseEventHandler::new::<JoinProject, _>(project_id as usize, cx, |mouse_state, cx| {
+        //                 let tree_branch = *tree_branch.in_state(is_selected).style_for(mouse_state);
+        //                 let row = if is_current {
+        //                     collab_theme
+        //                         .project_row
+        //                         .in_state(true)
+        //                         .style_for(&mut Default::default())
+        //                 } else {
+        //                     collab_theme
+        //                         .project_row
+        //                         .in_state(is_selected)
+        //                         .style_for(mouse_state)
+        //                 };
 
-    //     fn render_participant_project(
-    //         project_id: u64,
-    //         worktree_root_names: &[String],
-    //         host_user_id: u64,
-    //         is_current: bool,
-    //         is_last: bool,
-    //         is_selected: bool,
-    //         theme: &theme::Theme,
-    //         cx: &mut ViewContext<Self>,
-    //     ) -> AnyElement<Self> {
-    //         enum JoinProject {}
-    //         enum JoinProjectTooltip {}
+        //                 Flex::row()
+        //                     .with_child(render_tree_branch(
+        //                         tree_branch,
+        //                         &row.name.text,
+        //                         is_last,
+        //                         vec2f(host_avatar_width, collab_theme.row_height),
+        //                         cx.font_cache(),
+        //                     ))
+        //                     .with_child(
+        //                         Svg::new("icons/file_icons/folder.svg")
+        //                             .with_color(collab_theme.channel_hash.color)
+        //                             .constrained()
+        //                             .with_width(collab_theme.channel_hash.width)
+        //                             .aligned()
+        //                             .left(),
+        //                     )
+        //                     .with_child(
+        //                         Label::new(project_name.clone(), row.name.text.clone())
+        //                             .aligned()
+        //                             .left()
+        //                             .contained()
+        //                             .with_style(row.name.container)
+        //                             .flex(1., false),
+        //                     )
+        //                     .constrained()
+        //                     .with_height(collab_theme.row_height)
+        //                     .contained()
+        //                     .with_style(row.container)
+        //             });
 
-    //         let collab_theme = &theme.collab_panel;
-    //         let host_avatar_width = collab_theme
-    //             .contact_avatar
-    //             .width
-    //             .or(collab_theme.contact_avatar.height)
-    //             .unwrap_or(0.);
-    //         let tree_branch = collab_theme.tree_branch;
-    //         let project_name = if worktree_root_names.is_empty() {
-    //             "untitled".to_string()
-    //         } else {
-    //             worktree_root_names.join(", ")
-    //         };
+        //         if is_current {
+        //             return content.into_any();
+        //         }
 
-    //         let content =
-    //             MouseEventHandler::new::<JoinProject, _>(project_id as usize, cx, |mouse_state, cx| {
-    //                 let tree_branch = *tree_branch.in_state(is_selected).style_for(mouse_state);
-    //                 let row = if is_current {
-    //                     collab_theme
-    //                         .project_row
-    //                         .in_state(true)
-    //                         .style_for(&mut Default::default())
-    //                 } else {
-    //                     collab_theme
-    //                         .project_row
-    //                         .in_state(is_selected)
-    //                         .style_for(mouse_state)
-    //                 };
+        //         content
+        //             .with_cursor_style(CursorStyle::PointingHand)
+        //             .on_click(MouseButton::Left, move |_, this, cx| {
+        //                 if let Some(workspace) = this.workspace.upgrade(cx) {
+        //                     let app_state = workspace.read(cx).app_state().clone();
+        //                     workspace::join_remote_project(project_id, host_user_id, app_state, cx)
+        //                         .detach_and_log_err(cx);
+        //                 }
+        //             })
+        //             .with_tooltip::<JoinProjectTooltip>(
+        //                 project_id as usize,
+        //                 format!("Open {}", project_name),
+        //                 None,
+        //                 theme.tooltip.clone(),
+        //                 cx,
+        //             )
+        //             .into_any()
+    }
 
-    //                 Flex::row()
-    //                     .with_child(render_tree_branch(
-    //                         tree_branch,
-    //                         &row.name.text,
-    //                         is_last,
-    //                         vec2f(host_avatar_width, collab_theme.row_height),
-    //                         cx.font_cache(),
-    //                     ))
-    //                     .with_child(
-    //                         Svg::new("icons/file_icons/folder.svg")
-    //                             .with_color(collab_theme.channel_hash.color)
-    //                             .constrained()
-    //                             .with_width(collab_theme.channel_hash.width)
-    //                             .aligned()
-    //                             .left(),
-    //                     )
-    //                     .with_child(
-    //                         Label::new(project_name.clone(), row.name.text.clone())
-    //                             .aligned()
-    //                             .left()
-    //                             .contained()
-    //                             .with_style(row.name.container)
-    //                             .flex(1., false),
-    //                     )
-    //                     .constrained()
-    //                     .with_height(collab_theme.row_height)
-    //                     .contained()
-    //                     .with_style(row.container)
-    //             });
+    fn render_participant_screen(
+        &self,
+        peer_id: Option<PeerId>,
+        is_last: bool,
+        cx: &mut ViewContext<Self>,
+    ) -> impl IntoElement {
+        //         enum OpenSharedScreen {}
 
-    //         if is_current {
-    //             return content.into_any();
-    //         }
+        //         let host_avatar_width = theme
+        //             .contact_avatar
+        //             .width
+        //             .or(theme.contact_avatar.height)
+        //             .unwrap_or(0.);
+        //         let tree_branch = theme.tree_branch;
 
-    //         content
-    //             .with_cursor_style(CursorStyle::PointingHand)
-    //             .on_click(MouseButton::Left, move |_, this, cx| {
-    //                 if let Some(workspace) = this.workspace.upgrade(cx) {
-    //                     let app_state = workspace.read(cx).app_state().clone();
-    //                     workspace::join_remote_project(project_id, host_user_id, app_state, cx)
-    //                         .detach_and_log_err(cx);
-    //                 }
-    //             })
-    //             .with_tooltip::<JoinProjectTooltip>(
-    //                 project_id as usize,
-    //                 format!("Open {}", project_name),
-    //                 None,
-    //                 theme.tooltip.clone(),
-    //                 cx,
-    //             )
-    //             .into_any()
-    //     }
+        //         let handler = MouseEventHandler::new::<OpenSharedScreen, _>(
+        //             peer_id.map(|id| id.as_u64()).unwrap_or(0) as usize,
+        //             cx,
+        //             |mouse_state, cx| {
+        //                 let tree_branch = *tree_branch.in_state(is_selected).style_for(mouse_state);
+        //                 let row = theme
+        //                     .project_row
+        //                     .in_state(is_selected)
+        //                     .style_for(mouse_state);
 
-    //     fn render_participant_screen(
-    //         peer_id: Option<PeerId>,
-    //         is_last: bool,
-    //         is_selected: bool,
-    //         theme: &theme::CollabPanel,
-    //         cx: &mut ViewContext<Self>,
-    //     ) -> AnyElement<Self> {
-    //         enum OpenSharedScreen {}
+        //                 Flex::row()
+        //                     .with_child(render_tree_branch(
+        //                         tree_branch,
+        //                         &row.name.text,
+        //                         is_last,
+        //                         vec2f(host_avatar_width, theme.row_height),
+        //                         cx.font_cache(),
+        //                     ))
+        //                     .with_child(
+        //                         Svg::new("icons/desktop.svg")
+        //                             .with_color(theme.channel_hash.color)
+        //                             .constrained()
+        //                             .with_width(theme.channel_hash.width)
+        //                             .aligned()
+        //                             .left(),
+        //                     )
+        //                     .with_child(
+        //                         Label::new("Screen", row.name.text.clone())
+        //                             .aligned()
+        //                             .left()
+        //                             .contained()
+        //                             .with_style(row.name.container)
+        //                             .flex(1., false),
+        //                     )
+        //                     .constrained()
+        //                     .with_height(theme.row_height)
+        //                     .contained()
+        //                     .with_style(row.container)
+        //             },
+        //         );
+        //         if peer_id.is_none() {
+        //             return handler.into_any();
+        //         }
+        //         handler
+        //             .with_cursor_style(CursorStyle::PointingHand)
+        //             .on_click(MouseButton::Left, move |_, this, cx| {
+        //                 if let Some(workspace) = this.workspace.upgrade(cx) {
+        //                     workspace.update(cx, |workspace, cx| {
+        //                         workspace.open_shared_screen(peer_id.unwrap(), cx)
+        //                     });
+        //                 }
+        //             })
+        //             .into_any()
 
-    //         let host_avatar_width = theme
-    //             .contact_avatar
-    //             .width
-    //             .or(theme.contact_avatar.height)
-    //             .unwrap_or(0.);
-    //         let tree_branch = theme.tree_branch;
-
-    //         let handler = MouseEventHandler::new::<OpenSharedScreen, _>(
-    //             peer_id.map(|id| id.as_u64()).unwrap_or(0) as usize,
-    //             cx,
-    //             |mouse_state, cx| {
-    //                 let tree_branch = *tree_branch.in_state(is_selected).style_for(mouse_state);
-    //                 let row = theme
-    //                     .project_row
-    //                     .in_state(is_selected)
-    //                     .style_for(mouse_state);
-
-    //                 Flex::row()
-    //                     .with_child(render_tree_branch(
-    //                         tree_branch,
-    //                         &row.name.text,
-    //                         is_last,
-    //                         vec2f(host_avatar_width, theme.row_height),
-    //                         cx.font_cache(),
-    //                     ))
-    //                     .with_child(
-    //                         Svg::new("icons/desktop.svg")
-    //                             .with_color(theme.channel_hash.color)
-    //                             .constrained()
-    //                             .with_width(theme.channel_hash.width)
-    //                             .aligned()
-    //                             .left(),
-    //                     )
-    //                     .with_child(
-    //                         Label::new("Screen", row.name.text.clone())
-    //                             .aligned()
-    //                             .left()
-    //                             .contained()
-    //                             .with_style(row.name.container)
-    //                             .flex(1., false),
-    //                     )
-    //                     .constrained()
-    //                     .with_height(theme.row_height)
-    //                     .contained()
-    //                     .with_style(row.container)
-    //             },
-    //         );
-    //         if peer_id.is_none() {
-    //             return handler.into_any();
-    //         }
-    //         handler
-    //             .with_cursor_style(CursorStyle::PointingHand)
-    //             .on_click(MouseButton::Left, move |_, this, cx| {
-    //                 if let Some(workspace) = this.workspace.upgrade(cx) {
-    //                     workspace.update(cx, |workspace, cx| {
-    //                         workspace.open_shared_screen(peer_id.unwrap(), cx)
-    //                     });
-    //                 }
-    //             })
-    //             .into_any()
-    //     }
+        div()
+    }
 
     fn take_editing_state(&mut self, cx: &mut ViewContext<Self>) -> bool {
         if let Some(_) = self.channel_editing_state.take() {
@@ -1463,117 +1410,114 @@ impl CollabPanel {
     //         .into_any()
     //     }
 
-    //     fn render_channel_notes(
-    //         &self,
-    //         channel_id: ChannelId,
-    //         theme: &theme::CollabPanel,
-    //         is_selected: bool,
-    //         ix: usize,
-    //         cx: &mut ViewContext<Self>,
-    //     ) -> AnyElement<Self> {
-    //         enum ChannelNotes {}
-    //         let host_avatar_width = theme
-    //             .contact_avatar
-    //             .width
-    //             .or(theme.contact_avatar.height)
-    //             .unwrap_or(0.);
+    fn render_channel_notes(
+        &self,
+        channel_id: ChannelId,
+        cx: &mut ViewContext<Self>,
+    ) -> impl IntoElement {
+        //         enum ChannelNotes {}
+        //         let host_avatar_width = theme
+        //             .contact_avatar
+        //             .width
+        //             .or(theme.contact_avatar.height)
+        //             .unwrap_or(0.);
 
-    //         MouseEventHandler::new::<ChannelNotes, _>(ix as usize, cx, |state, cx| {
-    //             let tree_branch = *theme.tree_branch.in_state(is_selected).style_for(state);
-    //             let row = theme.project_row.in_state(is_selected).style_for(state);
+        //         MouseEventHandler::new::<ChannelNotes, _>(ix as usize, cx, |state, cx| {
+        //             let tree_branch = *theme.tree_branch.in_state(is_selected).style_for(state);
+        //             let row = theme.project_row.in_state(is_selected).style_for(state);
 
-    //             Flex::<Self>::row()
-    //                 .with_child(render_tree_branch(
-    //                     tree_branch,
-    //                     &row.name.text,
-    //                     false,
-    //                     vec2f(host_avatar_width, theme.row_height),
-    //                     cx.font_cache(),
-    //                 ))
-    //                 .with_child(
-    //                     Svg::new("icons/file.svg")
-    //                         .with_color(theme.channel_hash.color)
-    //                         .constrained()
-    //                         .with_width(theme.channel_hash.width)
-    //                         .aligned()
-    //                         .left(),
-    //                 )
-    //                 .with_child(
-    //                     Label::new("notes", theme.channel_name.text.clone())
-    //                         .contained()
-    //                         .with_style(theme.channel_name.container)
-    //                         .aligned()
-    //                         .left()
-    //                         .flex(1., true),
-    //                 )
-    //                 .constrained()
-    //                 .with_height(theme.row_height)
-    //                 .contained()
-    //                 .with_style(*theme.channel_row.style_for(is_selected, state))
-    //                 .with_padding_left(theme.channel_row.default_style().padding.left)
-    //         })
-    //         .on_click(MouseButton::Left, move |_, this, cx| {
-    //             this.open_channel_notes(&OpenChannelNotes { channel_id }, cx);
-    //         })
-    //         .with_cursor_style(CursorStyle::PointingHand)
-    //         .into_any()
-    //     }
+        //             Flex::<Self>::row()
+        //                 .with_child(render_tree_branch(
+        //                     tree_branch,
+        //                     &row.name.text,
+        //                     false,
+        //                     vec2f(host_avatar_width, theme.row_height),
+        //                     cx.font_cache(),
+        //                 ))
+        //                 .with_child(
+        //                     Svg::new("icons/file.svg")
+        //                         .with_color(theme.channel_hash.color)
+        //                         .constrained()
+        //                         .with_width(theme.channel_hash.width)
+        //                         .aligned()
+        //                         .left(),
+        //                 )
+        //                 .with_child(
+        //                     Label::new("notes", theme.channel_name.text.clone())
+        //                         .contained()
+        //                         .with_style(theme.channel_name.container)
+        //                         .aligned()
+        //                         .left()
+        //                         .flex(1., true),
+        //                 )
+        //                 .constrained()
+        //                 .with_height(theme.row_height)
+        //                 .contained()
+        //                 .with_style(*theme.channel_row.style_for(is_selected, state))
+        //                 .with_padding_left(theme.channel_row.default_style().padding.left)
+        //         })
+        //         .on_click(MouseButton::Left, move |_, this, cx| {
+        //             this.open_channel_notes(&OpenChannelNotes { channel_id }, cx);
+        //         })
+        //         .with_cursor_style(CursorStyle::PointingHand)
+        //         .into_any()
 
-    //     fn render_channel_chat(
-    //         &self,
-    //         channel_id: ChannelId,
-    //         theme: &theme::CollabPanel,
-    //         is_selected: bool,
-    //         ix: usize,
-    //         cx: &mut ViewContext<Self>,
-    //     ) -> AnyElement<Self> {
-    //         enum ChannelChat {}
-    //         let host_avatar_width = theme
-    //             .contact_avatar
-    //             .width
-    //             .or(theme.contact_avatar.height)
-    //             .unwrap_or(0.);
+        div()
+    }
 
-    //         MouseEventHandler::new::<ChannelChat, _>(ix as usize, cx, |state, cx| {
-    //             let tree_branch = *theme.tree_branch.in_state(is_selected).style_for(state);
-    //             let row = theme.project_row.in_state(is_selected).style_for(state);
+    fn render_channel_chat(
+        &self,
+        channel_id: ChannelId,
+        cx: &mut ViewContext<Self>,
+    ) -> impl IntoElement {
+        //         enum ChannelChat {}
+        //         let host_avatar_width = theme
+        //             .contact_avatar
+        //             .width
+        //             .or(theme.contact_avatar.height)
+        //             .unwrap_or(0.);
 
-    //             Flex::<Self>::row()
-    //                 .with_child(render_tree_branch(
-    //                     tree_branch,
-    //                     &row.name.text,
-    //                     true,
-    //                     vec2f(host_avatar_width, theme.row_height),
-    //                     cx.font_cache(),
-    //                 ))
-    //                 .with_child(
-    //                     Svg::new("icons/conversations.svg")
-    //                         .with_color(theme.channel_hash.color)
-    //                         .constrained()
-    //                         .with_width(theme.channel_hash.width)
-    //                         .aligned()
-    //                         .left(),
-    //                 )
-    //                 .with_child(
-    //                     Label::new("chat", theme.channel_name.text.clone())
-    //                         .contained()
-    //                         .with_style(theme.channel_name.container)
-    //                         .aligned()
-    //                         .left()
-    //                         .flex(1., true),
-    //                 )
-    //                 .constrained()
-    //                 .with_height(theme.row_height)
-    //                 .contained()
-    //                 .with_style(*theme.channel_row.style_for(is_selected, state))
-    //                 .with_padding_left(theme.channel_row.default_style().padding.left)
-    //         })
-    //         .on_click(MouseButton::Left, move |_, this, cx| {
-    //             this.join_channel_chat(&JoinChannelChat { channel_id }, cx);
-    //         })
-    //         .with_cursor_style(CursorStyle::PointingHand)
-    //         .into_any()
-    //     }
+        //         MouseEventHandler::new::<ChannelChat, _>(ix as usize, cx, |state, cx| {
+        //             let tree_branch = *theme.tree_branch.in_state(is_selected).style_for(state);
+        //             let row = theme.project_row.in_state(is_selected).style_for(state);
+
+        //             Flex::<Self>::row()
+        //                 .with_child(render_tree_branch(
+        //                     tree_branch,
+        //                     &row.name.text,
+        //                     true,
+        //                     vec2f(host_avatar_width, theme.row_height),
+        //                     cx.font_cache(),
+        //                 ))
+        //                 .with_child(
+        //                     Svg::new("icons/conversations.svg")
+        //                         .with_color(theme.channel_hash.color)
+        //                         .constrained()
+        //                         .with_width(theme.channel_hash.width)
+        //                         .aligned()
+        //                         .left(),
+        //                 )
+        //                 .with_child(
+        //                     Label::new("chat", theme.channel_name.text.clone())
+        //                         .contained()
+        //                         .with_style(theme.channel_name.container)
+        //                         .aligned()
+        //                         .left()
+        //                         .flex(1., true),
+        //                 )
+        //                 .constrained()
+        //                 .with_height(theme.row_height)
+        //                 .contained()
+        //                 .with_style(*theme.channel_row.style_for(is_selected, state))
+        //                 .with_padding_left(theme.channel_row.default_style().padding.left)
+        //         })
+        //         .on_click(MouseButton::Left, move |_, this, cx| {
+        //             this.join_channel_chat(&JoinChannelChat { channel_id }, cx);
+        //         })
+        //         .with_cursor_style(CursorStyle::PointingHand)
+        //         .into_any()
+        div()
+    }
 
     //     fn render_channel_invite(
     //         channel: Arc<Channel>,
@@ -2058,13 +2002,11 @@ impl CollabPanel {
     }
 
     fn invite_members(&mut self, channel_id: ChannelId, cx: &mut ViewContext<Self>) {
-        todo!();
-        // self.show_channel_modal(channel_id, channel_modal::Mode::InviteMembers, cx);
+        self.show_channel_modal(channel_id, channel_modal::Mode::InviteMembers, cx);
     }
 
     fn manage_members(&mut self, channel_id: ChannelId, cx: &mut ViewContext<Self>) {
-        todo!();
-        // self.show_channel_modal(channel_id, channel_modal::Mode::ManageMembers, cx);
+        self.show_channel_modal(channel_id, channel_modal::Mode::ManageMembers, cx);
     }
 
     fn remove_selected_channel(&mut self, _: &Remove, cx: &mut ViewContext<Self>) {
@@ -2156,38 +2098,36 @@ impl CollabPanel {
             })
     }
 
-    //     fn show_channel_modal(
-    //         &mut self,
-    //         channel_id: ChannelId,
-    //         mode: channel_modal::Mode,
-    //         cx: &mut ViewContext<Self>,
-    //     ) {
-    //         let workspace = self.workspace.clone();
-    //         let user_store = self.user_store.clone();
-    //         let channel_store = self.channel_store.clone();
-    //         let members = self.channel_store.update(cx, |channel_store, cx| {
-    //             channel_store.get_channel_member_details(channel_id, cx)
-    //         });
+    fn show_channel_modal(
+        &mut self,
+        channel_id: ChannelId,
+        mode: channel_modal::Mode,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let workspace = self.workspace.clone();
+        let user_store = self.user_store.clone();
+        let channel_store = self.channel_store.clone();
+        let members = self.channel_store.update(cx, |channel_store, cx| {
+            channel_store.get_channel_member_details(channel_id, cx)
+        });
 
-    //         cx.spawn(|_, mut cx| async move {
-    //             let members = members.await?;
-    //             workspace.update(&mut cx, |workspace, cx| {
-    //                 workspace.toggle_modal(cx, |_, cx| {
-    //                     cx.add_view(|cx| {
-    //                         ChannelModal::new(
-    //                             user_store.clone(),
-    //                             channel_store.clone(),
-    //                             channel_id,
-    //                             mode,
-    //                             members,
-    //                             cx,
-    //                         )
-    //                     })
-    //                 });
-    //             })
-    //         })
-    //         .detach();
-    //     }
+        cx.spawn(|_, mut cx| async move {
+            let members = members.await?;
+            workspace.update(&mut cx, |workspace, cx| {
+                workspace.toggle_modal(cx, |cx| {
+                    ChannelModal::new(
+                        user_store.clone(),
+                        channel_store.clone(),
+                        channel_id,
+                        mode,
+                        members,
+                        cx,
+                    )
+                });
+            })
+        })
+        .detach();
+    }
 
     //     fn remove_selected_channel(&mut self, action: &RemoveChannel, cx: &mut ViewContext<Self>) {
     //         self.remove_channel(action.channel_id, cx)
@@ -2275,20 +2215,19 @@ impl CollabPanel {
     }
 
     fn join_channel(&self, channel_id: u64, cx: &mut ViewContext<Self>) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
         let Some(handle) = cx.window_handle().downcast::<Workspace>() else {
             return;
         };
-        let active_call = ActiveCall::global(cx);
-        cx.spawn(|_, mut cx| async move {
-            active_call
-                .update(&mut cx, |active_call, cx| {
-                    active_call.join_channel(channel_id, Some(handle), cx)
-                })
-                .log_err()?
-                .await
-                .notify_async_err(&mut cx)
-        })
-        .detach()
+        workspace::join_channel(
+            channel_id,
+            workspace.read(cx).app_state().clone(),
+            Some(handle),
+            cx,
+        )
+        .detach_and_log_err(cx)
     }
 
     fn join_channel_chat(&mut self, channel_id: ChannelId, cx: &mut ViewContext<Self>) {
@@ -2392,6 +2331,36 @@ impl CollabPanel {
                                     ListEntry::ChannelEditor { depth } => {
                                         self.render_channel_editor(depth, cx).into_any_element()
                                     }
+                                    ListEntry::CallParticipant {
+                                        user,
+                                        peer_id,
+                                        is_pending,
+                                    } => self
+                                        .render_call_participant(user, peer_id, is_pending, cx)
+                                        .into_any_element(),
+                                    ListEntry::ParticipantProject {
+                                        project_id,
+                                        worktree_root_names,
+                                        host_user_id,
+                                        is_last,
+                                    } => self
+                                        .render_participant_project(
+                                            project_id,
+                                            &worktree_root_names,
+                                            host_user_id,
+                                            is_last,
+                                            cx,
+                                        )
+                                        .into_any_element(),
+                                    ListEntry::ParticipantScreen { peer_id, is_last } => self
+                                        .render_participant_screen(peer_id, is_last, cx)
+                                        .into_any_element(),
+                                    ListEntry::ChannelNotes { channel_id } => {
+                                        self.render_channel_notes(channel_id, cx).into_any_element()
+                                    }
+                                    ListEntry::ChannelChat { channel_id } => {
+                                        self.render_channel_chat(channel_id, cx).into_any_element()
+                                    }
                                 }
                             }),
                     ),
@@ -2405,37 +2374,36 @@ impl CollabPanel {
         is_collapsed: bool,
         cx: &ViewContext<Self>,
     ) -> impl IntoElement {
-        // let mut channel_link = None;
-        // let mut channel_tooltip_text = None;
-        // let mut channel_icon = None;
+        let mut channel_link = None;
+        let mut channel_tooltip_text = None;
+        let mut channel_icon = None;
         // let mut is_dragged_over = false;
 
         let text = match section {
             Section::ActiveCall => {
-                // let channel_name = maybe!({
-                //     let channel_id = ActiveCall::global(cx).read(cx).channel_id(cx)?;
+                let channel_name = maybe!({
+                    let channel_id = ActiveCall::global(cx).read(cx).channel_id(cx)?;
 
-                //     let channel = self.channel_store.read(cx).channel_for_id(channel_id)?;
+                    let channel = self.channel_store.read(cx).channel_for_id(channel_id)?;
 
-                //     channel_link = Some(channel.link());
-                //     (channel_icon, channel_tooltip_text) = match channel.visibility {
-                //         proto::ChannelVisibility::Public => {
-                //             (Some("icons/public.svg"), Some("Copy public channel link."))
-                //         }
-                //         proto::ChannelVisibility::Members => {
-                //             (Some("icons/hash.svg"), Some("Copy private channel link."))
-                //         }
-                //     };
+                    channel_link = Some(channel.link());
+                    (channel_icon, channel_tooltip_text) = match channel.visibility {
+                        proto::ChannelVisibility::Public => {
+                            (Some("icons/public.svg"), Some("Copy public channel link."))
+                        }
+                        proto::ChannelVisibility::Members => {
+                            (Some("icons/hash.svg"), Some("Copy private channel link."))
+                        }
+                    };
 
-                //     Some(channel.name.as_str())
-                // });
+                    Some(channel.name.as_str())
+                });
 
-                // if let Some(name) = channel_name {
-                //     SharedString::from(format!("{}", name))
-                // } else {
-                //     SharedString::from("Current Call")
-                // }
-                todo!()
+                if let Some(name) = channel_name {
+                    SharedString::from(format!("{}", name))
+                } else {
+                    SharedString::from("Current Call")
+                }
             }
             Section::ContactRequests => SharedString::from("Requests"),
             Section::Contacts => SharedString::from("Contacts"),
@@ -2446,34 +2414,15 @@ impl CollabPanel {
         };
 
         let button = match section {
-            Section::ActiveCall =>
-            // channel_link.map(|channel_link| {
-            // let channel_link_copy = channel_link.clone();
-            // MouseEventHandler::new::<AddContact, _>(0, cx, |state, _| {
-            //     render_icon_button(
-            //         theme
-            //             .collab_panel
-            //             .leave_call_button
-            //             .style_for(is_selected, state),
-            //         "icons/link.svg",
-            //     )
-            // })
-            // .with_cursor_style(CursorStyle::PointingHand)
-            // .on_click(MouseButton::Left, move |_, _, cx| {
-            //     let item = ClipboardItem::new(channel_link_copy.clone());
-            //     cx.write_to_clipboard(item)
-            // })
-            // .with_tooltip::<AddContact>(
-            //     0,
-            //     channel_tooltip_text.unwrap(),
-            //     None,
-            //     tooltip_style.clone(),
-            //     cx,
-            // )
-            // }),
-            {
-                todo!()
-            }
+            Section::ActiveCall => channel_link.map(|channel_link| {
+                let channel_link_copy = channel_link.clone();
+                IconButton::new("channel-link", Icon::Check)
+                    .on_click(move |_, cx| {
+                        let item = ClipboardItem::new(channel_link_copy.clone());
+                        cx.write_to_clipboard(item)
+                    })
+                    .tooltip(|cx| Tooltip::text("Copy channel link", cx))
+            }),
             Section::Contacts => Some(
                 IconButton::new("add-contact", Icon::Plus)
                     .on_click(cx.listener(|this, _, cx| this.toggle_contact_finder(cx)))
@@ -2546,15 +2495,7 @@ impl CollabPanel {
         let user_id = contact.user.id;
         let github_login = SharedString::from(contact.user.github_login.clone());
         let mut item = ListItem::new(github_login.clone())
-            .on_click(cx.listener(move |this, _, cx| {
-                this.workspace
-                    .update(cx, |this, cx| {
-                        this.call_state()
-                            .invite(user_id, None, cx)
-                            .detach_and_log_err(cx)
-                    })
-                    .log_err();
-            }))
+            .on_click(cx.listener(move |this, _, cx| this.call(user_id, cx)))
             .child(
                 h_stack()
                     .w_full()
@@ -3177,50 +3118,49 @@ impl CollabPanel {
     }
 }
 
-// fn render_tree_branch(
-//     branch_style: theme::TreeBranch,
-//     row_style: &TextStyle,
-//     is_last: bool,
-//     size: Vector2F,
-//     font_cache: &FontCache,
-// ) -> gpui::elements::ConstrainedBox<CollabPanel> {
-//     let line_height = row_style.line_height(font_cache);
-//     let cap_height = row_style.cap_height(font_cache);
-//     let baseline_offset = row_style.baseline_offset(font_cache) + (size.y() - line_height) / 2.;
+fn render_tree_branch(is_last: bool, cx: &mut WindowContext) -> impl IntoElement {
+    let text_style = cx.text_style();
+    let rem_size = cx.rem_size();
+    let text_system = cx.text_system();
+    let font_id = text_system.font_id(&text_style.font()).unwrap();
+    let font_size = text_style.font_size.to_pixels(rem_size);
+    let line_height = text_style.line_height_in_pixels(rem_size);
+    let cap_height = text_system.cap_height(font_id, font_size);
+    let baseline_offset = text_system.baseline_offset(font_id, font_size, line_height);
+    let width = cx.rem_size() * 2.5;
+    let thickness = px(2.);
+    let color = cx.theme().colors().text;
 
-//     Canvas::new(move |bounds, _, _, cx| {
-//         cx.paint_layer(None, |cx| {
-//             let start_x = bounds.min_x() + (bounds.width() / 2.) - (branch_style.width / 2.);
-//             let end_x = bounds.max_x();
-//             let start_y = bounds.min_y();
-//             let end_y = bounds.min_y() + baseline_offset - (cap_height / 2.);
+    canvas(move |bounds, cx| {
+        let start_x = bounds.left() + (bounds.size.width / 2.) - (width / 2.);
+        let end_x = bounds.right();
+        let start_y = bounds.top();
+        let end_y = bounds.top() + baseline_offset - (cap_height / 2.);
 
-//             cx.scene().push_quad(gpui::Quad {
-//                 bounds: RectF::from_points(
-//                     vec2f(start_x, start_y),
-//                     vec2f(
-//                         start_x + branch_style.width,
-//                         if is_last { end_y } else { bounds.max_y() },
-//                     ),
-//                 ),
-//                 background: Some(branch_style.color),
-//                 border: gpui::Border::default(),
-//                 corner_radii: (0.).into(),
-//             });
-//             cx.scene().push_quad(gpui::Quad {
-//                 bounds: RectF::from_points(
-//                     vec2f(start_x, end_y),
-//                     vec2f(end_x, end_y + branch_style.width),
-//                 ),
-//                 background: Some(branch_style.color),
-//                 border: gpui::Border::default(),
-//                 corner_radii: (0.).into(),
-//             });
-//         })
-//     })
-//     .constrained()
-//     .with_width(size.x())
-// }
+        cx.paint_quad(
+            Bounds::from_corners(
+                point(start_x, start_y),
+                point(
+                    start_x + thickness,
+                    if is_last { end_y } else { bounds.bottom() },
+                ),
+            ),
+            Default::default(),
+            color,
+            Default::default(),
+            Hsla::transparent_black(),
+        );
+        cx.paint_quad(
+            Bounds::from_corners(point(start_x, end_y), point(end_x, end_y + thickness)),
+            Default::default(),
+            color,
+            Default::default(),
+            Hsla::transparent_black(),
+        );
+    })
+    .w(width)
+    .h(line_height)
+}
 
 impl Render for CollabPanel {
     type Element = Focusable<Div>;
@@ -3427,33 +3367,33 @@ impl PartialEq for ListEntry {
                     return section_1 == section_2;
                 }
             }
-            // ListEntry::CallParticipant { user: user_1, .. } => {
-            //     if let ListEntry::CallParticipant { user: user_2, .. } = other {
-            //         return user_1.id == user_2.id;
-            //     }
-            // }
-            // ListEntry::ParticipantProject {
-            //     project_id: project_id_1,
-            //     ..
-            // } => {
-            //     if let ListEntry::ParticipantProject {
-            //         project_id: project_id_2,
-            //         ..
-            //     } = other
-            //     {
-            //         return project_id_1 == project_id_2;
-            //     }
-            // }
-            // ListEntry::ParticipantScreen {
-            //     peer_id: peer_id_1, ..
-            // } => {
-            //     if let ListEntry::ParticipantScreen {
-            //         peer_id: peer_id_2, ..
-            //     } = other
-            //     {
-            //         return peer_id_1 == peer_id_2;
-            //     }
-            // }
+            ListEntry::CallParticipant { user: user_1, .. } => {
+                if let ListEntry::CallParticipant { user: user_2, .. } = other {
+                    return user_1.id == user_2.id;
+                }
+            }
+            ListEntry::ParticipantProject {
+                project_id: project_id_1,
+                ..
+            } => {
+                if let ListEntry::ParticipantProject {
+                    project_id: project_id_2,
+                    ..
+                } = other
+                {
+                    return project_id_1 == project_id_2;
+                }
+            }
+            ListEntry::ParticipantScreen {
+                peer_id: peer_id_1, ..
+            } => {
+                if let ListEntry::ParticipantScreen {
+                    peer_id: peer_id_2, ..
+                } = other
+                {
+                    return peer_id_1 == peer_id_2;
+                }
+            }
             ListEntry::Channel {
                 channel: channel_1, ..
             } => {
@@ -3464,22 +3404,22 @@ impl PartialEq for ListEntry {
                     return channel_1.id == channel_2.id;
                 }
             }
-            // ListEntry::ChannelNotes { channel_id } => {
-            //     if let ListEntry::ChannelNotes {
-            //         channel_id: other_id,
-            //     } = other
-            //     {
-            //         return channel_id == other_id;
-            //     }
-            // }
-            // ListEntry::ChannelChat { channel_id } => {
-            //     if let ListEntry::ChannelChat {
-            //         channel_id: other_id,
-            //     } = other
-            //     {
-            //         return channel_id == other_id;
-            //     }
-            // }
+            ListEntry::ChannelNotes { channel_id } => {
+                if let ListEntry::ChannelNotes {
+                    channel_id: other_id,
+                } = other
+                {
+                    return channel_id == other_id;
+                }
+            }
+            ListEntry::ChannelChat { channel_id } => {
+                if let ListEntry::ChannelChat {
+                    channel_id: other_id,
+                } = other
+                {
+                    return channel_id == other_id;
+                }
+            }
             // ListEntry::ChannelInvite(channel_1) => {
             //     if let ListEntry::ChannelInvite(channel_2) = other {
             //         return channel_1.id == channel_2.id;

@@ -191,7 +191,6 @@ fn main() {
             user_store: user_store.clone(),
             fs,
             build_window_options,
-            call_factory: call::Call::new,
             workspace_store,
             node_runtime,
         });
@@ -205,7 +204,7 @@ fn main() {
 
         go_to_line::init(cx);
         file_finder::init(cx);
-        // outline::init(cx);
+        outline::init(cx);
         // project_symbols::init(cx);
         project_panel::init(Assets, cx);
         channel::init(&client, user_store.clone(), cx);
@@ -216,7 +215,7 @@ fn main() {
         terminal_view::init(cx);
 
         // journal2::init(app_state.clone(), cx);
-        // language_selector::init(cx);
+        language_selector::init(cx);
         theme_selector::init(cx);
         // activity_indicator::init(cx);
         // language_tools::init(cx);

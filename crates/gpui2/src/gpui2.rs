@@ -21,7 +21,7 @@ mod subscription;
 mod svg_renderer;
 mod taffy;
 #[cfg(any(test, feature = "test-support"))]
-mod test;
+pub mod test;
 mod text_system;
 mod util;
 mod view;

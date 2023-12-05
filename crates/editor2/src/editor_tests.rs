@@ -12,7 +12,7 @@ use futures::StreamExt;
 use gpui::{
     div,
     serde_json::{self, json},
-    Div, TestAppContext, VisualTestContext, WindowBounds, WindowOptions,
+    Div, Flatten, Platform, TestAppContext, VisualTestContext, WindowBounds, WindowOptions,
 };
 use indoc::indoc;
 use language::{
@@ -36,121 +36,120 @@ use workspace::{
     NavigationEntry, ViewId,
 };
 
-// todo(finish edit tests)
-// #[gpui::test]
-// fn test_edit_events(cx: &mut TestAppContext) {
-//     init_test(cx, |_| {});
+#[gpui::test]
+fn test_edit_events(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
 
-//     let buffer = cx.build_model(|cx| {
-//         let mut buffer = language::Buffer::new(0, cx.entity_id().as_u64(), "123456");
-//         buffer.set_group_interval(Duration::from_secs(1));
-//         buffer
-//     });
+    let buffer = cx.build_model(|cx| {
+        let mut buffer = language::Buffer::new(0, cx.entity_id().as_u64(), "123456");
+        buffer.set_group_interval(Duration::from_secs(1));
+        buffer
+    });
 
-//     let events = Rc::new(RefCell::new(Vec::new()));
-//     let editor1 = cx.add_window({
-//         let events = events.clone();
-//         |cx| {
-//             let view = cx.view().clone();
-//             cx.subscribe(&view, move |_, _, event, _| {
-//                 if matches!(event, Event::Edited | Event::BufferEdited) {
-//                     events.borrow_mut().push(("editor1", event.clone()));
-//                 }
-//             })
-//             .detach();
-//             Editor::for_buffer(buffer.clone(), None, cx)
-//         }
-//     });
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let editor1 = cx.add_window({
+        let events = events.clone();
+        |cx| {
+            let view = cx.view().clone();
+            cx.subscribe(&view, move |_, _, event: &EditorEvent, _| {
+                if matches!(event, EditorEvent::Edited | EditorEvent::BufferEdited) {
+                    events.borrow_mut().push(("editor1", event.clone()));
+                }
+            })
+            .detach();
+            Editor::for_buffer(buffer.clone(), None, cx)
+        }
+    });
 
-//     let editor2 = cx.add_window({
-//         let events = events.clone();
-//         |cx| {
-//             cx.subscribe(&cx.view().clone(), move |_, _, event, _| {
-//                 if matches!(event, Event::Edited | Event::BufferEdited) {
-//                     events.borrow_mut().push(("editor2", event.clone()));
-//                 }
-//             })
-//             .detach();
-//             Editor::for_buffer(buffer.clone(), None, cx)
-//         }
-//     });
+    let editor2 = cx.add_window({
+        let events = events.clone();
+        |cx| {
+            cx.subscribe(&cx.view().clone(), move |_, _, event: &EditorEvent, _| {
+                if matches!(event, EditorEvent::Edited | EditorEvent::BufferEdited) {
+                    events.borrow_mut().push(("editor2", event.clone()));
+                }
+            })
+            .detach();
+            Editor::for_buffer(buffer.clone(), None, cx)
+        }
+    });
 
-//     assert_eq!(mem::take(&mut *events.borrow_mut()), []);
+    assert_eq!(mem::take(&mut *events.borrow_mut()), []);
 
-//     // Mutating editor 1 will emit an `Edited` event only for that editor.
-//     editor1.update(cx, |editor, cx| editor.insert("X", cx));
-//     assert_eq!(
-//         mem::take(&mut *events.borrow_mut()),
-//         [
-//             ("editor1", Event::Edited),
-//             ("editor1", Event::BufferEdited),
-//             ("editor2", Event::BufferEdited),
-//         ]
-//     );
+    // Mutating editor 1 will emit an `Edited` event only for that editor.
+    editor1.update(cx, |editor, cx| editor.insert("X", cx));
+    assert_eq!(
+        mem::take(&mut *events.borrow_mut()),
+        [
+            ("editor1", EditorEvent::Edited),
+            ("editor1", EditorEvent::BufferEdited),
+            ("editor2", EditorEvent::BufferEdited),
+        ]
+    );
 
-//     // Mutating editor 2 will emit an `Edited` event only for that editor.
-//     editor2.update(cx, |editor, cx| editor.delete(&Delete, cx));
-//     assert_eq!(
-//         mem::take(&mut *events.borrow_mut()),
-//         [
-//             ("editor2", Event::Edited),
-//             ("editor1", Event::BufferEdited),
-//             ("editor2", Event::BufferEdited),
-//         ]
-//     );
+    // Mutating editor 2 will emit an `Edited` event only for that editor.
+    editor2.update(cx, |editor, cx| editor.delete(&Delete, cx));
+    assert_eq!(
+        mem::take(&mut *events.borrow_mut()),
+        [
+            ("editor2", EditorEvent::Edited),
+            ("editor1", EditorEvent::BufferEdited),
+            ("editor2", EditorEvent::BufferEdited),
+        ]
+    );
 
-//     // Undoing on editor 1 will emit an `Edited` event only for that editor.
-//     editor1.update(cx, |editor, cx| editor.undo(&Undo, cx));
-//     assert_eq!(
-//         mem::take(&mut *events.borrow_mut()),
-//         [
-//             ("editor1", Event::Edited),
-//             ("editor1", Event::BufferEdited),
-//             ("editor2", Event::BufferEdited),
-//         ]
-//     );
+    // Undoing on editor 1 will emit an `Edited` event only for that editor.
+    editor1.update(cx, |editor, cx| editor.undo(&Undo, cx));
+    assert_eq!(
+        mem::take(&mut *events.borrow_mut()),
+        [
+            ("editor1", EditorEvent::Edited),
+            ("editor1", EditorEvent::BufferEdited),
+            ("editor2", EditorEvent::BufferEdited),
+        ]
+    );
 
-//     // Redoing on editor 1 will emit an `Edited` event only for that editor.
-//     editor1.update(cx, |editor, cx| editor.redo(&Redo, cx));
-//     assert_eq!(
-//         mem::take(&mut *events.borrow_mut()),
-//         [
-//             ("editor1", Event::Edited),
-//             ("editor1", Event::BufferEdited),
-//             ("editor2", Event::BufferEdited),
-//         ]
-//     );
+    // Redoing on editor 1 will emit an `Edited` event only for that editor.
+    editor1.update(cx, |editor, cx| editor.redo(&Redo, cx));
+    assert_eq!(
+        mem::take(&mut *events.borrow_mut()),
+        [
+            ("editor1", EditorEvent::Edited),
+            ("editor1", EditorEvent::BufferEdited),
+            ("editor2", EditorEvent::BufferEdited),
+        ]
+    );
 
-//     // Undoing on editor 2 will emit an `Edited` event only for that editor.
-//     editor2.update(cx, |editor, cx| editor.undo(&Undo, cx));
-//     assert_eq!(
-//         mem::take(&mut *events.borrow_mut()),
-//         [
-//             ("editor2", Event::Edited),
-//             ("editor1", Event::BufferEdited),
-//             ("editor2", Event::BufferEdited),
-//         ]
-//     );
+    // Undoing on editor 2 will emit an `Edited` event only for that editor.
+    editor2.update(cx, |editor, cx| editor.undo(&Undo, cx));
+    assert_eq!(
+        mem::take(&mut *events.borrow_mut()),
+        [
+            ("editor2", EditorEvent::Edited),
+            ("editor1", EditorEvent::BufferEdited),
+            ("editor2", EditorEvent::BufferEdited),
+        ]
+    );
 
-//     // Redoing on editor 2 will emit an `Edited` event only for that editor.
-//     editor2.update(cx, |editor, cx| editor.redo(&Redo, cx));
-//     assert_eq!(
-//         mem::take(&mut *events.borrow_mut()),
-//         [
-//             ("editor2", Event::Edited),
-//             ("editor1", Event::BufferEdited),
-//             ("editor2", Event::BufferEdited),
-//         ]
-//     );
+    // Redoing on editor 2 will emit an `Edited` event only for that editor.
+    editor2.update(cx, |editor, cx| editor.redo(&Redo, cx));
+    assert_eq!(
+        mem::take(&mut *events.borrow_mut()),
+        [
+            ("editor2", EditorEvent::Edited),
+            ("editor1", EditorEvent::BufferEdited),
+            ("editor2", EditorEvent::BufferEdited),
+        ]
+    );
 
-//     // No event is emitted when the mutation is a no-op.
-//     editor2.update(cx, |editor, cx| {
-//         editor.change_selections(None, cx, |s| s.select_ranges([0..0]));
+    // No event is emitted when the mutation is a no-op.
+    editor2.update(cx, |editor, cx| {
+        editor.change_selections(None, cx, |s| s.select_ranges([0..0]));
 
-//         editor.backspace(&Backspace, cx);
-//     });
-//     assert_eq!(mem::take(&mut *events.borrow_mut()), []);
-// }
+        editor.backspace(&Backspace, cx);
+    });
+    assert_eq!(mem::take(&mut *events.borrow_mut()), []);
+}
 
 #[gpui::test]
 fn test_undo_redo_with_selection_restoration(cx: &mut TestAppContext) {
@@ -515,123 +514,123 @@ fn test_clone(cx: &mut TestAppContext) {
 }
 
 //todo!(editor navigate)
-// #[gpui::test]
-// async fn test_navigation_history(cx: &mut TestAppContext) {
-//     init_test(cx, |_| {});
+#[gpui::test]
+async fn test_navigation_history(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
 
-//     use workspace::item::Item;
+    use workspace::item::Item;
 
-//     let fs = FakeFs::new(cx.executor());
-//     let project = Project::test(fs, [], cx).await;
-//     let workspace = cx.add_window(|cx| Workspace::test_new(project, cx));
-//     let pane = workspace
-//         .update(cx, |workspace, _| workspace.active_pane().clone())
-//         .unwrap();
+    let fs = FakeFs::new(cx.executor());
+    let project = Project::test(fs, [], cx).await;
+    let workspace = cx.add_window(|cx| Workspace::test_new(project, cx));
+    let pane = workspace
+        .update(cx, |workspace, _| workspace.active_pane().clone())
+        .unwrap();
 
-//     workspace.update(cx, |v, cx| {
-//         cx.build_view(|cx| {
-//             let buffer = MultiBuffer::build_simple(&sample_text(300, 5, 'a'), cx);
-//             let mut editor = build_editor(buffer.clone(), cx);
-//             let handle = cx.view();
-//             editor.set_nav_history(Some(pane.read(cx).nav_history_for_item(&handle)));
+    workspace.update(cx, |v, cx| {
+        cx.build_view(|cx| {
+            let buffer = MultiBuffer::build_simple(&sample_text(300, 5, 'a'), cx);
+            let mut editor = build_editor(buffer.clone(), cx);
+            let handle = cx.view();
+            editor.set_nav_history(Some(pane.read(cx).nav_history_for_item(&handle)));
 
-//             fn pop_history(editor: &mut Editor, cx: &mut WindowContext) -> Option<NavigationEntry> {
-//                 editor.nav_history.as_mut().unwrap().pop_backward(cx)
-//             }
+            fn pop_history(editor: &mut Editor, cx: &mut WindowContext) -> Option<NavigationEntry> {
+                editor.nav_history.as_mut().unwrap().pop_backward(cx)
+            }
 
-//             // Move the cursor a small distance.
-//             // Nothing is added to the navigation history.
-//             editor.change_selections(None, cx, |s| {
-//                 s.select_display_ranges([DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0)])
-//             });
-//             editor.change_selections(None, cx, |s| {
-//                 s.select_display_ranges([DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0)])
-//             });
-//             assert!(pop_history(&mut editor, cx).is_none());
+            // Move the cursor a small distance.
+            // Nothing is added to the navigation history.
+            editor.change_selections(None, cx, |s| {
+                s.select_display_ranges([DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0)])
+            });
+            editor.change_selections(None, cx, |s| {
+                s.select_display_ranges([DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0)])
+            });
+            assert!(pop_history(&mut editor, cx).is_none());
 
-//             // Move the cursor a large distance.
-//             // The history can jump back to the previous position.
-//             editor.change_selections(None, cx, |s| {
-//                 s.select_display_ranges([DisplayPoint::new(13, 0)..DisplayPoint::new(13, 3)])
-//             });
-//             let nav_entry = pop_history(&mut editor, cx).unwrap();
-//             editor.navigate(nav_entry.data.unwrap(), cx);
-//             assert_eq!(nav_entry.item.id(), cx.entity_id());
-//             assert_eq!(
-//                 editor.selections.display_ranges(cx),
-//                 &[DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0)]
-//             );
-//             assert!(pop_history(&mut editor, cx).is_none());
+            // Move the cursor a large distance.
+            // The history can jump back to the previous position.
+            editor.change_selections(None, cx, |s| {
+                s.select_display_ranges([DisplayPoint::new(13, 0)..DisplayPoint::new(13, 3)])
+            });
+            let nav_entry = pop_history(&mut editor, cx).unwrap();
+            editor.navigate(nav_entry.data.unwrap(), cx);
+            assert_eq!(nav_entry.item.id(), cx.entity_id());
+            assert_eq!(
+                editor.selections.display_ranges(cx),
+                &[DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0)]
+            );
+            assert!(pop_history(&mut editor, cx).is_none());
 
-//             // Move the cursor a small distance via the mouse.
-//             // Nothing is added to the navigation history.
-//             editor.begin_selection(DisplayPoint::new(5, 0), false, 1, cx);
-//             editor.end_selection(cx);
-//             assert_eq!(
-//                 editor.selections.display_ranges(cx),
-//                 &[DisplayPoint::new(5, 0)..DisplayPoint::new(5, 0)]
-//             );
-//             assert!(pop_history(&mut editor, cx).is_none());
+            // Move the cursor a small distance via the mouse.
+            // Nothing is added to the navigation history.
+            editor.begin_selection(DisplayPoint::new(5, 0), false, 1, cx);
+            editor.end_selection(cx);
+            assert_eq!(
+                editor.selections.display_ranges(cx),
+                &[DisplayPoint::new(5, 0)..DisplayPoint::new(5, 0)]
+            );
+            assert!(pop_history(&mut editor, cx).is_none());
 
-//             // Move the cursor a large distance via the mouse.
-//             // The history can jump back to the previous position.
-//             editor.begin_selection(DisplayPoint::new(15, 0), false, 1, cx);
-//             editor.end_selection(cx);
-//             assert_eq!(
-//                 editor.selections.display_ranges(cx),
-//                 &[DisplayPoint::new(15, 0)..DisplayPoint::new(15, 0)]
-//             );
-//             let nav_entry = pop_history(&mut editor, cx).unwrap();
-//             editor.navigate(nav_entry.data.unwrap(), cx);
-//             assert_eq!(nav_entry.item.id(), cx.entity_id());
-//             assert_eq!(
-//                 editor.selections.display_ranges(cx),
-//                 &[DisplayPoint::new(5, 0)..DisplayPoint::new(5, 0)]
-//             );
-//             assert!(pop_history(&mut editor, cx).is_none());
+            // Move the cursor a large distance via the mouse.
+            // The history can jump back to the previous position.
+            editor.begin_selection(DisplayPoint::new(15, 0), false, 1, cx);
+            editor.end_selection(cx);
+            assert_eq!(
+                editor.selections.display_ranges(cx),
+                &[DisplayPoint::new(15, 0)..DisplayPoint::new(15, 0)]
+            );
+            let nav_entry = pop_history(&mut editor, cx).unwrap();
+            editor.navigate(nav_entry.data.unwrap(), cx);
+            assert_eq!(nav_entry.item.id(), cx.entity_id());
+            assert_eq!(
+                editor.selections.display_ranges(cx),
+                &[DisplayPoint::new(5, 0)..DisplayPoint::new(5, 0)]
+            );
+            assert!(pop_history(&mut editor, cx).is_none());
 
-//             // Set scroll position to check later
-//             editor.set_scroll_position(gpui::Point::<f32>::new(5.5, 5.5), cx);
-//             let original_scroll_position = editor.scroll_manager.anchor();
+            // Set scroll position to check later
+            editor.set_scroll_position(gpui::Point::<f32>::new(5.5, 5.5), cx);
+            let original_scroll_position = editor.scroll_manager.anchor();
 
-//             // Jump to the end of the document and adjust scroll
-//             editor.move_to_end(&MoveToEnd, cx);
-//             editor.set_scroll_position(gpui::Point::<f32>::new(-2.5, -0.5), cx);
-//             assert_ne!(editor.scroll_manager.anchor(), original_scroll_position);
+            // Jump to the end of the document and adjust scroll
+            editor.move_to_end(&MoveToEnd, cx);
+            editor.set_scroll_position(gpui::Point::<f32>::new(-2.5, -0.5), cx);
+            assert_ne!(editor.scroll_manager.anchor(), original_scroll_position);
 
-//             let nav_entry = pop_history(&mut editor, cx).unwrap();
-//             editor.navigate(nav_entry.data.unwrap(), cx);
-//             assert_eq!(editor.scroll_manager.anchor(), original_scroll_position);
+            let nav_entry = pop_history(&mut editor, cx).unwrap();
+            editor.navigate(nav_entry.data.unwrap(), cx);
+            assert_eq!(editor.scroll_manager.anchor(), original_scroll_position);
 
-//             // Ensure we don't panic when navigation data contains invalid anchors *and* points.
-//             let mut invalid_anchor = editor.scroll_manager.anchor().anchor;
-//             invalid_anchor.text_anchor.buffer_id = Some(999);
-//             let invalid_point = Point::new(9999, 0);
-//             editor.navigate(
-//                 Box::new(NavigationData {
-//                     cursor_anchor: invalid_anchor,
-//                     cursor_position: invalid_point,
-//                     scroll_anchor: ScrollAnchor {
-//                         anchor: invalid_anchor,
-//                         offset: Default::default(),
-//                     },
-//                     scroll_top_row: invalid_point.row,
-//                 }),
-//                 cx,
-//             );
-//             assert_eq!(
-//                 editor.selections.display_ranges(cx),
-//                 &[editor.max_point(cx)..editor.max_point(cx)]
-//             );
-//             assert_eq!(
-//                 editor.scroll_position(cx),
-//                 gpui::Point::new(0., editor.max_point(cx).row() as f32)
-//             );
+            // Ensure we don't panic when navigation data contains invalid anchors *and* points.
+            let mut invalid_anchor = editor.scroll_manager.anchor().anchor;
+            invalid_anchor.text_anchor.buffer_id = Some(999);
+            let invalid_point = Point::new(9999, 0);
+            editor.navigate(
+                Box::new(NavigationData {
+                    cursor_anchor: invalid_anchor,
+                    cursor_position: invalid_point,
+                    scroll_anchor: ScrollAnchor {
+                        anchor: invalid_anchor,
+                        offset: Default::default(),
+                    },
+                    scroll_top_row: invalid_point.row,
+                }),
+                cx,
+            );
+            assert_eq!(
+                editor.selections.display_ranges(cx),
+                &[editor.max_point(cx)..editor.max_point(cx)]
+            );
+            assert_eq!(
+                editor.scroll_position(cx),
+                gpui::Point::new(0., editor.max_point(cx).row() as f32)
+            );
 
-//             editor
-//         })
-//     });
-// }
+            editor
+        })
+    });
+}
 
 #[gpui::test]
 fn test_cancel(cx: &mut TestAppContext) {
@@ -959,55 +958,55 @@ fn test_move_cursor_multibyte(cx: &mut TestAppContext) {
 }
 
 //todo!(finish editor tests)
-// #[gpui::test]
-// fn test_move_cursor_different_line_lengths(cx: &mut TestAppContext) {
-//     init_test(cx, |_| {});
+#[gpui::test]
+fn test_move_cursor_different_line_lengths(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
 
-//     let view = cx.add_window(|cx| {
-//         let buffer = MultiBuffer::build_simple("ⓐⓑⓒⓓⓔ\nabcd\nαβγ\nabcd\nⓐⓑⓒⓓⓔ\n", cx);
-//         build_editor(buffer.clone(), cx)
-//     });
-//     view.update(cx, |view, cx| {
-//         view.change_selections(None, cx, |s| {
-//             s.select_display_ranges([empty_range(0, "ⓐⓑⓒⓓⓔ".len())]);
-//         });
-//         view.move_down(&MoveDown, cx);
-//         assert_eq!(
-//             view.selections.display_ranges(cx),
-//             &[empty_range(1, "abcd".len())]
-//         );
+    let view = cx.add_window(|cx| {
+        let buffer = MultiBuffer::build_simple("ⓐⓑⓒⓓⓔ\nabcd\nαβγ\nabcd\nⓐⓑⓒⓓⓔ\n", cx);
+        build_editor(buffer.clone(), cx)
+    });
+    view.update(cx, |view, cx| {
+        view.change_selections(None, cx, |s| {
+            s.select_display_ranges([empty_range(0, "ⓐⓑⓒⓓⓔ".len())]);
+        });
+        view.move_down(&MoveDown, cx);
+        assert_eq!(
+            view.selections.display_ranges(cx),
+            &[empty_range(1, "abcd".len())]
+        );
 
-//         view.move_down(&MoveDown, cx);
-//         assert_eq!(
-//             view.selections.display_ranges(cx),
-//             &[empty_range(2, "αβγ".len())]
-//         );
+        view.move_down(&MoveDown, cx);
+        assert_eq!(
+            view.selections.display_ranges(cx),
+            &[empty_range(2, "αβγ".len())]
+        );
 
-//         view.move_down(&MoveDown, cx);
-//         assert_eq!(
-//             view.selections.display_ranges(cx),
-//             &[empty_range(3, "abcd".len())]
-//         );
+        view.move_down(&MoveDown, cx);
+        assert_eq!(
+            view.selections.display_ranges(cx),
+            &[empty_range(3, "abcd".len())]
+        );
 
-//         view.move_down(&MoveDown, cx);
-//         assert_eq!(
-//             view.selections.display_ranges(cx),
-//             &[empty_range(4, "ⓐⓑⓒⓓⓔ".len())]
-//         );
+        view.move_down(&MoveDown, cx);
+        assert_eq!(
+            view.selections.display_ranges(cx),
+            &[empty_range(4, "ⓐⓑⓒⓓⓔ".len())]
+        );
 
-//         view.move_up(&MoveUp, cx);
-//         assert_eq!(
-//             view.selections.display_ranges(cx),
-//             &[empty_range(3, "abcd".len())]
-//         );
+        view.move_up(&MoveUp, cx);
+        assert_eq!(
+            view.selections.display_ranges(cx),
+            &[empty_range(3, "abcd".len())]
+        );
 
-//         view.move_up(&MoveUp, cx);
-//         assert_eq!(
-//             view.selections.display_ranges(cx),
-//             &[empty_range(2, "αβγ".len())]
-//         );
-//     });
-// }
+        view.move_up(&MoveUp, cx);
+        assert_eq!(
+            view.selections.display_ranges(cx),
+            &[empty_range(2, "αβγ".len())]
+        );
+    });
+}
 
 #[gpui::test]
 fn test_beginning_end_of_line(cx: &mut TestAppContext) {
@@ -1225,416 +1224,435 @@ fn test_prev_next_word_boundary(cx: &mut TestAppContext) {
 }
 
 //todo!(finish editor tests)
-// #[gpui::test]
-// fn test_prev_next_word_bounds_with_soft_wrap(cx: &mut TestAppContext) {
-//     init_test(cx, |_| {});
+#[gpui::test]
+fn test_prev_next_word_bounds_with_soft_wrap(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
 
-//     let view = cx.add_window(|cx| {
-//         let buffer = MultiBuffer::build_simple("use one::{\n    two::three::four::five\n};", cx);
-//         build_editor(buffer, cx)
-//     });
+    let view = cx.add_window(|cx| {
+        let buffer = MultiBuffer::build_simple("use one::{\n    two::three::four::five\n};", cx);
+        build_editor(buffer, cx)
+    });
 
-//     view.update(cx, |view, cx| {
-//         view.set_wrap_width(Some(140.0.into()), cx);
-//         assert_eq!(
-//             view.display_text(cx),
-//             "use one::{\n    two::three::\n    four::five\n};"
-//         );
+    view.update(cx, |view, cx| {
+        view.set_wrap_width(Some(140.0.into()), cx);
+        assert_eq!(
+            view.display_text(cx),
+            "use one::{\n    two::three::\n    four::five\n};"
+        );
 
-//         view.change_selections(None, cx, |s| {
-//             s.select_display_ranges([DisplayPoint::new(1, 7)..DisplayPoint::new(1, 7)]);
-//         });
+        view.change_selections(None, cx, |s| {
+            s.select_display_ranges([DisplayPoint::new(1, 7)..DisplayPoint::new(1, 7)]);
+        });
 
-//         view.move_to_next_word_end(&MoveToNextWordEnd, cx);
-//         assert_eq!(
-//             view.selections.display_ranges(cx),
-//             &[DisplayPoint::new(1, 9)..DisplayPoint::new(1, 9)]
-//         );
+        view.move_to_next_word_end(&MoveToNextWordEnd, cx);
+        assert_eq!(
+            view.selections.display_ranges(cx),
+            &[DisplayPoint::new(1, 9)..DisplayPoint::new(1, 9)]
+        );
 
-//         view.move_to_next_word_end(&MoveToNextWordEnd, cx);
-//         assert_eq!(
-//             view.selections.display_ranges(cx),
-//             &[DisplayPoint::new(1, 14)..DisplayPoint::new(1, 14)]
-//         );
+        view.move_to_next_word_end(&MoveToNextWordEnd, cx);
+        assert_eq!(
+            view.selections.display_ranges(cx),
+            &[DisplayPoint::new(1, 14)..DisplayPoint::new(1, 14)]
+        );
 
-//         view.move_to_next_word_end(&MoveToNextWordEnd, cx);
-//         assert_eq!(
-//             view.selections.display_ranges(cx),
-//             &[DisplayPoint::new(2, 4)..DisplayPoint::new(2, 4)]
-//         );
+        view.move_to_next_word_end(&MoveToNextWordEnd, cx);
+        assert_eq!(
+            view.selections.display_ranges(cx),
+            &[DisplayPoint::new(2, 4)..DisplayPoint::new(2, 4)]
+        );
 
-//         view.move_to_next_word_end(&MoveToNextWordEnd, cx);
-//         assert_eq!(
-//             view.selections.display_ranges(cx),
-//             &[DisplayPoint::new(2, 8)..DisplayPoint::new(2, 8)]
-//         );
+        view.move_to_next_word_end(&MoveToNextWordEnd, cx);
+        assert_eq!(
+            view.selections.display_ranges(cx),
+            &[DisplayPoint::new(2, 8)..DisplayPoint::new(2, 8)]
+        );
 
-//         view.move_to_previous_word_start(&MoveToPreviousWordStart, cx);
-//         assert_eq!(
-//             view.selections.display_ranges(cx),
-//             &[DisplayPoint::new(2, 4)..DisplayPoint::new(2, 4)]
-//         );
+        view.move_to_previous_word_start(&MoveToPreviousWordStart, cx);
+        assert_eq!(
+            view.selections.display_ranges(cx),
+            &[DisplayPoint::new(2, 4)..DisplayPoint::new(2, 4)]
+        );
 
-//         view.move_to_previous_word_start(&MoveToPreviousWordStart, cx);
-//         assert_eq!(
-//             view.selections.display_ranges(cx),
-//             &[DisplayPoint::new(1, 14)..DisplayPoint::new(1, 14)]
-//         );
-//     });
-// }
+        view.move_to_previous_word_start(&MoveToPreviousWordStart, cx);
+        assert_eq!(
+            view.selections.display_ranges(cx),
+            &[DisplayPoint::new(1, 14)..DisplayPoint::new(1, 14)]
+        );
+    });
+}
 
 //todo!(simulate_resize)
-// #[gpui::test]
-// async fn test_move_start_of_paragraph_end_of_paragraph(cx: &mut gpui::TestAppContext) {
-//     init_test(cx, |_| {});
-//     let mut cx = EditorTestContext::new(cx).await;
+#[gpui::test]
+async fn test_move_start_of_paragraph_end_of_paragraph(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
 
-//     let line_height = cx.editor(|editor, cx| editor.style(cx).text.line_height(cx.font_cache()));
-//     let window = cx.window;
-//     window.simulate_resize(gpui::Point::new(100., 4. * line_height), &mut cx);
+    let line_height = cx.editor(|editor, cx| {
+        editor
+            .style()
+            .unwrap()
+            .text
+            .line_height_in_pixels(cx.rem_size())
+    });
+    cx.simulate_window_resize(cx.window, size(px(100.), 4. * line_height));
 
-//     cx.set_state(
-//         &r#"ˇone
-//         two
+    cx.set_state(
+        &r#"ˇone
+        two
 
-//         three
-//         fourˇ
-//         five
+        three
+        fourˇ
+        five
 
-//         six"#
-//             .unindent(),
-//     );
+        six"#
+            .unindent(),
+    );
 
-//     cx.update_editor(|editor, cx| editor.move_to_end_of_paragraph(&MoveToEndOfParagraph, cx));
-//     cx.assert_editor_state(
-//         &r#"one
-//         two
-//         ˇ
-//         three
-//         four
-//         five
-//         ˇ
-//         six"#
-//             .unindent(),
-//     );
+    cx.update_editor(|editor, cx| editor.move_to_end_of_paragraph(&MoveToEndOfParagraph, cx));
+    cx.assert_editor_state(
+        &r#"one
+        two
+        ˇ
+        three
+        four
+        five
+        ˇ
+        six"#
+            .unindent(),
+    );
 
-//     cx.update_editor(|editor, cx| editor.move_to_end_of_paragraph(&MoveToEndOfParagraph, cx));
-//     cx.assert_editor_state(
-//         &r#"one
-//         two
+    cx.update_editor(|editor, cx| editor.move_to_end_of_paragraph(&MoveToEndOfParagraph, cx));
+    cx.assert_editor_state(
+        &r#"one
+        two
 
-//         three
-//         four
-//         five
-//         ˇ
-//         sixˇ"#
-//             .unindent(),
-//     );
+        three
+        four
+        five
+        ˇ
+        sixˇ"#
+            .unindent(),
+    );
 
-//     cx.update_editor(|editor, cx| editor.move_to_end_of_paragraph(&MoveToEndOfParagraph, cx));
-//     cx.assert_editor_state(
-//         &r#"one
-//         two
+    cx.update_editor(|editor, cx| editor.move_to_end_of_paragraph(&MoveToEndOfParagraph, cx));
+    cx.assert_editor_state(
+        &r#"one
+        two
 
-//         three
-//         four
-//         five
+        three
+        four
+        five
 
-//         sixˇ"#
-//             .unindent(),
-//     );
+        sixˇ"#
+            .unindent(),
+    );
 
-//     cx.update_editor(|editor, cx| editor.move_to_start_of_paragraph(&MoveToStartOfParagraph, cx));
-//     cx.assert_editor_state(
-//         &r#"one
-//         two
+    cx.update_editor(|editor, cx| editor.move_to_start_of_paragraph(&MoveToStartOfParagraph, cx));
+    cx.assert_editor_state(
+        &r#"one
+        two
 
-//         three
-//         four
-//         five
-//         ˇ
-//         six"#
-//             .unindent(),
-//     );
+        three
+        four
+        five
+        ˇ
+        six"#
+            .unindent(),
+    );
 
-//     cx.update_editor(|editor, cx| editor.move_to_start_of_paragraph(&MoveToStartOfParagraph, cx));
-//     cx.assert_editor_state(
-//         &r#"one
-//         two
-//         ˇ
-//         three
-//         four
-//         five
+    cx.update_editor(|editor, cx| editor.move_to_start_of_paragraph(&MoveToStartOfParagraph, cx));
+    cx.assert_editor_state(
+        &r#"one
+        two
+        ˇ
+        three
+        four
+        five
 
-//         six"#
-//             .unindent(),
-//     );
+        six"#
+            .unindent(),
+    );
 
-//     cx.update_editor(|editor, cx| editor.move_to_start_of_paragraph(&MoveToStartOfParagraph, cx));
-//     cx.assert_editor_state(
-//         &r#"ˇone
-//         two
+    cx.update_editor(|editor, cx| editor.move_to_start_of_paragraph(&MoveToStartOfParagraph, cx));
+    cx.assert_editor_state(
+        &r#"ˇone
+        two
 
-//         three
-//         four
-//         five
+        three
+        four
+        five
 
-//         six"#
-//             .unindent(),
-//     );
-// }
+        six"#
+            .unindent(),
+    );
+}
 
-// #[gpui::test]
-// async fn test_scroll_page_up_page_down(cx: &mut gpui::TestAppContext) {
-//     init_test(cx, |_| {});
-//     let mut cx = EditorTestContext::new(cx).await;
-//     let line_height = cx.editor(|editor, cx| editor.style(cx).text.line_height(cx.font_cache()));
-//     let window = cx.window;
-//     window.simulate_resize(Point::new(1000., 4. * line_height + 0.5), &mut cx);
+#[gpui::test]
+async fn test_scroll_page_up_page_down(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    let line_height = cx.editor(|editor, cx| {
+        editor
+            .style()
+            .unwrap()
+            .text
+            .line_height_in_pixels(cx.rem_size())
+    });
+    let window = cx.window;
+    cx.simulate_window_resize(window, size(px(1000.), 4. * line_height + px(0.5)));
 
-//     cx.set_state(
-//         &r#"ˇone
-//         two
-//         three
-//         four
-//         five
-//         six
-//         seven
-//         eight
-//         nine
-//         ten
-//         "#,
-//     );
+    cx.set_state(
+        &r#"ˇone
+        two
+        three
+        four
+        five
+        six
+        seven
+        eight
+        nine
+        ten
+        "#,
+    );
 
-//     cx.update_editor(|editor, cx| {
-//         assert_eq!(
-//             editor.snapshot(cx).scroll_position(),
-//             gpui::Point::new(0., 0.)
-//         );
-//         editor.scroll_screen(&ScrollAmount::Page(1.), cx);
-//         assert_eq!(
-//             editor.snapshot(cx).scroll_position(),
-//             gpui::Point::new(0., 3.)
-//         );
-//         editor.scroll_screen(&ScrollAmount::Page(1.), cx);
-//         assert_eq!(
-//             editor.snapshot(cx).scroll_position(),
-//             gpui::Point::new(0., 6.)
-//         );
-//         editor.scroll_screen(&ScrollAmount::Page(-1.), cx);
-//         assert_eq!(
-//             editor.snapshot(cx).scroll_position(),
-//             gpui::Point::new(0., 3.)
-//         );
+    cx.update_editor(|editor, cx| {
+        assert_eq!(
+            editor.snapshot(cx).scroll_position(),
+            gpui::Point::new(0., 0.)
+        );
+        editor.scroll_screen(&ScrollAmount::Page(1.), cx);
+        assert_eq!(
+            editor.snapshot(cx).scroll_position(),
+            gpui::Point::new(0., 3.)
+        );
+        editor.scroll_screen(&ScrollAmount::Page(1.), cx);
+        assert_eq!(
+            editor.snapshot(cx).scroll_position(),
+            gpui::Point::new(0., 6.)
+        );
+        editor.scroll_screen(&ScrollAmount::Page(-1.), cx);
+        assert_eq!(
+            editor.snapshot(cx).scroll_position(),
+            gpui::Point::new(0., 3.)
+        );
 
-//         editor.scroll_screen(&ScrollAmount::Page(-0.5), cx);
-//         assert_eq!(
-//             editor.snapshot(cx).scroll_position(),
-//             gpui::Point::new(0., 1.)
-//         );
-//         editor.scroll_screen(&ScrollAmount::Page(0.5), cx);
-//         assert_eq!(
-//             editor.snapshot(cx).scroll_position(),
-//             gpui::Point::new(0., 3.)
-//         );
-//     });
-// }
+        editor.scroll_screen(&ScrollAmount::Page(-0.5), cx);
+        assert_eq!(
+            editor.snapshot(cx).scroll_position(),
+            gpui::Point::new(0., 1.)
+        );
+        editor.scroll_screen(&ScrollAmount::Page(0.5), cx);
+        assert_eq!(
+            editor.snapshot(cx).scroll_position(),
+            gpui::Point::new(0., 3.)
+        );
+    });
+}
 
-// #[gpui::test]
-// async fn test_autoscroll(cx: &mut gpui::TestAppContext) {
-//     init_test(cx, |_| {});
-//     let mut cx = EditorTestContext::new(cx).await;
+#[gpui::test]
+async fn test_autoscroll(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
 
-//     let line_height = cx.update_editor(|editor, cx| {
-//         editor.set_vertical_scroll_margin(2, cx);
-//         editor.style(cx).text.line_height(cx.font_cache())
-//     });
+    let line_height = cx.update_editor(|editor, cx| {
+        editor.set_vertical_scroll_margin(2, cx);
+        editor
+            .style()
+            .unwrap()
+            .text
+            .line_height_in_pixels(cx.rem_size())
+    });
+    let window = cx.window;
+    cx.simulate_window_resize(window, size(px(1000.), 6. * line_height));
 
-//     let window = cx.window;
-//     window.simulate_resize(gpui::Point::new(1000., 6.0 * line_height), &mut cx);
+    cx.set_state(
+        &r#"ˇone
+            two
+            three
+            four
+            five
+            six
+            seven
+            eight
+            nine
+            ten
+        "#,
+    );
+    cx.update_editor(|editor, cx| {
+        assert_eq!(
+            editor.snapshot(cx).scroll_position(),
+            gpui::Point::new(0., 0.0)
+        );
+    });
 
-//     cx.set_state(
-//         &r#"ˇone
-//             two
-//             three
-//             four
-//             five
-//             six
-//             seven
-//             eight
-//             nine
-//             ten
-//         "#,
-//     );
-//     cx.update_editor(|editor, cx| {
-//         assert_eq!(
-//             editor.snapshot(cx).scroll_position(),
-//             gpui::Point::new(0., 0.0)
-//         );
-//     });
+    // Add a cursor below the visible area. Since both cursors cannot fit
+    // on screen, the editor autoscrolls to reveal the newest cursor, and
+    // allows the vertical scroll margin below that cursor.
+    cx.update_editor(|editor, cx| {
+        editor.change_selections(Some(Autoscroll::fit()), cx, |selections| {
+            selections.select_ranges([
+                Point::new(0, 0)..Point::new(0, 0),
+                Point::new(6, 0)..Point::new(6, 0),
+            ]);
+        })
+    });
+    cx.update_editor(|editor, cx| {
+        assert_eq!(
+            editor.snapshot(cx).scroll_position(),
+            gpui::Point::new(0., 3.0)
+        );
+    });
 
-//     // Add a cursor below the visible area. Since both cursors cannot fit
-//     // on screen, the editor autoscrolls to reveal the newest cursor, and
-//     // allows the vertical scroll margin below that cursor.
-//     cx.update_editor(|editor, cx| {
-//         editor.change_selections(Some(Autoscroll::fit()), cx, |selections| {
-//             selections.select_ranges([
-//                 Point::new(0, 0)..Point::new(0, 0),
-//                 Point::new(6, 0)..Point::new(6, 0),
-//             ]);
-//         })
-//     });
-//     cx.update_editor(|editor, cx| {
-//         assert_eq!(
-//             editor.snapshot(cx).scroll_position(),
-//             gpui::Point::new(0., 3.0)
-//         );
-//     });
+    // Move down. The editor cursor scrolls down to track the newest cursor.
+    cx.update_editor(|editor, cx| {
+        editor.move_down(&Default::default(), cx);
+    });
+    cx.update_editor(|editor, cx| {
+        assert_eq!(
+            editor.snapshot(cx).scroll_position(),
+            gpui::Point::new(0., 4.0)
+        );
+    });
 
-//     // Move down. The editor cursor scrolls down to track the newest cursor.
-//     cx.update_editor(|editor, cx| {
-//         editor.move_down(&Default::default(), cx);
-//     });
-//     cx.update_editor(|editor, cx| {
-//         assert_eq!(
-//             editor.snapshot(cx).scroll_position(),
-//             gpui::Point::new(0., 4.0)
-//         );
-//     });
+    // Add a cursor above the visible area. Since both cursors fit on screen,
+    // the editor scrolls to show both.
+    cx.update_editor(|editor, cx| {
+        editor.change_selections(Some(Autoscroll::fit()), cx, |selections| {
+            selections.select_ranges([
+                Point::new(1, 0)..Point::new(1, 0),
+                Point::new(6, 0)..Point::new(6, 0),
+            ]);
+        })
+    });
+    cx.update_editor(|editor, cx| {
+        assert_eq!(
+            editor.snapshot(cx).scroll_position(),
+            gpui::Point::new(0., 1.0)
+        );
+    });
+}
 
-//     // Add a cursor above the visible area. Since both cursors fit on screen,
-//     // the editor scrolls to show both.
-//     cx.update_editor(|editor, cx| {
-//         editor.change_selections(Some(Autoscroll::fit()), cx, |selections| {
-//             selections.select_ranges([
-//                 Point::new(1, 0)..Point::new(1, 0),
-//                 Point::new(6, 0)..Point::new(6, 0),
-//             ]);
-//         })
-//     });
-//     cx.update_editor(|editor, cx| {
-//         assert_eq!(
-//             editor.snapshot(cx).scroll_position(),
-//             gpui::Point::new(0., 1.0)
-//         );
-//     });
-// }
+#[gpui::test]
+async fn test_move_page_up_page_down(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
 
-// #[gpui::test]
-// async fn test_move_page_up_page_down(cx: &mut gpui::TestAppContext) {
-//     init_test(cx, |_| {});
-//     let mut cx = EditorTestContext::new(cx).await;
+    let line_height = cx.editor(|editor, cx| {
+        editor
+            .style()
+            .unwrap()
+            .text
+            .line_height_in_pixels(cx.rem_size())
+    });
+    let window = cx.window;
+    cx.simulate_window_resize(window, size(px(100.), 4. * line_height));
+    cx.set_state(
+        &r#"
+        ˇone
+        two
+        threeˇ
+        four
+        five
+        six
+        seven
+        eight
+        nine
+        ten
+        "#
+        .unindent(),
+    );
 
-//     let line_height = cx.editor(|editor, cx| editor.style(cx).text.line_height(cx.font_cache()));
-//     let window = cx.window;
-//     window.simulate_resize(gpui::Point::new(100., 4. * line_height), &mut cx);
+    cx.update_editor(|editor, cx| editor.move_page_down(&MovePageDown::default(), cx));
+    cx.assert_editor_state(
+        &r#"
+        one
+        two
+        three
+        ˇfour
+        five
+        sixˇ
+        seven
+        eight
+        nine
+        ten
+        "#
+        .unindent(),
+    );
 
-//     cx.set_state(
-//         &r#"
-//         ˇone
-//         two
-//         threeˇ
-//         four
-//         five
-//         six
-//         seven
-//         eight
-//         nine
-//         ten
-//         "#
-//         .unindent(),
-//     );
+    cx.update_editor(|editor, cx| editor.move_page_down(&MovePageDown::default(), cx));
+    cx.assert_editor_state(
+        &r#"
+        one
+        two
+        three
+        four
+        five
+        six
+        ˇseven
+        eight
+        nineˇ
+        ten
+        "#
+        .unindent(),
+    );
 
-//     cx.update_editor(|editor, cx| editor.move_page_down(&MovePageDown::default(), cx));
-//     cx.assert_editor_state(
-//         &r#"
-//         one
-//         two
-//         three
-//         ˇfour
-//         five
-//         sixˇ
-//         seven
-//         eight
-//         nine
-//         ten
-//         "#
-//         .unindent(),
-//     );
+    cx.update_editor(|editor, cx| editor.move_page_up(&MovePageUp::default(), cx));
+    cx.assert_editor_state(
+        &r#"
+        one
+        two
+        three
+        ˇfour
+        five
+        sixˇ
+        seven
+        eight
+        nine
+        ten
+        "#
+        .unindent(),
+    );
 
-//     cx.update_editor(|editor, cx| editor.move_page_down(&MovePageDown::default(), cx));
-//     cx.assert_editor_state(
-//         &r#"
-//         one
-//         two
-//         three
-//         four
-//         five
-//         six
-//         ˇseven
-//         eight
-//         nineˇ
-//         ten
-//         "#
-//         .unindent(),
-//     );
+    cx.update_editor(|editor, cx| editor.move_page_up(&MovePageUp::default(), cx));
+    cx.assert_editor_state(
+        &r#"
+        ˇone
+        two
+        threeˇ
+        four
+        five
+        six
+        seven
+        eight
+        nine
+        ten
+        "#
+        .unindent(),
+    );
 
-//     cx.update_editor(|editor, cx| editor.move_page_up(&MovePageUp::default(), cx));
-//     cx.assert_editor_state(
-//         &r#"
-//         one
-//         two
-//         three
-//         ˇfour
-//         five
-//         sixˇ
-//         seven
-//         eight
-//         nine
-//         ten
-//         "#
-//         .unindent(),
-//     );
-
-//     cx.update_editor(|editor, cx| editor.move_page_up(&MovePageUp::default(), cx));
-//     cx.assert_editor_state(
-//         &r#"
-//         ˇone
-//         two
-//         threeˇ
-//         four
-//         five
-//         six
-//         seven
-//         eight
-//         nine
-//         ten
-//         "#
-//         .unindent(),
-//     );
-
-//     // Test select collapsing
-//     cx.update_editor(|editor, cx| {
-//         editor.move_page_down(&MovePageDown::default(), cx);
-//         editor.move_page_down(&MovePageDown::default(), cx);
-//         editor.move_page_down(&MovePageDown::default(), cx);
-//     });
-//     cx.assert_editor_state(
-//         &r#"
-//         one
-//         two
-//         three
-//         four
-//         five
-//         six
-//         seven
-//         eight
-//         nine
-//         ˇten
-//         ˇ"#
-//         .unindent(),
-//     );
-// }
+    // Test select collapsing
+    cx.update_editor(|editor, cx| {
+        editor.move_page_down(&MovePageDown::default(), cx);
+        editor.move_page_down(&MovePageDown::default(), cx);
+        editor.move_page_down(&MovePageDown::default(), cx);
+    });
+    cx.assert_editor_state(
+        &r#"
+        one
+        two
+        three
+        four
+        five
+        six
+        seven
+        eight
+        nine
+        ˇten
+        ˇ"#
+        .unindent(),
+    );
+}
 
 #[gpui::test]
 async fn test_delete_to_beginning_of_line(cx: &mut gpui::TestAppContext) {
@@ -2493,136 +2511,136 @@ fn test_delete_line(cx: &mut TestAppContext) {
 }
 
 //todo!(select_anchor_ranges)
-// #[gpui::test]
-// fn test_join_lines_with_single_selection(cx: &mut TestAppContext) {
-//     init_test(cx, |_| {});
+#[gpui::test]
+fn test_join_lines_with_single_selection(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
 
-//     cx.add_window(|cx| {
-//         let buffer = MultiBuffer::build_simple("aaa\nbbb\nccc\nddd\n\n", cx);
-//         let mut editor = build_editor(buffer.clone(), cx);
-//         let buffer = buffer.read(cx).as_singleton().unwrap();
+    cx.add_window(|cx| {
+        let buffer = MultiBuffer::build_simple("aaa\nbbb\nccc\nddd\n\n", cx);
+        let mut editor = build_editor(buffer.clone(), cx);
+        let buffer = buffer.read(cx).as_singleton().unwrap();
 
-//         assert_eq!(
-//             editor.selections.ranges::<Point>(cx),
-//             &[Point::new(0, 0)..Point::new(0, 0)]
-//         );
+        assert_eq!(
+            editor.selections.ranges::<Point>(cx),
+            &[Point::new(0, 0)..Point::new(0, 0)]
+        );
 
-//         // When on single line, replace newline at end by space
-//         editor.join_lines(&JoinLines, cx);
-//         assert_eq!(buffer.read(cx).text(), "aaa bbb\nccc\nddd\n\n");
-//         assert_eq!(
-//             editor.selections.ranges::<Point>(cx),
-//             &[Point::new(0, 3)..Point::new(0, 3)]
-//         );
+        // When on single line, replace newline at end by space
+        editor.join_lines(&JoinLines, cx);
+        assert_eq!(buffer.read(cx).text(), "aaa bbb\nccc\nddd\n\n");
+        assert_eq!(
+            editor.selections.ranges::<Point>(cx),
+            &[Point::new(0, 3)..Point::new(0, 3)]
+        );
 
-//         // When multiple lines are selected, remove newlines that are spanned by the selection
-//         editor.change_selections(None, cx, |s| {
-//             s.select_ranges([Point::new(0, 5)..Point::new(2, 2)])
-//         });
-//         editor.join_lines(&JoinLines, cx);
-//         assert_eq!(buffer.read(cx).text(), "aaa bbb ccc ddd\n\n");
-//         assert_eq!(
-//             editor.selections.ranges::<Point>(cx),
-//             &[Point::new(0, 11)..Point::new(0, 11)]
-//         );
+        // When multiple lines are selected, remove newlines that are spanned by the selection
+        editor.change_selections(None, cx, |s| {
+            s.select_ranges([Point::new(0, 5)..Point::new(2, 2)])
+        });
+        editor.join_lines(&JoinLines, cx);
+        assert_eq!(buffer.read(cx).text(), "aaa bbb ccc ddd\n\n");
+        assert_eq!(
+            editor.selections.ranges::<Point>(cx),
+            &[Point::new(0, 11)..Point::new(0, 11)]
+        );
 
-//         // Undo should be transactional
-//         editor.undo(&Undo, cx);
-//         assert_eq!(buffer.read(cx).text(), "aaa bbb\nccc\nddd\n\n");
-//         assert_eq!(
-//             editor.selections.ranges::<Point>(cx),
-//             &[Point::new(0, 5)..Point::new(2, 2)]
-//         );
+        // Undo should be transactional
+        editor.undo(&Undo, cx);
+        assert_eq!(buffer.read(cx).text(), "aaa bbb\nccc\nddd\n\n");
+        assert_eq!(
+            editor.selections.ranges::<Point>(cx),
+            &[Point::new(0, 5)..Point::new(2, 2)]
+        );
 
-//         // When joining an empty line don't insert a space
-//         editor.change_selections(None, cx, |s| {
-//             s.select_ranges([Point::new(2, 1)..Point::new(2, 2)])
-//         });
-//         editor.join_lines(&JoinLines, cx);
-//         assert_eq!(buffer.read(cx).text(), "aaa bbb\nccc\nddd\n");
-//         assert_eq!(
-//             editor.selections.ranges::<Point>(cx),
-//             [Point::new(2, 3)..Point::new(2, 3)]
-//         );
+        // When joining an empty line don't insert a space
+        editor.change_selections(None, cx, |s| {
+            s.select_ranges([Point::new(2, 1)..Point::new(2, 2)])
+        });
+        editor.join_lines(&JoinLines, cx);
+        assert_eq!(buffer.read(cx).text(), "aaa bbb\nccc\nddd\n");
+        assert_eq!(
+            editor.selections.ranges::<Point>(cx),
+            [Point::new(2, 3)..Point::new(2, 3)]
+        );
 
-//         // We can remove trailing newlines
-//         editor.join_lines(&JoinLines, cx);
-//         assert_eq!(buffer.read(cx).text(), "aaa bbb\nccc\nddd");
-//         assert_eq!(
-//             editor.selections.ranges::<Point>(cx),
-//             [Point::new(2, 3)..Point::new(2, 3)]
-//         );
+        // We can remove trailing newlines
+        editor.join_lines(&JoinLines, cx);
+        assert_eq!(buffer.read(cx).text(), "aaa bbb\nccc\nddd");
+        assert_eq!(
+            editor.selections.ranges::<Point>(cx),
+            [Point::new(2, 3)..Point::new(2, 3)]
+        );
 
-//         // We don't blow up on the last line
-//         editor.join_lines(&JoinLines, cx);
-//         assert_eq!(buffer.read(cx).text(), "aaa bbb\nccc\nddd");
-//         assert_eq!(
-//             editor.selections.ranges::<Point>(cx),
-//             [Point::new(2, 3)..Point::new(2, 3)]
-//         );
+        // We don't blow up on the last line
+        editor.join_lines(&JoinLines, cx);
+        assert_eq!(buffer.read(cx).text(), "aaa bbb\nccc\nddd");
+        assert_eq!(
+            editor.selections.ranges::<Point>(cx),
+            [Point::new(2, 3)..Point::new(2, 3)]
+        );
 
-//         // reset to test indentation
-//         editor.buffer.update(cx, |buffer, cx| {
-//             buffer.edit(
-//                 [
-//                     (Point::new(1, 0)..Point::new(1, 2), "  "),
-//                     (Point::new(2, 0)..Point::new(2, 3), "  \n\td"),
-//                 ],
-//                 None,
-//                 cx,
-//             )
-//         });
+        // reset to test indentation
+        editor.buffer.update(cx, |buffer, cx| {
+            buffer.edit(
+                [
+                    (Point::new(1, 0)..Point::new(1, 2), "  "),
+                    (Point::new(2, 0)..Point::new(2, 3), "  \n\td"),
+                ],
+                None,
+                cx,
+            )
+        });
 
-//         // We remove any leading spaces
-//         assert_eq!(buffer.read(cx).text(), "aaa bbb\n  c\n  \n\td");
-//         editor.change_selections(None, cx, |s| {
-//             s.select_ranges([Point::new(0, 1)..Point::new(0, 1)])
-//         });
-//         editor.join_lines(&JoinLines, cx);
-//         assert_eq!(buffer.read(cx).text(), "aaa bbb c\n  \n\td");
+        // We remove any leading spaces
+        assert_eq!(buffer.read(cx).text(), "aaa bbb\n  c\n  \n\td");
+        editor.change_selections(None, cx, |s| {
+            s.select_ranges([Point::new(0, 1)..Point::new(0, 1)])
+        });
+        editor.join_lines(&JoinLines, cx);
+        assert_eq!(buffer.read(cx).text(), "aaa bbb c\n  \n\td");
 
-//         // We don't insert a space for a line containing only spaces
-//         editor.join_lines(&JoinLines, cx);
-//         assert_eq!(buffer.read(cx).text(), "aaa bbb c\n\td");
+        // We don't insert a space for a line containing only spaces
+        editor.join_lines(&JoinLines, cx);
+        assert_eq!(buffer.read(cx).text(), "aaa bbb c\n\td");
 
-//         // We ignore any leading tabs
-//         editor.join_lines(&JoinLines, cx);
-//         assert_eq!(buffer.read(cx).text(), "aaa bbb c d");
+        // We ignore any leading tabs
+        editor.join_lines(&JoinLines, cx);
+        assert_eq!(buffer.read(cx).text(), "aaa bbb c d");
 
-//         editor
-//     });
-// }
+        editor
+    });
+}
 
-// #[gpui::test]
-// fn test_join_lines_with_multi_selection(cx: &mut TestAppContext) {
-//     init_test(cx, |_| {});
+#[gpui::test]
+fn test_join_lines_with_multi_selection(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
 
-//     cx.add_window(|cx| {
-//         let buffer = MultiBuffer::build_simple("aaa\nbbb\nccc\nddd\n\n", cx);
-//         let mut editor = build_editor(buffer.clone(), cx);
-//         let buffer = buffer.read(cx).as_singleton().unwrap();
+    cx.add_window(|cx| {
+        let buffer = MultiBuffer::build_simple("aaa\nbbb\nccc\nddd\n\n", cx);
+        let mut editor = build_editor(buffer.clone(), cx);
+        let buffer = buffer.read(cx).as_singleton().unwrap();
 
-//         editor.change_selections(None, cx, |s| {
-//             s.select_ranges([
-//                 Point::new(0, 2)..Point::new(1, 1),
-//                 Point::new(1, 2)..Point::new(1, 2),
-//                 Point::new(3, 1)..Point::new(3, 2),
-//             ])
-//         });
+        editor.change_selections(None, cx, |s| {
+            s.select_ranges([
+                Point::new(0, 2)..Point::new(1, 1),
+                Point::new(1, 2)..Point::new(1, 2),
+                Point::new(3, 1)..Point::new(3, 2),
+            ])
+        });
 
-//         editor.join_lines(&JoinLines, cx);
-//         assert_eq!(buffer.read(cx).text(), "aaa bbb ccc\nddd\n");
+        editor.join_lines(&JoinLines, cx);
+        assert_eq!(buffer.read(cx).text(), "aaa bbb ccc\nddd\n");
 
-//         assert_eq!(
-//             editor.selections.ranges::<Point>(cx),
-//             [
-//                 Point::new(0, 7)..Point::new(0, 7),
-//                 Point::new(1, 3)..Point::new(1, 3)
-//             ]
-//         );
-//         editor
-//     });
-// }
+        assert_eq!(
+            editor.selections.ranges::<Point>(cx),
+            [
+                Point::new(0, 7)..Point::new(0, 7),
+                Point::new(1, 3)..Point::new(1, 3)
+            ]
+        );
+        editor
+    });
+}
 
 #[gpui::test]
 async fn test_manipulate_lines_with_single_selection(cx: &mut TestAppContext) {
@@ -3061,296 +3079,300 @@ fn test_move_line_up_down_with_blocks(cx: &mut TestAppContext) {
 }
 
 //todo!(test_transpose)
-// #[gpui::test]
-// fn test_transpose(cx: &mut TestAppContext) {
-//     init_test(cx, |_| {});
+#[gpui::test]
+fn test_transpose(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
 
-//     _ = cx.add_window(|cx| {
-//         let mut editor = build_editor(MultiBuffer::build_simple("abc", cx), cx);
+    _ = cx.add_window(|cx| {
+        let mut editor = build_editor(MultiBuffer::build_simple("abc", cx), cx);
+        editor.set_style(EditorStyle::default(), cx);
+        editor.change_selections(None, cx, |s| s.select_ranges([1..1]));
+        editor.transpose(&Default::default(), cx);
+        assert_eq!(editor.text(cx), "bac");
+        assert_eq!(editor.selections.ranges(cx), [2..2]);
 
-//         editor.change_selections(None, cx, |s| s.select_ranges([1..1]));
-//         editor.transpose(&Default::default(), cx);
-//         assert_eq!(editor.text(cx), "bac");
-//         assert_eq!(editor.selections.ranges(cx), [2..2]);
+        editor.transpose(&Default::default(), cx);
+        assert_eq!(editor.text(cx), "bca");
+        assert_eq!(editor.selections.ranges(cx), [3..3]);
 
-//         editor.transpose(&Default::default(), cx);
-//         assert_eq!(editor.text(cx), "bca");
-//         assert_eq!(editor.selections.ranges(cx), [3..3]);
+        editor.transpose(&Default::default(), cx);
+        assert_eq!(editor.text(cx), "bac");
+        assert_eq!(editor.selections.ranges(cx), [3..3]);
 
-//         editor.transpose(&Default::default(), cx);
-//         assert_eq!(editor.text(cx), "bac");
-//         assert_eq!(editor.selections.ranges(cx), [3..3]);
+        editor
+    });
 
-//         editor
-//     });
+    _ = cx.add_window(|cx| {
+        let mut editor = build_editor(MultiBuffer::build_simple("abc\nde", cx), cx);
+        editor.set_style(EditorStyle::default(), cx);
+        editor.change_selections(None, cx, |s| s.select_ranges([3..3]));
+        editor.transpose(&Default::default(), cx);
+        assert_eq!(editor.text(cx), "acb\nde");
+        assert_eq!(editor.selections.ranges(cx), [3..3]);
 
-//     _ = cx.add_window(|cx| {
-//         let mut editor = build_editor(MultiBuffer::build_simple("abc\nde", cx), cx);
+        editor.change_selections(None, cx, |s| s.select_ranges([4..4]));
+        editor.transpose(&Default::default(), cx);
+        assert_eq!(editor.text(cx), "acbd\ne");
+        assert_eq!(editor.selections.ranges(cx), [5..5]);
 
-//         editor.change_selections(None, cx, |s| s.select_ranges([3..3]));
-//         editor.transpose(&Default::default(), cx);
-//         assert_eq!(editor.text(cx), "acb\nde");
-//         assert_eq!(editor.selections.ranges(cx), [3..3]);
+        editor.transpose(&Default::default(), cx);
+        assert_eq!(editor.text(cx), "acbde\n");
+        assert_eq!(editor.selections.ranges(cx), [6..6]);
 
-//         editor.change_selections(None, cx, |s| s.select_ranges([4..4]));
-//         editor.transpose(&Default::default(), cx);
-//         assert_eq!(editor.text(cx), "acbd\ne");
-//         assert_eq!(editor.selections.ranges(cx), [5..5]);
+        editor.transpose(&Default::default(), cx);
+        assert_eq!(editor.text(cx), "acbd\ne");
+        assert_eq!(editor.selections.ranges(cx), [6..6]);
 
-//         editor.transpose(&Default::default(), cx);
-//         assert_eq!(editor.text(cx), "acbde\n");
-//         assert_eq!(editor.selections.ranges(cx), [6..6]);
+        editor
+    });
 
-//         editor.transpose(&Default::default(), cx);
-//         assert_eq!(editor.text(cx), "acbd\ne");
-//         assert_eq!(editor.selections.ranges(cx), [6..6]);
+    _ = cx.add_window(|cx| {
+        let mut editor = build_editor(MultiBuffer::build_simple("abc\nde", cx), cx);
+        editor.set_style(EditorStyle::default(), cx);
+        editor.change_selections(None, cx, |s| s.select_ranges([1..1, 2..2, 4..4]));
+        editor.transpose(&Default::default(), cx);
+        assert_eq!(editor.text(cx), "bacd\ne");
+        assert_eq!(editor.selections.ranges(cx), [2..2, 3..3, 5..5]);
 
-//         editor
-//     });
+        editor.transpose(&Default::default(), cx);
+        assert_eq!(editor.text(cx), "bcade\n");
+        assert_eq!(editor.selections.ranges(cx), [3..3, 4..4, 6..6]);
 
-//     _ = cx.add_window(|cx| {
-//         let mut editor = build_editor(MultiBuffer::build_simple("abc\nde", cx), cx);
+        editor.transpose(&Default::default(), cx);
+        assert_eq!(editor.text(cx), "bcda\ne");
+        assert_eq!(editor.selections.ranges(cx), [4..4, 6..6]);
 
-//         editor.change_selections(None, cx, |s| s.select_ranges([1..1, 2..2, 4..4]));
-//         editor.transpose(&Default::default(), cx);
-//         assert_eq!(editor.text(cx), "bacd\ne");
-//         assert_eq!(editor.selections.ranges(cx), [2..2, 3..3, 5..5]);
+        editor.transpose(&Default::default(), cx);
+        assert_eq!(editor.text(cx), "bcade\n");
+        assert_eq!(editor.selections.ranges(cx), [4..4, 6..6]);
 
-//         editor.transpose(&Default::default(), cx);
-//         assert_eq!(editor.text(cx), "bcade\n");
-//         assert_eq!(editor.selections.ranges(cx), [3..3, 4..4, 6..6]);
+        editor.transpose(&Default::default(), cx);
+        assert_eq!(editor.text(cx), "bcaed\n");
+        assert_eq!(editor.selections.ranges(cx), [5..5, 6..6]);
 
-//         editor.transpose(&Default::default(), cx);
-//         assert_eq!(editor.text(cx), "bcda\ne");
-//         assert_eq!(editor.selections.ranges(cx), [4..4, 6..6]);
+        editor
+    });
 
-//         editor.transpose(&Default::default(), cx);
-//         assert_eq!(editor.text(cx), "bcade\n");
-//         assert_eq!(editor.selections.ranges(cx), [4..4, 6..6]);
+    _ = cx.add_window(|cx| {
+        let mut editor = build_editor(MultiBuffer::build_simple("🍐🏀✋", cx), cx);
+        editor.set_style(EditorStyle::default(), cx);
+        editor.change_selections(None, cx, |s| s.select_ranges([4..4]));
+        editor.transpose(&Default::default(), cx);
+        assert_eq!(editor.text(cx), "🏀🍐✋");
+        assert_eq!(editor.selections.ranges(cx), [8..8]);
 
-//         editor.transpose(&Default::default(), cx);
-//         assert_eq!(editor.text(cx), "bcaed\n");
-//         assert_eq!(editor.selections.ranges(cx), [5..5, 6..6]);
+        editor.transpose(&Default::default(), cx);
+        assert_eq!(editor.text(cx), "🏀✋🍐");
+        assert_eq!(editor.selections.ranges(cx), [11..11]);
 
-//         editor
-//     });
+        editor.transpose(&Default::default(), cx);
+        assert_eq!(editor.text(cx), "🏀🍐✋");
+        assert_eq!(editor.selections.ranges(cx), [11..11]);
 
-//     _ = cx.add_window(|cx| {
-//         let mut editor = build_editor(MultiBuffer::build_simple("🍐🏀✋", cx), cx);
+        editor
+    });
+}
 
-//         editor.change_selections(None, cx, |s| s.select_ranges([4..4]));
-//         editor.transpose(&Default::default(), cx);
-//         assert_eq!(editor.text(cx), "🏀🍐✋");
-//         assert_eq!(editor.selections.ranges(cx), [8..8]);
+#[gpui::test]
+async fn test_clipboard(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
 
-//         editor.transpose(&Default::default(), cx);
-//         assert_eq!(editor.text(cx), "🏀✋🍐");
-//         assert_eq!(editor.selections.ranges(cx), [11..11]);
+    let mut cx = EditorTestContext::new(cx).await;
 
-//         editor.transpose(&Default::default(), cx);
-//         assert_eq!(editor.text(cx), "🏀🍐✋");
-//         assert_eq!(editor.selections.ranges(cx), [11..11]);
+    cx.set_state("«one✅ ˇ»two «three ˇ»four «five ˇ»six ");
+    cx.update_editor(|e, cx| e.cut(&Cut, cx));
+    cx.assert_editor_state("ˇtwo ˇfour ˇsix ");
 
-//         editor
-//     });
-// }
+    // Paste with three cursors. Each cursor pastes one slice of the clipboard text.
+    cx.set_state("two ˇfour ˇsix ˇ");
+    cx.update_editor(|e, cx| e.paste(&Paste, cx));
+    cx.assert_editor_state("two one✅ ˇfour three ˇsix five ˇ");
 
-//todo!(clipboard)
-// #[gpui::test]
-// async fn test_clipboard(cx: &mut gpui::TestAppContext) {
-//     init_test(cx, |_| {});
+    // Paste again but with only two cursors. Since the number of cursors doesn't
+    // match the number of slices in the clipboard, the entire clipboard text
+    // is pasted at each cursor.
+    cx.set_state("ˇtwo one✅ four three six five ˇ");
+    cx.update_editor(|e, cx| {
+        e.handle_input("( ", cx);
+        e.paste(&Paste, cx);
+        e.handle_input(") ", cx);
+    });
+    cx.assert_editor_state(
+        &([
+            "( one✅ ",
+            "three ",
+            "five ) ˇtwo one✅ four three six five ( one✅ ",
+            "three ",
+            "five ) ˇ",
+        ]
+        .join("\n")),
+    );
 
-//     let mut cx = EditorTestContext::new(cx).await;
+    // Cut with three selections, one of which is full-line.
+    cx.set_state(indoc! {"
+        1«2ˇ»3
+        4ˇ567
+        «8ˇ»9"});
+    cx.update_editor(|e, cx| e.cut(&Cut, cx));
+    cx.assert_editor_state(indoc! {"
+        1ˇ3
+        ˇ9"});
 
-//     cx.set_state("«one✅ ˇ»two «three ˇ»four «five ˇ»six ");
-//     cx.update_editor(|e, cx| e.cut(&Cut, cx));
-//     cx.assert_editor_state("ˇtwo ˇfour ˇsix ");
+    // Paste with three selections, noticing how the copied selection that was full-line
+    // gets inserted before the second cursor.
+    cx.set_state(indoc! {"
+        1ˇ3
+        9ˇ
+        «oˇ»ne"});
+    cx.update_editor(|e, cx| e.paste(&Paste, cx));
+    cx.assert_editor_state(indoc! {"
+        12ˇ3
+        4567
+        9ˇ
+        8ˇne"});
 
-//     // Paste with three cursors. Each cursor pastes one slice of the clipboard text.
-//     cx.set_state("two ˇfour ˇsix ˇ");
-//     cx.update_editor(|e, cx| e.paste(&Paste, cx));
-//     cx.assert_editor_state("two one✅ ˇfour three ˇsix five ˇ");
+    // Copy with a single cursor only, which writes the whole line into the clipboard.
+    cx.set_state(indoc! {"
+        The quick brown
+        fox juˇmps over
+        the lazy dog"});
+    cx.update_editor(|e, cx| e.copy(&Copy, cx));
+    assert_eq!(
+        cx.test_platform
+            .read_from_clipboard()
+            .map(|item| item.text().to_owned()),
+        Some("fox jumps over\n".to_owned())
+    );
 
-//     // Paste again but with only two cursors. Since the number of cursors doesn't
-//     // match the number of slices in the clipboard, the entire clipboard text
-//     // is pasted at each cursor.
-//     cx.set_state("ˇtwo one✅ four three six five ˇ");
-//     cx.update_editor(|e, cx| {
-//         e.handle_input("( ", cx);
-//         e.paste(&Paste, cx);
-//         e.handle_input(") ", cx);
-//     });
-//     cx.assert_editor_state(
-//         &([
-//             "( one✅ ",
-//             "three ",
-//             "five ) ˇtwo one✅ four three six five ( one✅ ",
-//             "three ",
-//             "five ) ˇ",
-//         ]
-//         .join("\n")),
-//     );
+    // Paste with three selections, noticing how the copied full-line selection is inserted
+    // before the empty selections but replaces the selection that is non-empty.
+    cx.set_state(indoc! {"
+        Tˇhe quick brown
+        «foˇ»x jumps over
+        tˇhe lazy dog"});
+    cx.update_editor(|e, cx| e.paste(&Paste, cx));
+    cx.assert_editor_state(indoc! {"
+        fox jumps over
+        Tˇhe quick brown
+        fox jumps over
+        ˇx jumps over
+        fox jumps over
+        tˇhe lazy dog"});
+}
 
-//     // Cut with three selections, one of which is full-line.
-//     cx.set_state(indoc! {"
-//         1«2ˇ»3
-//         4ˇ567
-//         «8ˇ»9"});
-//     cx.update_editor(|e, cx| e.cut(&Cut, cx));
-//     cx.assert_editor_state(indoc! {"
-//         1ˇ3
-//         ˇ9"});
+#[gpui::test]
+async fn test_paste_multiline(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
 
-//     // Paste with three selections, noticing how the copied selection that was full-line
-//     // gets inserted before the second cursor.
-//     cx.set_state(indoc! {"
-//         1ˇ3
-//         9ˇ
-//         «oˇ»ne"});
-//     cx.update_editor(|e, cx| e.paste(&Paste, cx));
-//     cx.assert_editor_state(indoc! {"
-//         12ˇ3
-//         4567
-//         9ˇ
-//         8ˇne"});
+    let mut cx = EditorTestContext::new(cx).await;
+    let language = Arc::new(Language::new(
+        LanguageConfig::default(),
+        Some(tree_sitter_rust::language()),
+    ));
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
 
-//     // Copy with a single cursor only, which writes the whole line into the clipboard.
-//     cx.set_state(indoc! {"
-//         The quick brown
-//         fox juˇmps over
-//         the lazy dog"});
-//     cx.update_editor(|e, cx| e.copy(&Copy, cx));
-//     cx.cx.assert_clipboard_content(Some("fox jumps over\n"));
+    // Cut an indented block, without the leading whitespace.
+    cx.set_state(indoc! {"
+        const a: B = (
+            c(),
+            «d(
+                e,
+                f
+            )ˇ»
+        );
+    "});
+    cx.update_editor(|e, cx| e.cut(&Cut, cx));
+    cx.assert_editor_state(indoc! {"
+        const a: B = (
+            c(),
+            ˇ
+        );
+    "});
 
-//     // Paste with three selections, noticing how the copied full-line selection is inserted
-//     // before the empty selections but replaces the selection that is non-empty.
-//     cx.set_state(indoc! {"
-//         Tˇhe quick brown
-//         «foˇ»x jumps over
-//         tˇhe lazy dog"});
-//     cx.update_editor(|e, cx| e.paste(&Paste, cx));
-//     cx.assert_editor_state(indoc! {"
-//         fox jumps over
-//         Tˇhe quick brown
-//         fox jumps over
-//         ˇx jumps over
-//         fox jumps over
-//         tˇhe lazy dog"});
-// }
+    // Paste it at the same position.
+    cx.update_editor(|e, cx| e.paste(&Paste, cx));
+    cx.assert_editor_state(indoc! {"
+        const a: B = (
+            c(),
+            d(
+                e,
+                f
+            )ˇ
+        );
+    "});
 
-// #[gpui::test]
-// async fn test_paste_multiline(cx: &mut gpui::TestAppContext) {
-//     init_test(cx, |_| {});
+    // Paste it at a line with a lower indent level.
+    cx.set_state(indoc! {"
+        ˇ
+        const a: B = (
+            c(),
+        );
+    "});
+    cx.update_editor(|e, cx| e.paste(&Paste, cx));
+    cx.assert_editor_state(indoc! {"
+        d(
+            e,
+            f
+        )ˇ
+        const a: B = (
+            c(),
+        );
+    "});
 
-//     let mut cx = EditorTestContext::new(cx).await;
-//     let language = Arc::new(Language::new(
-//         LanguageConfig::default(),
-//         Some(tree_sitter_rust::language()),
-//     ));
-//     cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+    // Cut an indented block, with the leading whitespace.
+    cx.set_state(indoc! {"
+        const a: B = (
+            c(),
+        «    d(
+                e,
+                f
+            )
+        ˇ»);
+    "});
+    cx.update_editor(|e, cx| e.cut(&Cut, cx));
+    cx.assert_editor_state(indoc! {"
+        const a: B = (
+            c(),
+        ˇ);
+    "});
 
-//     // Cut an indented block, without the leading whitespace.
-//     cx.set_state(indoc! {"
-//         const a: B = (
-//             c(),
-//             «d(
-//                 e,
-//                 f
-//             )ˇ»
-//         );
-//     "});
-//     cx.update_editor(|e, cx| e.cut(&Cut, cx));
-//     cx.assert_editor_state(indoc! {"
-//         const a: B = (
-//             c(),
-//             ˇ
-//         );
-//     "});
+    // Paste it at the same position.
+    cx.update_editor(|e, cx| e.paste(&Paste, cx));
+    cx.assert_editor_state(indoc! {"
+        const a: B = (
+            c(),
+            d(
+                e,
+                f
+            )
+        ˇ);
+    "});
 
-//     // Paste it at the same position.
-//     cx.update_editor(|e, cx| e.paste(&Paste, cx));
-//     cx.assert_editor_state(indoc! {"
-//         const a: B = (
-//             c(),
-//             d(
-//                 e,
-//                 f
-//             )ˇ
-//         );
-//     "});
-
-//     // Paste it at a line with a lower indent level.
-//     cx.set_state(indoc! {"
-//         ˇ
-//         const a: B = (
-//             c(),
-//         );
-//     "});
-//     cx.update_editor(|e, cx| e.paste(&Paste, cx));
-//     cx.assert_editor_state(indoc! {"
-//         d(
-//             e,
-//             f
-//         )ˇ
-//         const a: B = (
-//             c(),
-//         );
-//     "});
-
-//     // Cut an indented block, with the leading whitespace.
-//     cx.set_state(indoc! {"
-//         const a: B = (
-//             c(),
-//         «    d(
-//                 e,
-//                 f
-//             )
-//         ˇ»);
-//     "});
-//     cx.update_editor(|e, cx| e.cut(&Cut, cx));
-//     cx.assert_editor_state(indoc! {"
-//         const a: B = (
-//             c(),
-//         ˇ);
-//     "});
-
-//     // Paste it at the same position.
-//     cx.update_editor(|e, cx| e.paste(&Paste, cx));
-//     cx.assert_editor_state(indoc! {"
-//         const a: B = (
-//             c(),
-//             d(
-//                 e,
-//                 f
-//             )
-//         ˇ);
-//     "});
-
-//     // Paste it at a line with a higher indent level.
-//     cx.set_state(indoc! {"
-//         const a: B = (
-//             c(),
-//             d(
-//                 e,
-//                 fˇ
-//             )
-//         );
-//     "});
-//     cx.update_editor(|e, cx| e.paste(&Paste, cx));
-//     cx.assert_editor_state(indoc! {"
-//         const a: B = (
-//             c(),
-//             d(
-//                 e,
-//                 f    d(
-//                     e,
-//                     f
-//                 )
-//         ˇ
-//             )
-//         );
-//     "});
-// }
+    // Paste it at a line with a higher indent level.
+    cx.set_state(indoc! {"
+        const a: B = (
+            c(),
+            d(
+                e,
+                fˇ
+            )
+        );
+    "});
+    cx.update_editor(|e, cx| e.paste(&Paste, cx));
+    cx.assert_editor_state(indoc! {"
+        const a: B = (
+            c(),
+            d(
+                e,
+                f    d(
+                    e,
+                    f
+                )
+        ˇ
+            )
+        );
+    "});
+}
 
 #[gpui::test]
 fn test_select_all(cx: &mut TestAppContext) {
@@ -4809,114 +4831,113 @@ async fn test_delete_autoclose_pair(cx: &mut gpui::TestAppContext) {
 }
 
 // todo!(select_anchor_ranges)
-// #[gpui::test]
-// async fn test_snippets(cx: &mut gpui::TestAppContext) {
-//     init_test(cx, |_| {});
+#[gpui::test]
+async fn test_snippets(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
 
-//     let (text, insertion_ranges) = marked_text_ranges(
-//         indoc! {"
-//             a.ˇ b
-//             a.ˇ b
-//             a.ˇ b
-//         "},
-//         false,
-//     );
+    let (text, insertion_ranges) = marked_text_ranges(
+        indoc! {"
+            a.ˇ b
+            a.ˇ b
+            a.ˇ b
+        "},
+        false,
+    );
 
-//     let buffer = cx.update(|cx| MultiBuffer::build_simple(&text, cx));
-//     let (editor, mut cx) = cx.add_window_view(|cx| build_editor(buffer, cx));
-//     let cx = &mut cx;
+    let buffer = cx.update(|cx| MultiBuffer::build_simple(&text, cx));
+    let (editor, mut cx) = cx.add_window_view(|cx| build_editor(buffer, cx));
 
-//     editor.update(cx, |editor, cx| {
-//         let snippet = Snippet::parse("f(${1:one}, ${2:two}, ${1:three})$0").unwrap();
+    editor.update(cx, |editor, cx| {
+        let snippet = Snippet::parse("f(${1:one}, ${2:two}, ${1:three})$0").unwrap();
 
-//         editor
-//             .insert_snippet(&insertion_ranges, snippet, cx)
-//             .unwrap();
+        editor
+            .insert_snippet(&insertion_ranges, snippet, cx)
+            .unwrap();
 
-//         fn assert(editor: &mut Editor, cx: &mut ViewContext<Editor>, marked_text: &str) {
-//             let (expected_text, selection_ranges) = marked_text_ranges(marked_text, false);
-//             assert_eq!(editor.text(cx), expected_text);
-//             assert_eq!(editor.selections.ranges::<usize>(cx), selection_ranges);
-//         }
+        fn assert(editor: &mut Editor, cx: &mut ViewContext<Editor>, marked_text: &str) {
+            let (expected_text, selection_ranges) = marked_text_ranges(marked_text, false);
+            assert_eq!(editor.text(cx), expected_text);
+            assert_eq!(editor.selections.ranges::<usize>(cx), selection_ranges);
+        }
 
-//         assert(
-//             editor,
-//             cx,
-//             indoc! {"
-//                 a.f(«one», two, «three») b
-//                 a.f(«one», two, «three») b
-//                 a.f(«one», two, «three») b
-//             "},
-//         );
+        assert(
+            editor,
+            cx,
+            indoc! {"
+                a.f(«one», two, «three») b
+                a.f(«one», two, «three») b
+                a.f(«one», two, «three») b
+            "},
+        );
 
-//         // Can't move earlier than the first tab stop
-//         assert!(!editor.move_to_prev_snippet_tabstop(cx));
-//         assert(
-//             editor,
-//             cx,
-//             indoc! {"
-//                 a.f(«one», two, «three») b
-//                 a.f(«one», two, «three») b
-//                 a.f(«one», two, «three») b
-//             "},
-//         );
+        // Can't move earlier than the first tab stop
+        assert!(!editor.move_to_prev_snippet_tabstop(cx));
+        assert(
+            editor,
+            cx,
+            indoc! {"
+                a.f(«one», two, «three») b
+                a.f(«one», two, «three») b
+                a.f(«one», two, «three») b
+            "},
+        );
 
-//         assert!(editor.move_to_next_snippet_tabstop(cx));
-//         assert(
-//             editor,
-//             cx,
-//             indoc! {"
-//                 a.f(one, «two», three) b
-//                 a.f(one, «two», three) b
-//                 a.f(one, «two», three) b
-//             "},
-//         );
+        assert!(editor.move_to_next_snippet_tabstop(cx));
+        assert(
+            editor,
+            cx,
+            indoc! {"
+                a.f(one, «two», three) b
+                a.f(one, «two», three) b
+                a.f(one, «two», three) b
+            "},
+        );
 
-//         editor.move_to_prev_snippet_tabstop(cx);
-//         assert(
-//             editor,
-//             cx,
-//             indoc! {"
-//                 a.f(«one», two, «three») b
-//                 a.f(«one», two, «three») b
-//                 a.f(«one», two, «three») b
-//             "},
-//         );
+        editor.move_to_prev_snippet_tabstop(cx);
+        assert(
+            editor,
+            cx,
+            indoc! {"
+                a.f(«one», two, «three») b
+                a.f(«one», two, «three») b
+                a.f(«one», two, «three») b
+            "},
+        );
 
-//         assert!(editor.move_to_next_snippet_tabstop(cx));
-//         assert(
-//             editor,
-//             cx,
-//             indoc! {"
-//                 a.f(one, «two», three) b
-//                 a.f(one, «two», three) b
-//                 a.f(one, «two», three) b
-//             "},
-//         );
-//         assert!(editor.move_to_next_snippet_tabstop(cx));
-//         assert(
-//             editor,
-//             cx,
-//             indoc! {"
-//                 a.f(one, two, three)ˇ b
-//                 a.f(one, two, three)ˇ b
-//                 a.f(one, two, three)ˇ b
-//             "},
-//         );
+        assert!(editor.move_to_next_snippet_tabstop(cx));
+        assert(
+            editor,
+            cx,
+            indoc! {"
+                a.f(one, «two», three) b
+                a.f(one, «two», three) b
+                a.f(one, «two», three) b
+            "},
+        );
+        assert!(editor.move_to_next_snippet_tabstop(cx));
+        assert(
+            editor,
+            cx,
+            indoc! {"
+                a.f(one, two, three)ˇ b
+                a.f(one, two, three)ˇ b
+                a.f(one, two, three)ˇ b
+            "},
+        );
 
-//         // As soon as the last tab stop is reached, snippet state is gone
-//         editor.move_to_prev_snippet_tabstop(cx);
-//         assert(
-//             editor,
-//             cx,
-//             indoc! {"
-//                 a.f(one, two, three)ˇ b
-//                 a.f(one, two, three)ˇ b
-//                 a.f(one, two, three)ˇ b
-//             "},
-//         );
-//     });
-// }
+        // As soon as the last tab stop is reached, snippet state is gone
+        editor.move_to_prev_snippet_tabstop(cx);
+        assert(
+            editor,
+            cx,
+            indoc! {"
+                a.f(one, two, three)ˇ b
+                a.f(one, two, three)ˇ b
+                a.f(one, two, three)ˇ b
+            "},
+        );
+    });
+}
 
 #[gpui::test]
 async fn test_document_format_during_save(cx: &mut gpui::TestAppContext) {
@@ -6325,419 +6346,420 @@ async fn test_extra_newline_insertion(cx: &mut gpui::TestAppContext) {
     });
 }
 
-//todo!(finish editor tests)
-// #[gpui::test]
-// fn test_highlighted_ranges(cx: &mut TestAppContext) {
-//     init_test(cx, |_| {});
+#[gpui::test]
+fn test_highlighted_ranges(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
 
-//     let editor = cx.add_window(|cx| {
-//         let buffer = MultiBuffer::build_simple(&sample_text(16, 8, 'a'), cx);
-//         build_editor(buffer.clone(), cx)
-//     });
+    let editor = cx.add_window(|cx| {
+        let buffer = MultiBuffer::build_simple(&sample_text(16, 8, 'a'), cx);
+        build_editor(buffer.clone(), cx)
+    });
 
-//     editor.update(cx, |editor, cx| {
-//         struct Type1;
-//         struct Type2;
+    editor.update(cx, |editor, cx| {
+        struct Type1;
+        struct Type2;
 
-//         let buffer = editor.buffer.read(cx).snapshot(cx);
+        let buffer = editor.buffer.read(cx).snapshot(cx);
 
-//         let anchor_range =
-//             |range: Range<Point>| buffer.anchor_after(range.start)..buffer.anchor_after(range.end);
+        let anchor_range =
+            |range: Range<Point>| buffer.anchor_after(range.start)..buffer.anchor_after(range.end);
 
-//         editor.highlight_background::<Type1>(
-//             vec![
-//                 anchor_range(Point::new(2, 1)..Point::new(2, 3)),
-//                 anchor_range(Point::new(4, 2)..Point::new(4, 4)),
-//                 anchor_range(Point::new(6, 3)..Point::new(6, 5)),
-//                 anchor_range(Point::new(8, 4)..Point::new(8, 6)),
-//             ],
-//             |_| Hsla::red(),
-//             cx,
-//         );
-//         editor.highlight_background::<Type2>(
-//             vec![
-//                 anchor_range(Point::new(3, 2)..Point::new(3, 5)),
-//                 anchor_range(Point::new(5, 3)..Point::new(5, 6)),
-//                 anchor_range(Point::new(7, 4)..Point::new(7, 7)),
-//                 anchor_range(Point::new(9, 5)..Point::new(9, 8)),
-//             ],
-//             |_| Hsla::green(),
-//             cx,
-//         );
+        editor.highlight_background::<Type1>(
+            vec![
+                anchor_range(Point::new(2, 1)..Point::new(2, 3)),
+                anchor_range(Point::new(4, 2)..Point::new(4, 4)),
+                anchor_range(Point::new(6, 3)..Point::new(6, 5)),
+                anchor_range(Point::new(8, 4)..Point::new(8, 6)),
+            ],
+            |_| Hsla::red(),
+            cx,
+        );
+        editor.highlight_background::<Type2>(
+            vec![
+                anchor_range(Point::new(3, 2)..Point::new(3, 5)),
+                anchor_range(Point::new(5, 3)..Point::new(5, 6)),
+                anchor_range(Point::new(7, 4)..Point::new(7, 7)),
+                anchor_range(Point::new(9, 5)..Point::new(9, 8)),
+            ],
+            |_| Hsla::green(),
+            cx,
+        );
 
-//         let snapshot = editor.snapshot(cx);
-//         let mut highlighted_ranges = editor.background_highlights_in_range(
-//             anchor_range(Point::new(3, 4)..Point::new(7, 4)),
-//             &snapshot,
-//             cx.theme().colors(),
-//         );
-//         // Enforce a consistent ordering based on color without relying on the ordering of the
-//         // highlight's `TypeId` which is non-executor.
-//         highlighted_ranges.sort_unstable_by_key(|(_, color)| *color);
-//         assert_eq!(
-//             highlighted_ranges,
-//             &[
-//                 (
-//                     DisplayPoint::new(3, 2)..DisplayPoint::new(3, 5),
-//                     Hsla::green(),
-//                 ),
-//                 (
-//                     DisplayPoint::new(5, 3)..DisplayPoint::new(5, 6),
-//                     Hsla::green(),
-//                 ),
-//                 (
-//                     DisplayPoint::new(4, 2)..DisplayPoint::new(4, 4),
-//                     Hsla::red(),
-//                 ),
-//                 (
-//                     DisplayPoint::new(6, 3)..DisplayPoint::new(6, 5),
-//                     Hsla::red(),
-//                 ),
-//             ]
-//         );
-//         assert_eq!(
-//             editor.background_highlights_in_range(
-//                 anchor_range(Point::new(5, 6)..Point::new(6, 4)),
-//                 &snapshot,
-//                 cx.theme().colors(),
-//             ),
-//             &[(
-//                 DisplayPoint::new(6, 3)..DisplayPoint::new(6, 5),
-//                 Hsla::red(),
-//             )]
-//         );
-//     });
-// }
+        let snapshot = editor.snapshot(cx);
+        let mut highlighted_ranges = editor.background_highlights_in_range(
+            anchor_range(Point::new(3, 4)..Point::new(7, 4)),
+            &snapshot,
+            cx.theme().colors(),
+        );
+        // Enforce a consistent ordering based on color without relying on the ordering of the
+        // highlight's `TypeId` which is non-executor.
+        highlighted_ranges.sort_unstable_by_key(|(_, color)| *color);
+        assert_eq!(
+            highlighted_ranges,
+            &[
+                (
+                    DisplayPoint::new(4, 2)..DisplayPoint::new(4, 4),
+                    Hsla::red(),
+                ),
+                (
+                    DisplayPoint::new(6, 3)..DisplayPoint::new(6, 5),
+                    Hsla::red(),
+                ),
+                (
+                    DisplayPoint::new(3, 2)..DisplayPoint::new(3, 5),
+                    Hsla::green(),
+                ),
+                (
+                    DisplayPoint::new(5, 3)..DisplayPoint::new(5, 6),
+                    Hsla::green(),
+                ),
+            ]
+        );
+        assert_eq!(
+            editor.background_highlights_in_range(
+                anchor_range(Point::new(5, 6)..Point::new(6, 4)),
+                &snapshot,
+                cx.theme().colors(),
+            ),
+            &[(
+                DisplayPoint::new(6, 3)..DisplayPoint::new(6, 5),
+                Hsla::red(),
+            )]
+        );
+    });
+}
 
 // todo!(following)
-// #[gpui::test]
-// async fn test_following(cx: &mut gpui::TestAppContext) {
-//     init_test(cx, |_| {});
+#[gpui::test]
+async fn test_following(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
 
-//     let fs = FakeFs::new(cx.executor());
-//     let project = Project::test(fs, ["/file.rs".as_ref()], cx).await;
+    let fs = FakeFs::new(cx.executor());
+    let project = Project::test(fs, ["/file.rs".as_ref()], cx).await;
 
-//     let buffer = project.update(cx, |project, cx| {
-//         let buffer = project
-//             .create_buffer(&sample_text(16, 8, 'a'), None, cx)
-//             .unwrap();
-//         cx.build_model(|cx| MultiBuffer::singleton(buffer, cx))
-//     });
-//     let leader = cx.add_window(|cx| build_editor(buffer.clone(), cx));
-//     let follower = cx.update(|cx| {
-//         cx.open_window(
-//             WindowOptions {
-//                 bounds: WindowBounds::Fixed(Bounds::from_corners(
-//                     gpui::Point::new((0. as f64).into(), (0. as f64).into()),
-//                     gpui::Point::new((10. as f64).into(), (80. as f64).into()),
-//                 )),
-//                 ..Default::default()
-//             },
-//             |cx| cx.build_view(|cx| build_editor(buffer.clone(), cx)),
-//         )
-//     });
+    let buffer = project.update(cx, |project, cx| {
+        let buffer = project
+            .create_buffer(&sample_text(16, 8, 'a'), None, cx)
+            .unwrap();
+        cx.build_model(|cx| MultiBuffer::singleton(buffer, cx))
+    });
+    let leader = cx.add_window(|cx| build_editor(buffer.clone(), cx));
+    let follower = cx.update(|cx| {
+        cx.open_window(
+            WindowOptions {
+                bounds: WindowBounds::Fixed(Bounds::from_corners(
+                    gpui::Point::new((0. as f64).into(), (0. as f64).into()),
+                    gpui::Point::new((10. as f64).into(), (80. as f64).into()),
+                )),
+                ..Default::default()
+            },
+            |cx| cx.build_view(|cx| build_editor(buffer.clone(), cx)),
+        )
+    });
 
-//     let is_still_following = Rc::new(RefCell::new(true));
-//     let follower_edit_event_count = Rc::new(RefCell::new(0));
-//     let pending_update = Rc::new(RefCell::new(None));
-//     follower.update(cx, {
-//         let update = pending_update.clone();
-//         let is_still_following = is_still_following.clone();
-//         let follower_edit_event_count = follower_edit_event_count.clone();
-//         |_, cx| {
-//             cx.subscribe(
-//                 &leader.root_view(cx).unwrap(),
-//                 move |_, leader, event, cx| {
-//                     leader
-//                         .read(cx)
-//                         .add_event_to_update_proto(event, &mut *update.borrow_mut(), cx);
-//                 },
-//             )
-//             .detach();
+    let is_still_following = Rc::new(RefCell::new(true));
+    let follower_edit_event_count = Rc::new(RefCell::new(0));
+    let pending_update = Rc::new(RefCell::new(None));
+    follower.update(cx, {
+        let update = pending_update.clone();
+        let is_still_following = is_still_following.clone();
+        let follower_edit_event_count = follower_edit_event_count.clone();
+        |_, cx| {
+            cx.subscribe(
+                &leader.root_view(cx).unwrap(),
+                move |_, leader, event, cx| {
+                    leader
+                        .read(cx)
+                        .add_event_to_update_proto(event, &mut *update.borrow_mut(), cx);
+                },
+            )
+            .detach();
 
-//             cx.subscribe(
-//                 &follower.root_view(cx).unwrap(),
-//                 move |_, _, event: &Event, cx| {
-//                     if matches!(event.to_follow_event(), Some(FollowEvent::Unfollow)) {
-//                         *is_still_following.borrow_mut() = false;
-//                     }
+            cx.subscribe(
+                &follower.root_view(cx).unwrap(),
+                move |_, _, event: &EditorEvent, cx| {
+                    if matches!(event.to_follow_event(), Some(FollowEvent::Unfollow)) {
+                        *is_still_following.borrow_mut() = false;
+                    }
 
-//                     if let Event::BufferEdited = event {
-//                         *follower_edit_event_count.borrow_mut() += 1;
-//                     }
-//                 },
-//             )
-//             .detach();
-//         }
-//     });
+                    if let EditorEvent::BufferEdited = event {
+                        *follower_edit_event_count.borrow_mut() += 1;
+                    }
+                },
+            )
+            .detach();
+        }
+    });
 
-//     // Update the selections only
-//     leader.update(cx, |leader, cx| {
-//         leader.change_selections(None, cx, |s| s.select_ranges([1..1]));
-//     });
-//     follower
-//         .update(cx, |follower, cx| {
-//             follower.apply_update_proto(&project, pending_update.borrow_mut().take().unwrap(), cx)
-//         })
-//         .unwrap()
-//         .await
-//         .unwrap();
-//     follower.update(cx, |follower, cx| {
-//         assert_eq!(follower.selections.ranges(cx), vec![1..1]);
-//     });
-//     assert_eq!(*is_still_following.borrow(), true);
-//     assert_eq!(*follower_edit_event_count.borrow(), 0);
+    // Update the selections only
+    leader.update(cx, |leader, cx| {
+        leader.change_selections(None, cx, |s| s.select_ranges([1..1]));
+    });
+    follower
+        .update(cx, |follower, cx| {
+            follower.apply_update_proto(&project, pending_update.borrow_mut().take().unwrap(), cx)
+        })
+        .unwrap()
+        .await
+        .unwrap();
+    follower.update(cx, |follower, cx| {
+        assert_eq!(follower.selections.ranges(cx), vec![1..1]);
+    });
+    assert_eq!(*is_still_following.borrow(), true);
+    assert_eq!(*follower_edit_event_count.borrow(), 0);
 
-//     // Update the scroll position only
-//     leader.update(cx, |leader, cx| {
-//         leader.set_scroll_position(gpui::Point::new(1.5, 3.5), cx);
-//     });
-//     follower
-//         .update(cx, |follower, cx| {
-//             follower.apply_update_proto(&project, pending_update.borrow_mut().take().unwrap(), cx)
-//         })
-//         .unwrap()
-//         .await
-//         .unwrap();
-//     assert_eq!(
-//         follower
-//             .update(cx, |follower, cx| follower.scroll_position(cx))
-//             .unwrap(),
-//         gpui::Point::new(1.5, 3.5)
-//     );
-//     assert_eq!(*is_still_following.borrow(), true);
-//     assert_eq!(*follower_edit_event_count.borrow(), 0);
+    // Update the scroll position only
+    leader.update(cx, |leader, cx| {
+        leader.set_scroll_position(gpui::Point::new(1.5, 3.5), cx);
+    });
+    follower
+        .update(cx, |follower, cx| {
+            follower.apply_update_proto(&project, pending_update.borrow_mut().take().unwrap(), cx)
+        })
+        .unwrap()
+        .await
+        .unwrap();
+    assert_eq!(
+        follower
+            .update(cx, |follower, cx| follower.scroll_position(cx))
+            .unwrap(),
+        gpui::Point::new(1.5, 3.5)
+    );
+    assert_eq!(*is_still_following.borrow(), true);
+    assert_eq!(*follower_edit_event_count.borrow(), 0);
 
-//     // Update the selections and scroll position. The follower's scroll position is updated
-//     // via autoscroll, not via the leader's exact scroll position.
-//     leader.update(cx, |leader, cx| {
-//         leader.change_selections(None, cx, |s| s.select_ranges([0..0]));
-//         leader.request_autoscroll(Autoscroll::newest(), cx);
-//         leader.set_scroll_position(gpui::Point::new(1.5, 3.5), cx);
-//     });
-//     follower
-//         .update(cx, |follower, cx| {
-//             follower.apply_update_proto(&project, pending_update.borrow_mut().take().unwrap(), cx)
-//         })
-//         .unwrap()
-//         .await
-//         .unwrap();
-//     follower.update(cx, |follower, cx| {
-//         assert_eq!(follower.scroll_position(cx), gpui::Point::new(1.5, 0.0));
-//         assert_eq!(follower.selections.ranges(cx), vec![0..0]);
-//     });
-//     assert_eq!(*is_still_following.borrow(), true);
+    // Update the selections and scroll position. The follower's scroll position is updated
+    // via autoscroll, not via the leader's exact scroll position.
+    leader.update(cx, |leader, cx| {
+        leader.change_selections(None, cx, |s| s.select_ranges([0..0]));
+        leader.request_autoscroll(Autoscroll::newest(), cx);
+        leader.set_scroll_position(gpui::Point::new(1.5, 3.5), cx);
+    });
+    follower
+        .update(cx, |follower, cx| {
+            follower.apply_update_proto(&project, pending_update.borrow_mut().take().unwrap(), cx)
+        })
+        .unwrap()
+        .await
+        .unwrap();
+    follower.update(cx, |follower, cx| {
+        assert_eq!(follower.scroll_position(cx), gpui::Point::new(1.5, 0.0));
+        assert_eq!(follower.selections.ranges(cx), vec![0..0]);
+    });
+    assert_eq!(*is_still_following.borrow(), true);
 
-//     // Creating a pending selection that precedes another selection
-//     leader.update(cx, |leader, cx| {
-//         leader.change_selections(None, cx, |s| s.select_ranges([1..1]));
-//         leader.begin_selection(DisplayPoint::new(0, 0), true, 1, cx);
-//     });
-//     follower
-//         .update(cx, |follower, cx| {
-//             follower.apply_update_proto(&project, pending_update.borrow_mut().take().unwrap(), cx)
-//         })
-//         .unwrap()
-//         .await
-//         .unwrap();
-//     follower.update(cx, |follower, cx| {
-//         assert_eq!(follower.selections.ranges(cx), vec![0..0, 1..1]);
-//     });
-//     assert_eq!(*is_still_following.borrow(), true);
+    // Creating a pending selection that precedes another selection
+    leader.update(cx, |leader, cx| {
+        leader.change_selections(None, cx, |s| s.select_ranges([1..1]));
+        leader.begin_selection(DisplayPoint::new(0, 0), true, 1, cx);
+    });
+    follower
+        .update(cx, |follower, cx| {
+            follower.apply_update_proto(&project, pending_update.borrow_mut().take().unwrap(), cx)
+        })
+        .unwrap()
+        .await
+        .unwrap();
+    follower.update(cx, |follower, cx| {
+        assert_eq!(follower.selections.ranges(cx), vec![0..0, 1..1]);
+    });
+    assert_eq!(*is_still_following.borrow(), true);
 
-//     // Extend the pending selection so that it surrounds another selection
-//     leader.update(cx, |leader, cx| {
-//         leader.extend_selection(DisplayPoint::new(0, 2), 1, cx);
-//     });
-//     follower
-//         .update(cx, |follower, cx| {
-//             follower.apply_update_proto(&project, pending_update.borrow_mut().take().unwrap(), cx)
-//         })
-//         .unwrap()
-//         .await
-//         .unwrap();
-//     follower.update(cx, |follower, cx| {
-//         assert_eq!(follower.selections.ranges(cx), vec![0..2]);
-//     });
+    // Extend the pending selection so that it surrounds another selection
+    leader.update(cx, |leader, cx| {
+        leader.extend_selection(DisplayPoint::new(0, 2), 1, cx);
+    });
+    follower
+        .update(cx, |follower, cx| {
+            follower.apply_update_proto(&project, pending_update.borrow_mut().take().unwrap(), cx)
+        })
+        .unwrap()
+        .await
+        .unwrap();
+    follower.update(cx, |follower, cx| {
+        assert_eq!(follower.selections.ranges(cx), vec![0..2]);
+    });
 
-//     // Scrolling locally breaks the follow
-//     follower.update(cx, |follower, cx| {
-//         let top_anchor = follower.buffer().read(cx).read(cx).anchor_after(0);
-//         follower.set_scroll_anchor(
-//             ScrollAnchor {
-//                 anchor: top_anchor,
-//                 offset: gpui::Point::new(0.0, 0.5),
-//             },
-//             cx,
-//         );
-//     });
-//     assert_eq!(*is_still_following.borrow(), false);
-// }
+    // Scrolling locally breaks the follow
+    follower.update(cx, |follower, cx| {
+        let top_anchor = follower.buffer().read(cx).read(cx).anchor_after(0);
+        follower.set_scroll_anchor(
+            ScrollAnchor {
+                anchor: top_anchor,
+                offset: gpui::Point::new(0.0, 0.5),
+            },
+            cx,
+        );
+    });
+    assert_eq!(*is_still_following.borrow(), false);
+}
 
-// #[gpui::test]
-// async fn test_following_with_multiple_excerpts(cx: &mut gpui::TestAppContext) {
-//     init_test(cx, |_| {});
+#[gpui::test]
+async fn test_following_with_multiple_excerpts(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
 
-//     let fs = FakeFs::new(cx.executor());
-//     let project = Project::test(fs, ["/file.rs".as_ref()], cx).await;
-//     let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
-//     let pane = workspace
-//         .update(cx, |workspace, _| workspace.active_pane().clone())
-//         .unwrap();
+    let fs = FakeFs::new(cx.executor());
+    let project = Project::test(fs, ["/file.rs".as_ref()], cx).await;
+    let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+    let pane = workspace
+        .update(cx, |workspace, _| workspace.active_pane().clone())
+        .unwrap();
 
-//     let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
+    let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
 
-//     let leader = pane.update(cx, |_, cx| {
-//         let multibuffer = cx.build_model(|_| MultiBuffer::new(0));
-//         cx.build_view(|cx| build_editor(multibuffer.clone(), cx))
-//     });
+    let leader = pane.update(cx, |_, cx| {
+        let multibuffer = cx.build_model(|_| MultiBuffer::new(0));
+        cx.build_view(|cx| build_editor(multibuffer.clone(), cx))
+    });
 
-//     // Start following the editor when it has no excerpts.
-//     let mut state_message = leader.update(cx, |leader, cx| leader.to_state_proto(cx));
-//     let follower_1 = cx
-//         .update(|cx| {
-//             Editor::from_state_proto(
-//                 pane.clone(),
-//                 workspace.root_view(cx).unwrap(),
-//                 ViewId {
-//                     creator: Default::default(),
-//                     id: 0,
-//                 },
-//                 &mut state_message,
-//                 cx,
-//             )
-//         })
-//         .unwrap()
-//         .await
-//         .unwrap();
+    // Start following the editor when it has no excerpts.
+    let mut state_message = leader.update(cx, |leader, cx| leader.to_state_proto(cx));
+    let follower_1 = cx
+        .update_window(*workspace.deref(), |_, cx| {
+            Editor::from_state_proto(
+                pane.clone(),
+                workspace.root_view(cx).unwrap(),
+                ViewId {
+                    creator: Default::default(),
+                    id: 0,
+                },
+                &mut state_message,
+                cx,
+            )
+        })
+        .unwrap()
+        .unwrap()
+        .await
+        .unwrap();
 
-//     let update_message = Rc::new(RefCell::new(None));
-//     follower_1.update(cx, {
-//         let update = update_message.clone();
-//         |_, cx| {
-//             cx.subscribe(&leader, move |_, leader, event, cx| {
-//                 leader
-//                     .read(cx)
-//                     .add_event_to_update_proto(event, &mut *update.borrow_mut(), cx);
-//             })
-//             .detach();
-//         }
-//     });
+    let update_message = Rc::new(RefCell::new(None));
+    follower_1.update(cx, {
+        let update = update_message.clone();
+        |_, cx| {
+            cx.subscribe(&leader, move |_, leader, event, cx| {
+                leader
+                    .read(cx)
+                    .add_event_to_update_proto(event, &mut *update.borrow_mut(), cx);
+            })
+            .detach();
+        }
+    });
 
-//     let (buffer_1, buffer_2) = project.update(cx, |project, cx| {
-//         (
-//             project
-//                 .create_buffer("abc\ndef\nghi\njkl\n", None, cx)
-//                 .unwrap(),
-//             project
-//                 .create_buffer("mno\npqr\nstu\nvwx\n", None, cx)
-//                 .unwrap(),
-//         )
-//     });
+    let (buffer_1, buffer_2) = project.update(cx, |project, cx| {
+        (
+            project
+                .create_buffer("abc\ndef\nghi\njkl\n", None, cx)
+                .unwrap(),
+            project
+                .create_buffer("mno\npqr\nstu\nvwx\n", None, cx)
+                .unwrap(),
+        )
+    });
 
-//     // Insert some excerpts.
-//     leader.update(cx, |leader, cx| {
-//         leader.buffer.update(cx, |multibuffer, cx| {
-//             let excerpt_ids = multibuffer.push_excerpts(
-//                 buffer_1.clone(),
-//                 [
-//                     ExcerptRange {
-//                         context: 1..6,
-//                         primary: None,
-//                     },
-//                     ExcerptRange {
-//                         context: 12..15,
-//                         primary: None,
-//                     },
-//                     ExcerptRange {
-//                         context: 0..3,
-//                         primary: None,
-//                     },
-//                 ],
-//                 cx,
-//             );
-//             multibuffer.insert_excerpts_after(
-//                 excerpt_ids[0],
-//                 buffer_2.clone(),
-//                 [
-//                     ExcerptRange {
-//                         context: 8..12,
-//                         primary: None,
-//                     },
-//                     ExcerptRange {
-//                         context: 0..6,
-//                         primary: None,
-//                     },
-//                 ],
-//                 cx,
-//             );
-//         });
-//     });
+    // Insert some excerpts.
+    leader.update(cx, |leader, cx| {
+        leader.buffer.update(cx, |multibuffer, cx| {
+            let excerpt_ids = multibuffer.push_excerpts(
+                buffer_1.clone(),
+                [
+                    ExcerptRange {
+                        context: 1..6,
+                        primary: None,
+                    },
+                    ExcerptRange {
+                        context: 12..15,
+                        primary: None,
+                    },
+                    ExcerptRange {
+                        context: 0..3,
+                        primary: None,
+                    },
+                ],
+                cx,
+            );
+            multibuffer.insert_excerpts_after(
+                excerpt_ids[0],
+                buffer_2.clone(),
+                [
+                    ExcerptRange {
+                        context: 8..12,
+                        primary: None,
+                    },
+                    ExcerptRange {
+                        context: 0..6,
+                        primary: None,
+                    },
+                ],
+                cx,
+            );
+        });
+    });
 
-//     // Apply the update of adding the excerpts.
-//     follower_1
-//         .update(cx, |follower, cx| {
-//             follower.apply_update_proto(&project, update_message.borrow().clone().unwrap(), cx)
-//         })
-//         .await
-//         .unwrap();
-//     assert_eq!(
-//         follower_1.update(cx, |editor, cx| editor.text(cx)),
-//         leader.update(cx, |editor, cx| editor.text(cx))
-//     );
-//     update_message.borrow_mut().take();
+    // Apply the update of adding the excerpts.
+    follower_1
+        .update(cx, |follower, cx| {
+            follower.apply_update_proto(&project, update_message.borrow().clone().unwrap(), cx)
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        follower_1.update(cx, |editor, cx| editor.text(cx)),
+        leader.update(cx, |editor, cx| editor.text(cx))
+    );
+    update_message.borrow_mut().take();
 
-//     // Start following separately after it already has excerpts.
-//     let mut state_message = leader.update(cx, |leader, cx| leader.to_state_proto(cx));
-//     let follower_2 = cx
-//         .update(|cx| {
-//             Editor::from_state_proto(
-//                 pane.clone(),
-//                 workspace.clone(),
-//                 ViewId {
-//                     creator: Default::default(),
-//                     id: 0,
-//                 },
-//                 &mut state_message,
-//                 cx,
-//             )
-//         })
-//         .unwrap()
-//         .await
-//         .unwrap();
-//     assert_eq!(
-//         follower_2.update(cx, |editor, cx| editor.text(cx)),
-//         leader.update(cx, |editor, cx| editor.text(cx))
-//     );
+    // Start following separately after it already has excerpts.
+    let mut state_message = leader.update(cx, |leader, cx| leader.to_state_proto(cx));
+    let follower_2 = cx
+        .update_window(*workspace.deref(), |_, cx| {
+            Editor::from_state_proto(
+                pane.clone(),
+                workspace.root_view(cx).unwrap().clone(),
+                ViewId {
+                    creator: Default::default(),
+                    id: 0,
+                },
+                &mut state_message,
+                cx,
+            )
+        })
+        .unwrap()
+        .unwrap()
+        .await
+        .unwrap();
+    assert_eq!(
+        follower_2.update(cx, |editor, cx| editor.text(cx)),
+        leader.update(cx, |editor, cx| editor.text(cx))
+    );
 
-//     // Remove some excerpts.
-//     leader.update(cx, |leader, cx| {
-//         leader.buffer.update(cx, |multibuffer, cx| {
-//             let excerpt_ids = multibuffer.excerpt_ids();
-//             multibuffer.remove_excerpts([excerpt_ids[1], excerpt_ids[2]], cx);
-//             multibuffer.remove_excerpts([excerpt_ids[0]], cx);
-//         });
-//     });
+    // Remove some excerpts.
+    leader.update(cx, |leader, cx| {
+        leader.buffer.update(cx, |multibuffer, cx| {
+            let excerpt_ids = multibuffer.excerpt_ids();
+            multibuffer.remove_excerpts([excerpt_ids[1], excerpt_ids[2]], cx);
+            multibuffer.remove_excerpts([excerpt_ids[0]], cx);
+        });
+    });
 
-//     // Apply the update of removing the excerpts.
-//     follower_1
-//         .update(cx, |follower, cx| {
-//             follower.apply_update_proto(&project, update_message.borrow().clone().unwrap(), cx)
-//         })
-//         .await
-//         .unwrap();
-//     follower_2
-//         .update(cx, |follower, cx| {
-//             follower.apply_update_proto(&project, update_message.borrow().clone().unwrap(), cx)
-//         })
-//         .await
-//         .unwrap();
-//     update_message.borrow_mut().take();
-//     assert_eq!(
-//         follower_1.update(cx, |editor, cx| editor.text(cx)),
-//         leader.update(cx, |editor, cx| editor.text(cx))
-//     );
-// }
+    // Apply the update of removing the excerpts.
+    follower_1
+        .update(cx, |follower, cx| {
+            follower.apply_update_proto(&project, update_message.borrow().clone().unwrap(), cx)
+        })
+        .await
+        .unwrap();
+    follower_2
+        .update(cx, |follower, cx| {
+            follower.apply_update_proto(&project, update_message.borrow().clone().unwrap(), cx)
+        })
+        .await
+        .unwrap();
+    update_message.borrow_mut().take();
+    assert_eq!(
+        follower_1.update(cx, |editor, cx| editor.text(cx)),
+        leader.update(cx, |editor, cx| editor.text(cx))
+    );
+}
 
 #[gpui::test]
 async fn go_to_prev_overlapping_diagnostic(
@@ -7047,255 +7069,256 @@ async fn test_move_to_enclosing_bracket(cx: &mut gpui::TestAppContext) {
 }
 
 // todo!(completions)
-// #[gpui::test(iterations = 10)]
-// async fn test_copilot(executor: BackgroundExecutor, cx: &mut gpui::TestAppContext) {
-//     init_test(cx, |_| {});
+#[gpui::test(iterations = 10)]
+async fn test_copilot(executor: BackgroundExecutor, cx: &mut gpui::TestAppContext) {
+    // flaky
+    init_test(cx, |_| {});
 
-//     let (copilot, copilot_lsp) = Copilot::fake(cx);
-//     cx.update(|cx| cx.set_global(copilot));
-//     let mut cx = EditorLspTestContext::new_rust(
-//         lsp::ServerCapabilities {
-//             completion_provider: Some(lsp::CompletionOptions {
-//                 trigger_characters: Some(vec![".".to_string(), ":".to_string()]),
-//                 ..Default::default()
-//             }),
-//             ..Default::default()
-//         },
-//         cx,
-//     )
-//     .await;
+    let (copilot, copilot_lsp) = Copilot::fake(cx);
+    cx.update(|cx| cx.set_global(copilot));
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            completion_provider: Some(lsp::CompletionOptions {
+                trigger_characters: Some(vec![".".to_string(), ":".to_string()]),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
 
-//     // When inserting, ensure autocompletion is favored over Copilot suggestions.
-//     cx.set_state(indoc! {"
-//         oneˇ
-//         two
-//         three
-//     "});
-//     cx.simulate_keystroke(".");
-//     let _ = handle_completion_request(
-//         &mut cx,
-//         indoc! {"
-//             one.|<>
-//             two
-//             three
-//         "},
-//         vec!["completion_a", "completion_b"],
-//     );
-//     handle_copilot_completion_request(
-//         &copilot_lsp,
-//         vec![copilot::request::Completion {
-//             text: "one.copilot1".into(),
-//             range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 4)),
-//             ..Default::default()
-//         }],
-//         vec![],
-//     );
-//     executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
-//     cx.update_editor(|editor, cx| {
-//         assert!(editor.context_menu_visible());
-//         assert!(!editor.has_active_copilot_suggestion(cx));
+    // When inserting, ensure autocompletion is favored over Copilot suggestions.
+    cx.set_state(indoc! {"
+        oneˇ
+        two
+        three
+    "});
+    cx.simulate_keystroke(".");
+    let _ = handle_completion_request(
+        &mut cx,
+        indoc! {"
+            one.|<>
+            two
+            three
+        "},
+        vec!["completion_a", "completion_b"],
+    );
+    handle_copilot_completion_request(
+        &copilot_lsp,
+        vec![copilot::request::Completion {
+            text: "one.copilot1".into(),
+            range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 4)),
+            ..Default::default()
+        }],
+        vec![],
+    );
+    executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+    cx.update_editor(|editor, cx| {
+        assert!(editor.context_menu_visible());
+        assert!(!editor.has_active_copilot_suggestion(cx));
 
-//         // Confirming a completion inserts it and hides the context menu, without showing
-//         // the copilot suggestion afterwards.
-//         editor
-//             .confirm_completion(&Default::default(), cx)
-//             .unwrap()
-//             .detach();
-//         assert!(!editor.context_menu_visible());
-//         assert!(!editor.has_active_copilot_suggestion(cx));
-//         assert_eq!(editor.text(cx), "one.completion_a\ntwo\nthree\n");
-//         assert_eq!(editor.display_text(cx), "one.completion_a\ntwo\nthree\n");
-//     });
+        // Confirming a completion inserts it and hides the context menu, without showing
+        // the copilot suggestion afterwards.
+        editor
+            .confirm_completion(&Default::default(), cx)
+            .unwrap()
+            .detach();
+        assert!(!editor.context_menu_visible());
+        assert!(!editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.text(cx), "one.completion_a\ntwo\nthree\n");
+        assert_eq!(editor.display_text(cx), "one.completion_a\ntwo\nthree\n");
+    });
 
-//     // Ensure Copilot suggestions are shown right away if no autocompletion is available.
-//     cx.set_state(indoc! {"
-//         oneˇ
-//         two
-//         three
-//     "});
-//     cx.simulate_keystroke(".");
-//     let _ = handle_completion_request(
-//         &mut cx,
-//         indoc! {"
-//             one.|<>
-//             two
-//             three
-//         "},
-//         vec![],
-//     );
-//     handle_copilot_completion_request(
-//         &copilot_lsp,
-//         vec![copilot::request::Completion {
-//             text: "one.copilot1".into(),
-//             range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 4)),
-//             ..Default::default()
-//         }],
-//         vec![],
-//     );
-//     executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
-//     cx.update_editor(|editor, cx| {
-//         assert!(!editor.context_menu_visible());
-//         assert!(editor.has_active_copilot_suggestion(cx));
-//         assert_eq!(editor.display_text(cx), "one.copilot1\ntwo\nthree\n");
-//         assert_eq!(editor.text(cx), "one.\ntwo\nthree\n");
-//     });
+    // Ensure Copilot suggestions are shown right away if no autocompletion is available.
+    cx.set_state(indoc! {"
+        oneˇ
+        two
+        three
+    "});
+    cx.simulate_keystroke(".");
+    let _ = handle_completion_request(
+        &mut cx,
+        indoc! {"
+            one.|<>
+            two
+            three
+        "},
+        vec![],
+    );
+    handle_copilot_completion_request(
+        &copilot_lsp,
+        vec![copilot::request::Completion {
+            text: "one.copilot1".into(),
+            range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 4)),
+            ..Default::default()
+        }],
+        vec![],
+    );
+    executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+    cx.update_editor(|editor, cx| {
+        assert!(!editor.context_menu_visible());
+        assert!(editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.display_text(cx), "one.copilot1\ntwo\nthree\n");
+        assert_eq!(editor.text(cx), "one.\ntwo\nthree\n");
+    });
 
-//     // Reset editor, and ensure autocompletion is still favored over Copilot suggestions.
-//     cx.set_state(indoc! {"
-//         oneˇ
-//         two
-//         three
-//     "});
-//     cx.simulate_keystroke(".");
-//     let _ = handle_completion_request(
-//         &mut cx,
-//         indoc! {"
-//             one.|<>
-//             two
-//             three
-//         "},
-//         vec!["completion_a", "completion_b"],
-//     );
-//     handle_copilot_completion_request(
-//         &copilot_lsp,
-//         vec![copilot::request::Completion {
-//             text: "one.copilot1".into(),
-//             range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 4)),
-//             ..Default::default()
-//         }],
-//         vec![],
-//     );
-//     executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
-//     cx.update_editor(|editor, cx| {
-//         assert!(editor.context_menu_visible());
-//         assert!(!editor.has_active_copilot_suggestion(cx));
+    // Reset editor, and ensure autocompletion is still favored over Copilot suggestions.
+    cx.set_state(indoc! {"
+        oneˇ
+        two
+        three
+    "});
+    cx.simulate_keystroke(".");
+    let _ = handle_completion_request(
+        &mut cx,
+        indoc! {"
+            one.|<>
+            two
+            three
+        "},
+        vec!["completion_a", "completion_b"],
+    );
+    handle_copilot_completion_request(
+        &copilot_lsp,
+        vec![copilot::request::Completion {
+            text: "one.copilot1".into(),
+            range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 4)),
+            ..Default::default()
+        }],
+        vec![],
+    );
+    executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+    cx.update_editor(|editor, cx| {
+        assert!(editor.context_menu_visible());
+        assert!(!editor.has_active_copilot_suggestion(cx));
 
-//         // When hiding the context menu, the Copilot suggestion becomes visible.
-//         editor.hide_context_menu(cx);
-//         assert!(!editor.context_menu_visible());
-//         assert!(editor.has_active_copilot_suggestion(cx));
-//         assert_eq!(editor.display_text(cx), "one.copilot1\ntwo\nthree\n");
-//         assert_eq!(editor.text(cx), "one.\ntwo\nthree\n");
-//     });
+        // When hiding the context menu, the Copilot suggestion becomes visible.
+        editor.hide_context_menu(cx);
+        assert!(!editor.context_menu_visible());
+        assert!(editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.display_text(cx), "one.copilot1\ntwo\nthree\n");
+        assert_eq!(editor.text(cx), "one.\ntwo\nthree\n");
+    });
 
-//     // Ensure existing completion is interpolated when inserting again.
-//     cx.simulate_keystroke("c");
-//     executor.run_until_parked();
-//     cx.update_editor(|editor, cx| {
-//         assert!(!editor.context_menu_visible());
-//         assert!(editor.has_active_copilot_suggestion(cx));
-//         assert_eq!(editor.display_text(cx), "one.copilot1\ntwo\nthree\n");
-//         assert_eq!(editor.text(cx), "one.c\ntwo\nthree\n");
-//     });
+    // Ensure existing completion is interpolated when inserting again.
+    cx.simulate_keystroke("c");
+    executor.run_until_parked();
+    cx.update_editor(|editor, cx| {
+        assert!(!editor.context_menu_visible());
+        assert!(editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.display_text(cx), "one.copilot1\ntwo\nthree\n");
+        assert_eq!(editor.text(cx), "one.c\ntwo\nthree\n");
+    });
 
-//     // After debouncing, new Copilot completions should be requested.
-//     handle_copilot_completion_request(
-//         &copilot_lsp,
-//         vec![copilot::request::Completion {
-//             text: "one.copilot2".into(),
-//             range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 5)),
-//             ..Default::default()
-//         }],
-//         vec![],
-//     );
-//     executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
-//     cx.update_editor(|editor, cx| {
-//         assert!(!editor.context_menu_visible());
-//         assert!(editor.has_active_copilot_suggestion(cx));
-//         assert_eq!(editor.display_text(cx), "one.copilot2\ntwo\nthree\n");
-//         assert_eq!(editor.text(cx), "one.c\ntwo\nthree\n");
+    // After debouncing, new Copilot completions should be requested.
+    handle_copilot_completion_request(
+        &copilot_lsp,
+        vec![copilot::request::Completion {
+            text: "one.copilot2".into(),
+            range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 5)),
+            ..Default::default()
+        }],
+        vec![],
+    );
+    executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+    cx.update_editor(|editor, cx| {
+        assert!(!editor.context_menu_visible());
+        assert!(editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.display_text(cx), "one.copilot2\ntwo\nthree\n");
+        assert_eq!(editor.text(cx), "one.c\ntwo\nthree\n");
 
-//         // Canceling should remove the active Copilot suggestion.
-//         editor.cancel(&Default::default(), cx);
-//         assert!(!editor.has_active_copilot_suggestion(cx));
-//         assert_eq!(editor.display_text(cx), "one.c\ntwo\nthree\n");
-//         assert_eq!(editor.text(cx), "one.c\ntwo\nthree\n");
+        // Canceling should remove the active Copilot suggestion.
+        editor.cancel(&Default::default(), cx);
+        assert!(!editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.display_text(cx), "one.c\ntwo\nthree\n");
+        assert_eq!(editor.text(cx), "one.c\ntwo\nthree\n");
 
-//         // After canceling, tabbing shouldn't insert the previously shown suggestion.
-//         editor.tab(&Default::default(), cx);
-//         assert!(!editor.has_active_copilot_suggestion(cx));
-//         assert_eq!(editor.display_text(cx), "one.c   \ntwo\nthree\n");
-//         assert_eq!(editor.text(cx), "one.c   \ntwo\nthree\n");
+        // After canceling, tabbing shouldn't insert the previously shown suggestion.
+        editor.tab(&Default::default(), cx);
+        assert!(!editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.display_text(cx), "one.c   \ntwo\nthree\n");
+        assert_eq!(editor.text(cx), "one.c   \ntwo\nthree\n");
 
-//         // When undoing the previously active suggestion is shown again.
-//         editor.undo(&Default::default(), cx);
-//         assert!(editor.has_active_copilot_suggestion(cx));
-//         assert_eq!(editor.display_text(cx), "one.copilot2\ntwo\nthree\n");
-//         assert_eq!(editor.text(cx), "one.c\ntwo\nthree\n");
-//     });
+        // When undoing the previously active suggestion is shown again.
+        editor.undo(&Default::default(), cx);
+        assert!(editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.display_text(cx), "one.copilot2\ntwo\nthree\n");
+        assert_eq!(editor.text(cx), "one.c\ntwo\nthree\n");
+    });
 
-//     // If an edit occurs outside of this editor, the suggestion is still correctly interpolated.
-//     cx.update_buffer(|buffer, cx| buffer.edit([(5..5, "o")], None, cx));
-//     cx.update_editor(|editor, cx| {
-//         assert!(editor.has_active_copilot_suggestion(cx));
-//         assert_eq!(editor.display_text(cx), "one.copilot2\ntwo\nthree\n");
-//         assert_eq!(editor.text(cx), "one.co\ntwo\nthree\n");
+    // If an edit occurs outside of this editor, the suggestion is still correctly interpolated.
+    cx.update_buffer(|buffer, cx| buffer.edit([(5..5, "o")], None, cx));
+    cx.update_editor(|editor, cx| {
+        assert!(editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.display_text(cx), "one.copilot2\ntwo\nthree\n");
+        assert_eq!(editor.text(cx), "one.co\ntwo\nthree\n");
 
-//         // Tabbing when there is an active suggestion inserts it.
-//         editor.tab(&Default::default(), cx);
-//         assert!(!editor.has_active_copilot_suggestion(cx));
-//         assert_eq!(editor.display_text(cx), "one.copilot2\ntwo\nthree\n");
-//         assert_eq!(editor.text(cx), "one.copilot2\ntwo\nthree\n");
+        // Tabbing when there is an active suggestion inserts it.
+        editor.tab(&Default::default(), cx);
+        assert!(!editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.display_text(cx), "one.copilot2\ntwo\nthree\n");
+        assert_eq!(editor.text(cx), "one.copilot2\ntwo\nthree\n");
 
-//         // When undoing the previously active suggestion is shown again.
-//         editor.undo(&Default::default(), cx);
-//         assert!(editor.has_active_copilot_suggestion(cx));
-//         assert_eq!(editor.display_text(cx), "one.copilot2\ntwo\nthree\n");
-//         assert_eq!(editor.text(cx), "one.co\ntwo\nthree\n");
+        // When undoing the previously active suggestion is shown again.
+        editor.undo(&Default::default(), cx);
+        assert!(editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.display_text(cx), "one.copilot2\ntwo\nthree\n");
+        assert_eq!(editor.text(cx), "one.co\ntwo\nthree\n");
 
-//         // Hide suggestion.
-//         editor.cancel(&Default::default(), cx);
-//         assert!(!editor.has_active_copilot_suggestion(cx));
-//         assert_eq!(editor.display_text(cx), "one.co\ntwo\nthree\n");
-//         assert_eq!(editor.text(cx), "one.co\ntwo\nthree\n");
-//     });
+        // Hide suggestion.
+        editor.cancel(&Default::default(), cx);
+        assert!(!editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.display_text(cx), "one.co\ntwo\nthree\n");
+        assert_eq!(editor.text(cx), "one.co\ntwo\nthree\n");
+    });
 
-//     // If an edit occurs outside of this editor but no suggestion is being shown,
-//     // we won't make it visible.
-//     cx.update_buffer(|buffer, cx| buffer.edit([(6..6, "p")], None, cx));
-//     cx.update_editor(|editor, cx| {
-//         assert!(!editor.has_active_copilot_suggestion(cx));
-//         assert_eq!(editor.display_text(cx), "one.cop\ntwo\nthree\n");
-//         assert_eq!(editor.text(cx), "one.cop\ntwo\nthree\n");
-//     });
+    // If an edit occurs outside of this editor but no suggestion is being shown,
+    // we won't make it visible.
+    cx.update_buffer(|buffer, cx| buffer.edit([(6..6, "p")], None, cx));
+    cx.update_editor(|editor, cx| {
+        assert!(!editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.display_text(cx), "one.cop\ntwo\nthree\n");
+        assert_eq!(editor.text(cx), "one.cop\ntwo\nthree\n");
+    });
 
-//     // Reset the editor to verify how suggestions behave when tabbing on leading indentation.
-//     cx.update_editor(|editor, cx| {
-//         editor.set_text("fn foo() {\n  \n}", cx);
-//         editor.change_selections(None, cx, |s| {
-//             s.select_ranges([Point::new(1, 2)..Point::new(1, 2)])
-//         });
-//     });
-//     handle_copilot_completion_request(
-//         &copilot_lsp,
-//         vec![copilot::request::Completion {
-//             text: "    let x = 4;".into(),
-//             range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(1, 2)),
-//             ..Default::default()
-//         }],
-//         vec![],
-//     );
+    // Reset the editor to verify how suggestions behave when tabbing on leading indentation.
+    cx.update_editor(|editor, cx| {
+        editor.set_text("fn foo() {\n  \n}", cx);
+        editor.change_selections(None, cx, |s| {
+            s.select_ranges([Point::new(1, 2)..Point::new(1, 2)])
+        });
+    });
+    handle_copilot_completion_request(
+        &copilot_lsp,
+        vec![copilot::request::Completion {
+            text: "    let x = 4;".into(),
+            range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(1, 2)),
+            ..Default::default()
+        }],
+        vec![],
+    );
 
-//     cx.update_editor(|editor, cx| editor.next_copilot_suggestion(&Default::default(), cx));
-//     executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
-//     cx.update_editor(|editor, cx| {
-//         assert!(editor.has_active_copilot_suggestion(cx));
-//         assert_eq!(editor.display_text(cx), "fn foo() {\n    let x = 4;\n}");
-//         assert_eq!(editor.text(cx), "fn foo() {\n  \n}");
+    cx.update_editor(|editor, cx| editor.next_copilot_suggestion(&Default::default(), cx));
+    executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+    cx.update_editor(|editor, cx| {
+        assert!(editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.display_text(cx), "fn foo() {\n    let x = 4;\n}");
+        assert_eq!(editor.text(cx), "fn foo() {\n  \n}");
 
-//         // Tabbing inside of leading whitespace inserts indentation without accepting the suggestion.
-//         editor.tab(&Default::default(), cx);
-//         assert!(editor.has_active_copilot_suggestion(cx));
-//         assert_eq!(editor.text(cx), "fn foo() {\n    \n}");
-//         assert_eq!(editor.display_text(cx), "fn foo() {\n    let x = 4;\n}");
+        // Tabbing inside of leading whitespace inserts indentation without accepting the suggestion.
+        editor.tab(&Default::default(), cx);
+        assert!(editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.text(cx), "fn foo() {\n    \n}");
+        assert_eq!(editor.display_text(cx), "fn foo() {\n    let x = 4;\n}");
 
-//         // Tabbing again accepts the suggestion.
-//         editor.tab(&Default::default(), cx);
-//         assert!(!editor.has_active_copilot_suggestion(cx));
-//         assert_eq!(editor.text(cx), "fn foo() {\n    let x = 4;\n}");
-//         assert_eq!(editor.display_text(cx), "fn foo() {\n    let x = 4;\n}");
-//     });
-// }
+        // Tabbing again accepts the suggestion.
+        editor.tab(&Default::default(), cx);
+        assert!(!editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.text(cx), "fn foo() {\n    let x = 4;\n}");
+        assert_eq!(editor.display_text(cx), "fn foo() {\n    let x = 4;\n}");
+    });
+}
 
 #[gpui::test]
 async fn test_copilot_completion_invalidation(
@@ -7364,106 +7387,105 @@ async fn test_copilot_completion_invalidation(
     });
 }
 
-//todo!()
-// #[gpui::test]
-// async fn test_copilot_multibuffer(executor: BackgroundExecutor, cx: &mut gpui::TestAppContext) {
-//     init_test(cx, |_| {});
+#[gpui::test]
+async fn test_copilot_multibuffer(executor: BackgroundExecutor, cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
 
-//     let (copilot, copilot_lsp) = Copilot::fake(cx);
-//     cx.update(|cx| cx.set_global(copilot));
+    let (copilot, copilot_lsp) = Copilot::fake(cx);
+    cx.update(|cx| cx.set_global(copilot));
 
-//     let buffer_1 = cx.build_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), "a = 1\nb = 2\n"));
-//     let buffer_2 = cx.build_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), "c = 3\nd = 4\n"));
-//     let multibuffer = cx.build_model(|cx| {
-//         let mut multibuffer = MultiBuffer::new(0);
-//         multibuffer.push_excerpts(
-//             buffer_1.clone(),
-//             [ExcerptRange {
-//                 context: Point::new(0, 0)..Point::new(2, 0),
-//                 primary: None,
-//             }],
-//             cx,
-//         );
-//         multibuffer.push_excerpts(
-//             buffer_2.clone(),
-//             [ExcerptRange {
-//                 context: Point::new(0, 0)..Point::new(2, 0),
-//                 primary: None,
-//             }],
-//             cx,
-//         );
-//         multibuffer
-//     });
-//     let editor = cx.add_window(|cx| build_editor(multibuffer, cx));
+    let buffer_1 = cx.build_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), "a = 1\nb = 2\n"));
+    let buffer_2 = cx.build_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), "c = 3\nd = 4\n"));
+    let multibuffer = cx.build_model(|cx| {
+        let mut multibuffer = MultiBuffer::new(0);
+        multibuffer.push_excerpts(
+            buffer_1.clone(),
+            [ExcerptRange {
+                context: Point::new(0, 0)..Point::new(2, 0),
+                primary: None,
+            }],
+            cx,
+        );
+        multibuffer.push_excerpts(
+            buffer_2.clone(),
+            [ExcerptRange {
+                context: Point::new(0, 0)..Point::new(2, 0),
+                primary: None,
+            }],
+            cx,
+        );
+        multibuffer
+    });
+    let editor = cx.add_window(|cx| build_editor(multibuffer, cx));
 
-//     handle_copilot_completion_request(
-//         &copilot_lsp,
-//         vec![copilot::request::Completion {
-//             text: "b = 2 + a".into(),
-//             range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(1, 5)),
-//             ..Default::default()
-//         }],
-//         vec![],
-//     );
-//     editor.update(cx, |editor, cx| {
-//         // Ensure copilot suggestions are shown for the first excerpt.
-//         editor.change_selections(None, cx, |s| {
-//             s.select_ranges([Point::new(1, 5)..Point::new(1, 5)])
-//         });
-//         editor.next_copilot_suggestion(&Default::default(), cx);
-//     });
-//     executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
-//     editor.update(cx, |editor, cx| {
-//         assert!(editor.has_active_copilot_suggestion(cx));
-//         assert_eq!(
-//             editor.display_text(cx),
-//             "\n\na = 1\nb = 2 + a\n\n\n\nc = 3\nd = 4\n"
-//         );
-//         assert_eq!(editor.text(cx), "a = 1\nb = 2\n\nc = 3\nd = 4\n");
-//     });
+    handle_copilot_completion_request(
+        &copilot_lsp,
+        vec![copilot::request::Completion {
+            text: "b = 2 + a".into(),
+            range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(1, 5)),
+            ..Default::default()
+        }],
+        vec![],
+    );
+    editor.update(cx, |editor, cx| {
+        // Ensure copilot suggestions are shown for the first excerpt.
+        editor.change_selections(None, cx, |s| {
+            s.select_ranges([Point::new(1, 5)..Point::new(1, 5)])
+        });
+        editor.next_copilot_suggestion(&Default::default(), cx);
+    });
+    executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+    editor.update(cx, |editor, cx| {
+        assert!(editor.has_active_copilot_suggestion(cx));
+        assert_eq!(
+            editor.display_text(cx),
+            "\n\na = 1\nb = 2 + a\n\n\n\nc = 3\nd = 4\n"
+        );
+        assert_eq!(editor.text(cx), "a = 1\nb = 2\n\nc = 3\nd = 4\n");
+    });
 
-//     handle_copilot_completion_request(
-//         &copilot_lsp,
-//         vec![copilot::request::Completion {
-//             text: "d = 4 + c".into(),
-//             range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(1, 6)),
-//             ..Default::default()
-//         }],
-//         vec![],
-//     );
-//     editor.update(cx, |editor, cx| {
-//         // Move to another excerpt, ensuring the suggestion gets cleared.
-//         editor.change_selections(None, cx, |s| {
-//             s.select_ranges([Point::new(4, 5)..Point::new(4, 5)])
-//         });
-//         assert!(!editor.has_active_copilot_suggestion(cx));
-//         assert_eq!(
-//             editor.display_text(cx),
-//             "\n\na = 1\nb = 2\n\n\n\nc = 3\nd = 4\n"
-//         );
-//         assert_eq!(editor.text(cx), "a = 1\nb = 2\n\nc = 3\nd = 4\n");
+    handle_copilot_completion_request(
+        &copilot_lsp,
+        vec![copilot::request::Completion {
+            text: "d = 4 + c".into(),
+            range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(1, 6)),
+            ..Default::default()
+        }],
+        vec![],
+    );
+    editor.update(cx, |editor, cx| {
+        // Move to another excerpt, ensuring the suggestion gets cleared.
+        editor.change_selections(None, cx, |s| {
+            s.select_ranges([Point::new(4, 5)..Point::new(4, 5)])
+        });
+        assert!(!editor.has_active_copilot_suggestion(cx));
+        assert_eq!(
+            editor.display_text(cx),
+            "\n\na = 1\nb = 2\n\n\n\nc = 3\nd = 4\n"
+        );
+        assert_eq!(editor.text(cx), "a = 1\nb = 2\n\nc = 3\nd = 4\n");
 
-//         // Type a character, ensuring we don't even try to interpolate the previous suggestion.
-//         editor.handle_input(" ", cx);
-//         assert!(!editor.has_active_copilot_suggestion(cx));
-//         assert_eq!(
-//             editor.display_text(cx),
-//             "\n\na = 1\nb = 2\n\n\n\nc = 3\nd = 4 \n"
-//         );
-//         assert_eq!(editor.text(cx), "a = 1\nb = 2\n\nc = 3\nd = 4 \n");
-//     });
+        // Type a character, ensuring we don't even try to interpolate the previous suggestion.
+        editor.handle_input(" ", cx);
+        assert!(!editor.has_active_copilot_suggestion(cx));
+        assert_eq!(
+            editor.display_text(cx),
+            "\n\na = 1\nb = 2\n\n\n\nc = 3\nd = 4 \n"
+        );
+        assert_eq!(editor.text(cx), "a = 1\nb = 2\n\nc = 3\nd = 4 \n");
+    });
 
-//     // Ensure the new suggestion is displayed when the debounce timeout expires.
-//     executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
-//     editor.update(cx, |editor, cx| {
-//         assert!(editor.has_active_copilot_suggestion(cx));
-//         assert_eq!(
-//             editor.display_text(cx),
-//             "\n\na = 1\nb = 2\n\n\n\nc = 3\nd = 4 + c\n"
-//         );
-//         assert_eq!(editor.text(cx), "a = 1\nb = 2\n\nc = 3\nd = 4 \n");
-//     });
-// }
+    // Ensure the new suggestion is displayed when the debounce timeout expires.
+    executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+    editor.update(cx, |editor, cx| {
+        assert!(editor.has_active_copilot_suggestion(cx));
+        assert_eq!(
+            editor.display_text(cx),
+            "\n\na = 1\nb = 2\n\n\n\nc = 3\nd = 4 + c\n"
+        );
+        assert_eq!(editor.text(cx), "a = 1\nb = 2\n\nc = 3\nd = 4 \n");
+    });
+}
 
 #[gpui::test]
 async fn test_copilot_disabled_globs(executor: BackgroundExecutor, cx: &mut gpui::TestAppContext) {

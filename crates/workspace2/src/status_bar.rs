@@ -6,7 +6,7 @@ use gpui::{
     WindowContext,
 };
 use ui::prelude::*;
-use ui::{h_stack, Button, Icon, IconButton};
+use ui::{h_stack, Icon, IconButton};
 use util::ResultExt;
 
 pub trait StatusItemView: Render {
@@ -53,39 +53,11 @@ impl Render for StatusBar {
                     .gap_4()
                     .child(
                         h_stack().gap_1().child(
-                            // TODO: Language picker
+                            // Feedback Tool
                             div()
                                 .border()
                                 .border_color(gpui::red())
-                                .child(Button::new("status_buffer_language", "Rust")),
-                        ),
-                    )
-                    .child(
-                        h_stack()
-                            .gap_1()
-                            .child(
-                                // Github tool
-                                div()
-                                    .border()
-                                    .border_color(gpui::red())
-                                    .child(IconButton::new("status-copilot", Icon::Copilot)),
-                            )
-                            .child(
-                                // Feedback Tool
-                                div()
-                                    .border()
-                                    .border_color(gpui::red())
-                                    .child(IconButton::new("status-feedback", Icon::Envelope)),
-                            ),
-                    )
-                    .child(
-                        // Bottom Dock
-                        h_stack().gap_1().child(
-                            // Terminal
-                            div()
-                                .border()
-                                .border_color(gpui::red())
-                                .child(IconButton::new("status-terminal", Icon::Terminal)),
+                                .child(IconButton::new("status-feedback", Icon::Envelope)),
                         ),
                     )
                     .child(

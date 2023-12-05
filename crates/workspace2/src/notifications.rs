@@ -135,24 +135,22 @@ impl Workspace {
     }
 
     pub fn show_toast(&mut self, toast: Toast, cx: &mut ViewContext<Self>) {
-        todo!()
-        // self.dismiss_notification::<simple_message_notification::MessageNotification>(toast.id, cx);
-        // self.show_notification(toast.id, cx, |cx| {
-        //     cx.add_view(|_cx| match toast.on_click.as_ref() {
-        //         Some((click_msg, on_click)) => {
-        //             let on_click = on_click.clone();
-        //             simple_message_notification::MessageNotification::new(toast.msg.clone())
-        //                 .with_click_message(click_msg.clone())
-        //                 .on_click(move |cx| on_click(cx))
-        //         }
-        //         None => simple_message_notification::MessageNotification::new(toast.msg.clone()),
-        //     })
-        // })
+        self.dismiss_notification::<simple_message_notification::MessageNotification>(toast.id, cx);
+        self.show_notification(toast.id, cx, |cx| {
+            cx.build_view(|_cx| match toast.on_click.as_ref() {
+                Some((click_msg, on_click)) => {
+                    let on_click = on_click.clone();
+                    simple_message_notification::MessageNotification::new(toast.msg.clone())
+                        .with_click_message(click_msg.clone())
+                        .on_click(move |cx| on_click(cx))
+                }
+                None => simple_message_notification::MessageNotification::new(toast.msg.clone()),
+            })
+        })
     }
 
     pub fn dismiss_toast(&mut self, id: usize, cx: &mut ViewContext<Self>) {
-        todo!()
-        // self.dismiss_notification::<simple_message_notification::MessageNotification>(id, cx);
+        self.dismiss_notification::<simple_message_notification::MessageNotification>(id, cx);
     }
 
     fn dismiss_notification_internal(
@@ -179,32 +177,9 @@ pub mod simple_message_notification {
         ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, TextStyle,
         ViewContext,
     };
-    use serde::Deserialize;
-    use std::{borrow::Cow, sync::Arc};
+    use std::sync::Arc;
     use ui::prelude::*;
     use ui::{h_stack, v_stack, Button, Icon, IconElement, Label, StyledExt};
-
-    #[derive(Clone, Default, Deserialize, PartialEq)]
-    pub struct OsOpen(pub Cow<'static, str>);
-
-    impl OsOpen {
-        pub fn new<I: Into<Cow<'static, str>>>(url: I) -> Self {
-            OsOpen(url.into())
-        }
-    }
-
-    // todo!()
-    //     impl_actions!(message_notifications, [OsOpen]);
-    //
-    // todo!()
-    //     pub fn init(cx: &mut AppContext) {
-    //         cx.add_action(MessageNotification::dismiss);
-    //         cx.add_action(
-    //             |_workspace: &mut Workspace, open_action: &OsOpen, cx: &mut ViewContext<Workspace>| {
-    //                 cx.platform().open_url(open_action.0.as_ref());
-    //             },
-    //         )
-    //     }
 
     enum NotificationMessage {
         Text(SharedString),
@@ -213,7 +188,7 @@ pub mod simple_message_notification {
 
     pub struct MessageNotification {
         message: NotificationMessage,
-        on_click: Option<Arc<dyn Fn(&mut ViewContext<Self>) + Send + Sync>>,
+        on_click: Option<Arc<dyn Fn(&mut ViewContext<Self>)>>,
         click_message: Option<SharedString>,
     }
 
@@ -252,7 +227,7 @@ pub mod simple_message_notification {
 
         pub fn on_click<F>(mut self, on_click: F) -> Self
         where
-            F: 'static + Send + Sync + Fn(&mut ViewContext<Self>),
+            F: 'static + Fn(&mut ViewContext<Self>),
         {
             self.on_click = Some(Arc::new(on_click));
             self

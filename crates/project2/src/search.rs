@@ -371,15 +371,25 @@ impl SearchQuery {
     pub fn file_matches(&self, file_path: Option<&Path>) -> bool {
         match file_path {
             Some(file_path) => {
-                !self
-                    .files_to_exclude()
-                    .iter()
-                    .any(|exclude_glob| exclude_glob.is_match(file_path))
-                    && (self.files_to_include().is_empty()
+                let mut path = file_path.to_path_buf();
+                loop {
+                    if self
+                        .files_to_exclude()
+                        .iter()
+                        .any(|exclude_glob| exclude_glob.is_match(&path))
+                    {
+                        return false;
+                    } else if self.files_to_include().is_empty()
                         || self
                             .files_to_include()
                             .iter()
-                            .any(|include_glob| include_glob.is_match(file_path)))
+                            .any(|include_glob| include_glob.is_match(&path))
+                    {
+                        return true;
+                    } else if !path.pop() {
+                        return false;
+                    }
+                }
             }
             None => self.files_to_include().is_empty(),
         }

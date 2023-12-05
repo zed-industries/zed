@@ -101,9 +101,7 @@ fn paint_line(
     let mut glyph_origin = origin;
     let mut prev_glyph_position = Point::default();
     for (run_ix, run) in layout.runs.iter().enumerate() {
-        let max_glyph_size = text_system
-            .bounding_box(run.font_id, layout.font_size)?
-            .size;
+        let max_glyph_size = text_system.bounding_box(run.font_id, layout.font_size).size;
 
         for (glyph_ix, glyph) in run.glyphs.iter().enumerate() {
             glyph_origin.x += glyph.position.x - prev_glyph_position.x;

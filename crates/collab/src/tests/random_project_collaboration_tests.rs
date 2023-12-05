@@ -665,7 +665,6 @@ impl RandomizedTest for ProjectCollaborationTest {
                 ensure_project_shared(&project, client, cx).await;
                 project
                     .update(cx, |p, cx| p.create_entry(project_path, is_dir, cx))
-                    .unwrap()
                     .await?;
             }
 

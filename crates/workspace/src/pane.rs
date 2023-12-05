@@ -481,18 +481,21 @@ impl Pane {
 
     pub(crate) fn open_item(
         &mut self,
-        project_entry_id: ProjectEntryId,
+        project_entry_id: Option<ProjectEntryId>,
         focus_item: bool,
         cx: &mut ViewContext<Self>,
         build_item: impl FnOnce(&mut ViewContext<Pane>) -> Box<dyn ItemHandle>,
     ) -> Box<dyn ItemHandle> {
         let mut existing_item = None;
-        for (index, item) in self.items.iter().enumerate() {
-            if item.is_singleton(cx) && item.project_entry_ids(cx).as_slice() == [project_entry_id]
-            {
-                let item = item.boxed_clone();
-                existing_item = Some((index, item));
-                break;
+        if let Some(project_entry_id) = project_entry_id {
+            for (index, item) in self.items.iter().enumerate() {
+                if item.is_singleton(cx)
+                    && item.project_entry_ids(cx).as_slice() == [project_entry_id]
+                {
+                    let item = item.boxed_clone();
+                    existing_item = Some((index, item));
+                    break;
+                }
             }
         }
 

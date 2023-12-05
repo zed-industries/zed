@@ -358,7 +358,7 @@ impl AppContext {
     {
         let entity_id = entity.entity_id();
         let handle = entity.downgrade();
-        self.observers.insert(
+        let (subscription, activate) = self.observers.insert(
             entity_id,
             Box::new(move |cx| {
                 if let Some(handle) = E::upgrade_from(&handle) {
@@ -367,7 +367,9 @@ impl AppContext {
                     false
                 }
             }),
-        )
+        );
+        self.defer(move |_| activate());
+        subscription
     }
 
     pub fn subscribe<T, E, Evt>(
@@ -398,8 +400,7 @@ impl AppContext {
     {
         let entity_id = entity.entity_id();
         let entity = entity.downgrade();
-
-        self.event_listeners.insert(
+        let (subscription, activate) = self.event_listeners.insert(
             entity_id,
             (
                 TypeId::of::<Evt>(),
@@ -412,7 +413,9 @@ impl AppContext {
                     }
                 }),
             ),
-        )
+        );
+        self.defer(move |_| activate());
+        subscription
     }
 
     pub fn windows(&self) -> Vec<AnyWindowHandle> {
@@ -873,13 +876,15 @@ impl AppContext {
         &mut self,
         mut f: impl FnMut(&mut Self) + 'static,
     ) -> Subscription {
-        self.global_observers.insert(
+        let (subscription, activate) = self.global_observers.insert(
             TypeId::of::<G>(),
             Box::new(move |cx| {
                 f(cx);
                 true
             }),
-        )
+        );
+        self.defer(move |_| activate());
+        subscription
     }
 
     /// Move the global of the given type to the stack.
@@ -903,7 +908,7 @@ impl AppContext {
         &mut self,
         on_new: impl 'static + Fn(&mut V, &mut ViewContext<V>),
     ) -> Subscription {
-        self.new_view_observers.insert(
+        let (subscription, activate) = self.new_view_observers.insert(
             TypeId::of::<V>(),
             Box::new(move |any_view: AnyView, cx: &mut WindowContext| {
                 any_view
@@ -913,7 +918,9 @@ impl AppContext {
                         on_new(view_state, cx);
                     })
             }),
-        )
+        );
+        activate();
+        subscription
     }
 
     pub fn observe_release<E, T>(
@@ -925,13 +932,15 @@ impl AppContext {
         E: Entity<T>,
         T: 'static,
     {
-        self.release_listeners.insert(
+        let (subscription, activate) = self.release_listeners.insert(
             handle.entity_id(),
             Box::new(move |entity, cx| {
                 let entity = entity.downcast_mut().expect("invalid entity type");
                 on_release(entity, cx)
             }),
-        )
+        );
+        activate();
+        subscription
     }
 
     pub(crate) fn push_text_style(&mut self, text_style: TextStyleRefinement) {
@@ -996,13 +1005,15 @@ impl AppContext {
     where
         Fut: 'static + Future<Output = ()>,
     {
-        self.quit_observers.insert(
+        let (subscription, activate) = self.quit_observers.insert(
             (),
             Box::new(move |cx| {
                 let future = on_quit(cx);
                 async move { future.await }.boxed_local()
             }),
-        )
+        );
+        activate();
+        subscription
     }
 }
 

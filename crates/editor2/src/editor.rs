@@ -100,8 +100,10 @@ use text::{OffsetUtf16, Rope};
 use theme::{
     ActiveTheme, DiagnosticStyle, PlayerColor, SyntaxTheme, Theme, ThemeColors, ThemeSettings,
 };
-use ui::prelude::*;
-use ui::{h_stack, v_stack, HighlightedLabel, IconButton, Popover, Tooltip};
+use ui::{
+    h_stack, v_stack, ButtonSize, ButtonStyle, HighlightedLabel, Icon, IconButton, Popover, Tooltip,
+};
+use ui::{prelude::*, IconSize};
 use util::{post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::{
     item::{ItemEvent, ItemHandle},
@@ -1920,14 +1922,14 @@ impl Editor {
     //         self.buffer.read(cx).read(cx).file_at(point).cloned()
     //     }
 
-    //     pub fn active_excerpt(
-    //         &self,
-    //         cx: &AppContext,
-    //     ) -> Option<(ExcerptId, Model<Buffer>, Range<text::Anchor>)> {
-    //         self.buffer
-    //             .read(cx)
-    //             .excerpt_containing(self.selections.newest_anchor().head(), cx)
-    //     }
+    pub fn active_excerpt(
+        &self,
+        cx: &AppContext,
+    ) -> Option<(ExcerptId, Model<Buffer>, Range<text::Anchor>)> {
+        self.buffer
+            .read(cx)
+            .excerpt_containing(self.selections.newest_anchor().head(), cx)
+    }
 
     //     pub fn style(&self, cx: &AppContext) -> EditorStyle {
     //         build_style(
@@ -3484,7 +3486,7 @@ impl Editor {
                         drop(context_menu);
                         this.discard_copilot_suggestion(cx);
                         cx.notify();
-                    } else if this.completion_tasks.is_empty() {
+                    } else if this.completion_tasks.len() <= 1 {
                         // If there are no more completion tasks and the last menu was
                         // empty, we should hide it. If it was already hidden, we should
                         // also show the copilot suggestion when available.
@@ -8238,6 +8240,11 @@ impl Editor {
         self.style = Some(style);
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn style(&self) -> Option<&EditorStyle> {
+        self.style.as_ref()
+    }
+
     pub fn set_wrap_width(&self, width: Option<Pixels>, cx: &mut AppContext) -> bool {
         self.display_map
             .update(cx, |map, cx| map.set_wrap_width(width, cx))
@@ -9689,20 +9696,42 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, is_valid: bool) -> Rend
     let message = diagnostic.message;
     Arc::new(move |cx: &mut BlockContext| {
         let message = message.clone();
+        let copy_id: SharedString = format!("copy-{}", cx.block_id.clone()).to_string().into();
+        let write_to_clipboard = cx.write_to_clipboard(ClipboardItem::new(message.clone()));
+
+        // TODO: Nate: We should tint the background of the block with the severity color
+        // We need to extend the theme before we can do this
         v_stack()
             .id(cx.block_id)
+            .relative()
             .size_full()
             .bg(gpui::red())
             .children(highlighted_lines.iter().map(|(line, highlights)| {
-                div()
+                let group_id = cx.block_id.to_string();
+
+                h_stack()
+                    .group(group_id.clone())
+                    .gap_2()
+                    .absolute()
+                    .left(cx.anchor_x)
+                    .px_1p5()
                     .child(HighlightedLabel::new(line.clone(), highlights.clone()))
-                    .ml(cx.anchor_x)
+                    .child(
+                        div()
+                            .border()
+                            .border_color(gpui::red())
+                            .invisible()
+                            .group_hover(group_id, |style| style.visible())
+                            .child(
+                                IconButton::new(copy_id.clone(), Icon::Copy)
+                                    .icon_color(Color::Muted)
+                                    .size(ButtonSize::Compact)
+                                    .style(ButtonStyle::Transparent)
+                                    .on_click(cx.listener(move |_, _, cx| write_to_clipboard))
+                                    .tooltip(|cx| Tooltip::text("Copy diagnostic message", cx)),
+                            ),
+                    )
             }))
-            .cursor_pointer()
-            .on_click(cx.listener(move |_, _, cx| {
-                cx.write_to_clipboard(ClipboardItem::new(message.clone()));
-            }))
-            .tooltip(|cx| Tooltip::text("Copy diagnostic message", cx))
             .into_any_element()
     })
 }

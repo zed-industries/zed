@@ -1,5 +1,7 @@
-use crate::TestDispatcher;
+use crate::{Entity, Subscription, TestAppContext, TestDispatcher};
+use futures::StreamExt as _;
 use rand::prelude::*;
+use smol::channel;
 use std::{
     env,
     panic::{self, RefUnwindSafe},
@@ -48,4 +50,31 @@ pub fn run_test(
             }
         }
     }
+}
+
+pub struct Observation<T> {
+    rx: channel::Receiver<T>,
+    _subscription: Subscription,
+}
+
+impl<T: 'static> futures::Stream for Observation<T> {
+    type Item = T;
+
+    fn poll_next(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        self.rx.poll_next_unpin(cx)
+    }
+}
+
+pub fn observe<T: 'static>(entity: &impl Entity<T>, cx: &mut TestAppContext) -> Observation<()> {
+    let (tx, rx) = smol::channel::unbounded();
+    let _subscription = cx.update(|cx| {
+        cx.observe(entity, move |_, _| {
+            let _ = smol::block_on(tx.send(()));
+        })
+    });
+
+    Observation { rx, _subscription }
 }
