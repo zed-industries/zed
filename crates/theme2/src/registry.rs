@@ -6,8 +6,8 @@ use gpui::{HighlightStyle, SharedString};
 use refineable::Refineable;
 
 use crate::{
-    one_themes::one_family, Appearance, PlayerColors, StatusColors, SyntaxTheme, SystemColors,
-    Theme, ThemeColors, ThemeFamily, ThemeStyles, UserTheme, UserThemeFamily, zed_pro_family,
+    one_themes::one_family, zed_pro_family, Appearance, PlayerColors, StatusColors, SyntaxTheme,
+    SystemColors, Theme, ThemeColors, ThemeFamily, ThemeStyles, UserTheme, UserThemeFamily,
 };
 
 pub struct ThemeRegistry {

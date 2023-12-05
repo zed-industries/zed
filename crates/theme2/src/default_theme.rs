@@ -1,8 +1,10 @@
 use std::sync::Arc;
 
 use crate::{
+    default_color_scales,
     one_themes::{one_dark, one_family},
-    Theme, ThemeFamily, Appearance, ThemeStyles, SystemColors, ThemeColors, StatusColors, PlayerColors, SyntaxTheme, default_color_scales,
+    Appearance, PlayerColors, StatusColors, SyntaxTheme, SystemColors, Theme, ThemeColors,
+    ThemeFamily, ThemeStyles,
 };
 
 fn zed_pro_daylight() -> Theme {
