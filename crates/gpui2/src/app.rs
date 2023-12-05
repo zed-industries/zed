@@ -39,7 +39,10 @@ use std::{
     sync::{atomic::Ordering::SeqCst, Arc},
     time::Duration,
 };
-use util::http::{self, HttpClient};
+use util::{
+    http::{self, HttpClient},
+    ResultExt,
+};
 
 /// Temporary(?) wrapper around RefCell<AppContext> to help us debug any double borrows.
 /// Strongly consider removing after stabilization.
@@ -1054,6 +1057,62 @@ impl AppContext {
 
         self.global_action_listeners
             .contains_key(&action.as_any().type_id())
+    }
+
+    pub fn dispatch_action(&mut self, action: &dyn Action) {
+        self.propagate_event = true;
+
+        if let Some(mut global_listeners) = self
+            .global_action_listeners
+            .remove(&action.as_any().type_id())
+        {
+            for listener in &global_listeners {
+                listener(action, DispatchPhase::Capture, self);
+                if !self.propagate_event {
+                    break;
+                }
+            }
+
+            global_listeners.extend(
+                self.global_action_listeners
+                    .remove(&action.as_any().type_id())
+                    .unwrap_or_default(),
+            );
+
+            self.global_action_listeners
+                .insert(action.as_any().type_id(), global_listeners);
+        }
+
+        if self.propagate_event {
+            if let Some(active_window) = self.active_window() {
+                active_window
+                    .update(self, |_, cx| cx.dispatch_action(action.boxed_clone()))
+                    .log_err();
+            }
+        }
+
+        if self.propagate_event {
+            if let Some(mut global_listeners) = self
+                .global_action_listeners
+                .remove(&action.as_any().type_id())
+            {
+                for listener in global_listeners.iter().rev() {
+                    listener(action, DispatchPhase::Bubble, self);
+                    if !self.propagate_event {
+                        break;
+                    }
+                }
+
+                global_listeners.extend(
+                    self.global_action_listeners
+                        .remove(&action.as_any().type_id())
+                        .unwrap_or_default(),
+                );
+
+                self.global_action_listeners
+                    .insert(action.as_any().type_id(), global_listeners);
+            }
+        }
     }
 }
 

@@ -683,15 +683,15 @@ impl Platform for MacPlatform {
         }
     }
 
-    fn on_menu_command(&self, callback: Box<dyn FnMut(&dyn Action)>) {
+    fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>) {
         self.0.lock().menu_command = Some(callback);
     }
 
-    fn on_will_open_menu(&self, callback: Box<dyn FnMut()>) {
+    fn on_will_open_app_menu(&self, callback: Box<dyn FnMut()>) {
         self.0.lock().will_open_menu = Some(callback);
     }
 
-    fn on_validate_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>) {
+    fn on_validate_app_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>) {
         self.0.lock().validate_menu_command = Some(callback);
     }
 

@@ -53,14 +53,14 @@ pub enum OsAction {
 }
 
 pub(crate) fn init(platform: &dyn Platform, cx: &mut AppContext) {
-    platform.on_will_open_menu(Box::new({
+    platform.on_will_open_app_menu(Box::new({
         let cx = cx.to_async();
         move || {
             cx.update(|cx| cx.clear_pending_keystrokes()).ok();
         }
     }));
 
-    platform.on_validate_menu_command(Box::new({
+    platform.on_validate_app_menu_command(Box::new({
         let cx = cx.to_async();
         move |action| {
             cx.update(|cx| cx.is_action_available(action))
@@ -68,29 +68,10 @@ pub(crate) fn init(platform: &dyn Platform, cx: &mut AppContext) {
         }
     }));
 
-    platform.on_menu_command(Box::new({
+    platform.on_app_menu_action(Box::new({
         let cx = cx.to_async();
         move |action| {
-            cx.update(|cx| {
-                // if let Some(main_window) = cx.active_window() {
-                //     let dispatched = main_window
-                //         .update(&mut *cx, |cx| {
-                //             if let Some(view_id) = cx.focused_view_id() {
-                //                 cx.dispatch_action(Some(view_id), action);
-                //                 true
-                //             } else {
-                //                 false
-                //             }
-                //         })
-                //         .unwrap_or(false);
-
-                //     if dispatched {
-                //         return;
-                //     }
-                // }
-                // cx.dispatch_global_action_any(action);
-            })
-            .log_err();
+            cx.update(|cx| cx.dispatch_action(action)).log_err();
         }
     }));
 }
