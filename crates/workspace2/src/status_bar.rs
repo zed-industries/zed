@@ -6,7 +6,7 @@ use gpui::{
     WindowContext,
 };
 use ui::prelude::*;
-use ui::{h_stack, Button, Icon, IconButton};
+use ui::{h_stack, Icon, IconButton};
 use util::ResultExt;
 
 pub trait StatusItemView: Render {
@@ -52,49 +52,12 @@ impl Render for StatusBar {
                 h_stack()
                     .gap_4()
                     .child(
-                        h_stack()
-                            .gap_1()
-                            .child(
-                                // TODO: Line / column numbers
-                                div()
-                                    .border()
-                                    .border_color(gpui::red())
-                                    .child(Button::new("status_line_column_numbers", "15:22")),
-                            )
-                            .child(
-                                // TODO: Language picker
-                                div()
-                                    .border()
-                                    .border_color(gpui::red())
-                                    .child(Button::new("status_buffer_language", "Rust")),
-                            ),
-                    )
-                    .child(
-                        h_stack()
-                            .gap_1()
-                            .child(
-                                // Github tool
-                                div()
-                                    .border()
-                                    .border_color(gpui::red())
-                                    .child(IconButton::new("status-copilot", Icon::Copilot)),
-                            )
-                            .child(
-                                // Feedback Tool
-                                div()
-                                    .border()
-                                    .border_color(gpui::red())
-                                    .child(IconButton::new("status-feedback", Icon::Envelope)),
-                            ),
-                    )
-                    .child(
-                        // Bottom Dock
                         h_stack().gap_1().child(
-                            // Terminal
+                            // Feedback Tool
                             div()
                                 .border()
                                 .border_color(gpui::red())
-                                .child(IconButton::new("status-terminal", Icon::Terminal)),
+                                .child(IconButton::new("status-feedback", Icon::Envelope)),
                         ),
                     )
                     .child(
@@ -133,7 +96,7 @@ impl StatusBar {
         h_stack()
             .items_center()
             .gap_2()
-            .children(self.right_items.iter().map(|item| item.to_any()))
+            .children(self.right_items.iter().rev().map(|item| item.to_any()))
     }
 }
 

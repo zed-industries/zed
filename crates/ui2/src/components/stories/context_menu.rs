@@ -2,7 +2,7 @@ use gpui::{actions, Action, AnchorCorner, Div, Render, View};
 use story::Story;
 
 use crate::prelude::*;
-use crate::{menu_handle, ContextMenu, Label};
+use crate::{right_click_menu, ContextMenu, Label};
 
 actions!(PrintCurrentDate, PrintBestFood);
 
@@ -45,25 +45,13 @@ impl Render for ContextMenuStory {
                     .flex_col()
                     .justify_between()
                     .child(
-                        menu_handle("test2")
-                            .child(|is_open| {
-                                Label::new(if is_open {
-                                    "TOP LEFT"
-                                } else {
-                                    "RIGHT CLICK ME"
-                                })
-                            })
+                        right_click_menu("test2")
+                            .trigger(Label::new("TOP LEFT"))
                             .menu(move |cx| build_menu(cx, "top left")),
                     )
                     .child(
-                        menu_handle("test1")
-                            .child(|is_open| {
-                                Label::new(if is_open {
-                                    "BOTTOM LEFT"
-                                } else {
-                                    "RIGHT CLICK ME"
-                                })
-                            })
+                        right_click_menu("test1")
+                            .trigger(Label::new("BOTTOM LEFT"))
                             .anchor(AnchorCorner::BottomLeft)
                             .attach(AnchorCorner::TopLeft)
                             .menu(move |cx| build_menu(cx, "bottom left")),
@@ -75,26 +63,14 @@ impl Render for ContextMenuStory {
                     .flex_col()
                     .justify_between()
                     .child(
-                        menu_handle("test3")
-                            .child(|is_open| {
-                                Label::new(if is_open {
-                                    "TOP RIGHT"
-                                } else {
-                                    "RIGHT CLICK ME"
-                                })
-                            })
+                        right_click_menu("test3")
+                            .trigger(Label::new("TOP RIGHT"))
                             .anchor(AnchorCorner::TopRight)
                             .menu(move |cx| build_menu(cx, "top right")),
                     )
                     .child(
-                        menu_handle("test4")
-                            .child(|is_open| {
-                                Label::new(if is_open {
-                                    "BOTTOM RIGHT"
-                                } else {
-                                    "RIGHT CLICK ME"
-                                })
-                            })
+                        right_click_menu("test4")
+                            .trigger(Label::new("BOTTOM RIGHT"))
                             .anchor(AnchorCorner::BottomRight)
                             .attach(AnchorCorner::TopRight)
                             .menu(move |cx| build_menu(cx, "bottom right")),

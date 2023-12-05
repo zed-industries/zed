@@ -1,7 +1,8 @@
 use std::rc::Rc;
 
 use gpui::{
-    px, AnyElement, ClickEvent, Div, ImageSource, MouseButton, MouseDownEvent, Pixels, Stateful,
+    px, AnyElement, AnyView, ClickEvent, Div, ImageSource, MouseButton, MouseDownEvent, Pixels,
+    Stateful,
 };
 use smallvec::SmallVec;
 
@@ -21,6 +22,7 @@ pub struct ListItem {
     inset: bool,
     on_click: Option<Rc<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
     on_toggle: Option<Rc<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
+    tooltip: Option<Box<dyn Fn(&mut WindowContext) -> AnyView + 'static>>,
     on_secondary_mouse_down: Option<Rc<dyn Fn(&MouseDownEvent, &mut WindowContext) + 'static>>,
     children: SmallVec<[AnyElement; 2]>,
 }
@@ -38,6 +40,7 @@ impl ListItem {
             on_click: None,
             on_secondary_mouse_down: None,
             on_toggle: None,
+            tooltip: None,
             children: SmallVec::new(),
         }
     }
@@ -52,6 +55,11 @@ impl ListItem {
         handler: impl Fn(&MouseDownEvent, &mut WindowContext) + 'static,
     ) -> Self {
         self.on_secondary_mouse_down = Some(Rc::new(handler));
+        self
+    }
+
+    pub fn tooltip(mut self, tooltip: impl Fn(&mut WindowContext) -> AnyView + 'static) -> Self {
+        self.tooltip = Some(Box::new(tooltip));
         self
     }
 
@@ -149,6 +157,7 @@ impl RenderOnce for ListItem {
                     (on_mouse_down)(event, cx)
                 })
             })
+            .when_some(self.tooltip, |this, tooltip| this.tooltip(tooltip))
             .child(
                 div()
                     .when(self.inset, |this| this.px_2())

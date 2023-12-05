@@ -1,21 +1,22 @@
 use crate::{
-    h_stack, prelude::*, v_stack, KeyBinding, Label, List, ListItem, ListSeparator, ListSubHeader,
+    h_stack, prelude::*, v_stack, Icon, IconElement, KeyBinding, Label, List, ListItem,
+    ListSeparator, ListSubHeader,
 };
 use gpui::{
-    overlay, px, Action, AnchorCorner, AnyElement, AppContext, Bounds, DismissEvent, DispatchPhase,
-    Div, EventEmitter, FocusHandle, FocusableView, IntoElement, LayoutId, ManagedView, MouseButton,
-    MouseDownEvent, Pixels, Point, Render, View, VisualContext,
+    px, Action, AppContext, DismissEvent, Div, EventEmitter, FocusHandle, FocusableView,
+    IntoElement, Render, View, VisualContext,
 };
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrev};
-use std::{cell::RefCell, rc::Rc};
+use std::{rc::Rc, time::Duration};
 
 pub enum ContextMenuItem {
     Separator,
     Header(SharedString),
     Entry {
         label: SharedString,
+        icon: Option<Icon>,
         handler: Rc<dyn Fn(&mut WindowContext)>,
-        key_binding: Option<KeyBinding>,
+        action: Option<Box<dyn Action>>,
     },
 }
 
@@ -23,6 +24,7 @@ pub struct ContextMenu {
     items: Vec<ContextMenuItem>,
     focus_handle: FocusHandle,
     selected_index: Option<usize>,
+    delayed: bool,
 }
 
 impl FocusableView for ContextMenu {
@@ -45,6 +47,7 @@ impl ContextMenu {
                     items: Default::default(),
                     focus_handle: cx.focus_handle(),
                     selected_index: None,
+                    delayed: false,
                 },
                 cx,
             )
@@ -69,21 +72,28 @@ impl ContextMenu {
         self.items.push(ContextMenuItem::Entry {
             label: label.into(),
             handler: Rc::new(on_click),
-            key_binding: None,
+            icon: None,
+            action: None,
         });
         self
     }
 
-    pub fn action(
-        mut self,
-        label: impl Into<SharedString>,
-        action: Box<dyn Action>,
-        cx: &mut WindowContext,
-    ) -> Self {
+    pub fn action(mut self, label: impl Into<SharedString>, action: Box<dyn Action>) -> Self {
         self.items.push(ContextMenuItem::Entry {
             label: label.into(),
-            key_binding: KeyBinding::for_action(&*action, cx),
+            action: Some(action.boxed_clone()),
             handler: Rc::new(move |cx| cx.dispatch_action(action.boxed_clone())),
+            icon: None,
+        });
+        self
+    }
+
+    pub fn link(mut self, label: impl Into<SharedString>, action: Box<dyn Action>) -> Self {
+        self.items.push(ContextMenuItem::Entry {
+            label: label.into(),
+            action: Some(action.boxed_clone()),
+            handler: Rc::new(move |cx| cx.dispatch_action(action.boxed_clone())),
+            icon: Some(Icon::Link),
         });
         self
     }
@@ -143,6 +153,37 @@ impl ContextMenu {
             self.select_last(&Default::default(), cx);
         }
     }
+
+    pub fn on_action_dispatch(&mut self, dispatched: &Box<dyn Action>, cx: &mut ViewContext<Self>) {
+        if let Some(ix) = self.items.iter().position(|item| {
+            if let ContextMenuItem::Entry {
+                action: Some(action),
+                ..
+            } = item
+            {
+                action.partial_eq(&**dispatched)
+            } else {
+                false
+            }
+        }) {
+            self.selected_index = Some(ix);
+            self.delayed = true;
+            cx.notify();
+            let action = dispatched.boxed_clone();
+            cx.spawn(|this, mut cx| async move {
+                cx.background_executor()
+                    .timer(Duration::from_millis(50))
+                    .await;
+                this.update(&mut cx, |this, cx| {
+                    cx.dispatch_action(action);
+                    this.cancel(&Default::default(), cx)
+                })
+            })
+            .detach_and_log_err(cx);
+        } else {
+            cx.propagate()
+        }
+    }
 }
 
 impl ContextMenuItem {
@@ -167,6 +208,22 @@ impl Render for ContextMenu {
                 .on_action(cx.listener(ContextMenu::select_prev))
                 .on_action(cx.listener(ContextMenu::confirm))
                 .on_action(cx.listener(ContextMenu::cancel))
+                .when(!self.delayed, |mut el| {
+                    for item in self.items.iter() {
+                        if let ContextMenuItem::Entry {
+                            action: Some(action),
+                            ..
+                        } = item
+                        {
+                            el = el.on_boxed_action(
+                                action,
+                                cx.listener(ContextMenu::on_action_dispatch),
+                            );
+                        }
+                    }
+                    el
+                })
+                .on_blur(cx.listener(|this, _, cx| this.cancel(&Default::default(), cx)))
                 .flex_none()
                 .child(
                     List::new().children(self.items.iter().enumerate().map(
@@ -176,28 +233,38 @@ impl Render for ContextMenu {
                                 ListSubHeader::new(header.clone()).into_any_element()
                             }
                             ContextMenuItem::Entry {
-                                label: entry,
-                                handler: callback,
-                                key_binding,
+                                label,
+                                handler,
+                                icon,
+                                action,
                             } => {
-                                let callback = callback.clone();
+                                let handler = handler.clone();
                                 let dismiss = cx.listener(|_, _, cx| cx.emit(DismissEvent));
 
-                                ListItem::new(entry.clone())
+                                let label_element = if let Some(icon) = icon {
+                                    h_stack()
+                                        .gap_1()
+                                        .child(Label::new(label.clone()))
+                                        .child(IconElement::new(*icon))
+                                        .into_any_element()
+                                } else {
+                                    Label::new(label.clone()).into_any_element()
+                                };
+
+                                ListItem::new(label.clone())
                                     .child(
                                         h_stack()
                                             .w_full()
                                             .justify_between()
-                                            .child(Label::new(entry.clone()))
-                                            .children(
-                                                key_binding
-                                                    .clone()
-                                                    .map(|binding| div().ml_1().child(binding)),
-                                            ),
+                                            .child(label_element)
+                                            .children(action.as_ref().and_then(|action| {
+                                                KeyBinding::for_action(&**action, cx)
+                                                    .map(|binding| div().ml_1().child(binding))
+                                            })),
                                     )
                                     .selected(Some(ix) == self.selected_index)
                                     .on_click(move |event, cx| {
-                                        callback(cx);
+                                        handler(cx);
                                         dismiss(event, cx)
                                     })
                                     .into_any_element()
@@ -206,176 +273,5 @@ impl Render for ContextMenu {
                     )),
                 ),
         )
-    }
-}
-
-pub struct MenuHandle<M: ManagedView> {
-    id: ElementId,
-    child_builder: Option<Box<dyn FnOnce(bool) -> AnyElement + 'static>>,
-    menu_builder: Option<Rc<dyn Fn(&mut WindowContext) -> View<M> + 'static>>,
-    anchor: Option<AnchorCorner>,
-    attach: Option<AnchorCorner>,
-}
-
-impl<M: ManagedView> MenuHandle<M> {
-    pub fn menu(mut self, f: impl Fn(&mut WindowContext) -> View<M> + 'static) -> Self {
-        self.menu_builder = Some(Rc::new(f));
-        self
-    }
-
-    pub fn child<R: IntoElement>(mut self, f: impl FnOnce(bool) -> R + 'static) -> Self {
-        self.child_builder = Some(Box::new(|b| f(b).into_element().into_any()));
-        self
-    }
-
-    /// anchor defines which corner of the menu to anchor to the attachment point
-    /// (by default the cursor position, but see attach)
-    pub fn anchor(mut self, anchor: AnchorCorner) -> Self {
-        self.anchor = Some(anchor);
-        self
-    }
-
-    /// attach defines which corner of the handle to attach the menu's anchor to
-    pub fn attach(mut self, attach: AnchorCorner) -> Self {
-        self.attach = Some(attach);
-        self
-    }
-}
-
-pub fn menu_handle<M: ManagedView>(id: impl Into<ElementId>) -> MenuHandle<M> {
-    MenuHandle {
-        id: id.into(),
-        child_builder: None,
-        menu_builder: None,
-        anchor: None,
-        attach: None,
-    }
-}
-
-pub struct MenuHandleState<M> {
-    menu: Rc<RefCell<Option<View<M>>>>,
-    position: Rc<RefCell<Point<Pixels>>>,
-    child_layout_id: Option<LayoutId>,
-    child_element: Option<AnyElement>,
-    menu_element: Option<AnyElement>,
-}
-
-impl<M: ManagedView> Element for MenuHandle<M> {
-    type State = MenuHandleState<M>;
-
-    fn layout(
-        &mut self,
-        element_state: Option<Self::State>,
-        cx: &mut WindowContext,
-    ) -> (gpui::LayoutId, Self::State) {
-        let (menu, position) = if let Some(element_state) = element_state {
-            (element_state.menu, element_state.position)
-        } else {
-            (Rc::default(), Rc::default())
-        };
-
-        let mut menu_layout_id = None;
-
-        let menu_element = menu.borrow_mut().as_mut().map(|menu| {
-            let mut overlay = overlay().snap_to_window();
-            if let Some(anchor) = self.anchor {
-                overlay = overlay.anchor(anchor);
-            }
-            overlay = overlay.position(*position.borrow());
-
-            let mut element = overlay.child(menu.clone()).into_any();
-            menu_layout_id = Some(element.layout(cx));
-            element
-        });
-
-        let mut child_element = self
-            .child_builder
-            .take()
-            .map(|child_builder| (child_builder)(menu.borrow().is_some()));
-
-        let child_layout_id = child_element
-            .as_mut()
-            .map(|child_element| child_element.layout(cx));
-
-        let layout_id = cx.request_layout(
-            &gpui::Style::default(),
-            menu_layout_id.into_iter().chain(child_layout_id),
-        );
-
-        (
-            layout_id,
-            MenuHandleState {
-                menu,
-                position,
-                child_element,
-                child_layout_id,
-                menu_element,
-            },
-        )
-    }
-
-    fn paint(
-        self,
-        bounds: Bounds<gpui::Pixels>,
-        element_state: &mut Self::State,
-        cx: &mut WindowContext,
-    ) {
-        if let Some(child) = element_state.child_element.take() {
-            child.paint(cx);
-        }
-
-        if let Some(menu) = element_state.menu_element.take() {
-            menu.paint(cx);
-            return;
-        }
-
-        let Some(builder) = self.menu_builder else {
-            return;
-        };
-        let menu = element_state.menu.clone();
-        let position = element_state.position.clone();
-        let attach = self.attach.clone();
-        let child_layout_id = element_state.child_layout_id.clone();
-
-        cx.on_mouse_event(move |event: &MouseDownEvent, phase, cx| {
-            if phase == DispatchPhase::Bubble
-                && event.button == MouseButton::Right
-                && bounds.contains_point(&event.position)
-            {
-                cx.stop_propagation();
-                cx.prevent_default();
-
-                let new_menu = (builder)(cx);
-                let menu2 = menu.clone();
-                cx.subscribe(&new_menu, move |_modal, _: &DismissEvent, cx| {
-                    *menu2.borrow_mut() = None;
-                    cx.notify();
-                })
-                .detach();
-                cx.focus_view(&new_menu);
-                *menu.borrow_mut() = Some(new_menu);
-
-                *position.borrow_mut() = if attach.is_some() && child_layout_id.is_some() {
-                    attach
-                        .unwrap()
-                        .corner(cx.layout_bounds(child_layout_id.unwrap()))
-                } else {
-                    cx.mouse_position()
-                };
-                cx.notify();
-            }
-        });
-    }
-}
-
-impl<M: ManagedView> IntoElement for MenuHandle<M> {
-    type Element = Self;
-
-    fn element_id(&self) -> Option<gpui::ElementId> {
-        Some(self.id.clone())
-    }
-
-    fn into_element(self) -> Self::Element {
-        self
     }
 }

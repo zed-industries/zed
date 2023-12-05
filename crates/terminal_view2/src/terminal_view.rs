@@ -299,11 +299,8 @@ impl TerminalView {
         cx: &mut ViewContext<Self>,
     ) {
         self.context_menu = Some(ContextMenu::build(cx, |menu, cx| {
-            menu.action("Clear", Box::new(Clear), cx).action(
-                "Close",
-                Box::new(CloseActiveItem { save_intent: None }),
-                cx,
-            )
+            menu.action("Clear", Box::new(Clear))
+                .action("Close", Box::new(CloseActiveItem { save_intent: None }))
         }));
         dbg!(&position);
         // todo!()
@@ -1173,6 +1170,7 @@ mod tests {
                 })
             })
             .await
+            .unwrap()
             .unwrap();
 
         (wt, entry)

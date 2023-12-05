@@ -621,7 +621,7 @@ impl ProjectPanel {
             edited_entry_id = NEW_ENTRY_ID;
             edit_task = self.project.update(cx, |project, cx| {
                 project.create_entry((worktree_id, &new_path), is_dir, cx)
-            })?;
+            });
         } else {
             let new_path = if let Some(parent) = entry.path.clone().parent() {
                 parent.join(&filename)
@@ -635,7 +635,7 @@ impl ProjectPanel {
             edited_entry_id = entry.id;
             edit_task = self.project.update(cx, |project, cx| {
                 project.rename_entry(entry.id, new_path.as_path(), cx)
-            })?;
+            });
         };
 
         edit_state.processing_filename = Some(filename);
@@ -648,21 +648,22 @@ impl ProjectPanel {
                 cx.notify();
             })?;
 
-            let new_entry = new_entry?;
-            this.update(&mut cx, |this, cx| {
-                if let Some(selection) = &mut this.selection {
-                    if selection.entry_id == edited_entry_id {
-                        selection.worktree_id = worktree_id;
-                        selection.entry_id = new_entry.id;
-                        this.expand_to_selection(cx);
+            if let Some(new_entry) = new_entry? {
+                this.update(&mut cx, |this, cx| {
+                    if let Some(selection) = &mut this.selection {
+                        if selection.entry_id == edited_entry_id {
+                            selection.worktree_id = worktree_id;
+                            selection.entry_id = new_entry.id;
+                            this.expand_to_selection(cx);
+                        }
                     }
-                }
-                this.update_visible_entries(None, cx);
-                if is_new_entry && !is_dir {
-                    this.open_entry(new_entry.id, true, cx);
-                }
-                cx.notify();
-            })?;
+                    this.update_visible_entries(None, cx);
+                    if is_new_entry && !is_dir {
+                        this.open_entry(new_entry.id, true, cx);
+                    }
+                    cx.notify();
+                })?;
+            }
             Ok(())
         }))
     }
@@ -935,15 +936,17 @@ impl ProjectPanel {
             }
 
             if clipboard_entry.is_cut() {
-                if let Some(task) = self.project.update(cx, |project, cx| {
-                    project.rename_entry(clipboard_entry.entry_id(), new_path, cx)
-                }) {
-                    task.detach_and_log_err(cx)
-                }
-            } else if let Some(task) = self.project.update(cx, |project, cx| {
-                project.copy_entry(clipboard_entry.entry_id(), new_path, cx)
-            }) {
-                task.detach_and_log_err(cx)
+                self.project
+                    .update(cx, |project, cx| {
+                        project.rename_entry(clipboard_entry.entry_id(), new_path, cx)
+                    })
+                    .detach_and_log_err(cx)
+            } else {
+                self.project
+                    .update(cx, |project, cx| {
+                        project.copy_entry(clipboard_entry.entry_id(), new_path, cx)
+                    })
+                    .detach_and_log_err(cx)
             }
         }
         None
@@ -1026,7 +1029,7 @@ impl ProjectPanel {
             let mut new_path = destination_path.to_path_buf();
             new_path.push(entry_path.path.file_name()?);
             if new_path != entry_path.path.as_ref() {
-                let task = project.rename_entry(entry_to_move, new_path, cx)?;
+                let task = project.rename_entry(entry_to_move, new_path, cx);
                 cx.foreground().spawn(task).detach_and_log_err(cx);
             }
 
@@ -1627,9 +1630,21 @@ impl View for ProjectPanel {
         }
     }
 
-    fn update_keymap_context(&self, keymap: &mut KeymapContext, _: &AppContext) {
+    fn update_keymap_context(&self, keymap: &mut KeymapContext, cx: &AppContext) {
         Self::reset_to_default_keymap_context(keymap);
         keymap.add_identifier("menu");
+
+        if let Some(window) = cx.active_window() {
+            window.read_with(cx, |cx| {
+                let identifier = if self.filename_editor.is_focused(cx) {
+                    "editing"
+                } else {
+                    "not_editing"
+                };
+
+                keymap.add_identifier(identifier);
+            });
+        }
     }
 
     fn focus_in(&mut self, _: gpui::AnyViewHandle, cx: &mut ViewContext<Self>) {

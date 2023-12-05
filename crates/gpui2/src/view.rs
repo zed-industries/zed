@@ -209,9 +209,7 @@ impl AnyView {
     ) {
         cx.with_absolute_element_offset(origin, |cx| {
             let (layout_id, rendered_element) = (self.layout)(self, cx);
-            cx.window
-                .layout_engine
-                .compute_layout(layout_id, available_space);
+            cx.compute_layout(layout_id, available_space);
             (self.paint)(self, rendered_element, cx);
         })
     }
@@ -240,6 +238,10 @@ impl Element for AnyView {
     }
 
     fn paint(self, _: Bounds<Pixels>, state: &mut Self::State, cx: &mut WindowContext) {
+        debug_assert!(
+            state.is_some(),
+            "state is None. Did you include an AnyView twice in the tree?"
+        );
         (self.paint)(&self, state.take().unwrap(), cx)
     }
 }

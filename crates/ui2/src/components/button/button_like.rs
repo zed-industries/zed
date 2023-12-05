@@ -1,3 +1,4 @@
+use gpui::{relative, DefiniteLength};
 use gpui::{rems, transparent_black, AnyElement, AnyView, ClickEvent, Div, Hsla, Rems, Stateful};
 use smallvec::SmallVec;
 
@@ -5,18 +6,50 @@ use crate::h_stack;
 use crate::prelude::*;
 
 pub trait ButtonCommon: Clickable + Disableable {
+    /// A unique element ID to identify the button.
     fn id(&self) -> &ElementId;
+
+    /// The visual style of the button.
+    ///
+    /// Mosty commonly will be [`ButtonStyle::Subtle`], or [`ButtonStyle::Filled`]
+    /// for an emphasized button.
     fn style(self, style: ButtonStyle) -> Self;
+
+    /// The size of the button.
+    ///
+    /// Most buttons will use the default size.
+    ///
+    /// [`ButtonSize`] can also be used to help build non-button elements
+    /// that are consistently sized with buttons.
     fn size(self, size: ButtonSize) -> Self;
+
+    /// The tooltip that shows when a user hovers over the button.
+    ///
+    /// Nearly all interactable elements should have a tooltip. Some example
+    /// exceptions might a scroll bar, or a slider.
     fn tooltip(self, tooltip: impl Fn(&mut WindowContext) -> AnyView + 'static) -> Self;
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Default)]
 pub enum ButtonStyle {
-    #[default]
+    /// A filled button with a solid background color. Provides emphasis versus
+    /// the more common subtle button.
     Filled,
-    // Tinted,
+
+    /// 🚧 Under construction 🚧
+    ///
+    /// Used to emphasize a button in some way, like a selected state, or a semantic
+    /// coloring like an error or success button.
+    Tinted,
+
+    /// The default button style, used for most buttons. Has a transparent background,
+    /// but has a background color to indicate states like hover and active.
+    #[default]
     Subtle,
+
+    /// Used for buttons that only change forground color on hover and active states.
+    ///
+    /// TODO: Better docs for this.
     Transparent,
 }
 
@@ -40,6 +73,12 @@ impl ButtonStyle {
                 label_color: Color::Default.color(cx),
                 icon_color: Color::Default.color(cx),
             },
+            ButtonStyle::Tinted => ButtonLikeStyles {
+                background: gpui::red(),
+                border_color: gpui::red(),
+                label_color: gpui::red(),
+                icon_color: gpui::red(),
+            },
             ButtonStyle::Subtle => ButtonLikeStyles {
                 background: cx.theme().colors().ghost_element_background,
                 border_color: transparent_black(),
@@ -62,6 +101,12 @@ impl ButtonStyle {
                 border_color: transparent_black(),
                 label_color: Color::Default.color(cx),
                 icon_color: Color::Default.color(cx),
+            },
+            ButtonStyle::Tinted => ButtonLikeStyles {
+                background: gpui::red(),
+                border_color: gpui::red(),
+                label_color: gpui::red(),
+                icon_color: gpui::red(),
             },
             ButtonStyle::Subtle => ButtonLikeStyles {
                 background: cx.theme().colors().ghost_element_hover,
@@ -87,6 +132,12 @@ impl ButtonStyle {
                 border_color: transparent_black(),
                 label_color: Color::Default.color(cx),
                 icon_color: Color::Default.color(cx),
+            },
+            ButtonStyle::Tinted => ButtonLikeStyles {
+                background: gpui::red(),
+                border_color: gpui::red(),
+                label_color: gpui::red(),
+                icon_color: gpui::red(),
             },
             ButtonStyle::Subtle => ButtonLikeStyles {
                 background: cx.theme().colors().ghost_element_active,
@@ -114,6 +165,12 @@ impl ButtonStyle {
                 label_color: Color::Default.color(cx),
                 icon_color: Color::Default.color(cx),
             },
+            ButtonStyle::Tinted => ButtonLikeStyles {
+                background: gpui::red(),
+                border_color: gpui::red(),
+                label_color: gpui::red(),
+                icon_color: gpui::red(),
+            },
             ButtonStyle::Subtle => ButtonLikeStyles {
                 background: cx.theme().colors().ghost_element_background,
                 border_color: cx.theme().colors().border_focused,
@@ -137,6 +194,12 @@ impl ButtonStyle {
                 label_color: Color::Disabled.color(cx),
                 icon_color: Color::Disabled.color(cx),
             },
+            ButtonStyle::Tinted => ButtonLikeStyles {
+                background: gpui::red(),
+                border_color: gpui::red(),
+                label_color: gpui::red(),
+                icon_color: gpui::red(),
+            },
             ButtonStyle::Subtle => ButtonLikeStyles {
                 background: cx.theme().colors().ghost_element_disabled,
                 border_color: cx.theme().colors().border_disabled,
@@ -153,6 +216,8 @@ impl ButtonStyle {
     }
 }
 
+/// ButtonSize can also be used to help build  non-button elements
+/// that are consistently sized with buttons.
 #[derive(Default, PartialEq, Clone, Copy)]
 pub enum ButtonSize {
     #[default]
@@ -171,12 +236,18 @@ impl ButtonSize {
     }
 }
 
+/// A button-like element that can be used to create a custom button when
+/// prebuilt buttons are not sufficient. Use this sparingly, as it is
+/// unconstrained and may make the UI feel less consistent.
+///
+/// This is also used to build the prebuilt buttons.
 #[derive(IntoElement)]
 pub struct ButtonLike {
     id: ElementId,
     pub(super) style: ButtonStyle,
     pub(super) disabled: bool,
     pub(super) selected: bool,
+    pub(super) width: Option<DefiniteLength>,
     size: ButtonSize,
     tooltip: Option<Box<dyn Fn(&mut WindowContext) -> AnyView>>,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
@@ -190,6 +261,7 @@ impl ButtonLike {
             style: ButtonStyle::default(),
             disabled: false,
             selected: false,
+            width: None,
             size: ButtonSize::Default,
             tooltip: None,
             children: SmallVec::new(),
@@ -215,6 +287,18 @@ impl Selectable for ButtonLike {
 impl Clickable for ButtonLike {
     fn on_click(mut self, handler: impl Fn(&ClickEvent, &mut WindowContext) + 'static) -> Self {
         self.on_click = Some(Box::new(handler));
+        self
+    }
+}
+
+impl FixedWidth for ButtonLike {
+    fn width(mut self, width: DefiniteLength) -> Self {
+        self.width = Some(width);
+        self
+    }
+
+    fn full_width(mut self) -> Self {
+        self.width = Some(relative(1.));
         self
     }
 }
@@ -252,14 +336,19 @@ impl RenderOnce for ButtonLike {
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         h_stack()
             .id(self.id.clone())
+            .group("")
+            .flex_none()
             .h(self.size.height())
+            .when_some(self.width, |this, width| this.w(width))
             .rounded_md()
-            .cursor_pointer()
             .gap_1()
             .px_1()
             .bg(self.style.enabled(cx).background)
-            .hover(|hover| hover.bg(self.style.hovered(cx).background))
-            .active(|active| active.bg(self.style.active(cx).background))
+            .when(!self.disabled, |this| {
+                this.cursor_pointer()
+                    .hover(|hover| hover.bg(self.style.hovered(cx).background))
+                    .active(|active| active.bg(self.style.active(cx).background))
+            })
             .when_some(
                 self.on_click.filter(|_| !self.disabled),
                 |this, on_click| {
@@ -270,7 +359,11 @@ impl RenderOnce for ButtonLike {
                 },
             )
             .when_some(self.tooltip, |this, tooltip| {
-                this.tooltip(move |cx| tooltip(cx))
+                if !self.selected {
+                    this.tooltip(move |cx| tooltip(cx))
+                } else {
+                    this
+                }
             })
             .children(self.children)
     }

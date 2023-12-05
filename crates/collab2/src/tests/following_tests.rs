@@ -4,10 +4,12 @@
 // use call::ActiveCall;
 // use collab_ui::notifications::project_shared_notification::ProjectSharedNotification;
 // use editor::{Editor, ExcerptRange, MultiBuffer};
-// use gpui::{BackgroundExecutor, TestAppContext, View};
+// use gpui::{point, BackgroundExecutor, TestAppContext, View, VisualTestContext, WindowContext};
 // use live_kit_client::MacOSDisplay;
+// use project::project_settings::ProjectSettings;
 // use rpc::proto::PeerId;
 // use serde_json::json;
+// use settings::SettingsStore;
 // use std::borrow::Cow;
 // use workspace::{
 //     dock::{test::TestPanel, DockPosition},
@@ -24,7 +26,7 @@
 //     cx_c: &mut TestAppContext,
 //     cx_d: &mut TestAppContext,
 // ) {
-//     let mut server = TestServer::start(&executor).await;
+//     let mut server = TestServer::start(executor.clone()).await;
 //     let client_a = server.create_client(cx_a, "user_a").await;
 //     let client_b = server.create_client(cx_b, "user_b").await;
 //     let client_c = server.create_client(cx_c, "user_c").await;
@@ -71,12 +73,22 @@
 //         .unwrap();
 
 //     let window_a = client_a.build_workspace(&project_a, cx_a);
-//     let workspace_a = window_a.root(cx_a);
+//     let workspace_a = window_a.root(cx_a).unwrap();
 //     let window_b = client_b.build_workspace(&project_b, cx_b);
-//     let workspace_b = window_b.root(cx_b);
+//     let workspace_b = window_b.root(cx_b).unwrap();
+
+//     todo!("could be wrong")
+//     let mut cx_a = VisualTestContext::from_window(*window_a, cx_a);
+//     let cx_a = &mut cx_a;
+//     let mut cx_b = VisualTestContext::from_window(*window_b, cx_b);
+//     let cx_b = &mut cx_b;
+//     let mut cx_c = VisualTestContext::from_window(*window_c, cx_c);
+//     let cx_c = &mut cx_c;
+//     let mut cx_d = VisualTestContext::from_window(*window_d, cx_d);
+//     let cx_d = &mut cx_d;
 
 //     // Client A opens some editors.
-//     let pane_a = workspace_a.read_with(cx_a, |workspace, _| workspace.active_pane().clone());
+//     let pane_a = workspace_a.update(cx_a, |workspace, _| workspace.active_pane().clone());
 //     let editor_a1 = workspace_a
 //         .update(cx_a, |workspace, cx| {
 //             workspace.open_path((worktree_id, "1.txt"), None, true, cx)
@@ -132,8 +144,8 @@
 //         .await
 //         .unwrap();
 
-//     cx_c.foreground().run_until_parked();
-//     let editor_b2 = workspace_b.read_with(cx_b, |workspace, cx| {
+//     cx_c.executor().run_until_parked();
+//     let editor_b2 = workspace_b.update(cx_b, |workspace, cx| {
 //         workspace
 //             .active_item(cx)
 //             .unwrap()
@@ -145,19 +157,19 @@
 //         Some((worktree_id, "2.txt").into())
 //     );
 //     assert_eq!(
-//         editor_b2.read_with(cx_b, |editor, cx| editor.selections.ranges(cx)),
+//         editor_b2.update(cx_b, |editor, cx| editor.selections.ranges(cx)),
 //         vec![2..1]
 //     );
 //     assert_eq!(
-//         editor_b1.read_with(cx_b, |editor, cx| editor.selections.ranges(cx)),
+//         editor_b1.update(cx_b, |editor, cx| editor.selections.ranges(cx)),
 //         vec![3..2]
 //     );
 
-//     cx_c.foreground().run_until_parked();
+//     cx_c.executor().run_until_parked();
 //     let active_call_c = cx_c.read(ActiveCall::global);
 //     let project_c = client_c.build_remote_project(project_id, cx_c).await;
 //     let window_c = client_c.build_workspace(&project_c, cx_c);
-//     let workspace_c = window_c.root(cx_c);
+//     let workspace_c = window_c.root(cx_c).unwrap();
 //     active_call_c
 //         .update(cx_c, |call, cx| call.set_location(Some(&project_c), cx))
 //         .await
@@ -172,10 +184,13 @@
 //         .await
 //         .unwrap();
 
-//     cx_d.foreground().run_until_parked();
+//     cx_d.executor().run_until_parked();
 //     let active_call_d = cx_d.read(ActiveCall::global);
 //     let project_d = client_d.build_remote_project(project_id, cx_d).await;
-//     let workspace_d = client_d.build_workspace(&project_d, cx_d).root(cx_d);
+//     let workspace_d = client_d
+//         .build_workspace(&project_d, cx_d)
+//         .root(cx_d)
+//         .unwrap();
 //     active_call_d
 //         .update(cx_d, |call, cx| call.set_location(Some(&project_d), cx))
 //         .await
@@ -183,7 +198,7 @@
 //     drop(project_d);
 
 //     // All clients see that clients B and C are following client A.
-//     cx_c.foreground().run_until_parked();
+//     cx_c.executor().run_until_parked();
 //     for (name, cx) in [("A", &cx_a), ("B", &cx_b), ("C", &cx_c), ("D", &cx_d)] {
 //         assert_eq!(
 //             followers_by_leader(project_id, cx),
@@ -198,7 +213,7 @@
 //     });
 
 //     // All clients see that clients B is following client A.
-//     cx_c.foreground().run_until_parked();
+//     cx_c.executor().run_until_parked();
 //     for (name, cx) in [("A", &cx_a), ("B", &cx_b), ("C", &cx_c), ("D", &cx_d)] {
 //         assert_eq!(
 //             followers_by_leader(project_id, cx),
@@ -216,7 +231,7 @@
 //         .unwrap();
 
 //     // All clients see that clients B and C are following client A.
-//     cx_c.foreground().run_until_parked();
+//     cx_c.executor().run_until_parked();
 //     for (name, cx) in [("A", &cx_a), ("B", &cx_b), ("C", &cx_c), ("D", &cx_d)] {
 //         assert_eq!(
 //             followers_by_leader(project_id, cx),
@@ -240,7 +255,7 @@
 //         .unwrap();
 
 //     // All clients see that D is following C
-//     cx_d.foreground().run_until_parked();
+//     cx_d.executor().run_until_parked();
 //     for (name, cx) in [("A", &cx_a), ("B", &cx_b), ("C", &cx_c), ("D", &cx_d)] {
 //         assert_eq!(
 //             followers_by_leader(project_id, cx),
@@ -257,7 +272,7 @@
 //     cx_c.drop_last(workspace_c);
 
 //     // Clients A and B see that client B is following A, and client C is not present in the followers.
-//     cx_c.foreground().run_until_parked();
+//     cx_c.executor().run_until_parked();
 //     for (name, cx) in [("A", &cx_a), ("B", &cx_b), ("C", &cx_c), ("D", &cx_d)] {
 //         assert_eq!(
 //             followers_by_leader(project_id, cx),
@@ -271,12 +286,15 @@
 //         workspace.activate_item(&editor_a1, cx)
 //     });
 //     executor.run_until_parked();
-//     workspace_b.read_with(cx_b, |workspace, cx| {
-//         assert_eq!(workspace.active_item(cx).unwrap().id(), editor_b1.id());
+//     workspace_b.update(cx_b, |workspace, cx| {
+//         assert_eq!(
+//             workspace.active_item(cx).unwrap().item_id(),
+//             editor_b1.item_id()
+//         );
 //     });
 
 //     // When client A opens a multibuffer, client B does so as well.
-//     let multibuffer_a = cx_a.add_model(|cx| {
+//     let multibuffer_a = cx_a.build_model(|cx| {
 //         let buffer_a1 = project_a.update(cx, |project, cx| {
 //             project
 //                 .get_open_buffer(&(worktree_id, "1.txt").into(), cx)
@@ -308,12 +326,12 @@
 //     });
 //     let multibuffer_editor_a = workspace_a.update(cx_a, |workspace, cx| {
 //         let editor =
-//             cx.add_view(|cx| Editor::for_multibuffer(multibuffer_a, Some(project_a.clone()), cx));
+//             cx.build_view(|cx| Editor::for_multibuffer(multibuffer_a, Some(project_a.clone()), cx));
 //         workspace.add_item(Box::new(editor.clone()), cx);
 //         editor
 //     });
 //     executor.run_until_parked();
-//     let multibuffer_editor_b = workspace_b.read_with(cx_b, |workspace, cx| {
+//     let multibuffer_editor_b = workspace_b.update(cx_b, |workspace, cx| {
 //         workspace
 //             .active_item(cx)
 //             .unwrap()
@@ -321,8 +339,8 @@
 //             .unwrap()
 //     });
 //     assert_eq!(
-//         multibuffer_editor_a.read_with(cx_a, |editor, cx| editor.text(cx)),
-//         multibuffer_editor_b.read_with(cx_b, |editor, cx| editor.text(cx)),
+//         multibuffer_editor_a.update(cx_a, |editor, cx| editor.text(cx)),
+//         multibuffer_editor_b.update(cx_b, |editor, cx| editor.text(cx)),
 //     );
 
 //     // When client A navigates back and forth, client B does so as well.
@@ -333,8 +351,11 @@
 //         .await
 //         .unwrap();
 //     executor.run_until_parked();
-//     workspace_b.read_with(cx_b, |workspace, cx| {
-//         assert_eq!(workspace.active_item(cx).unwrap().id(), editor_b1.id());
+//     workspace_b.update(cx_b, |workspace, cx| {
+//         assert_eq!(
+//             workspace.active_item(cx).unwrap().item_id(),
+//             editor_b1.item_id()
+//         );
 //     });
 
 //     workspace_a
@@ -344,8 +365,11 @@
 //         .await
 //         .unwrap();
 //     executor.run_until_parked();
-//     workspace_b.read_with(cx_b, |workspace, cx| {
-//         assert_eq!(workspace.active_item(cx).unwrap().id(), editor_b2.id());
+//     workspace_b.update(cx_b, |workspace, cx| {
+//         assert_eq!(
+//             workspace.active_item(cx).unwrap().item_id(),
+//             editor_b2.item_id()
+//         );
 //     });
 
 //     workspace_a
@@ -355,8 +379,11 @@
 //         .await
 //         .unwrap();
 //     executor.run_until_parked();
-//     workspace_b.read_with(cx_b, |workspace, cx| {
-//         assert_eq!(workspace.active_item(cx).unwrap().id(), editor_b1.id());
+//     workspace_b.update(cx_b, |workspace, cx| {
+//         assert_eq!(
+//             workspace.active_item(cx).unwrap().item_id(),
+//             editor_b1.item_id()
+//         );
 //     });
 
 //     // Changes to client A's editor are reflected on client B.
@@ -364,20 +391,20 @@
 //         editor.change_selections(None, cx, |s| s.select_ranges([1..1, 2..2]));
 //     });
 //     executor.run_until_parked();
-//     editor_b1.read_with(cx_b, |editor, cx| {
+//     editor_b1.update(cx_b, |editor, cx| {
 //         assert_eq!(editor.selections.ranges(cx), &[1..1, 2..2]);
 //     });
 
 //     editor_a1.update(cx_a, |editor, cx| editor.set_text("TWO", cx));
 //     executor.run_until_parked();
-//     editor_b1.read_with(cx_b, |editor, cx| assert_eq!(editor.text(cx), "TWO"));
+//     editor_b1.update(cx_b, |editor, cx| assert_eq!(editor.text(cx), "TWO"));
 
 //     editor_a1.update(cx_a, |editor, cx| {
 //         editor.change_selections(None, cx, |s| s.select_ranges([3..3]));
-//         editor.set_scroll_position(vec2f(0., 100.), cx);
+//         editor.set_scroll_position(point(0., 100.), cx);
 //     });
 //     executor.run_until_parked();
-//     editor_b1.read_with(cx_b, |editor, cx| {
+//     editor_b1.update(cx_b, |editor, cx| {
 //         assert_eq!(editor.selections.ranges(cx), &[3..3]);
 //     });
 
@@ -390,11 +417,11 @@
 //     });
 //     executor.run_until_parked();
 //     assert_eq!(
-//         workspace_b.read_with(cx_b, |workspace, cx| workspace
+//         workspace_b.update(cx_b, |workspace, cx| workspace
 //             .active_item(cx)
 //             .unwrap()
-//             .id()),
-//         editor_b1.id()
+//             .item_id()),
+//         editor_b1.item_id()
 //     );
 
 //     // Client A starts following client B.
@@ -405,15 +432,15 @@
 //         .await
 //         .unwrap();
 //     assert_eq!(
-//         workspace_a.read_with(cx_a, |workspace, _| workspace.leader_for_pane(&pane_a)),
+//         workspace_a.update(cx_a, |workspace, _| workspace.leader_for_pane(&pane_a)),
 //         Some(peer_id_b)
 //     );
 //     assert_eq!(
-//         workspace_a.read_with(cx_a, |workspace, cx| workspace
+//         workspace_a.update(cx_a, |workspace, cx| workspace
 //             .active_item(cx)
 //             .unwrap()
-//             .id()),
-//         editor_a1.id()
+//             .item_id()),
+//         editor_a1.item_id()
 //     );
 
 //     // Client B activates an external window, which causes a new screen-sharing item to be added to the pane.
@@ -432,7 +459,7 @@
 //         .await
 //         .unwrap();
 //     executor.run_until_parked();
-//     let shared_screen = workspace_a.read_with(cx_a, |workspace, cx| {
+//     let shared_screen = workspace_a.update(cx_a, |workspace, cx| {
 //         workspace
 //             .active_item(cx)
 //             .expect("no active item")
@@ -446,8 +473,11 @@
 //         .await
 //         .unwrap();
 //     executor.run_until_parked();
-//     workspace_a.read_with(cx_a, |workspace, cx| {
-//         assert_eq!(workspace.active_item(cx).unwrap().id(), editor_a1.id())
+//     workspace_a.update(cx_a, |workspace, cx| {
+//         assert_eq!(
+//             workspace.active_item(cx).unwrap().item_id(),
+//             editor_a1.item_id()
+//         )
 //     });
 
 //     // Client B activates a multibuffer that was created by following client A. Client A returns to that multibuffer.
@@ -455,26 +485,26 @@
 //         workspace.activate_item(&multibuffer_editor_b, cx)
 //     });
 //     executor.run_until_parked();
-//     workspace_a.read_with(cx_a, |workspace, cx| {
+//     workspace_a.update(cx_a, |workspace, cx| {
 //         assert_eq!(
-//             workspace.active_item(cx).unwrap().id(),
-//             multibuffer_editor_a.id()
+//             workspace.active_item(cx).unwrap().item_id(),
+//             multibuffer_editor_a.item_id()
 //         )
 //     });
 
 //     // Client B activates a panel, and the previously-opened screen-sharing item gets activated.
-//     let panel = window_b.add_view(cx_b, |_| TestPanel::new(DockPosition::Left));
+//     let panel = window_b.build_view(cx_b, |_| TestPanel::new(DockPosition::Left));
 //     workspace_b.update(cx_b, |workspace, cx| {
 //         workspace.add_panel(panel, cx);
 //         workspace.toggle_panel_focus::<TestPanel>(cx);
 //     });
 //     executor.run_until_parked();
 //     assert_eq!(
-//         workspace_a.read_with(cx_a, |workspace, cx| workspace
+//         workspace_a.update(cx_a, |workspace, cx| workspace
 //             .active_item(cx)
 //             .unwrap()
-//             .id()),
-//         shared_screen.id()
+//             .item_id()),
+//         shared_screen.item_id()
 //     );
 
 //     // Toggling the focus back to the pane causes client A to return to the multibuffer.
@@ -482,16 +512,16 @@
 //         workspace.toggle_panel_focus::<TestPanel>(cx);
 //     });
 //     executor.run_until_parked();
-//     workspace_a.read_with(cx_a, |workspace, cx| {
+//     workspace_a.update(cx_a, |workspace, cx| {
 //         assert_eq!(
-//             workspace.active_item(cx).unwrap().id(),
-//             multibuffer_editor_a.id()
+//             workspace.active_item(cx).unwrap().item_id(),
+//             multibuffer_editor_a.item_id()
 //         )
 //     });
 
 //     // Client B activates an item that doesn't implement following,
 //     // so the previously-opened screen-sharing item gets activated.
-//     let unfollowable_item = window_b.add_view(cx_b, |_| TestItem::new());
+//     let unfollowable_item = window_b.build_view(cx_b, |_| TestItem::new());
 //     workspace_b.update(cx_b, |workspace, cx| {
 //         workspace.active_pane().update(cx, |pane, cx| {
 //             pane.add_item(Box::new(unfollowable_item), true, true, None, cx)
@@ -499,18 +529,18 @@
 //     });
 //     executor.run_until_parked();
 //     assert_eq!(
-//         workspace_a.read_with(cx_a, |workspace, cx| workspace
+//         workspace_a.update(cx_a, |workspace, cx| workspace
 //             .active_item(cx)
 //             .unwrap()
-//             .id()),
-//         shared_screen.id()
+//             .item_id()),
+//         shared_screen.item_id()
 //     );
 
 //     // Following interrupts when client B disconnects.
 //     client_b.disconnect(&cx_b.to_async());
 //     executor.advance_clock(RECONNECT_TIMEOUT);
 //     assert_eq!(
-//         workspace_a.read_with(cx_a, |workspace, _| workspace.leader_for_pane(&pane_a)),
+//         workspace_a.update(cx_a, |workspace, _| workspace.leader_for_pane(&pane_a)),
 //         None
 //     );
 // }
@@ -521,7 +551,7 @@
 //     cx_a: &mut TestAppContext,
 //     cx_b: &mut TestAppContext,
 // ) {
-//     let mut server = TestServer::start(&executor).await;
+//     let mut server = TestServer::start(executor.clone()).await;
 //     let client_a = server.create_client(cx_a, "user_a").await;
 //     let client_b = server.create_client(cx_b, "user_b").await;
 //     server
@@ -560,13 +590,19 @@
 //         .await
 //         .unwrap();
 
-//     let workspace_a = client_a.build_workspace(&project_a, cx_a).root(cx_a);
-//     let pane_a = workspace_a.read_with(cx_a, |workspace, _| workspace.active_pane().clone());
+//     let workspace_a = client_a
+//         .build_workspace(&project_a, cx_a)
+//         .root(cx_a)
+//         .unwrap();
+//     let pane_a = workspace_a.update(cx_a, |workspace, _| workspace.active_pane().clone());
 
-//     let workspace_b = client_b.build_workspace(&project_b, cx_b).root(cx_b);
-//     let pane_b = workspace_b.read_with(cx_b, |workspace, _| workspace.active_pane().clone());
+//     let workspace_b = client_b
+//         .build_workspace(&project_b, cx_b)
+//         .root(cx_b)
+//         .unwrap();
+//     let pane_b = workspace_b.update(cx_b, |workspace, _| workspace.active_pane().clone());
 
-//     let client_b_id = project_a.read_with(cx_a, |project, _| {
+//     let client_b_id = project_a.update(cx_a, |project, _| {
 //         project.collaborators().values().next().unwrap().peer_id
 //     });
 
@@ -584,7 +620,7 @@
 //         .await
 //         .unwrap();
 
-//     let pane_paths = |pane: &ViewHandle<workspace::Pane>, cx: &mut TestAppContext| {
+//     let pane_paths = |pane: &View<workspace::Pane>, cx: &mut TestAppContext| {
 //         pane.update(cx, |pane, cx| {
 //             pane.items()
 //                 .map(|item| {
@@ -642,7 +678,7 @@
 //     cx_a: &mut TestAppContext,
 //     cx_b: &mut TestAppContext,
 // ) {
-//     let mut server = TestServer::start(&executor).await;
+//     let mut server = TestServer::start(executor.clone()).await;
 //     let client_a = server.create_client(cx_a, "user_a").await;
 //     let client_b = server.create_client(cx_b, "user_b").await;
 //     server
@@ -685,7 +721,10 @@
 //         .unwrap();
 
 //     // Client A opens a file.
-//     let workspace_a = client_a.build_workspace(&project_a, cx_a).root(cx_a);
+//     let workspace_a = client_a
+//         .build_workspace(&project_a, cx_a)
+//         .root(cx_a)
+//         .unwrap();
 //     workspace_a
 //         .update(cx_a, |workspace, cx| {
 //             workspace.open_path((worktree_id, "1.txt"), None, true, cx)
@@ -696,7 +735,10 @@
 //         .unwrap();
 
 //     // Client B opens a different file.
-//     let workspace_b = client_b.build_workspace(&project_b, cx_b).root(cx_b);
+//     let workspace_b = client_b
+//         .build_workspace(&project_b, cx_b)
+//         .root(cx_b)
+//         .unwrap();
 //     workspace_b
 //         .update(cx_b, |workspace, cx| {
 //             workspace.open_path((worktree_id, "2.txt"), None, true, cx)
@@ -1167,7 +1209,7 @@
 //     cx_b: &mut TestAppContext,
 // ) {
 //     // 2 clients connect to a server.
-//     let mut server = TestServer::start(&executor).await;
+//     let mut server = TestServer::start(executor.clone()).await;
 //     let client_a = server.create_client(cx_a, "user_a").await;
 //     let client_b = server.create_client(cx_b, "user_b").await;
 //     server
@@ -1207,8 +1249,17 @@
 //         .await
 //         .unwrap();
 
+//     todo!("could be wrong")
+//     let mut cx_a = VisualTestContext::from_window(*window_a, cx_a);
+//     let cx_a = &mut cx_a;
+//     let mut cx_b = VisualTestContext::from_window(*window_b, cx_b);
+//     let cx_b = &mut cx_b;
+
 //     // Client A opens some editors.
-//     let workspace_a = client_a.build_workspace(&project_a, cx_a).root(cx_a);
+//     let workspace_a = client_a
+//         .build_workspace(&project_a, cx_a)
+//         .root(cx_a)
+//         .unwrap();
 //     let _editor_a1 = workspace_a
 //         .update(cx_a, |workspace, cx| {
 //             workspace.open_path((worktree_id, "1.txt"), None, true, cx)
@@ -1219,9 +1270,12 @@
 //         .unwrap();
 
 //     // Client B starts following client A.
-//     let workspace_b = client_b.build_workspace(&project_b, cx_b).root(cx_b);
-//     let pane_b = workspace_b.read_with(cx_b, |workspace, _| workspace.active_pane().clone());
-//     let leader_id = project_b.read_with(cx_b, |project, _| {
+//     let workspace_b = client_b
+//         .build_workspace(&project_b, cx_b)
+//         .root(cx_b)
+//         .unwrap();
+//     let pane_b = workspace_b.update(cx_b, |workspace, _| workspace.active_pane().clone());
+//     let leader_id = project_b.update(cx_b, |project, _| {
 //         project.collaborators().values().next().unwrap().peer_id
 //     });
 //     workspace_b
@@ -1231,10 +1285,10 @@
 //         .await
 //         .unwrap();
 //     assert_eq!(
-//         workspace_b.read_with(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),
+//         workspace_b.update(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),
 //         Some(leader_id)
 //     );
-//     let editor_b2 = workspace_b.read_with(cx_b, |workspace, cx| {
+//     let editor_b2 = workspace_b.update(cx_b, |workspace, cx| {
 //         workspace
 //             .active_item(cx)
 //             .unwrap()
@@ -1245,7 +1299,7 @@
 //     // When client B moves, it automatically stops following client A.
 //     editor_b2.update(cx_b, |editor, cx| editor.move_right(&editor::MoveRight, cx));
 //     assert_eq!(
-//         workspace_b.read_with(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),
+//         workspace_b.update(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),
 //         None
 //     );
 
@@ -1256,14 +1310,14 @@
 //         .await
 //         .unwrap();
 //     assert_eq!(
-//         workspace_b.read_with(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),
+//         workspace_b.update(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),
 //         Some(leader_id)
 //     );
 
 //     // When client B edits, it automatically stops following client A.
 //     editor_b2.update(cx_b, |editor, cx| editor.insert("X", cx));
 //     assert_eq!(
-//         workspace_b.read_with(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),
+//         workspace_b.update(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),
 //         None
 //     );
 
@@ -1274,16 +1328,16 @@
 //         .await
 //         .unwrap();
 //     assert_eq!(
-//         workspace_b.read_with(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),
+//         workspace_b.update(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),
 //         Some(leader_id)
 //     );
 
 //     // When client B scrolls, it automatically stops following client A.
 //     editor_b2.update(cx_b, |editor, cx| {
-//         editor.set_scroll_position(vec2f(0., 3.), cx)
+//         editor.set_scroll_position(point(0., 3.), cx)
 //     });
 //     assert_eq!(
-//         workspace_b.read_with(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),
+//         workspace_b.update(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),
 //         None
 //     );
 
@@ -1294,7 +1348,7 @@
 //         .await
 //         .unwrap();
 //     assert_eq!(
-//         workspace_b.read_with(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),
+//         workspace_b.update(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),
 //         Some(leader_id)
 //     );
 
@@ -1303,13 +1357,13 @@
 //         workspace.split_and_clone(pane_b.clone(), SplitDirection::Right, cx)
 //     });
 //     assert_eq!(
-//         workspace_b.read_with(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),
+//         workspace_b.update(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),
 //         Some(leader_id)
 //     );
 
 //     workspace_b.update(cx_b, |workspace, cx| workspace.activate_next_pane(cx));
 //     assert_eq!(
-//         workspace_b.read_with(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),
+//         workspace_b.update(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),
 //         Some(leader_id)
 //     );
 
@@ -1321,7 +1375,7 @@
 //         .await
 //         .unwrap();
 //     assert_eq!(
-//         workspace_b.read_with(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),
+//         workspace_b.update(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),
 //         None
 //     );
 // }
@@ -1332,7 +1386,7 @@
 //     cx_a: &mut TestAppContext,
 //     cx_b: &mut TestAppContext,
 // ) {
-//     let mut server = TestServer::start(&executor).await;
+//     let mut server = TestServer::start(executor.clone()).await;
 //     let client_a = server.create_client(cx_a, "user_a").await;
 //     let client_b = server.create_client(cx_b, "user_b").await;
 //     server
@@ -1345,20 +1399,26 @@
 
 //     client_a.fs().insert_tree("/a", json!({})).await;
 //     let (project_a, _) = client_a.build_local_project("/a", cx_a).await;
-//     let workspace_a = client_a.build_workspace(&project_a, cx_a).root(cx_a);
+//     let workspace_a = client_a
+//         .build_workspace(&project_a, cx_a)
+//         .root(cx_a)
+//         .unwrap();
 //     let project_id = active_call_a
 //         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
 //         .await
 //         .unwrap();
 
 //     let project_b = client_b.build_remote_project(project_id, cx_b).await;
-//     let workspace_b = client_b.build_workspace(&project_b, cx_b).root(cx_b);
+//     let workspace_b = client_b
+//         .build_workspace(&project_b, cx_b)
+//         .root(cx_b)
+//         .unwrap();
 
 //     executor.run_until_parked();
-//     let client_a_id = project_b.read_with(cx_b, |project, _| {
+//     let client_a_id = project_b.update(cx_b, |project, _| {
 //         project.collaborators().values().next().unwrap().peer_id
 //     });
-//     let client_b_id = project_a.read_with(cx_a, |project, _| {
+//     let client_b_id = project_a.update(cx_a, |project, _| {
 //         project.collaborators().values().next().unwrap().peer_id
 //     });
 
@@ -1370,13 +1430,13 @@
 //     });
 
 //     futures::try_join!(a_follow_b, b_follow_a).unwrap();
-//     workspace_a.read_with(cx_a, |workspace, _| {
+//     workspace_a.update(cx_a, |workspace, _| {
 //         assert_eq!(
 //             workspace.leader_for_pane(workspace.active_pane()),
 //             Some(client_b_id)
 //         );
 //     });
-//     workspace_b.read_with(cx_b, |workspace, _| {
+//     workspace_b.update(cx_b, |workspace, _| {
 //         assert_eq!(
 //             workspace.leader_for_pane(workspace.active_pane()),
 //             Some(client_a_id)
@@ -1398,7 +1458,7 @@
 //     // b opens a different file in project 2, a follows b
 //     // b opens a different file in project 1, a cannot follow b
 //     // b shares the project, a joins the project and follows b
-//     let mut server = TestServer::start(&executor).await;
+//     let mut server = TestServer::start(executor.clone()).await;
 //     let client_a = server.create_client(cx_a, "user_a").await;
 //     let client_b = server.create_client(cx_b, "user_b").await;
 //     cx_a.update(editor::init);
@@ -1435,8 +1495,14 @@
 //     let (project_a, worktree_id_a) = client_a.build_local_project("/a", cx_a).await;
 //     let (project_b, worktree_id_b) = client_b.build_local_project("/b", cx_b).await;
 
-//     let workspace_a = client_a.build_workspace(&project_a, cx_a).root(cx_a);
-//     let workspace_b = client_b.build_workspace(&project_b, cx_b).root(cx_b);
+//     let workspace_a = client_a
+//         .build_workspace(&project_a, cx_a)
+//         .root(cx_a)
+//         .unwrap();
+//     let workspace_b = client_b
+//         .build_workspace(&project_b, cx_b)
+//         .root(cx_b)
+//         .unwrap();
 
 //     cx_a.update(|cx| collab_ui::init(&client_a.app_state, cx));
 //     cx_b.update(|cx| collab_ui::init(&client_b.app_state, cx));
@@ -1454,6 +1520,12 @@
 //         .update(cx_b, |call, cx| call.set_location(Some(&project_b), cx))
 //         .await
 //         .unwrap();
+
+//     todo!("could be wrong")
+//     let mut cx_a = VisualTestContext::from_window(*window_a, cx_a);
+//     let cx_a = &mut cx_a;
+//     let mut cx_b = VisualTestContext::from_window(*window_b, cx_b);
+//     let cx_b = &mut cx_b;
 
 //     workspace_a
 //         .update(cx_a, |workspace, cx| {
@@ -1476,11 +1548,12 @@
 //     let workspace_b_project_a = cx_b
 //         .windows()
 //         .iter()
-//         .max_by_key(|window| window.id())
+//         .max_by_key(|window| window.item_id())
 //         .unwrap()
 //         .downcast::<Workspace>()
 //         .unwrap()
-//         .root(cx_b);
+//         .root(cx_b)
+//         .unwrap();
 
 //     // assert that b is following a in project a in w.rs
 //     workspace_b_project_a.update(cx_b, |workspace, cx| {
@@ -1534,7 +1607,7 @@
 //             workspace.leader_for_pane(workspace.active_pane())
 //         );
 //         let item = workspace.active_pane().read(cx).active_item().unwrap();
-//         assert_eq!(item.tab_description(0, cx).unwrap(), Cow::Borrowed("x.rs"));
+//         assert_eq!(item.tab_description(0, cx).unwrap(), "x.rs".into());
 //     });
 
 //     // b moves to y.rs in b's project, a is still following but can't yet see
@@ -1578,11 +1651,12 @@
 //     let workspace_a_project_b = cx_a
 //         .windows()
 //         .iter()
-//         .max_by_key(|window| window.id())
+//         .max_by_key(|window| window.item_id())
 //         .unwrap()
 //         .downcast::<Workspace>()
 //         .unwrap()
-//         .root(cx_a);
+//         .root(cx_a)
+//         .unwrap();
 
 //     workspace_a_project_b.update(cx_a, |workspace, cx| {
 //         assert_eq!(workspace.project().read(cx).remote_id(), Some(project_b_id));
@@ -1596,12 +1670,151 @@
 //     });
 // }
 
+// #[gpui::test]
+// async fn test_following_into_excluded_file(
+//     executor: BackgroundExecutor,
+//     mut cx_a: &mut TestAppContext,
+//     mut cx_b: &mut TestAppContext,
+// ) {
+//     let mut server = TestServer::start(executor.clone()).await;
+//     let client_a = server.create_client(cx_a, "user_a").await;
+//     let client_b = server.create_client(cx_b, "user_b").await;
+//     for cx in [&mut cx_a, &mut cx_b] {
+//         cx.update(|cx| {
+//             cx.update_global::<SettingsStore, _>(|store, cx| {
+//                 store.update_user_settings::<ProjectSettings>(cx, |project_settings| {
+//                     project_settings.file_scan_exclusions = Some(vec!["**/.git".to_string()]);
+//                 });
+//             });
+//         });
+//     }
+//     server
+//         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+//         .await;
+//     let active_call_a = cx_a.read(ActiveCall::global);
+//     let active_call_b = cx_b.read(ActiveCall::global);
+
+//     cx_a.update(editor::init);
+//     cx_b.update(editor::init);
+
+//     client_a
+//         .fs()
+//         .insert_tree(
+//             "/a",
+//             json!({
+//                 ".git": {
+//                     "COMMIT_EDITMSG": "write your commit message here",
+//                 },
+//                 "1.txt": "one\none\none",
+//                 "2.txt": "two\ntwo\ntwo",
+//                 "3.txt": "three\nthree\nthree",
+//             }),
+//         )
+//         .await;
+//     let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
+//     active_call_a
+//         .update(cx_a, |call, cx| call.set_location(Some(&project_a), cx))
+//         .await
+//         .unwrap();
+
+//     let project_id = active_call_a
+//         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+//         .await
+//         .unwrap();
+//     let project_b = client_b.build_remote_project(project_id, cx_b).await;
+//     active_call_b
+//         .update(cx_b, |call, cx| call.set_location(Some(&project_b), cx))
+//         .await
+//         .unwrap();
+
+//     let window_a = client_a.build_workspace(&project_a, cx_a);
+//     let workspace_a = window_a.root(cx_a).unwrap();
+//     let peer_id_a = client_a.peer_id().unwrap();
+//     let window_b = client_b.build_workspace(&project_b, cx_b);
+//     let workspace_b = window_b.root(cx_b).unwrap();
+
+//     todo!("could be wrong")
+//     let mut cx_a = VisualTestContext::from_window(*window_a, cx_a);
+//     let cx_a = &mut cx_a;
+//     let mut cx_b = VisualTestContext::from_window(*window_b, cx_b);
+//     let cx_b = &mut cx_b;
+
+//     // Client A opens editors for a regular file and an excluded file.
+//     let editor_for_regular = workspace_a
+//         .update(cx_a, |workspace, cx| {
+//             workspace.open_path((worktree_id, "1.txt"), None, true, cx)
+//         })
+//         .await
+//         .unwrap()
+//         .downcast::<Editor>()
+//         .unwrap();
+//     let editor_for_excluded_a = workspace_a
+//         .update(cx_a, |workspace, cx| {
+//             workspace.open_path((worktree_id, ".git/COMMIT_EDITMSG"), None, true, cx)
+//         })
+//         .await
+//         .unwrap()
+//         .downcast::<Editor>()
+//         .unwrap();
+
+//     // Client A updates their selections in those editors
+//     editor_for_regular.update(cx_a, |editor, cx| {
+//         editor.handle_input("a", cx);
+//         editor.handle_input("b", cx);
+//         editor.handle_input("c", cx);
+//         editor.select_left(&Default::default(), cx);
+//         assert_eq!(editor.selections.ranges(cx), vec![3..2]);
+//     });
+//     editor_for_excluded_a.update(cx_a, |editor, cx| {
+//         editor.select_all(&Default::default(), cx);
+//         editor.handle_input("new commit message", cx);
+//         editor.select_left(&Default::default(), cx);
+//         assert_eq!(editor.selections.ranges(cx), vec![18..17]);
+//     });
+
+//     // When client B starts following client A, currently visible file is replicated
+//     workspace_b
+//         .update(cx_b, |workspace, cx| {
+//             workspace.follow(peer_id_a, cx).unwrap()
+//         })
+//         .await
+//         .unwrap();
+
+//     let editor_for_excluded_b = workspace_b.update(cx_b, |workspace, cx| {
+//         workspace
+//             .active_item(cx)
+//             .unwrap()
+//             .downcast::<Editor>()
+//             .unwrap()
+//     });
+//     assert_eq!(
+//         cx_b.read(|cx| editor_for_excluded_b.project_path(cx)),
+//         Some((worktree_id, ".git/COMMIT_EDITMSG").into())
+//     );
+//     assert_eq!(
+//         editor_for_excluded_b.update(cx_b, |editor, cx| editor.selections.ranges(cx)),
+//         vec![18..17]
+//     );
+
+//     // Changes from B to the excluded file are replicated in A's editor
+//     editor_for_excluded_b.update(cx_b, |editor, cx| {
+//         editor.handle_input("\nCo-Authored-By: B <b@b.b>", cx);
+//     });
+//     executor.run_until_parked();
+//     editor_for_excluded_a.update(cx_a, |editor, cx| {
+//         assert_eq!(
+//             editor.text(cx),
+//             "new commit messag\nCo-Authored-By: B <b@b.b>"
+//         );
+//     });
+// }
+
 // fn visible_push_notifications(
 //     cx: &mut TestAppContext,
-// ) -> Vec<gpui::ViewHandle<ProjectSharedNotification>> {
+// ) -> Vec<gpui::View<ProjectSharedNotification>> {
 //     let mut ret = Vec::new();
 //     for window in cx.windows() {
-//         window.read_with(cx, |window| {
+//         window.update(cx, |window| {
 //             if let Some(handle) = window
 //                 .root_view()
 //                 .clone()
@@ -1645,8 +1858,8 @@
 //     })
 // }
 
-// fn pane_summaries(workspace: &ViewHandle<Workspace>, cx: &mut TestAppContext) -> Vec<PaneSummary> {
-//     workspace.read_with(cx, |workspace, cx| {
+// fn pane_summaries(workspace: &View<Workspace>, cx: &mut WindowContext<'_>) -> Vec<PaneSummary> {
+//     workspace.update(cx, |workspace, cx| {
 //         let active_pane = workspace.active_pane();
 //         workspace
 //             .panes()

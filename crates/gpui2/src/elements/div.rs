@@ -221,26 +221,29 @@ pub trait InteractiveElement: Sized + Element {
 
     /// Add a listener for the given action, fires during the bubble event phase
     fn on_action<A: Action>(mut self, listener: impl Fn(&A, &mut WindowContext) + 'static) -> Self {
-        // NOTE: this debug assert has the side-effect of working around
-        // a bug where a crate consisting only of action definitions does
-        // not register the actions in debug builds:
-        //
-        // https://github.com/rust-lang/rust/issues/47384
-        // https://github.com/mmastrac/rust-ctor/issues/280
-        //
-        // if we are relying on this side-effect still, removing the debug_assert!
-        // likely breaks the command_palette tests.
-        // debug_assert!(
-        //     A::is_registered(),
-        //     "{:?} is not registered as an action",
-        //     A::qualified_name()
-        // );
         self.interactivity().action_listeners.push((
             TypeId::of::<A>(),
             Box::new(move |action, phase, cx| {
                 let action = action.downcast_ref().unwrap();
                 if phase == DispatchPhase::Bubble {
                     (listener)(action, cx)
+                }
+            }),
+        ));
+        self
+    }
+
+    fn on_boxed_action(
+        mut self,
+        action: &Box<dyn Action>,
+        listener: impl Fn(&Box<dyn Action>, &mut WindowContext) + 'static,
+    ) -> Self {
+        let action = action.boxed_clone();
+        self.interactivity().action_listeners.push((
+            (*action).type_id(),
+            Box::new(move |_, phase, cx| {
+                if phase == DispatchPhase::Bubble {
+                    (listener)(&action, cx)
                 }
             }),
         ));
@@ -866,6 +869,7 @@ impl Interactivity {
         }
 
         if self.hover_style.is_some()
+            || self.base_style.mouse_cursor.is_some()
             || cx.active_drag.is_some() && !self.drag_over_styles.is_empty()
         {
             let bounds = bounds.intersect(&cx.content_mask().bounds);
@@ -992,14 +996,14 @@ impl Interactivity {
             let interactive_bounds = interactive_bounds.clone();
 
             cx.on_mouse_event(move |event: &MouseMoveEvent, phase, cx| {
-                if phase != DispatchPhase::Bubble {
-                    return;
-                }
-
                 let is_hovered = interactive_bounds.visibly_contains(&event.position, cx)
                     && pending_mouse_down.borrow().is_none();
                 if !is_hovered {
                     active_tooltip.borrow_mut().take();
+                    return;
+                }
+
+                if phase != DispatchPhase::Bubble {
                     return;
                 }
 

@@ -7,8 +7,8 @@ use gpui::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use ui::prelude::*;
-use ui::{h_stack, menu_handle, ContextMenu, IconButton, Tooltip};
+use ui::{h_stack, ContextMenu, IconButton, Tooltip};
+use ui::{prelude::*, right_click_menu};
 
 pub enum PanelEvent {
     ChangePosition,
@@ -702,7 +702,7 @@ impl Render for PanelButtons {
                 };
 
                 Some(
-                    menu_handle(name)
+                    right_click_menu(name)
                         .menu(move |cx| {
                             const POSITIONS: [DockPosition; 3] = [
                                 DockPosition::Left,
@@ -726,14 +726,14 @@ impl Render for PanelButtons {
                         })
                         .anchor(menu_anchor)
                         .attach(menu_attach)
-                        .child(move |_is_open| {
+                        .trigger(
                             IconButton::new(name, icon)
                                 .selected(is_active_button)
                                 .action(action.boxed_clone())
                                 .tooltip(move |cx| {
                                     Tooltip::for_action(tooltip.clone(), &*action, cx)
-                                })
-                        }),
+                                }),
+                        ),
                 )
             });
 

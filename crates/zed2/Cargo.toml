@@ -19,7 +19,7 @@ ai = { package = "ai2", path = "../ai2"}
 audio = { package = "audio2", path = "../audio2" }
 activity_indicator = { package = "activity_indicator2", path = "../activity_indicator2"}
 auto_update = { package = "auto_update2", path = "../auto_update2" }
-# breadcrumbs = { path = "../breadcrumbs" }
+breadcrumbs = { package = "breadcrumbs2", path = "../breadcrumbs2" }
 call = { package = "call2", path = "../call2" }
 channel = { package = "channel2", path = "../channel2" }
 cli = { path = "../cli" }
@@ -30,7 +30,7 @@ command_palette = { package="command_palette2", path = "../command_palette2" }
 client = { package = "client2", path = "../client2" }
 # clock = { path = "../clock" }
 copilot = { package = "copilot2", path = "../copilot2" }
-# copilot_button = { path = "../copilot_button" }
+copilot_button = { package = "copilot_button2", path = "../copilot_button2" }
 diagnostics = { package = "diagnostics2", path = "../diagnostics2" }
 db = { package = "db2", path = "../db2" }
 editor = { package="editor2", path = "../editor2" }
@@ -44,13 +44,13 @@ gpui = { package = "gpui2", path = "../gpui2" }
 install_cli = { package = "install_cli2", path = "../install_cli2" }
 journal = { package = "journal2", path = "../journal2" }
 language = { package = "language2", path = "../language2" }
-# language_selector = { path = "../language_selector" }
+language_selector = { package = "language_selector2", path = "../language_selector2" }
 lsp = { package = "lsp2", path = "../lsp2" }
 menu = { package = "menu2", path = "../menu2" }
 # language_tools = { path = "../language_tools" }
 node_runtime = { path = "../node_runtime" }
 # assistant = { path = "../assistant" }
-# outline = { path = "../outline" }
+outline = { package = "outline2", path = "../outline2" }
 # plugin_runtime = { path = "../plugin_runtime",optional = true }
 project = { package = "project2", path = "../project2" }
 project_panel = { package = "project_panel2", path = "../project_panel2" }
@@ -167,7 +167,7 @@ osx_info_plist_exts = ["resources/info/*"]
 osx_url_schemes = ["zed-dev"]
 
 [package.metadata.bundle-nightly]
-icon = ["resources/app-icon-preview@2x.png", "resources/app-icon-preview.png"]
+icon = ["resources/app-icon-nightly@2x.png", "resources/app-icon-nightly.png"]
 identifier = "dev.zed.Zed-Dev"
 name = "Zed Nightly"
 osx_minimum_system_version = "10.15.7"

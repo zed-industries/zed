@@ -10,9 +10,9 @@ use anyhow::{anyhow, Result};
 use gpui::{
     actions, div, overlay, px, uniform_list, Action, AppContext, AssetSource, AsyncWindowContext,
     ClipboardItem, DismissEvent, Div, EventEmitter, FocusHandle, Focusable, FocusableView,
-    InteractiveElement, Model, MouseButton, MouseDownEvent, ParentElement, Pixels, Point,
-    PromptLevel, Render, Stateful, Styled, Subscription, Task, UniformListScrollHandle, View,
-    ViewContext, VisualContext as _, WeakView, WindowContext,
+    InteractiveElement, KeyContext, Model, MouseButton, MouseDownEvent, ParentElement, Pixels,
+    Point, PromptLevel, Render, Stateful, Styled, Subscription, Task, UniformListScrollHandle,
+    View, ViewContext, VisualContext as _, WeakView, WindowContext,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
 use project::{
@@ -397,7 +397,6 @@ impl ProjectPanel {
                     menu = menu.action(
                         "Add Folder to Project",
                         Box::new(workspace::AddFolderToProject),
-                        cx,
                     );
                     if is_root {
                         menu = menu.entry(
@@ -412,35 +411,35 @@ impl ProjectPanel {
                 }
 
                 menu = menu
-                    .action("New File", Box::new(NewFile), cx)
-                    .action("New Folder", Box::new(NewDirectory), cx)
+                    .action("New File", Box::new(NewFile))
+                    .action("New Folder", Box::new(NewDirectory))
                     .separator()
-                    .action("Cut", Box::new(Cut), cx)
-                    .action("Copy", Box::new(Copy), cx);
+                    .action("Cut", Box::new(Cut))
+                    .action("Copy", Box::new(Copy));
 
                 if let Some(clipboard_entry) = self.clipboard_entry {
                     if clipboard_entry.worktree_id() == worktree_id {
-                        menu = menu.action("Paste", Box::new(Paste), cx);
+                        menu = menu.action("Paste", Box::new(Paste));
                     }
                 }
 
                 menu = menu
                     .separator()
-                    .action("Copy Path", Box::new(CopyPath), cx)
-                    .action("Copy Relative Path", Box::new(CopyRelativePath), cx)
+                    .action("Copy Path", Box::new(CopyPath))
+                    .action("Copy Relative Path", Box::new(CopyRelativePath))
                     .separator()
-                    .action("Reveal in Finder", Box::new(RevealInFinder), cx);
+                    .action("Reveal in Finder", Box::new(RevealInFinder));
 
                 if is_dir {
                     menu = menu
-                        .action("Open in Terminal", Box::new(OpenInTerminal), cx)
-                        .action("Search Inside", Box::new(NewSearchInDirectory), cx)
+                        .action("Open in Terminal", Box::new(OpenInTerminal))
+                        .action("Search Inside", Box::new(NewSearchInDirectory))
                 }
 
-                menu = menu.separator().action("Rename", Box::new(Rename), cx);
+                menu = menu.separator().action("Rename", Box::new(Rename));
 
                 if !is_root {
-                    menu = menu.action("Delete", Box::new(Delete), cx);
+                    menu = menu.action("Delete", Box::new(Delete));
                 }
 
                 menu
@@ -611,7 +610,7 @@ impl ProjectPanel {
             edited_entry_id = NEW_ENTRY_ID;
             edit_task = self.project.update(cx, |project, cx| {
                 project.create_entry((worktree_id, &new_path), is_dir, cx)
-            })?;
+            });
         } else {
             let new_path = if let Some(parent) = entry.path.clone().parent() {
                 parent.join(&filename)
@@ -625,7 +624,7 @@ impl ProjectPanel {
             edited_entry_id = entry.id;
             edit_task = self.project.update(cx, |project, cx| {
                 project.rename_entry(entry.id, new_path.as_path(), cx)
-            })?;
+            });
         };
 
         edit_state.processing_filename = Some(filename);
@@ -638,21 +637,22 @@ impl ProjectPanel {
                 cx.notify();
             })?;
 
-            let new_entry = new_entry?;
-            this.update(&mut cx, |this, cx| {
-                if let Some(selection) = &mut this.selection {
-                    if selection.entry_id == edited_entry_id {
-                        selection.worktree_id = worktree_id;
-                        selection.entry_id = new_entry.id;
-                        this.expand_to_selection(cx);
+            if let Some(new_entry) = new_entry? {
+                this.update(&mut cx, |this, cx| {
+                    if let Some(selection) = &mut this.selection {
+                        if selection.entry_id == edited_entry_id {
+                            selection.worktree_id = worktree_id;
+                            selection.entry_id = new_entry.id;
+                            this.expand_to_selection(cx);
+                        }
                     }
-                }
-                this.update_visible_entries(None, cx);
-                if is_new_entry && !is_dir {
-                    this.open_entry(new_entry.id, true, cx);
-                }
-                cx.notify();
-            })?;
+                    this.update_visible_entries(None, cx);
+                    if is_new_entry && !is_dir {
+                        this.open_entry(new_entry.id, true, cx);
+                    }
+                    cx.notify();
+                })?;
+            }
             Ok(())
         }))
     }
@@ -932,15 +932,17 @@ impl ProjectPanel {
             }
 
             if clipboard_entry.is_cut() {
-                if let Some(task) = self.project.update(cx, |project, cx| {
-                    project.rename_entry(clipboard_entry.entry_id(), new_path, cx)
-                }) {
-                    task.detach_and_log_err(cx);
-                }
-            } else if let Some(task) = self.project.update(cx, |project, cx| {
-                project.copy_entry(clipboard_entry.entry_id(), new_path, cx)
-            }) {
-                task.detach_and_log_err(cx);
+                self.project
+                    .update(cx, |project, cx| {
+                        project.rename_entry(clipboard_entry.entry_id(), new_path, cx)
+                    })
+                    .detach_and_log_err(cx)
+            } else {
+                self.project
+                    .update(cx, |project, cx| {
+                        project.copy_entry(clipboard_entry.entry_id(), new_path, cx)
+                    })
+                    .detach_and_log_err(cx)
             }
 
             Some(())
@@ -1026,7 +1028,7 @@ impl ProjectPanel {
     //         let mut new_path = destination_path.to_path_buf();
     //         new_path.push(entry_path.path.file_name()?);
     //         if new_path != entry_path.path.as_ref() {
-    //             let task = project.rename_entry(entry_to_move, new_path, cx)?;
+    //             let task = project.rename_entry(entry_to_move, new_path, cx);
     //             cx.foreground_executor().spawn(task).detach_and_log_err(cx);
     //         }
 
@@ -1420,6 +1422,22 @@ impl ProjectPanel {
         //     );
         // })
     }
+
+    fn dispatch_context(&self, cx: &ViewContext<Self>) -> KeyContext {
+        let mut dispatch_context = KeyContext::default();
+        dispatch_context.add("ProjectPanel");
+        dispatch_context.add("menu");
+
+        let identifier = if self.filename_editor.focus_handle(cx).is_focused(cx) {
+            "editing"
+        } else {
+            "not_editing"
+        };
+
+        dispatch_context.add(identifier);
+
+        dispatch_context
+    }
 }
 
 impl Render for ProjectPanel {
@@ -1433,7 +1451,7 @@ impl Render for ProjectPanel {
                 .id("project-panel")
                 .size_full()
                 .relative()
-                .key_context("ProjectPanel")
+                .key_context(self.dispatch_context(cx))
                 .on_action(cx.listener(Self::select_next))
                 .on_action(cx.listener(Self::select_prev))
                 .on_action(cx.listener(Self::expand_selected_entry))

@@ -1,18 +1,20 @@
 use crate::{AppState, FollowerState, Pane, Workspace};
 use anyhow::{anyhow, bail, Result};
+use call::{ActiveCall, ParticipantLocation};
 use collections::HashMap;
-use db2::sqlez::{
+use db::sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
 };
 use gpui::{
-    point, size, AnyWeakView, Bounds, Div, IntoElement, Model, Pixels, Point, View, ViewContext,
+    point, size, AnyWeakView, Bounds, Div, Entity as _, IntoElement, Model, Pixels, Point, View,
+    ViewContext,
 };
 use parking_lot::Mutex;
-use project2::Project;
+use project::Project;
 use serde::Deserialize;
 use std::sync::Arc;
-use ui::prelude::*;
+use ui::{prelude::*, Button};
 
 const HANDLE_HITBOX_SIZE: f32 = 4.0;
 const HORIZONTAL_MIN_SIZE: f32 = 80.;
@@ -126,6 +128,7 @@ impl PaneGroup {
         &self,
         project: &Model<Project>,
         follower_states: &HashMap<View<Pane>, FollowerState>,
+        active_call: Option<&Model<ActiveCall>>,
         active_pane: &View<Pane>,
         zoomed: Option<&AnyWeakView>,
         app_state: &Arc<AppState>,
@@ -135,6 +138,7 @@ impl PaneGroup {
             project,
             0,
             follower_states,
+            active_call,
             active_pane,
             zoomed,
             app_state,
@@ -196,6 +200,7 @@ impl Member {
         project: &Model<Project>,
         basis: usize,
         follower_states: &HashMap<View<Pane>, FollowerState>,
+        active_call: Option<&Model<ActiveCall>>,
         active_pane: &View<Pane>,
         zoomed: Option<&AnyWeakView>,
         app_state: &Arc<AppState>,
@@ -203,19 +208,89 @@ impl Member {
     ) -> impl IntoElement {
         match self {
             Member::Pane(pane) => {
-                // todo!()
-                // let pane_element = if Some(pane.into()) == zoomed {
-                //     None
-                // } else {
-                //     Some(pane)
-                // };
+                let leader = follower_states.get(pane).and_then(|state| {
+                    let room = active_call?.read(cx).room()?.read(cx);
+                    room.remote_participant_for_peer_id(state.leader_id)
+                });
 
-                div().size_full().child(pane.clone()).into_any()
+                let mut leader_border = None;
+                let mut leader_status_box = None;
+                if let Some(leader) = &leader {
+                    let mut leader_color = cx
+                        .theme()
+                        .players()
+                        .color_for_participant(leader.participant_index.0)
+                        .cursor;
+                    leader_color.fade_out(0.3);
+                    leader_border = Some(leader_color);
 
-                //         Stack::new()
-                //             .with_child(pane_element.contained().with_border(leader_border))
-                //             .with_children(leader_status_box)
-                //             .into_any()
+                    leader_status_box = match leader.location {
+                        ParticipantLocation::SharedProject {
+                            project_id: leader_project_id,
+                        } => {
+                            if Some(leader_project_id) == project.read(cx).remote_id() {
+                                None
+                            } else {
+                                let leader_user = leader.user.clone();
+                                let leader_user_id = leader.user.id;
+                                Some(
+                                    Button::new(
+                                        ("leader-status", pane.entity_id()),
+                                        format!(
+                                            "Follow {} to their active project",
+                                            leader_user.github_login,
+                                        ),
+                                    )
+                                    .on_click(cx.listener(
+                                        move |this, _, cx| {
+                                            crate::join_remote_project(
+                                                leader_project_id,
+                                                leader_user_id,
+                                                this.app_state().clone(),
+                                                cx,
+                                            )
+                                            .detach_and_log_err(cx);
+                                        },
+                                    )),
+                                )
+                            }
+                        }
+                        ParticipantLocation::UnsharedProject => Some(Button::new(
+                            ("leader-status", pane.entity_id()),
+                            format!(
+                                "{} is viewing an unshared Zed project",
+                                leader.user.github_login
+                            ),
+                        )),
+                        ParticipantLocation::External => Some(Button::new(
+                            ("leader-status", pane.entity_id()),
+                            format!(
+                                "{} is viewing a window outside of Zed",
+                                leader.user.github_login
+                            ),
+                        )),
+                    };
+                }
+
+                div()
+                    .relative()
+                    .size_full()
+                    .child(pane.clone())
+                    .when_some(leader_border, |this, color| {
+                        this.border_2().border_color(color)
+                    })
+                    .when_some(leader_status_box, |this, status_box| {
+                        this.child(
+                            div()
+                                .absolute()
+                                .w_96()
+                                .bottom_3()
+                                .right_3()
+                                .z_index(1)
+                                .child(status_box),
+                        )
+                    })
+                    .into_any()
 
                 // let el = div()
                 //     .flex()

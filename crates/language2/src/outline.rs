@@ -81,6 +81,7 @@ impl<T> Outline<T> {
         let mut prev_item_ix = 0;
         for mut string_match in matches {
             let outline_match = &self.items[string_match.candidate_id];
+            string_match.string = outline_match.text.clone();
 
             if is_path_query {
                 let prefix_len = self.path_candidate_prefixes[string_match.candidate_id];
