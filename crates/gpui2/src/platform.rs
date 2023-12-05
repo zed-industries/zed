@@ -1,3 +1,4 @@
+mod app_menu;
 mod keystroke;
 #[cfg(target_os = "macos")]
 mod mac;
@@ -32,6 +33,7 @@ use std::{
 };
 use uuid::Uuid;
 
+pub use app_menu::*;
 pub use keystroke::*;
 #[cfg(target_os = "macos")]
 pub use mac::*;
@@ -59,7 +61,7 @@ pub trait Platform: 'static {
 
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>>;
     fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>>;
-    fn main_window(&self) -> Option<AnyWindowHandle>;
+    fn active_window(&self) -> Option<AnyWindowHandle>;
     fn open_window(
         &self,
         handle: AnyWindowHandle,

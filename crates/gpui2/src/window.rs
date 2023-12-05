@@ -430,7 +430,7 @@ impl<'a> WindowContext<'a> {
         self.window
             .current_frame
             .dispatch_tree
-            .clear_keystroke_matchers();
+            .clear_pending_keystrokes();
         self.app.push_effect(Effect::FocusChanged {
             window_handle: self.window.handle,
             focused: Some(focus_id),
@@ -1177,7 +1177,7 @@ impl<'a> WindowContext<'a> {
         self.window
             .current_frame
             .dispatch_tree
-            .preserve_keystroke_matchers(
+            .preserve_pending_keystrokes(
                 &mut self.window.previous_frame.dispatch_tree,
                 self.window.focus,
             );

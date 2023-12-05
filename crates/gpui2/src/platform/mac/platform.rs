@@ -1,16 +1,17 @@
 use super::BoolExt;
 use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
-    ForegroundExecutor, InputEvent, MacDispatcher, MacDisplay, MacDisplayLinker, MacTextSystem,
-    MacWindow, PathPromptOptions, Platform, PlatformDisplay, PlatformTextSystem, PlatformWindow,
-    Result, SemanticVersion, VideoTimestamp, WindowOptions,
+    ForegroundExecutor, InputEvent, KeystrokeMatcher, MacDispatcher, MacDisplay, MacDisplayLinker,
+    MacTextSystem, MacWindow, MenuItem, PathPromptOptions, Platform, PlatformDisplay,
+    PlatformTextSystem, PlatformWindow, Result, SemanticVersion, VideoTimestamp, WindowOptions,
 };
 use anyhow::anyhow;
 use block::ConcreteBlock;
 use cocoa::{
     appkit::{
         NSApplication, NSApplicationActivationPolicy::NSApplicationActivationPolicyRegular,
-        NSModalResponse, NSOpenPanel, NSPasteboard, NSPasteboardTypeString, NSSavePanel, NSWindow,
+        NSMenuItem, NSModalResponse, NSOpenPanel, NSPasteboard, NSPasteboardTypeString,
+        NSSavePanel, NSWindow,
     },
     base::{id, nil, BOOL, YES},
     foundation::{
@@ -237,114 +238,115 @@ impl MacPlatform {
     //     application_menu
     // }
 
-    // unsafe fn create_menu_item(
-    //     &self,
-    //     item: MenuItem,
-    //     delegate: id,
-    //     actions: &mut Vec<Box<dyn Action>>,
-    //     keystroke_matcher: &KeymapMatcher,
-    // ) -> id {
-    //     match item {
-    //         MenuItem::Separator => NSMenuItem::separatorItem(nil),
-    //         MenuItem::Action {
-    //             name,
-    //             action,
-    //             os_action,
-    //         } => {
-    //             // TODO
-    //             let keystrokes = keystroke_matcher
-    //                 .bindings_for_action(action.id())
-    //                 .find(|binding| binding.action().eq(action.as_ref()))
-    //                 .map(|binding| binding.keystrokes());
-    //             let selector = match os_action {
-    //                 Some(crate::OsAction::Cut) => selector("cut:"),
-    //                 Some(crate::OsAction::Copy) => selector("copy:"),
-    //                 Some(crate::OsAction::Paste) => selector("paste:"),
-    //                 Some(crate::OsAction::SelectAll) => selector("selectAll:"),
-    //                 Some(crate::OsAction::Undo) => selector("undo:"),
-    //                 Some(crate::OsAction::Redo) => selector("redo:"),
-    //                 None => selector("handleGPUIMenuItem:"),
-    //             };
+    unsafe fn create_menu_item(
+        &self,
+        item: MenuItem,
+        delegate: id,
+        actions: &mut Vec<Box<dyn Action>>,
+        keystroke_matcher: &KeystrokeMatcher,
+    ) -> id {
+        todo!()
+        // match item {
+        //     MenuItem::Separator => NSMenuItem::separatorItem(nil),
+        //     MenuItem::Action {
+        //         name,
+        //         action,
+        //         os_action,
+        //     } => {
+        //         // TODO
+        //         let keystrokes = keystroke_matcher
+        //             .bindings_for_action(action.id())
+        //             .find(|binding| binding.action().eq(action.as_ref()))
+        //             .map(|binding| binding.keystrokes());
+        //         let selector = match os_action {
+        //             Some(crate::OsAction::Cut) => selector("cut:"),
+        //             Some(crate::OsAction::Copy) => selector("copy:"),
+        //             Some(crate::OsAction::Paste) => selector("paste:"),
+        //             Some(crate::OsAction::SelectAll) => selector("selectAll:"),
+        //             Some(crate::OsAction::Undo) => selector("undo:"),
+        //             Some(crate::OsAction::Redo) => selector("redo:"),
+        //             None => selector("handleGPUIMenuItem:"),
+        //         };
 
-    //             let item;
-    //             if let Some(keystrokes) = keystrokes {
-    //                 if keystrokes.len() == 1 {
-    //                     let keystroke = &keystrokes[0];
-    //                     let mut mask = NSEventModifierFlags::empty();
-    //                     for (modifier, flag) in &[
-    //                         (keystroke.cmd, NSEventModifierFlags::NSCommandKeyMask),
-    //                         (keystroke.ctrl, NSEventModifierFlags::NSControlKeyMask),
-    //                         (keystroke.alt, NSEventModifierFlags::NSAlternateKeyMask),
-    //                         (keystroke.shift, NSEventModifierFlags::NSShiftKeyMask),
-    //                     ] {
-    //                         if *modifier {
-    //                             mask |= *flag;
-    //                         }
-    //                     }
+        //         let item;
+        //         if let Some(keystrokes) = keystrokes {
+        //             if keystrokes.len() == 1 {
+        //                 let keystroke = &keystrokes[0];
+        //                 let mut mask = NSEventModifierFlags::empty();
+        //                 for (modifier, flag) in &[
+        //                     (keystroke.cmd, NSEventModifierFlags::NSCommandKeyMask),
+        //                     (keystroke.ctrl, NSEventModifierFlags::NSControlKeyMask),
+        //                     (keystroke.alt, NSEventModifierFlags::NSAlternateKeyMask),
+        //                     (keystroke.shift, NSEventModifierFlags::NSShiftKeyMask),
+        //                 ] {
+        //                     if *modifier {
+        //                         mask |= *flag;
+        //                     }
+        //                 }
 
-    //                     item = NSMenuItem::alloc(nil)
-    //                         .initWithTitle_action_keyEquivalent_(
-    //                             ns_string(name),
-    //                             selector,
-    //                             ns_string(key_to_native(&keystroke.key).as_ref()),
-    //                         )
-    //                         .autorelease();
-    //                     item.setKeyEquivalentModifierMask_(mask);
-    //                 }
-    //                 // For multi-keystroke bindings, render the keystroke as part of the title.
-    //                 else {
-    //                     use std::fmt::Write;
+        //                 item = NSMenuItem::alloc(nil)
+        //                     .initWithTitle_action_keyEquivalent_(
+        //                         ns_string(name),
+        //                         selector,
+        //                         ns_string(key_to_native(&keystroke.key).as_ref()),
+        //                     )
+        //                     .autorelease();
+        //                 item.setKeyEquivalentModifierMask_(mask);
+        //             }
+        //             // For multi-keystroke bindings, render the keystroke as part of the title.
+        //             else {
+        //                 use std::fmt::Write;
 
-    //                     let mut name = format!("{name} [");
-    //                     for (i, keystroke) in keystrokes.iter().enumerate() {
-    //                         if i > 0 {
-    //                             name.push(' ');
-    //                         }
-    //                         write!(&mut name, "{}", keystroke).unwrap();
-    //                     }
-    //                     name.push(']');
+        //                 let mut name = format!("{name} [");
+        //                 for (i, keystroke) in keystrokes.iter().enumerate() {
+        //                     if i > 0 {
+        //                         name.push(' ');
+        //                     }
+        //                     write!(&mut name, "{}", keystroke).unwrap();
+        //                 }
+        //                 name.push(']');
 
-    //                     item = NSMenuItem::alloc(nil)
-    //                         .initWithTitle_action_keyEquivalent_(
-    //                             ns_string(&name),
-    //                             selector,
-    //                             ns_string(""),
-    //                         )
-    //                         .autorelease();
-    //                 }
-    //             } else {
-    //                 item = NSMenuItem::alloc(nil)
-    //                     .initWithTitle_action_keyEquivalent_(
-    //                         ns_string(name),
-    //                         selector,
-    //                         ns_string(""),
-    //                     )
-    //                     .autorelease();
-    //             }
+        //                 item = NSMenuItem::alloc(nil)
+        //                     .initWithTitle_action_keyEquivalent_(
+        //                         ns_string(&name),
+        //                         selector,
+        //                         ns_string(""),
+        //                     )
+        //                     .autorelease();
+        //             }
+        //         } else {
+        //             item = NSMenuItem::alloc(nil)
+        //                 .initWithTitle_action_keyEquivalent_(
+        //                     ns_string(name),
+        //                     selector,
+        //                     ns_string(""),
+        //                 )
+        //                 .autorelease();
+        //         }
 
-    //             let tag = actions.len() as NSInteger;
-    //             let _: () = msg_send![item, setTag: tag];
-    //             actions.push(action);
-    //             item
-    //         }
-    //         MenuItem::Submenu(Menu { name, items }) => {
-    //             let item = NSMenuItem::new(nil).autorelease();
-    //             let submenu = NSMenu::new(nil).autorelease();
-    //             submenu.setDelegate_(delegate);
-    //             for item in items {
-    //                 submenu.addItem_(self.create_menu_item(
-    //                     item,
-    //                     delegate,
-    //                     actions,
-    //                     keystroke_matcher,
-    //                 ));
-    //             }
-    //             item.setSubmenu_(submenu);
-    //             item.setTitle_(ns_string(name));
-    //             item
-    //         }
-    //     }
-    // }
+        //         let tag = actions.len() as NSInteger;
+        //         let _: () = msg_send![item, setTag: tag];
+        //         actions.push(action);
+        //         item
+        //     }
+        //     MenuItem::Submenu(Menu { name, items }) => {
+        //         let item = NSMenuItem::new(nil).autorelease();
+        //         let submenu = NSMenu::new(nil).autorelease();
+        //         submenu.setDelegate_(delegate);
+        //         for item in items {
+        //             submenu.addItem_(self.create_menu_item(
+        //                 item,
+        //                 delegate,
+        //                 actions,
+        //                 keystroke_matcher,
+        //             ));
+        //         }
+        //         item.setSubmenu_(submenu);
+        //         item.setTitle_(ns_string(name));
+        //         item
+        //     }
+        // }
+    }
 }
 
 impl Platform for MacPlatform {
@@ -479,8 +481,8 @@ impl Platform for MacPlatform {
         MacDisplay::find_by_id(id).map(|screen| Rc::new(screen) as Rc<_>)
     }
 
-    fn main_window(&self) -> Option<AnyWindowHandle> {
-        MacWindow::main_window()
+    fn active_window(&self) -> Option<AnyWindowHandle> {
+        MacWindow::active_window()
     }
 
     fn open_window(

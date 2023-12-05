@@ -82,13 +82,13 @@ impl DispatchTree {
         }
     }
 
-    pub fn clear_keystroke_matchers(&mut self) {
+    pub fn clear_pending_keystrokes(&mut self) {
         self.keystroke_matchers.clear();
     }
 
     /// Preserve keystroke matchers from previous frames to support multi-stroke
     /// bindings across multiple frames.
-    pub fn preserve_keystroke_matchers(&mut self, old_tree: &mut Self, focus_id: Option<FocusId>) {
+    pub fn preserve_pending_keystrokes(&mut self, old_tree: &mut Self, focus_id: Option<FocusId>) {
         if let Some(node_id) = focus_id.and_then(|focus_id| self.focusable_node_id(focus_id)) {
             let dispatch_path = self.dispatch_path(node_id);
 
@@ -161,6 +161,22 @@ impl DispatchTree {
             }
         }
         actions
+    }
+
+    pub fn is_action_available(&self, action: &dyn Action, target: FocusId) -> bool {
+        if let Some(node) = self.focusable_node_ids.get(&target) {
+            for node_id in self.dispatch_path(*node) {
+                let node = &self.nodes[node_id.0];
+                if node
+                    .action_listeners
+                    .iter()
+                    .any(|listener| listener.action_type == action.as_any().type_id())
+                {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     pub fn bindings_for_action(

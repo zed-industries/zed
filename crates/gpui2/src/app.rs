@@ -425,6 +425,10 @@ impl AppContext {
             .collect()
     }
 
+    pub fn active_window(&self) -> Option<AnyWindowHandle> {
+        self.platform.active_window()
+    }
+
     /// Opens a new window with the given option and the root view returned by the given function.
     /// The function is invoked with a `WindowContext`, which can be used to interact with window-specific
     /// functionality.
@@ -1014,6 +1018,42 @@ impl AppContext {
         );
         activate();
         subscription
+    }
+
+    pub(crate) fn clear_pending_keystrokes(&mut self) {
+        for window in self.windows() {
+            window
+                .update(self, |_, cx| {
+                    cx.window
+                        .current_frame
+                        .dispatch_tree
+                        .clear_pending_keystrokes()
+                })
+                .ok();
+        }
+    }
+
+    pub fn is_action_available(&mut self, action: &dyn Action) -> bool {
+        if let Some(window) = self.active_window() {
+            let window_action_available = window
+                .update(self, |_, cx| {
+                    if let Some(focus_id) = cx.window.focus {
+                        cx.window
+                            .current_frame
+                            .dispatch_tree
+                            .is_action_available(action, focus_id)
+                    } else {
+                        false
+                    }
+                })
+                .unwrap_or(false);
+            if window_action_available {
+                return true;
+            }
+        }
+
+        self.global_action_listeners
+            .contains_key(&action.as_any().type_id())
     }
 }
 

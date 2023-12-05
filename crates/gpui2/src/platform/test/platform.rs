@@ -127,7 +127,7 @@ impl Platform for TestPlatform {
         self.displays().iter().find(|d| d.id() == id).cloned()
     }
 
-    fn main_window(&self) -> Option<crate::AnyWindowHandle> {
+    fn active_window(&self) -> Option<crate::AnyWindowHandle> {
         unimplemented!()
     }
 
