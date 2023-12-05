@@ -33,16 +33,16 @@ actions!(GiveFeedback, SubmitFeedback);
 //     });
 // }
 
-// #[derive(Serialize)]
-// struct FeedbackRequestBody<'a> {
-//     feedback_text: &'a str,
-//     email: Option<String>,
-//     metrics_id: Option<Arc<str>>,
-//     installation_id: Option<Arc<str>>,
-//     system_specs: SystemSpecs,
-//     is_staff: bool,
-//     token: &'a str,
-// }
+#[derive(Serialize)]
+struct FeedbackRequestBody<'a> {
+    feedback_text: &'a str,
+    email: Option<String>,
+    metrics_id: Option<Arc<str>>,
+    installation_id: Option<Arc<str>>,
+    system_specs: SystemSpecs,
+    is_staff: bool,
+    token: &'a str,
+}
 
 // #[derive(Clone)]
 // pub(crate) struct FeedbackEditor {
