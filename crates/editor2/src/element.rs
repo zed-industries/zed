@@ -3503,15 +3503,14 @@ mod tests {
         let size = state.position_map.size;
 
         assert_eq!(state.position_map.line_layouts.len(), 4);
-        // todo!() uncomment this assert
-        // assert_eq!(
-        //     state
-        //         .line_number_layouts
-        //         .iter()
-        //         .map(Option::is_some)
-        //         .collect::<Vec<_>>(),
-        //     &[false, false, false, true]
-        // );
+        assert_eq!(
+            state
+                .line_numbers
+                .iter()
+                .map(Option::is_some)
+                .collect::<Vec<_>>(),
+            &[false, false, false, true]
+        );
 
         // Don't panic.
         let bounds = Bounds::<Pixels>::new(Default::default(), size);
