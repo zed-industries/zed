@@ -1512,7 +1512,13 @@ impl Pane {
                             this.border_r().ml_px().border_b()
                         }
                     }
-                    cmp::Ordering::Equal => this.border_l().border_r().mb_px(),
+                    cmp::Ordering::Equal => {
+                        if is_first_item {
+                            this.ml_px().border_r().mb_px()
+                        } else {
+                            this.border_l().border_r().mb_px()
+                        }
+                    }
                 }
             })
             // .hover(|h| h.bg(tab_hover_bg))
