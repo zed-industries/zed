@@ -3942,8 +3942,6 @@ impl std::fmt::Debug for OpenPaths {
     }
 }
 
-pub struct WorkspaceCreated(pub WeakView<Workspace>);
-
 pub fn activate_workspace_for_project(
     cx: &mut AppContext,
     predicate: impl Fn(&Project, &AppContext) -> bool + Send + 'static,
