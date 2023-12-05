@@ -3558,103 +3558,107 @@ mod tests {
         assert_eq!(expected_invisibles, actual_invisibles);
     }
 
-    //     #[gpui::test]
-    //     fn test_invisibles_dont_appear_in_certain_editors(cx: &mut TestAppContext) {
-    //         init_test(cx, |s| {
-    //             s.defaults.show_whitespaces = Some(ShowWhitespaceSetting::All);
-    //             s.defaults.tab_size = NonZeroU32::new(4);
-    //         });
+    #[gpui::test]
+    fn test_invisibles_dont_appear_in_certain_editors(cx: &mut TestAppContext) {
+        init_test(cx, |s| {
+            s.defaults.show_whitespaces = Some(ShowWhitespaceSetting::All);
+            s.defaults.tab_size = NonZeroU32::new(4);
+        });
 
-    //         for editor_mode_without_invisibles in [
-    //             EditorMode::SingleLine,
-    //             EditorMode::AutoHeight { max_lines: 100 },
-    //         ] {
-    //             let invisibles = collect_invisibles_from_new_editor(
-    //                 cx,
-    //                 editor_mode_without_invisibles,
-    //                 "\t\t\t| | a b",
-    //                 500.0,
-    //             );
-    //             assert!(invisibles.is_empty,
-    //                 "For editor mode {editor_mode_without_invisibles:?} no invisibles was expected but got {invisibles:?}");
-    //         }
-    //     }
+        for editor_mode_without_invisibles in [
+            EditorMode::SingleLine,
+            EditorMode::AutoHeight { max_lines: 100 },
+        ] {
+            let invisibles = collect_invisibles_from_new_editor(
+                cx,
+                editor_mode_without_invisibles,
+                "\t\t\t| | a b",
+                px(500.0),
+            );
+            assert!(invisibles.is_empty(),
+                    "For editor mode {editor_mode_without_invisibles:?} no invisibles was expected but got {invisibles:?}");
+        }
+    }
 
-    //     #[gpui::test]
-    //     fn test_wrapped_invisibles_drawing(cx: &mut TestAppContext) {
-    //         let tab_size = 4;
-    //         let input_text = "a\tbcd   ".repeat(9);
-    //         let repeated_invisibles = [
-    //             Invisible::Tab {
-    //                 line_start_offset: 1,
-    //             },
-    //             Invisible::Whitespace {
-    //                 line_offset: tab_size as usize + 3,
-    //             },
-    //             Invisible::Whitespace {
-    //                 line_offset: tab_size as usize + 4,
-    //             },
-    //             Invisible::Whitespace {
-    //                 line_offset: tab_size as usize + 5,
-    //             },
-    //         ];
-    //         let expected_invisibles = std::iter::once(repeated_invisibles)
-    //             .cycle()
-    //             .take(9)
-    //             .flatten()
-    //             .collect::<Vec<_>>();
-    //         assert_eq!(
-    //             expected_invisibles.len(),
-    //             input_text
-    //                 .chars()
-    //                 .filter(|initial_char| initial_char.is_whitespace())
-    //                 .count(),
-    //             "Hardcoded expected invisibles differ from the actual ones in '{input_text}'"
-    //         );
-    //         info!("Expected invisibles: {expected_invisibles:?}");
+    #[gpui::test]
+    fn test_wrapped_invisibles_drawing(cx: &mut TestAppContext) {
+        let tab_size = 4;
+        let input_text = "a\tbcd   ".repeat(9);
+        let repeated_invisibles = [
+            Invisible::Tab {
+                line_start_offset: 1,
+            },
+            Invisible::Whitespace {
+                line_offset: tab_size as usize + 3,
+            },
+            Invisible::Whitespace {
+                line_offset: tab_size as usize + 4,
+            },
+            Invisible::Whitespace {
+                line_offset: tab_size as usize + 5,
+            },
+        ];
+        let expected_invisibles = std::iter::once(repeated_invisibles)
+            .cycle()
+            .take(9)
+            .flatten()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            expected_invisibles.len(),
+            input_text
+                .chars()
+                .filter(|initial_char| initial_char.is_whitespace())
+                .count(),
+            "Hardcoded expected invisibles differ from the actual ones in '{input_text}'"
+        );
+        info!("Expected invisibles: {expected_invisibles:?}");
 
-    //         init_test(cx, |_| {});
+        init_test(cx, |_| {});
 
-    //         // Put the same string with repeating whitespace pattern into editors of various size,
-    //         // take deliberately small steps during resizing, to put all whitespace kinds near the wrap point.
-    //         let resize_step = 10.0;
-    //         let mut editor_width = 200.0;
-    //         while editor_width <= 1000.0 {
-    //             update_test_language_settings(cx, |s| {
-    //                 s.defaults.tab_size = NonZeroU32::new(tab_size);
-    //                 s.defaults.show_whitespaces = Some(ShowWhitespaceSetting::All);
-    //                 s.defaults.preferred_line_length = Some(editor_width as u32);
-    //                 s.defaults.soft_wrap = Some(language_settings::SoftWrap::PreferredLineLength);
-    //             });
+        // Put the same string with repeating whitespace pattern into editors of various size,
+        // take deliberately small steps during resizing, to put all whitespace kinds near the wrap point.
+        let resize_step = 10.0;
+        let mut editor_width = 200.0;
+        while editor_width <= 1000.0 {
+            update_test_language_settings(cx, |s| {
+                s.defaults.tab_size = NonZeroU32::new(tab_size);
+                s.defaults.show_whitespaces = Some(ShowWhitespaceSetting::All);
+                s.defaults.preferred_line_length = Some(editor_width as u32);
+                s.defaults.soft_wrap = Some(language_settings::SoftWrap::PreferredLineLength);
+            });
 
-    //             let actual_invisibles =
-    //                 collect_invisibles_from_new_editor(cx, EditorMode::Full, &input_text, editor_width);
+            let actual_invisibles = collect_invisibles_from_new_editor(
+                cx,
+                EditorMode::Full,
+                &input_text,
+                px(editor_width),
+            );
 
-    //             // Whatever the editor size is, ensure it has the same invisible kinds in the same order
-    //             // (no good guarantees about the offsets: wrapping could trigger padding and its tests should check the offsets).
-    //             let mut i = 0;
-    //             for (actual_index, actual_invisible) in actual_invisibles.iter().enumerate() {
-    //                 i = actual_index;
-    //                 match expected_invisibles.get(i) {
-    //                     Some(expected_invisible) => match (expected_invisible, actual_invisible) {
-    //                         (Invisible::Whitespace { .. }, Invisible::Whitespace { .. })
-    //                         | (Invisible::Tab { .. }, Invisible::Tab { .. }) => {}
-    //                         _ => {
-    //                             panic!("At index {i}, expected invisible {expected_invisible:?} does not match actual {actual_invisible:?} by kind. Actual invisibles: {actual_invisibles:?}")
-    //                         }
-    //                     },
-    //                     None => panic!("Unexpected extra invisible {actual_invisible:?} at index {i}"),
-    //                 }
-    //             }
-    //             let missing_expected_invisibles = &expected_invisibles[i + 1..];
-    //             assert!(
-    //                 missing_expected_invisibles.is_empty,
-    //                 "Missing expected invisibles after index {i}: {missing_expected_invisibles:?}"
-    //             );
+            // Whatever the editor size is, ensure it has the same invisible kinds in the same order
+            // (no good guarantees about the offsets: wrapping could trigger padding and its tests should check the offsets).
+            let mut i = 0;
+            for (actual_index, actual_invisible) in actual_invisibles.iter().enumerate() {
+                i = actual_index;
+                match expected_invisibles.get(i) {
+                    Some(expected_invisible) => match (expected_invisible, actual_invisible) {
+                        (Invisible::Whitespace { .. }, Invisible::Whitespace { .. })
+                        | (Invisible::Tab { .. }, Invisible::Tab { .. }) => {}
+                        _ => {
+                            panic!("At index {i}, expected invisible {expected_invisible:?} does not match actual {actual_invisible:?} by kind. Actual invisibles: {actual_invisibles:?}")
+                        }
+                    },
+                    None => panic!("Unexpected extra invisible {actual_invisible:?} at index {i}"),
+                }
+            }
+            let missing_expected_invisibles = &expected_invisibles[i + 1..];
+            assert!(
+                missing_expected_invisibles.is_empty(),
+                "Missing expected invisibles after index {i}: {missing_expected_invisibles:?}"
+            );
 
-    //             editor_width += resize_step;
-    //         }
-    //     }
+            editor_width += resize_step;
+        }
+    }
 
     fn collect_invisibles_from_new_editor(
         cx: &mut TestAppContext,
