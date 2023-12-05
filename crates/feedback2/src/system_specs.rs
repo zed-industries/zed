@@ -66,10 +66,3 @@ impl Display for SystemSpecs {
         write!(f, "{system_specs}")
     }
 }
-
-// fn serialize_app_version<S>(version: ZED_APP_VERSION, serializer: S) -> Result<S::Ok, S::Error>
-// where
-//     S: serde::Serializer,
-// {
-//     version.map(|v| v.to_string()).serialize(serializer)
-// }
