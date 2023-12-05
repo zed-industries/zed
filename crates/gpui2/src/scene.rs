@@ -198,7 +198,7 @@ impl SceneBuilder {
     }
 }
 
-pub(crate) struct Scene {
+pub struct Scene {
     pub shadows: Vec<Shadow>,
     pub quads: Vec<Quad>,
     pub paths: Vec<Path<ScaledPixels>>,
@@ -214,7 +214,7 @@ impl Scene {
         &self.paths
     }
 
-    pub fn batches(&self) -> impl Iterator<Item = PrimitiveBatch> {
+    pub(crate) fn batches(&self) -> impl Iterator<Item = PrimitiveBatch> {
         BatchIterator {
             shadows: &self.shadows,
             shadows_start: 0,

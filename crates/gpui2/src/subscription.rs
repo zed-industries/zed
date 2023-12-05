@@ -1,6 +1,6 @@
 use collections::{BTreeMap, BTreeSet};
 use parking_lot::Mutex;
-use std::{fmt::Debug, mem, sync::Arc};
+use std::{cell::Cell, fmt::Debug, mem, rc::Rc, sync::Arc};
 use util::post_inc;
 
 pub(crate) struct SubscriberSet<EmitterKey, Callback>(
@@ -14,9 +14,14 @@ impl<EmitterKey, Callback> Clone for SubscriberSet<EmitterKey, Callback> {
 }
 
 struct SubscriberSetState<EmitterKey, Callback> {
-    subscribers: BTreeMap<EmitterKey, Option<BTreeMap<usize, Callback>>>,
+    subscribers: BTreeMap<EmitterKey, Option<BTreeMap<usize, Subscriber<Callback>>>>,
     dropped_subscribers: BTreeSet<(EmitterKey, usize)>,
     next_subscriber_id: usize,
+}
+
+struct Subscriber<Callback> {
+    active: Rc<Cell<bool>>,
+    callback: Callback,
 }
 
 impl<EmitterKey, Callback> SubscriberSet<EmitterKey, Callback>
@@ -32,16 +37,33 @@ where
         })))
     }
 
-    pub fn insert(&self, emitter_key: EmitterKey, callback: Callback) -> Subscription {
+    /// Inserts a new `[Subscription]` for the given `emitter_key`. By default, subscriptions
+    /// are inert, meaning that they won't be listed when calling `[SubscriberSet::remove]` or `[SubscriberSet::retain]`.
+    /// This method returns a tuple of a `[Subscription]` and an `impl FnOnce`, and you can use the latter
+    /// to activate the `[Subscription]`.
+    #[must_use]
+    pub fn insert(
+        &self,
+        emitter_key: EmitterKey,
+        callback: Callback,
+    ) -> (Subscription, impl FnOnce()) {
+        let active = Rc::new(Cell::new(false));
         let mut lock = self.0.lock();
         let subscriber_id = post_inc(&mut lock.next_subscriber_id);
         lock.subscribers
             .entry(emitter_key.clone())
             .or_default()
             .get_or_insert_with(|| Default::default())
-            .insert(subscriber_id, callback);
+            .insert(
+                subscriber_id,
+                Subscriber {
+                    active: active.clone(),
+                    callback,
+                },
+            );
         let this = self.0.clone();
-        Subscription {
+
+        let subscription = Subscription {
             unsubscribe: Some(Box::new(move || {
                 let mut lock = this.lock();
                 let Some(subscribers) = lock.subscribers.get_mut(&emitter_key) else {
@@ -63,7 +85,8 @@ where
                 lock.dropped_subscribers
                     .insert((emitter_key, subscriber_id));
             })),
-        }
+        };
+        (subscription, move || active.set(true))
     }
 
     pub fn remove(&self, emitter: &EmitterKey) -> impl IntoIterator<Item = Callback> {
@@ -73,6 +96,13 @@ where
             .map(|s| s.into_values())
             .into_iter()
             .flatten()
+            .filter_map(|subscriber| {
+                if subscriber.active.get() {
+                    Some(subscriber.callback)
+                } else {
+                    None
+                }
+            })
     }
 
     /// Call the given callback for each subscriber to the given emitter.
@@ -91,7 +121,13 @@ where
             return;
         };
 
-        subscribers.retain(|_, callback| f(callback));
+        subscribers.retain(|_, subscriber| {
+            if subscriber.active.get() {
+                f(&mut subscriber.callback)
+            } else {
+                true
+            }
+        });
         let mut lock = self.0.lock();
 
         // Add any new subscribers that were added while invoking the callback.

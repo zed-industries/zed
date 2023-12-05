@@ -2112,7 +2112,7 @@ dependencies = [
  "lsp2",
  "node_runtime",
  "parking_lot 0.11.2",
- "rpc",
+ "rpc2",
  "serde",
  "serde_derive",
  "settings2",

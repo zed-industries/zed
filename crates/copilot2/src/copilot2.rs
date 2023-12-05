@@ -1002,229 +1002,231 @@ async fn get_copilot_lsp(http: Arc<dyn HttpClient>) -> anyhow::Result<PathBuf> {
     }
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     use gpui::{executor::Deterministic, TestAppContext};
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::TestAppContext;
 
-//     #[gpui::test(iterations = 10)]
-//     async fn test_buffer_management(deterministic: Arc<Deterministic>, cx: &mut TestAppContext) {
-//         deterministic.forbid_parking();
-//         let (copilot, mut lsp) = Copilot::fake(cx);
+    #[gpui::test(iterations = 10)]
+    async fn test_buffer_management(cx: &mut TestAppContext) {
+        let (copilot, mut lsp) = Copilot::fake(cx);
 
-//         let buffer_1 = cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, "Hello"));
-//         let buffer_1_uri: lsp::Url = format!("buffer://{}", buffer_1.id()).parse().unwrap();
-//         copilot.update(cx, |copilot, cx| copilot.register_buffer(&buffer_1, cx));
-//         assert_eq!(
-//             lsp.receive_notification::<lsp::notification::DidOpenTextDocument>()
-//                 .await,
-//             lsp::DidOpenTextDocumentParams {
-//                 text_document: lsp::TextDocumentItem::new(
-//                     buffer_1_uri.clone(),
-//                     "plaintext".into(),
-//                     0,
-//                     "Hello".into()
-//                 ),
-//             }
-//         );
+        let buffer_1 = cx.build_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), "Hello"));
+        let buffer_1_uri: lsp::Url = format!("buffer://{}", buffer_1.entity_id().as_u64())
+            .parse()
+            .unwrap();
+        copilot.update(cx, |copilot, cx| copilot.register_buffer(&buffer_1, cx));
+        assert_eq!(
+            lsp.receive_notification::<lsp::notification::DidOpenTextDocument>()
+                .await,
+            lsp::DidOpenTextDocumentParams {
+                text_document: lsp::TextDocumentItem::new(
+                    buffer_1_uri.clone(),
+                    "plaintext".into(),
+                    0,
+                    "Hello".into()
+                ),
+            }
+        );
 
-//         let buffer_2 = cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, "Goodbye"));
-//         let buffer_2_uri: lsp::Url = format!("buffer://{}", buffer_2.id()).parse().unwrap();
-//         copilot.update(cx, |copilot, cx| copilot.register_buffer(&buffer_2, cx));
-//         assert_eq!(
-//             lsp.receive_notification::<lsp::notification::DidOpenTextDocument>()
-//                 .await,
-//             lsp::DidOpenTextDocumentParams {
-//                 text_document: lsp::TextDocumentItem::new(
-//                     buffer_2_uri.clone(),
-//                     "plaintext".into(),
-//                     0,
-//                     "Goodbye".into()
-//                 ),
-//             }
-//         );
+        let buffer_2 = cx.build_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), "Goodbye"));
+        let buffer_2_uri: lsp::Url = format!("buffer://{}", buffer_2.entity_id().as_u64())
+            .parse()
+            .unwrap();
+        copilot.update(cx, |copilot, cx| copilot.register_buffer(&buffer_2, cx));
+        assert_eq!(
+            lsp.receive_notification::<lsp::notification::DidOpenTextDocument>()
+                .await,
+            lsp::DidOpenTextDocumentParams {
+                text_document: lsp::TextDocumentItem::new(
+                    buffer_2_uri.clone(),
+                    "plaintext".into(),
+                    0,
+                    "Goodbye".into()
+                ),
+            }
+        );
 
-//         buffer_1.update(cx, |buffer, cx| buffer.edit([(5..5, " world")], None, cx));
-//         assert_eq!(
-//             lsp.receive_notification::<lsp::notification::DidChangeTextDocument>()
-//                 .await,
-//             lsp::DidChangeTextDocumentParams {
-//                 text_document: lsp::VersionedTextDocumentIdentifier::new(buffer_1_uri.clone(), 1),
-//                 content_changes: vec![lsp::TextDocumentContentChangeEvent {
-//                     range: Some(lsp::Range::new(
-//                         lsp::Position::new(0, 5),
-//                         lsp::Position::new(0, 5)
-//                     )),
-//                     range_length: None,
-//                     text: " world".into(),
-//                 }],
-//             }
-//         );
+        buffer_1.update(cx, |buffer, cx| buffer.edit([(5..5, " world")], None, cx));
+        assert_eq!(
+            lsp.receive_notification::<lsp::notification::DidChangeTextDocument>()
+                .await,
+            lsp::DidChangeTextDocumentParams {
+                text_document: lsp::VersionedTextDocumentIdentifier::new(buffer_1_uri.clone(), 1),
+                content_changes: vec![lsp::TextDocumentContentChangeEvent {
+                    range: Some(lsp::Range::new(
+                        lsp::Position::new(0, 5),
+                        lsp::Position::new(0, 5)
+                    )),
+                    range_length: None,
+                    text: " world".into(),
+                }],
+            }
+        );
 
-//         // Ensure updates to the file are reflected in the LSP.
-//         buffer_1
-//             .update(cx, |buffer, cx| {
-//                 buffer.file_updated(
-//                     Arc::new(File {
-//                         abs_path: "/root/child/buffer-1".into(),
-//                         path: Path::new("child/buffer-1").into(),
-//                     }),
-//                     cx,
-//                 )
-//             })
-//             .await;
-//         assert_eq!(
-//             lsp.receive_notification::<lsp::notification::DidCloseTextDocument>()
-//                 .await,
-//             lsp::DidCloseTextDocumentParams {
-//                 text_document: lsp::TextDocumentIdentifier::new(buffer_1_uri),
-//             }
-//         );
-//         let buffer_1_uri = lsp::Url::from_file_path("/root/child/buffer-1").unwrap();
-//         assert_eq!(
-//             lsp.receive_notification::<lsp::notification::DidOpenTextDocument>()
-//                 .await,
-//             lsp::DidOpenTextDocumentParams {
-//                 text_document: lsp::TextDocumentItem::new(
-//                     buffer_1_uri.clone(),
-//                     "plaintext".into(),
-//                     1,
-//                     "Hello world".into()
-//                 ),
-//             }
-//         );
+        // Ensure updates to the file are reflected in the LSP.
+        buffer_1.update(cx, |buffer, cx| {
+            buffer.file_updated(
+                Arc::new(File {
+                    abs_path: "/root/child/buffer-1".into(),
+                    path: Path::new("child/buffer-1").into(),
+                }),
+                cx,
+            )
+        });
+        assert_eq!(
+            lsp.receive_notification::<lsp::notification::DidCloseTextDocument>()
+                .await,
+            lsp::DidCloseTextDocumentParams {
+                text_document: lsp::TextDocumentIdentifier::new(buffer_1_uri),
+            }
+        );
+        let buffer_1_uri = lsp::Url::from_file_path("/root/child/buffer-1").unwrap();
+        assert_eq!(
+            lsp.receive_notification::<lsp::notification::DidOpenTextDocument>()
+                .await,
+            lsp::DidOpenTextDocumentParams {
+                text_document: lsp::TextDocumentItem::new(
+                    buffer_1_uri.clone(),
+                    "plaintext".into(),
+                    1,
+                    "Hello world".into()
+                ),
+            }
+        );
 
-//         // Ensure all previously-registered buffers are closed when signing out.
-//         lsp.handle_request::<request::SignOut, _, _>(|_, _| async {
-//             Ok(request::SignOutResult {})
-//         });
-//         copilot
-//             .update(cx, |copilot, cx| copilot.sign_out(cx))
-//             .await
-//             .unwrap();
-//         assert_eq!(
-//             lsp.receive_notification::<lsp::notification::DidCloseTextDocument>()
-//                 .await,
-//             lsp::DidCloseTextDocumentParams {
-//                 text_document: lsp::TextDocumentIdentifier::new(buffer_2_uri.clone()),
-//             }
-//         );
-//         assert_eq!(
-//             lsp.receive_notification::<lsp::notification::DidCloseTextDocument>()
-//                 .await,
-//             lsp::DidCloseTextDocumentParams {
-//                 text_document: lsp::TextDocumentIdentifier::new(buffer_1_uri.clone()),
-//             }
-//         );
+        // Ensure all previously-registered buffers are closed when signing out.
+        lsp.handle_request::<request::SignOut, _, _>(|_, _| async {
+            Ok(request::SignOutResult {})
+        });
+        copilot
+            .update(cx, |copilot, cx| copilot.sign_out(cx))
+            .await
+            .unwrap();
+        // todo!() po: these notifications now happen in reverse order?
+        assert_eq!(
+            lsp.receive_notification::<lsp::notification::DidCloseTextDocument>()
+                .await,
+            lsp::DidCloseTextDocumentParams {
+                text_document: lsp::TextDocumentIdentifier::new(buffer_1_uri.clone()),
+            }
+        );
+        assert_eq!(
+            lsp.receive_notification::<lsp::notification::DidCloseTextDocument>()
+                .await,
+            lsp::DidCloseTextDocumentParams {
+                text_document: lsp::TextDocumentIdentifier::new(buffer_2_uri.clone()),
+            }
+        );
 
-//         // Ensure all previously-registered buffers are re-opened when signing in.
-//         lsp.handle_request::<request::SignInInitiate, _, _>(|_, _| async {
-//             Ok(request::SignInInitiateResult::AlreadySignedIn {
-//                 user: "user-1".into(),
-//             })
-//         });
-//         copilot
-//             .update(cx, |copilot, cx| copilot.sign_in(cx))
-//             .await
-//             .unwrap();
-//         assert_eq!(
-//             lsp.receive_notification::<lsp::notification::DidOpenTextDocument>()
-//                 .await,
-//             lsp::DidOpenTextDocumentParams {
-//                 text_document: lsp::TextDocumentItem::new(
-//                     buffer_2_uri.clone(),
-//                     "plaintext".into(),
-//                     0,
-//                     "Goodbye".into()
-//                 ),
-//             }
-//         );
-//         assert_eq!(
-//             lsp.receive_notification::<lsp::notification::DidOpenTextDocument>()
-//                 .await,
-//             lsp::DidOpenTextDocumentParams {
-//                 text_document: lsp::TextDocumentItem::new(
-//                     buffer_1_uri.clone(),
-//                     "plaintext".into(),
-//                     0,
-//                     "Hello world".into()
-//                 ),
-//             }
-//         );
+        // Ensure all previously-registered buffers are re-opened when signing in.
+        lsp.handle_request::<request::SignInInitiate, _, _>(|_, _| async {
+            Ok(request::SignInInitiateResult::AlreadySignedIn {
+                user: "user-1".into(),
+            })
+        });
+        copilot
+            .update(cx, |copilot, cx| copilot.sign_in(cx))
+            .await
+            .unwrap();
 
-//         // Dropping a buffer causes it to be closed on the LSP side as well.
-//         cx.update(|_| drop(buffer_2));
-//         assert_eq!(
-//             lsp.receive_notification::<lsp::notification::DidCloseTextDocument>()
-//                 .await,
-//             lsp::DidCloseTextDocumentParams {
-//                 text_document: lsp::TextDocumentIdentifier::new(buffer_2_uri),
-//             }
-//         );
-//     }
+        assert_eq!(
+            lsp.receive_notification::<lsp::notification::DidOpenTextDocument>()
+                .await,
+            lsp::DidOpenTextDocumentParams {
+                text_document: lsp::TextDocumentItem::new(
+                    buffer_1_uri.clone(),
+                    "plaintext".into(),
+                    0,
+                    "Hello world".into()
+                ),
+            }
+        );
+        assert_eq!(
+            lsp.receive_notification::<lsp::notification::DidOpenTextDocument>()
+                .await,
+            lsp::DidOpenTextDocumentParams {
+                text_document: lsp::TextDocumentItem::new(
+                    buffer_2_uri.clone(),
+                    "plaintext".into(),
+                    0,
+                    "Goodbye".into()
+                ),
+            }
+        );
+        // Dropping a buffer causes it to be closed on the LSP side as well.
+        cx.update(|_| drop(buffer_2));
+        assert_eq!(
+            lsp.receive_notification::<lsp::notification::DidCloseTextDocument>()
+                .await,
+            lsp::DidCloseTextDocumentParams {
+                text_document: lsp::TextDocumentIdentifier::new(buffer_2_uri),
+            }
+        );
+    }
 
-//     struct File {
-//         abs_path: PathBuf,
-//         path: Arc<Path>,
-//     }
+    struct File {
+        abs_path: PathBuf,
+        path: Arc<Path>,
+    }
 
-//     impl language2::File for File {
-//         fn as_local(&self) -> Option<&dyn language2::LocalFile> {
-//             Some(self)
-//         }
+    impl language::File for File {
+        fn as_local(&self) -> Option<&dyn language::LocalFile> {
+            Some(self)
+        }
 
-//         fn mtime(&self) -> std::time::SystemTime {
-//             unimplemented!()
-//         }
+        fn mtime(&self) -> std::time::SystemTime {
+            unimplemented!()
+        }
 
-//         fn path(&self) -> &Arc<Path> {
-//             &self.path
-//         }
+        fn path(&self) -> &Arc<Path> {
+            &self.path
+        }
 
-//         fn full_path(&self, _: &AppContext) -> PathBuf {
-//             unimplemented!()
-//         }
+        fn full_path(&self, _: &AppContext) -> PathBuf {
+            unimplemented!()
+        }
 
-//         fn file_name<'a>(&'a self, _: &'a AppContext) -> &'a std::ffi::OsStr {
-//             unimplemented!()
-//         }
+        fn file_name<'a>(&'a self, _: &'a AppContext) -> &'a std::ffi::OsStr {
+            unimplemented!()
+        }
 
-//         fn is_deleted(&self) -> bool {
-//             unimplemented!()
-//         }
+        fn is_deleted(&self) -> bool {
+            unimplemented!()
+        }
 
-//         fn as_any(&self) -> &dyn std::any::Any {
-//             unimplemented!()
-//         }
+        fn as_any(&self) -> &dyn std::any::Any {
+            unimplemented!()
+        }
 
-//         fn to_proto(&self) -> rpc::proto::File {
-//             unimplemented!()
-//         }
+        fn to_proto(&self) -> rpc::proto::File {
+            unimplemented!()
+        }
 
-//         fn worktree_id(&self) -> usize {
-//             0
-//         }
-//     }
+        fn worktree_id(&self) -> usize {
+            0
+        }
+    }
 
-//     impl language::LocalFile for File {
-//         fn abs_path(&self, _: &AppContext) -> PathBuf {
-//             self.abs_path.clone()
-//         }
+    impl language::LocalFile for File {
+        fn abs_path(&self, _: &AppContext) -> PathBuf {
+            self.abs_path.clone()
+        }
 
-//         fn load(&self, _: &AppContext) -> Task<Result<String>> {
-//             unimplemented!()
-//         }
+        fn load(&self, _: &AppContext) -> Task<Result<String>> {
+            unimplemented!()
+        }
 
-//         fn buffer_reloaded(
-//             &self,
-//             _: u64,
-//             _: &clock::Global,
-//             _: language::RopeFingerprint,
-//             _: language::LineEnding,
-//             _: std::time::SystemTime,
-//             _: &mut AppContext,
-//         ) {
-//             unimplemented!()
-//         }
-//     }
-// }
+        fn buffer_reloaded(
+            &self,
+            _: u64,
+            _: &clock::Global,
+            _: language::RopeFingerprint,
+            _: language::LineEnding,
+            _: std::time::SystemTime,
+            _: &mut AppContext,
+        ) {
+            unimplemented!()
+        }
+    }
+}
