@@ -1,4 +1,4 @@
-use gpui::{AnyView, DefiniteLength};
+use gpui::{AnyView, ClickEvent, DefiniteLength, Listener};
 
 use crate::prelude::*;
 use crate::{
@@ -79,10 +79,7 @@ impl Disableable for Button {
 }
 
 impl Clickable for Button {
-    fn on_click(
-        mut self,
-        handler: impl Fn(&gpui::ClickEvent, &mut WindowContext) + 'static,
-    ) -> Self {
+    fn on_click(mut self, handler: Listener<ClickEvent>) -> Self {
         self.base = self.base.on_click(handler);
         self
     }
@@ -115,7 +112,7 @@ impl ButtonCommon for Button {
         self
     }
 
-    fn tooltip(mut self, tooltip: impl Fn(&mut WindowContext) -> AnyView + 'static) -> Self {
+    fn tooltip(mut self, tooltip: gpui::Constructor<AnyView>) -> Self {
         self.base = self.base.tooltip(tooltip);
         self
     }

@@ -4,8 +4,8 @@ use copilot::{Copilot, SignOut, Status};
 use editor::{scroll::autoscroll::Autoscroll, Editor};
 use fs::Fs;
 use gpui::{
-    div, Action, AnchorCorner, AppContext, AsyncAppContext, AsyncWindowContext, Div, Entity,
-    ParentElement, Render, Subscription, View, ViewContext, WeakView, WindowContext,
+    constructor, div, Action, AnchorCorner, AppContext, AsyncAppContext, AsyncWindowContext, Div,
+    Entity, ParentElement, Render, Subscription, View, ViewContext, WeakView, WindowContext,
 };
 use language::{
     language_settings::{self, all_language_settings, AllLanguageSettings},
@@ -92,7 +92,7 @@ impl Render for CopilotButton {
                             });
                         }
                     }))
-                    .tooltip(|cx| Tooltip::text("GitHub Copilot", cx)),
+                    .tooltip(constructor(|cx| Tooltip::text("GitHub Copilot", cx))),
             );
         }
         let this = cx.view().clone();
@@ -106,7 +106,7 @@ impl Render for CopilotButton {
                 .anchor(AnchorCorner::BottomRight)
                 .trigger(
                     IconButton::new("copilot-icon", icon)
-                        .tooltip(|cx| Tooltip::text("GitHub Copilot", cx)),
+                        .tooltip(constructor(|cx| Tooltip::text("GitHub Copilot", cx))),
                 ),
         )
     }

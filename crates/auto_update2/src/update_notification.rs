@@ -1,6 +1,6 @@
 use gpui::{
-    div, DismissEvent, Div, EventEmitter, InteractiveElement, ParentElement, Render,
-    SemanticVersion, StatefulInteractiveElement, Styled, ViewContext, WindowContext,
+    div, listener, DismissEvent, Div, EventEmitter, InteractiveElement, ParentElement, Render,
+    SemanticVersion, StatefulInteractiveElement, Styled, ViewContext,
 };
 use util::channel::ReleaseChannel;
 use workspace::ui::{h_stack, v_stack, Icon, IconElement, Label, StyledExt};
@@ -40,9 +40,9 @@ impl Render for UpdateNotification {
                     .id("notes")
                     .child(Label::new("View the release notes"))
                     .cursor_pointer()
-                    .on_click(|_: &_, cx: &mut WindowContext| {
+                    .on_click(listener(|_, cx| {
                         crate::view_release_notes(&Default::default(), cx)
-                    }),
+                    })),
             )
     }
 }

@@ -7,7 +7,7 @@ use crate::{
 use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
 use gpui::{
-    actions, overlay, prelude::*, rems, Action, AnchorCorner, AnyWeakView, AppContext,
+    actions, constructor, overlay, prelude::*, rems, Action, AnchorCorner, AnyWeakView, AppContext,
     AsyncWindowContext, DismissEvent, Div, EntityId, EventEmitter, FocusHandle, Focusable,
     FocusableView, Model, Pixels, Point, PromptLevel, Render, Task, View, ViewContext,
     VisualContext, WeakView, WindowContext,
@@ -1455,9 +1455,9 @@ impl Pane {
             .id(ix)
             .cursor_pointer()
             .when_some(item.tab_tooltip_text(cx), |div, text| {
-                div.tooltip(move |cx: &mut WindowContext| {
+                div.tooltip(constructor(move |cx: &mut WindowContext| {
                     cx.build_view(|cx| Tooltip::new(text.clone())).into()
-                })
+                }))
             })
             .on_click(cx.listener(move |v: &mut Self, e, cx| v.activate_item(ix, true, true, cx)))
             // .on_drag(move |pane, cx| pane.render_tab(ix, item.boxed_clone(), detail, cx))
@@ -1579,20 +1579,14 @@ impl Pane {
                     .child(
                         div().border().border_color(gpui::red()).child(
                             IconButton::new("navigate_backward", Icon::ArrowLeft)
-                                .on_click({
-                                    let view = cx.view().clone();
-                                    move |_, cx| view.update(cx, Self::navigate_backward)
-                                })
+                                .on_click(cx.listener(|this, _, cx| this.navigate_backward(cx)))
                                 .disabled(!self.can_navigate_backward()),
                         ),
                     )
                     .child(
                         div().border().border_color(gpui::red()).child(
                             IconButton::new("navigate_forward", Icon::ArrowRight)
-                                .on_click({
-                                    let view = cx.view().clone();
-                                    move |_, cx| view.update(cx, Self::navigate_backward)
-                                })
+                                .on_click(cx.listener(|this, _, cx| this.navigate_backward(cx)))
                                 .disabled(!self.can_navigate_forward()),
                         ),
                     ),
@@ -2107,18 +2101,8 @@ impl Render for Pane {
         v_stack()
             .key_context("Pane")
             .track_focus(&self.focus_handle)
-            .on_focus_in({
-                let this = this.clone();
-                move |event, cx| {
-                    this.update(cx, |this, cx| this.focus_in(cx)).ok();
-                }
-            })
-            .on_focus_out({
-                let this = this.clone();
-                move |event, cx| {
-                    this.update(cx, |this, cx| this.focus_out(cx)).ok();
-                }
-            })
+            .on_focus_in(cx.listener(|this, _, cx| this.focus_in(cx)))
+            .on_focus_out(cx.listener(|this, _, cx| this.focus_out(cx)))
             .on_action(cx.listener(|pane, _: &SplitLeft, cx| pane.split(SplitDirection::Left, cx)))
             .on_action(cx.listener(|pane, _: &SplitUp, cx| pane.split(SplitDirection::Up, cx)))
             .on_action(

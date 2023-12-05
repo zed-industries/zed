@@ -1,9 +1,9 @@
 use std::{cell::RefCell, rc::Rc};
 
 use gpui::{
-    overlay, point, px, rems, AnchorCorner, AnyElement, Bounds, DismissEvent, DispatchPhase,
-    Element, ElementId, InteractiveBounds, IntoElement, LayoutId, ManagedView, MouseDownEvent,
-    ParentElement, Pixels, Point, View, VisualContext, WindowContext,
+    listener, overlay, point, px, rems, AnchorCorner, AnyElement, Bounds, DismissEvent,
+    DispatchPhase, Element, ElementId, InteractiveBounds, IntoElement, LayoutId, ManagedView,
+    MouseDownEvent, ParentElement, Pixels, Point, View, VisualContext, WindowContext,
 };
 
 use crate::{Clickable, Selectable};
@@ -41,7 +41,7 @@ impl<M: ManagedView> PopoverMenu<M> {
             t.selected(open)
                 .when_some(builder, |el, builder| {
                     el.on_click({
-                        move |_, cx| {
+                        listener(move |_: &_, cx: &mut WindowContext| {
                             let new_menu = (builder)(cx);
                             let menu2 = menu.clone();
                             let previous_focus_handle = cx.focused();
@@ -58,7 +58,7 @@ impl<M: ManagedView> PopoverMenu<M> {
                             .detach();
                             cx.focus_view(&new_menu);
                             *menu.borrow_mut() = Some(new_menu);
-                        }
+                        })
                     })
                 })
                 .into_any_element()

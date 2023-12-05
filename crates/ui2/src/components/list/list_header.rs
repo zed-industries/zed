@@ -1,6 +1,4 @@
-use std::rc::Rc;
-
-use gpui::{AnyElement, ClickEvent, Div};
+use gpui::{AnyElement, ClickEvent, Div, Listener};
 use smallvec::SmallVec;
 
 use crate::prelude::*;
@@ -12,7 +10,7 @@ pub struct ListHeader {
     left_icon: Option<Icon>,
     meta: SmallVec<[AnyElement; 2]>,
     toggle: Option<bool>,
-    on_toggle: Option<Rc<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
+    on_toggle: Option<Listener<ClickEvent>>,
     inset: bool,
     selected: bool,
 }
@@ -35,8 +33,8 @@ impl ListHeader {
         self
     }
 
-    pub fn on_toggle(mut self, on_toggle: impl IntoListener<ClickEvent>) -> Self {
-        self.on_toggle = Some(on_toggle.into_listener());
+    pub fn on_toggle(mut self, on_toggle: Listener<ClickEvent>) -> Self {
+        self.on_toggle = Some(on_toggle);
         self
     }
 
@@ -90,10 +88,12 @@ impl RenderOnce for ListHeader {
                                 }))
                                 .child(Label::new(self.label.clone()).color(Color::Muted)),
                         )
-                        .children(
-                            self.toggle
-                                .map(|is_open| Disclosure::new(is_open).on_toggle(self.on_toggle)),
-                        ),
+                        .children(self.toggle.map(|is_open| {
+                            Disclosure::new(is_open)
+                                .when_some(self.on_toggle, |disclosure, on_toggle| {
+                                    disclosure.on_toggle(on_toggle)
+                                })
+                        })),
                 )
                 .child(h_stack().gap_2().items_center().children(self.meta)),
         )

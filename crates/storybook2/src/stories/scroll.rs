@@ -1,3 +1,4 @@
+use gpui::constructor;
 use gpui::{div, prelude::*, px, Div, Render, SharedString, Stateful, Styled, View, WindowContext};
 use ui::prelude::*;
 use ui::Tooltip;
@@ -38,9 +39,9 @@ impl Render for ScrollStory {
                         };
                         div()
                             .id(id)
-                            .tooltip(move |cx: &mut WindowContext| {
+                            .tooltip(constructor(move |cx: &mut WindowContext| {
                                 Tooltip::text(format!("{}, {}", row, column), cx)
-                            })
+                            }))
                             .bg(bg)
                             .size(px(100. as f32))
                             .when(row >= 5 && column >= 5, |d| {

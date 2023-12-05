@@ -31,9 +31,10 @@ use std::sync::Arc;
 use call::ActiveCall;
 use client::{Client, UserStore};
 use gpui::{
-    div, px, rems, AppContext, ClickEvent, Div, Element, InteractiveElement, IntoElement, Model,
-    MouseButton, ParentElement, Render, RenderOnce, Stateful, StatefulInteractiveElement, Styled,
-    Subscription, ViewContext, VisualContext, WeakView, WindowBounds, WindowContext,
+    constructor, div, listener, px, rems, AppContext, ClickEvent, Div, Element, InteractiveElement,
+    IntoElement, Model, MouseButton, ParentElement, Render, RenderOnce, Stateful,
+    StatefulInteractiveElement, Styled, Subscription, ViewContext, VisualContext, WeakView,
+    WindowBounds, WindowContext,
 };
 use project::{Project, RepositoryEntry};
 use theme::ActiveTheme;
@@ -142,11 +143,11 @@ impl Render for CollabTitlebarItem {
                 |s| s.pl(px(68.)),
             )
             .bg(cx.theme().colors().title_bar_background)
-            .on_click(|event: &ClickEvent, cx: &mut WindowContext| {
+            .on_click(listener(|event: &ClickEvent, cx: &mut WindowContext| {
                 if event.up.click_count == 2 {
                     cx.zoom_window();
                 }
-            })
+            }))
             .child(
                 h_stack()
                     .gap_1()
@@ -176,13 +177,13 @@ impl Render for CollabTitlebarItem {
                                         )
                                         .on_mouse_down(MouseButton::Left, {
                                             let workspace = workspace.clone();
-                                            move |_: &_, cx: &mut WindowContext| {
+                                            listener(move |_, cx| {
                                                 workspace
                                                     .update(cx, |this, cx| {
                                                         this.open_shared_screen(peer_id, cx);
                                                     })
                                                     .log_err();
-                                            }
+                                            })
                                         })
                                         .into_any_element()
                                 })
@@ -211,13 +212,13 @@ impl Render for CollabTitlebarItem {
                                         .style(ButtonStyle::Subtle)
                                         .on_click({
                                             let workspace = workspace.clone();
-                                            move |_, cx| {
+                                            listener(move |_, cx| {
                                                 workspace
                                                     .update(cx, |this, cx| {
                                                         this.call_state().hang_up(cx).detach();
                                                     })
                                                     .log_err();
-                                            }
+                                            })
                                         }),
                                 ),
                         )
@@ -237,48 +238,48 @@ impl Render for CollabTitlebarItem {
                                     .selected(is_muted)
                                     .on_click({
                                         let workspace = workspace.clone();
-                                        move |_, cx| {
+                                        listener(move |_, cx| {
                                             workspace
                                                 .update(cx, |this, cx| {
                                                     this.call_state().toggle_mute(cx);
                                                 })
                                                 .log_err();
-                                        }
+                                        })
                                     }),
                                 )
                                 .child(
                                     IconButton::new("mute-sound", speakers_icon)
                                         .style(ButtonStyle::Subtle)
                                         .selected(is_deafened.clone())
-                                        .tooltip(move |cx| {
+                                        .tooltip(constructor(move |cx| {
                                             Tooltip::with_meta(
                                                 "Deafen Audio",
                                                 None,
                                                 "Mic will be muted",
                                                 cx,
                                             )
-                                        })
+                                        }))
                                         .on_click({
                                             let workspace = workspace.clone();
-                                            move |_, cx| {
+                                            listener(move |_, cx| {
                                                 workspace
                                                     .update(cx, |this, cx| {
                                                         this.call_state().toggle_deafen(cx);
                                                     })
                                                     .log_err();
-                                            }
+                                            })
                                         }),
                                 )
                                 .child(
                                     IconButton::new("screen-share", ui::Icon::Screen)
                                         .style(ButtonStyle::Subtle)
-                                        .on_click(move |_, cx| {
+                                        .on_click(listener(move |_, cx| {
                                             workspace
                                                 .update(cx, |this, cx| {
                                                     this.call_state().toggle_screen_share(cx);
                                                 })
                                                 .log_err();
-                                        }),
+                                        })),
                                 )
                                 .pl_2(),
                         ),
@@ -301,7 +302,7 @@ impl Render for CollabTitlebarItem {
                                             ),
                                         )
                                         .style(ButtonStyle::Subtle)
-                                        .tooltip(move |cx| Tooltip::text("Toggle User Menu", cx)),
+                                        .tooltip(Tooltip::text_constructor("Toggle User Menu")),
                                 )
                                 .anchor(gpui::AnchorCorner::TopRight),
                         )
@@ -317,16 +318,18 @@ impl Render for CollabTitlebarItem {
                         // )
                     })
                 } else {
-                    this.child(Button::new("sign_in", "Sign in").on_click(move |_, cx| {
-                        let client = client.clone();
-                        cx.spawn(move |mut cx| async move {
-                            client
-                                .authenticate_and_connect(true, &cx)
-                                .await
-                                .notify_async_err(&mut cx);
-                        })
-                        .detach();
-                    }))
+                    this.child(Button::new("sign_in", "Sign in").on_click(listener(
+                        move |_, cx| {
+                            let client = client.clone();
+                            cx.spawn(move |mut cx| async move {
+                                client
+                                    .authenticate_and_connect(true, &cx)
+                                    .await
+                                    .notify_async_err(&mut cx);
+                            })
+                            .detach();
+                        },
+                    )))
                 }
             }))
     }
@@ -490,7 +493,7 @@ impl CollabTitlebarItem {
                 )
                 .color(Color::Player(participant_index))
                 .style(ButtonStyle::Subtle)
-                .tooltip(move |cx| Tooltip::text("Toggle following", cx)),
+                .tooltip(constructor(move |cx| Tooltip::text("Toggle following", cx))),
             ),
         )
     }
@@ -510,7 +513,7 @@ impl CollabTitlebarItem {
         div().border().border_color(gpui::red()).child(
             Button::new("project_name_trigger", name)
                 .style(ButtonStyle::Subtle)
-                .tooltip(move |cx| Tooltip::text("Recent Projects", cx)),
+                .tooltip(constructor(move |cx| Tooltip::text("Recent Projects", cx))),
         )
     }
 
@@ -534,7 +537,7 @@ impl CollabTitlebarItem {
             div().border().border_color(gpui::red()).child(
                 Button::new("project_branch_trigger", branch_name)
                     .style(ButtonStyle::Subtle)
-                    .tooltip(move |cx| {
+                    .tooltip(constructor(move |cx| {
                         cx.build_view(|_| {
                             Tooltip::new("Recent Branches")
                                 .key_binding(KeyBinding::new(gpui::KeyBinding::new(
@@ -546,7 +549,7 @@ impl CollabTitlebarItem {
                                 .meta("Local branches only")
                         })
                         .into()
-                    }),
+                    })),
             ),
         )
     }

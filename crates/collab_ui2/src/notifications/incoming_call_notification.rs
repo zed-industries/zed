@@ -2,8 +2,8 @@ use crate::notification_window_options;
 use call::{ActiveCall, IncomingCall};
 use futures::StreamExt;
 use gpui::{
-    div, px, red, AppContext, Div, Element, ParentElement, Render, RenderOnce, Styled, ViewContext,
-    VisualContext as _, WindowHandle,
+    div, listener, px, red, AppContext, Div, Element, ParentElement, Render, RenderOnce, Styled,
+    ViewContext, VisualContext as _, WindowHandle,
 };
 use std::sync::{Arc, Weak};
 use ui::prelude::*;
@@ -206,7 +206,7 @@ impl IncomingCallNotification {
                     // .bg(green())
                     .on_click({
                         let state = self.state.clone();
-                        move |_, cx| state.respond(true, cx)
+                        listener(move |_, cx| state.respond(true, cx))
                     }),
             )
             .child(
@@ -215,7 +215,7 @@ impl IncomingCallNotification {
                     // .bg(red())
                     .on_click({
                         let state = self.state.clone();
-                        move |_, cx| state.respond(false, cx)
+                        listener(move |_, cx| state.respond(false, cx))
                     }),
             )
 

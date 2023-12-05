@@ -3,7 +3,7 @@ use crate::{
     ListSeparator, ListSubHeader,
 };
 use gpui::{
-    px, Action, AppContext, DismissEvent, Div, EventEmitter, FocusHandle, FocusableView,
+    listener, px, Action, AppContext, DismissEvent, Div, EventEmitter, FocusHandle, FocusableView,
     IntoElement, Render, View, VisualContext,
 };
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrev};
@@ -225,10 +225,10 @@ impl Render for ContextMenu {
                                             ),
                                     )
                                     .selected(Some(ix) == self.selected_index)
-                                    .on_click(move |event, cx| {
+                                    .on_click(listener(move |event, cx| {
                                         handler(cx);
                                         dismiss(event, cx)
-                                    })
+                                    }))
                                     .into_any_element()
                             }
                         },

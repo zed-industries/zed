@@ -1,4 +1,4 @@
-use gpui::{Div, Render};
+use gpui::{constructor, listener, Div, Render};
 use story::Story;
 
 use crate::{prelude::*, Tooltip};
@@ -36,19 +36,17 @@ impl Render for IconButtonStory {
             )
             .child(Story::label("With `on_click`"))
             .child(
-                div()
-                    .w_8()
-                    .child(IconButton::new("with_on_click", Icon::Ai).on_click(
-                        |_event: &_, _cx: &mut WindowContext| {
-                            println!("Clicked!");
-                        },
-                    )),
+                div().w_8().child(
+                    IconButton::new("with_on_click", Icon::Ai).on_click(listener(|_, _| {
+                        println!("Clicked!");
+                    })),
+                ),
             )
             .child(Story::label("With `tooltip`"))
             .child(
                 div().w_8().child(
                     IconButton::new("with_tooltip", Icon::MessageBubbles)
-                        .tooltip(|cx| Tooltip::text("Open messages", cx)),
+                        .tooltip(constructor(|cx| Tooltip::text("Open messages", cx))),
                 ),
             )
     }

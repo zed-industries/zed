@@ -169,7 +169,7 @@ use editor::Editor;
 use feature_flags::{ChannelsAlpha, FeatureFlagAppExt, FeatureFlagViewExt};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
-    actions, div, img, overlay, prelude::*, px, rems, serde_json, Action, AppContext,
+    actions, constructor, div, img, overlay, prelude::*, px, rems, serde_json, Action, AppContext,
     AsyncWindowContext, Bounds, ClipboardItem, DismissEvent, Div, EventEmitter, FocusHandle,
     Focusable, FocusableView, InteractiveElement, IntoElement, Model, MouseDownEvent,
     ParentElement, Pixels, Point, PromptLevel, Render, RenderOnce, ScrollHandle, SharedString,
@@ -2475,12 +2475,14 @@ impl CollabPanel {
             Section::Contacts => Some(
                 IconButton::new("add-contact", Icon::Plus)
                     .on_click(cx.listener(|this, _, cx| this.toggle_contact_finder(cx)))
-                    .tooltip(|cx| Tooltip::text("Search for new contact", cx)),
+                    .tooltip(constructor(|cx| {
+                        Tooltip::text("Search for new contact", cx)
+                    })),
             ),
             Section::Channels => Some(
                 IconButton::new("add-channel", Icon::Plus)
                     .on_click(cx.listener(|this, _, cx| this.new_root_channel(cx)))
-                    .tooltip(|cx| Tooltip::text("Create a channel", cx)),
+                    .tooltip(Tooltip::text_constructor("Create a channel")),
             ),
             _ => None,
         };
@@ -2570,7 +2572,7 @@ impl CollabPanel {
                                 .child(
                                     IconButton::new("remove_contact", Icon::Close)
                                         .icon_color(Color::Muted)
-                                        .tooltip(|cx| Tooltip::text("Remove Contact", cx))
+                                        .tooltip(Tooltip::text_constructor("Remove Contact"))
                                         .on_click(cx.listener({
                                             let github_login = github_login.clone();
                                             move |this, _, cx| {
@@ -2594,7 +2596,7 @@ impl CollabPanel {
             .id(github_login.clone())
             .group("")
             .child(item)
-            .tooltip(move |cx| {
+            .tooltip(constructor(move |cx| {
                 let text = if !online {
                     format!(" {} is offline", &github_login)
                 } else if busy {
@@ -2608,7 +2610,7 @@ impl CollabPanel {
                     }
                 };
                 Tooltip::text(text, cx)
-            })
+            }))
     }
 
     fn render_contact_request(
@@ -2634,13 +2636,13 @@ impl CollabPanel {
                         this.respond_to_contact_request(user_id, false, cx);
                     }))
                     .icon_color(color)
-                    .tooltip(|cx| Tooltip::text("Decline invite", cx)),
+                    .tooltip(Tooltip::text_constructor("Decline invite")),
                 IconButton::new("remove_contact", Icon::Check)
                     .on_click(cx.listener(move |this, _, cx| {
                         this.respond_to_contact_request(user_id, true, cx);
                     }))
                     .icon_color(color)
-                    .tooltip(|cx| Tooltip::text("Accept invite", cx)),
+                    .tooltip(Tooltip::text_constructor("Accept invite")),
             ]
         } else {
             let github_login = github_login.clone();
@@ -2649,7 +2651,7 @@ impl CollabPanel {
                     this.remove_contact(user_id, &github_login, cx);
                 }))
                 .icon_color(color)
-                .tooltip(|cx| Tooltip::text("Cancel invite", cx))]
+                .tooltip(Tooltip::text_constructor("Cancel invite"))]
         };
 
         ListItem::new(github_login.clone())
@@ -2741,10 +2743,10 @@ impl CollabPanel {
             .group("")
             .on_drag({
                 let channel = channel.clone();
-                move |cx| {
+                constructor(move |cx| {
                     let channel = channel.clone();
                     cx.build_view({ |cx| DraggedChannelView { channel, width } })
-                }
+                })
             })
             .drag_over::<DraggedChannelView>(|style| {
                 style.bg(cx.theme().colors().ghost_element_hover)
@@ -2796,7 +2798,9 @@ impl CollabPanel {
                                                     Color::Muted
                                                 }),
                                             )
-                                            .tooltip(|cx| Tooltip::text("Open channel chat", cx)),
+                                            .tooltip(Tooltip::text_constructor(
+                                                "Open channel chat",
+                                            )),
                                     )
                                     .child(
                                         div()
@@ -2810,9 +2814,9 @@ impl CollabPanel {
                                                     } else {
                                                         Color::Muted
                                                     })
-                                                    .tooltip(|cx| {
+                                                    .tooltip(constructor(|cx| {
                                                         Tooltip::text("Open channel notes", cx)
-                                                    }),
+                                                    })),
                                             ),
                                     ),
                             ),
@@ -2838,7 +2842,7 @@ impl CollabPanel {
                         },
                     )),
             )
-            .tooltip(|cx| Tooltip::text("Join channel", cx))
+            .tooltip(Tooltip::text_constructor("Join channel"))
 
         // let channel_id = channel.id;
         // let collab_theme = &theme.collab_panel;

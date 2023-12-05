@@ -1,4 +1,4 @@
-use gpui::{Action, AnyView, DefiniteLength};
+use gpui::{listener, Action, AnyView, ClickEvent, DefiniteLength, Listener};
 
 use crate::prelude::*;
 use crate::{ButtonCommon, ButtonLike, ButtonSize, ButtonStyle, Icon, IconSize};
@@ -41,7 +41,9 @@ impl IconButton {
     }
 
     pub fn action(self, action: Box<dyn Action>) -> Self {
-        self.on_click(move |_event, cx| cx.dispatch_action(action.boxed_clone()))
+        self.on_click(listener(move |_event: &_, cx: &mut WindowContext| {
+            cx.dispatch_action(action.boxed_clone())
+        }))
     }
 }
 
@@ -60,10 +62,7 @@ impl Selectable for IconButton {
 }
 
 impl Clickable for IconButton {
-    fn on_click(
-        mut self,
-        handler: impl Fn(&gpui::ClickEvent, &mut WindowContext) + 'static,
-    ) -> Self {
+    fn on_click(mut self, handler: Listener<ClickEvent>) -> Self {
         self.base = self.base.on_click(handler);
         self
     }
@@ -96,7 +95,7 @@ impl ButtonCommon for IconButton {
         self
     }
 
-    fn tooltip(mut self, tooltip: impl Fn(&mut WindowContext) -> AnyView + 'static) -> Self {
+    fn tooltip(mut self, tooltip: gpui::Constructor<AnyView>) -> Self {
         self.base = self.base.tooltip(tooltip);
         self
     }

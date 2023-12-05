@@ -1499,15 +1499,24 @@ impl<'a> WindowContext<'a> {
             .bindings_for_action(action)
     }
 
+    pub fn constructor_for<V: Render, R>(
+        &self,
+        view: &View<V>,
+        f: impl Fn(&mut V, &mut ViewContext<V>) -> R + 'static,
+    ) -> Constructor<R> {
+        let view = view.clone();
+        constructor(move |cx: &mut WindowContext| view.update(cx, |view, cx| f(view, cx)))
+    }
+
     pub fn listener_for<V: Render, E>(
         &self,
         view: &View<V>,
         f: impl Fn(&mut V, &E, &mut ViewContext<V>) + 'static,
-    ) -> impl DynFn<dyn Fn(&E, &mut WindowContext) + 'static> {
-        let view = view.downgrade();
-        move |e: &E, cx: &mut WindowContext| {
-            view.update(cx, |view, cx| f(view, e, cx)).ok();
-        }
+    ) -> Listener<E> {
+        let view = view.clone();
+        listener(move |e: &E, cx: &mut WindowContext| {
+            view.update(cx, |view, cx| f(view, e, cx));
+        })
     }
 
     pub fn handler_for<V: Render>(
@@ -1515,9 +1524,9 @@ impl<'a> WindowContext<'a> {
         view: &View<V>,
         f: impl Fn(&mut V, &mut ViewContext<V>) + 'static,
     ) -> impl Fn(&mut WindowContext) {
-        let view = view.downgrade();
+        let view = view.clone();
         move |cx: &mut WindowContext| {
-            view.update(cx, |view, cx| f(view, cx)).ok();
+            view.update(cx, |view, cx| f(view, cx));
         }
     }
 
@@ -2422,11 +2431,19 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     pub fn listener<E>(
         &self,
         f: impl Fn(&mut V, &E, &mut ViewContext<V>) + 'static,
-    ) -> impl DynFn<dyn Fn(&E, &mut WindowContext) + 'static> {
-        let view = self.view().downgrade();
-        move |e: &E, cx: &mut WindowContext| {
-            view.update(cx, |view, cx| f(view, e, cx)).ok();
-        }
+    ) -> Listener<E> {
+        let view = self.view().clone();
+        listener(move |e: &E, cx| {
+            view.update(cx, |view, cx| f(view, e, cx));
+        })
+    }
+
+    pub fn constructor<R>(
+        &self,
+        f: impl Fn(&mut V, &mut ViewContext<V>) -> R + 'static,
+    ) -> Constructor<R> {
+        let view = self.view().clone();
+        constructor(move |cx| view.update(cx, |view, cx| f(view, cx)))
     }
 }
 
@@ -2759,14 +2776,10 @@ impl<'a> From<&'a FocusHandle> for ElementId {
     }
 }
 
-/// This trait allows us to abstract over unboxed and wrapped closures,
-/// closures without any more overhead than necessary.
-pub trait DynFn<F: ?Sized>: 'static {
-    fn borrowed(&self) -> &F;
-
-    fn boxed(self) -> Box<F>;
-}
-
+/// A callback that is invoked when an event is received.
+///
+/// Construct with either the gpui::listener() free function
+/// or the ViewContext::listener() and WindowContext::listener_for methods.
 pub struct Listener<E>(Box<dyn Fn(&E, &mut WindowContext) + 'static>);
 
 impl<E: 'static> Deref for Listener<E> {
@@ -2777,55 +2790,19 @@ impl<E: 'static> Deref for Listener<E> {
     }
 }
 
-impl<E: 'static> DynFn<dyn Fn(&E, &mut WindowContext) + 'static> for Listener<E> {
-    fn borrowed(&self) -> &(dyn Fn(&E, &mut WindowContext) + 'static) {
-        &self.0
-    }
-
-    fn boxed(self) -> Box<dyn Fn(&E, &mut WindowContext)> {
-        self.0
-    }
+/// Construct a listener callback.
+pub fn listener<E>(f: impl Fn(&E, &mut WindowContext) + 'static) -> Listener<E> {
+    Listener(Box::new(f))
 }
 
-impl<E, F> DynFn<dyn Fn(&E, &mut WindowContext) + 'static> for F
-where
-    F: Fn(&E, &mut WindowContext) + 'static,
-{
-    fn borrowed(&self) -> &(dyn Fn(&E, &mut WindowContext) + 'static) {
-        self
-    }
-
-    fn boxed(self) -> Box<dyn Fn(&E, &mut WindowContext)> {
-        Box::new(self)
-    }
-}
-
-pub trait IntoListener<E> {
-    fn into_listener(self) -> Listener<E>;
-}
-
-impl<F, E> IntoListener<E> for F
-where
-    F: DynFn<dyn Fn(&E, &mut WindowContext) + 'static>,
-{
-    fn into_listener(self) -> Listener<E> {
-        Listener(self.boxed())
-    }
-}
-
+/// A wrapper around a callback.
+///
+/// Construct with either the gpui::constructor() free function
+/// or the ViewContext::constructor() and WindowContext::constructer_for methods.
 pub struct Constructor<R>(Box<dyn Fn(&mut WindowContext) -> R + 'static>);
 
-pub trait IntoConstructor<R> {
-    fn into_constructor(self) -> Constructor<R>;
-}
-
-impl<F, R> IntoConstructor<R> for F
-where
-    F: DynFn<dyn Fn(&mut WindowContext) -> R + 'static>,
-{
-    fn into_constructor(self) -> Constructor<R> {
-        Constructor(self.boxed())
-    }
+pub fn constructor<R>(f: impl Fn(&mut WindowContext) -> R + 'static) -> Constructor<R> {
+    Constructor(Box::new(f))
 }
 
 impl<R: 'static> Deref for Constructor<R> {
@@ -2833,28 +2810,5 @@ impl<R: 'static> Deref for Constructor<R> {
 
     fn deref(&self) -> &Self::Target {
         &self.0
-    }
-}
-
-impl<R: 'static> DynFn<dyn Fn(&mut WindowContext) -> R + 'static> for Constructor<R> {
-    fn borrowed(&self) -> &(dyn Fn(&mut WindowContext) -> R + 'static) {
-        &self.0
-    }
-
-    fn boxed(self) -> Box<dyn Fn(&mut WindowContext) -> R> {
-        self.0
-    }
-}
-
-impl<R: 'static, F> DynFn<dyn Fn(&mut WindowContext) -> R + 'static> for F
-where
-    F: Fn(&mut WindowContext) -> R + 'static,
-{
-    fn borrowed(&self) -> &(dyn Fn(&mut WindowContext) -> R + 'static) {
-        self
-    }
-
-    fn boxed(self) -> Box<dyn Fn(&mut WindowContext) -> R> {
-        Box::new(self)
     }
 }

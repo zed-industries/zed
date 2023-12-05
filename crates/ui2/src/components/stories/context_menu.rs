@@ -1,4 +1,4 @@
-use gpui::{actions, Action, AnchorCorner, Div, Render, View};
+use gpui::{actions, listener, Action, AnchorCorner, Div, Render, View};
 use story::Story;
 
 use crate::prelude::*;
@@ -27,15 +27,15 @@ impl Render for ContextMenuStory {
 
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
         Story::container()
-            .on_action(|_: &PrintCurrentDate, _: &mut WindowContext| {
+            .on_action(listener(|_: &PrintCurrentDate, _| {
                 println!("printing unix time!");
                 if let Ok(unix_time) = std::time::UNIX_EPOCH.elapsed() {
                     println!("Current Unix time is {:?}", unix_time.as_secs());
                 }
-            })
-            .on_action(|_: &PrintBestFood, _: &mut WindowContext| {
+            }))
+            .on_action(listener(|_: &PrintBestFood, _| {
                 println!("burrito");
-            })
+            }))
             .flex()
             .flex_row()
             .justify_between()

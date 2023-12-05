@@ -1,10 +1,10 @@
 use crate::{
     point, px, Action, AnyDrag, AnyElement, AnyTooltip, AnyView, AppContext, BorrowAppContext,
-    BorrowWindow, Bounds, ClickEvent, DispatchPhase, DynFn, Element, ElementId, FocusEvent,
-    FocusHandle, IntoElement, KeyContext, KeyDownEvent, KeyUpEvent, LayoutId, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, Render,
-    ScrollWheelEvent, SharedString, Size, StackingOrder, Style, StyleRefinement, Styled, Task,
-    View, Visibility, WindowContext,
+    BorrowWindow, Bounds, ClickEvent, Constructor, DispatchPhase, Element, ElementId, FocusEvent,
+    FocusHandle, IntoElement, KeyContext, KeyDownEvent, KeyUpEvent, LayoutId, Listener,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point,
+    Render, ScrollWheelEvent, SharedString, Size, StackingOrder, Style, StyleRefinement, Styled,
+    Task, View, Visibility, WindowContext,
 };
 use collections::HashMap;
 use refineable::Refineable;
@@ -77,43 +77,32 @@ pub trait InteractiveElement: Sized + Element {
         self
     }
 
-    fn on_mouse_down(
-        mut self,
-        button: MouseButton,
-        listener: impl DynFn<dyn Fn(&MouseDownEvent, &mut WindowContext)>,
-    ) -> Self {
+    fn on_mouse_down(mut self, button: MouseButton, listener: Listener<MouseDownEvent>) -> Self {
         self.interactivity().mouse_down_listeners.push(Box::new(
             move |event, bounds, phase, cx| {
                 if phase == DispatchPhase::Bubble
                     && event.button == button
                     && bounds.visibly_contains(&event.position, cx)
                 {
-                    listener.borrowed()(event, cx)
+                    listener(event, cx)
                 }
             },
         ));
         self
     }
 
-    fn on_any_mouse_down(
-        mut self,
-        listener: impl DynFn<dyn Fn(&MouseDownEvent, &mut WindowContext)>,
-    ) -> Self {
+    fn on_any_mouse_down(mut self, listener: Listener<MouseDownEvent>) -> Self {
         self.interactivity().mouse_down_listeners.push(Box::new(
             move |event, bounds, phase, cx| {
                 if phase == DispatchPhase::Bubble && bounds.visibly_contains(&event.position, cx) {
-                    listener.borrowed()(event, cx)
+                    listener(event, cx)
                 }
             },
         ));
         self
     }
 
-    fn on_mouse_up(
-        mut self,
-        button: MouseButton,
-        listener: impl DynFn<dyn Fn(&MouseUpEvent, &mut WindowContext)>,
-    ) -> Self {
+    fn on_mouse_up(mut self, button: MouseButton, listener: Listener<MouseUpEvent>) -> Self {
         self.interactivity()
             .mouse_up_listeners
             .push(Box::new(move |event, bounds, phase, cx| {
@@ -121,46 +110,36 @@ pub trait InteractiveElement: Sized + Element {
                     && event.button == button
                     && bounds.visibly_contains(&event.position, cx)
                 {
-                    listener.borrowed()(event, cx)
+                    listener(event, cx)
                 }
             }));
         self
     }
 
-    fn on_any_mouse_up(
-        mut self,
-        listener: impl DynFn<dyn Fn(&MouseUpEvent, &mut WindowContext)>,
-    ) -> Self {
+    fn on_any_mouse_up(mut self, listener: Listener<MouseUpEvent>) -> Self {
         self.interactivity()
             .mouse_up_listeners
             .push(Box::new(move |event, bounds, phase, cx| {
                 if phase == DispatchPhase::Bubble && bounds.visibly_contains(&event.position, cx) {
-                    listener.borrowed()(event, cx)
+                    listener(event, cx)
                 }
             }));
         self
     }
 
-    fn on_mouse_down_out(
-        mut self,
-        listener: impl DynFn<dyn Fn(&MouseDownEvent, &mut WindowContext)>,
-    ) -> Self {
+    fn on_mouse_down_out(mut self, listener: Listener<MouseDownEvent>) -> Self {
         self.interactivity().mouse_down_listeners.push(Box::new(
             move |event, bounds, phase, cx| {
                 if phase == DispatchPhase::Capture && !bounds.visibly_contains(&event.position, cx)
                 {
-                    listener.borrowed()(event, cx)
+                    listener(event, cx)
                 }
             },
         ));
         self
     }
 
-    fn on_mouse_up_out(
-        mut self,
-        button: MouseButton,
-        listener: impl DynFn<dyn Fn(&MouseUpEvent, &mut WindowContext)>,
-    ) -> Self {
+    fn on_mouse_up_out(mut self, button: MouseButton, listener: Listener<MouseUpEvent>) -> Self {
         self.interactivity()
             .mouse_up_listeners
             .push(Box::new(move |event, bounds, phase, cx| {
@@ -168,34 +147,28 @@ pub trait InteractiveElement: Sized + Element {
                     && event.button == button
                     && !bounds.visibly_contains(&event.position, cx)
                 {
-                    listener.borrowed()(event, cx);
+                    listener(event, cx);
                 }
             }));
         self
     }
 
-    fn on_mouse_move(
-        mut self,
-        listener: impl DynFn<dyn Fn(&MouseMoveEvent, &mut WindowContext)>,
-    ) -> Self {
+    fn on_mouse_move(mut self, listener: Listener<MouseMoveEvent>) -> Self {
         self.interactivity().mouse_move_listeners.push(Box::new(
             move |event, bounds, phase, cx| {
                 if phase == DispatchPhase::Bubble && bounds.visibly_contains(&event.position, cx) {
-                    listener.borrowed()(event, cx);
+                    listener(event, cx);
                 }
             },
         ));
         self
     }
 
-    fn on_scroll_wheel(
-        mut self,
-        listener: impl DynFn<dyn Fn(&ScrollWheelEvent, &mut WindowContext)>,
-    ) -> Self {
+    fn on_scroll_wheel(mut self, listener: Listener<ScrollWheelEvent>) -> Self {
         self.interactivity().scroll_wheel_listeners.push(Box::new(
             move |event, bounds, phase, cx| {
                 if phase == DispatchPhase::Bubble && bounds.visibly_contains(&event.position, cx) {
-                    listener.borrowed()(event, cx);
+                    listener(event, cx);
                 }
             },
         ));
@@ -203,16 +176,13 @@ pub trait InteractiveElement: Sized + Element {
     }
 
     /// Capture the given action, before normal action dispatch can fire
-    fn capture_action<A: Action>(
-        mut self,
-        listener: impl DynFn<dyn Fn(&A, &mut WindowContext)>,
-    ) -> Self {
+    fn capture_action<A: Action>(mut self, listener: Listener<A>) -> Self {
         self.interactivity().action_listeners.push((
             TypeId::of::<A>(),
             Box::new(move |action, phase, cx| {
                 let action = action.downcast_ref().unwrap();
                 if phase == DispatchPhase::Capture {
-                    listener.borrowed()(action, cx)
+                    listener(action, cx)
                 }
             }),
         ));
@@ -220,10 +190,7 @@ pub trait InteractiveElement: Sized + Element {
     }
 
     /// Add a listener for the given action, fires during the bubble event phase
-    fn on_action<A: Action>(
-        mut self,
-        listener: impl DynFn<dyn Fn(&A, &mut WindowContext)>,
-    ) -> Self {
+    fn on_action<A: Action>(mut self, listener: Listener<A>) -> Self {
         // NOTE: this debug assert has the side-effect of working around
         // a bug where a crate consisting only of action definitions does
         // not register the actions in debug builds:
@@ -243,61 +210,52 @@ pub trait InteractiveElement: Sized + Element {
             Box::new(move |action, phase, cx| {
                 let action = action.downcast_ref().unwrap();
                 if phase == DispatchPhase::Bubble {
-                    listener.borrowed()(action, cx)
+                    listener(action, cx)
                 }
             }),
         ));
         self
     }
 
-    fn on_key_down(
-        mut self,
-        listener: impl DynFn<dyn Fn(&KeyDownEvent, &mut WindowContext)>,
-    ) -> Self {
+    fn on_key_down(mut self, listener: Listener<KeyDownEvent>) -> Self {
         self.interactivity()
             .key_down_listeners
             .push(Box::new(move |event, phase, cx| {
                 if phase == DispatchPhase::Bubble {
-                    listener.borrowed()(event, cx)
+                    listener(event, cx)
                 }
             }));
         self
     }
 
-    fn capture_key_down(
-        mut self,
-        listener: impl DynFn<dyn Fn(&KeyDownEvent, &mut WindowContext)>,
-    ) -> Self {
+    fn capture_key_down(mut self, listener: Listener<KeyDownEvent>) -> Self {
         self.interactivity()
             .key_down_listeners
             .push(Box::new(move |event, phase, cx| {
                 if phase == DispatchPhase::Capture {
-                    listener.borrowed()(event, cx)
+                    listener(event, cx)
                 }
             }));
         self
     }
 
-    fn on_key_up(mut self, listener: impl DynFn<dyn Fn(&KeyUpEvent, &mut WindowContext)>) -> Self {
+    fn on_key_up(mut self, listener: Listener<KeyUpEvent>) -> Self {
         self.interactivity()
             .key_up_listeners
             .push(Box::new(move |event, phase, cx| {
                 if phase == DispatchPhase::Bubble {
-                    listener.borrowed()(event, cx)
+                    listener(event, cx)
                 }
             }));
         self
     }
 
-    fn capture_key_up(
-        mut self,
-        listener: impl DynFn<dyn Fn(&KeyUpEvent, &mut WindowContext)>,
-    ) -> Self {
+    fn capture_key_up(mut self, listener: Listener<KeyUpEvent>) -> Self {
         self.interactivity()
             .key_up_listeners
             .push(Box::new(move |event, phase, cx| {
                 if phase == DispatchPhase::Capture {
-                    listener.borrowed()(event, cx)
+                    listener(event, cx)
                 }
             }));
         self
@@ -325,14 +283,11 @@ pub trait InteractiveElement: Sized + Element {
         self
     }
 
-    fn on_drop<W: 'static>(
-        mut self,
-        listener: impl DynFn<dyn Fn(&View<W>, &mut WindowContext)>,
-    ) -> Self {
+    fn on_drop<W: 'static>(mut self, listener: Listener<View<W>>) -> Self {
         self.interactivity().drop_listeners.push((
             TypeId::of::<W>(),
             Box::new(move |dragged_view, cx| {
-                listener.borrowed()(&dragged_view.downcast().unwrap(), cx);
+                listener(&dragged_view.downcast().unwrap(), cx);
             }),
         ));
         self
@@ -389,15 +344,15 @@ pub trait StatefulInteractiveElement: InteractiveElement {
         self
     }
 
-    fn on_click(mut self, listener: impl DynFn<dyn Fn(&ClickEvent, &mut WindowContext)>) -> Self
+    fn on_click(mut self, listener: Listener<ClickEvent>) -> Self
     where
         Self: Sized,
     {
-        self.interactivity().click_listeners.push(listener.boxed());
+        self.interactivity().click_listeners.push(listener);
         self
     }
 
-    fn on_drag<W>(mut self, listener: impl DynFn<dyn Fn(&mut WindowContext) -> View<W>>) -> Self
+    fn on_drag<W>(mut self, constructor: Constructor<View<W>>) -> Self
     where
         Self: Sized,
         W: 'static + Render,
@@ -407,13 +362,13 @@ pub trait StatefulInteractiveElement: InteractiveElement {
             "calling on_drag more than once on the same element is not supported"
         );
         self.interactivity().drag_listener = Some(Box::new(move |cursor_offset, cx| AnyDrag {
-            view: listener.borrowed()(cx).into(),
+            view: constructor(cx).into(),
             cursor_offset,
         }));
         self
     }
 
-    fn on_hover(mut self, listener: impl DynFn<dyn Fn(&bool, &mut WindowContext)>) -> Self
+    fn on_hover(mut self, listener: Listener<bool>) -> Self
     where
         Self: Sized,
     {
@@ -421,11 +376,11 @@ pub trait StatefulInteractiveElement: InteractiveElement {
             self.interactivity().hover_listener.is_none(),
             "calling on_hover more than once on the same element is not supported"
         );
-        self.interactivity().hover_listener = Some(listener.boxed());
+        self.interactivity().hover_listener = Some(listener);
         self
     }
 
-    fn tooltip(mut self, build_tooltip: impl DynFn<dyn Fn(&mut WindowContext) -> AnyView>) -> Self
+    fn tooltip(mut self, build_tooltip: Constructor<AnyView>) -> Self
     where
         Self: Sized,
     {
@@ -433,7 +388,7 @@ pub trait StatefulInteractiveElement: InteractiveElement {
             self.interactivity().tooltip_builder.is_none(),
             "calling tooltip more than once on the same element is not supported"
         );
-        self.interactivity().tooltip_builder = Some(build_tooltip.boxed());
+        self.interactivity().tooltip_builder = Some(build_tooltip);
 
         self
     }
@@ -456,7 +411,7 @@ pub trait FocusableElement: InteractiveElement {
         self
     }
 
-    fn on_focus(mut self, listener: impl DynFn<dyn Fn(&FocusEvent, &mut WindowContext)>) -> Self
+    fn on_focus(mut self, listener: Listener<FocusEvent>) -> Self
     where
         Self: Sized,
     {
@@ -464,13 +419,13 @@ pub trait FocusableElement: InteractiveElement {
             .focus_listeners
             .push(Box::new(move |focus_handle, event, cx| {
                 if event.focused.as_ref() == Some(focus_handle) {
-                    listener.borrowed()(event, cx)
+                    listener(event, cx)
                 }
             }));
         self
     }
 
-    fn on_blur(mut self, listener: impl DynFn<dyn Fn(&FocusEvent, &mut WindowContext)>) -> Self
+    fn on_blur(mut self, listener: Listener<FocusEvent>) -> Self
     where
         Self: Sized,
     {
@@ -478,13 +433,13 @@ pub trait FocusableElement: InteractiveElement {
             .focus_listeners
             .push(Box::new(move |focus_handle, event, cx| {
                 if event.blurred.as_ref() == Some(focus_handle) {
-                    listener.borrowed()(event, cx)
+                    listener(event, cx)
                 }
             }));
         self
     }
 
-    fn on_focus_in(mut self, listener: impl DynFn<dyn Fn(&FocusEvent, &mut WindowContext)>) -> Self
+    fn on_focus_in(mut self, listener: Listener<FocusEvent>) -> Self
     where
         Self: Sized,
     {
@@ -501,13 +456,13 @@ pub trait FocusableElement: InteractiveElement {
                     .map_or(false, |focused| focus_handle.contains(focused, cx));
 
                 if !descendant_blurred && descendant_focused {
-                    listener.borrowed()(event, cx)
+                    listener(event, cx)
                 }
             }));
         self
     }
 
-    fn on_focus_out(mut self, listener: impl DynFn<dyn Fn(&FocusEvent, &mut WindowContext)>) -> Self
+    fn on_focus_out(mut self, listener: Listener<FocusEvent>) -> Self
     where
         Self: Sized,
     {
@@ -523,7 +478,7 @@ pub trait FocusableElement: InteractiveElement {
                     .as_ref()
                     .map_or(false, |focused| focus_handle.contains(focused, cx));
                 if descendant_blurred && !descendant_focused {
-                    listener.borrowed()(event, cx)
+                    listener(event, cx)
                 }
             }));
         self
@@ -746,10 +701,10 @@ pub struct Interactivity {
     pub key_up_listeners: SmallVec<[KeyUpListener; 2]>,
     pub action_listeners: SmallVec<[(TypeId, ActionListener); 8]>,
     pub drop_listeners: SmallVec<[(TypeId, Box<DropListener>); 2]>,
-    pub click_listeners: SmallVec<[ClickListener; 2]>,
+    pub click_listeners: SmallVec<[Listener<ClickEvent>; 2]>,
     pub drag_listener: Option<DragListener>,
-    pub hover_listener: Option<Box<dyn Fn(&bool, &mut WindowContext)>>,
-    pub tooltip_builder: Option<TooltipBuilder>,
+    pub hover_listener: Option<Listener<bool>>,
+    pub tooltip_builder: Option<Constructor<AnyView>>,
 }
 
 #[derive(Clone)]
@@ -921,7 +876,7 @@ impl Interactivity {
                             up: event.clone(),
                         };
                         for listener in &click_listeners {
-                            listener.borrowed()(&mouse_click, cx);
+                            listener(&mouse_click, cx);
                         }
                     }
                     *pending_mouse_down.borrow_mut() = None;

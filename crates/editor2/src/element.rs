@@ -23,10 +23,10 @@ use anyhow::Result;
 use collections::{BTreeMap, HashMap};
 use git::diff::DiffHunkStatus;
 use gpui::{
-    div, overlay, point, px, relative, size, transparent_black, Action, AnchorCorner, AnyElement,
-    AsyncWindowContext, AvailableSpace, BorrowWindow, Bounds, ContentMask, Corners, CursorStyle,
-    DispatchPhase, Edges, Element, ElementId, ElementInputHandler, Entity, EntityId, Hsla,
-    InteractiveBounds, InteractiveElement, IntoElement, LineLayout, ModifiersChangedEvent,
+    div, listener, overlay, point, px, relative, size, transparent_black, Action, AnchorCorner,
+    AnyElement, AsyncWindowContext, AvailableSpace, BorrowWindow, Bounds, ContentMask, Corners,
+    CursorStyle, DispatchPhase, Edges, Element, ElementId, ElementInputHandler, Entity, EntityId,
+    Hsla, InteractiveBounds, InteractiveElement, IntoElement, LineLayout, ModifiersChangedEvent,
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, RenderOnce,
     ScrollWheelEvent, ShapedLine, SharedString, Size, StackingOrder, StatefulInteractiveElement,
     Style, Styled, TextRun, TextStyle, View, ViewContext, WeakView, WindowContext, WrappedLine,
@@ -930,7 +930,7 @@ impl EditorElement {
                                 .size_full()
                                 .on_mouse_down(
                                     MouseButton::Left,
-                                    |_: &_, cx: &mut WindowContext| cx.stop_propagation(),
+                                    listener(|_, cx| cx.stop_propagation()),
                                 )
                                 .on_click(cx.listener_for(
                                     &self.editor,
@@ -2310,9 +2310,10 @@ impl EditorElement {
                                     IconButton::new(block_id, Icon::ArrowUpRight)
                                         .style(ButtonStyle::Subtle)
                                         .on_click(jump_handler)
-                                        .tooltip(|cx| {
-                                            Tooltip::for_action("Jump to Buffer", &OpenExcerpts, cx)
-                                        })
+                                        .tooltip(Tooltip::action_constructor(
+                                            "Jump to Buffer",
+                                            &OpenExcerpts,
+                                        ))
                                 })), // .p_x(gutter_padding)
                         )
                     } else {
@@ -2338,13 +2339,10 @@ impl EditorElement {
                                             .style(ButtonStyle::Transparent)
                                             .full_width()
                                             .on_click(jump_handler)
-                                            .tooltip(|cx| {
-                                                Tooltip::for_action(
-                                                    "Jump to Buffer",
-                                                    &OpenExcerpts,
-                                                    cx,
-                                                )
-                                            })
+                                            .tooltip(Tooltip::action_constructor(
+                                                "Jump to Buffer",
+                                                &OpenExcerpts,
+                                            ))
                                             .child(
                                                 div()
                                                     .h_px()

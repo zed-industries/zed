@@ -1,6 +1,4 @@
-use std::rc::Rc;
-
-use gpui::ClickEvent;
+use gpui::{ClickEvent, Listener};
 
 use crate::prelude::*;
 use crate::{Color, Icon, IconButton, IconSize};
@@ -8,7 +6,7 @@ use crate::{Color, Icon, IconButton, IconSize};
 #[derive(IntoElement)]
 pub struct Disclosure {
     is_open: bool,
-    on_toggle: Option<Rc<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
+    on_toggle: Option<Listener<ClickEvent>>,
 }
 
 impl Disclosure {
@@ -19,11 +17,8 @@ impl Disclosure {
         }
     }
 
-    pub fn on_toggle(
-        mut self,
-        handler: impl Into<Option<Rc<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>>,
-    ) -> Self {
-        self.on_toggle = handler.into();
+    pub fn on_toggle(mut self, handler: Listener<ClickEvent>) -> Self {
+        self.on_toggle = Some(handler);
         self
     }
 }
@@ -42,7 +37,7 @@ impl RenderOnce for Disclosure {
         .icon_color(Color::Muted)
         .icon_size(IconSize::Small)
         .when_some(self.on_toggle, move |this, on_toggle| {
-            this.on_click(move |event, cx| on_toggle(event, cx))
+            this.on_click(on_toggle)
         })
     }
 }

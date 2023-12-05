@@ -1,6 +1,6 @@
 use gpui::{
-    Component, Element, EventEmitter, IntoElement, ParentElement, Render, StyledText, Subscription,
-    ViewContext, WeakView,
+    listener, Component, Element, EventEmitter, IntoElement, ParentElement, Render, StyledText,
+    Subscription, ViewContext, WeakView,
 };
 use itertools::Itertools;
 use theme::ActiveTheme;
@@ -72,7 +72,7 @@ impl Render for Breadcrumbs {
         button
             .style(ButtonStyle::Filled)
             .disabled(false)
-            .on_click(move |_, _cx| {
+            .on_click(listener(move |_, _cx| {
                 todo!("outline::toggle");
                 // this.update(cx, |this, cx| {
                 //     if let Some(workspace) = this.workspace.upgrade() {
@@ -82,7 +82,7 @@ impl Render for Breadcrumbs {
                 //     }
                 // })
                 // .ok();
-            })
+            }))
             .into_element()
     }
 }

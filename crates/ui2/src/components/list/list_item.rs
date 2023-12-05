@@ -1,6 +1,6 @@
 use gpui::{
-    px, AnyElement, ClickEvent, Div, ImageSource, IntoListener, Listener, MouseButton,
-    MouseDownEvent, Pixels, Stateful,
+    listener, px, AnyElement, ClickEvent, Div, ImageSource, Listener, MouseButton, MouseDownEvent,
+    Pixels, Stateful,
 };
 use smallvec::SmallVec;
 
@@ -41,13 +41,13 @@ impl ListItem {
         }
     }
 
-    pub fn on_click(mut self, handler: impl IntoListener<ClickEvent>) -> Self {
-        self.on_click = Some(handler.into_listener());
+    pub fn on_click(mut self, handler: Listener<ClickEvent>) -> Self {
+        self.on_click = Some(handler);
         self
     }
 
-    pub fn on_secondary_mouse_down(mut self, handler: impl IntoListener<MouseDownEvent>) -> Self {
-        self.on_secondary_mouse_down = Some(handler.into_listener());
+    pub fn on_secondary_mouse_down(mut self, handler: Listener<MouseDownEvent>) -> Self {
+        self.on_secondary_mouse_down = Some(handler);
         self
     }
 
@@ -71,8 +71,8 @@ impl ListItem {
         self
     }
 
-    pub fn on_toggle(mut self, on_toggle: impl IntoListener<ClickEvent>) -> Self {
-        self.on_toggle = Some(on_toggle.into_listener());
+    pub fn on_toggle(mut self, on_toggle: Listener<ClickEvent>) -> Self {
+        self.on_toggle = Some(on_toggle);
         self
     }
 
@@ -129,14 +129,15 @@ impl RenderOnce for ListItem {
                 this.bg(cx.theme().colors().ghost_element_selected)
             })
             .when_some(self.on_click, |this, on_click| {
-                this.cursor_pointer()
-                    .on_click(move |event: &ClickEvent, cx: &mut WindowContext| {
+                this.cursor_pointer().on_click(listener(
+                    move |event: &ClickEvent, cx: &mut WindowContext| {
                         // HACK: GPUI currently fires `on_click` with any mouse button,
                         // but we only care about the left button.
                         if event.down.button == MouseButton::Left {
                             on_click(event, cx)
                         }
-                    })
+                    },
+                ))
             })
             .when_some(self.on_secondary_mouse_down, |this, on_mouse_down| {
                 this.on_mouse_down(MouseButton::Right, on_mouse_down)
@@ -149,10 +150,12 @@ impl RenderOnce for ListItem {
                     .gap_1()
                     .items_center()
                     .relative()
-                    .children(
-                        self.toggle
-                            .map(|is_open| Disclosure::new(is_open).on_toggle(self.on_toggle)),
-                    )
+                    .children(self.toggle.map(|is_open| {
+                        Disclosure::new(is_open)
+                            .when_some(self.on_toggle, |disclosure, on_toggle| {
+                                disclosure.on_toggle(on_toggle)
+                            })
+                    }))
                     .children(self.left_slot)
                     .children(self.children),
             )

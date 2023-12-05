@@ -57,7 +57,7 @@ impl Render for ActiveBufferLanguage {
                             });
                         }
                     }))
-                    .tooltip(|cx| Tooltip::text("Select Language", cx)),
+                    .tooltip(Tooltip::text_constructor("Select Language")),
             )
         })
     }

@@ -1,4 +1,4 @@
-use gpui::{Div, Render};
+use gpui::{listener, Div, Render};
 use story::Story;
 
 use crate::prelude::*;
@@ -29,18 +29,20 @@ impl Render for ListItemStory {
                     )),
             )
             .child(Story::label("With `on_click`"))
-            .child(ListItem::new("with_on_click").child("Click me").on_click(
-                |_event: &_, _cx: &mut WindowContext| {
-                    println!("Clicked!");
-                },
-            ))
+            .child(
+                ListItem::new("with_on_click")
+                    .child("Click me")
+                    .on_click(listener(|_, _| {
+                        println!("Clicked!");
+                    })),
+            )
             .child(Story::label("With `on_secondary_mouse_down`"))
             .child(
                 ListItem::new("with_on_secondary_mouse_down")
                     .child("Right click me")
-                    .on_secondary_mouse_down(|_event: &_, _cx: &mut WindowContext| {
+                    .on_secondary_mouse_down(listener(|_, _| {
                         println!("Right mouse down!");
-                    }),
+                    })),
             )
     }
 }

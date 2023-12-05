@@ -1,5 +1,6 @@
 use gpui::{
-    div, prelude::*, Div, Element, ElementId, IntoElement, Listener, Styled, WindowContext,
+    div, listener, prelude::*, Div, Element, ElementId, IntoElement, Listener, Styled,
+    WindowContext,
 };
 
 use crate::prelude::*;
@@ -137,9 +138,9 @@ impl RenderOnce for Checkbox {
             .when_some(
                 self.on_click.filter(|_| !self.disabled),
                 |this, on_click| {
-                    this.on_click(move |_: &_, cx: &mut WindowContext| {
+                    this.on_click(listener(move |_: &_, cx: &mut WindowContext| {
                         on_click(&self.checked.inverse(), cx)
-                    })
+                    }))
                 },
             )
     }
@@ -280,9 +281,9 @@ impl Checkbox {
             .when_some(
                 self.on_click.filter(|_| !self.disabled),
                 |this, on_click| {
-                    this.on_click(move |_: &_, cx: &mut WindowContext| {
+                    this.on_click(listener(move |_: &_, cx: &mut WindowContext| {
                         on_click(&self.checked.inverse(), cx)
-                    })
+                    }))
                 },
             )
     }

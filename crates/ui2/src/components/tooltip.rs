@@ -1,4 +1,6 @@
-use gpui::{overlay, Action, AnyView, IntoElement, Overlay, Render, VisualContext};
+use gpui::{
+    constructor, overlay, Action, AnyView, Constructor, IntoElement, Overlay, Render, VisualContext,
+};
 use settings::Settings;
 use theme::ThemeSettings;
 
@@ -12,6 +14,24 @@ pub struct Tooltip {
 }
 
 impl Tooltip {
+    pub fn new(title: impl Into<SharedString>) -> Self {
+        Self {
+            title: title.into(),
+            meta: None,
+            key_binding: None,
+        }
+    }
+
+    pub fn meta(mut self, meta: impl Into<SharedString>) -> Self {
+        self.meta = Some(meta.into());
+        self
+    }
+
+    pub fn key_binding(mut self, key_binding: impl Into<Option<KeyBinding>>) -> Self {
+        self.key_binding = key_binding.into();
+        self
+    }
+
     pub fn text(title: impl Into<SharedString>, cx: &mut WindowContext) -> AnyView {
         cx.build_view(|_cx| Self {
             title: title.into(),
@@ -48,22 +68,35 @@ impl Tooltip {
         .into()
     }
 
-    pub fn new(title: impl Into<SharedString>) -> Self {
-        Self {
-            title: title.into(),
-            meta: None,
-            key_binding: None,
-        }
+    pub fn text_constructor(title: impl Into<SharedString>) -> Constructor<AnyView> {
+        let title = title.into();
+        constructor(move |cx| {
+            let title = title.clone();
+            cx.build_view(|_| Self {
+                title,
+                meta: None,
+                key_binding: None,
+            })
+            .into()
+        })
     }
 
-    pub fn meta(mut self, meta: impl Into<SharedString>) -> Self {
-        self.meta = Some(meta.into());
-        self
-    }
-
-    pub fn key_binding(mut self, key_binding: impl Into<Option<KeyBinding>>) -> Self {
-        self.key_binding = key_binding.into();
-        self
+    pub fn action_constructor(
+        title: impl Into<SharedString>,
+        action: &dyn Action,
+    ) -> Constructor<AnyView> {
+        let title = title.into();
+        let action = action.boxed_clone();
+        constructor(move |cx| {
+            let title = title.clone();
+            let action = action.boxed_clone();
+            cx.build_view(move |cx| Self {
+                title,
+                meta: None,
+                key_binding: KeyBinding::for_action(&*action, cx),
+            })
+            .into()
+        })
     }
 }
 

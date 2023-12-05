@@ -1,8 +1,8 @@
 use crate::{status_bar::StatusItemView, Axis, Workspace};
 use gpui::{
-    div, px, Action, AnchorCorner, AnyView, AppContext, Div, Entity, EntityId, EventEmitter,
-    FocusHandle, FocusableView, IntoElement, ParentElement, Render, SharedString, Styled,
-    Subscription, View, ViewContext, VisualContext, WeakView, WindowContext,
+    constructor, div, px, Action, AnchorCorner, AnyView, AppContext, Div, Entity, EntityId,
+    EventEmitter, FocusHandle, FocusableView, IntoElement, ParentElement, Render, SharedString,
+    Styled, Subscription, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -730,9 +730,9 @@ impl Render for PanelButtons {
                             IconButton::new(name, icon)
                                 .selected(is_active_button)
                                 .action(action.boxed_clone())
-                                .tooltip(move |cx| {
+                                .tooltip(constructor(move |cx| {
                                     Tooltip::for_action(tooltip.clone(), &*action, cx)
-                                }),
+                                })),
                         ),
                 )
             });

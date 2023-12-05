@@ -6,9 +6,9 @@ use crate::{
 };
 use futures::FutureExt;
 use gpui::{
-    actions, div, px, AnyElement, AppContext, CursorStyle, InteractiveElement, IntoElement, Model,
-    MouseButton, ParentElement, Pixels, SharedString, Size, StatefulInteractiveElement, Styled,
-    Task, ViewContext, WeakView, WindowContext,
+    actions, div, listener, px, AnyElement, AppContext, CursorStyle, InteractiveElement,
+    IntoElement, Model, MouseButton, ParentElement, Pixels, SharedString, Size,
+    StatefulInteractiveElement, Styled, Task, ViewContext, WeakView, WindowContext,
 };
 use language::{markdown, Bias, DiagnosticEntry, Language, LanguageRegistry, ParsedMarkdown};
 use lsp::DiagnosticSeverity;
@@ -484,7 +484,9 @@ impl InfoPopover {
             .max_h(max_size.height)
             // Prevent a mouse move on the popover from being propagated to the editor,
             // because that would dismiss the popover.
-            .on_mouse_move(|_: &_, cx: &mut WindowContext| cx.stop_propagation())
+            .on_mouse_move(listener(|_: &_, cx: &mut WindowContext| {
+                cx.stop_propagation()
+            }))
             .child(crate::render_parsed_markdown(
                 "content",
                 &self.parsed_content,
@@ -527,17 +529,18 @@ impl DiagnosticPopover {
             .max_w(max_size.width)
             .max_h(max_size.height)
             .cursor(CursorStyle::PointingHand)
-            .tooltip(move |cx: &mut WindowContext| {
-                Tooltip::for_action("Go To Diagnostic", &crate::GoToDiagnostic, cx)
-            })
+            .tooltip(Tooltip::action_constructor(
+                "Go To Diagnostic",
+                &crate::GoToDiagnostic,
+            ))
             // Prevent a mouse move on the popover from being propagated to the editor,
             // because that would dismiss the popover.
-            .on_mouse_move(|_: &_, cx: &mut WindowContext| cx.stop_propagation())
+            .on_mouse_move(listener(|_: &_, cx: &mut WindowContext| {
+                cx.stop_propagation()
+            }))
             // Prevent a mouse down on the popover from being propagated to the editor,
             // because that would move the cursor.
-            .on_mouse_down(MouseButton::Left, |_: &_, cx: &mut WindowContext| {
-                cx.stop_propagation()
-            })
+            .on_mouse_down(MouseButton::Left, listener(|_, cx| cx.stop_propagation()))
             .on_click(cx.listener(|editor, _, cx| editor.go_to_diagnostic(&Default::default(), cx)))
             .child(SharedString::from(text))
             .into_any_element()
