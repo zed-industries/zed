@@ -1360,54 +1360,14 @@ impl CollabPanel {
         channel_id: ChannelId,
         cx: &mut ViewContext<Self>,
     ) -> impl IntoElement {
-        //         enum ChannelNotes {}
-        //         let host_avatar_width = theme
-        //             .contact_avatar
-        //             .width
-        //             .or(theme.contact_avatar.height)
-        //             .unwrap_or(0.);
-
-        //         MouseEventHandler::new::<ChannelNotes, _>(ix as usize, cx, |state, cx| {
-        //             let tree_branch = *theme.tree_branch.in_state(is_selected).style_for(state);
-        //             let row = theme.project_row.in_state(is_selected).style_for(state);
-
-        //             Flex::<Self>::row()
-        //                 .with_child(render_tree_branch(
-        //                     tree_branch,
-        //                     &row.name.text,
-        //                     false,
-        //                     vec2f(host_avatar_width, theme.row_height),
-        //                     cx.font_cache(),
-        //                 ))
-        //                 .with_child(
-        //                     Svg::new("icons/file.svg")
-        //                         .with_color(theme.channel_hash.color)
-        //                         .constrained()
-        //                         .with_width(theme.channel_hash.width)
-        //                         .aligned()
-        //                         .left(),
-        //                 )
-        //                 .with_child(
-        //                     Label::new("notes", theme.channel_name.text.clone())
-        //                         .contained()
-        //                         .with_style(theme.channel_name.container)
-        //                         .aligned()
-        //                         .left()
-        //                         .flex(1., true),
-        //                 )
-        //                 .constrained()
-        //                 .with_height(theme.row_height)
-        //                 .contained()
-        //                 .with_style(*theme.channel_row.style_for(is_selected, state))
-        //                 .with_padding_left(theme.channel_row.default_style().padding.left)
-        //         })
-        //         .on_click(MouseButton::Left, move |_, this, cx| {
-        //             this.open_channel_notes(&OpenChannelNotes { channel_id }, cx);
-        //         })
-        //         .with_cursor_style(CursorStyle::PointingHand)
-        //         .into_any()
-
-        div()
+        ListItem::new("channel-notes")
+            .on_click(cx.listener(move |this, _, cx| {
+                this.open_channel_notes(channel_id, cx);
+            }))
+            .left_child(render_tree_branch(false, cx))
+            .child(IconButton::new(0, Icon::File))
+            .child(Label::new("notes"))
+            .tooltip(move |cx| Tooltip::text("Open Channel Notes", cx))
     }
 
     fn render_channel_chat(
@@ -1415,53 +1375,14 @@ impl CollabPanel {
         channel_id: ChannelId,
         cx: &mut ViewContext<Self>,
     ) -> impl IntoElement {
-        //         enum ChannelChat {}
-        //         let host_avatar_width = theme
-        //             .contact_avatar
-        //             .width
-        //             .or(theme.contact_avatar.height)
-        //             .unwrap_or(0.);
-
-        //         MouseEventHandler::new::<ChannelChat, _>(ix as usize, cx, |state, cx| {
-        //             let tree_branch = *theme.tree_branch.in_state(is_selected).style_for(state);
-        //             let row = theme.project_row.in_state(is_selected).style_for(state);
-
-        //             Flex::<Self>::row()
-        //                 .with_child(render_tree_branch(
-        //                     tree_branch,
-        //                     &row.name.text,
-        //                     true,
-        //                     vec2f(host_avatar_width, theme.row_height),
-        //                     cx.font_cache(),
-        //                 ))
-        //                 .with_child(
-        //                     Svg::new("icons/conversations.svg")
-        //                         .with_color(theme.channel_hash.color)
-        //                         .constrained()
-        //                         .with_width(theme.channel_hash.width)
-        //                         .aligned()
-        //                         .left(),
-        //                 )
-        //                 .with_child(
-        //                     Label::new("chat", theme.channel_name.text.clone())
-        //                         .contained()
-        //                         .with_style(theme.channel_name.container)
-        //                         .aligned()
-        //                         .left()
-        //                         .flex(1., true),
-        //                 )
-        //                 .constrained()
-        //                 .with_height(theme.row_height)
-        //                 .contained()
-        //                 .with_style(*theme.channel_row.style_for(is_selected, state))
-        //                 .with_padding_left(theme.channel_row.default_style().padding.left)
-        //         })
-        //         .on_click(MouseButton::Left, move |_, this, cx| {
-        //             this.join_channel_chat(&JoinChannelChat { channel_id }, cx);
-        //         })
-        //         .with_cursor_style(CursorStyle::PointingHand)
-        //         .into_any()
-        div()
+        ListItem::new("channel-chat")
+            .on_click(cx.listener(move |this, _, cx| {
+                this.join_channel_chat(channel_id, cx);
+            }))
+            .left_child(render_tree_branch(true, cx))
+            .child(IconButton::new(0, Icon::MessageBubbles))
+            .child(Label::new("chat"))
+            .tooltip(move |cx| Tooltip::text("Open Chat", cx))
     }
 
     //     fn render_channel_invite(
