@@ -4,8 +4,10 @@ use collab_ui::notifications::project_shared_notification::ProjectSharedNotifica
 use editor::{Editor, ExcerptRange, MultiBuffer};
 use gpui::{executor::Deterministic, geometry::vector::vec2f, TestAppContext, ViewHandle};
 use live_kit_client::MacOSDisplay;
+use project::project_settings::ProjectSettings;
 use rpc::proto::PeerId;
 use serde_json::json;
+use settings::SettingsStore;
 use std::{borrow::Cow, sync::Arc};
 use workspace::{
     dock::{test::TestPanel, DockPosition},
@@ -1599,6 +1601,141 @@ async fn test_following_across_workspaces(
         );
         let item = workspace.active_item(cx).unwrap();
         assert_eq!(item.tab_description(0, cx).unwrap(), Cow::Borrowed("y.rs"));
+    });
+}
+
+#[gpui::test]
+async fn test_following_into_excluded_file(
+    deterministic: Arc<Deterministic>,
+    mut cx_a: &mut TestAppContext,
+    mut cx_b: &mut TestAppContext,
+) {
+    deterministic.forbid_parking();
+
+    let mut server = TestServer::start(&deterministic).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    for cx in [&mut cx_a, &mut cx_b] {
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _, _>(|store, cx| {
+                store.update_user_settings::<ProjectSettings>(cx, |project_settings| {
+                    project_settings.file_scan_exclusions = Some(vec!["**/.git".to_string()]);
+                });
+            });
+        });
+    }
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_b = cx_b.read(ActiveCall::global);
+
+    cx_a.update(editor::init);
+    cx_b.update(editor::init);
+
+    client_a
+        .fs()
+        .insert_tree(
+            "/a",
+            json!({
+                ".git": {
+                    "COMMIT_EDITMSG": "write your commit message here",
+                },
+                "1.txt": "one\none\none",
+                "2.txt": "two\ntwo\ntwo",
+                "3.txt": "three\nthree\nthree",
+            }),
+        )
+        .await;
+    let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
+    active_call_a
+        .update(cx_a, |call, cx| call.set_location(Some(&project_a), cx))
+        .await
+        .unwrap();
+
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
+    active_call_b
+        .update(cx_b, |call, cx| call.set_location(Some(&project_b), cx))
+        .await
+        .unwrap();
+
+    let window_a = client_a.build_workspace(&project_a, cx_a);
+    let workspace_a = window_a.root(cx_a);
+    let peer_id_a = client_a.peer_id().unwrap();
+    let window_b = client_b.build_workspace(&project_b, cx_b);
+    let workspace_b = window_b.root(cx_b);
+
+    // Client A opens editors for a regular file and an excluded file.
+    let editor_for_regular = workspace_a
+        .update(cx_a, |workspace, cx| {
+            workspace.open_path((worktree_id, "1.txt"), None, true, cx)
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+    let editor_for_excluded_a = workspace_a
+        .update(cx_a, |workspace, cx| {
+            workspace.open_path((worktree_id, ".git/COMMIT_EDITMSG"), None, true, cx)
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+
+    // Client A updates their selections in those editors
+    editor_for_regular.update(cx_a, |editor, cx| {
+        editor.handle_input("a", cx);
+        editor.handle_input("b", cx);
+        editor.handle_input("c", cx);
+        editor.select_left(&Default::default(), cx);
+        assert_eq!(editor.selections.ranges(cx), vec![3..2]);
+    });
+    editor_for_excluded_a.update(cx_a, |editor, cx| {
+        editor.select_all(&Default::default(), cx);
+        editor.handle_input("new commit message", cx);
+        editor.select_left(&Default::default(), cx);
+        assert_eq!(editor.selections.ranges(cx), vec![18..17]);
+    });
+
+    // When client B starts following client A, currently visible file is replicated
+    workspace_b
+        .update(cx_b, |workspace, cx| {
+            workspace.follow(peer_id_a, cx).unwrap()
+        })
+        .await
+        .unwrap();
+
+    let editor_for_excluded_b = workspace_b.read_with(cx_b, |workspace, cx| {
+        workspace
+            .active_item(cx)
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap()
+    });
+    assert_eq!(
+        cx_b.read(|cx| editor_for_excluded_b.project_path(cx)),
+        Some((worktree_id, ".git/COMMIT_EDITMSG").into())
+    );
+    assert_eq!(
+        editor_for_excluded_b.read_with(cx_b, |editor, cx| editor.selections.ranges(cx)),
+        vec![18..17]
+    );
+
+    // Changes from B to the excluded file are replicated in A's editor
+    editor_for_excluded_b.update(cx_b, |editor, cx| {
+        editor.handle_input("\nCo-Authored-By: B <b@b.b>", cx);
+    });
+    deterministic.run_until_parked();
+    editor_for_excluded_a.update(cx_a, |editor, cx| {
+        assert_eq!(
+            editor.text(cx),
+            "new commit messag\nCo-Authored-By: B <b@b.b>"
+        );
     });
 }
 

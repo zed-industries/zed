@@ -10,7 +10,7 @@ mod persistence;
 pub mod searchable;
 // todo!()
 mod modal_layer;
-mod shared_screen;
+pub mod shared_screen;
 mod status_bar;
 mod toolbar;
 mod workspace_settings;
@@ -1853,13 +1853,13 @@ impl Workspace {
         })
     }
 
-    pub(crate) fn load_path(
+    fn load_path(
         &mut self,
         path: ProjectPath,
         cx: &mut ViewContext<Self>,
     ) -> Task<
         Result<(
-            ProjectEntryId,
+            Option<ProjectEntryId>,
             impl 'static + Send + FnOnce(&mut ViewContext<Pane>) -> Box<dyn ItemHandle>,
         )>,
     > {
