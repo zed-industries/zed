@@ -3235,7 +3235,7 @@ mod tests {
         editor_tests::{init_test, update_test_language_settings},
         Editor, MultiBuffer,
     };
-    use gpui::TestAppContext;
+    use gpui::{EmptyView, TestAppContext};
     use language::language_settings;
     use log::info;
     use std::{num::NonZeroU32, sync::Arc};
@@ -3458,60 +3458,68 @@ mod tests {
         assert_eq!(local_selections[1].head, DisplayPoint::new(10, 0));
     }
 
-    //     #[gpui::test]
-    //     fn test_layout_with_placeholder_text_and_blocks(cx: &mut TestAppContext) {
-    //         init_test(cx, |_| {});
+    #[gpui::test]
+    fn test_layout_with_placeholder_text_and_blocks(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
 
-    //         let editor = cx
-    //             .add_window(|cx| {
-    //                 let buffer = MultiBuffer::build_simple("", cx);
-    //                 Editor::new(EditorMode::Full, buffer, None, None, cx)
-    //             })
-    //             .root(cx);
+        let window = cx.add_window(|cx| {
+            let buffer = MultiBuffer::build_simple("", cx);
+            Editor::new(EditorMode::Full, buffer, None, cx)
+        });
+        let editor = window.root(cx).unwrap();
+        let style = cx.update(|cx| editor.read(cx).style().unwrap().clone());
+        window
+            .update(cx, |editor, cx| {
+                editor.set_placeholder_text("hello", cx);
+                editor.insert_blocks(
+                    [BlockProperties {
+                        style: BlockStyle::Fixed,
+                        disposition: BlockDisposition::Above,
+                        height: 3,
+                        position: Anchor::min(),
+                        render: Arc::new(|_| div().into_any()),
+                    }],
+                    None,
+                    cx,
+                );
 
-    //         editor.update(cx, |editor, cx| {
-    //             editor.set_placeholder_text("hello", cx);
-    //             editor.insert_blocks(
-    //                 [BlockProperties {
-    //                     style: BlockStyle::Fixed,
-    //                     disposition: BlockDisposition::Above,
-    //                     height: 3,
-    //                     position: Anchor::min(),
-    //                     render: Arc::new(|_| Empty::new().into_any),
-    //                 }],
-    //                 None,
-    //                 cx,
-    //             );
+                // Blur the editor so that it displays placeholder text.
+                cx.blur();
+            })
+            .unwrap();
 
-    //             // Blur the editor so that it displays placeholder text.
-    //             cx.blur();
-    //         });
+        let mut element = EditorElement::new(&editor, style);
+        let mut state = cx
+            .update_window(window.into(), |_, cx| {
+                element.compute_layout(
+                    Bounds {
+                        origin: point(px(500.), px(500.)),
+                        size: size(px(500.), px(500.)),
+                    },
+                    cx,
+                )
+            })
+            .unwrap();
+        let size = state.position_map.size;
 
-    //         let mut element = EditorElement::new(editor.read_with(cx, |editor, cx| editor.style(cx)));
-    //         let (size, mut state) = editor.update(cx, |editor, cx| {
-    //             element.layout(
-    //                 SizeConstraint::new(point(500., 500.), point(500., 500.)),
-    //                 editor,
-    //                 cx,
-    //             )
-    //         });
+        assert_eq!(state.position_map.line_layouts.len(), 4);
+        // todo!() uncomment this assert
+        // assert_eq!(
+        //     state
+        //         .line_number_layouts
+        //         .iter()
+        //         .map(Option::is_some)
+        //         .collect::<Vec<_>>(),
+        //     &[false, false, false, true]
+        // );
 
-    //         assert_eq!(state.position_map.line_layouts.len(), 4);
-    //         assert_eq!(
-    //             state
-    //                 .line_number_layouts
-    //                 .iter()
-    //                 .map(Option::is_some)
-    //                 .collect::<Vec<_>>(),
-    //             &[false, false, false, true]
-    //         );
-
-    //         // Don't panic.
-    //         let bounds = Bounds::<Pixels>::new(Default::default(), size);
-    //         editor.update(cx, |editor, cx| {
-    //             element.paint(bounds, bounds, &mut state, editor, cx);
-    //         });
-    //     }
+        // Don't panic.
+        let bounds = Bounds::<Pixels>::new(Default::default(), size);
+        cx.update_window(window.into(), |_, cx| {
+            element.paint(bounds, &mut (), cx);
+        })
+        .unwrap()
+    }
 
     #[gpui::test]
     fn test_all_invisibles_drawing(cx: &mut TestAppContext) {
