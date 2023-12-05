@@ -510,10 +510,9 @@ async fn test_joining_channels_and_calling_multiple_users_simultaneously(
 
     // Simultaneously join channel 1 and then channel 2
     active_call_a
-        .update(cx_a, |call, cx| call.join_channel(channel_1, None, cx))
+        .update(cx_a, |call, cx| call.join_channel(channel_1, cx))
         .detach();
-    let join_channel_2 =
-        active_call_a.update(cx_a, |call, cx| call.join_channel(channel_2, None, cx));
+    let join_channel_2 = active_call_a.update(cx_a, |call, cx| call.join_channel(channel_2, cx));
 
     join_channel_2.await.unwrap();
 
@@ -539,8 +538,7 @@ async fn test_joining_channels_and_calling_multiple_users_simultaneously(
         call.invite(client_c.user_id().unwrap(), None, cx)
     });
 
-    let join_channel =
-        active_call_a.update(cx_a, |call, cx| call.join_channel(channel_1, None, cx));
+    let join_channel = active_call_a.update(cx_a, |call, cx| call.join_channel(channel_1, cx));
 
     b_invite.await.unwrap();
     c_invite.await.unwrap();
@@ -569,8 +567,7 @@ async fn test_joining_channels_and_calling_multiple_users_simultaneously(
         .unwrap();
 
     // Simultaneously join channel 1 and call user B and user C from client A.
-    let join_channel =
-        active_call_a.update(cx_a, |call, cx| call.join_channel(channel_1, None, cx));
+    let join_channel = active_call_a.update(cx_a, |call, cx| call.join_channel(channel_1, cx));
 
     let b_invite = active_call_a.update(cx_a, |call, cx| {
         call.invite(client_b.user_id().unwrap(), None, cx)

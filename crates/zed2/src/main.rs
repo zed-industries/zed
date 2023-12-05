@@ -191,7 +191,6 @@ fn main() {
             user_store: user_store.clone(),
             fs,
             build_window_options,
-            call_factory: call::Call::new,
             workspace_store,
             node_runtime,
         });

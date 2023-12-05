@@ -31,9 +31,7 @@ media = { path = "../media" }
 project = { package = "project2", path = "../project2" }
 settings = { package = "settings2", path = "../settings2" }
 util = { path = "../util" }
-ui = {package = "ui2", path = "../ui2"}
-workspace = {package = "workspace2", path = "../workspace2"}
-async-trait.workspace = true
+
 anyhow.workspace = true
 async-broadcast = "0.4"
 futures.workspace = true

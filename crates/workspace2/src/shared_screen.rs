@@ -1,5 +1,9 @@
-use crate::participant::{Frame, RemoteVideoTrack};
+use crate::{
+    item::{Item, ItemEvent},
+    ItemNavHistory, WorkspaceId,
+};
 use anyhow::Result;
+use call::participant::{Frame, RemoteVideoTrack};
 use client::{proto::PeerId, User};
 use futures::StreamExt;
 use gpui::{
@@ -9,7 +13,6 @@ use gpui::{
 };
 use std::sync::{Arc, Weak};
 use ui::{h_stack, Icon, IconElement};
-use workspace::{item::Item, ItemNavHistory, WorkspaceId};
 
 pub enum Event {
     Close,
@@ -56,7 +59,7 @@ impl SharedScreen {
 }
 
 impl EventEmitter<Event> for SharedScreen {}
-impl EventEmitter<workspace::item::ItemEvent> for SharedScreen {}
+impl EventEmitter<ItemEvent> for SharedScreen {}
 
 impl FocusableView for SharedScreen {
     fn focus_handle(&self, _: &AppContext) -> FocusHandle {
