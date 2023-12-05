@@ -22,6 +22,7 @@ use request::StatusNotification;
 use settings::SettingsStore;
 use smol::{fs, io::BufReader, stream::StreamExt};
 use std::{
+    any::TypeId,
     ffi::OsString,
     mem,
     ops::Range,
@@ -32,13 +33,14 @@ use util::{
     fs::remove_matching, github::latest_github_release, http::HttpClient, paths, ResultExt,
 };
 
-// todo!()
-// const COPILOT_AUTH_NAMESPACE: &'static str = "copilot_auth";
-actions!(SignIn, SignOut);
-
-// todo!()
-// const COPILOT_NAMESPACE: &'static str = "copilot";
-actions!(Suggest, NextSuggestion, PreviousSuggestion, Reinstall);
+actions!(
+    Suggest,
+    NextSuggestion,
+    PreviousSuggestion,
+    Reinstall,
+    SignIn,
+    SignOut
+);
 
 pub fn init(
     new_server_id: LanguageServerId,
@@ -51,52 +53,63 @@ pub fn init(
         move |cx| Copilot::start(new_server_id, http, node_runtime, cx)
     });
     cx.set_global(copilot.clone());
+    cx.observe(&copilot, |handle, cx| {
+        let copilot_action_types = [
+            TypeId::of::<Suggest>(),
+            TypeId::of::<NextSuggestion>(),
+            TypeId::of::<PreviousSuggestion>(),
+            TypeId::of::<Reinstall>(),
+        ];
+        let copilot_auth_action_types = [TypeId::of::<SignIn>(), TypeId::of::<SignOut>()];
 
-    // TODO
-    // cx.observe(&copilot, |handle, cx| {
-    //     let status = handle.read(cx).status();
-    //     cx.update_default_global::<collections::CommandPaletteFilter, _, _>(move |filter, _cx| {
-    //         match status {
-    //             Status::Disabled => {
-    //                 filter.filtered_namespaces.insert(COPILOT_NAMESPACE);
-    //                 filter.filtered_namespaces.insert(COPILOT_AUTH_NAMESPACE);
-    //             }
-    //             Status::Authorized => {
-    //                 filter.filtered_namespaces.remove(COPILOT_NAMESPACE);
-    //                 filter.filtered_namespaces.remove(COPILOT_AUTH_NAMESPACE);
-    //             }
-    //             _ => {
-    //                 filter.filtered_namespaces.insert(COPILOT_NAMESPACE);
-    //                 filter.filtered_namespaces.remove(COPILOT_AUTH_NAMESPACE);
-    //             }
-    //         }
-    //     });
-    // })
-    // .detach();
+        let status = handle.read(cx).status();
+        let filter = cx.default_global::<collections::CommandPaletteFilter>();
 
-    // sign_in::init(cx);
-    // cx.add_global_action(|_: &SignIn, cx| {
-    //     if let Some(copilot) = Copilot::global(cx) {
-    //         copilot
-    //             .update(cx, |copilot, cx| copilot.sign_in(cx))
-    //             .detach_and_log_err(cx);
-    //     }
-    // });
-    // cx.add_global_action(|_: &SignOut, cx| {
-    //     if let Some(copilot) = Copilot::global(cx) {
-    //         copilot
-    //             .update(cx, |copilot, cx| copilot.sign_out(cx))
-    //             .detach_and_log_err(cx);
-    //     }
-    // });
+        match status {
+            Status::Disabled => {
+                filter.hidden_action_types.extend(copilot_action_types);
+                filter.hidden_action_types.extend(copilot_auth_action_types);
+            }
+            Status::Authorized => {
+                for type_id in copilot_action_types
+                    .iter()
+                    .chain(&copilot_auth_action_types)
+                {
+                    filter.hidden_action_types.remove(type_id);
+                }
+            }
+            _ => {
+                filter.hidden_action_types.extend(copilot_action_types);
+                for type_id in &copilot_auth_action_types {
+                    filter.hidden_action_types.remove(type_id);
+                }
+            }
+        }
+    })
+    .detach();
 
-    // cx.add_global_action(|_: &Reinstall, cx| {
-    //     if let Some(copilot) = Copilot::global(cx) {
-    //         copilot
-    //             .update(cx, |copilot, cx| copilot.reinstall(cx))
-    //             .detach();
-    //     }
-    // });
+    sign_in::init(cx);
+    cx.on_action(|_: &SignIn, cx| {
+        if let Some(copilot) = Copilot::global(cx) {
+            copilot
+                .update(cx, |copilot, cx| copilot.sign_in(cx))
+                .detach_and_log_err(cx);
+        }
+    });
+    cx.on_action(|_: &SignOut, cx| {
+        if let Some(copilot) = Copilot::global(cx) {
+            copilot
+                .update(cx, |copilot, cx| copilot.sign_out(cx))
+                .detach_and_log_err(cx);
+        }
+    });
+    cx.on_action(|_: &Reinstall, cx| {
+        if let Some(copilot) = Copilot::global(cx) {
+            copilot
+                .update(cx, |copilot, cx| copilot.reinstall(cx))
+                .detach();
+        }
+    });
 }
 
 enum CopilotServer {

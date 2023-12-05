@@ -1486,10 +1486,18 @@ impl<'a> WindowContext<'a> {
 
     pub fn available_actions(&self) -> Vec<Box<dyn Action>> {
         if let Some(focus_id) = self.window.focus {
-            self.window
+            let mut actions = self
+                .window
                 .current_frame
                 .dispatch_tree
-                .available_actions(focus_id)
+                .available_actions(focus_id);
+            actions.extend(
+                self.app
+                    .global_action_listeners
+                    .keys()
+                    .filter_map(|type_id| self.app.actions.build_action_type(type_id).ok()),
+            );
+            actions
         } else {
             Vec::new()
         }
