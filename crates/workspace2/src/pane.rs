@@ -1533,24 +1533,17 @@ impl Pane {
                 menu.action(
                     "Close Active Item",
                     CloseActiveItem { save_intent: None }.boxed_clone(),
-                    cx,
                 )
-                .action("Close Inactive Items", CloseInactiveItems.boxed_clone(), cx)
-                .action("Close Clean Items", CloseCleanItems.boxed_clone(), cx)
-                .action(
-                    "Close Items To The Left",
-                    CloseItemsToTheLeft.boxed_clone(),
-                    cx,
-                )
+                .action("Close Inactive Items", CloseInactiveItems.boxed_clone())
+                .action("Close Clean Items", CloseCleanItems.boxed_clone())
+                .action("Close Items To The Left", CloseItemsToTheLeft.boxed_clone())
                 .action(
                     "Close Items To The Right",
                     CloseItemsToTheRight.boxed_clone(),
-                    cx,
                 )
                 .action(
                     "Close All Items",
                     CloseAllItems { save_intent: None }.boxed_clone(),
-                    cx,
                 )
             })
         })
@@ -1623,17 +1616,12 @@ impl Pane {
                                     .child(IconButton::new("plus", Icon::Plus).on_click(
                                         cx.listener(|this, _, cx| {
                                             let menu = ContextMenu::build(cx, |menu, cx| {
-                                                menu.action("New File", NewFile.boxed_clone(), cx)
+                                                menu.action("New File", NewFile.boxed_clone())
                                                     .action(
                                                         "New Terminal",
                                                         NewCenterTerminal.boxed_clone(),
-                                                        cx,
                                                     )
-                                                    .action(
-                                                        "New Search",
-                                                        NewSearch.boxed_clone(),
-                                                        cx,
-                                                    )
+                                                    .action("New Search", NewSearch.boxed_clone())
                                             });
                                             cx.subscribe(
                                                 &menu,
@@ -1657,14 +1645,10 @@ impl Pane {
                                     .child(IconButton::new("split", Icon::Split).on_click(
                                         cx.listener(|this, _, cx| {
                                             let menu = ContextMenu::build(cx, |menu, cx| {
-                                                menu.action(
-                                                    "Split Right",
-                                                    SplitRight.boxed_clone(),
-                                                    cx,
-                                                )
-                                                .action("Split Left", SplitLeft.boxed_clone(), cx)
-                                                .action("Split Up", SplitUp.boxed_clone(), cx)
-                                                .action("Split Down", SplitDown.boxed_clone(), cx)
+                                                menu.action("Split Right", SplitRight.boxed_clone())
+                                                    .action("Split Left", SplitLeft.boxed_clone())
+                                                    .action("Split Up", SplitUp.boxed_clone())
+                                                    .action("Split Down", SplitDown.boxed_clone())
                                             });
                                             cx.subscribe(
                                                 &menu,

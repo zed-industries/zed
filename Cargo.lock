@@ -6165,6 +6165,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "outline2"
+version = "0.1.0"
+dependencies = [
+ "editor2",
+ "fuzzy2",
+ "gpui2",
+ "language2",
+ "ordered-float 2.10.0",
+ "picker2",
+ "postage",
+ "settings2",
+ "smol",
+ "text2",
+ "theme2",
+ "ui2",
+ "util",
+ "workspace2",
+]
+
+[[package]]
 name = "overload"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11818,6 +11838,7 @@ dependencies = [
  "menu2",
  "node_runtime",
  "num_cpus",
+ "outline2",
  "parking_lot 0.11.2",
  "postage",
  "project2",

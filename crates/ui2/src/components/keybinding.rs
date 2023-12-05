@@ -1,5 +1,5 @@
 use crate::{h_stack, prelude::*, Icon, IconElement, IconSize};
-use gpui::{relative, rems, Action, Div, IntoElement, Keystroke};
+use gpui::{relative, rems, Action, Div, FocusHandle, IntoElement, Keystroke};
 
 #[derive(IntoElement, Clone)]
 pub struct KeyBinding {
@@ -49,9 +49,18 @@ impl RenderOnce for KeyBinding {
 
 impl KeyBinding {
     pub fn for_action(action: &dyn Action, cx: &mut WindowContext) -> Option<Self> {
-        // todo! this last is arbitrary, we want to prefer users key bindings over defaults,
-        // and vim over normal (in vim mode), etc.
         let key_binding = cx.bindings_for_action(action).last().cloned()?;
+        Some(Self::new(key_binding))
+    }
+
+    // like for_action(), but lets you specify the context from which keybindings
+    // are matched.
+    pub fn for_action_in(
+        action: &dyn Action,
+        focus: &FocusHandle,
+        cx: &mut WindowContext,
+    ) -> Option<Self> {
+        let key_binding = cx.bindings_for_action_in(action, focus).last().cloned()?;
         Some(Self::new(key_binding))
     }
 

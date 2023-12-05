@@ -201,9 +201,8 @@ impl CopilotButton {
                     url: COPILOT_SETTINGS_URL.to_string(),
                 }
                 .boxed_clone(),
-                cx,
             )
-            .action("Sign Out", SignOut.boxed_clone(), cx)
+            .action("Sign Out", SignOut.boxed_clone())
         });
     }
 
