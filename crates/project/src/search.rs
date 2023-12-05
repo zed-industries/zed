@@ -372,7 +372,7 @@ impl SearchQuery {
         match file_path {
             Some(file_path) => {
                 let mut path = file_path.to_path_buf();
-                let mut matches = false;
+                let mut matches;
                 loop {
                     matches = !self
                         .files_to_exclude()
