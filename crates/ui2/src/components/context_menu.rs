@@ -24,6 +24,7 @@ pub struct ContextMenu {
     items: Vec<ContextMenuItem>,
     focus_handle: FocusHandle,
     selected_index: Option<usize>,
+    delayed: bool,
 }
 
 impl FocusableView for ContextMenu {
@@ -46,6 +47,7 @@ impl ContextMenu {
                     items: Default::default(),
                     focus_handle: cx.focus_handle(),
                     selected_index: None,
+                    delayed: false,
                 },
                 cx,
             )
@@ -165,6 +167,7 @@ impl ContextMenu {
             }
         }) {
             self.selected_index = Some(ix);
+            self.delayed = true;
             cx.notify();
             let action = dispatched.boxed_clone();
             cx.spawn(|this, mut cx| async move {
@@ -205,7 +208,7 @@ impl Render for ContextMenu {
                 .on_action(cx.listener(ContextMenu::select_prev))
                 .on_action(cx.listener(ContextMenu::confirm))
                 .on_action(cx.listener(ContextMenu::cancel))
-                .map(|mut el| {
+                .when(!self.delayed, |mut el| {
                     for item in self.items.iter() {
                         if let ContextMenuItem::Entry {
                             action: Some(action),

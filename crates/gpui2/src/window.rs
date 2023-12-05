@@ -1497,10 +1497,13 @@ impl<'a> WindowContext<'a> {
     }
 
     pub fn bindings_for_action(&self, action: &dyn Action) -> Vec<KeyBinding> {
-        self.window.current_frame.dispatch_tree.bindings_for_action(
-            action,
-            &self.window.current_frame.dispatch_tree.context_stack,
-        )
+        self.window
+            .previous_frame
+            .dispatch_tree
+            .bindings_for_action(
+                action,
+                &self.window.previous_frame.dispatch_tree.context_stack,
+            )
     }
 
     pub fn bindings_for_action_in(
