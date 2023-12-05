@@ -1294,70 +1294,20 @@ impl CollabPanel {
         is_last: bool,
         cx: &mut ViewContext<Self>,
     ) -> impl IntoElement {
-        //         enum OpenSharedScreen {}
+        let id = peer_id.map_or(usize::MAX, |id| id.as_u64() as usize);
 
-        //         let host_avatar_width = theme
-        //             .contact_avatar
-        //             .width
-        //             .or(theme.contact_avatar.height)
-        //             .unwrap_or(0.);
-        //         let tree_branch = theme.tree_branch;
-
-        //         let handler = MouseEventHandler::new::<OpenSharedScreen, _>(
-        //             peer_id.map(|id| id.as_u64()).unwrap_or(0) as usize,
-        //             cx,
-        //             |mouse_state, cx| {
-        //                 let tree_branch = *tree_branch.in_state(is_selected).style_for(mouse_state);
-        //                 let row = theme
-        //                     .project_row
-        //                     .in_state(is_selected)
-        //                     .style_for(mouse_state);
-
-        //                 Flex::row()
-        //                     .with_child(render_tree_branch(
-        //                         tree_branch,
-        //                         &row.name.text,
-        //                         is_last,
-        //                         vec2f(host_avatar_width, theme.row_height),
-        //                         cx.font_cache(),
-        //                     ))
-        //                     .with_child(
-        //                         Svg::new("icons/desktop.svg")
-        //                             .with_color(theme.channel_hash.color)
-        //                             .constrained()
-        //                             .with_width(theme.channel_hash.width)
-        //                             .aligned()
-        //                             .left(),
-        //                     )
-        //                     .with_child(
-        //                         Label::new("Screen", row.name.text.clone())
-        //                             .aligned()
-        //                             .left()
-        //                             .contained()
-        //                             .with_style(row.name.container)
-        //                             .flex(1., false),
-        //                     )
-        //                     .constrained()
-        //                     .with_height(theme.row_height)
-        //                     .contained()
-        //                     .with_style(row.container)
-        //             },
-        //         );
-        //         if peer_id.is_none() {
-        //             return handler.into_any();
-        //         }
-        //         handler
-        //             .with_cursor_style(CursorStyle::PointingHand)
-        //             .on_click(MouseButton::Left, move |_, this, cx| {
-        //                 if let Some(workspace) = this.workspace.upgrade(cx) {
-        //                     workspace.update(cx, |workspace, cx| {
-        //                         workspace.open_shared_screen(peer_id.unwrap(), cx)
-        //                     });
-        //                 }
-        //             })
-        //             .into_any()
-
-        div()
+        ListItem::new(("screen", id))
+            .left_child(render_tree_branch(is_last, cx))
+            .child(IconButton::new(0, Icon::Screen))
+            .child(Label::new("Screen"))
+            .when_some(peer_id, |this, _| {
+                this.on_click(cx.listener(move |this, _, cx| {
+                    this.workspace.update(cx, |workspace, cx| {
+                        workspace.open_shared_screen(peer_id.unwrap(), cx)
+                    });
+                }))
+                .tooltip(move |cx| Tooltip::text(format!("Open shared screen"), cx))
+            })
     }
 
     fn take_editing_state(&mut self, cx: &mut ViewContext<Self>) -> bool {
