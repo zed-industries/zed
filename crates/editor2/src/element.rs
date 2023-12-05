@@ -3310,137 +3310,153 @@ mod tests {
         assert_eq!(relative_rows[&2], 3);
     }
 
-    //     #[gpui::test]
-    //     async fn test_vim_visual_selections(cx: &mut TestAppContext) {
-    //         init_test(cx, |_| {});
+    #[gpui::test]
+    async fn test_vim_visual_selections(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
 
-    //         let editor = cx
-    //             .add_window(|cx| {
-    //                 let buffer = MultiBuffer::build_simple(&(sample_text(6, 6, 'a') + "\n"), cx);
-    //                 Editor::new(EditorMode::Full, buffer, None, None, cx)
-    //             })
-    //             .root(cx);
-    //         let mut element = EditorElement::new(editor.read_with(cx, |editor, cx| editor.style(cx)));
-    //         let (_, state) = editor.update(cx, |editor, cx| {
-    //             editor.cursor_shape = CursorShape::Block;
-    //             editor.change_selections(None, cx, |s| {
-    //                 s.select_ranges([
-    //                     Point::new(0, 0)..Point::new(1, 0),
-    //                     Point::new(3, 2)..Point::new(3, 3),
-    //                     Point::new(5, 6)..Point::new(6, 0),
-    //                 ]);
-    //             });
-    //             element.layout(
-    //                 SizeConstraint::new(point(500., 500.), point(500., 500.)),
-    //                 editor,
-    //                 cx,
-    //             )
-    //         });
-    //         assert_eq!(state.selections.len(), 1);
-    //         let local_selections = &state.selections[0].1;
-    //         assert_eq!(local_selections.len(), 3);
-    //         // moves cursor back one line
-    //         assert_eq!(local_selections[0].head, DisplayPoint::new(0, 6));
-    //         assert_eq!(
-    //             local_selections[0].range,
-    //             DisplayPoint::new(0, 0)..DisplayPoint::new(1, 0)
-    //         );
+        let window = cx.add_window(|cx| {
+            let buffer = MultiBuffer::build_simple(&(sample_text(6, 6, 'a') + "\n"), cx);
+            Editor::new(EditorMode::Full, buffer, None, cx)
+        });
+        let editor = window.root(cx).unwrap();
+        let style = cx.update(|cx| editor.read(cx).style().unwrap().clone());
+        let mut element = EditorElement::new(&editor, style);
 
-    //         // moves cursor back one column
-    //         assert_eq!(
-    //             local_selections[1].range,
-    //             DisplayPoint::new(3, 2)..DisplayPoint::new(3, 3)
-    //         );
-    //         assert_eq!(local_selections[1].head, DisplayPoint::new(3, 2));
+        window
+            .update(cx, |editor, cx| {
+                editor.cursor_shape = CursorShape::Block;
+                editor.change_selections(None, cx, |s| {
+                    s.select_ranges([
+                        Point::new(0, 0)..Point::new(1, 0),
+                        Point::new(3, 2)..Point::new(3, 3),
+                        Point::new(5, 6)..Point::new(6, 0),
+                    ]);
+                });
+            })
+            .unwrap();
+        let state = cx
+            .update_window(window.into(), |_, cx| {
+                element.compute_layout(
+                    Bounds {
+                        origin: point(px(500.), px(500.)),
+                        size: size(px(500.), px(500.)),
+                    },
+                    cx,
+                )
+            })
+            .unwrap();
 
-    //         // leaves cursor on the max point
-    //         assert_eq!(
-    //             local_selections[2].range,
-    //             DisplayPoint::new(5, 6)..DisplayPoint::new(6, 0)
-    //         );
-    //         assert_eq!(local_selections[2].head, DisplayPoint::new(6, 0));
+        assert_eq!(state.selections.len(), 1);
+        let local_selections = &state.selections[0].1;
+        assert_eq!(local_selections.len(), 3);
+        // moves cursor back one line
+        assert_eq!(local_selections[0].head, DisplayPoint::new(0, 6));
+        assert_eq!(
+            local_selections[0].range,
+            DisplayPoint::new(0, 0)..DisplayPoint::new(1, 0)
+        );
 
-    //         // active lines does not include 1 (even though the range of the selection does)
-    //         assert_eq!(
-    //             state.active_rows.keys().cloned().collect::<Vec<u32>>(),
-    //             vec![0, 3, 5, 6]
-    //         );
+        // moves cursor back one column
+        assert_eq!(
+            local_selections[1].range,
+            DisplayPoint::new(3, 2)..DisplayPoint::new(3, 3)
+        );
+        assert_eq!(local_selections[1].head, DisplayPoint::new(3, 2));
 
-    //         // multi-buffer support
-    //         // in DisplayPoint co-ordinates, this is what we're dealing with:
-    //         //  0: [[file
-    //         //  1:   header]]
-    //         //  2: aaaaaa
-    //         //  3: bbbbbb
-    //         //  4: cccccc
-    //         //  5:
-    //         //  6: ...
-    //         //  7: ffffff
-    //         //  8: gggggg
-    //         //  9: hhhhhh
-    //         // 10:
-    //         // 11: [[file
-    //         // 12:   header]]
-    //         // 13: bbbbbb
-    //         // 14: cccccc
-    //         // 15: dddddd
-    //         let editor = cx
-    //             .add_window(|cx| {
-    //                 let buffer = MultiBuffer::build_multi(
-    //                     [
-    //                         (
-    //                             &(sample_text(8, 6, 'a') + "\n"),
-    //                             vec![
-    //                                 Point::new(0, 0)..Point::new(3, 0),
-    //                                 Point::new(4, 0)..Point::new(7, 0),
-    //                             ],
-    //                         ),
-    //                         (
-    //                             &(sample_text(8, 6, 'a') + "\n"),
-    //                             vec![Point::new(1, 0)..Point::new(3, 0)],
-    //                         ),
-    //                     ],
-    //                     cx,
-    //                 );
-    //                 Editor::new(EditorMode::Full, buffer, None, None, cx)
-    //             })
-    //             .root(cx);
-    //         let mut element = EditorElement::new(editor.read_with(cx, |editor, cx| editor.style(cx)));
-    //         let (_, state) = editor.update(cx, |editor, cx| {
-    //             editor.cursor_shape = CursorShape::Block;
-    //             editor.change_selections(None, cx, |s| {
-    //                 s.select_display_ranges([
-    //                     DisplayPoint::new(4, 0)..DisplayPoint::new(7, 0),
-    //                     DisplayPoint::new(10, 0)..DisplayPoint::new(13, 0),
-    //                 ]);
-    //             });
-    //             element.layout(
-    //                 SizeConstraint::new(point(500., 500.), point(500., 500.)),
-    //                 editor,
-    //                 cx,
-    //             )
-    //         });
+        // leaves cursor on the max point
+        assert_eq!(
+            local_selections[2].range,
+            DisplayPoint::new(5, 6)..DisplayPoint::new(6, 0)
+        );
+        assert_eq!(local_selections[2].head, DisplayPoint::new(6, 0));
 
-    //         assert_eq!(state.selections.len(), 1);
-    //         let local_selections = &state.selections[0].1;
-    //         assert_eq!(local_selections.len(), 2);
+        // active lines does not include 1 (even though the range of the selection does)
+        assert_eq!(
+            state.active_rows.keys().cloned().collect::<Vec<u32>>(),
+            vec![0, 3, 5, 6]
+        );
 
-    //         // moves cursor on excerpt boundary back a line
-    //         // and doesn't allow selection to bleed through
-    //         assert_eq!(
-    //             local_selections[0].range,
-    //             DisplayPoint::new(4, 0)..DisplayPoint::new(6, 0)
-    //         );
-    //         assert_eq!(local_selections[0].head, DisplayPoint::new(5, 0));
+        // multi-buffer support
+        // in DisplayPoint co-ordinates, this is what we're dealing with:
+        //  0: [[file
+        //  1:   header]]
+        //  2: aaaaaa
+        //  3: bbbbbb
+        //  4: cccccc
+        //  5:
+        //  6: ...
+        //  7: ffffff
+        //  8: gggggg
+        //  9: hhhhhh
+        // 10:
+        // 11: [[file
+        // 12:   header]]
+        // 13: bbbbbb
+        // 14: cccccc
+        // 15: dddddd
+        let window = cx.add_window(|cx| {
+            let buffer = MultiBuffer::build_multi(
+                [
+                    (
+                        &(sample_text(8, 6, 'a') + "\n"),
+                        vec![
+                            Point::new(0, 0)..Point::new(3, 0),
+                            Point::new(4, 0)..Point::new(7, 0),
+                        ],
+                    ),
+                    (
+                        &(sample_text(8, 6, 'a') + "\n"),
+                        vec![Point::new(1, 0)..Point::new(3, 0)],
+                    ),
+                ],
+                cx,
+            );
+            Editor::new(EditorMode::Full, buffer, None, cx)
+        });
+        let editor = window.root(cx).unwrap();
+        let style = cx.update(|cx| editor.read(cx).style().unwrap().clone());
+        let mut element = EditorElement::new(&editor, style);
+        let state = window.update(cx, |editor, cx| {
+            editor.cursor_shape = CursorShape::Block;
+            editor.change_selections(None, cx, |s| {
+                s.select_display_ranges([
+                    DisplayPoint::new(4, 0)..DisplayPoint::new(7, 0),
+                    DisplayPoint::new(10, 0)..DisplayPoint::new(13, 0),
+                ]);
+            });
+        });
 
-    //         // moves cursor on buffer boundary back two lines
-    //         // and doesn't allow selection to bleed through
-    //         assert_eq!(
-    //             local_selections[1].range,
-    //             DisplayPoint::new(10, 0)..DisplayPoint::new(11, 0)
-    //         );
-    //         assert_eq!(local_selections[1].head, DisplayPoint::new(10, 0));
-    //     }
+        let state = cx
+            .update_window(window.into(), |_, cx| {
+                element.compute_layout(
+                    Bounds {
+                        origin: point(px(500.), px(500.)),
+                        size: size(px(500.), px(500.)),
+                    },
+                    cx,
+                )
+            })
+            .unwrap();
+        assert_eq!(state.selections.len(), 1);
+        let local_selections = &state.selections[0].1;
+        assert_eq!(local_selections.len(), 2);
+
+        // moves cursor on excerpt boundary back a line
+        // and doesn't allow selection to bleed through
+        assert_eq!(
+            local_selections[0].range,
+            DisplayPoint::new(4, 0)..DisplayPoint::new(6, 0)
+        );
+        assert_eq!(local_selections[0].head, DisplayPoint::new(5, 0));
+        dbg!("Hi");
+        // moves cursor on buffer boundary back two lines
+        // and doesn't allow selection to bleed through
+        assert_eq!(
+            local_selections[1].range,
+            DisplayPoint::new(10, 0)..DisplayPoint::new(11, 0)
+        );
+        assert_eq!(local_selections[1].head, DisplayPoint::new(10, 0));
+    }
 
     //     #[gpui::test]
     //     fn test_layout_with_placeholder_text_and_blocks(cx: &mut TestAppContext) {
