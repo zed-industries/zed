@@ -8233,6 +8233,57 @@ dependencies = [
 ]
 
 [[package]]
+name = "semantic_index2"
+version = "0.1.0"
+dependencies = [
+ "ai2",
+ "anyhow",
+ "async-trait",
+ "client2",
+ "collections",
+ "ctor",
+ "env_logger 0.9.3",
+ "futures 0.3.28",
+ "globset",
+ "gpui2",
+ "language2",
+ "lazy_static",
+ "log",
+ "ndarray",
+ "node_runtime",
+ "ordered-float 2.10.0",
+ "parking_lot 0.11.2",
+ "postage",
+ "pretty_assertions",
+ "project2",
+ "rand 0.8.5",
+ "rpc2",
+ "rusqlite",
+ "rust-embed",
+ "schemars",
+ "serde",
+ "serde_json",
+ "settings2",
+ "sha1",
+ "smol",
+ "tempdir",
+ "tiktoken-rs",
+ "tree-sitter",
+ "tree-sitter-cpp",
+ "tree-sitter-elixir",
+ "tree-sitter-json 0.20.0",
+ "tree-sitter-lua",
+ "tree-sitter-php",
+ "tree-sitter-ruby",
+ "tree-sitter-rust",
+ "tree-sitter-toml",
+ "tree-sitter-typescript",
+ "unindent",
+ "util",
+ "workspace2",
+]
+
+[[package]]
 name = "semver"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
