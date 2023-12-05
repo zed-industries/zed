@@ -2619,6 +2619,9 @@ impl CollabPanel {
                                                     } else {
                                                         Color::Muted
                                                     })
+                                                    .on_click(cx.listener(move |this, _, cx| {
+                                                        this.open_channel_notes(channel_id, cx)
+                                                    }))
                                                     .tooltip(|cx| {
                                                         Tooltip::text("Open channel notes", cx)
                                                     }),
