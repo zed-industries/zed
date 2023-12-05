@@ -2,14 +2,14 @@ use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, AppContext, DismissEvent, EventEmitter, FocusableView, Render, SharedString, View,
-    ViewContext, VisualContext, WeakView,
+    actions, AppContext, DismissEvent, Div, EventEmitter, FocusableView, Render, SharedString,
+    View, ViewContext, VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};
 use settings::{update_settings_file, SettingsStore};
 use std::sync::Arc;
 use theme::{Theme, ThemeRegistry, ThemeSettings};
-use ui::{prelude::*, ListItem};
+use ui::{prelude::*, v_stack, ListItem};
 use util::ResultExt;
 use workspace::{ui::HighlightedLabel, Workspace};
 
@@ -65,10 +65,10 @@ impl FocusableView for ThemeSelector {
 }
 
 impl Render for ThemeSelector {
-    type Element = View<Picker<ThemeSelectorDelegate>>;
+    type Element = Div;
 
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
-        self.picker.clone()
+        v_stack().min_w_96().child(self.picker.clone())
     }
 }
 
