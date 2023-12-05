@@ -132,39 +132,3 @@ pub fn load_default_keymap(cx: &mut AppContext) {
     //     KeymapFile::load_asset(asset_path, cx).unwrap();
     // }
 }
-
-pub fn handle_keymap_file_changes(
-    mut user_keymap_file_rx: mpsc::UnboundedReceiver<String>,
-    cx: &mut AppContext,
-) {
-    cx.spawn(move |cx| async move {
-        //  let mut settings_subscription = None;
-        while let Some(user_keymap_content) = user_keymap_file_rx.next().await {
-            if let Some(keymap_content) = KeymapFile::parse(&user_keymap_content).log_err() {
-                cx.update(|cx| reload_keymaps(cx, &keymap_content)).ok();
-
-                // todo!()
-                // let mut old_base_keymap = cx.read(|cx| *settings::get::<BaseKeymap>(cx));
-                // drop(settings_subscription);
-                // settings_subscription = Some(cx.update(|cx| {
-                //     cx.observe_global::<SettingsStore, _>(move |cx| {
-                //         let new_base_keymap = *settings::get::<BaseKeymap>(cx);
-                //         if new_base_keymap != old_base_keymap {
-                //             old_base_keymap = new_base_keymap.clone();
-                //             reload_keymaps(cx, &keymap_content);
-                //         }
-                //     })
-                // }));
-            }
-        }
-    })
-    .detach();
-}
-
-fn reload_keymaps(cx: &mut AppContext, keymap_content: &KeymapFile) {
-    // todo!()
-    // cx.clear_bindings();
-    load_default_keymap(cx);
-    keymap_content.clone().add_to_cx(cx).log_err();
-    // cx.set_menus(menus::menus());
-}

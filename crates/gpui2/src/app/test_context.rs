@@ -1,9 +1,10 @@
 use crate::{
     div, Action, AnyView, AnyWindowHandle, AppCell, AppContext, AsyncAppContext,
-    BackgroundExecutor, Bounds, Context, Div, Entity, EventEmitter, ForegroundExecutor, InputEvent,
-    KeyDownEvent, Keystroke, Model, ModelContext, Pixels, PlatformWindow, Point, Render, Result,
-    Size, Task, TestDispatcher, TestPlatform, TestWindow, TestWindowHandlers, View, ViewContext,
-    VisualContext, WindowBounds, WindowContext, WindowHandle, WindowOptions,
+    BackgroundExecutor, Bounds, ClipboardItem, Context, Div, Entity, EventEmitter,
+    ForegroundExecutor, InputEvent, KeyDownEvent, Keystroke, Model, ModelContext, Pixels, Platform,
+    PlatformWindow, Point, Render, Result, Size, Task, TestDispatcher, TestPlatform, TestWindow,
+    TestWindowHandlers, TextSystem, View, ViewContext, VisualContext, WindowBounds, WindowContext,
+    WindowHandle, WindowOptions,
 };
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt};
@@ -16,6 +17,7 @@ pub struct TestAppContext {
     pub foreground_executor: ForegroundExecutor,
     pub dispatcher: TestDispatcher,
     pub test_platform: Rc<TestPlatform>,
+    text_system: Arc<TextSystem>,
 }
 
 impl Context for TestAppContext {
@@ -82,6 +84,7 @@ impl TestAppContext {
         let platform = TestPlatform::new(background_executor.clone(), foreground_executor.clone());
         let asset_source = Arc::new(());
         let http_client = util::http::FakeHttpClient::with_404_response();
+        let text_system = Arc::new(TextSystem::new(platform.text_system()));
 
         Self {
             app: AppContext::new(platform.clone(), asset_source, http_client),
@@ -89,6 +92,7 @@ impl TestAppContext {
             foreground_executor,
             dispatcher: dispatcher.clone(),
             test_platform: platform,
+            text_system,
         }
     }
 
@@ -153,6 +157,18 @@ impl TestAppContext {
         let cx = Box::new(VisualTestContext::from_window(*window.deref(), self));
         // it might be nice to try and cleanup these at the end of each test.
         (view, Box::leak(cx))
+    }
+
+    pub fn text_system(&self) -> &Arc<TextSystem> {
+        &self.text_system
+    }
+
+    pub fn write_to_clipboard(&self, item: ClipboardItem) {
+        self.test_platform.write_to_clipboard(item)
+    }
+
+    pub fn read_from_clipboard(&self) -> Option<ClipboardItem> {
+        self.test_platform.read_from_clipboard()
     }
 
     pub fn simulate_new_path_selection(

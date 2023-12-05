@@ -12,7 +12,7 @@ use futures::StreamExt;
 use gpui::{
     div,
     serde_json::{self, json},
-    Div, Flatten, Platform, TestAppContext, VisualTestContext, WindowBounds, WindowOptions,
+    Div, Flatten, TestAppContext, VisualTestContext, WindowBounds, WindowOptions,
 };
 use indoc::indoc;
 use language::{
@@ -3238,9 +3238,7 @@ async fn test_clipboard(cx: &mut gpui::TestAppContext) {
         the lazy dog"});
     cx.update_editor(|e, cx| e.copy(&Copy, cx));
     assert_eq!(
-        cx.test_platform
-            .read_from_clipboard()
-            .map(|item| item.text().to_owned()),
+        cx.read_from_clipboard().map(|item| item.text().to_owned()),
         Some("fox jumps over\n".to_owned())
     );
 

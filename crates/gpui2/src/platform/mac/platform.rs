@@ -1,8 +1,8 @@
-use super::BoolExt;
+use super::{events::key_to_native, BoolExt};
 use crate::{
-    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
-    ForegroundExecutor, InputEvent, KeystrokeMatcher, MacDispatcher, MacDisplay, MacDisplayLinker,
-    MacTextSystem, MacWindow, MenuItem, PathPromptOptions, Platform, PlatformDisplay,
+    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DispatchTree,
+    DisplayId, ForegroundExecutor, InputEvent, MacDispatcher, MacDisplay, MacDisplayLinker,
+    MacTextSystem, MacWindow, Menu, MenuItem, PathPromptOptions, Platform, PlatformDisplay,
     PlatformTextSystem, PlatformWindow, Result, SemanticVersion, VideoTimestamp, WindowOptions,
 };
 use anyhow::anyhow;
@@ -10,10 +10,10 @@ use block::ConcreteBlock;
 use cocoa::{
     appkit::{
         NSApplication, NSApplicationActivationPolicy::NSApplicationActivationPolicyRegular,
-        NSMenuItem, NSModalResponse, NSOpenPanel, NSPasteboard, NSPasteboardTypeString,
-        NSSavePanel, NSWindow,
+        NSEventModifierFlags, NSMenu, NSMenuItem, NSModalResponse, NSOpenPanel, NSPasteboard,
+        NSPasteboardTypeString, NSSavePanel, NSWindow,
     },
-    base::{id, nil, BOOL, YES},
+    base::{id, nil, selector, BOOL, YES},
     foundation::{
         NSArray, NSAutoreleasePool, NSBundle, NSData, NSInteger, NSProcessInfo, NSString,
         NSUInteger, NSURL,
@@ -201,151 +201,155 @@ impl MacPlatform {
         }
     }
 
-    // unsafe fn create_menu_bar(
-    //     &self,
-    //     menus: Vec<Menu>,
-    //     delegate: id,
-    //     actions: &mut Vec<Box<dyn Action>>,
-    //     keystroke_matcher: &KeymapMatcher,
-    // ) -> id {
-    //     let application_menu = NSMenu::new(nil).autorelease();
-    //     application_menu.setDelegate_(delegate);
+    unsafe fn create_menu_bar(
+        &self,
+        menus: Vec<Menu>,
+        delegate: id,
+        actions: &mut Vec<Box<dyn Action>>,
+        dispatch_tree: Option<&DispatchTree>,
+    ) -> id {
+        let application_menu = NSMenu::new(nil).autorelease();
+        application_menu.setDelegate_(delegate);
 
-    //     for menu_config in menus {
-    //         let menu = NSMenu::new(nil).autorelease();
-    //         menu.setTitle_(ns_string(menu_config.name));
-    //         menu.setDelegate_(delegate);
+        for menu_config in menus {
+            let menu = NSMenu::new(nil).autorelease();
+            menu.setTitle_(ns_string(menu_config.name));
+            menu.setDelegate_(delegate);
 
-    //         for item_config in menu_config.items {
-    //             menu.addItem_(self.create_menu_item(
-    //                 item_config,
-    //                 delegate,
-    //                 actions,
-    //                 keystroke_matcher,
-    //             ));
-    //         }
+            for item_config in menu_config.items {
+                menu.addItem_(self.create_menu_item(item_config, delegate, actions, dispatch_tree));
+            }
 
-    //         let menu_item = NSMenuItem::new(nil).autorelease();
-    //         menu_item.setSubmenu_(menu);
-    //         application_menu.addItem_(menu_item);
+            let menu_item = NSMenuItem::new(nil).autorelease();
+            menu_item.setSubmenu_(menu);
+            application_menu.addItem_(menu_item);
 
-    //         if menu_config.name == "Window" {
-    //             let app: id = msg_send![APP_CLASS, sharedApplication];
-    //             app.setWindowsMenu_(menu);
-    //         }
-    //     }
+            if menu_config.name == "Window" {
+                let app: id = msg_send![APP_CLASS, sharedApplication];
+                app.setWindowsMenu_(menu);
+            }
+        }
 
-    //     application_menu
-    // }
+        application_menu
+    }
 
     unsafe fn create_menu_item(
         &self,
         item: MenuItem,
         delegate: id,
         actions: &mut Vec<Box<dyn Action>>,
-        keystroke_matcher: &KeystrokeMatcher,
+        dispatch_tree: Option<&DispatchTree>,
     ) -> id {
-        todo!()
-        // match item {
-        //     MenuItem::Separator => NSMenuItem::separatorItem(nil),
-        //     MenuItem::Action {
-        //         name,
-        //         action,
-        //         os_action,
-        //     } => {
-        //         // TODO
-        //         let keystrokes = keystroke_matcher
-        //             .bindings_for_action(action.id())
-        //             .find(|binding| binding.action().eq(action.as_ref()))
-        //             .map(|binding| binding.keystrokes());
-        //         let selector = match os_action {
-        //             Some(crate::OsAction::Cut) => selector("cut:"),
-        //             Some(crate::OsAction::Copy) => selector("copy:"),
-        //             Some(crate::OsAction::Paste) => selector("paste:"),
-        //             Some(crate::OsAction::SelectAll) => selector("selectAll:"),
-        //             Some(crate::OsAction::Undo) => selector("undo:"),
-        //             Some(crate::OsAction::Redo) => selector("redo:"),
-        //             None => selector("handleGPUIMenuItem:"),
-        //         };
+        match item {
+            MenuItem::Separator => NSMenuItem::separatorItem(nil),
+            MenuItem::Action {
+                name,
+                action,
+                os_action,
+            } => {
+                let bindings = dispatch_tree
+                    .map(|tree| tree.bindings_for_action(action.as_ref(), &tree.context_stack))
+                    .unwrap_or_default();
+                let keystrokes = bindings
+                    .iter()
+                    .find(|binding| binding.action().partial_eq(action.as_ref()))
+                    .map(|binding| binding.keystrokes());
 
-        //         let item;
-        //         if let Some(keystrokes) = keystrokes {
-        //             if keystrokes.len() == 1 {
-        //                 let keystroke = &keystrokes[0];
-        //                 let mut mask = NSEventModifierFlags::empty();
-        //                 for (modifier, flag) in &[
-        //                     (keystroke.cmd, NSEventModifierFlags::NSCommandKeyMask),
-        //                     (keystroke.ctrl, NSEventModifierFlags::NSControlKeyMask),
-        //                     (keystroke.alt, NSEventModifierFlags::NSAlternateKeyMask),
-        //                     (keystroke.shift, NSEventModifierFlags::NSShiftKeyMask),
-        //                 ] {
-        //                     if *modifier {
-        //                         mask |= *flag;
-        //                     }
-        //                 }
+                let selector = match os_action {
+                    Some(crate::OsAction::Cut) => selector("cut:"),
+                    Some(crate::OsAction::Copy) => selector("copy:"),
+                    Some(crate::OsAction::Paste) => selector("paste:"),
+                    Some(crate::OsAction::SelectAll) => selector("selectAll:"),
+                    Some(crate::OsAction::Undo) => selector("undo:"),
+                    Some(crate::OsAction::Redo) => selector("redo:"),
+                    None => selector("handleGPUIMenuItem:"),
+                };
 
-        //                 item = NSMenuItem::alloc(nil)
-        //                     .initWithTitle_action_keyEquivalent_(
-        //                         ns_string(name),
-        //                         selector,
-        //                         ns_string(key_to_native(&keystroke.key).as_ref()),
-        //                     )
-        //                     .autorelease();
-        //                 item.setKeyEquivalentModifierMask_(mask);
-        //             }
-        //             // For multi-keystroke bindings, render the keystroke as part of the title.
-        //             else {
-        //                 use std::fmt::Write;
+                let item;
+                if let Some(keystrokes) = keystrokes {
+                    if keystrokes.len() == 1 {
+                        let keystroke = &keystrokes[0];
+                        let mut mask = NSEventModifierFlags::empty();
+                        for (modifier, flag) in &[
+                            (
+                                keystroke.modifiers.command,
+                                NSEventModifierFlags::NSCommandKeyMask,
+                            ),
+                            (
+                                keystroke.modifiers.control,
+                                NSEventModifierFlags::NSControlKeyMask,
+                            ),
+                            (
+                                keystroke.modifiers.alt,
+                                NSEventModifierFlags::NSAlternateKeyMask,
+                            ),
+                            (
+                                keystroke.modifiers.shift,
+                                NSEventModifierFlags::NSShiftKeyMask,
+                            ),
+                        ] {
+                            if *modifier {
+                                mask |= *flag;
+                            }
+                        }
 
-        //                 let mut name = format!("{name} [");
-        //                 for (i, keystroke) in keystrokes.iter().enumerate() {
-        //                     if i > 0 {
-        //                         name.push(' ');
-        //                     }
-        //                     write!(&mut name, "{}", keystroke).unwrap();
-        //                 }
-        //                 name.push(']');
+                        item = NSMenuItem::alloc(nil)
+                            .initWithTitle_action_keyEquivalent_(
+                                ns_string(name),
+                                selector,
+                                ns_string(key_to_native(&keystroke.key).as_ref()),
+                            )
+                            .autorelease();
+                        item.setKeyEquivalentModifierMask_(mask);
+                    }
+                    // For multi-keystroke bindings, render the keystroke as part of the title.
+                    else {
+                        use std::fmt::Write;
 
-        //                 item = NSMenuItem::alloc(nil)
-        //                     .initWithTitle_action_keyEquivalent_(
-        //                         ns_string(&name),
-        //                         selector,
-        //                         ns_string(""),
-        //                     )
-        //                     .autorelease();
-        //             }
-        //         } else {
-        //             item = NSMenuItem::alloc(nil)
-        //                 .initWithTitle_action_keyEquivalent_(
-        //                     ns_string(name),
-        //                     selector,
-        //                     ns_string(""),
-        //                 )
-        //                 .autorelease();
-        //         }
+                        let mut name = format!("{name} [");
+                        for (i, keystroke) in keystrokes.iter().enumerate() {
+                            if i > 0 {
+                                name.push(' ');
+                            }
+                            write!(&mut name, "{}", keystroke).unwrap();
+                        }
+                        name.push(']');
 
-        //         let tag = actions.len() as NSInteger;
-        //         let _: () = msg_send![item, setTag: tag];
-        //         actions.push(action);
-        //         item
-        //     }
-        //     MenuItem::Submenu(Menu { name, items }) => {
-        //         let item = NSMenuItem::new(nil).autorelease();
-        //         let submenu = NSMenu::new(nil).autorelease();
-        //         submenu.setDelegate_(delegate);
-        //         for item in items {
-        //             submenu.addItem_(self.create_menu_item(
-        //                 item,
-        //                 delegate,
-        //                 actions,
-        //                 keystroke_matcher,
-        //             ));
-        //         }
-        //         item.setSubmenu_(submenu);
-        //         item.setTitle_(ns_string(name));
-        //         item
-        //     }
-        // }
+                        item = NSMenuItem::alloc(nil)
+                            .initWithTitle_action_keyEquivalent_(
+                                ns_string(&name),
+                                selector,
+                                ns_string(""),
+                            )
+                            .autorelease();
+                    }
+                } else {
+                    item = NSMenuItem::alloc(nil)
+                        .initWithTitle_action_keyEquivalent_(
+                            ns_string(name),
+                            selector,
+                            ns_string(""),
+                        )
+                        .autorelease();
+                }
+
+                let tag = actions.len() as NSInteger;
+                let _: () = msg_send![item, setTag: tag];
+                actions.push(action);
+                item
+            }
+            MenuItem::Submenu(Menu { name, items }) => {
+                let item = NSMenuItem::new(nil).autorelease();
+                let submenu = NSMenu::new(nil).autorelease();
+                submenu.setDelegate_(delegate);
+                for item in items {
+                    submenu.addItem_(self.create_menu_item(item, delegate, actions, dispatch_tree));
+                }
+                item.setSubmenu_(submenu);
+                item.setTitle_(ns_string(name));
+                item
+            }
+        }
     }
 }
 
@@ -633,6 +637,18 @@ impl Platform for MacPlatform {
         self.0.lock().event = Some(callback);
     }
 
+    fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>) {
+        self.0.lock().menu_command = Some(callback);
+    }
+
+    fn on_will_open_app_menu(&self, callback: Box<dyn FnMut()>) {
+        self.0.lock().will_open_menu = Some(callback);
+    }
+
+    fn on_validate_app_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>) {
+        self.0.lock().validate_menu_command = Some(callback);
+    }
+
     fn os_name(&self) -> &'static str {
         "macOS"
     }
@@ -675,6 +691,15 @@ impl Platform for MacPlatform {
         }
     }
 
+    fn set_menus(&self, menus: Vec<Menu>, dispatch_tree: Option<&DispatchTree>) {
+        unsafe {
+            let app: id = msg_send![APP_CLASS, sharedApplication];
+            let mut state = self.0.lock();
+            let actions = &mut state.menu_actions;
+            app.setMainMenu_(self.create_menu_bar(menus, app.delegate(), actions, dispatch_tree));
+        }
+    }
+
     fn local_timezone(&self) -> UtcOffset {
         unsafe {
             let local_timezone: id = msg_send![class!(NSTimeZone), localTimeZone];
@@ -682,32 +707,6 @@ impl Platform for MacPlatform {
             UtcOffset::from_whole_seconds(seconds_from_gmt.try_into().unwrap()).unwrap()
         }
     }
-
-    fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>) {
-        self.0.lock().menu_command = Some(callback);
-    }
-
-    fn on_will_open_app_menu(&self, callback: Box<dyn FnMut()>) {
-        self.0.lock().will_open_menu = Some(callback);
-    }
-
-    fn on_validate_app_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>) {
-        self.0.lock().validate_menu_command = Some(callback);
-    }
-
-    // fn set_menus(&self, menus: Vec<Menu>, keystroke_matcher: &KeymapMatcher) {
-    //     unsafe {
-    //         let app: id = msg_send![APP_CLASS, sharedApplication];
-    //         let mut state = self.0.lock();
-    //         let actions = &mut state.menu_actions;
-    //         app.setMainMenu_(self.create_menu_bar(
-    //             menus,
-    //             app.delegate(),
-    //             actions,
-    //             keystroke_matcher,
-    //         ));
-    //     }
-    // }
 
     fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf> {
         unsafe {

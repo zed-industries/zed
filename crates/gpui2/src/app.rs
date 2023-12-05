@@ -15,10 +15,10 @@ use smol::future::FutureExt;
 pub use test_context::*;
 
 use crate::{
-    current_platform, image_cache::ImageCache, Action, ActionRegistry, Any, AnyView,
-    AnyWindowHandle, AppMetadata, AssetSource, BackgroundExecutor, ClipboardItem, Context,
+    current_platform, image_cache::ImageCache, init_app_menus, Action, ActionRegistry, Any,
+    AnyView, AnyWindowHandle, AppMetadata, AssetSource, BackgroundExecutor, ClipboardItem, Context,
     DispatchPhase, DisplayId, Entity, EventEmitter, FocusEvent, FocusHandle, FocusId,
-    ForegroundExecutor, KeyBinding, Keymap, LayoutId, PathPromptOptions, Pixels, Platform,
+    ForegroundExecutor, KeyBinding, Keymap, LayoutId, Menu, PathPromptOptions, Pixels, Platform,
     PlatformDisplay, Point, Render, SharedString, SubscriberSet, Subscription, SvgRenderer, Task,
     TextStyle, TextStyleRefinement, TextSystem, View, ViewContext, Window, WindowContext,
     WindowHandle, WindowId,
@@ -277,6 +277,8 @@ impl AppContext {
                 propagate_event: true,
             }),
         });
+
+        init_app_menus(platform.as_ref(), &mut *app.borrow_mut());
 
         platform.on_quit(Box::new({
             let cx = app.clone();
@@ -1057,6 +1059,19 @@ impl AppContext {
 
         self.global_action_listeners
             .contains_key(&action.as_any().type_id())
+    }
+
+    pub fn set_menus(&mut self, menus: Vec<Menu>) {
+        if let Some(active_window) = self.active_window() {
+            active_window
+                .update(self, |_, cx| {
+                    cx.platform
+                        .set_menus(menus, Some(&cx.window.current_frame.dispatch_tree));
+                })
+                .ok();
+        } else {
+            self.platform.set_menus(menus, None);
+        }
     }
 
     pub fn dispatch_action(&mut self, action: &dyn Action) {
