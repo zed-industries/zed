@@ -3,8 +3,8 @@ use gpui::{
     div, AnyView, Div, Entity, EntityId, EventEmitter, ParentElement as _, Render, Styled, View,
     ViewContext, WindowContext,
 };
-use ui::prelude::*;
 use ui::{h_stack, v_stack, Icon, IconButton};
+use ui::{prelude::*, Tooltip};
 
 pub enum ToolbarItemEvent {
     ChangeLocation(ToolbarItemLocation),
@@ -93,17 +93,24 @@ impl Render for Toolbar {
                     .child(
                         h_stack()
                             .p_1()
+                            .gap_2()
                             .child(
-                                div()
-                                    .border()
-                                    .border_color(gpui::red())
-                                    .child(IconButton::new("buffer-search", Icon::MagnifyingGlass)),
+                                IconButton::new("toggle-inlay-hints", Icon::InlayHint)
+                                    .size(ui::ButtonSize::Compact)
+                                    .style(ui::ButtonStyle::Subtle)
+                                    .tooltip(move |cx| Tooltip::text("Inlay Hints", cx)),
                             )
                             .child(
-                                div()
-                                    .border()
-                                    .border_color(gpui::red())
-                                    .child(IconButton::new("inline-assist", Icon::MagicWand)),
+                                IconButton::new("buffer-search", Icon::MagnifyingGlass)
+                                    .size(ui::ButtonSize::Compact)
+                                    .style(ui::ButtonStyle::Subtle)
+                                    .tooltip(move |cx| Tooltip::text("Search in File", cx)),
+                            )
+                            .child(
+                                IconButton::new("inline-assist", Icon::MagicWand)
+                                    .size(ui::ButtonSize::Compact)
+                                    .style(ui::ButtonStyle::Subtle)
+                                    .tooltip(move |cx| Tooltip::text("Inline Assist", cx)),
                             ),
                     ),
             )
