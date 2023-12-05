@@ -5,7 +5,7 @@ use gpui::{
     Action, Div, ElementId, EventEmitter, InteractiveElement, ParentElement, Render, Stateful,
     Styled, Subscription, View, ViewContext, WeakView,
 };
-use search::{buffer_search, BufferSearchBar};
+use search::BufferSearchBar;
 use ui::{prelude::*, ButtonSize, ButtonStyle, Icon, IconButton, IconSize, Tooltip};
 use workspace::{
     item::ItemHandle, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
@@ -15,6 +15,7 @@ pub struct QuickActionBar {
     buffer_search_bar: View<BufferSearchBar>,
     active_item: Option<Box<dyn ItemHandle>>,
     _inlay_hints_enabled_subscription: Option<Subscription>,
+    #[allow(unused)]
     workspace: WeakView<Workspace>,
 }
 
@@ -28,6 +29,7 @@ impl QuickActionBar {
         }
     }
 
+    #[allow(dead_code)]
     fn active_editor(&self) -> Option<View<Editor>> {
         self.active_item
             .as_ref()
@@ -172,6 +174,7 @@ impl QuickActionBarButton {
         }
     }
 
+    #[allow(dead_code)]
     pub fn meta(mut self, meta: Option<impl Into<SharedString>>) -> Self {
         self.tooltip_meta = meta.map(|meta| meta.into());
         self
