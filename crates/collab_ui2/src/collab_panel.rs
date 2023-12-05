@@ -1165,12 +1165,11 @@ impl CollabPanel {
                         div().into_any_element()
                     }),
             )
-            .when(!is_current_user, |this| {
+            .when_some(peer_id, |this, peer_id| {
                 this.tooltip(move |cx| Tooltip::text(tooltip.clone(), cx))
                     .on_click(cx.listener(move |this, _, cx| {
-                        this.workspace.update(cx, |workspace, cx| {
-                            // workspace.follow(peer_id, cx)
-                        });
+                        this.workspace
+                            .update(cx, |workspace, cx| workspace.follow(peer_id, cx));
                     }))
             })
     }

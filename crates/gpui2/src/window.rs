@@ -2708,6 +2708,7 @@ pub enum ElementId {
     Integer(usize),
     Name(SharedString),
     FocusHandle(FocusId),
+    NamedInteger(SharedString, usize),
 }
 
 impl ElementId {
@@ -2755,5 +2756,11 @@ impl From<&'static str> for ElementId {
 impl<'a> From<&'a FocusHandle> for ElementId {
     fn from(handle: &'a FocusHandle) -> Self {
         ElementId::FocusHandle(handle.id)
+    }
+}
+
+impl From<(&'static str, EntityId)> for ElementId {
+    fn from((name, id): (&'static str, EntityId)) -> Self {
+        ElementId::NamedInteger(name.into(), id.as_u64() as usize)
     }
 }
