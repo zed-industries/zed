@@ -218,8 +218,6 @@ impl PathMatcher {
         })
     }
 
-    // TODO kb tests for matching
-    // TODO kb add an integration test on excluded file opening
     pub fn is_match<P: AsRef<Path>>(&self, other: P) -> bool {
         let other_path = other.as_ref();
         other_path.starts_with(&self.maybe_path)

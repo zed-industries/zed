@@ -372,28 +372,24 @@ impl SearchQuery {
         match file_path {
             Some(file_path) => {
                 let mut path = file_path.to_path_buf();
-                let mut matches;
                 loop {
-                    matches = !self
+                    if self
                         .files_to_exclude()
                         .iter()
                         .any(|exclude_glob| exclude_glob.is_match(&path))
-                        && (self.files_to_include().is_empty()
-                            || self
-                                .files_to_include()
-                                .iter()
-                                .any(|include_glob| include_glob.is_match(&path)));
-                    if matches || !path.pop() {
-                        break;
+                    {
+                        return false;
+                    } else if self.files_to_include().is_empty()
+                        || self
+                            .files_to_include()
+                            .iter()
+                            .any(|include_glob| include_glob.is_match(&path))
+                    {
+                        return true;
+                    } else if !path.pop() {
+                        return false;
                     }
                 }
-
-                let path_str = file_path.to_string_lossy();
-                if path_str.contains("node_modules") && path_str.contains("prettier") {
-                    dbg!(path_str, path, matches);
-                }
-
-                matches
             }
             None => self.files_to_include().is_empty(),
         }
