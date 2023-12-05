@@ -98,7 +98,7 @@ impl ThemeSelectorDelegate {
         let original_theme = cx.theme().clone();
 
         let staff_mode = cx.is_staff();
-        let registry = cx.global::<Arc<ThemeRegistry>>();
+        let registry = cx.global::<ThemeRegistry>();
         let theme_names = registry.list(staff_mode).collect::<Vec<_>>();
         //todo!(theme sorting)
         // theme_names.sort_unstable_by(|a, b| a.is_light.cmp(&b.is_light).then(a.name.cmp(&b.name)));
@@ -126,7 +126,7 @@ impl ThemeSelectorDelegate {
 
     fn show_selected_theme(&mut self, cx: &mut ViewContext<Picker<ThemeSelectorDelegate>>) {
         if let Some(mat) = self.matches.get(self.selected_index) {
-            let registry = cx.global::<Arc<ThemeRegistry>>();
+            let registry = cx.global::<ThemeRegistry>();
             match registry.get(&mat.string) {
                 Ok(theme) => {
                     Self::set_theme(theme, cx);
