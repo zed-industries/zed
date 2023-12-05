@@ -2816,3 +2816,9 @@ impl From<(&'static str, EntityId)> for ElementId {
         ElementId::NamedInteger(name.into(), id.as_u64() as usize)
     }
 }
+
+impl From<(&'static str, usize)> for ElementId {
+    fn from((name, id): (&'static str, usize)) -> Self {
+        ElementId::NamedInteger(name.into(), id)
+    }
+}

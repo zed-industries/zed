@@ -169,7 +169,7 @@ use editor::Editor;
 use feature_flags::{ChannelsAlpha, FeatureFlagAppExt, FeatureFlagViewExt};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
-    actions, canvas, div, img, overlay, point, prelude::*, px, rems, serde_json, Action,
+    actions, canvas, div, img, overlay, point, prelude::*, px, rems, serde_json, size, Action,
     AppContext, AsyncWindowContext, Bounds, ClipboardItem, DismissEvent, Div, EventEmitter,
     FocusHandle, Focusable, FocusableView, Hsla, InteractiveElement, IntoElement, Length, Model,
     MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Quad, Render, RenderOnce,
@@ -1204,14 +1204,9 @@ impl CollabPanel {
                         .detach_and_log_err(cx);
                 });
             }))
-            .left_child(IconButton::new(0, Icon::Folder))
-            .child(
-                h_stack()
-                    .w_full()
-                    .justify_between()
-                    .child(render_tree_branch(is_last, cx))
-                    .child(Label::new(project_name.clone())),
-            )
+            .left_child(render_tree_branch(is_last, cx))
+            .child(IconButton::new(0, Icon::Folder))
+            .child(Label::new(project_name.clone()))
             .tooltip(move |cx| Tooltip::text(format!("Open {}", project_name), cx))
 
         //         enum JoinProject {}
@@ -1299,70 +1294,20 @@ impl CollabPanel {
         is_last: bool,
         cx: &mut ViewContext<Self>,
     ) -> impl IntoElement {
-        //         enum OpenSharedScreen {}
+        let id = peer_id.map_or(usize::MAX, |id| id.as_u64() as usize);
 
-        //         let host_avatar_width = theme
-        //             .contact_avatar
-        //             .width
-        //             .or(theme.contact_avatar.height)
-        //             .unwrap_or(0.);
-        //         let tree_branch = theme.tree_branch;
-
-        //         let handler = MouseEventHandler::new::<OpenSharedScreen, _>(
-        //             peer_id.map(|id| id.as_u64()).unwrap_or(0) as usize,
-        //             cx,
-        //             |mouse_state, cx| {
-        //                 let tree_branch = *tree_branch.in_state(is_selected).style_for(mouse_state);
-        //                 let row = theme
-        //                     .project_row
-        //                     .in_state(is_selected)
-        //                     .style_for(mouse_state);
-
-        //                 Flex::row()
-        //                     .with_child(render_tree_branch(
-        //                         tree_branch,
-        //                         &row.name.text,
-        //                         is_last,
-        //                         vec2f(host_avatar_width, theme.row_height),
-        //                         cx.font_cache(),
-        //                     ))
-        //                     .with_child(
-        //                         Svg::new("icons/desktop.svg")
-        //                             .with_color(theme.channel_hash.color)
-        //                             .constrained()
-        //                             .with_width(theme.channel_hash.width)
-        //                             .aligned()
-        //                             .left(),
-        //                     )
-        //                     .with_child(
-        //                         Label::new("Screen", row.name.text.clone())
-        //                             .aligned()
-        //                             .left()
-        //                             .contained()
-        //                             .with_style(row.name.container)
-        //                             .flex(1., false),
-        //                     )
-        //                     .constrained()
-        //                     .with_height(theme.row_height)
-        //                     .contained()
-        //                     .with_style(row.container)
-        //             },
-        //         );
-        //         if peer_id.is_none() {
-        //             return handler.into_any();
-        //         }
-        //         handler
-        //             .with_cursor_style(CursorStyle::PointingHand)
-        //             .on_click(MouseButton::Left, move |_, this, cx| {
-        //                 if let Some(workspace) = this.workspace.upgrade(cx) {
-        //                     workspace.update(cx, |workspace, cx| {
-        //                         workspace.open_shared_screen(peer_id.unwrap(), cx)
-        //                     });
-        //                 }
-        //             })
-        //             .into_any()
-
-        div()
+        ListItem::new(("screen", id))
+            .left_child(render_tree_branch(is_last, cx))
+            .child(IconButton::new(0, Icon::Screen))
+            .child(Label::new("Screen"))
+            .when_some(peer_id, |this, _| {
+                this.on_click(cx.listener(move |this, _, cx| {
+                    this.workspace.update(cx, |workspace, cx| {
+                        workspace.open_shared_screen(peer_id.unwrap(), cx)
+                    });
+                }))
+                .tooltip(move |cx| Tooltip::text(format!("Open shared screen"), cx))
+            })
     }
 
     fn take_editing_state(&mut self, cx: &mut ViewContext<Self>) -> bool {
@@ -1415,54 +1360,14 @@ impl CollabPanel {
         channel_id: ChannelId,
         cx: &mut ViewContext<Self>,
     ) -> impl IntoElement {
-        //         enum ChannelNotes {}
-        //         let host_avatar_width = theme
-        //             .contact_avatar
-        //             .width
-        //             .or(theme.contact_avatar.height)
-        //             .unwrap_or(0.);
-
-        //         MouseEventHandler::new::<ChannelNotes, _>(ix as usize, cx, |state, cx| {
-        //             let tree_branch = *theme.tree_branch.in_state(is_selected).style_for(state);
-        //             let row = theme.project_row.in_state(is_selected).style_for(state);
-
-        //             Flex::<Self>::row()
-        //                 .with_child(render_tree_branch(
-        //                     tree_branch,
-        //                     &row.name.text,
-        //                     false,
-        //                     vec2f(host_avatar_width, theme.row_height),
-        //                     cx.font_cache(),
-        //                 ))
-        //                 .with_child(
-        //                     Svg::new("icons/file.svg")
-        //                         .with_color(theme.channel_hash.color)
-        //                         .constrained()
-        //                         .with_width(theme.channel_hash.width)
-        //                         .aligned()
-        //                         .left(),
-        //                 )
-        //                 .with_child(
-        //                     Label::new("notes", theme.channel_name.text.clone())
-        //                         .contained()
-        //                         .with_style(theme.channel_name.container)
-        //                         .aligned()
-        //                         .left()
-        //                         .flex(1., true),
-        //                 )
-        //                 .constrained()
-        //                 .with_height(theme.row_height)
-        //                 .contained()
-        //                 .with_style(*theme.channel_row.style_for(is_selected, state))
-        //                 .with_padding_left(theme.channel_row.default_style().padding.left)
-        //         })
-        //         .on_click(MouseButton::Left, move |_, this, cx| {
-        //             this.open_channel_notes(&OpenChannelNotes { channel_id }, cx);
-        //         })
-        //         .with_cursor_style(CursorStyle::PointingHand)
-        //         .into_any()
-
-        div()
+        ListItem::new("channel-notes")
+            .on_click(cx.listener(move |this, _, cx| {
+                this.open_channel_notes(channel_id, cx);
+            }))
+            .left_child(render_tree_branch(false, cx))
+            .child(IconButton::new(0, Icon::File))
+            .child(Label::new("notes"))
+            .tooltip(move |cx| Tooltip::text("Open Channel Notes", cx))
     }
 
     fn render_channel_chat(
@@ -1470,53 +1375,14 @@ impl CollabPanel {
         channel_id: ChannelId,
         cx: &mut ViewContext<Self>,
     ) -> impl IntoElement {
-        //         enum ChannelChat {}
-        //         let host_avatar_width = theme
-        //             .contact_avatar
-        //             .width
-        //             .or(theme.contact_avatar.height)
-        //             .unwrap_or(0.);
-
-        //         MouseEventHandler::new::<ChannelChat, _>(ix as usize, cx, |state, cx| {
-        //             let tree_branch = *theme.tree_branch.in_state(is_selected).style_for(state);
-        //             let row = theme.project_row.in_state(is_selected).style_for(state);
-
-        //             Flex::<Self>::row()
-        //                 .with_child(render_tree_branch(
-        //                     tree_branch,
-        //                     &row.name.text,
-        //                     true,
-        //                     vec2f(host_avatar_width, theme.row_height),
-        //                     cx.font_cache(),
-        //                 ))
-        //                 .with_child(
-        //                     Svg::new("icons/conversations.svg")
-        //                         .with_color(theme.channel_hash.color)
-        //                         .constrained()
-        //                         .with_width(theme.channel_hash.width)
-        //                         .aligned()
-        //                         .left(),
-        //                 )
-        //                 .with_child(
-        //                     Label::new("chat", theme.channel_name.text.clone())
-        //                         .contained()
-        //                         .with_style(theme.channel_name.container)
-        //                         .aligned()
-        //                         .left()
-        //                         .flex(1., true),
-        //                 )
-        //                 .constrained()
-        //                 .with_height(theme.row_height)
-        //                 .contained()
-        //                 .with_style(*theme.channel_row.style_for(is_selected, state))
-        //                 .with_padding_left(theme.channel_row.default_style().padding.left)
-        //         })
-        //         .on_click(MouseButton::Left, move |_, this, cx| {
-        //             this.join_channel_chat(&JoinChannelChat { channel_id }, cx);
-        //         })
-        //         .with_cursor_style(CursorStyle::PointingHand)
-        //         .into_any()
-        div()
+        ListItem::new("channel-chat")
+            .on_click(cx.listener(move |this, _, cx| {
+                this.join_channel_chat(channel_id, cx);
+            }))
+            .left_child(render_tree_branch(true, cx))
+            .child(IconButton::new(0, Icon::MessageBubbles))
+            .child(Label::new("chat"))
+            .tooltip(move |cx| Tooltip::text("Open Chat", cx))
     }
 
     //     fn render_channel_invite(
@@ -3119,30 +2985,24 @@ impl CollabPanel {
 }
 
 fn render_tree_branch(is_last: bool, cx: &mut WindowContext) -> impl IntoElement {
-    let text_style = cx.text_style();
     let rem_size = cx.rem_size();
-    let text_system = cx.text_system();
-    let font_id = text_system.font_id(&text_style.font()).unwrap();
-    let font_size = text_style.font_size.to_pixels(rem_size);
-    let line_height = text_style.line_height_in_pixels(rem_size);
-    let cap_height = text_system.cap_height(font_id, font_size);
-    let baseline_offset = text_system.baseline_offset(font_id, font_size, line_height);
-    let width = cx.rem_size() * 2.5;
+    let line_height = cx.text_style().line_height_in_pixels(rem_size);
+    let width = rem_size * 1.5;
     let thickness = px(2.);
     let color = cx.theme().colors().text;
 
     canvas(move |bounds, cx| {
-        let start_x = bounds.left() + (bounds.size.width / 2.) - (width / 2.);
-        let end_x = bounds.right();
-        let start_y = bounds.top();
-        let end_y = bounds.top() + baseline_offset - (cap_height / 2.);
+        let start_x = (bounds.left() + bounds.right() - thickness) / 2.;
+        let start_y = (bounds.top() + bounds.bottom() - thickness) / 2.;
+        let right = bounds.right();
+        let top = bounds.top();
 
         cx.paint_quad(
             Bounds::from_corners(
-                point(start_x, start_y),
+                point(start_x, top),
                 point(
                     start_x + thickness,
-                    if is_last { end_y } else { bounds.bottom() },
+                    if is_last { start_y } else { bounds.bottom() },
                 ),
             ),
             Default::default(),
@@ -3151,7 +3011,7 @@ fn render_tree_branch(is_last: bool, cx: &mut WindowContext) -> impl IntoElement
             Hsla::transparent_black(),
         );
         cx.paint_quad(
-            Bounds::from_corners(point(start_x, end_y), point(end_x, end_y + thickness)),
+            Bounds::from_corners(point(start_x, start_y), point(right, start_y + thickness)),
             Default::default(),
             color,
             Default::default(),

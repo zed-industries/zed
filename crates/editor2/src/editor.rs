@@ -1675,8 +1675,7 @@ impl Editor {
             if let Some(project) = project.as_ref() {
                 if buffer.read(cx).is_singleton() {
                     project_subscriptions.push(cx.observe(project, |_, _, cx| {
-                        cx.emit(ItemEvent::UpdateTab);
-                        cx.emit(ItemEvent::UpdateBreadcrumbs);
+                        cx.emit(EditorEvent::TitleChanged);
                     }));
                 }
                 project_subscriptions.push(cx.subscribe(project, |editor, _, event, cx| {
@@ -2139,10 +2138,6 @@ impl Editor {
 
         if self.selections.disjoint_anchors().len() == 1 {
             cx.emit(SearchEvent::ActiveMatchChanged)
-        }
-
-        if local {
-            cx.emit(ItemEvent::UpdateBreadcrumbs);
         }
 
         cx.notify();
@@ -8573,8 +8568,6 @@ impl Editor {
                     self.update_visible_copilot_suggestion(cx);
                 }
                 cx.emit(EditorEvent::BufferEdited);
-                cx.emit(ItemEvent::Edit);
-                cx.emit(ItemEvent::UpdateBreadcrumbs);
                 cx.emit(SearchEvent::MatchesInvalidated);
 
                 if *sigleton_buffer_edited {
@@ -8622,20 +8615,14 @@ impl Editor {
                 self.refresh_inlay_hints(InlayHintRefreshReason::ExcerptsRemoved(ids.clone()), cx);
                 cx.emit(EditorEvent::ExcerptsRemoved { ids: ids.clone() })
             }
-            multi_buffer::Event::Reparsed => {
-                cx.emit(ItemEvent::UpdateBreadcrumbs);
-            }
-            multi_buffer::Event::DirtyChanged => {
-                cx.emit(ItemEvent::UpdateTab);
-            }
-            multi_buffer::Event::Saved
-            | multi_buffer::Event::FileHandleChanged
-            | multi_buffer::Event::Reloaded => {
-                cx.emit(ItemEvent::UpdateTab);
-                cx.emit(ItemEvent::UpdateBreadcrumbs);
+            multi_buffer::Event::Reparsed => cx.emit(EditorEvent::Reparsed),
+            multi_buffer::Event::DirtyChanged => cx.emit(EditorEvent::DirtyChanged),
+            multi_buffer::Event::Saved => cx.emit(EditorEvent::Saved),
+            multi_buffer::Event::FileHandleChanged | multi_buffer::Event::Reloaded => {
+                cx.emit(EditorEvent::TitleChanged)
             }
             multi_buffer::Event::DiffBaseChanged => cx.emit(EditorEvent::DiffBaseChanged),
-            multi_buffer::Event::Closed => cx.emit(ItemEvent::CloseItem),
+            multi_buffer::Event::Closed => cx.emit(EditorEvent::Closed),
             multi_buffer::Event::DiagnosticsUpdated => {
                 self.refresh_active_diagnostics(cx);
             }

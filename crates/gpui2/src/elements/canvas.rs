@@ -1,9 +1,11 @@
-use crate::{Bounds, Element, IntoElement, Pixels, StyleRefinement, Styled, WindowContext};
+use refineable::Refineable as _;
+
+use crate::{Bounds, Element, IntoElement, Pixels, Style, StyleRefinement, Styled, WindowContext};
 
 pub fn canvas(callback: impl 'static + FnOnce(Bounds<Pixels>, &mut WindowContext)) -> Canvas {
     Canvas {
         paint_callback: Box::new(callback),
-        style: Default::default(),
+        style: StyleRefinement::default(),
     }
 }
 
@@ -32,7 +34,9 @@ impl Element for Canvas {
         _: Option<Self::State>,
         cx: &mut WindowContext,
     ) -> (crate::LayoutId, Self::State) {
-        let layout_id = cx.request_layout(&self.style.clone().into(), []);
+        let mut style = Style::default();
+        style.refine(&self.style);
+        let layout_id = cx.request_layout(&style, []);
         (layout_id, ())
     }
 
