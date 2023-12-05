@@ -2625,8 +2625,6 @@ impl Workspace {
         update: proto::UpdateFollowers,
         cx: &mut AsyncWindowContext,
     ) -> Result<()> {
-        dbg!("process_leader_update", &update);
-
         match update.variant.ok_or_else(|| anyhow!("invalid update"))? {
             proto::update_followers::Variant::UpdateActiveView(update_active_view) => {
                 this.update(cx, |this, _| {
@@ -3879,8 +3877,6 @@ impl WorkspaceStore {
     ) -> Result<()> {
         let leader_id = envelope.original_sender_id()?;
         let update = envelope.payload;
-
-        dbg!("handle_upate_followers");
 
         this.update(&mut cx, |this, cx| {
             for workspace in &this.workspaces {
