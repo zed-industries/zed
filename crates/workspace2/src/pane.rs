@@ -1421,13 +1421,12 @@ impl Pane {
         let close_icon = || {
             let id = item.item_id();
 
-            div()
+            h_stack()
                 .id(ix)
-                .w_3p5()
-                .h_3p5()
-                .rounded_sm()
-                .border()
-                .border_color(cx.theme().colors().border_variant)
+                .justify_center()
+                .w_4()
+                .h_4()
+                .rounded_md()
                 .absolute()
                 .map(|this| {
                     if close_right {

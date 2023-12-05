@@ -87,35 +87,7 @@ impl Render for Toolbar {
             .child(
                 h_stack()
                     .justify_between()
-                    // Toolbar left side
-                    .children(self.items.iter().map(|(child, _)| child.to_any()))
-                    // Toolbar right side
-                    .child(
-                        h_stack()
-                            .p_1()
-                            .gap_2()
-                            .child(
-                                IconButton::new("toggle-inlay-hints", Icon::InlayHint)
-                                    .size(ui::ButtonSize::Compact)
-                                    .icon_size(ui::IconSize::Small)
-                                    .style(ui::ButtonStyle::Subtle)
-                                    .tooltip(move |cx| Tooltip::text("Inlay Hints", cx)),
-                            )
-                            .child(
-                                IconButton::new("buffer-search", Icon::MagnifyingGlass)
-                                    .size(ui::ButtonSize::Compact)
-                                    .icon_size(ui::IconSize::Small)
-                                    .style(ui::ButtonStyle::Subtle)
-                                    .tooltip(move |cx| Tooltip::text("Search in File", cx)),
-                            )
-                            .child(
-                                IconButton::new("inline-assist", Icon::MagicWand)
-                                    .size(ui::ButtonSize::Compact)
-                                    .icon_size(ui::IconSize::Small)
-                                    .style(ui::ButtonStyle::Subtle)
-                                    .tooltip(move |cx| Tooltip::text("Inline Assist", cx)),
-                            ),
-                    ),
+                    .children(self.items.iter().map(|(child, _)| child.to_any())),
             )
     }
 }
