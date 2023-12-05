@@ -1327,7 +1327,7 @@ impl LocalWorktree {
         old_path: Option<Arc<Path>>,
         cx: &mut ModelContext<Worktree>,
     ) -> Task<Result<Option<Entry>>> {
-        if self.is_path_excluded(self.absolutize(&path)) {
+        if self.is_path_excluded(path.to_path_buf()) {
             return Task::ready(Ok(None));
         }
         let paths = if let Some(old_path) = old_path.as_ref() {
@@ -2521,7 +2521,7 @@ impl BackgroundScannerState {
                 ids_to_preserve.insert(work_directory_id);
             } else {
                 let git_dir_abs_path = snapshot.abs_path().join(&entry.git_dir_path);
-                let git_dir_excluded = snapshot.is_path_excluded(git_dir_abs_path.clone());
+                let git_dir_excluded = snapshot.is_path_excluded(entry.git_dir_path.to_path_buf());
                 if git_dir_excluded
                     && !matches!(smol::block_on(fs.metadata(&git_dir_abs_path)), Ok(None))
                 {
@@ -3400,7 +3400,7 @@ impl BackgroundScanner {
                     return false;
                 }
 
-                if snapshot.is_path_excluded(abs_path.clone()) {
+                if snapshot.is_path_excluded(relative_path.to_path_buf()) {
                     if !is_git_related {
                         log::debug!("ignoring FS event for excluded path {relative_path:?}");
                     }
@@ -3584,7 +3584,7 @@ impl BackgroundScanner {
             let state = self.state.lock();
             let snapshot = &state.snapshot;
             root_abs_path = snapshot.abs_path().clone();
-            if snapshot.is_path_excluded(job.abs_path.to_path_buf()) {
+            if snapshot.is_path_excluded(job.path.to_path_buf()) {
                 log::error!("skipping excluded directory {:?}", job.path);
                 return Ok(());
             }
@@ -3656,11 +3656,8 @@ impl BackgroundScanner {
 
             {
                 let mut state = self.state.lock();
-                if state
-                    .snapshot
-                    .is_path_excluded(child_abs_path.to_path_buf())
-                {
-                    let relative_path = job.path.join(child_name);
+                let relative_path = job.path.join(child_name);
+                if state.snapshot.is_path_excluded(relative_path.clone()) {
                     log::debug!("skipping excluded child entry {relative_path:?}");
                     state.remove_path(&relative_path);
                     continue;

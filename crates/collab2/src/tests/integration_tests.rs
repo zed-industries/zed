@@ -2781,11 +2781,10 @@ async fn test_fs_operations(
 
     let entry = project_b
         .update(cx_b, |project, cx| {
-            project
-                .create_entry((worktree_id, "c.txt"), false, cx)
-                .unwrap()
+            project.create_entry((worktree_id, "c.txt"), false, cx)
         })
         .await
+        .unwrap()
         .unwrap();
 
     worktree_a.read_with(cx_a, |worktree, _| {
@@ -2812,8 +2811,8 @@ async fn test_fs_operations(
         .update(cx_b, |project, cx| {
             project.rename_entry(entry.id, Path::new("d.txt"), cx)
         })
-        .unwrap()
         .await
+        .unwrap()
         .unwrap();
 
     worktree_a.read_with(cx_a, |worktree, _| {
@@ -2838,11 +2837,10 @@ async fn test_fs_operations(
 
     let dir_entry = project_b
         .update(cx_b, |project, cx| {
-            project
-                .create_entry((worktree_id, "DIR"), true, cx)
-                .unwrap()
+            project.create_entry((worktree_id, "DIR"), true, cx)
         })
         .await
+        .unwrap()
         .unwrap();
 
     worktree_a.read_with(cx_a, |worktree, _| {
@@ -2867,27 +2865,24 @@ async fn test_fs_operations(
 
     project_b
         .update(cx_b, |project, cx| {
-            project
-                .create_entry((worktree_id, "DIR/e.txt"), false, cx)
-                .unwrap()
+            project.create_entry((worktree_id, "DIR/e.txt"), false, cx)
         })
         .await
+        .unwrap()
         .unwrap();
     project_b
         .update(cx_b, |project, cx| {
-            project
-                .create_entry((worktree_id, "DIR/SUBDIR"), true, cx)
-                .unwrap()
+            project.create_entry((worktree_id, "DIR/SUBDIR"), true, cx)
         })
         .await
+        .unwrap()
         .unwrap();
     project_b
         .update(cx_b, |project, cx| {
-            project
-                .create_entry((worktree_id, "DIR/SUBDIR/f.txt"), false, cx)
-                .unwrap()
+            project.create_entry((worktree_id, "DIR/SUBDIR/f.txt"), false, cx)
         })
         .await
+        .unwrap()
         .unwrap();
 
     worktree_a.read_with(cx_a, |worktree, _| {
@@ -2928,11 +2923,10 @@ async fn test_fs_operations(
 
     project_b
         .update(cx_b, |project, cx| {
-            project
-                .copy_entry(entry.id, Path::new("f.txt"), cx)
-                .unwrap()
+            project.copy_entry(entry.id, Path::new("f.txt"), cx)
         })
         .await
+        .unwrap()
         .unwrap();
 
     worktree_a.read_with(cx_a, |worktree, _| {
