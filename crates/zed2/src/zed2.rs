@@ -95,6 +95,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
         cx.subscribe(&workspace_handle, {
             move |workspace, _, event, cx| {
                 if let workspace::Event::PaneAdded(pane) = event {
+                    dbg!("PaneAdded");
                     pane.update(cx, |pane, cx| {
                         pane.toolbar().update(cx, |toolbar, cx| {
                             let breadcrumbs = cx.build_view(|_| Breadcrumbs::new(workspace));
