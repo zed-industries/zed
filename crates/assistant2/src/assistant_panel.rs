@@ -27,8 +27,8 @@ use editor::{
 use fs::Fs;
 use futures::StreamExt;
 use gpui::{
-    actions, div, point, uniform_list, Action, AnyElement, AppContext, AsyncAppContext,
-    ClipboardItem, Div, Element, Entity, EventEmitter, FocusHandle, Focusable, FocusableView,
+    actions, div, point, uniform_list, Action, AnyElement, AppContext, AsyncWindowContext,
+    ClipboardItem, Context, Div, EventEmitter, FocusHandle, Focusable, FocusableView,
     HighlightStyle, InteractiveElement, IntoElement, Model, ModelContext, ParentElement, Pixels,
     PromptLevel, Render, StatefulInteractiveElement, Styled, Subscription, Task,
     UniformListScrollHandle, View, ViewContext, VisualContext, WeakModel, WeakView, WindowContext,
@@ -51,7 +51,7 @@ use std::{
 };
 use ui::{
     h_stack, v_stack, Button, ButtonCommon, ButtonLike, Clickable, Color, Icon, IconButton,
-    IconElement, Label, Selectable, StyledExt, Tooltip,
+    IconElement, Label, Selectable, Tooltip,
 };
 use util::{paths::CONVERSATIONS_DIR, post_inc, ResultExt, TryFutureExt};
 use uuid::Uuid;
@@ -76,49 +76,18 @@ actions!(
 
 pub fn init(cx: &mut AppContext) {
     AssistantSettings::register(cx);
-    cx.add_action(
-        |this: &mut AssistantPanel,
-         _: &workspace::NewFile,
-         cx: &mut ViewContext<AssistantPanel>| {
-            this.new_conversation(cx);
+    cx.observe_new_views(
+        |workspace: &mut Workspace, cx: &mut ViewContext<Workspace>| {
+            workspace
+                .register_action(|workspace, _: &ToggleFocus, cx| {
+                    workspace.toggle_panel_focus::<AssistantPanel>(cx);
+                })
+                .register_action(AssistantPanel::inline_assist)
+                .register_action(AssistantPanel::cancel_last_inline_assist)
+                .register_action(ConversationEditor::quote_selection);
         },
-    );
-    cx.add_action(ConversationEditor::assist);
-    cx.capture_action(ConversationEditor::cancel_last_assist);
-    cx.capture_action(ConversationEditor::save);
-    cx.add_action(ConversationEditor::quote_selection);
-    cx.capture_action(ConversationEditor::copy);
-    cx.add_action(ConversationEditor::split);
-    cx.capture_action(ConversationEditor::cycle_message_role);
-    cx.add_action(AssistantPanel::save_credentials);
-    cx.add_action(AssistantPanel::reset_credentials);
-    cx.add_action(AssistantPanel::toggle_zoom);
-    cx.add_action(AssistantPanel::deploy);
-    cx.add_action(AssistantPanel::select_next_match);
-    cx.add_action(AssistantPanel::select_prev_match);
-    cx.add_action(AssistantPanel::handle_editor_cancel);
-    cx.add_action(
-        |workspace: &mut Workspace, _: &ToggleFocus, cx: &mut ViewContext<Workspace>| {
-            workspace.toggle_panel_focus::<AssistantPanel>(cx);
-        },
-    );
-    cx.add_action(AssistantPanel::inline_assist);
-    cx.add_action(AssistantPanel::cancel_last_inline_assist);
-    cx.add_action(InlineAssistant::confirm);
-    cx.add_action(InlineAssistant::cancel);
-    cx.add_action(InlineAssistant::toggle_include_conversation);
-    cx.add_action(InlineAssistant::toggle_retrieve_context);
-    cx.add_action(InlineAssistant::move_up);
-    cx.add_action(InlineAssistant::move_down);
-}
-
-#[derive(Debug)]
-pub enum AssistantPanelEvent {
-    ZoomIn,
-    ZoomOut,
-    Focus,
-    Close,
-    DockPositionChanged,
+    )
+    .detach();
 }
 
 pub struct AssistantPanel {
@@ -131,7 +100,6 @@ pub struct AssistantPanel {
     saved_conversations: Vec<SavedConversationMetadata>,
     saved_conversations_scroll_handle: UniformListScrollHandle,
     zoomed: bool,
-    // todo!("remove has_focus field")
     focus_handle: FocusHandle,
     toolbar: View<Toolbar>,
     completion_provider: Arc<dyn CompletionProvider>,
@@ -152,9 +120,12 @@ pub struct AssistantPanel {
 impl AssistantPanel {
     const INLINE_PROMPT_HISTORY_MAX_LEN: usize = 20;
 
-    pub fn load(workspace: WeakView<Workspace>, cx: AsyncAppContext) -> Task<Result<View<Self>>> {
+    pub fn load(
+        workspace: WeakView<Workspace>,
+        mut cx: AsyncWindowContext,
+    ) -> Task<Result<View<Self>>> {
         cx.spawn(|mut cx| async move {
-            let fs = workspace.read_with(&cx, |workspace, _| workspace.app_state().fs.clone())?;
+            let fs = workspace.update(&mut cx, |workspace, _| workspace.app_state().fs.clone())?;
             let saved_conversations = SavedConversationMetadata::list(fs.clone())
                 .await
                 .log_err()
@@ -163,7 +134,7 @@ impl AssistantPanel {
             // TODO: deserialize state.
             let workspace_handle = workspace.clone();
             workspace.update(&mut cx, |workspace, cx| {
-                cx.add_view::<Self, _>(|cx| {
+                cx.build_view::<Self>(|cx| {
                     const CONVERSATION_WATCH_DURATION: Duration = Duration::from_millis(100);
                     let _watch_saved_conversations = cx.spawn(move |this, mut cx| async move {
                         let mut events = fs
@@ -184,10 +155,10 @@ impl AssistantPanel {
                         anyhow::Ok(())
                     });
 
-                    let toolbar = cx.add_view(|cx| {
+                    let toolbar = cx.build_view(|cx| {
                         let mut toolbar = Toolbar::new();
                         toolbar.set_can_navigate(false, cx);
-                        toolbar.add_item(cx.add_view(|cx| BufferSearchBar::new(cx)), cx);
+                        toolbar.add_item(cx.build_view(|cx| BufferSearchBar::new(cx)), cx);
                         toolbar
                     });
 
@@ -199,8 +170,8 @@ impl AssistantPanel {
                     ));
 
                     let focus_handle = cx.focus_handle();
-                    cx.on_focus_in(Self::focus_in).detach();
-                    cx.on_focus_out(Self::focus_out).detach();
+                    cx.on_focus_in(&focus_handle, Self::focus_in).detach();
+                    cx.on_focus_out(&focus_handle, Self::focus_out).detach();
 
                     let mut this = Self {
                         workspace: workspace_handle,
@@ -231,11 +202,11 @@ impl AssistantPanel {
 
                     let mut old_dock_position = this.position(cx);
                     this.subscriptions =
-                        vec![cx.observe_global::<SettingsStore, _>(move |this, cx| {
+                        vec![cx.observe_global::<SettingsStore>(move |this, cx| {
                             let new_dock_position = this.position(cx);
                             if new_dock_position != old_dock_position {
                                 old_dock_position = new_dock_position;
-                                cx.emit(AssistantPanelEvent::DockPositionChanged);
+                                cx.emit(PanelEvent::ChangePosition);
                             }
                             cx.notify();
                         })];
@@ -343,7 +314,7 @@ impl AssistantPanel {
         // Retrieve Credentials Authenticates the Provider
         provider.retrieve_credentials(cx);
 
-        let codegen = cx.add_model(|cx| {
+        let codegen = cx.build_model(|cx| {
             Codegen::new(editor.read(cx).buffer().clone(), codegen_kind, provider, cx)
         });
 
@@ -353,14 +324,14 @@ impl AssistantPanel {
                 let previously_indexed = semantic_index
                     .update(&mut cx, |index, cx| {
                         index.project_previously_indexed(&project, cx)
-                    })
+                    })?
                     .await
                     .unwrap_or(false);
                 if previously_indexed {
                     let _ = semantic_index
                         .update(&mut cx, |index, cx| {
                             index.index_project(project.clone(), cx)
-                        })
+                        })?
                         .await;
                 }
                 anyhow::Ok(())
@@ -369,7 +340,7 @@ impl AssistantPanel {
         }
 
         let measurements = Rc::new(Cell::new(BlockMeasurements::default()));
-        let inline_assistant = cx.add_view(|cx| {
+        let inline_assistant = cx.build_view(|cx| {
             let assistant = InlineAssistant::new(
                 inline_assist_id,
                 measurements.clone(),
@@ -382,7 +353,7 @@ impl AssistantPanel {
                 self.semantic_index.clone(),
                 project.clone(),
             );
-            cx.focus_self();
+            assistant.focus_handle.focus(cx);
             assistant
         });
         let block_id = editor.update(cx, |editor, cx| {
@@ -429,8 +400,13 @@ impl AssistantPanel {
                         move |_, editor, event, cx| {
                             if let Some(inline_assistant) = inline_assistant.upgrade() {
                                 if let EditorEvent::SelectionsChanged { local } = event {
-                                    if *local && inline_assistant.read(cx).has_focus {
-                                        cx.focus(&editor);
+                                    if *local
+                                        && inline_assistant
+                                            .read(cx)
+                                            .focus_handle
+                                            .contains_focused(cx)
+                                    {
+                                        cx.focus_view(&editor);
                                     }
                                 }
                             }
@@ -555,7 +531,7 @@ impl AssistantPanel {
             }
         }
 
-        cx.propagate_action();
+        cx.propagate();
     }
 
     fn finish_inline_assist(&mut self, assist_id: usize, undo: bool, cx: &mut ViewContext<Self>) {
@@ -709,13 +685,17 @@ impl AssistantPanel {
             let snippets = cx.spawn(|_, mut cx| async move {
                 let mut snippets = Vec::new();
                 for result in search_results.await {
-                    snippets.push(PromptCodeSnippet::new(result.buffer, result.range, &mut cx));
+                    snippets.push(PromptCodeSnippet::new(
+                        result.buffer,
+                        result.range,
+                        &mut cx,
+                    )?);
                 }
-                snippets
+                anyhow::Ok(snippets)
             });
             snippets
         } else {
-            Task::ready(Vec::new())
+            Task::ready(Ok(Vec::new()))
         };
 
         let mut model = AssistantSettings::get_global(cx)
@@ -724,7 +704,7 @@ impl AssistantPanel {
         let model_name = model.full_name();
 
         let prompt = cx.background_executor().spawn(async move {
-            let snippets = snippets.await;
+            let snippets = snippets.await?;
 
             let language_name = language_name.as_deref();
             generate_content_prompt(
@@ -799,7 +779,7 @@ impl AssistantPanel {
             } else {
                 editor.highlight_background::<PendingInlineAssist>(
                     background_ranges,
-                    |theme| theme.assistant.inline.pending_edit_background,
+                    |theme| gpui::red(), // todo!("use the appropriate color")
                     cx,
                 );
             }
@@ -820,7 +800,7 @@ impl AssistantPanel {
     }
 
     fn new_conversation(&mut self, cx: &mut ViewContext<Self>) -> View<ConversationEditor> {
-        let editor = cx.add_view(|cx| {
+        let editor = cx.build_view(|cx| {
             ConversationEditor::new(
                 self.completion_provider.clone(),
                 self.languages.clone(),
@@ -854,8 +834,8 @@ impl AssistantPanel {
             self.toolbar.update(cx, |toolbar, cx| {
                 toolbar.set_active_item(Some(&editor), cx);
             });
-            if self.has_focus(cx) {
-                cx.focus(&editor);
+            if self.focus_handle.contains_focused(cx) {
+                cx.focus_view(&editor);
             }
         } else {
             self.toolbar.update(cx, |toolbar, cx| {
@@ -891,31 +871,31 @@ impl AssistantPanel {
                 self.completion_provider.save_credentials(cx, credential);
 
                 self.api_key_editor.take();
-                cx.focus_self();
+                self.focus_handle.focus(cx);
                 cx.notify();
             }
         } else {
-            cx.propagate_action();
+            cx.propagate();
         }
     }
 
     fn reset_credentials(&mut self, _: &ResetKey, cx: &mut ViewContext<Self>) {
         self.completion_provider.delete_credentials(cx);
         self.api_key_editor = Some(build_api_key_editor(cx));
-        cx.focus_self();
+        self.focus_handle.focus(cx);
         cx.notify();
     }
 
     fn toggle_zoom(&mut self, _: &workspace::ToggleZoom, cx: &mut ViewContext<Self>) {
         if self.zoomed {
-            cx.emit(AssistantPanelEvent::ZoomOut)
+            cx.emit(PanelEvent::ZoomOut)
         } else {
-            cx.emit(AssistantPanelEvent::ZoomIn)
+            cx.emit(PanelEvent::ZoomIn)
         }
     }
 
     fn deploy(&mut self, action: &search::buffer_search::Deploy, cx: &mut ViewContext<Self>) {
-        let mut propagate_action = true;
+        let mut propagate = true;
         if let Some(search_bar) = self.toolbar.read(cx).item_of_type::<BufferSearchBar>() {
             search_bar.update(cx, |search_bar, cx| {
                 if search_bar.show(cx) {
@@ -924,12 +904,12 @@ impl AssistantPanel {
                         search_bar.select_query(cx);
                         cx.focus_self();
                     }
-                    propagate_action = false
+                    propagate = false
                 }
             });
         }
-        if propagate_action {
-            cx.propagate_action();
+        if propagate {
+            cx.propagate();
         }
     }
 
@@ -942,7 +922,7 @@ impl AssistantPanel {
                 return;
             }
         }
-        cx.propagate_action();
+        cx.propagate();
     }
 
     fn select_next_match(&mut self, _: &search::SelectNextMatch, cx: &mut ViewContext<Self>) {
@@ -976,9 +956,9 @@ impl AssistantPanel {
     fn render_editor_tools(&self, cx: &mut ViewContext<Self>) -> Vec<AnyElement> {
         if self.active_editor().is_some() {
             vec![
-                Self::render_split_button(cx).into_any(),
-                Self::render_quote_button(cx).into_any(),
-                Self::render_assist_button(cx).into_any(),
+                Self::render_split_button(cx).into_any_element(),
+                Self::render_quote_button(cx).into_any_element(),
+                Self::render_assist_button(cx).into_any_element(),
             ]
         } else {
             Default::default()
@@ -1028,16 +1008,13 @@ impl AssistantPanel {
     }
 
     fn render_zoom_button(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let zoomed = self.zoomed;
         IconButton::new("zoom_button", Icon::Menu)
             .on_click(cx.listener(|this, _event, cx| {
                 this.toggle_zoom(&ToggleZoom, cx);
             }))
-            .tooltip(|cx| {
-                Tooltip::for_action(
-                    if self.zoomed { "Zoom Out" } else { "Zoom In" },
-                    &ToggleZoom,
-                    cx,
-                )
+            .tooltip(move |cx| {
+                Tooltip::for_action(if zoomed { "Zoom Out" } else { "Zoom In" }, &ToggleZoom, cx)
             })
     }
 
@@ -1072,16 +1049,16 @@ impl AssistantPanel {
         cx.spawn(|this, mut cx| async move {
             let saved_conversation = fs.load(&path).await?;
             let saved_conversation = serde_json::from_str(&saved_conversation)?;
-            let conversation = cx.add_model(|cx| {
+            let conversation = cx.build_model(|cx| {
                 Conversation::deserialize(saved_conversation, path.clone(), languages, cx)
-            });
+            })?;
             this.update(&mut cx, |this, cx| {
                 // If, by the time we've loaded the conversation, the user has already opened
                 // the same conversation, we don't want to open it again.
                 if let Some(ix) = this.editor_index_for_path(&path, cx) {
                     this.set_active_editor_index(Some(ix), cx);
                 } else {
-                    let editor = cx.add_view(|cx| {
+                    let editor = cx.build_view(|cx| {
                         ConversationEditor::for_conversation(conversation, fs, workspace, cx)
                     });
                     this.add_conversation(editor, cx);
@@ -1120,6 +1097,7 @@ impl Render for AssistantPanel {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         if let Some(api_key_editor) = self.api_key_editor.clone() {
             v_stack()
+                .on_action(cx.listener(AssistantPanel::save_credentials))
                 .track_focus(&self.focus_handle)
                 .child(Label::new(
                     "To use the assistant panel or inline assistant, you need to add your OpenAI api key.",
@@ -1159,6 +1137,15 @@ impl Render for AssistantPanel {
             }
 
             v_stack()
+                .on_action(cx.listener(|this, _: &workspace::NewFile, cx| {
+                    this.new_conversation(cx);
+                }))
+                .on_action(cx.listener(AssistantPanel::reset_credentials))
+                .on_action(cx.listener(AssistantPanel::toggle_zoom))
+                .on_action(cx.listener(AssistantPanel::deploy))
+                .on_action(cx.listener(AssistantPanel::select_next_match))
+                .on_action(cx.listener(AssistantPanel::select_prev_match))
+                .on_action(cx.listener(AssistantPanel::handle_editor_cancel))
                 .track_focus(&self.focus_handle)
                 .child(header)
                 .children(if self.toolbar.read(cx).hidden() {
@@ -1175,7 +1162,7 @@ impl Render for AssistantPanel {
                         self.saved_conversations.len(),
                         |this, range, cx| {
                             range
-                                .map(|ix| this.render_saved_conversation(ix, cx).into_any())
+                                .map(|ix| this.render_saved_conversation(ix, cx))
                                 .collect()
                         },
                     )
@@ -1311,17 +1298,14 @@ impl Conversation {
         completion_provider: Arc<dyn CompletionProvider>,
     ) -> Self {
         let markdown = language_registry.language_for_name("Markdown");
-        let buffer = cx.add_model(|cx| {
-            let mut buffer = Buffer::new(0, cx.model_id() as u64, "");
+        let buffer = cx.build_model(|cx| {
+            let mut buffer = Buffer::new(0, cx.entity_id().as_u64(), "");
             buffer.set_language_registry(language_registry);
-            cx.spawn_weak(|buffer, mut cx| async move {
+            cx.spawn(|buffer, mut cx| async move {
                 let markdown = markdown.await?;
-                let buffer = buffer
-                    .upgrade(&cx)
-                    .ok_or_else(|| anyhow!("buffer was dropped"))?;
                 buffer.update(&mut cx, |buffer: &mut Buffer, cx| {
                     buffer.set_language(Some(markdown), cx)
-                });
+                })?;
                 anyhow::Ok(())
             })
             .detach_and_log_err(cx);
@@ -1409,8 +1393,8 @@ impl Conversation {
         let markdown = language_registry.language_for_name("Markdown");
         let mut message_anchors = Vec::new();
         let mut next_message_id = MessageId(0);
-        let buffer = cx.add_model(|cx| {
-            let mut buffer = Buffer::new(0, cx.model_id() as u64, saved_conversation.text);
+        let buffer = cx.build_model(|cx| {
+            let mut buffer = Buffer::new(0, cx.entity_id().as_u64(), saved_conversation.text);
             for message in saved_conversation.messages {
                 message_anchors.push(MessageAnchor {
                     id: message.id,
@@ -1419,14 +1403,11 @@ impl Conversation {
                 next_message_id = cmp::max(next_message_id, MessageId(message.id.0 + 1));
             }
             buffer.set_language_registry(language_registry);
-            cx.spawn_weak(|buffer, mut cx| async move {
+            cx.spawn(|buffer, mut cx| async move {
                 let markdown = markdown.await?;
-                let buffer = buffer
-                    .upgrade(&cx)
-                    .ok_or_else(|| anyhow!("buffer was dropped"))?;
                 buffer.update(&mut cx, |buffer: &mut Buffer, cx| {
                     buffer.set_language(Some(markdown), cx)
-                });
+                })?;
                 anyhow::Ok(())
             })
             .detach_and_log_err(cx);
@@ -1497,26 +1478,24 @@ impl Conversation {
             })
             .collect::<Vec<_>>();
         let model = self.model.clone();
-        self.pending_token_count = cx.spawn_weak(|this, mut cx| {
+        self.pending_token_count = cx.spawn(|this, mut cx| {
             async move {
                 cx.background_executor()
                     .timer(Duration::from_millis(200))
                     .await;
                 let token_count = cx
-                    .background()
+                    .background_executor()
                     .spawn(async move {
                         tiktoken_rs::num_tokens_from_messages(&model.full_name(), &messages)
                     })
                     .await?;
 
-                this.upgrade(&cx)
-                    .ok_or_else(|| anyhow!("conversation was dropped"))?
-                    .update(&mut cx, |this, cx| {
-                        this.max_token_count =
-                            tiktoken_rs::model::get_context_size(&this.model.full_name());
-                        this.token_count = Some(token_count);
-                        cx.notify()
-                    });
+                this.update(&mut cx, |this, cx| {
+                    this.max_token_count =
+                        tiktoken_rs::model::get_context_size(&this.model.full_name());
+                    this.token_count = Some(token_count);
+                    cx.notify()
+                })?;
                 anyhow::Ok(())
             }
             .log_err()
@@ -1603,7 +1582,7 @@ impl Conversation {
                 .unwrap();
             user_messages.push(user_message);
 
-            let task = cx.spawn_weak({
+            let task = cx.spawn({
                 |this, mut cx| async move {
                     let assistant_message_id = assistant_message.id;
                     let stream_completion = async {
@@ -1612,59 +1591,55 @@ impl Conversation {
                         while let Some(message) = messages.next().await {
                             let text = message?;
 
-                            this.upgrade(&cx)
-                                .ok_or_else(|| anyhow!("conversation was dropped"))?
-                                .update(&mut cx, |this, cx| {
-                                    let message_ix = this
-                                        .message_anchors
+                            this.update(&mut cx, |this, cx| {
+                                let message_ix = this
+                                    .message_anchors
+                                    .iter()
+                                    .position(|message| message.id == assistant_message_id)?;
+                                this.buffer.update(cx, |buffer, cx| {
+                                    let offset = this.message_anchors[message_ix + 1..]
                                         .iter()
-                                        .position(|message| message.id == assistant_message_id)?;
-                                    this.buffer.update(cx, |buffer, cx| {
-                                        let offset = this.message_anchors[message_ix + 1..]
-                                            .iter()
-                                            .find(|message| message.start.is_valid(buffer))
-                                            .map_or(buffer.len(), |message| {
-                                                message.start.to_offset(buffer).saturating_sub(1)
-                                            });
-                                        buffer.edit([(offset..offset, text)], None, cx);
-                                    });
-                                    cx.emit(ConversationEvent::StreamedCompletion);
-
-                                    Some(())
+                                        .find(|message| message.start.is_valid(buffer))
+                                        .map_or(buffer.len(), |message| {
+                                            message.start.to_offset(buffer).saturating_sub(1)
+                                        });
+                                    buffer.edit([(offset..offset, text)], None, cx);
                                 });
+                                cx.emit(ConversationEvent::StreamedCompletion);
+
+                                Some(())
+                            })?;
                             smol::future::yield_now().await;
                         }
 
-                        this.upgrade(&cx)
-                            .ok_or_else(|| anyhow!("conversation was dropped"))?
-                            .update(&mut cx, |this, cx| {
-                                this.pending_completions
-                                    .retain(|completion| completion.id != this.completion_count);
-                                this.summarize(cx);
-                            });
+                        this.update(&mut cx, |this, cx| {
+                            this.pending_completions
+                                .retain(|completion| completion.id != this.completion_count);
+                            this.summarize(cx);
+                        })?;
 
                         anyhow::Ok(())
                     };
 
                     let result = stream_completion.await;
-                    if let Some(this) = this.upgrade(&cx) {
-                        this.update(&mut cx, |this, cx| {
-                            if let Some(metadata) =
-                                this.messages_metadata.get_mut(&assistant_message.id)
-                            {
-                                match result {
-                                    Ok(_) => {
-                                        metadata.status = MessageStatus::Done;
-                                    }
-                                    Err(error) => {
-                                        metadata.status =
-                                            MessageStatus::Error(error.to_string().trim().into());
-                                    }
+
+                    this.update(&mut cx, |this, cx| {
+                        if let Some(metadata) =
+                            this.messages_metadata.get_mut(&assistant_message.id)
+                        {
+                            match result {
+                                Ok(_) => {
+                                    metadata.status = MessageStatus::Done;
                                 }
-                                cx.notify();
+                                Err(error) => {
+                                    metadata.status =
+                                        MessageStatus::Error(error.to_string().trim().into());
+                                }
                             }
-                        });
-                    }
+                            cx.notify();
+                        }
+                    })
+                    .ok();
                 }
             });
 
@@ -1999,10 +1974,10 @@ impl Conversation {
                     None
                 };
                 (path, summary)
-            });
+            })?;
 
             if let Some(summary) = summary {
-                let conversation = this.read_with(&cx, |this, cx| this.serialize(cx));
+                let conversation = this.read_with(&cx, |this, cx| this.serialize(cx))?;
                 let path = if let Some(old_path) = old_path {
                     old_path
                 } else {
@@ -2026,7 +2001,7 @@ impl Conversation {
                 fs.create_dir(CONVERSATIONS_DIR.as_ref()).await?;
                 fs.atomic_write(path.clone(), serde_json::to_string(&conversation).unwrap())
                     .await?;
-                this.update(&mut cx, |this, _| this.path = Some(path));
+                this.update(&mut cx, |this, _| this.path = Some(path))?;
             }
 
             Ok(())
@@ -2069,7 +2044,7 @@ impl ConversationEditor {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let conversation =
-            cx.add_model(|cx| Conversation::new(language_registry, cx, completion_provider));
+            cx.build_model(|cx| Conversation::new(language_registry, cx, completion_provider));
         Self::for_conversation(conversation, fs, workspace, cx)
     }
 
@@ -2079,7 +2054,7 @@ impl ConversationEditor {
         workspace: WeakView<Workspace>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let editor = cx.add_view(|cx| {
+        let editor = cx.build_view(|cx| {
             let mut editor = Editor::for_buffer(conversation.read(cx).buffer.clone(), None, cx);
             editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
             editor.set_show_gutter(false, cx);
@@ -2093,7 +2068,7 @@ impl ConversationEditor {
             cx.observe(&conversation, |_, _, cx| cx.notify()),
             cx.subscribe(&conversation, Self::handle_conversation_event),
             cx.subscribe(&editor, Self::handle_editor_event),
-            cx.on_focus(&focus_handle, |this, _, cx| cx.focus(&this.editor)),
+            cx.on_focus(&focus_handle, |this, cx| cx.focus_view(&this.editor)),
         ];
 
         let mut this = Self {
@@ -2155,7 +2130,7 @@ impl ConversationEditor {
             .conversation
             .update(cx, |conversation, _| conversation.cancel_last_assist())
         {
-            cx.propagate_action();
+            cx.propagate();
         }
     }
 
@@ -2247,8 +2222,8 @@ impl ConversationEditor {
                 .anchor()
                 .scroll_position(&snapshot.display_snapshot);
 
-            let scroll_bottom = scroll_position.y() + editor.visible_line_count().unwrap_or(0.);
-            if (scroll_position.y()..scroll_bottom).contains(&cursor_row) {
+            let scroll_bottom = scroll_position.y + editor.visible_line_count().unwrap_or(0.);
+            if (scroll_position.y..scroll_bottom).contains(&cursor_row) {
                 Some(ScrollPosition {
                     cursor,
                     offset_before_cursor: point(scroll_position.x, cursor_row - scroll_position.y),
@@ -2286,7 +2261,7 @@ impl ConversationEditor {
                                 })
                                 .on_click({
                                     let conversation = conversation.clone();
-                                    move |_, _, cx| {
+                                    move |_, cx| {
                                         conversation.update(cx, |conversation, cx| {
                                             conversation.cycle_message_roles(
                                                 HashSet::from_iter(Some(message_id)),
@@ -2302,18 +2277,16 @@ impl ConversationEditor {
                                 .border_color(gpui::red())
                                 .child(sender)
                                 .child(Label::new(message.sent_at.format("%I:%M%P").to_string()))
-                                .with_children(
-                                    if let MessageStatus::Error(error) = &message.status {
-                                        Some(
-                                            div()
-                                                .id("error")
-                                                .tooltip(|cx| Tooltip::text(error, cx))
-                                                .child(IconElement::new(Icon::XCircle)),
-                                        )
-                                    } else {
-                                        None
-                                    },
-                                )
+                                .children(if let MessageStatus::Error(error) = &message.status {
+                                    Some(
+                                        div()
+                                            .id("error")
+                                            .tooltip(|cx| Tooltip::text(error, cx))
+                                            .child(IconElement::new(Icon::XCircle)),
+                                    )
+                                } else {
+                                    None
+                                })
                                 .into_any_element()
                         }
                     }),
@@ -2342,36 +2315,35 @@ impl ConversationEditor {
             return;
         };
 
-        let text = editor.read_with(cx, |editor, cx| {
-            let range = editor.selections.newest::<usize>(cx).range();
-            let buffer = editor.buffer().read(cx).snapshot(cx);
-            let start_language = buffer.language_at(range.start);
-            let end_language = buffer.language_at(range.end);
-            let language_name = if start_language == end_language {
-                start_language.map(|language| language.name())
-            } else {
-                None
-            };
-            let language_name = language_name.as_deref().unwrap_or("").to_lowercase();
+        let editor = editor.read(cx);
+        let range = editor.selections.newest::<usize>(cx).range();
+        let buffer = editor.buffer().read(cx).snapshot(cx);
+        let start_language = buffer.language_at(range.start);
+        let end_language = buffer.language_at(range.end);
+        let language_name = if start_language == end_language {
+            start_language.map(|language| language.name())
+        } else {
+            None
+        };
+        let language_name = language_name.as_deref().unwrap_or("").to_lowercase();
 
-            let selected_text = buffer.text_for_range(range).collect::<String>();
-            if selected_text.is_empty() {
-                None
+        let selected_text = buffer.text_for_range(range).collect::<String>();
+        let text = if selected_text.is_empty() {
+            None
+        } else {
+            Some(if language_name == "markdown" {
+                selected_text
+                    .lines()
+                    .map(|line| format!("> {}", line))
+                    .collect::<Vec<_>>()
+                    .join("\n")
             } else {
-                Some(if language_name == "markdown" {
-                    selected_text
-                        .lines()
-                        .map(|line| format!("> {}", line))
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                } else {
-                    format!("```{language_name}\n{selected_text}\n```")
-                })
-            }
-        });
+                format!("```{language_name}\n{selected_text}\n```")
+            })
+        };
 
         // Activate the panel
-        if !panel.read(cx).has_focus(cx) {
+        if !panel.focus_handle(cx).contains_focused(cx) {
             workspace.toggle_panel_focus::<AssistantPanel>(cx);
         }
 
@@ -2415,13 +2387,12 @@ impl ConversationEditor {
             }
 
             if spanned_messages > 1 {
-                cx.platform()
-                    .write_to_clipboard(ClipboardItem::new(copied_text));
+                cx.write_to_clipboard(ClipboardItem::new(copied_text));
                 return;
             }
         }
 
-        cx.propagate_action();
+        cx.propagate();
     }
 
     fn split(&mut self, _: &Split, cx: &mut ViewContext<Self>) {
@@ -2492,15 +2463,30 @@ impl Render for ConversationEditor {
     type Element = Div;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-        div().relative().child(self.editor.clone()).child(
-            h_stack()
-                .absolute()
-                .gap_1()
-                .top_3()
-                .right_5()
-                .child(self.render_current_model(cx))
-                .children(self.render_remaining_tokens(cx)),
-        )
+        div()
+            .relative()
+            .capture_action(cx.listener(ConversationEditor::cancel_last_assist))
+            .capture_action(cx.listener(ConversationEditor::save))
+            .capture_action(cx.listener(ConversationEditor::copy))
+            .capture_action(cx.listener(ConversationEditor::cycle_message_role))
+            .on_action(cx.listener(ConversationEditor::assist))
+            .on_action(cx.listener(ConversationEditor::split))
+            .child(self.editor.clone())
+            .child(
+                h_stack()
+                    .absolute()
+                    .gap_1()
+                    .top_3()
+                    .right_5()
+                    .child(self.render_current_model(cx))
+                    .children(self.render_remaining_tokens(cx)),
+            )
+    }
+}
+
+impl FocusableView for ConversationEditor {
+    fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
+        self.focus_handle.clone()
     }
 }
 
@@ -2577,30 +2563,40 @@ impl Render for InlineAssistant {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         let measurements = self.measurements.get();
         h_stack()
+            .on_action(cx.listener(Self::confirm))
+            .on_action(cx.listener(Self::cancel))
+            .on_action(cx.listener(Self::toggle_include_conversation))
+            .on_action(cx.listener(Self::toggle_retrieve_context))
+            .on_action(cx.listener(Self::move_up))
+            .on_action(cx.listener(Self::move_down))
             .child(
                 h_stack()
                     .justify_center()
                     .w(measurements.gutter_width)
                     .child(
                         IconButton::new("include_conversation", Icon::Ai)
-                            .action(ToggleIncludeConversation)
+                            .action(Box::new(ToggleIncludeConversation))
                             .selected(self.include_conversation)
-                            .tooltip(Tooltip::for_action(
-                                "Include Conversation",
-                                &ToggleIncludeConversation,
-                                cx,
-                            )),
+                            .tooltip(|cx| {
+                                Tooltip::for_action(
+                                    "Include Conversation",
+                                    &ToggleIncludeConversation,
+                                    cx,
+                                )
+                            }),
                     )
                     .children(if SemanticIndex::enabled(cx) {
                         Some(
                             IconButton::new("retrieve_context", Icon::MagnifyingGlass)
-                                .action(ToggleRetrieveContext)
+                                .action(Box::new(ToggleRetrieveContext))
                                 .selected(self.retrieve_context)
-                                .tooltip(Tooltip::for_action(
-                                    "Retrieve Context",
-                                    &ToggleRetrieveContext,
-                                    cx,
-                                )),
+                                .tooltip(|cx| {
+                                    Tooltip::for_action(
+                                        "Retrieve Context",
+                                        &ToggleRetrieveContext,
+                                        cx,
+                                    )
+                                }),
                         )
                     } else {
                         None
@@ -2626,6 +2622,12 @@ impl Render for InlineAssistant {
             } else {
                 None
             })
+    }
+}
+
+impl FocusableView for InlineAssistant {
+    fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
+        self.focus_handle.clone()
     }
 }
 
@@ -2656,10 +2658,7 @@ impl InlineAssistant {
         let mut subscriptions = vec![
             cx.observe(&codegen, Self::handle_codegen_changed),
             cx.subscribe(&prompt_editor, Self::handle_prompt_editor_events),
-            cx.on_focus(
-                &focus_handle,
-                cx.listener(|this, _, cx| cx.focus(&this.prompt_editor)),
-            ),
+            cx.on_focus(&focus_handle, |this, cx| cx.focus_view(&this.prompt_editor)),
         ];
 
         if let Some(semantic_index) = semantic_index.clone() {
@@ -2939,42 +2938,17 @@ impl InlineAssistant {
                         div()
                             .id("update")
                             .tooltip(|cx| Tooltip::text(status_text, cx))
-                            .child(IconElement::new(Icon::Update).color(color))
+                            .child(IconElement::new(Icon::Update).color(Color::Info))
                             .into_any_element()
-                        Svg::new("icons/update.svg")
-                            .with_color(theme.assistant.inline.context_status.in_progress_icon.color)
-                            .constrained()
-                            .with_width(theme.assistant.inline.context_status.in_progress_icon.width)
-                            .contained()
-                            .with_style(theme.assistant.inline.context_status.in_progress_icon.container)
-                            .with_tooltip::<ContextStatusIcon>(
-                                self.id,
-                                status_text,
-                                None,
-                                theme.tooltip.clone(),
-                                cx,
-                            )
-                            .aligned()
-                            .into_any(),
                     )
                 }
 
                 SemanticIndexStatus::Indexed {} => Some(
-                    Svg::new("icons/check.svg")
-                        .with_color(theme.assistant.inline.context_status.complete_icon.color)
-                        .constrained()
-                        .with_width(theme.assistant.inline.context_status.complete_icon.width)
-                        .contained()
-                        .with_style(theme.assistant.inline.context_status.complete_icon.container)
-                        .with_tooltip::<ContextStatusIcon>(
-                            self.id,
-                            "Index up to date",
-                            None,
-                            theme.tooltip.clone(),
-                            cx,
-                        )
-                        .aligned()
-                        .into_any(),
+                    div()
+                        .id("check")
+                        .tooltip(|cx| Tooltip::text("Index up to date", cx))
+                        .child(IconElement::new(Icon::Check).color(Color::Success))
+                        .into_any_element()
                 ),
             }
         } else {
@@ -3083,7 +3057,8 @@ mod tests {
         let registry = Arc::new(LanguageRegistry::test());
 
         let completion_provider = Arc::new(FakeCompletionProvider::new());
-        let conversation = cx.add_model(|cx| Conversation::new(registry, cx, completion_provider));
+        let conversation =
+            cx.build_model(|cx| Conversation::new(registry, cx, completion_provider));
         let buffer = conversation.read(cx).buffer.clone();
 
         let message_1 = conversation.read(cx).message_anchors[0].clone();
@@ -3213,7 +3188,8 @@ mod tests {
         let registry = Arc::new(LanguageRegistry::test());
         let completion_provider = Arc::new(FakeCompletionProvider::new());
 
-        let conversation = cx.add_model(|cx| Conversation::new(registry, cx, completion_provider));
+        let conversation =
+            cx.build_model(|cx| Conversation::new(registry, cx, completion_provider));
         let buffer = conversation.read(cx).buffer.clone();
 
         let message_1 = conversation.read(cx).message_anchors[0].clone();
@@ -3310,7 +3286,8 @@ mod tests {
         init(cx);
         let registry = Arc::new(LanguageRegistry::test());
         let completion_provider = Arc::new(FakeCompletionProvider::new());
-        let conversation = cx.add_model(|cx| Conversation::new(registry, cx, completion_provider));
+        let conversation =
+            cx.build_model(|cx| Conversation::new(registry, cx, completion_provider));
         let buffer = conversation.read(cx).buffer.clone();
 
         let message_1 = conversation.read(cx).message_anchors[0].clone();
@@ -3394,7 +3371,7 @@ mod tests {
         let registry = Arc::new(LanguageRegistry::test());
         let completion_provider = Arc::new(FakeCompletionProvider::new());
         let conversation =
-            cx.add_model(|cx| Conversation::new(registry.clone(), cx, completion_provider));
+            cx.build_model(|cx| Conversation::new(registry.clone(), cx, completion_provider));
         let buffer = conversation.read(cx).buffer.clone();
         let message_0 = conversation.read(cx).message_anchors[0].id;
         let message_1 = conversation.update(cx, |conversation, cx| {
@@ -3427,7 +3404,7 @@ mod tests {
             ]
         );
 
-        let deserialized_conversation = cx.add_model(|cx| {
+        let deserialized_conversation = cx.build_model(|cx| {
             Conversation::deserialize(
                 conversation.read(cx).serialize(cx),
                 Default::default(),
