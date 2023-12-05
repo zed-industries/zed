@@ -555,6 +555,7 @@ impl Render for TerminalView {
                     .on_action(cx.listener(TerminalView::select_all))
                     .child(TerminalElement::new(
                         terminal_handle,
+                        self.focus_handle.clone(),
                         focused,
                         self.should_show_cursor(focused, cx),
                         self.can_navigate_to_selected_word,

@@ -9478,6 +9478,7 @@ dependencies = [
  "terminal2",
  "theme2",
  "thiserror",
+ "ui2",
  "util",
  "workspace2",
 ]

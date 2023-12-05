@@ -1,9 +1,10 @@
 use editor::{Cursor, HighlightedRange, HighlightedRangeLine};
 use gpui::{
-    black, point, px, red, relative, transparent_black, AnyElement, Bounds, Element, ElementId,
-    Font, FontStyle, FontWeight, HighlightStyle, Hsla, IntoElement, LayoutId, Pixels, Point, Rgba,
-    ShapedLine, Style, TextRun, TextStyle, TextSystem, UnderlineStyle, ViewContext, WeakModel,
-    WhiteSpace, WindowContext,
+    black, div, point, px, red, relative, transparent_black, AnyElement, AvailableSpace, Bounds,
+    Element, ElementId, FocusHandle, Font, FontStyle, FontWeight, HighlightStyle, Hsla,
+    InteractiveElement, InteractiveElementState, IntoElement, LayoutId, ModelContext, Pixels,
+    Point, Rgba, ShapedLine, Size, StatefulInteractiveElement, Styled, TextRun, TextStyle,
+    TextSystem, UnderlineStyle, WeakModel, WhiteSpace, WindowContext,
 };
 use itertools::Itertools;
 use language::CursorShape;
@@ -20,11 +21,10 @@ use terminal::{
     IndexedCell, Terminal, TerminalContent, TerminalSize,
 };
 use theme::{ActiveTheme, Theme, ThemeSettings};
+use ui::Tooltip;
 
 use std::mem;
 use std::{fmt::Debug, ops::RangeInclusive};
-
-use crate::TerminalView;
 
 ///The information generated during layout that is necessary for painting
 pub struct LayoutState {
@@ -146,14 +146,25 @@ impl LayoutRect {
 ///We need to keep a reference to the view for mouse events, do we need it for any other terminal stuff, or can we move that to connection?
 pub struct TerminalElement {
     terminal: WeakModel<Terminal>,
+    focus: FocusHandle,
     focused: bool,
     cursor_visible: bool,
     can_navigate_to_selected_word: bool,
+    interactivity: gpui::Interactivity,
 }
+
+impl InteractiveElement for TerminalElement {
+    fn interactivity(&mut self) -> &mut gpui::Interactivity {
+        &mut self.interactivity
+    }
+}
+
+impl StatefulInteractiveElement for TerminalElement {}
 
 impl TerminalElement {
     pub fn new(
         terminal: WeakModel<Terminal>,
+        focus: FocusHandle,
         focused: bool,
         cursor_visible: bool,
         can_navigate_to_selected_word: bool,
@@ -161,8 +172,10 @@ impl TerminalElement {
         TerminalElement {
             terminal,
             focused,
+            focus,
             cursor_visible,
             can_navigate_to_selected_word,
+            interactivity: Default::default(),
         }
     }
 
@@ -365,7 +378,6 @@ impl TerminalElement {
 
         //Setup layout information
         // todo!(Terminal tooltips)
-        // let link_style = settings.theme.editor.link_definition;
         // let tooltip_style = settings.theme.tooltip.clone();
 
         let buffer_font_size = settings.buffer_font_size(cx);
@@ -390,6 +402,20 @@ impl TerminalElement {
 
         let settings = ThemeSettings::get_global(cx);
         let theme = cx.theme().clone();
+
+        let link_style = HighlightStyle {
+            color: Some(gpui::blue()),
+            font_weight: None,
+            font_style: None,
+            background_color: None,
+            underline: Some(UnderlineStyle {
+                thickness: px(1.0),
+                color: Some(gpui::red()),
+                wavy: false,
+            }),
+            fade_out: None,
+        };
+
         let text_style = TextStyle {
             font_family,
             font_features,
@@ -439,38 +465,19 @@ impl TerminalElement {
         let last_hovered_word = terminal_handle.update(cx, |terminal, cx| {
             terminal.set_size(dimensions);
             terminal.try_sync(cx);
-            // if self.can_navigate_to_selected_word && terminal.can_navigate_to_selected_word() {
-            //     terminal.last_content.last_hovered_word.clone()
-            // } else {
-            None
-            // }
+            if self.can_navigate_to_selected_word && terminal.can_navigate_to_selected_word() {
+                terminal.last_content.last_hovered_word.clone()
+            } else {
+                None
+            }
         });
 
-        // let hyperlink_tooltip = last_hovered_word.clone().map(|hovered_word| {
-        //     let mut tooltip = Overlay::new(
-        //         Empty::new()
-        //             .contained()
-        //             .constrained()
-        //             .with_width(dimensions.width())
-        //             .with_height(dimensions.height())
-        //             .with_tooltip::<TerminalElement>(
-        //                 hovered_word.id,
-        //                 hovered_word.word,
-        //                 None,
-        //                 tooltip_style,
-        //                 cx,
-        //             ),
-        //     )
-        //     .with_position_mode(gpui::OverlayPositionMode::Local)
-        //     .into_any();
-
-        //     tooltip.layout(
-        //         SizeConstraint::new(Point::zero(), cx.window_size()),
-        //         view_state,
-        //         cx,
-        //     );
-        //     tooltip
-        // });
+        let hyperlink_tooltip = last_hovered_word.clone().map(|hovered_word| {
+            div()
+                .size_full()
+                .id("terminal-element")
+                .tooltip(move |cx| Tooltip::text(hovered_word.word.clone(), cx))
+        });
 
         let TerminalContent {
             cells,
@@ -498,10 +505,9 @@ impl TerminalElement {
             cells,
             &text_style,
             &cx.text_system(),
-            // todo!(Terminal tooltips)
-            last_hovered_word,
-            // .as_ref()
-            // .map(|last_hovered_word| (link_style, &last_hovered_word.word_match)),
+            last_hovered_word
+                .as_ref()
+                .map(|last_hovered_word| (link_style, &last_hovered_word.word_match)),
             cx,
         );
 
@@ -577,92 +583,95 @@ impl TerminalElement {
         }
     }
 
-    // todo!()
-    // fn generic_button_handler<E>(
-    //     connection: WeakModel<Terminal>,
-    //     origin: Point<Pixels>,
-    //     f: impl Fn(&mut Terminal, Point<Pixels>, E, &mut ModelContext<Terminal>),
-    // ) -> impl Fn(E, &mut TerminalView, &mut EventContext<TerminalView>) {
-    //     move |event, _: &mut TerminalView, cx| {
-    //         cx.focus_parent();
-    //         if let Some(conn_handle) = connection.upgrade() {
-    //             conn_handle.update(cx, |terminal, cx| {
-    //                 f(terminal, origin, event, cx);
-
-    //                 cx.notify();
-    //             })
-    //         }
-    //     }
-    // }
-
-    fn attach_mouse_handlers(
-        &self,
+    fn generic_button_handler<E>(
+        connection: WeakModel<Terminal>,
         origin: Point<Pixels>,
-        visible_bounds: Bounds<Pixels>,
+        focus_handle: FocusHandle,
+        f: impl Fn(&mut Terminal, Point<Pixels>, &E, &mut ModelContext<Terminal>),
+    ) -> impl Fn(&E, &mut WindowContext) {
+        move |event, cx| {
+            cx.focus(&focus_handle);
+            if let Some(conn_handle) = connection.upgrade() {
+                conn_handle.update(cx, |terminal, cx| {
+                    f(terminal, origin, event, cx);
+
+                    cx.notify();
+                })
+            }
+        }
+    }
+
+    fn paint_mouse_listeners(
+        self,
+        origin: Point<Pixels>,
         mode: TermMode,
-        cx: &mut ViewContext<TerminalView>,
-    ) {
-        // todo!()
-        // let connection = self.terminal;
+        bounds: Bounds<Pixels>,
+        cx: &mut WindowContext,
+    ) -> Self {
+        let focus = self.focus.clone();
+        let connection = self.terminal.clone();
 
-        // let mut region = MouseRegion::new::<Self>(cx.view_id(), 0, visible_bounds);
+        self.on_mouse_down(gpui::MouseButton::Left, {
+            let connection = connection.clone();
+            let focus = focus.clone();
+            move |e, cx| {
+                cx.focus(&focus);
+                //todo!(context menu)
+                // v.context_menu.update(cx, |menu, _cx| menu.delay_cancel());
+                if let Some(conn_handle) = connection.upgrade() {
+                    conn_handle.update(cx, |terminal, cx| {
+                        terminal.mouse_down(&e, origin);
 
-        // // Terminal Emulator controlled behavior:
-        // region = region
-        //     // Start selections
-        //     .on_down(MouseButton::Left, move |event, v: &mut TerminalView, cx| {
-        //         let terminal_view = cx.handle();
-        //         cx.focus(&terminal_view);
-        //         v.context_menu.update(cx, |menu, _cx| menu.delay_cancel());
-        //         if let Some(conn_handle) = connection.upgrade() {
-        //             conn_handle.update(cx, |terminal, cx| {
-        //                 terminal.mouse_down(&event, origin);
+                        cx.notify();
+                    })
+                }
+            }
+        })
+        .on_drag_event({
+            let connection = connection.clone();
+            let focus = focus.clone();
+            move |e, cx| {
+                if focus.is_focused(cx) {
+                    if let Some(conn_handle) = connection.upgrade() {
+                        conn_handle.update(cx, |terminal, cx| {
+                            terminal.mouse_drag(e, origin, bounds);
+                            cx.notify();
+                        })
+                    }
+                }
+            }
+        })
+        .on_mouse_up(
+            gpui::MouseButton::Left,
+            TerminalElement::generic_button_handler(
+                connection.clone(),
+                origin,
+                focus.clone(),
+                move |terminal, origin, e, cx| {
+                    terminal.mouse_up(&e, origin, cx);
+                },
+            ),
+        )
+        .on_click({
+            let connection = connection.clone();
+            move |e, cx| {
+                if e.down.button == gpui::MouseButton::Right {
+                    let mouse_mode = if let Some(conn_handle) = connection.upgrade() {
+                        conn_handle.update(cx, |terminal, _cx| {
+                            terminal.mouse_mode(e.down.modifiers.shift)
+                        })
+                    } else {
+                        // If we can't get the model handle, probably can't deploy the context menu
+                        true
+                    };
+                    if !mouse_mode {
+                        //todo!(context menu)
+                        // view.deploy_context_menu(e.position, cx);
+                    }
+                }
+            }
+        })
 
-        //                 cx.notify();
-        //             })
-        //         }
-        //     })
-        //     // Update drag selections
-        //     .on_drag(MouseButton::Left, move |event, _: &mut TerminalView, cx| {
-        //         if event.end {
-        //             return;
-        //         }
-
-        //         if cx.is_self_focused() {
-        //             if let Some(conn_handle) = connection.upgrade() {
-        //                 conn_handle.update(cx, |terminal, cx| {
-        //                     terminal.mouse_drag(event, origin);
-        //                     cx.notify();
-        //                 })
-        //             }
-        //         }
-        //     })
-        //     // Copy on up behavior
-        //     .on_up(
-        //         MouseButton::Left,
-        //         TerminalElement::generic_button_handler(
-        //             connection,
-        //             origin,
-        //             move |terminal, origin, e, cx| {
-        //                 terminal.mouse_up(&e, origin, cx);
-        //             },
-        //         ),
-        //     )
-        //     // Context menu
-        //     .on_click(
-        //         MouseButton::Right,
-        //         move |event, view: &mut TerminalView, cx| {
-        //             let mouse_mode = if let Some(conn_handle) = connection.upgrade() {
-        //                 conn_handle.update(cx, |terminal, _cx| terminal.mouse_mode(event.shift))
-        //             } else {
-        //                 // If we can't get the model handle, probably can't deploy the context menu
-        //                 true
-        //             };
-        //             if !mouse_mode {
-        //                 view.deploy_context_menu(event.position, cx);
-        //             }
-        //         },
-        //     )
         //     .on_move(move |event, _: &mut TerminalView, cx| {
         //         if cx.is_self_focused() {
         //             if let Some(conn_handle) = connection.upgrade() {
@@ -733,71 +742,88 @@ impl TerminalElement {
 }
 
 impl Element for TerminalElement {
-    type State = ();
+    type State = InteractiveElementState;
 
     fn layout(
         &mut self,
         element_state: Option<Self::State>,
         cx: &mut WindowContext<'_>,
     ) -> (LayoutId, Self::State) {
-        let mut style = Style::default();
-        style.size.width = relative(1.).into();
-        style.size.height = relative(1.).into();
-        let layout_id = cx.request_layout(&style, None);
+        let (layout_id, interactive_state) =
+            self.interactivity
+                .layout(element_state, cx, |mut style, cx| {
+                    style.size.width = relative(1.).into();
+                    style.size.height = relative(1.).into();
+                    let layout_id = cx.request_layout(&style, None);
 
-        (layout_id, ())
+                    layout_id
+                });
+
+        (layout_id, interactive_state)
     }
 
-    fn paint(self, bounds: Bounds<Pixels>, _: &mut Self::State, cx: &mut WindowContext<'_>) {
-        let layout = self.compute_layout(bounds, cx);
+    fn paint(self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut WindowContext<'_>) {
+        let mut layout = self.compute_layout(bounds, cx);
 
         let theme = cx.theme();
+
         cx.paint_quad(
             bounds,
             Default::default(),
-            theme.colors().editor_background,
+            layout.background_color,
             Default::default(),
             Hsla::default(),
         );
         let origin = bounds.origin + Point::new(layout.gutter, px(0.));
 
-        for rect in &layout.rects {
-            rect.paint(origin, &layout, cx);
-        }
+        let this = self.paint_mouse_listeners(origin, layout.mode, bounds, cx);
 
-        cx.with_z_index(1, |cx| {
-            for (relative_highlighted_range, color) in layout.relative_highlighted_ranges.iter() {
-                if let Some((start_y, highlighted_range_lines)) =
-                    to_highlighted_range_lines(relative_highlighted_range, &layout, origin)
-                {
-                    let hr = HighlightedRange {
-                        start_y, //Need to change this
-                        line_height: layout.size.line_height,
-                        lines: highlighted_range_lines,
-                        color: color.clone(),
-                        //Copied from editor. TODO: move to theme or something
-                        corner_radius: 0.15 * layout.size.line_height,
-                    };
-                    hr.paint(bounds, cx);
+        this.interactivity
+            .paint(bounds, bounds.size, state, cx, |_, _, cx| {
+                for rect in &layout.rects {
+                    rect.paint(origin, &layout, cx);
                 }
-            }
-        });
 
-        cx.with_z_index(2, |cx| {
-            for cell in &layout.cells {
-                cell.paint(origin, &layout, bounds, cx);
-            }
-        });
+                cx.with_z_index(1, |cx| {
+                    for (relative_highlighted_range, color) in
+                        layout.relative_highlighted_ranges.iter()
+                    {
+                        if let Some((start_y, highlighted_range_lines)) =
+                            to_highlighted_range_lines(relative_highlighted_range, &layout, origin)
+                        {
+                            let hr = HighlightedRange {
+                                start_y, //Need to change this
+                                line_height: layout.size.line_height,
+                                lines: highlighted_range_lines,
+                                color: color.clone(),
+                                //Copied from editor. TODO: move to theme or something
+                                corner_radius: 0.15 * layout.size.line_height,
+                            };
+                            hr.paint(bounds, cx);
+                        }
+                    }
+                });
 
-        cx.with_z_index(3, |cx| {
-            if let Some(cursor) = &layout.cursor {
-                cursor.paint(origin, cx);
-            }
-        });
+                cx.with_z_index(2, |cx| {
+                    for cell in &layout.cells {
+                        cell.paint(origin, &layout, bounds, cx);
+                    }
+                });
 
-        //     if let Some(element) = &mut element_state.hyperlink_tooltip {
-        //         element.paint(origin, visible_bounds, view_state, cx)
-        //     }
+                if this.cursor_visible {
+                    cx.with_z_index(3, |cx| {
+                        if let Some(cursor) = &layout.cursor {
+                            cursor.paint(origin, cx);
+                        }
+                    });
+                }
+
+                if let Some(element) = layout.hyperlink_tooltip.take() {
+                    let width: AvailableSpace = bounds.size.width.into();
+                    let height: AvailableSpace = bounds.size.height.into();
+                    element.draw(origin, Size { width, height }, cx)
+                }
+            });
     }
 
     // todo!() remove?

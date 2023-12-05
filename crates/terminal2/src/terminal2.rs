@@ -1104,7 +1104,12 @@ impl Terminal {
         }
     }
 
-    pub fn mouse_drag(&mut self, e: MouseMoveEvent, origin: Point<Pixels>, region: Bounds<Pixels>) {
+    pub fn mouse_drag(
+        &mut self,
+        e: &MouseMoveEvent,
+        origin: Point<Pixels>,
+        region: Bounds<Pixels>,
+    ) {
         let position = e.position - origin;
         self.last_mouse_position = Some(position);
 
@@ -1130,7 +1135,7 @@ impl Terminal {
         }
     }
 
-    fn drag_line_delta(&mut self, e: MouseMoveEvent, region: Bounds<Pixels>) -> Option<Pixels> {
+    fn drag_line_delta(&mut self, e: &MouseMoveEvent, region: Bounds<Pixels>) -> Option<Pixels> {
         //TODO: Why do these need to be doubled? Probably the same problem that the IME has
         let top = region.origin.y + (self.last_content.size.line_height * 2.);
         let bottom = region.lower_left().y - (self.last_content.size.line_height * 2.);
