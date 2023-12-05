@@ -1199,7 +1199,6 @@ impl CollabPanel {
             .on_click(cx.listener(move |this, _, cx| {
                 this.workspace.update(cx, |workspace, cx| {
                     let app_state = workspace.app_state().clone();
-                    let call = workspace.call_state();
                     workspace::join_remote_project(project_id, host_user_id, app_state, cx)
                         .detach_and_log_err(cx);
                 });
@@ -2219,20 +2218,19 @@ impl CollabPanel {
     }
 
     fn join_channel(&self, channel_id: u64, cx: &mut ViewContext<Self>) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
         let Some(handle) = cx.window_handle().downcast::<Workspace>() else {
             return;
         };
-        let active_call = ActiveCall::global(cx);
-        cx.spawn(|_, mut cx| async move {
-            active_call
-                .update(&mut cx, |active_call, cx| {
-                    active_call.join_channel(channel_id, Some(handle), cx)
-                })
-                .log_err()?
-                .await
-                .notify_async_err(&mut cx)
-        })
-        .detach()
+        workspace::join_channel(
+            channel_id,
+            workspace.read(cx).app_state().clone(),
+            Some(handle),
+            cx,
+        )
+        .detach_and_log_err(cx)
     }
 
     fn join_channel_chat(&mut self, channel_id: ChannelId, cx: &mut ViewContext<Self>) {
@@ -2500,15 +2498,7 @@ impl CollabPanel {
         let user_id = contact.user.id;
         let github_login = SharedString::from(contact.user.github_login.clone());
         let mut item = ListItem::new(github_login.clone())
-            .on_click(cx.listener(move |this, _, cx| {
-                this.workspace
-                    .update(cx, |this, cx| {
-                        this.call_state()
-                            .invite(user_id, None, cx)
-                            .detach_and_log_err(cx)
-                    })
-                    .log_err();
-            }))
+            .on_click(cx.listener(move |this, _, cx| this.call(user_id, cx)))
             .child(
                 h_stack()
                     .w_full()

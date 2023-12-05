@@ -99,37 +99,23 @@ impl Render for CollabTitlebarItem {
     type Element = Stateful<Div>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-        let is_in_room = self
-            .workspace
-            .update(cx, |this, cx| this.call_state().is_in_room(cx))
-            .unwrap_or_default();
+        let room = ActiveCall::global(cx).read(cx).room();
+        let is_in_room = room.is_some();
         let is_shared = is_in_room && self.project.read(cx).is_shared();
         let current_user = self.user_store.read(cx).current_user();
         let client = self.client.clone();
-        let users = self
-            .workspace
-            .update(cx, |this, cx| this.call_state().remote_participants(cx))
-            .log_err()
-            .flatten();
-        let is_muted = self
-            .workspace
-            .update(cx, |this, cx| this.call_state().is_muted(cx))
-            .log_err()
-            .flatten()
-            .unwrap_or_default();
-        let is_deafened = self
-            .workspace
-            .update(cx, |this, cx| this.call_state().is_deafened(cx))
-            .log_err()
-            .flatten()
-            .unwrap_or_default();
-        let speakers_icon = if self
-            .workspace
-            .update(cx, |this, cx| this.call_state().is_deafened(cx))
-            .log_err()
-            .flatten()
-            .unwrap_or_default()
-        {
+        let remote_participants = room.map(|room| {
+            room.read(cx)
+                .remote_participants()
+                .values()
+                .map(|participant| (participant.user.clone(), participant.peer_id))
+                .collect::<Vec<_>>()
+        });
+        let is_muted = room.map_or(false, |room| room.read(cx).is_muted(cx));
+        let is_deafened = room
+            .and_then(|room| room.read(cx).is_deafened())
+            .unwrap_or(false);
+        let speakers_icon = if is_deafened {
             ui::Icon::AudioOff
         } else {
             ui::Icon::AudioOn
@@ -165,7 +151,7 @@ impl Render for CollabTitlebarItem {
                     .children(self.render_project_branch(cx)),
             )
             .when_some(
-                users.zip(current_user.clone()),
+                remote_participants.zip(current_user.clone()),
                 |this, (remote_participants, current_user)| {
                     let mut pile = FacePile::default();
                     pile.extend(
@@ -176,25 +162,30 @@ impl Render for CollabTitlebarItem {
                                 div().child(Avatar::data(avatar.clone())).into_any_element()
                             })
                             .into_iter()
-                            .chain(remote_participants.into_iter().flat_map(|(user, peer_id)| {
-                                user.avatar.as_ref().map(|avatar| {
-                                    div()
-                                        .child(
-                                            Avatar::data(avatar.clone()).into_element().into_any(),
-                                        )
-                                        .on_mouse_down(MouseButton::Left, {
-                                            let workspace = workspace.clone();
-                                            move |_, cx| {
-                                                workspace
-                                                    .update(cx, |this, cx| {
-                                                        this.open_shared_screen(peer_id, cx);
-                                                    })
-                                                    .log_err();
-                                            }
-                                        })
-                                        .into_any_element()
-                                })
-                            })),
+                            .chain(remote_participants.into_iter().filter_map(
+                                |(user, peer_id)| {
+                                    let avatar = user.avatar.as_ref()?;
+                                    Some(
+                                        div()
+                                            .child(
+                                                Avatar::data(avatar.clone())
+                                                    .into_element()
+                                                    .into_any(),
+                                            )
+                                            .on_mouse_down(MouseButton::Left, {
+                                                let workspace = workspace.clone();
+                                                move |_, cx| {
+                                                    workspace
+                                                        .update(cx, |this, cx| {
+                                                            this.open_shared_screen(peer_id, cx);
+                                                        })
+                                                        .log_err();
+                                                }
+                                            })
+                                            .into_any_element(),
+                                    )
+                                },
+                            )),
                     );
                     this.child(pile.render(cx))
                 },
@@ -226,15 +217,10 @@ impl Render for CollabTitlebarItem {
                                 .child(
                                     IconButton::new("leave-call", ui::Icon::Exit)
                                         .style(ButtonStyle::Subtle)
-                                        .on_click({
-                                            let workspace = workspace.clone();
-                                            move |_, cx| {
-                                                workspace
-                                                    .update(cx, |this, cx| {
-                                                        this.call_state().hang_up(cx).detach();
-                                                    })
-                                                    .log_err();
-                                            }
+                                        .on_click(move |_, cx| {
+                                            ActiveCall::global(cx)
+                                                .update(cx, |call, cx| call.hang_up(cx))
+                                                .detach_and_log_err(cx);
                                         }),
                                 ),
                         )
@@ -252,15 +238,8 @@ impl Render for CollabTitlebarItem {
                                     )
                                     .style(ButtonStyle::Subtle)
                                     .selected(is_muted)
-                                    .on_click({
-                                        let workspace = workspace.clone();
-                                        move |_, cx| {
-                                            workspace
-                                                .update(cx, |this, cx| {
-                                                    this.call_state().toggle_mute(cx);
-                                                })
-                                                .log_err();
-                                        }
+                                    .on_click(move |_, cx| {
+                                        crate::toggle_mute(&Default::default(), cx)
                                     }),
                                 )
                                 .child(
@@ -275,26 +254,15 @@ impl Render for CollabTitlebarItem {
                                                 cx,
                                             )
                                         })
-                                        .on_click({
-                                            let workspace = workspace.clone();
-                                            move |_, cx| {
-                                                workspace
-                                                    .update(cx, |this, cx| {
-                                                        this.call_state().toggle_deafen(cx);
-                                                    })
-                                                    .log_err();
-                                            }
+                                        .on_click(move |_, cx| {
+                                            crate::toggle_mute(&Default::default(), cx)
                                         }),
                                 )
                                 .child(
                                     IconButton::new("screen-share", ui::Icon::Screen)
                                         .style(ButtonStyle::Subtle)
                                         .on_click(move |_, cx| {
-                                            workspace
-                                                .update(cx, |this, cx| {
-                                                    this.call_state().toggle_screen_share(cx);
-                                                })
-                                                .log_err();
+                                            crate::toggle_screen_sharing(&Default::default(), cx)
                                         }),
                                 )
                                 .pl_2(),
