@@ -1,9 +1,9 @@
 use super::BoolExt;
 use crate::{
-    AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId, ForegroundExecutor,
-    InputEvent, MacDispatcher, MacDisplay, MacDisplayLinker, MacTextSystem, MacWindow,
-    PathPromptOptions, Platform, PlatformDisplay, PlatformTextSystem, PlatformWindow, Result,
-    SemanticVersion, VideoTimestamp, WindowOptions,
+    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
+    ForegroundExecutor, InputEvent, MacDispatcher, MacDisplay, MacDisplayLinker, MacTextSystem,
+    MacWindow, PathPromptOptions, Platform, PlatformDisplay, PlatformTextSystem, PlatformWindow,
+    Result, SemanticVersion, VideoTimestamp, WindowOptions,
 };
 use anyhow::anyhow;
 use block::ConcreteBlock;
@@ -155,12 +155,12 @@ pub struct MacPlatformState {
     reopen: Option<Box<dyn FnMut()>>,
     quit: Option<Box<dyn FnMut()>>,
     event: Option<Box<dyn FnMut(InputEvent) -> bool>>,
-    // menu_command: Option<Box<dyn FnMut(&dyn Action)>>,
-    // validate_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
+    menu_command: Option<Box<dyn FnMut(&dyn Action)>>,
+    validate_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
     will_open_menu: Option<Box<dyn FnMut()>>,
+    menu_actions: Vec<Box<dyn Action>>,
     open_urls: Option<Box<dyn FnMut(Vec<String>)>>,
     finish_launching: Option<Box<dyn FnOnce()>>,
-    // menu_actions: Vec<Box<dyn Action>>,
 }
 
 impl MacPlatform {
@@ -179,12 +179,12 @@ impl MacPlatform {
             reopen: None,
             quit: None,
             event: None,
+            menu_command: None,
+            validate_menu_command: None,
             will_open_menu: None,
+            menu_actions: Default::default(),
             open_urls: None,
             finish_launching: None,
-            // menu_command: None,
-            // validate_menu_command: None,
-            // menu_actions: Default::default(),
         }))
     }
 
@@ -681,17 +681,17 @@ impl Platform for MacPlatform {
         }
     }
 
-    // fn on_menu_command(&self, callback: Box<dyn FnMut(&dyn Action)>) {
-    //     self.0.lock().menu_command = Some(callback);
-    // }
+    fn on_menu_command(&self, callback: Box<dyn FnMut(&dyn Action)>) {
+        self.0.lock().menu_command = Some(callback);
+    }
 
-    // fn on_will_open_menu(&self, callback: Box<dyn FnMut()>) {
-    //     self.0.lock().will_open_menu = Some(callback);
-    // }
+    fn on_will_open_menu(&self, callback: Box<dyn FnMut()>) {
+        self.0.lock().will_open_menu = Some(callback);
+    }
 
-    // fn on_validate_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>) {
-    //     self.0.lock().validate_menu_command = Some(callback);
-    // }
+    fn on_validate_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>) {
+        self.0.lock().validate_menu_command = Some(callback);
+    }
 
     // fn set_menus(&self, menus: Vec<Menu>, keystroke_matcher: &KeymapMatcher) {
     //     unsafe {
@@ -956,7 +956,7 @@ unsafe fn path_from_objc(path: id) -> PathBuf {
     PathBuf::from(path)
 }
 
-unsafe fn get_foreground_platform(object: &mut Object) -> &MacPlatform {
+unsafe fn get_mac_platform(object: &mut Object) -> &MacPlatform {
     let platform_ptr: *mut c_void = *object.get_ivar(MAC_PLATFORM_IVAR);
     assert!(!platform_ptr.is_null());
     &*(platform_ptr as *const MacPlatform)
@@ -965,7 +965,7 @@ unsafe fn get_foreground_platform(object: &mut Object) -> &MacPlatform {
 extern "C" fn send_event(this: &mut Object, _sel: Sel, native_event: id) {
     unsafe {
         if let Some(event) = InputEvent::from_native(native_event, None) {
-            let platform = get_foreground_platform(this);
+            let platform = get_mac_platform(this);
             if let Some(callback) = platform.0.lock().event.as_mut() {
                 if !callback(event) {
                     return;
@@ -981,7 +981,7 @@ extern "C" fn did_finish_launching(this: &mut Object, _: Sel, _: id) {
         let app: id = msg_send![APP_CLASS, sharedApplication];
         app.setActivationPolicy_(NSApplicationActivationPolicyRegular);
 
-        let platform = get_foreground_platform(this);
+        let platform = get_mac_platform(this);
         let callback = platform.0.lock().finish_launching.take();
         if let Some(callback) = callback {
             callback();
@@ -991,7 +991,7 @@ extern "C" fn did_finish_launching(this: &mut Object, _: Sel, _: id) {
 
 extern "C" fn should_handle_reopen(this: &mut Object, _: Sel, _: id, has_open_windows: bool) {
     if !has_open_windows {
-        let platform = unsafe { get_foreground_platform(this) };
+        let platform = unsafe { get_mac_platform(this) };
         if let Some(callback) = platform.0.lock().reopen.as_mut() {
             callback();
         }
@@ -999,21 +999,21 @@ extern "C" fn should_handle_reopen(this: &mut Object, _: Sel, _: id, has_open_wi
 }
 
 extern "C" fn did_become_active(this: &mut Object, _: Sel, _: id) {
-    let platform = unsafe { get_foreground_platform(this) };
+    let platform = unsafe { get_mac_platform(this) };
     if let Some(callback) = platform.0.lock().become_active.as_mut() {
         callback();
     }
 }
 
 extern "C" fn did_resign_active(this: &mut Object, _: Sel, _: id) {
-    let platform = unsafe { get_foreground_platform(this) };
+    let platform = unsafe { get_mac_platform(this) };
     if let Some(callback) = platform.0.lock().resign_active.as_mut() {
         callback();
     }
 }
 
 extern "C" fn will_terminate(this: &mut Object, _: Sel, _: id) {
-    let platform = unsafe { get_foreground_platform(this) };
+    let platform = unsafe { get_mac_platform(this) };
     if let Some(callback) = platform.0.lock().quit.as_mut() {
         callback();
     }
@@ -1035,49 +1035,47 @@ extern "C" fn open_urls(this: &mut Object, _: Sel, _: id, urls: id) {
             })
             .collect::<Vec<_>>()
     };
-    let platform = unsafe { get_foreground_platform(this) };
+    let platform = unsafe { get_mac_platform(this) };
     if let Some(callback) = platform.0.lock().open_urls.as_mut() {
         callback(urls);
     }
 }
 
-extern "C" fn handle_menu_item(__this: &mut Object, _: Sel, __item: id) {
-    todo!()
-    // unsafe {
-    //     let platform = get_foreground_platform(this);
-    //     let mut platform = platform.0.lock();
-    //     if let Some(mut callback) = platform.menu_command.take() {
-    //         let tag: NSInteger = msg_send![item, tag];
-    //         let index = tag as usize;
-    //         if let Some(action) = platform.menu_actions.get(index) {
-    //             callback(action.as_ref());
-    //         }
-    //         platform.menu_command = Some(callback);
-    //     }
-    // }
+extern "C" fn handle_menu_item(this: &mut Object, _: Sel, item: id) {
+    unsafe {
+        let platform = get_mac_platform(this);
+        let mut platform = platform.0.lock();
+        if let Some(mut callback) = platform.menu_command.take() {
+            let tag: NSInteger = msg_send![item, tag];
+            let index = tag as usize;
+            if let Some(action) = platform.menu_actions.get(index) {
+                callback(action.as_ref());
+            }
+            platform.menu_command = Some(callback);
+        }
+    }
 }
 
-extern "C" fn validate_menu_item(__this: &mut Object, _: Sel, __item: id) -> bool {
-    todo!()
-    // unsafe {
-    //     let mut result = false;
-    //     let platform = get_foreground_platform(this);
-    //     let mut platform = platform.0.lock();
-    //     if let Some(mut callback) = platform.validate_menu_command.take() {
-    //         let tag: NSInteger = msg_send![item, tag];
-    //         let index = tag as usize;
-    //         if let Some(action) = platform.menu_actions.get(index) {
-    //             result = callback(action.as_ref());
-    //         }
-    //         platform.validate_menu_command = Some(callback);
-    //     }
-    //     result
-    // }
+extern "C" fn validate_menu_item(this: &mut Object, _: Sel, item: id) -> bool {
+    unsafe {
+        let mut result = false;
+        let platform = get_mac_platform(this);
+        let mut platform = platform.0.lock();
+        if let Some(mut callback) = platform.validate_menu_command.take() {
+            let tag: NSInteger = msg_send![item, tag];
+            let index = tag as usize;
+            if let Some(action) = platform.menu_actions.get(index) {
+                result = callback(action.as_ref());
+            }
+            platform.validate_menu_command = Some(callback);
+        }
+        result
+    }
 }
 
 extern "C" fn menu_will_open(this: &mut Object, _: Sel, _: id) {
     unsafe {
-        let platform = get_foreground_platform(this);
+        let platform = get_mac_platform(this);
         let mut platform = platform.0.lock();
         if let Some(mut callback) = platform.will_open_menu.take() {
             callback();

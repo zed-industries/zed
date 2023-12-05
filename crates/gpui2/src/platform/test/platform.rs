@@ -205,6 +205,18 @@ impl Platform for TestPlatform {
         unimplemented!()
     }
 
+    fn on_menu_command(&self, _callback: Box<dyn FnMut(&dyn crate::Action)>) {
+        unimplemented!()
+    }
+
+    fn on_will_open_menu(&self, _callback: Box<dyn FnMut()>) {
+        unimplemented!()
+    }
+
+    fn on_validate_menu_command(&self, _callback: Box<dyn FnMut(&dyn crate::Action) -> bool>) {
+        unimplemented!()
+    }
+
     fn os_name(&self) -> &'static str {
         "test"
     }

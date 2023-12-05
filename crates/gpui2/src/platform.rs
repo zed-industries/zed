@@ -5,7 +5,7 @@ mod mac;
 mod test;
 
 use crate::{
-    point, size, AnyWindowHandle, BackgroundExecutor, Bounds, DevicePixels, Font, FontId,
+    point, size, Action, AnyWindowHandle, BackgroundExecutor, Bounds, DevicePixels, Font, FontId,
     FontMetrics, FontRun, ForegroundExecutor, GlobalPixels, GlyphId, InputEvent, LineLayout,
     Pixels, Point, RenderGlyphParams, RenderImageParams, RenderSvgParams, Result, Scene,
     SharedString, Size, TaskLabel,
@@ -89,6 +89,10 @@ pub trait Platform: 'static {
     fn on_quit(&self, callback: Box<dyn FnMut()>);
     fn on_reopen(&self, callback: Box<dyn FnMut()>);
     fn on_event(&self, callback: Box<dyn FnMut(InputEvent) -> bool>);
+
+    fn on_menu_command(&self, callback: Box<dyn FnMut(&dyn Action)>);
+    fn on_will_open_menu(&self, callback: Box<dyn FnMut()>);
+    fn on_validate_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>);
 
     fn os_name(&self) -> &'static str;
     fn os_version(&self) -> Result<SemanticVersion>;
