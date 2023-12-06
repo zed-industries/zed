@@ -104,7 +104,6 @@ pub fn init(
         }
     });
     cx.on_action(|_: &SignOut, cx| {
-        dbg!("Signing out");
         if let Some(copilot) = Copilot::global(cx) {
             copilot
                 .update(cx, |copilot, cx| copilot.sign_out(cx))
