@@ -2077,6 +2077,7 @@ impl Workspace {
                 }
                 if &pane == self.active_pane() {
                     self.active_item_path_changed(cx);
+                    self.update_active_view_for_followers(cx);
                 }
             }
             pane::Event::ChangeItemTitle => {
@@ -2756,18 +2757,18 @@ impl Workspace {
     fn update_active_view_for_followers(&mut self, cx: &mut ViewContext<Self>) {
         let mut is_project_item = true;
         let mut update = proto::UpdateActiveView::default();
-        if self.active_pane.read(cx).has_focus(cx) {
-            let item = self
-                .active_item(cx)
-                .and_then(|item| item.to_followable_item_handle(cx));
-            if let Some(item) = item {
-                is_project_item = item.is_project_item(cx);
-                update = proto::UpdateActiveView {
-                    id: item
-                        .remote_id(&self.app_state.client, cx)
-                        .map(|id| id.to_proto()),
-                    leader_id: self.leader_for_pane(&self.active_pane),
-                };
+
+        if let Some(item) = self.active_item(cx) {
+            if item.focus_handle(cx).contains_focused(cx) {
+                if let Some(item) = item.to_followable_item_handle(cx) {
+                    is_project_item = item.is_project_item(cx);
+                    update = proto::UpdateActiveView {
+                        id: item
+                            .remote_id(&self.app_state.client, cx)
+                            .map(|id| id.to_proto()),
+                        leader_id: self.leader_for_pane(&self.active_pane),
+                    };
+                }
             }
         }
 

@@ -1830,7 +1830,7 @@ dependencies = [
  "clap 3.2.25",
  "client2",
  "clock",
- "collab_ui",
+ "collab_ui2",
  "collections",
  "ctor",
  "dashmap",

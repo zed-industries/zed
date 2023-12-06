@@ -13,7 +13,7 @@ use client::{
 use collections::{HashMap, HashSet};
 use fs::FakeFs;
 use futures::{channel::oneshot, StreamExt as _};
-use gpui::{BackgroundExecutor, Context, Model, TestAppContext, WindowHandle};
+use gpui::{BackgroundExecutor, Context, Model, TestAppContext, View, VisualTestContext};
 use language::LanguageRegistry;
 use node_runtime::FakeNodeRuntime;
 
@@ -602,14 +602,12 @@ impl TestClient {
         .unwrap()
     }
 
-    //todo(workspace)
-    #[allow(dead_code)]
-    pub fn build_workspace(
-        &self,
+    pub fn build_workspace<'a>(
+        &'a self,
         project: &Model<Project>,
-        cx: &mut TestAppContext,
-    ) -> WindowHandle<Workspace> {
-        cx.add_window(|cx| Workspace::new(0, project.clone(), self.app_state.clone(), cx))
+        cx: &'a mut TestAppContext,
+    ) -> (View<Workspace>, &'a mut VisualTestContext) {
+        cx.add_window_view(|cx| Workspace::new(0, project.clone(), self.app_state.clone(), cx))
     }
 }
 
