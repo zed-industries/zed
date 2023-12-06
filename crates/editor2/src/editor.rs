@@ -431,6 +431,15 @@ pub fn init(cx: &mut AppContext) {
             .detach();
         }
     });
+    cx.on_action(move |_: &workspace::NewWindow, cx| {
+        let app_state = cx.global::<Weak<workspace::AppState>>();
+        if let Some(app_state) = app_state.upgrade() {
+            workspace::open_new(&app_state, cx, |workspace, cx| {
+                Editor::new_file(workspace, &Default::default(), cx)
+            })
+            .detach();
+        }
+    })
 }
 
 trait InvalidationRegion {
