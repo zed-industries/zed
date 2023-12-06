@@ -32,7 +32,7 @@ use std::{
 };
 use text::Selection;
 use theme::{ActiveTheme, Theme};
-use ui::{h_stack, Color, Label};
+use ui::{h_stack, prelude::*, Label};
 use util::{paths::PathExt, paths::FILE_ROW_COLUMN_DELIMITER, ResultExt, TryFutureExt};
 use workspace::{
     item::{BreadcrumbText, FollowEvent, FollowableItemHandle},

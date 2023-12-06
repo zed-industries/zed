@@ -453,19 +453,21 @@ impl<'a> WindowContext<'a> {
     }
 
     pub fn dispatch_action(&mut self, action: Box<dyn Action>) {
-        if let Some(focus_handle) = self.focused() {
-            self.defer(move |cx| {
-                if let Some(node_id) = cx
-                    .window
-                    .current_frame
-                    .dispatch_tree
-                    .focusable_node_id(focus_handle.id)
-                {
-                    cx.propagate_event = true;
-                    cx.dispatch_action_on_node(node_id, action);
-                }
-            })
-        }
+        let focus_handle = self.focused();
+
+        self.defer(move |cx| {
+            let node_id = focus_handle
+                .and_then(|handle| {
+                    cx.window
+                        .current_frame
+                        .dispatch_tree
+                        .focusable_node_id(handle.id)
+                })
+                .unwrap_or_else(|| cx.window.current_frame.dispatch_tree.root_node_id());
+
+            cx.propagate_event = true;
+            cx.dispatch_action_on_node(node_id, action);
+        })
     }
 
     /// Schedules the given function to be run at the end of the current effect cycle, allowing entities
@@ -1154,8 +1156,19 @@ impl<'a> WindowContext<'a> {
         self.start_frame();
 
         self.with_z_index(0, |cx| {
-            let available_space = cx.window.viewport_size.map(Into::into);
-            root_view.draw(Point::zero(), available_space, cx);
+            cx.with_key_dispatch(Some(KeyContext::default()), None, |_, cx| {
+                for (action_type, action_listeners) in &cx.app.global_action_listeners {
+                    for action_listener in action_listeners.iter().cloned() {
+                        cx.window.current_frame.dispatch_tree.on_action(
+                            *action_type,
+                            Rc::new(move |action, phase, cx| action_listener(action, phase, cx)),
+                        )
+                    }
+                }
+
+                let available_space = cx.window.viewport_size.map(Into::into);
+                root_view.draw(Point::zero(), available_space, cx);
+            })
         });
 
         if let Some(active_drag) = self.app.active_drag.take() {
@@ -1338,73 +1351,77 @@ impl<'a> WindowContext<'a> {
     }
 
     fn dispatch_key_event(&mut self, event: &dyn Any) {
-        if let Some(node_id) = self.window.focus.and_then(|focus_id| {
-            self.window
-                .current_frame
-                .dispatch_tree
-                .focusable_node_id(focus_id)
-        }) {
-            let dispatch_path = self
-                .window
-                .current_frame
-                .dispatch_tree
-                .dispatch_path(node_id);
+        let node_id = self
+            .window
+            .focus
+            .and_then(|focus_id| {
+                self.window
+                    .current_frame
+                    .dispatch_tree
+                    .focusable_node_id(focus_id)
+            })
+            .unwrap_or_else(|| self.window.current_frame.dispatch_tree.root_node_id());
 
-            let mut actions: Vec<Box<dyn Action>> = Vec::new();
+        let dispatch_path = self
+            .window
+            .current_frame
+            .dispatch_tree
+            .dispatch_path(node_id);
 
-            // Capture phase
-            let mut context_stack: SmallVec<[KeyContext; 16]> = SmallVec::new();
-            self.propagate_event = true;
+        let mut actions: Vec<Box<dyn Action>> = Vec::new();
 
-            for node_id in &dispatch_path {
-                let node = self.window.current_frame.dispatch_tree.node(*node_id);
+        // Capture phase
+        let mut context_stack: SmallVec<[KeyContext; 16]> = SmallVec::new();
+        self.propagate_event = true;
 
-                if !node.context.is_empty() {
-                    context_stack.push(node.context.clone());
-                }
+        for node_id in &dispatch_path {
+            let node = self.window.current_frame.dispatch_tree.node(*node_id);
 
-                for key_listener in node.key_listeners.clone() {
-                    key_listener(event, DispatchPhase::Capture, self);
-                    if !self.propagate_event {
-                        return;
-                    }
-                }
+            if !node.context.is_empty() {
+                context_stack.push(node.context.clone());
             }
 
-            // Bubble phase
-            for node_id in dispatch_path.iter().rev() {
-                // Handle low level key events
-                let node = self.window.current_frame.dispatch_tree.node(*node_id);
-                for key_listener in node.key_listeners.clone() {
-                    key_listener(event, DispatchPhase::Bubble, self);
-                    if !self.propagate_event {
-                        return;
-                    }
-                }
-
-                // Match keystrokes
-                let node = self.window.current_frame.dispatch_tree.node(*node_id);
-                if !node.context.is_empty() {
-                    if let Some(key_down_event) = event.downcast_ref::<KeyDownEvent>() {
-                        if let Some(found) = self
-                            .window
-                            .current_frame
-                            .dispatch_tree
-                            .dispatch_key(&key_down_event.keystroke, &context_stack)
-                        {
-                            actions.push(found.boxed_clone())
-                        }
-                    }
-
-                    context_stack.pop();
-                }
-            }
-
-            for action in actions {
-                self.dispatch_action_on_node(node_id, action);
+            for key_listener in node.key_listeners.clone() {
+                key_listener(event, DispatchPhase::Capture, self);
                 if !self.propagate_event {
                     return;
                 }
+            }
+        }
+
+        // Bubble phase
+        for node_id in dispatch_path.iter().rev() {
+            // Handle low level key events
+            let node = self.window.current_frame.dispatch_tree.node(*node_id);
+            for key_listener in node.key_listeners.clone() {
+                key_listener(event, DispatchPhase::Bubble, self);
+                if !self.propagate_event {
+                    return;
+                }
+            }
+
+            // Match keystrokes
+            let node = self.window.current_frame.dispatch_tree.node(*node_id);
+            if !node.context.is_empty() {
+                if let Some(key_down_event) = event.downcast_ref::<KeyDownEvent>() {
+                    if let Some(found) = self
+                        .window
+                        .current_frame
+                        .dispatch_tree
+                        .dispatch_key(&key_down_event.keystroke, &context_stack)
+                    {
+                        actions.push(found.boxed_clone())
+                    }
+                }
+
+                context_stack.pop();
+            }
+        }
+
+        for action in actions {
+            self.dispatch_action_on_node(node_id, action);
+            if !self.propagate_event {
+                return;
             }
         }
     }
@@ -1490,14 +1507,21 @@ impl<'a> WindowContext<'a> {
     }
 
     pub fn available_actions(&self) -> Vec<Box<dyn Action>> {
-        if let Some(focus_id) = self.window.focus {
-            self.window
-                .current_frame
-                .dispatch_tree
-                .available_actions(focus_id)
-        } else {
-            Vec::new()
-        }
+        let node_id = self
+            .window
+            .focus
+            .and_then(|focus_id| {
+                self.window
+                    .current_frame
+                    .dispatch_tree
+                    .focusable_node_id(focus_id)
+            })
+            .unwrap_or_else(|| self.window.current_frame.dispatch_tree.root_node_id());
+
+        self.window
+            .current_frame
+            .dispatch_tree
+            .available_actions(node_id)
     }
 
     pub fn bindings_for_action(&self, action: &dyn Action) -> Vec<KeyBinding> {
@@ -1553,7 +1577,7 @@ impl<'a> WindowContext<'a> {
     //========== ELEMENT RELATED FUNCTIONS ===========
     pub fn with_key_dispatch<R>(
         &mut self,
-        context: KeyContext,
+        context: Option<KeyContext>,
         focus_handle: Option<FocusHandle>,
         f: impl FnOnce(Option<FocusHandle>, &mut Self) -> R,
     ) -> R {

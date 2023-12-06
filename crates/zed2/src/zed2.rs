@@ -169,9 +169,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
         cx.on_window_should_close(move |cx| {
             handle
                 .update(cx, |workspace, cx| {
-                    if let Some(task) = workspace.close(&Default::default(), cx) {
-                        task.detach_and_log_err(cx);
-                    }
+                    workspace.close_window(&Default::default(), cx);
                     false
                 })
                 .unwrap_or(true)
