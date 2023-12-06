@@ -15,7 +15,7 @@ impl TestDisplay {
             id: DisplayId(1),
             uuid: uuid::Uuid::new_v4(),
             bounds: Bounds::from_corners(
-                Point::zero(),
+                Point::default(),
                 Point::new(GlobalPixels(1920.), GlobalPixels(1080.)),
             ),
         }

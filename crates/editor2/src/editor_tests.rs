@@ -345,7 +345,12 @@ fn test_selection_with_mouse(cx: &mut TestAppContext) {
     );
 
     editor.update(cx, |view, cx| {
-        view.update_selection(DisplayPoint::new(3, 3), 0, gpui::Point::<f32>::zero(), cx);
+        view.update_selection(
+            DisplayPoint::new(3, 3),
+            0,
+            gpui::Point::<f32>::default(),
+            cx,
+        );
     });
 
     assert_eq!(
@@ -356,7 +361,12 @@ fn test_selection_with_mouse(cx: &mut TestAppContext) {
     );
 
     editor.update(cx, |view, cx| {
-        view.update_selection(DisplayPoint::new(1, 1), 0, gpui::Point::<f32>::zero(), cx);
+        view.update_selection(
+            DisplayPoint::new(1, 1),
+            0,
+            gpui::Point::<f32>::default(),
+            cx,
+        );
     });
 
     assert_eq!(
@@ -368,7 +378,12 @@ fn test_selection_with_mouse(cx: &mut TestAppContext) {
 
     editor.update(cx, |view, cx| {
         view.end_selection(cx);
-        view.update_selection(DisplayPoint::new(3, 3), 0, gpui::Point::<f32>::zero(), cx);
+        view.update_selection(
+            DisplayPoint::new(3, 3),
+            0,
+            gpui::Point::<f32>::default(),
+            cx,
+        );
     });
 
     assert_eq!(
@@ -380,7 +395,12 @@ fn test_selection_with_mouse(cx: &mut TestAppContext) {
 
     editor.update(cx, |view, cx| {
         view.begin_selection(DisplayPoint::new(3, 3), true, 1, cx);
-        view.update_selection(DisplayPoint::new(0, 0), 0, gpui::Point::<f32>::zero(), cx);
+        view.update_selection(
+            DisplayPoint::new(0, 0),
+            0,
+            gpui::Point::<f32>::default(),
+            cx,
+        );
     });
 
     assert_eq!(
@@ -423,7 +443,12 @@ fn test_canceling_pending_selection(cx: &mut TestAppContext) {
     });
 
     view.update(cx, |view, cx| {
-        view.update_selection(DisplayPoint::new(3, 3), 0, gpui::Point::<f32>::zero(), cx);
+        view.update_selection(
+            DisplayPoint::new(3, 3),
+            0,
+            gpui::Point::<f32>::default(),
+            cx,
+        );
         assert_eq!(
             view.selections.display_ranges(cx),
             [DisplayPoint::new(2, 2)..DisplayPoint::new(3, 3)]
@@ -432,7 +457,12 @@ fn test_canceling_pending_selection(cx: &mut TestAppContext) {
 
     view.update(cx, |view, cx| {
         view.cancel(&Cancel, cx);
-        view.update_selection(DisplayPoint::new(1, 1), 0, gpui::Point::<f32>::zero(), cx);
+        view.update_selection(
+            DisplayPoint::new(1, 1),
+            0,
+            gpui::Point::<f32>::default(),
+            cx,
+        );
         assert_eq!(
             view.selections.display_ranges(cx),
             [DisplayPoint::new(2, 2)..DisplayPoint::new(3, 3)]
@@ -643,11 +673,21 @@ fn test_cancel(cx: &mut TestAppContext) {
 
     view.update(cx, |view, cx| {
         view.begin_selection(DisplayPoint::new(3, 4), false, 1, cx);
-        view.update_selection(DisplayPoint::new(1, 1), 0, gpui::Point::<f32>::zero(), cx);
+        view.update_selection(
+            DisplayPoint::new(1, 1),
+            0,
+            gpui::Point::<f32>::default(),
+            cx,
+        );
         view.end_selection(cx);
 
         view.begin_selection(DisplayPoint::new(0, 1), true, 1, cx);
-        view.update_selection(DisplayPoint::new(0, 3), 0, gpui::Point::<f32>::zero(), cx);
+        view.update_selection(
+            DisplayPoint::new(0, 3),
+            0,
+            gpui::Point::<f32>::default(),
+            cx,
+        );
         view.end_selection(cx);
         assert_eq!(
             view.selections.display_ranges(cx),
