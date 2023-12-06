@@ -92,6 +92,7 @@ members = [
     "crates/project_symbols",
     "crates/quick_action_bar2",
     "crates/recent_projects",
+    "crates/recent_projects2",
     "crates/rope",
     "crates/rpc",
     "crates/rpc2",

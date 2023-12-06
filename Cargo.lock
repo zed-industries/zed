@@ -1959,6 +1959,7 @@ dependencies = [
  "postage",
  "pretty_assertions",
  "project2",
+ "recent_projects2",
  "rich_text2",
  "rpc2",
  "schemars",
@@ -7308,6 +7309,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "recent_projects2"
+version = "0.1.0"
+dependencies = [
+ "db",
+ "editor2",
+ "futures 0.3.28",
+ "fuzzy2",
+ "gpui2",
+ "language2",
+ "ordered-float 2.10.0",
+ "picker2",
+ "postage",
+ "settings2",
+ "smol",
+ "text2",
+ "theme2",
+ "ui2",
+ "util",
+ "workspace2",
+]
+
+[[package]]
 name = "redox_syscall"
 version = "0.2.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11948,6 +11971,7 @@ dependencies = [
  "project_panel2",
  "quick_action_bar2",
  "rand 0.8.5",
+ "recent_projects2",
  "regex",
  "rope2",
  "rpc2",

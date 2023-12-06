@@ -45,9 +45,10 @@ use node_runtime::NodeRuntime;
 use notifications::{simple_message_notification::MessageNotification, NotificationHandle};
 pub use pane::*;
 pub use pane_group::*;
+use persistence::DB;
 pub use persistence::{
     model::{ItemId, SerializedWorkspace, WorkspaceLocation},
-    WorkspaceDb, DB,
+    WorkspaceDb, DB as WORKSPACE_DB,
 };
 use postage::stream::Stream;
 use project::{Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};

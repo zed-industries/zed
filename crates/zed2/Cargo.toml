@@ -56,7 +56,7 @@ project = { package = "project2", path = "../project2" }
 project_panel = { package = "project_panel2", path = "../project_panel2" }
 # project_symbols = { path = "../project_symbols" }
 quick_action_bar = { package = "quick_action_bar2", path = "../quick_action_bar2" }
-# recent_projects = { path = "../recent_projects" }
+recent_projects = { package = "recent_projects2", path = "../recent_projects2" }
 rope = { package = "rope2", path = "../rope2"}
 rpc = { package = "rpc2", path = "../rpc2" }
 settings = { package = "settings2", path = "../settings2" }
