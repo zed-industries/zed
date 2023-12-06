@@ -8,12 +8,6 @@ use crate::{
 #[derive(Clone, Default)]
 pub struct SyntaxTheme {
     pub highlights: Vec<(String, HighlightStyle)>,
-    // todo!("Remove this in favor of StatusColor.hint")
-    // If this should be overridable we should move it to ThemeColors
-    pub inlay_style: HighlightStyle,
-    // todo!("Remove this in favor of StatusColor.prediction")
-    // If this should be overridable we should move it to ThemeColors
-    pub suggestion_style: HighlightStyle,
 }
 
 impl SyntaxTheme {
@@ -72,8 +66,6 @@ impl SyntaxTheme {
                 ("variable.special".into(), red().light().step_9().into()),
                 ("variant".into(), red().light().step_9().into()),
             ],
-            inlay_style: tomato().light().step_1().into(), // todo!("nate: use a proper style")
-            suggestion_style: orange().light().step_1().into(), // todo!("nate: use proper style")
         }
     }
 
@@ -132,8 +124,6 @@ impl SyntaxTheme {
                 ("variable.special".into(), red().dark().step_11().into()),
                 ("variant".into(), red().dark().step_11().into()),
             ],
-            inlay_style: neutral().dark().step_11().into(), // todo!("nate: use a proper style")
-            suggestion_style: orange().dark().step_11().into(), // todo!("nate: use a proper style")
         }
     }
 
@@ -152,8 +142,6 @@ impl SyntaxTheme {
                     )
                 })
                 .collect(),
-            inlay_style: HighlightStyle::default(),
-            suggestion_style: HighlightStyle::default(),
         }
     }
 
