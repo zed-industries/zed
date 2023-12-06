@@ -62,22 +62,13 @@ impl Render for StatusBar {
                     )
                     .child(
                         // Right Dock
-                        h_stack()
-                            .gap_1()
-                            .child(
-                                // Terminal
-                                div()
-                                    .border()
-                                    .border_color(gpui::red())
-                                    .child(IconButton::new("status-assistant", Icon::Ai)),
-                            )
-                            .child(
-                                // Terminal
-                                div()
-                                    .border()
-                                    .border_color(gpui::red())
-                                    .child(IconButton::new("status-chat", Icon::MessageBubbles)),
-                            ),
+                        h_stack().gap_1().child(
+                            // Terminal
+                            div()
+                                .border()
+                                .border_color(gpui::red())
+                                .child(IconButton::new("status-chat", Icon::MessageBubbles)),
+                        ),
                     )
                     .child(self.render_right_tools(cx)),
             )

@@ -415,10 +415,6 @@ impl Panel for TerminalPanel {
         }
     }
 
-    fn has_focus(&self, cx: &WindowContext) -> bool {
-        self.pane.read(cx).has_focus(cx)
-    }
-
     fn persistent_name() -> &'static str {
         "TerminalPanel"
     }

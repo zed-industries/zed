@@ -12,7 +12,7 @@ use futures::StreamExt;
 use gpui::{
     div,
     serde_json::{self, json},
-    Div, Flatten, Platform, TestAppContext, VisualTestContext, WindowBounds, WindowOptions,
+    Div, Flatten, TestAppContext, VisualTestContext, WindowBounds, WindowOptions,
 };
 use indoc::indoc;
 use language::{
@@ -32,7 +32,7 @@ use util::{
     test::{marked_text_ranges, marked_text_ranges_by, sample_text, TextRangeMarker},
 };
 use workspace::{
-    item::{FollowEvent, FollowableEvents, FollowableItem, Item, ItemHandle},
+    item::{FollowEvent, FollowableItem, Item, ItemHandle},
     NavigationEntry, ViewId,
 };
 
@@ -345,7 +345,12 @@ fn test_selection_with_mouse(cx: &mut TestAppContext) {
     );
 
     editor.update(cx, |view, cx| {
-        view.update_selection(DisplayPoint::new(3, 3), 0, gpui::Point::<f32>::zero(), cx);
+        view.update_selection(
+            DisplayPoint::new(3, 3),
+            0,
+            gpui::Point::<f32>::default(),
+            cx,
+        );
     });
 
     assert_eq!(
@@ -356,7 +361,12 @@ fn test_selection_with_mouse(cx: &mut TestAppContext) {
     );
 
     editor.update(cx, |view, cx| {
-        view.update_selection(DisplayPoint::new(1, 1), 0, gpui::Point::<f32>::zero(), cx);
+        view.update_selection(
+            DisplayPoint::new(1, 1),
+            0,
+            gpui::Point::<f32>::default(),
+            cx,
+        );
     });
 
     assert_eq!(
@@ -368,7 +378,12 @@ fn test_selection_with_mouse(cx: &mut TestAppContext) {
 
     editor.update(cx, |view, cx| {
         view.end_selection(cx);
-        view.update_selection(DisplayPoint::new(3, 3), 0, gpui::Point::<f32>::zero(), cx);
+        view.update_selection(
+            DisplayPoint::new(3, 3),
+            0,
+            gpui::Point::<f32>::default(),
+            cx,
+        );
     });
 
     assert_eq!(
@@ -380,7 +395,12 @@ fn test_selection_with_mouse(cx: &mut TestAppContext) {
 
     editor.update(cx, |view, cx| {
         view.begin_selection(DisplayPoint::new(3, 3), true, 1, cx);
-        view.update_selection(DisplayPoint::new(0, 0), 0, gpui::Point::<f32>::zero(), cx);
+        view.update_selection(
+            DisplayPoint::new(0, 0),
+            0,
+            gpui::Point::<f32>::default(),
+            cx,
+        );
     });
 
     assert_eq!(
@@ -423,7 +443,12 @@ fn test_canceling_pending_selection(cx: &mut TestAppContext) {
     });
 
     view.update(cx, |view, cx| {
-        view.update_selection(DisplayPoint::new(3, 3), 0, gpui::Point::<f32>::zero(), cx);
+        view.update_selection(
+            DisplayPoint::new(3, 3),
+            0,
+            gpui::Point::<f32>::default(),
+            cx,
+        );
         assert_eq!(
             view.selections.display_ranges(cx),
             [DisplayPoint::new(2, 2)..DisplayPoint::new(3, 3)]
@@ -432,7 +457,12 @@ fn test_canceling_pending_selection(cx: &mut TestAppContext) {
 
     view.update(cx, |view, cx| {
         view.cancel(&Cancel, cx);
-        view.update_selection(DisplayPoint::new(1, 1), 0, gpui::Point::<f32>::zero(), cx);
+        view.update_selection(
+            DisplayPoint::new(1, 1),
+            0,
+            gpui::Point::<f32>::default(),
+            cx,
+        );
         assert_eq!(
             view.selections.display_ranges(cx),
             [DisplayPoint::new(2, 2)..DisplayPoint::new(3, 3)]
@@ -643,11 +673,21 @@ fn test_cancel(cx: &mut TestAppContext) {
 
     view.update(cx, |view, cx| {
         view.begin_selection(DisplayPoint::new(3, 4), false, 1, cx);
-        view.update_selection(DisplayPoint::new(1, 1), 0, gpui::Point::<f32>::zero(), cx);
+        view.update_selection(
+            DisplayPoint::new(1, 1),
+            0,
+            gpui::Point::<f32>::default(),
+            cx,
+        );
         view.end_selection(cx);
 
         view.begin_selection(DisplayPoint::new(0, 1), true, 1, cx);
-        view.update_selection(DisplayPoint::new(0, 3), 0, gpui::Point::<f32>::zero(), cx);
+        view.update_selection(
+            DisplayPoint::new(0, 3),
+            0,
+            gpui::Point::<f32>::default(),
+            cx,
+        );
         view.end_selection(cx);
         assert_eq!(
             view.selections.display_ranges(cx),
@@ -3238,9 +3278,7 @@ async fn test_clipboard(cx: &mut gpui::TestAppContext) {
         the lazy dog"});
     cx.update_editor(|e, cx| e.copy(&Copy, cx));
     assert_eq!(
-        cx.test_platform
-            .read_from_clipboard()
-            .map(|item| item.text().to_owned()),
+        cx.read_from_clipboard().map(|item| item.text().to_owned()),
         Some("fox jumps over\n".to_owned())
     );
 
@@ -6478,7 +6516,7 @@ async fn test_following(cx: &mut gpui::TestAppContext) {
             cx.subscribe(
                 &follower.root_view(cx).unwrap(),
                 move |_, _, event: &EditorEvent, cx| {
-                    if matches!(event.to_follow_event(), Some(FollowEvent::Unfollow)) {
+                    if matches!(Editor::to_follow_event(event), Some(FollowEvent::Unfollow)) {
                         *is_still_following.borrow_mut() = false;
                     }
 

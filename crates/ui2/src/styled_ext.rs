@@ -70,8 +70,7 @@ pub trait StyledExt: Styled + Sized {
     /// or other places that text needs to match the user's buffer font size.
     fn text_buffer(self, cx: &mut WindowContext) -> Self {
         let settings = ThemeSettings::get_global(cx);
-
-        self.text_size(settings.buffer_font_size)
+        self.text_size(settings.buffer_font_size(cx))
     }
 
     /// The [`Surface`](ui2::ElevationIndex::Surface) elevation level, located above the app background, is the standard level for all elements

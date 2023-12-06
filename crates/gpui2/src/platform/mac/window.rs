@@ -662,7 +662,7 @@ impl MacWindow {
         }
     }
 
-    pub fn main_window() -> Option<AnyWindowHandle> {
+    pub fn active_window() -> Option<AnyWindowHandle> {
         unsafe {
             let app = NSApplication::sharedApplication(nil);
             let main_window: id = msg_send![app, mainWindow];

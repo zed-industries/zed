@@ -65,7 +65,7 @@ use std::{
     time::Duration,
 };
 use theme::{ActiveTheme, ThemeSettings};
-pub use toolbar::{ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
+pub use toolbar::{Toolbar, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 pub use ui;
 use util::ResultExt;
 use uuid::Uuid;
@@ -212,27 +212,31 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
     init_settings(cx);
     notifications::init(cx);
 
-    //     cx.add_global_action({
-    //         let app_state = Arc::downgrade(&app_state);
-    //         move |_: &Open, cx: &mut AppContext| {
-    //             let mut paths = cx.prompt_for_paths(PathPromptOptions {
-    //                 files: true,
-    //                 directories: true,
-    //                 multiple: true,
-    //             });
+    cx.on_action(Workspace::close_global);
+    cx.on_action(restart);
 
-    //             if let Some(app_state) = app_state.upgrade() {
-    //                 cx.spawn(move |mut cx| async move {
-    //                     if let Some(paths) = paths.recv().await.flatten() {
-    //                         cx.update(|cx| {
-    //                             open_paths(&paths, &app_state, None, cx).detach_and_log_err(cx)
-    //                         });
-    //                     }
-    //                 })
-    //                 .detach();
-    //             }
-    //         }
-    //     });
+    cx.on_action({
+        let app_state = Arc::downgrade(&app_state);
+        move |_: &Open, cx: &mut AppContext| {
+            let mut paths = cx.prompt_for_paths(PathPromptOptions {
+                files: true,
+                directories: true,
+                multiple: true,
+            });
+
+            if let Some(app_state) = app_state.upgrade() {
+                cx.spawn(move |mut cx| async move {
+                    if let Some(paths) = paths.await.log_err().flatten() {
+                        cx.update(|cx| {
+                            open_paths(&paths, &app_state, None, cx).detach_and_log_err(cx)
+                        })
+                        .ok();
+                    }
+                })
+                .detach();
+            }
+        }
+    });
 }
 
 type ProjectItemBuilders =
@@ -1076,7 +1080,6 @@ impl Workspace {
         }
     }
 
-    // todo!(Non-window-actions)
     pub fn close_global(_: &CloseWindow, cx: &mut AppContext) {
         cx.windows().iter().find(|window| {
             window
@@ -1094,21 +1097,18 @@ impl Workspace {
         });
     }
 
-    pub fn close(
-        &mut self,
-        _: &CloseWindow,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<Task<Result<()>>> {
+    pub fn close_window(&mut self, _: &CloseWindow, cx: &mut ViewContext<Self>) {
         let window = cx.window_handle();
         let prepare = self.prepare_to_close(false, cx);
-        Some(cx.spawn(|_, mut cx| async move {
+        cx.spawn(|_, mut cx| async move {
             if prepare.await? {
                 window.update(&mut cx, |_, cx| {
                     cx.remove_window();
                 })?;
             }
-            Ok(())
-        }))
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx)
     }
 
     pub fn prepare_to_close(
@@ -1542,7 +1542,7 @@ impl Workspace {
 
             if let Some(active_panel) = dock.active_panel() {
                 if was_visible {
-                    if active_panel.has_focus(cx) {
+                    if active_panel.focus_handle(cx).contains_focused(cx) {
                         focus_center = true;
                     }
                 } else {
@@ -1589,7 +1589,9 @@ impl Workspace {
     /// Focus the panel of the given type if it isn't already focused. If it is
     /// already focused, then transfer focus back to the workspace center.
     pub fn toggle_panel_focus<T: Panel>(&mut self, cx: &mut ViewContext<Self>) {
-        self.focus_or_unfocus_panel::<T>(cx, |panel, cx| !panel.has_focus(cx));
+        self.focus_or_unfocus_panel::<T>(cx, |panel, cx| {
+            !panel.focus_handle(cx).contains_focused(cx)
+        });
     }
 
     /// Focus or unfocus the given panel type, depending on the given callback.
@@ -1681,7 +1683,7 @@ impl Workspace {
                 if Some(dock.position()) != dock_to_reveal {
                     if let Some(panel) = dock.active_panel() {
                         if panel.is_zoomed(cx) {
-                            focus_center |= panel.has_focus(cx);
+                            focus_center |= panel.focus_handle(cx).contains_focused(cx);
                             dock.set_open(false, cx);
                         }
                     }
@@ -2075,6 +2077,7 @@ impl Workspace {
                 }
                 if &pane == self.active_pane() {
                     self.active_item_path_changed(cx);
+                    self.update_active_view_for_followers(cx);
                 }
             }
             pane::Event::ChangeItemTitle => {
@@ -2325,42 +2328,44 @@ impl Workspace {
         }))
     }
 
-    //     pub fn follow_next_collaborator(
-    //         &mut self,
-    //         _: &FollowNextCollaborator,
-    //         cx: &mut ViewContext<Self>,
-    //     ) -> Option<Task<Result<()>>> {
-    //         let collaborators = self.project.read(cx).collaborators();
-    //         let next_leader_id = if let Some(leader_id) = self.leader_for_pane(&self.active_pane) {
-    //             let mut collaborators = collaborators.keys().copied();
-    //             for peer_id in collaborators.by_ref() {
-    //                 if peer_id == leader_id {
-    //                     break;
-    //                 }
+    // pub fn follow_next_collaborator(
+    //     &mut self,
+    //     _: &FollowNextCollaborator,
+    //     cx: &mut ViewContext<Self>,
+    // ) {
+    //     let collaborators = self.project.read(cx).collaborators();
+    //     let next_leader_id = if let Some(leader_id) = self.leader_for_pane(&self.active_pane) {
+    //         let mut collaborators = collaborators.keys().copied();
+    //         for peer_id in collaborators.by_ref() {
+    //             if peer_id == leader_id {
+    //                 break;
     //             }
-    //             collaborators.next()
-    //         } else if let Some(last_leader_id) =
-    //             self.last_leaders_by_pane.get(&self.active_pane.downgrade())
-    //         {
-    //             if collaborators.contains_key(last_leader_id) {
-    //                 Some(*last_leader_id)
-    //             } else {
-    //                 None
-    //             }
+    //         }
+    //         collaborators.next()
+    //     } else if let Some(last_leader_id) =
+    //         self.last_leaders_by_pane.get(&self.active_pane.downgrade())
+    //     {
+    //         if collaborators.contains_key(last_leader_id) {
+    //             Some(*last_leader_id)
     //         } else {
     //             None
-    //         };
-
-    //         let pane = self.active_pane.clone();
-    //         let Some(leader_id) = next_leader_id.or_else(|| collaborators.keys().copied().next())
-    //         else {
-    //             return None;
-    //         };
-    //         if Some(leader_id) == self.unfollow(&pane, cx) {
-    //             return None;
     //         }
-    //         self.follow(leader_id, cx)
+    //     } else {
+    //         None
+    //     };
+
+    //     let pane = self.active_pane.clone();
+    //     let Some(leader_id) = next_leader_id.or_else(|| collaborators.keys().copied().next())
+    //     else {
+    //         return;
+    //     };
+    //     if Some(leader_id) == self.unfollow(&pane, cx) {
+    //         return;
     //     }
+    //     if let Some(task) = self.follow(leader_id, cx) {
+    //         task.detach();
+    //     }
+    // }
 
     pub fn follow(
         &mut self,
@@ -2408,6 +2413,18 @@ impl Workspace {
         // Otherwise, follow.
         self.start_following(leader_id, cx)
     }
+
+    //     // if you're already following, find the right pane and focus it.
+    //     for (pane, state) in &self.follower_states {
+    //         if leader_id == state.leader_id {
+    //             cx.focus(pane);
+    //             return None;
+    //         }
+    //     }
+
+    //     // Otherwise, follow.
+    //     self.start_following(leader_id, cx)
+    // }
 
     pub fn unfollow(&mut self, pane: &View<Pane>, cx: &mut ViewContext<Self>) -> Option<PeerId> {
         let state = self.follower_states.remove(pane)?;
@@ -2625,8 +2642,6 @@ impl Workspace {
         update: proto::UpdateFollowers,
         cx: &mut AsyncWindowContext,
     ) -> Result<()> {
-        dbg!("process_leader_update", &update);
-
         match update.variant.ok_or_else(|| anyhow!("invalid update"))? {
             proto::update_followers::Variant::UpdateActiveView(update_active_view) => {
                 this.update(cx, |this, _| {
@@ -2742,18 +2757,18 @@ impl Workspace {
     fn update_active_view_for_followers(&mut self, cx: &mut ViewContext<Self>) {
         let mut is_project_item = true;
         let mut update = proto::UpdateActiveView::default();
-        if self.active_pane.read(cx).has_focus(cx) {
-            let item = self
-                .active_item(cx)
-                .and_then(|item| item.to_followable_item_handle(cx));
-            if let Some(item) = item {
-                is_project_item = item.is_project_item(cx);
-                update = proto::UpdateActiveView {
-                    id: item
-                        .remote_id(&self.app_state.client, cx)
-                        .map(|id| id.to_proto()),
-                    leader_id: self.leader_for_pane(&self.active_pane),
-                };
+
+        if let Some(item) = self.active_item(cx) {
+            if item.focus_handle(cx).contains_focused(cx) {
+                if let Some(item) = item.to_followable_item_handle(cx) {
+                    is_project_item = item.is_project_item(cx);
+                    update = proto::UpdateActiveView {
+                        id: item
+                            .remote_id(&self.app_state.client, cx)
+                            .map(|id| id.to_proto()),
+                        leader_id: self.leader_for_pane(&self.active_pane),
+                    };
+                }
             }
         }
 
@@ -3221,13 +3236,8 @@ impl Workspace {
 
     fn actions(&self, div: Div, cx: &mut ViewContext<Self>) -> Div {
         self.add_workspace_actions_listeners(div, cx)
-            //     cx.add_async_action(Workspace::open);
-            //     cx.add_async_action(Workspace::follow_next_collaborator);
-            //     cx.add_async_action(Workspace::close);
             .on_action(cx.listener(Self::close_inactive_items_and_panes))
             .on_action(cx.listener(Self::close_all_items_and_panes))
-            //     cx.add_global_action(Workspace::close_global);
-            //     cx.add_global_action(restart);
             .on_action(cx.listener(Self::save_all))
             .on_action(cx.listener(Self::add_folder_to_project))
             .on_action(cx.listener(|workspace, _: &Unfollow, cx| {
@@ -3276,6 +3286,9 @@ impl Workspace {
                     workspace.close_all_docks(cx);
                 }),
             )
+            .on_action(cx.listener(Workspace::open))
+            .on_action(cx.listener(Workspace::close_window))
+
         //     cx.add_action(Workspace::activate_pane_at_index);
         //     cx.add_action(|workspace: &mut Workspace, _: &ReopenClosedItem, cx| {
         //         workspace.reopen_closed_item(cx).detach();
@@ -3879,8 +3892,6 @@ impl WorkspaceStore {
     ) -> Result<()> {
         let leader_id = envelope.original_sender_id()?;
         let update = envelope.payload;
-
-        dbg!("handle_upate_followers");
 
         this.update(&mut cx, |this, cx| {
             for workspace in &this.workspaces {

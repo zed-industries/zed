@@ -1,4 +1,4 @@
-use gpui::{Action, AnyView, DefiniteLength};
+use gpui::{AnyView, DefiniteLength};
 
 use crate::prelude::*;
 use crate::{ButtonCommon, ButtonLike, ButtonSize, ButtonStyle, Icon, IconSize};
@@ -38,10 +38,6 @@ impl IconButton {
     pub fn selected_icon(mut self, icon: impl Into<Option<Icon>>) -> Self {
         self.selected_icon = icon.into();
         self
-    }
-
-    pub fn action(self, action: Box<dyn Action>) -> Self {
-        self.on_click(move |_event, cx| cx.dispatch_action(action.boxed_clone()))
     }
 }
 

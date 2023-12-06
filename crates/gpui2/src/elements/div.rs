@@ -55,7 +55,7 @@ pub trait InteractiveElement: Sized + Element {
         E: Debug,
     {
         if let Some(key_context) = key_context.try_into().log_err() {
-            self.interactivity().key_context = key_context;
+            self.interactivity().key_context = Some(key_context);
         }
         self
     }
@@ -737,7 +737,7 @@ impl DivState {
 
 pub struct Interactivity {
     pub element_id: Option<ElementId>,
-    pub key_context: KeyContext,
+    pub key_context: Option<KeyContext>,
     pub focusable: bool,
     pub tracked_focus_handle: Option<FocusHandle>,
     pub scroll_handle: Option<ScrollHandle>,
@@ -1276,7 +1276,7 @@ impl Default for Interactivity {
     fn default() -> Self {
         Self {
             element_id: None,
-            key_context: KeyContext::default(),
+            key_context: None,
             focusable: false,
             tracked_focus_handle: None,
             scroll_handle: None,

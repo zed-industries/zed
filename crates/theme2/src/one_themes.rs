@@ -194,8 +194,6 @@ pub(crate) fn one_dark() -> Theme {
                     ("variable.special".into(), red.into()),
                     ("variant".into(), HighlightStyle::default()),
                 ],
-                inlay_style: HighlightStyle::default(),
-                suggestion_style: HighlightStyle::default(),
             }),
         },
     }

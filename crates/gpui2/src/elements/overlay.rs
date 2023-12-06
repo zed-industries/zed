@@ -102,7 +102,7 @@ impl Element for Overlay {
 
         let mut desired = self.anchor_corner.get_bounds(origin, size);
         let limits = Bounds {
-            origin: Point::zero(),
+            origin: Point::default(),
             size: cx.viewport_size(),
         };
 

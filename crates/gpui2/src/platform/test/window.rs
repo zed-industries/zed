@@ -78,7 +78,7 @@ impl PlatformWindow for TestWindow {
     }
 
     fn mouse_position(&self) -> Point<Pixels> {
-        Point::zero()
+        Point::default()
     }
 
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
@@ -223,7 +223,7 @@ impl PlatformAtlas for TestAtlas {
                 },
                 tile_id: TileId(tile_id),
                 bounds: crate::Bounds {
-                    origin: Point::zero(),
+                    origin: Point::default(),
                     size,
                 },
             },

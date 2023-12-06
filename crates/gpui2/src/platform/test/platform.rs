@@ -1,6 +1,6 @@
 use crate::{
     AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId, ForegroundExecutor,
-    Platform, PlatformDisplay, PlatformTextSystem, TestDisplay, TestWindow, WindowOptions,
+    Keymap, Platform, PlatformDisplay, PlatformTextSystem, TestDisplay, TestWindow, WindowOptions,
 };
 use anyhow::{anyhow, Result};
 use collections::VecDeque;
@@ -127,7 +127,7 @@ impl Platform for TestPlatform {
         self.displays().iter().find(|d| d.id() == id).cloned()
     }
 
-    fn main_window(&self) -> Option<crate::AnyWindowHandle> {
+    fn active_window(&self) -> Option<crate::AnyWindowHandle> {
         unimplemented!()
     }
 
@@ -147,18 +147,25 @@ impl Platform for TestPlatform {
     fn set_display_link_output_callback(
         &self,
         _display_id: DisplayId,
-        _callback: Box<dyn FnMut(&crate::VideoTimestamp, &crate::VideoTimestamp) + Send>,
+        mut callback: Box<dyn FnMut(&crate::VideoTimestamp, &crate::VideoTimestamp) + Send>,
     ) {
-        unimplemented!()
+        let timestamp = crate::VideoTimestamp {
+            version: 0,
+            video_time_scale: 0,
+            video_time: 0,
+            host_time: 0,
+            rate_scalar: 0.0,
+            video_refresh_period: 0,
+            smpte_time: crate::SmtpeTime::default(),
+            flags: 0,
+            reserved: 0,
+        };
+        callback(&timestamp, &timestamp)
     }
 
-    fn start_display_link(&self, _display_id: DisplayId) {
-        unimplemented!()
-    }
+    fn start_display_link(&self, _display_id: DisplayId) {}
 
-    fn stop_display_link(&self, _display_id: DisplayId) {
-        unimplemented!()
-    }
+    fn stop_display_link(&self, _display_id: DisplayId) {}
 
     fn open_url(&self, _url: &str) {
         unimplemented!()
@@ -204,6 +211,14 @@ impl Platform for TestPlatform {
     fn on_event(&self, _callback: Box<dyn FnMut(crate::InputEvent) -> bool>) {
         unimplemented!()
     }
+
+    fn set_menus(&self, _menus: Vec<crate::Menu>, _keymap: &Keymap) {}
+
+    fn on_app_menu_action(&self, _callback: Box<dyn FnMut(&dyn crate::Action)>) {}
+
+    fn on_will_open_app_menu(&self, _callback: Box<dyn FnMut()>) {}
+
+    fn on_validate_app_menu_command(&self, _callback: Box<dyn FnMut(&dyn crate::Action) -> bool>) {}
 
     fn os_name(&self) -> &'static str {
         "test"

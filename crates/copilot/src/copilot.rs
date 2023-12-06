@@ -58,16 +58,16 @@ pub fn init(
         cx.update_default_global::<collections::CommandPaletteFilter, _, _>(move |filter, _cx| {
             match status {
                 Status::Disabled => {
-                    filter.filtered_namespaces.insert(COPILOT_NAMESPACE);
-                    filter.filtered_namespaces.insert(COPILOT_AUTH_NAMESPACE);
+                    filter.hidden_namespaces.insert(COPILOT_NAMESPACE);
+                    filter.hidden_namespaces.insert(COPILOT_AUTH_NAMESPACE);
                 }
                 Status::Authorized => {
-                    filter.filtered_namespaces.remove(COPILOT_NAMESPACE);
-                    filter.filtered_namespaces.remove(COPILOT_AUTH_NAMESPACE);
+                    filter.hidden_namespaces.remove(COPILOT_NAMESPACE);
+                    filter.hidden_namespaces.remove(COPILOT_AUTH_NAMESPACE);
                 }
                 _ => {
-                    filter.filtered_namespaces.insert(COPILOT_NAMESPACE);
-                    filter.filtered_namespaces.remove(COPILOT_AUTH_NAMESPACE);
+                    filter.hidden_namespaces.insert(COPILOT_NAMESPACE);
+                    filter.hidden_namespaces.remove(COPILOT_AUTH_NAMESPACE);
                 }
             }
         });

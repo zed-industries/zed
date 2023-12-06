@@ -812,7 +812,7 @@ impl Element for TerminalElement {
         let theme = cx.theme();
 
         let dispatch_context = self.terminal_view.read(cx).dispatch_context(cx);
-        self.interactivity().key_context = dispatch_context;
+        self.interactivity().key_context = Some(dispatch_context);
         cx.paint_quad(
             bounds,
             Default::default(),
