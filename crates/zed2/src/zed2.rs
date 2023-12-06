@@ -11,8 +11,8 @@ use breadcrumbs::Breadcrumbs;
 use collections::VecDeque;
 use editor::{Editor, MultiBuffer};
 use gpui::{
-    actions, point, px, AppContext, Context, FocusableView, PromptLevel, TitlebarOptions,
-    ViewContext, VisualContext, WindowBounds, WindowKind, WindowOptions, View,
+    actions, point, px, AppContext, Context, FocusableView, PromptLevel, TitlebarOptions, View,
+    ViewContext, VisualContext, WindowBounds, WindowKind, WindowOptions,
 };
 pub use only_instance::*;
 pub use open_listener::*;
@@ -21,7 +21,6 @@ use anyhow::{anyhow, Context as _};
 use project_panel::ProjectPanel;
 use quick_action_bar::QuickActionBar;
 use settings::{initial_local_settings_content, Settings};
-use workspace::Pane;
 use std::{borrow::Cow, ops::Deref, sync::Arc};
 use terminal_view::terminal_panel::TerminalPanel;
 use util::{
@@ -31,6 +30,7 @@ use util::{
     ResultExt,
 };
 use uuid::Uuid;
+use workspace::Pane;
 use workspace::{
     create_and_open_local_file, dock::PanelHandle,
     notifications::simple_message_notification::MessageNotification, open_new, AppState, NewFile,
@@ -418,11 +418,10 @@ fn initialize_pane(workspace: &mut Workspace, pane: &View<Pane>, cx: &mut ViewCo
             let buffer_search_bar = cx.build_view(search::BufferSearchBar::new);
             toolbar.add_item(buffer_search_bar.clone(), cx);
 
-            let quick_action_bar = cx
-                .build_view(|_| QuickActionBar::new(buffer_search_bar, workspace));
+            let quick_action_bar =
+                cx.build_view(|_| QuickActionBar::new(buffer_search_bar, workspace));
             toolbar.add_item(quick_action_bar, cx);
-            let diagnostic_editor_controls =
-                cx.build_view(|_| diagnostics::ToolbarControls::new());
+            let diagnostic_editor_controls = cx.build_view(|_| diagnostics::ToolbarControls::new());
             //     toolbar.add_item(diagnostic_editor_controls, cx);
             //     let project_search_bar = cx.add_view(|_| ProjectSearchBar::new());
             //     toolbar.add_item(project_search_bar, cx);
