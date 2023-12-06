@@ -1,7 +1,7 @@
 use super::{events::key_to_native, BoolExt};
 use crate::{
-    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DispatchTree,
-    DisplayId, ForegroundExecutor, InputEvent, MacDispatcher, MacDisplay, MacDisplayLinker,
+    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
+    ForegroundExecutor, InputEvent, Keymap, MacDispatcher, MacDisplay, MacDisplayLinker,
     MacTextSystem, MacWindow, Menu, MenuItem, PathPromptOptions, Platform, PlatformDisplay,
     PlatformTextSystem, PlatformWindow, Result, SemanticVersion, VideoTimestamp, WindowOptions,
 };
@@ -206,7 +206,7 @@ impl MacPlatform {
         menus: Vec<Menu>,
         delegate: id,
         actions: &mut Vec<Box<dyn Action>>,
-        dispatch_tree: Option<&DispatchTree>,
+        keymap: &Keymap,
     ) -> id {
         let application_menu = NSMenu::new(nil).autorelease();
         application_menu.setDelegate_(delegate);
@@ -217,7 +217,7 @@ impl MacPlatform {
             menu.setDelegate_(delegate);
 
             for item_config in menu_config.items {
-                menu.addItem_(self.create_menu_item(item_config, delegate, actions, dispatch_tree));
+                menu.addItem_(self.create_menu_item(item_config, delegate, actions, keymap));
             }
 
             let menu_item = NSMenuItem::new(nil).autorelease();
@@ -238,7 +238,7 @@ impl MacPlatform {
         item: MenuItem,
         delegate: id,
         actions: &mut Vec<Box<dyn Action>>,
-        dispatch_tree: Option<&DispatchTree>,
+        keymap: &Keymap,
     ) -> id {
         match item {
             MenuItem::Separator => NSMenuItem::separatorItem(nil),
@@ -247,11 +247,8 @@ impl MacPlatform {
                 action,
                 os_action,
             } => {
-                let bindings = dispatch_tree
-                    .map(|tree| tree.bindings_for_action(action.as_ref(), &tree.context_stack))
-                    .unwrap_or_default();
-                let keystrokes = bindings
-                    .iter()
+                let keystrokes = keymap
+                    .bindings_for_action(action.type_id())
                     .find(|binding| binding.action().partial_eq(action.as_ref()))
                     .map(|binding| binding.keystrokes());
 
@@ -343,7 +340,7 @@ impl MacPlatform {
                 let submenu = NSMenu::new(nil).autorelease();
                 submenu.setDelegate_(delegate);
                 for item in items {
-                    submenu.addItem_(self.create_menu_item(item, delegate, actions, dispatch_tree));
+                    submenu.addItem_(self.create_menu_item(item, delegate, actions, keymap));
                 }
                 item.setSubmenu_(submenu);
                 item.setTitle_(ns_string(name));
@@ -691,12 +688,12 @@ impl Platform for MacPlatform {
         }
     }
 
-    fn set_menus(&self, menus: Vec<Menu>, dispatch_tree: Option<&DispatchTree>) {
+    fn set_menus(&self, menus: Vec<Menu>, keymap: &Keymap) {
         unsafe {
             let app: id = msg_send![APP_CLASS, sharedApplication];
             let mut state = self.0.lock();
             let actions = &mut state.menu_actions;
-            app.setMainMenu_(self.create_menu_bar(menus, app.delegate(), actions, dispatch_tree));
+            app.setMainMenu_(self.create_menu_bar(menus, app.delegate(), actions, keymap));
         }
     }
 

@@ -1,7 +1,6 @@
 use crate::{
-    AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DispatchTree, DisplayId,
-    ForegroundExecutor, Platform, PlatformDisplay, PlatformTextSystem, TestDisplay, TestWindow,
-    WindowOptions,
+    AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId, ForegroundExecutor,
+    Keymap, Platform, PlatformDisplay, PlatformTextSystem, TestDisplay, TestWindow, WindowOptions,
 };
 use anyhow::{anyhow, Result};
 use collections::VecDeque;
@@ -213,7 +212,7 @@ impl Platform for TestPlatform {
         unimplemented!()
     }
 
-    fn set_menus(&self, _menus: Vec<crate::Menu>, _dispatch_tree: Option<&DispatchTree>) {
+    fn set_menus(&self, _menus: Vec<crate::Menu>, _keymap: &Keymap) {
         unimplemented!()
     }
 

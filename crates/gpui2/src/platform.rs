@@ -6,8 +6,8 @@ mod mac;
 mod test;
 
 use crate::{
-    point, size, Action, AnyWindowHandle, BackgroundExecutor, Bounds, DevicePixels, DispatchTree,
-    Font, FontId, FontMetrics, FontRun, ForegroundExecutor, GlobalPixels, GlyphId, InputEvent,
+    point, size, Action, AnyWindowHandle, BackgroundExecutor, Bounds, DevicePixels, Font, FontId,
+    FontMetrics, FontRun, ForegroundExecutor, GlobalPixels, GlyphId, InputEvent, Keymap,
     LineLayout, Pixels, Point, RenderGlyphParams, RenderImageParams, RenderSvgParams, Result,
     Scene, SharedString, Size, TaskLabel,
 };
@@ -92,7 +92,7 @@ pub(crate) trait Platform: 'static {
     fn on_reopen(&self, callback: Box<dyn FnMut()>);
     fn on_event(&self, callback: Box<dyn FnMut(InputEvent) -> bool>);
 
-    fn set_menus(&self, menus: Vec<Menu>, dispatch_tree: Option<&DispatchTree>);
+    fn set_menus(&self, menus: Vec<Menu>, keymap: &Keymap);
     fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>);
     fn on_will_open_app_menu(&self, callback: Box<dyn FnMut()>);
     fn on_validate_app_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>);

@@ -1052,16 +1052,7 @@ impl AppContext {
     }
 
     pub fn set_menus(&mut self, menus: Vec<Menu>) {
-        if let Some(active_window) = self.active_window() {
-            active_window
-                .update(self, |_, cx| {
-                    cx.platform
-                        .set_menus(menus, Some(&cx.window.current_frame.dispatch_tree));
-                })
-                .ok();
-        } else {
-            self.platform.set_menus(menus, None);
-        }
+        self.platform.set_menus(menus, &self.keymap.lock());
     }
 
     pub fn dispatch_action(&mut self, action: &dyn Action) {
