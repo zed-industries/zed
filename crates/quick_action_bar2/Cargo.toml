@@ -9,7 +9,7 @@ path = "src/quick_action_bar.rs"
 doctest = false
 
 [dependencies]
-#assistant = { path = "../assistant" }
+assistant = { package = "assistant2", path = "../assistant2" }
 editor = { package = "editor2", path = "../editor2" }
 gpui = { package = "gpui2", path = "../gpui2" }
 search = { package = "search2", path = "../search2" }
