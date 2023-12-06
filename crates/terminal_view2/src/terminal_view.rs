@@ -9,10 +9,9 @@ pub mod terminal_panel;
 // use crate::terminal_element::TerminalElement;
 use editor::{scroll::autoscroll::Autoscroll, Editor};
 use gpui::{
-    actions, div, Action, AnyElement, AppContext, Div, Element, EventEmitter, FocusEvent,
-    FocusHandle, Focusable, FocusableElement, FocusableView, InputHandler, InteractiveElement,
-    KeyDownEvent, Keystroke, Model, MouseButton, MouseDownEvent, ParentElement, Pixels, Render,
-    SharedString, Styled, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
+    actions, div, Action, AnyElement, AppContext, Div, EventEmitter, FocusEvent, FocusHandle,
+    Focusable, FocusableElement, FocusableView, InputHandler, KeyDownEvent, Keystroke, Model,
+    MouseButton, MouseDownEvent, Pixels, Render, Task, View, VisualContext, WeakView,
 };
 use language::Bias;
 use persistence::TERMINAL_DB;
@@ -25,13 +24,13 @@ use terminal::{
     terminal_settings::{TerminalBlink, TerminalSettings, WorkingDirectory},
     Event, MaybeNavigationTarget, Terminal,
 };
+use ui::{h_stack, prelude::*, ContextMenu, Icon, IconElement, Label};
 use util::{paths::PathLikeWithPosition, ResultExt};
 use workspace::{
     item::{BreadcrumbText, Item, ItemEvent},
     notifications::NotifyResultExt,
     register_deserializable_item,
     searchable::{SearchEvent, SearchOptions, SearchableItem},
-    ui::{ContextMenu, Icon, IconElement, Label},
     CloseActiveItem, NewCenterTerminal, Pane, ToolbarItemLocation, Workspace, WorkspaceId,
 };
 
@@ -745,7 +744,8 @@ impl Item for TerminalView {
     fn tab_content(&self, _detail: Option<usize>, cx: &WindowContext) -> AnyElement {
         let title = self.terminal().read(cx).title();
 
-        div()
+        h_stack()
+            .gap_2()
             .child(IconElement::new(Icon::Terminal))
             .child(Label::new(title))
             .into_any()
