@@ -1140,6 +1140,7 @@ impl Render for AssistantPanel {
             }
 
             v_stack()
+                .size_full()
                 .on_action(cx.listener(|this, _: &workspace::NewFile, cx| {
                     this.new_conversation(cx);
                 }))
@@ -1156,22 +1157,26 @@ impl Render for AssistantPanel {
                 } else {
                     Some(self.toolbar.clone())
                 })
-                .child(if let Some(editor) = self.active_editor() {
-                    editor.clone().into_any_element()
-                } else {
-                    uniform_list(
-                        cx.view().clone(),
-                        "saved_conversations",
-                        self.saved_conversations.len(),
-                        |this, range, cx| {
-                            range
-                                .map(|ix| this.render_saved_conversation(ix, cx))
-                                .collect()
-                        },
-                    )
-                    .track_scroll(self.saved_conversations_scroll_handle.clone())
-                    .into_any_element()
-                })
+                .child(
+                    div()
+                        .flex_1()
+                        .child(if let Some(editor) = self.active_editor() {
+                            editor.clone().into_any_element()
+                        } else {
+                            uniform_list(
+                                cx.view().clone(),
+                                "saved_conversations",
+                                self.saved_conversations.len(),
+                                |this, range, cx| {
+                                    range
+                                        .map(|ix| this.render_saved_conversation(ix, cx))
+                                        .collect()
+                                },
+                            )
+                            .track_scroll(self.saved_conversations_scroll_handle.clone())
+                            .into_any_element()
+                        }),
+                )
                 .border()
                 .border_color(gpui::red())
         }
@@ -2469,6 +2474,7 @@ impl Render for ConversationEditor {
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         div()
+            .size_full()
             .relative()
             .capture_action(cx.listener(ConversationEditor::cancel_last_assist))
             .capture_action(cx.listener(ConversationEditor::save))
