@@ -499,7 +499,7 @@ pub struct EditorStyle {
     pub scrollbar_width: Pixels,
     pub syntax: Arc<SyntaxTheme>,
     pub diagnostic_style: DiagnosticStyle,
-    pub hints_style: HighlightStyle,
+    pub inlays_style: HighlightStyle,
     pub suggestions_style: HighlightStyle,
 }
 
@@ -7643,7 +7643,7 @@ impl Editor {
                                                     .diagnostic_style
                                                     .clone(),
                                                 // todo!("what about the rest of the highlight style parts for inlays and suggestions?")
-                                                hints_style: HighlightStyle {
+                                                inlays_style: HighlightStyle {
                                                     color: Some(cx.theme().status().hint),
                                                     font_weight: Some(FontWeight::BOLD),
                                                     fade_out: Some(0.6),
@@ -9318,7 +9318,7 @@ impl Render for Editor {
                 diagnostic_style: cx.theme().diagnostic_style(),
                 // TODO kb find `HighlightStyle` usages
                 // todo!("what about the rest of the highlight style parts?")
-                hints_style: HighlightStyle {
+                inlays_style: HighlightStyle {
                     color: Some(cx.theme().status().hint),
                     font_weight: Some(FontWeight::BOLD),
                     fade_out: Some(0.6),

@@ -513,7 +513,7 @@ impl DisplaySnapshot {
         self.chunks(
             display_rows,
             language_aware,
-            Some(editor_style.hints_style),
+            Some(editor_style.inlays_style),
             Some(editor_style.suggestions_style),
         )
         .map(|chunk| {
