@@ -12,11 +12,24 @@ use chrono::{DateTime, Local};
 use collections::HashMap;
 use fs::Fs;
 use futures::StreamExt;
-use gpui::AppContext;
+use gpui::{actions, AppContext};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::{cmp::Reverse, ffi::OsStr, path::PathBuf, sync::Arc};
 use util::paths::CONVERSATIONS_DIR;
+
+actions!(
+    NewConversation,
+    Assist,
+    Split,
+    CycleMessageRole,
+    QuoteSelection,
+    ToggleFocus,
+    ResetKey,
+    InlineAssist,
+    ToggleIncludeConversation,
+    ToggleRetrieveContext,
+);
 
 #[derive(
     Copy, Clone, Debug, Default, Eq, PartialEq, PartialOrd, Ord, Hash, Serialize, Deserialize,

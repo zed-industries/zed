@@ -2,8 +2,9 @@ use crate::{
     assistant_settings::{AssistantDockPosition, AssistantSettings, OpenAIModel},
     codegen::{self, Codegen, CodegenKind},
     prompts::generate_content_prompt,
-    MessageId, MessageMetadata, MessageStatus, Role, SavedConversation, SavedConversationMetadata,
-    SavedMessage,
+    Assist, CycleMessageRole, InlineAssist, MessageId, MessageMetadata, MessageStatus,
+    NewConversation, QuoteSelection, ResetKey, Role, SavedConversation, SavedConversationMetadata,
+    SavedMessage, Split, ToggleFocus, ToggleIncludeConversation, ToggleRetrieveContext,
 };
 
 use ai::{
@@ -28,12 +29,12 @@ use editor::{
 use fs::Fs;
 use futures::StreamExt;
 use gpui::{
-    actions, div, point, relative, rems, uniform_list, Action, AnyElement, AppContext,
-    AsyncWindowContext, ClipboardItem, Context, Div, EventEmitter, FocusHandle, Focusable,
-    FocusableView, FontStyle, FontWeight, HighlightStyle, InteractiveElement, IntoElement, Model,
-    ModelContext, ParentElement, Pixels, PromptLevel, Render, SharedString,
-    StatefulInteractiveElement, Styled, Subscription, Task, TextStyle, UniformListScrollHandle,
-    View, ViewContext, VisualContext, WeakModel, WeakView, WhiteSpace, WindowContext,
+    div, point, relative, rems, uniform_list, Action, AnyElement, AppContext, AsyncWindowContext,
+    ClipboardItem, Context, Div, EventEmitter, FocusHandle, Focusable, FocusableView, FontStyle,
+    FontWeight, HighlightStyle, InteractiveElement, IntoElement, Model, ModelContext,
+    ParentElement, Pixels, PromptLevel, Render, SharedString, StatefulInteractiveElement, Styled,
+    Subscription, Task, TextStyle, UniformListScrollHandle, View, ViewContext, VisualContext,
+    WeakModel, WeakView, WhiteSpace, WindowContext,
 };
 use language::{language_settings::SoftWrap, Buffer, LanguageRegistry, ToOffset as _};
 use project::Project;
@@ -51,10 +52,9 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use theme::{ActiveTheme, ThemeSettings};
+use theme::ThemeSettings;
 use ui::{
-    h_stack, v_stack, Button, ButtonCommon, ButtonLike, Clickable, Color, Icon, IconButton,
-    IconElement, Label, Selectable, Tooltip,
+    h_stack, prelude::*, v_stack, Button, ButtonLike, Icon, IconButton, IconElement, Label, Tooltip,
 };
 use util::{paths::CONVERSATIONS_DIR, post_inc, ResultExt, TryFutureExt};
 use uuid::Uuid;
@@ -63,19 +63,6 @@ use workspace::{
     searchable::Direction,
     Save, Toast, ToggleZoom, Toolbar, Workspace,
 };
-
-actions!(
-    NewConversation,
-    Assist,
-    Split,
-    CycleMessageRole,
-    QuoteSelection,
-    ToggleFocus,
-    ResetKey,
-    InlineAssist,
-    ToggleIncludeConversation,
-    ToggleRetrieveContext,
-);
 
 pub fn init(cx: &mut AppContext) {
     AssistantSettings::register(cx);
