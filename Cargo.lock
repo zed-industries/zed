@@ -2121,6 +2121,7 @@ dependencies = [
  "settings2",
  "smol",
  "theme2",
+ "ui2",
  "util",
 ]
 
