@@ -161,11 +161,11 @@ fn main() {
             node_runtime.clone(),
             cx,
         );
-        // assistant::init(cx);
+        assistant::init(cx);
         // component_test::init(cx);
 
-        // cx.spawn(|_| watch_languages(fs.clone(), languages.clone()))
-        //     .detach();
+        cx.spawn(|_| watch_languages(fs.clone(), languages.clone()))
+            .detach();
         watch_file_types(fs.clone(), cx);
 
         languages.set_theme(cx.theme().clone());
@@ -186,10 +186,10 @@ fn main() {
             .report_app_event(telemetry_settings, event_operation);
 
         let app_state = Arc::new(AppState {
-            languages,
+            languages: languages.clone(),
             client: client.clone(),
             user_store: user_store.clone(),
-            fs,
+            fs: fs.clone(),
             build_window_options,
             workspace_store,
             node_runtime,
@@ -210,7 +210,7 @@ fn main() {
         channel::init(&client, user_store.clone(), cx);
         // diagnostics::init(cx);
         search::init(cx);
-        // semantic_index::init(fs.clone(), http.clone(), languages.clone(), cx);
+        semantic_index::init(fs.clone(), http.clone(), languages.clone(), cx);
         // vim::init(cx);
         terminal_view::init(cx);
 

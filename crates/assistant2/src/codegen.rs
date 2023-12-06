@@ -181,12 +181,6 @@ impl Codegen {
                     });
 
                     while let Some(hunks) = hunks_rx.next().await {
-                        let this = if let Some(this) = this.upgrade() {
-                            this
-                        } else {
-                            break;
-                        };
-
                         this.update(&mut cx, |this, cx| {
                             this.last_equal_ranges.clear();
 
@@ -243,7 +237,7 @@ impl Codegen {
                             }
 
                             cx.notify();
-                        });
+                        })?;
                     }
 
                     diff.await?;

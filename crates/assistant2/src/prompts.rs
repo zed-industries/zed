@@ -227,7 +227,8 @@ pub(crate) mod tests {
 
     #[gpui::test]
     fn test_outline_for_prompt(cx: &mut AppContext) {
-        cx.set_global(SettingsStore::test(cx));
+        let settings_store = SettingsStore::test(cx);
+        cx.set_global(settings_store);
         language_settings::init(cx);
         let text = indoc! {"
             struct X {
