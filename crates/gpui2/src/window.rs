@@ -1393,8 +1393,8 @@ impl<'a> WindowContext<'a> {
         for node_id in &dispatch_path {
             let node = self.window.current_frame.dispatch_tree.node(*node_id);
 
-            if !node.context.is_empty() {
-                context_stack.push(node.context.clone());
+            if let Some(context) = node.context.clone() {
+                context_stack.push(context);
             }
 
             for key_listener in node.key_listeners.clone() {
@@ -1418,7 +1418,7 @@ impl<'a> WindowContext<'a> {
 
             // Match keystrokes
             let node = self.window.current_frame.dispatch_tree.node(*node_id);
-            if !node.context.is_empty() {
+            if node.context.is_some() {
                 if let Some(key_down_event) = event.downcast_ref::<KeyDownEvent>() {
                     if let Some(found) = self
                         .window
@@ -1563,7 +1563,7 @@ impl<'a> WindowContext<'a> {
         let context_stack = dispatch_tree
             .dispatch_path(node_id)
             .into_iter()
-            .map(|node_id| dispatch_tree.node(node_id).context.clone())
+            .filter_map(|node_id| dispatch_tree.node(node_id).context.clone())
             .collect();
         dispatch_tree.bindings_for_action(action, &context_stack)
     }

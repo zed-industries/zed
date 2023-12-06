@@ -28,7 +28,7 @@ pub(crate) struct DispatchTree {
 pub(crate) struct DispatchNode {
     pub key_listeners: SmallVec<[KeyListener; 2]>,
     pub action_listeners: SmallVec<[DispatchActionListener; 16]>,
-    pub context: KeyContext,
+    pub context: Option<KeyContext>,
     parent: Option<DispatchNodeId>,
 }
 
@@ -70,14 +70,14 @@ impl DispatchTree {
         });
         self.node_stack.push(node_id);
         if let Some(context) = context {
-            self.active_node().context = context.clone();
+            self.active_node().context = Some(context.clone());
             self.context_stack.push(context);
         }
     }
 
     pub fn pop_node(&mut self) {
         let node_id = self.node_stack.pop().unwrap();
-        if !self.nodes[node_id.0].context.is_empty() {
+        if self.nodes[node_id.0].context.is_some() {
             self.context_stack.pop();
         }
     }
@@ -95,8 +95,8 @@ impl DispatchTree {
             self.context_stack.clear();
             for node_id in dispatch_path {
                 let node = self.node(node_id);
-                if !node.context.is_empty() {
-                    self.context_stack.push(node.context.clone());
+                if let Some(context) = node.context.clone() {
+                    self.context_stack.push(context);
                 }
 
                 if let Some((context_stack, matcher)) = old_tree
