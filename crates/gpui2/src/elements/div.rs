@@ -95,32 +95,6 @@ pub trait InteractiveElement: Sized + Element {
         self
     }
 
-    fn on_mouse_down_weird(
-        mut self,
-        button: MouseButton,
-        listener: impl Fn(&MouseDownEvent, &mut WindowContext) + 'static,
-    ) -> Self {
-        self.interactivity().mouse_down_listeners.push(Box::new(
-            move |event, bounds, phase, cx| {
-                dbg!("HEREEEE");
-
-                let contains = dbg!(dbg!(&bounds.bounds).contains_point(dbg!(&event.position)))
-                    && dbg!(cx.was_top_layer(&event.position, &bounds.stacking_order));
-                dbg!(contains);
-
-                if phase == DispatchPhase::Bubble
-                    && event.button == button
-                    && bounds.visibly_contains(&event.position, cx)
-                {
-                    dbg!("HEREEEE2");
-
-                    (listener)(event, cx)
-                }
-            },
-        ));
-        self
-    }
-
     fn on_any_mouse_down(
         mut self,
         listener: impl Fn(&MouseDownEvent, &mut WindowContext) + 'static,

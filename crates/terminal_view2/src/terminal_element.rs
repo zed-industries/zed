@@ -1,10 +1,10 @@
 use editor::{Cursor, HighlightedRange, HighlightedRangeLine};
 use gpui::{
     black, div, point, px, red, relative, transparent_black, AnyElement, AvailableSpace, Bounds,
-    DispatchPhase, Element, ElementId, FocusHandle, Font, FontStyle, FontWeight, HighlightStyle,
-    Hsla, InteractiveElement, InteractiveElementState, IntoElement, LayoutId, ModelContext,
-    ModifiersChangedEvent, MouseButton, Pixels, Point, Rgba, ShapedLine, Size,
-    StatefulInteractiveElement, Styled, TextRun, TextStyle, TextSystem, UnderlineStyle, View,
+    DispatchPhase, Element, ElementId, ElementInputHandler, FocusHandle, Font, FontStyle,
+    FontWeight, HighlightStyle, Hsla, InteractiveElement, InteractiveElementState, IntoElement,
+    LayoutId, ModelContext, ModifiersChangedEvent, MouseButton, Pixels, Point, Rgba, ShapedLine,
+    Size, StatefulInteractiveElement, Styled, TextRun, TextStyle, TextSystem, UnderlineStyle, View,
     WeakModel, WhiteSpace, WindowContext,
 };
 use itertools::Itertools;
@@ -638,11 +638,10 @@ impl TerminalElement {
         let connection = self.terminal.clone();
 
         let mut this = self
-            .on_mouse_down_weird(MouseButton::Left, {
+            .on_mouse_down(MouseButton::Left, {
                 let connection = connection.clone();
                 let focus = focus.clone();
                 move |e, cx| {
-                    dbg!("here");
                     cx.focus(&focus);
                     //todo!(context menu)
                     // v.context_menu.update(cx, |menu, _cx| menu.delay_cancel());
@@ -655,18 +654,18 @@ impl TerminalElement {
                     }
                 }
             })
-            .on_drag_event({
+            .on_mouse_move({
                 let connection = connection.clone();
                 let focus = focus.clone();
                 move |e, cx| {
-                    dbg!("here");
-
-                    if focus.is_focused(cx) {
-                        if let Some(conn_handle) = connection.upgrade() {
-                            conn_handle.update(cx, |terminal, cx| {
-                                terminal.mouse_drag(e, origin, bounds);
-                                cx.notify();
-                            })
+                    if e.pressed_button.is_some() {
+                        if focus.is_focused(cx) {
+                            if let Some(conn_handle) = connection.upgrade() {
+                                conn_handle.update(cx, |terminal, cx| {
+                                    terminal.mouse_drag(e, origin, bounds);
+                                    cx.notify();
+                                })
+                            }
                         }
                     }
                 }
@@ -685,8 +684,6 @@ impl TerminalElement {
             .on_click({
                 let connection = connection.clone();
                 move |e, cx| {
-                    dbg!("here");
-
                     if e.down.button == MouseButton::Right {
                         let mouse_mode = if let Some(conn_handle) = connection.upgrade() {
                             conn_handle.update(cx, |terminal, _cx| {
@@ -707,8 +704,6 @@ impl TerminalElement {
                 let connection = connection.clone();
                 let focus = focus.clone();
                 move |e, cx| {
-                    dbg!("here");
-
                     if focus.is_focused(cx) {
                         if let Some(conn_handle) = connection.upgrade() {
                             conn_handle.update(cx, |terminal, cx| {
@@ -722,8 +717,6 @@ impl TerminalElement {
             .on_scroll_wheel({
                 let connection = connection.clone();
                 move |e, cx| {
-                    dbg!("here");
-
                     if let Some(conn_handle) = connection.upgrade() {
                         conn_handle.update(cx, |terminal, cx| {
                             terminal.scroll_wheel(e, origin);
@@ -814,7 +807,6 @@ impl Element for TerminalElement {
         state: &mut Self::State,
         cx: &mut WindowContext<'_>,
     ) {
-        dbg!(bounds);
         let mut layout = self.compute_layout(bounds, cx);
 
         let theme = cx.theme();
@@ -831,9 +823,13 @@ impl Element for TerminalElement {
         let origin = bounds.origin + Point::new(layout.gutter, px(0.));
 
         let mut this = self.register_mouse_listeners(origin, layout.mode, bounds, cx);
+
         let interactivity = mem::take(&mut this.interactivity);
 
         interactivity.paint(bounds, bounds.size, state, cx, |_, _, cx| {
+            let input_handler = ElementInputHandler::new(bounds, this.terminal_view.clone(), cx);
+            cx.handle_input(&this.focus, input_handler);
+
             this.register_key_listeners(cx);
 
             for rect in &layout.rects {

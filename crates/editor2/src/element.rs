@@ -3448,7 +3448,6 @@ mod tests {
             DisplayPoint::new(4, 0)..DisplayPoint::new(6, 0)
         );
         assert_eq!(local_selections[0].head, DisplayPoint::new(5, 0));
-        dbg!("Hi");
         // moves cursor on buffer boundary back two lines
         // and doesn't allow selection to bleed through
         assert_eq!(
