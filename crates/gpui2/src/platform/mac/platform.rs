@@ -1,18 +1,19 @@
-use super::BoolExt;
+use super::{events::key_to_native, BoolExt};
 use crate::{
-    AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId, ForegroundExecutor,
-    InputEvent, MacDispatcher, MacDisplay, MacDisplayLinker, MacTextSystem, MacWindow,
-    PathPromptOptions, Platform, PlatformDisplay, PlatformTextSystem, PlatformWindow, Result,
-    SemanticVersion, VideoTimestamp, WindowOptions,
+    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
+    ForegroundExecutor, InputEvent, Keymap, MacDispatcher, MacDisplay, MacDisplayLinker,
+    MacTextSystem, MacWindow, Menu, MenuItem, PathPromptOptions, Platform, PlatformDisplay,
+    PlatformTextSystem, PlatformWindow, Result, SemanticVersion, VideoTimestamp, WindowOptions,
 };
 use anyhow::anyhow;
 use block::ConcreteBlock;
 use cocoa::{
     appkit::{
         NSApplication, NSApplicationActivationPolicy::NSApplicationActivationPolicyRegular,
-        NSModalResponse, NSOpenPanel, NSPasteboard, NSPasteboardTypeString, NSSavePanel, NSWindow,
+        NSEventModifierFlags, NSMenu, NSMenuItem, NSModalResponse, NSOpenPanel, NSPasteboard,
+        NSPasteboardTypeString, NSSavePanel, NSWindow,
     },
-    base::{id, nil, BOOL, YES},
+    base::{id, nil, selector, BOOL, YES},
     foundation::{
         NSArray, NSAutoreleasePool, NSBundle, NSData, NSInteger, NSProcessInfo, NSString,
         NSUInteger, NSURL,
@@ -155,12 +156,12 @@ pub struct MacPlatformState {
     reopen: Option<Box<dyn FnMut()>>,
     quit: Option<Box<dyn FnMut()>>,
     event: Option<Box<dyn FnMut(InputEvent) -> bool>>,
-    // menu_command: Option<Box<dyn FnMut(&dyn Action)>>,
-    // validate_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
+    menu_command: Option<Box<dyn FnMut(&dyn Action)>>,
+    validate_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
     will_open_menu: Option<Box<dyn FnMut()>>,
+    menu_actions: Vec<Box<dyn Action>>,
     open_urls: Option<Box<dyn FnMut(Vec<String>)>>,
     finish_launching: Option<Box<dyn FnOnce()>>,
-    // menu_actions: Vec<Box<dyn Action>>,
 }
 
 impl MacPlatform {
@@ -179,12 +180,12 @@ impl MacPlatform {
             reopen: None,
             quit: None,
             event: None,
+            menu_command: None,
+            validate_menu_command: None,
             will_open_menu: None,
+            menu_actions: Default::default(),
             open_urls: None,
             finish_launching: None,
-            // menu_command: None,
-            // validate_menu_command: None,
-            // menu_actions: Default::default(),
         }))
     }
 
@@ -200,151 +201,153 @@ impl MacPlatform {
         }
     }
 
-    // unsafe fn create_menu_bar(
-    //     &self,
-    //     menus: Vec<Menu>,
-    //     delegate: id,
-    //     actions: &mut Vec<Box<dyn Action>>,
-    //     keystroke_matcher: &KeymapMatcher,
-    // ) -> id {
-    //     let application_menu = NSMenu::new(nil).autorelease();
-    //     application_menu.setDelegate_(delegate);
+    unsafe fn create_menu_bar(
+        &self,
+        menus: Vec<Menu>,
+        delegate: id,
+        actions: &mut Vec<Box<dyn Action>>,
+        keymap: &Keymap,
+    ) -> id {
+        let application_menu = NSMenu::new(nil).autorelease();
+        application_menu.setDelegate_(delegate);
 
-    //     for menu_config in menus {
-    //         let menu = NSMenu::new(nil).autorelease();
-    //         menu.setTitle_(ns_string(menu_config.name));
-    //         menu.setDelegate_(delegate);
+        for menu_config in menus {
+            let menu = NSMenu::new(nil).autorelease();
+            menu.setTitle_(ns_string(menu_config.name));
+            menu.setDelegate_(delegate);
 
-    //         for item_config in menu_config.items {
-    //             menu.addItem_(self.create_menu_item(
-    //                 item_config,
-    //                 delegate,
-    //                 actions,
-    //                 keystroke_matcher,
-    //             ));
-    //         }
+            for item_config in menu_config.items {
+                menu.addItem_(self.create_menu_item(item_config, delegate, actions, keymap));
+            }
 
-    //         let menu_item = NSMenuItem::new(nil).autorelease();
-    //         menu_item.setSubmenu_(menu);
-    //         application_menu.addItem_(menu_item);
+            let menu_item = NSMenuItem::new(nil).autorelease();
+            menu_item.setSubmenu_(menu);
+            application_menu.addItem_(menu_item);
 
-    //         if menu_config.name == "Window" {
-    //             let app: id = msg_send![APP_CLASS, sharedApplication];
-    //             app.setWindowsMenu_(menu);
-    //         }
-    //     }
+            if menu_config.name == "Window" {
+                let app: id = msg_send![APP_CLASS, sharedApplication];
+                app.setWindowsMenu_(menu);
+            }
+        }
 
-    //     application_menu
-    // }
+        application_menu
+    }
 
-    // unsafe fn create_menu_item(
-    //     &self,
-    //     item: MenuItem,
-    //     delegate: id,
-    //     actions: &mut Vec<Box<dyn Action>>,
-    //     keystroke_matcher: &KeymapMatcher,
-    // ) -> id {
-    //     match item {
-    //         MenuItem::Separator => NSMenuItem::separatorItem(nil),
-    //         MenuItem::Action {
-    //             name,
-    //             action,
-    //             os_action,
-    //         } => {
-    //             // TODO
-    //             let keystrokes = keystroke_matcher
-    //                 .bindings_for_action(action.id())
-    //                 .find(|binding| binding.action().eq(action.as_ref()))
-    //                 .map(|binding| binding.keystrokes());
-    //             let selector = match os_action {
-    //                 Some(crate::OsAction::Cut) => selector("cut:"),
-    //                 Some(crate::OsAction::Copy) => selector("copy:"),
-    //                 Some(crate::OsAction::Paste) => selector("paste:"),
-    //                 Some(crate::OsAction::SelectAll) => selector("selectAll:"),
-    //                 Some(crate::OsAction::Undo) => selector("undo:"),
-    //                 Some(crate::OsAction::Redo) => selector("redo:"),
-    //                 None => selector("handleGPUIMenuItem:"),
-    //             };
+    unsafe fn create_menu_item(
+        &self,
+        item: MenuItem,
+        delegate: id,
+        actions: &mut Vec<Box<dyn Action>>,
+        keymap: &Keymap,
+    ) -> id {
+        match item {
+            MenuItem::Separator => NSMenuItem::separatorItem(nil),
+            MenuItem::Action {
+                name,
+                action,
+                os_action,
+            } => {
+                let keystrokes = keymap
+                    .bindings_for_action(action.type_id())
+                    .find(|binding| binding.action().partial_eq(action.as_ref()))
+                    .map(|binding| binding.keystrokes());
 
-    //             let item;
-    //             if let Some(keystrokes) = keystrokes {
-    //                 if keystrokes.len() == 1 {
-    //                     let keystroke = &keystrokes[0];
-    //                     let mut mask = NSEventModifierFlags::empty();
-    //                     for (modifier, flag) in &[
-    //                         (keystroke.cmd, NSEventModifierFlags::NSCommandKeyMask),
-    //                         (keystroke.ctrl, NSEventModifierFlags::NSControlKeyMask),
-    //                         (keystroke.alt, NSEventModifierFlags::NSAlternateKeyMask),
-    //                         (keystroke.shift, NSEventModifierFlags::NSShiftKeyMask),
-    //                     ] {
-    //                         if *modifier {
-    //                             mask |= *flag;
-    //                         }
-    //                     }
+                let selector = match os_action {
+                    Some(crate::OsAction::Cut) => selector("cut:"),
+                    Some(crate::OsAction::Copy) => selector("copy:"),
+                    Some(crate::OsAction::Paste) => selector("paste:"),
+                    Some(crate::OsAction::SelectAll) => selector("selectAll:"),
+                    Some(crate::OsAction::Undo) => selector("undo:"),
+                    Some(crate::OsAction::Redo) => selector("redo:"),
+                    None => selector("handleGPUIMenuItem:"),
+                };
 
-    //                     item = NSMenuItem::alloc(nil)
-    //                         .initWithTitle_action_keyEquivalent_(
-    //                             ns_string(name),
-    //                             selector,
-    //                             ns_string(key_to_native(&keystroke.key).as_ref()),
-    //                         )
-    //                         .autorelease();
-    //                     item.setKeyEquivalentModifierMask_(mask);
-    //                 }
-    //                 // For multi-keystroke bindings, render the keystroke as part of the title.
-    //                 else {
-    //                     use std::fmt::Write;
+                let item;
+                if let Some(keystrokes) = keystrokes {
+                    if keystrokes.len() == 1 {
+                        let keystroke = &keystrokes[0];
+                        let mut mask = NSEventModifierFlags::empty();
+                        for (modifier, flag) in &[
+                            (
+                                keystroke.modifiers.command,
+                                NSEventModifierFlags::NSCommandKeyMask,
+                            ),
+                            (
+                                keystroke.modifiers.control,
+                                NSEventModifierFlags::NSControlKeyMask,
+                            ),
+                            (
+                                keystroke.modifiers.alt,
+                                NSEventModifierFlags::NSAlternateKeyMask,
+                            ),
+                            (
+                                keystroke.modifiers.shift,
+                                NSEventModifierFlags::NSShiftKeyMask,
+                            ),
+                        ] {
+                            if *modifier {
+                                mask |= *flag;
+                            }
+                        }
 
-    //                     let mut name = format!("{name} [");
-    //                     for (i, keystroke) in keystrokes.iter().enumerate() {
-    //                         if i > 0 {
-    //                             name.push(' ');
-    //                         }
-    //                         write!(&mut name, "{}", keystroke).unwrap();
-    //                     }
-    //                     name.push(']');
+                        item = NSMenuItem::alloc(nil)
+                            .initWithTitle_action_keyEquivalent_(
+                                ns_string(name),
+                                selector,
+                                ns_string(key_to_native(&keystroke.key).as_ref()),
+                            )
+                            .autorelease();
+                        item.setKeyEquivalentModifierMask_(mask);
+                    }
+                    // For multi-keystroke bindings, render the keystroke as part of the title.
+                    else {
+                        use std::fmt::Write;
 
-    //                     item = NSMenuItem::alloc(nil)
-    //                         .initWithTitle_action_keyEquivalent_(
-    //                             ns_string(&name),
-    //                             selector,
-    //                             ns_string(""),
-    //                         )
-    //                         .autorelease();
-    //                 }
-    //             } else {
-    //                 item = NSMenuItem::alloc(nil)
-    //                     .initWithTitle_action_keyEquivalent_(
-    //                         ns_string(name),
-    //                         selector,
-    //                         ns_string(""),
-    //                     )
-    //                     .autorelease();
-    //             }
+                        let mut name = format!("{name} [");
+                        for (i, keystroke) in keystrokes.iter().enumerate() {
+                            if i > 0 {
+                                name.push(' ');
+                            }
+                            write!(&mut name, "{}", keystroke).unwrap();
+                        }
+                        name.push(']');
 
-    //             let tag = actions.len() as NSInteger;
-    //             let _: () = msg_send![item, setTag: tag];
-    //             actions.push(action);
-    //             item
-    //         }
-    //         MenuItem::Submenu(Menu { name, items }) => {
-    //             let item = NSMenuItem::new(nil).autorelease();
-    //             let submenu = NSMenu::new(nil).autorelease();
-    //             submenu.setDelegate_(delegate);
-    //             for item in items {
-    //                 submenu.addItem_(self.create_menu_item(
-    //                     item,
-    //                     delegate,
-    //                     actions,
-    //                     keystroke_matcher,
-    //                 ));
-    //             }
-    //             item.setSubmenu_(submenu);
-    //             item.setTitle_(ns_string(name));
-    //             item
-    //         }
-    //     }
-    // }
+                        item = NSMenuItem::alloc(nil)
+                            .initWithTitle_action_keyEquivalent_(
+                                ns_string(&name),
+                                selector,
+                                ns_string(""),
+                            )
+                            .autorelease();
+                    }
+                } else {
+                    item = NSMenuItem::alloc(nil)
+                        .initWithTitle_action_keyEquivalent_(
+                            ns_string(name),
+                            selector,
+                            ns_string(""),
+                        )
+                        .autorelease();
+                }
+
+                let tag = actions.len() as NSInteger;
+                let _: () = msg_send![item, setTag: tag];
+                actions.push(action);
+                item
+            }
+            MenuItem::Submenu(Menu { name, items }) => {
+                let item = NSMenuItem::new(nil).autorelease();
+                let submenu = NSMenu::new(nil).autorelease();
+                submenu.setDelegate_(delegate);
+                for item in items {
+                    submenu.addItem_(self.create_menu_item(item, delegate, actions, keymap));
+                }
+                item.setSubmenu_(submenu);
+                item.setTitle_(ns_string(name));
+                item
+            }
+        }
+    }
 }
 
 impl Platform for MacPlatform {
@@ -479,8 +482,8 @@ impl Platform for MacPlatform {
         MacDisplay::find_by_id(id).map(|screen| Rc::new(screen) as Rc<_>)
     }
 
-    fn main_window(&self) -> Option<AnyWindowHandle> {
-        MacWindow::main_window()
+    fn active_window(&self) -> Option<AnyWindowHandle> {
+        MacWindow::active_window()
     }
 
     fn open_window(
@@ -631,6 +634,18 @@ impl Platform for MacPlatform {
         self.0.lock().event = Some(callback);
     }
 
+    fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>) {
+        self.0.lock().menu_command = Some(callback);
+    }
+
+    fn on_will_open_app_menu(&self, callback: Box<dyn FnMut()>) {
+        self.0.lock().will_open_menu = Some(callback);
+    }
+
+    fn on_validate_app_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>) {
+        self.0.lock().validate_menu_command = Some(callback);
+    }
+
     fn os_name(&self) -> &'static str {
         "macOS"
     }
@@ -673,6 +688,15 @@ impl Platform for MacPlatform {
         }
     }
 
+    fn set_menus(&self, menus: Vec<Menu>, keymap: &Keymap) {
+        unsafe {
+            let app: id = msg_send![APP_CLASS, sharedApplication];
+            let mut state = self.0.lock();
+            let actions = &mut state.menu_actions;
+            app.setMainMenu_(self.create_menu_bar(menus, app.delegate(), actions, keymap));
+        }
+    }
+
     fn local_timezone(&self) -> UtcOffset {
         unsafe {
             let local_timezone: id = msg_send![class!(NSTimeZone), localTimeZone];
@@ -680,32 +704,6 @@ impl Platform for MacPlatform {
             UtcOffset::from_whole_seconds(seconds_from_gmt.try_into().unwrap()).unwrap()
         }
     }
-
-    // fn on_menu_command(&self, callback: Box<dyn FnMut(&dyn Action)>) {
-    //     self.0.lock().menu_command = Some(callback);
-    // }
-
-    // fn on_will_open_menu(&self, callback: Box<dyn FnMut()>) {
-    //     self.0.lock().will_open_menu = Some(callback);
-    // }
-
-    // fn on_validate_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>) {
-    //     self.0.lock().validate_menu_command = Some(callback);
-    // }
-
-    // fn set_menus(&self, menus: Vec<Menu>, keystroke_matcher: &KeymapMatcher) {
-    //     unsafe {
-    //         let app: id = msg_send![APP_CLASS, sharedApplication];
-    //         let mut state = self.0.lock();
-    //         let actions = &mut state.menu_actions;
-    //         app.setMainMenu_(self.create_menu_bar(
-    //             menus,
-    //             app.delegate(),
-    //             actions,
-    //             keystroke_matcher,
-    //         ));
-    //     }
-    // }
 
     fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf> {
         unsafe {
@@ -956,7 +954,7 @@ unsafe fn path_from_objc(path: id) -> PathBuf {
     PathBuf::from(path)
 }
 
-unsafe fn get_foreground_platform(object: &mut Object) -> &MacPlatform {
+unsafe fn get_mac_platform(object: &mut Object) -> &MacPlatform {
     let platform_ptr: *mut c_void = *object.get_ivar(MAC_PLATFORM_IVAR);
     assert!(!platform_ptr.is_null());
     &*(platform_ptr as *const MacPlatform)
@@ -965,7 +963,7 @@ unsafe fn get_foreground_platform(object: &mut Object) -> &MacPlatform {
 extern "C" fn send_event(this: &mut Object, _sel: Sel, native_event: id) {
     unsafe {
         if let Some(event) = InputEvent::from_native(native_event, None) {
-            let platform = get_foreground_platform(this);
+            let platform = get_mac_platform(this);
             if let Some(callback) = platform.0.lock().event.as_mut() {
                 if !callback(event) {
                     return;
@@ -981,7 +979,7 @@ extern "C" fn did_finish_launching(this: &mut Object, _: Sel, _: id) {
         let app: id = msg_send![APP_CLASS, sharedApplication];
         app.setActivationPolicy_(NSApplicationActivationPolicyRegular);
 
-        let platform = get_foreground_platform(this);
+        let platform = get_mac_platform(this);
         let callback = platform.0.lock().finish_launching.take();
         if let Some(callback) = callback {
             callback();
@@ -991,7 +989,7 @@ extern "C" fn did_finish_launching(this: &mut Object, _: Sel, _: id) {
 
 extern "C" fn should_handle_reopen(this: &mut Object, _: Sel, _: id, has_open_windows: bool) {
     if !has_open_windows {
-        let platform = unsafe { get_foreground_platform(this) };
+        let platform = unsafe { get_mac_platform(this) };
         if let Some(callback) = platform.0.lock().reopen.as_mut() {
             callback();
         }
@@ -999,21 +997,21 @@ extern "C" fn should_handle_reopen(this: &mut Object, _: Sel, _: id, has_open_wi
 }
 
 extern "C" fn did_become_active(this: &mut Object, _: Sel, _: id) {
-    let platform = unsafe { get_foreground_platform(this) };
+    let platform = unsafe { get_mac_platform(this) };
     if let Some(callback) = platform.0.lock().become_active.as_mut() {
         callback();
     }
 }
 
 extern "C" fn did_resign_active(this: &mut Object, _: Sel, _: id) {
-    let platform = unsafe { get_foreground_platform(this) };
+    let platform = unsafe { get_mac_platform(this) };
     if let Some(callback) = platform.0.lock().resign_active.as_mut() {
         callback();
     }
 }
 
 extern "C" fn will_terminate(this: &mut Object, _: Sel, _: id) {
-    let platform = unsafe { get_foreground_platform(this) };
+    let platform = unsafe { get_mac_platform(this) };
     if let Some(callback) = platform.0.lock().quit.as_mut() {
         callback();
     }
@@ -1035,49 +1033,47 @@ extern "C" fn open_urls(this: &mut Object, _: Sel, _: id, urls: id) {
             })
             .collect::<Vec<_>>()
     };
-    let platform = unsafe { get_foreground_platform(this) };
+    let platform = unsafe { get_mac_platform(this) };
     if let Some(callback) = platform.0.lock().open_urls.as_mut() {
         callback(urls);
     }
 }
 
-extern "C" fn handle_menu_item(__this: &mut Object, _: Sel, __item: id) {
-    todo!()
-    // unsafe {
-    //     let platform = get_foreground_platform(this);
-    //     let mut platform = platform.0.lock();
-    //     if let Some(mut callback) = platform.menu_command.take() {
-    //         let tag: NSInteger = msg_send![item, tag];
-    //         let index = tag as usize;
-    //         if let Some(action) = platform.menu_actions.get(index) {
-    //             callback(action.as_ref());
-    //         }
-    //         platform.menu_command = Some(callback);
-    //     }
-    // }
+extern "C" fn handle_menu_item(this: &mut Object, _: Sel, item: id) {
+    unsafe {
+        let platform = get_mac_platform(this);
+        let mut platform = platform.0.lock();
+        if let Some(mut callback) = platform.menu_command.take() {
+            let tag: NSInteger = msg_send![item, tag];
+            let index = tag as usize;
+            if let Some(action) = platform.menu_actions.get(index) {
+                callback(action.as_ref());
+            }
+            platform.menu_command = Some(callback);
+        }
+    }
 }
 
-extern "C" fn validate_menu_item(__this: &mut Object, _: Sel, __item: id) -> bool {
-    todo!()
-    // unsafe {
-    //     let mut result = false;
-    //     let platform = get_foreground_platform(this);
-    //     let mut platform = platform.0.lock();
-    //     if let Some(mut callback) = platform.validate_menu_command.take() {
-    //         let tag: NSInteger = msg_send![item, tag];
-    //         let index = tag as usize;
-    //         if let Some(action) = platform.menu_actions.get(index) {
-    //             result = callback(action.as_ref());
-    //         }
-    //         platform.validate_menu_command = Some(callback);
-    //     }
-    //     result
-    // }
+extern "C" fn validate_menu_item(this: &mut Object, _: Sel, item: id) -> bool {
+    unsafe {
+        let mut result = false;
+        let platform = get_mac_platform(this);
+        let mut platform = platform.0.lock();
+        if let Some(mut callback) = platform.validate_menu_command.take() {
+            let tag: NSInteger = msg_send![item, tag];
+            let index = tag as usize;
+            if let Some(action) = platform.menu_actions.get(index) {
+                result = callback(action.as_ref());
+            }
+            platform.validate_menu_command = Some(callback);
+        }
+        result
+    }
 }
 
 extern "C" fn menu_will_open(this: &mut Object, _: Sel, _: id) {
     unsafe {
-        let platform = get_foreground_platform(this);
+        let platform = get_mac_platform(this);
         let mut platform = platform.0.lock();
         if let Some(mut callback) = platform.will_open_menu.take() {
             callback();

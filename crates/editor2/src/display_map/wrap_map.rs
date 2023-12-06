@@ -1032,7 +1032,7 @@ mod tests {
         display_map::{fold_map::FoldMap, inlay_map::InlayMap, tab_map::TabMap},
         MultiBuffer,
     };
-    use gpui::{font, px, test::observe, Platform};
+    use gpui::{font, px, test::observe};
     use rand::prelude::*;
     use settings::SettingsStore;
     use smol::stream::StreamExt;
