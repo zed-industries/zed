@@ -25,7 +25,11 @@ use crate::{
 };
 use anyhow::{anyhow, Result};
 use collections::{HashMap, HashSet, VecDeque};
-use futures::{channel::oneshot, future::LocalBoxFuture, Future};
+use futures::{
+    channel::{mpsc::UnboundedSender, oneshot},
+    future::LocalBoxFuture,
+    Future, StreamExt,
+};
 use parking_lot::Mutex;
 use slotmap::SlotMap;
 use std::{
@@ -180,6 +184,7 @@ type NewViewListener = Box<dyn FnMut(AnyView, &mut WindowContext) + 'static>;
 pub struct AppContext {
     pub(crate) this: Weak<AppCell>,
     pub(crate) platform: Rc<dyn Platform>,
+    pub(crate) draw_tx: UnboundedSender<DisplayId>,
     app_metadata: AppMetadata,
     text_system: Arc<TextSystem>,
     flushing_effects: bool,
@@ -237,10 +242,13 @@ impl AppContext {
             app_version: platform.app_version().ok(),
         };
 
+        let (draw_tx, mut draw_rx) = futures::channel::mpsc::unbounded::<DisplayId>();
+
         let app = Rc::new_cyclic(|this| AppCell {
             app: RefCell::new(AppContext {
                 this: this.clone(),
                 platform: platform.clone(),
+                draw_tx,
                 app_metadata,
                 text_system,
                 actions: Rc::new(ActionRegistry::default()),
@@ -274,6 +282,26 @@ impl AppContext {
                 propagate_event: true,
             }),
         });
+
+        app.borrow_mut()
+            .spawn(|cx| async move {
+                while let Some(display_id) = draw_rx.next().await {
+                    cx.update(|cx| {
+                        let mut handles = Vec::new();
+                        for window in cx.windows.values().filter_map(|w| w.as_ref()) {
+                            if window.dirty && window.platform_window.display().id() == display_id {
+                                handles.push(window.handle);
+                            }
+                        }
+
+                        for handle in handles {
+                            handle.update(cx, |_, cx| cx.draw()).unwrap();
+                        }
+                    })
+                    .ok();
+                }
+            })
+            .detach();
 
         platform.on_quit(Box::new({
             let cx = app.clone();
@@ -583,22 +611,22 @@ impl AppContext {
             }
         }
 
-        let dirty_window_ids = self
-            .windows
-            .iter()
-            .filter_map(|(_, window)| {
-                let window = window.as_ref()?;
-                if window.dirty {
-                    Some(window.handle.clone())
-                } else {
-                    None
-                }
-            })
-            .collect::<SmallVec<[_; 8]>>();
+        // let dirty_window_ids = self
+        //     .windows
+        //     .iter()
+        //     .filter_map(|(_, window)| {
+        //         let window = window.as_ref()?;
+        //         if window.dirty {
+        //             Some(window.handle.clone())
+        //         } else {
+        //             None
+        //         }
+        //     })
+        //     .collect::<SmallVec<[_; 8]>>();
 
-        for dirty_window_handle in dirty_window_ids {
-            dirty_window_handle.update(self, |_, cx| cx.draw()).unwrap();
-        }
+        // for dirty_window_handle in dirty_window_ids {
+        //     dirty_window_handle.update(self, |_, cx| cx.draw()).unwrap();
+        // }
     }
 
     /// Repeatedly called during `flush_effects` to release any entities whose

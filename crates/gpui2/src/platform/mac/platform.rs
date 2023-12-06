@@ -506,9 +506,9 @@ impl Platform for MacPlatform {
         self.0.lock().display_linker.start(display_id);
     }
 
-    fn stop_display_link(&self, display_id: DisplayId) {
-        self.0.lock().display_linker.stop(display_id);
-    }
+    // fn stop_display_link(&self, display_id: DisplayId) {
+    //     self.0.lock().display_linker.stop(display_id);
+    // }
 
     fn open_url(&self, url: &str) {
         unsafe {

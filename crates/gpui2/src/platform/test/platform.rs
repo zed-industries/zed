@@ -156,9 +156,9 @@ impl Platform for TestPlatform {
         unimplemented!()
     }
 
-    fn stop_display_link(&self, _display_id: DisplayId) {
-        unimplemented!()
-    }
+    // fn stop_display_link(&self, _display_id: DisplayId) {
+    //     unimplemented!()
+    // }
 
     fn open_url(&self, _url: &str) {
         unimplemented!()

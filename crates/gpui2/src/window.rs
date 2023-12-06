@@ -278,6 +278,14 @@ impl Window {
         let scale_factor = platform_window.scale_factor();
         let bounds = platform_window.bounds();
 
+        cx.platform.set_display_link_output_callback(display_id, {
+            let tx = cx.draw_tx.clone();
+            Box::new(move |_, _| {
+                tx.unbounded_send(display_id).ok();
+            })
+        });
+        cx.platform.start_display_link(display_id);
+
         platform_window.on_resize(Box::new({
             let mut cx = cx.to_async();
             move |_, _| {
@@ -548,20 +556,20 @@ impl<'a> WindowContext<'a> {
 
                     // Flush effects, then stop the display link if no new next_frame_callbacks have been added.
 
-                    cx.update(|cx| {
-                        if cx.next_frame_callbacks.is_empty() {
-                            cx.platform.stop_display_link(display_id);
-                        }
-                    })
-                    .ok();
+                    // cx.update(|cx| {
+                    //     if cx.next_frame_callbacks.is_empty() {
+                    //         cx.platform.stop_display_link(display_id);
+                    //     }
+                    // })
+                    // .ok();
                 }
             });
             self.frame_consumers.insert(display_id, consumer_task);
         }
 
-        if self.next_frame_callbacks.is_empty() {
-            self.platform.start_display_link(display_id);
-        }
+        // if self.next_frame_callbacks.is_empty() {
+        //     self.platform.start_display_link(display_id);
+        // }
 
         self.next_frame_callbacks
             .entry(display_id)

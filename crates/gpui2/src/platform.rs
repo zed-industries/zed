@@ -72,7 +72,7 @@ pub trait Platform: 'static {
         callback: Box<dyn FnMut(&VideoTimestamp, &VideoTimestamp) + Send>,
     );
     fn start_display_link(&self, display_id: DisplayId);
-    fn stop_display_link(&self, display_id: DisplayId);
+    // fn stop_display_link(&self, display_id: DisplayId);
     // fn add_status_item(&self, _handle: AnyWindowHandle) -> Box<dyn PlatformWindow>;
 
     fn open_url(&self, url: &str);
