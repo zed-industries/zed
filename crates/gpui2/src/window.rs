@@ -2203,8 +2203,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
             ),
         );
 
-        activate();
-        // self.app.defer(move |_| activate());
+        self.app.defer(move |_| activate());
         subscription
     }
 

@@ -12,7 +12,7 @@ use collections::VecDeque;
 use editor::{Editor, MultiBuffer};
 use gpui::{
     actions, point, px, AppContext, Context, FocusableView, PromptLevel, TitlebarOptions,
-    ViewContext, VisualContext, WindowBounds, WindowKind, WindowOptions,
+    ViewContext, VisualContext, WindowBounds, WindowKind, WindowOptions, View,
 };
 pub use only_instance::*;
 pub use open_listener::*;
@@ -21,6 +21,7 @@ use anyhow::{anyhow, Context as _};
 use project_panel::ProjectPanel;
 use quick_action_bar::QuickActionBar;
 use settings::{initial_local_settings_content, Settings};
+use workspace::Pane;
 use std::{borrow::Cow, ops::Deref, sync::Arc};
 use terminal_view::terminal_panel::TerminalPanel;
 use util::{
@@ -92,38 +93,12 @@ pub fn build_window_options(
 pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
     cx.observe_new_views(move |workspace: &mut Workspace, cx| {
         let workspace_handle = cx.view().clone();
+        let center_pane = workspace.active_pane().clone();
+        initialize_pane(workspace, &center_pane, cx);
         cx.subscribe(&workspace_handle, {
             move |workspace, _, event, cx| {
                 if let workspace::Event::PaneAdded(pane) = event {
-                    dbg!("PaneAdded");
-                    pane.update(cx, |pane, cx| {
-                        pane.toolbar().update(cx, |toolbar, cx| {
-                            let breadcrumbs = cx.build_view(|_| Breadcrumbs::new(workspace));
-                            toolbar.add_item(breadcrumbs, cx);
-                            let buffer_search_bar = cx.build_view(search::BufferSearchBar::new);
-                            toolbar.add_item(buffer_search_bar.clone(), cx);
-
-                            let quick_action_bar = cx
-                                .build_view(|_| QuickActionBar::new(buffer_search_bar, workspace));
-                            toolbar.add_item(quick_action_bar, cx);
-                            let diagnostic_editor_controls =
-                                cx.build_view(|_| diagnostics::ToolbarControls::new());
-                            //     toolbar.add_item(diagnostic_editor_controls, cx);
-                            //     let project_search_bar = cx.add_view(|_| ProjectSearchBar::new());
-                            //     toolbar.add_item(project_search_bar, cx);
-                            //     let submit_feedback_button =
-                            //         cx.add_view(|_| SubmitFeedbackButton::new());
-                            //     toolbar.add_item(submit_feedback_button, cx);
-                            //     let feedback_info_text = cx.add_view(|_| FeedbackInfoText::new());
-                            //     toolbar.add_item(feedback_info_text, cx);
-                            //     let lsp_log_item =
-                            //         cx.add_view(|_| language_tools::LspLogToolbarItemView::new());
-                            //     toolbar.add_item(lsp_log_item, cx);
-                            //     let syntax_tree_item = cx
-                            //         .add_view(|_| language_tools::SyntaxTreeToolbarItemView::new());
-                            //     toolbar.add_item(syntax_tree_item, cx);
-                        })
-                    });
+                    initialize_pane(workspace, pane, cx);
                 }
             }
         })
@@ -433,6 +408,37 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
         // load_default_keymap(cx);
     })
     .detach();
+}
+
+fn initialize_pane(workspace: &mut Workspace, pane: &View<Pane>, cx: &mut ViewContext<Workspace>) {
+    pane.update(cx, |pane, cx| {
+        pane.toolbar().update(cx, |toolbar, cx| {
+            let breadcrumbs = cx.build_view(|_| Breadcrumbs::new(workspace));
+            toolbar.add_item(breadcrumbs, cx);
+            let buffer_search_bar = cx.build_view(search::BufferSearchBar::new);
+            toolbar.add_item(buffer_search_bar.clone(), cx);
+
+            let quick_action_bar = cx
+                .build_view(|_| QuickActionBar::new(buffer_search_bar, workspace));
+            toolbar.add_item(quick_action_bar, cx);
+            let diagnostic_editor_controls =
+                cx.build_view(|_| diagnostics::ToolbarControls::new());
+            //     toolbar.add_item(diagnostic_editor_controls, cx);
+            //     let project_search_bar = cx.add_view(|_| ProjectSearchBar::new());
+            //     toolbar.add_item(project_search_bar, cx);
+            //     let submit_feedback_button =
+            //         cx.add_view(|_| SubmitFeedbackButton::new());
+            //     toolbar.add_item(submit_feedback_button, cx);
+            //     let feedback_info_text = cx.add_view(|_| FeedbackInfoText::new());
+            //     toolbar.add_item(feedback_info_text, cx);
+            //     let lsp_log_item =
+            //         cx.add_view(|_| language_tools::LspLogToolbarItemView::new());
+            //     toolbar.add_item(lsp_log_item, cx);
+            //     let syntax_tree_item = cx
+            //         .add_view(|_| language_tools::SyntaxTreeToolbarItemView::new());
+            //     toolbar.add_item(syntax_tree_item, cx);
+        })
+    });
 }
 
 fn about(_: &mut Workspace, _: &About, cx: &mut gpui::ViewContext<Workspace>) {

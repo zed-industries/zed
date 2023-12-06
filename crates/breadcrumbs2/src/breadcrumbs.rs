@@ -23,7 +23,6 @@ pub struct Breadcrumbs {
 
 impl Breadcrumbs {
     pub fn new(workspace: &Workspace) -> Self {
-        dbg!("Breadcrumbs::new");
         Self {
             pane_focused: false,
             active_item: Default::default(),
@@ -40,8 +39,6 @@ impl Render for Breadcrumbs {
     type Element = Div;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-        dbg!("Breadcrumbs::render");
-
         let element = h_stack().text_ui();
 
         let Some(active_item) = &self
