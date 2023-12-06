@@ -60,8 +60,8 @@ pub fn init(
             TypeId::of::<PreviousSuggestion>(),
             TypeId::of::<Reinstall>(),
         ];
-        let copilot_auth_action_types = [TypeId::of::<SignIn>(), TypeId::of::<SignOut>()];
-
+        let copilot_auth_action_types = [TypeId::of::<SignOut>()];
+        let copilot_no_auth_action_types = [TypeId::of::<SignIn>()];
         let status = handle.read(cx).status();
         let filter = cx.default_global::<collections::CommandPaletteFilter>();
 
@@ -69,8 +69,14 @@ pub fn init(
             Status::Disabled => {
                 filter.hidden_action_types.extend(copilot_action_types);
                 filter.hidden_action_types.extend(copilot_auth_action_types);
+                filter
+                    .hidden_action_types
+                    .extend(copilot_no_auth_action_types);
             }
             Status::Authorized => {
+                filter
+                    .hidden_action_types
+                    .extend(copilot_no_auth_action_types);
                 for type_id in copilot_action_types
                     .iter()
                     .chain(&copilot_auth_action_types)
@@ -80,7 +86,8 @@ pub fn init(
             }
             _ => {
                 filter.hidden_action_types.extend(copilot_action_types);
-                for type_id in &copilot_auth_action_types {
+                filter.hidden_action_types.extend(copilot_auth_action_types);
+                for type_id in &copilot_no_auth_action_types {
                     filter.hidden_action_types.remove(type_id);
                 }
             }
@@ -97,6 +104,7 @@ pub fn init(
         }
     });
     cx.on_action(|_: &SignOut, cx| {
+        dbg!("Signing out");
         if let Some(copilot) = Copilot::global(cx) {
             copilot
                 .update(cx, |copilot, cx| copilot.sign_out(cx))

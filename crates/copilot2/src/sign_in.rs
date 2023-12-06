@@ -13,13 +13,12 @@ const COPILOT_SIGN_UP_URL: &'static str = "https://github.com/features/copilot";
 
 use crate::{request::PromptUserDeviceFlow, Copilot, Status};
 use gpui::{
-    div, px, red, size, AnyElement, AppContext, Bounds, ClipboardItem, Div, Element, GlobalPixels,
-    InteractiveElement, IntoElement, MouseButton, ParentElement, Point, Render, Stateful,
-    StatefulInteractiveElement, Styled, ViewContext, VisualContext, WindowBounds, WindowHandle,
-    WindowKind, WindowOptions,
+    div, size, AppContext, Bounds, ClipboardItem, Div, Element, GlobalPixels, InteractiveElement,
+    IntoElement, ParentElement, Point, Render, Stateful, Styled, ViewContext, VisualContext,
+    WindowBounds, WindowHandle, WindowKind, WindowOptions,
 };
 use theme::ActiveTheme;
-use ui::{h_stack, v_stack, Button, Clickable, Icon, IconElement, Label};
+use ui::{h_stack, v_stack, Button, Clickable, Color, Icon, IconElement, Label};
 
 pub fn init(cx: &mut AppContext) {
     if let Some(copilot) = Copilot::global(cx) {
@@ -56,7 +55,9 @@ pub fn init(cx: &mut AppContext) {
                 }
                 _ => {
                     if let Some(code_verification) = verification_window.take() {
-                        code_verification.update(cx, |_, cx| cx.remove_window());
+                        code_verification
+                            .update(cx, |_, cx| cx.remove_window())
+                            .ok();
                     }
                 }
             }
@@ -118,12 +119,12 @@ impl CopilotCodeVerification {
             .on_mouse_down(gpui::MouseButton::Left, {
                 let user_code = data.user_code.clone();
                 move |_, cx| {
-                    dbg!("Copied");
                     cx.write_to_clipboard(ClipboardItem::new(user_code.clone()));
                     cx.notify();
                 }
             })
             .child(Label::new(data.user_code.clone()))
+            .child(div())
             .child(Label::new(if copied { "Copied!" } else { "Copy" }))
 
         // MouseEventHandler::new::<Self, _>(0, cx, |state, _cx| {
@@ -170,24 +171,18 @@ impl CopilotCodeVerification {
             "Connect to Github"
         };
         v_stack()
-            .child(
-                v_stack()
-                    .flex_1()
-                    .w_full()
-                    .items_center()
-                    .justify_between()
-                    .children([
-                        h_stack()
-                            .items_center()
-                            .child(Label::new("Enable Copilot by connecting")),
-                        h_stack()
-                            .items_center()
-                            .child(Label::new("your existing license")),
-                    ]),
-            )
+            .flex_1()
+            .items_center()
+            .justify_between()
+            .w_full()
+            .child(Label::new(
+                "Enable Copilot by connecting your existing license",
+            ))
             .child(Self::render_device_code(data, cx))
-            .child(Label::new("Paste this code into GitHub after").size(ui::LabelSize::Small))
-            .child(Label::new("clicking the button below.").size(ui::LabelSize::Small))
+            .child(
+                Label::new("Paste this code into GitHub after clicking the button below.")
+                    .size(ui::LabelSize::Small),
+            )
             .child(
                 Button::new("connect-button", connect_button_label).on_click({
                     let verification_uri = data.verification_uri.clone();
@@ -236,6 +231,17 @@ impl CopilotCodeVerification {
         //     ))
         //     .align_children_center()
     }
+    fn render_enabled_modal() -> impl Element {
+        v_stack()
+            .child(Label::new("Copilot Enabled!"))
+            .child(Label::new(
+                "You can update your settings or sign out from the Copilot menu in the status bar.",
+            ))
+            .child(
+                Button::new("copilot-enabled-done-button", "Done")
+                    .on_click(|_, cx| cx.remove_window()),
+            )
+    }
 
     //     fn render_enabled_modal(
     //         style: &theme::Copilot,
@@ -280,7 +286,22 @@ impl CopilotCodeVerification {
     //             .align_children_center()
     //             .into_any()
     //     }
-
+    fn render_unauthorized_modal() -> impl Element {
+        v_stack()
+            .child(Label::new(
+                "Enable Copilot by connecting your existing license.",
+            ))
+            .child(
+                Label::new("You must have an active Copilot license to use it in Zed.")
+                    .color(Color::Warning),
+            )
+            .child(
+                Button::new("copilot-subscribe-button", "Subscibe on Github").on_click(|_, cx| {
+                    cx.remove_window();
+                    cx.open_url(COPILOT_SIGN_UP_URL)
+                }),
+            )
+    }
     //     fn render_unauthorized_modal(
     //         style: &theme::Copilot,
     //         cx: &mut ViewContext<Self>,
@@ -344,8 +365,18 @@ impl Render for CopilotCodeVerification {
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         let prompt = match &self.status {
-            Status::SigningIn { prompt } => prompt.as_ref(),
-            _ => None,
+            Status::SigningIn {
+                prompt: Some(prompt),
+            } => Self::render_prompting_modal(self.connect_clicked, &prompt, cx).into_any_element(),
+            Status::Unauthorized => {
+                self.connect_clicked = false;
+                Self::render_unauthorized_modal().into_any_element()
+            }
+            Status::Authorized => {
+                self.connect_clicked = false;
+                Self::render_enabled_modal().into_any_element()
+            }
+            _ => div().into_any_element(),
         };
         div()
             .id("copilot code verification")
@@ -357,9 +388,7 @@ impl Render for CopilotCodeVerification {
             .bg(cx.theme().colors().element_background)
             .child(ui::Label::new("Connect Copilot to Zed"))
             .child(IconElement::new(Icon::ZedXCopilot))
-            .children(
-                prompt.map(|data| Self::render_prompting_modal(self.connect_clicked, data, cx)),
-            )
+            .child(prompt)
     }
 }
 
