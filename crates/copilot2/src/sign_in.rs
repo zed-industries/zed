@@ -5,7 +5,7 @@ use gpui::{
     WindowBounds, WindowHandle, WindowKind, WindowOptions,
 };
 use theme::ActiveTheme;
-use ui::{h_stack, v_stack, Button, Clickable, Color, Icon, IconElement, Label};
+use ui::{prelude::*, Button, Icon, IconElement, Label};
 
 const COPILOT_SIGN_UP_URL: &'static str = "https://github.com/features/copilot";
 
