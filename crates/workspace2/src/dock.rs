@@ -724,7 +724,10 @@ impl Render for PanelButtons {
                         .trigger(
                             IconButton::new(name, icon)
                                 .selected(is_active_button)
-                                .action(action.boxed_clone())
+                                .on_click({
+                                    let action = action.boxed_clone();
+                                    move |_, cx| cx.dispatch_action(action.boxed_clone())
+                                })
                                 .tooltip(move |cx| {
                                     Tooltip::for_action(tooltip.clone(), &*action, cx)
                                 }),

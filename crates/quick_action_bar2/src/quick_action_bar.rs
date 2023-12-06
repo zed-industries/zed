@@ -2,8 +2,8 @@
 use editor::Editor;
 
 use gpui::{
-    Action, Div, ElementId, EventEmitter, InteractiveElement, ParentElement, Render, Stateful,
-    Styled, Subscription, View, ViewContext, WeakView,
+    Action, ClickEvent, Div, ElementId, EventEmitter, InteractiveElement, ParentElement, Render,
+    Stateful, Styled, Subscription, View, ViewContext, WeakView,
 };
 use search::BufferSearchBar;
 use ui::{prelude::*, ButtonSize, ButtonStyle, Icon, IconButton, IconSize, Tooltip};
@@ -41,19 +41,24 @@ impl Render for QuickActionBar {
     type Element = Stateful<Div>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+        let buffer_search_bar = self.buffer_search_bar.clone();
         let search_button = QuickActionBarButton::new(
             "toggle buffer search",
             Icon::MagnifyingGlass,
             !self.buffer_search_bar.read(cx).is_dismissed(),
             Box::new(search::buffer_search::Deploy { focus: false }),
             "Buffer Search",
+            move |_, cx| {
+                buffer_search_bar.update(cx, |search_bar, cx| search_bar.toggle(cx));
+            },
         );
         let assistant_button = QuickActionBarButton::new(
-            "toggle inline assitant",
+            "toggle inline assistant",
             Icon::MagicWand,
             false,
             Box::new(gpui::NoAction),
             "Inline assistant",
+            |_, _cx| todo!(),
         );
         h_stack()
             .id("quick action bar")
@@ -154,6 +159,7 @@ struct QuickActionBarButton {
     action: Box<dyn Action>,
     tooltip: SharedString,
     tooltip_meta: Option<SharedString>,
+    on_click: Box<dyn Fn(&ClickEvent, &mut WindowContext)>,
 }
 
 impl QuickActionBarButton {
@@ -163,6 +169,7 @@ impl QuickActionBarButton {
         toggled: bool,
         action: Box<dyn Action>,
         tooltip: impl Into<SharedString>,
+        on_click: impl Fn(&ClickEvent, &mut WindowContext) + 'static,
     ) -> Self {
         Self {
             id: id.into(),
@@ -171,6 +178,7 @@ impl QuickActionBarButton {
             action,
             tooltip: tooltip.into(),
             tooltip_meta: None,
+            on_click: Box::new(on_click),
         }
     }
 
@@ -201,10 +209,7 @@ impl RenderOnce for QuickActionBarButton {
                     Tooltip::for_action(tooltip.clone(), &*action, cx)
                 }
             })
-            .on_click({
-                let action = self.action.boxed_clone();
-                move |_, cx| cx.dispatch_action(action.boxed_clone())
-            })
+            .on_click(move |event, cx| (self.on_click)(event, cx))
     }
 }
 

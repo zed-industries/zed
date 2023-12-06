@@ -2574,7 +2574,9 @@ impl Render for InlineAssistant {
                     .w(measurements.gutter_width)
                     .child(
                         IconButton::new("include_conversation", Icon::Ai)
-                            .action(Box::new(ToggleIncludeConversation))
+                            .on_click(cx.listener(|this, _, cx| {
+                                this.toggle_include_conversation(&ToggleIncludeConversation, cx)
+                            }))
                             .selected(self.include_conversation)
                             .tooltip(|cx| {
                                 Tooltip::for_action(
@@ -2587,7 +2589,9 @@ impl Render for InlineAssistant {
                     .children(if SemanticIndex::enabled(cx) {
                         Some(
                             IconButton::new("retrieve_context", Icon::MagnifyingGlass)
-                                .action(Box::new(ToggleRetrieveContext))
+                                .on_click(cx.listener(|this, _, cx| {
+                                    this.toggle_retrieve_context(&ToggleRetrieveContext, cx)
+                                }))
                                 .selected(self.retrieve_context)
                                 .tooltip(|cx| {
                                     Tooltip::for_action(
