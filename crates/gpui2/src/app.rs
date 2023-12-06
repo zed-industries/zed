@@ -201,7 +201,7 @@ pub struct AppContext {
     pub(crate) windows: SlotMap<WindowId, Option<Window>>,
     pub(crate) keymap: Arc<Mutex<Keymap>>,
     pub(crate) global_action_listeners:
-        HashMap<TypeId, Vec<Box<dyn Fn(&dyn Action, DispatchPhase, &mut Self)>>>,
+        HashMap<TypeId, Vec<Rc<dyn Fn(&dyn Any, DispatchPhase, &mut Self)>>>,
     pending_effects: VecDeque<Effect>,
     pub(crate) pending_notifications: HashSet<EntityId>,
     pub(crate) pending_global_notifications: HashSet<TypeId>,
@@ -962,9 +962,9 @@ impl AppContext {
         self.global_action_listeners
             .entry(TypeId::of::<A>())
             .or_default()
-            .push(Box::new(move |action, phase, cx| {
+            .push(Rc::new(move |action, phase, cx| {
                 if phase == DispatchPhase::Bubble {
-                    let action = action.as_any().downcast_ref().unwrap();
+                    let action = action.downcast_ref().unwrap();
                     listener(action, cx)
                 }
             }));

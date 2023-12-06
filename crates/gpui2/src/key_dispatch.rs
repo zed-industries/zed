@@ -61,7 +61,7 @@ impl DispatchTree {
         self.keystroke_matchers.clear();
     }
 
-    pub fn push_node(&mut self, context: KeyContext) {
+    pub fn push_node(&mut self, context: Option<KeyContext>) {
         let parent = self.node_stack.last().copied();
         let node_id = DispatchNodeId(self.nodes.len());
         self.nodes.push(DispatchNode {
@@ -69,7 +69,7 @@ impl DispatchTree {
             ..Default::default()
         });
         self.node_stack.push(node_id);
-        if !context.is_empty() {
+        if let Some(context) = context {
             self.active_node().context = context.clone();
             self.context_stack.push(context);
         }
@@ -148,16 +148,14 @@ impl DispatchTree {
         false
     }
 
-    pub fn available_actions(&self, target: FocusId) -> Vec<Box<dyn Action>> {
+    pub fn available_actions(&self, target: DispatchNodeId) -> Vec<Box<dyn Action>> {
         let mut actions = Vec::new();
-        if let Some(node) = self.focusable_node_ids.get(&target) {
-            for node_id in self.dispatch_path(*node) {
-                let node = &self.nodes[node_id.0];
-                for DispatchActionListener { action_type, .. } in &node.action_listeners {
-                    // Intentionally silence these errors without logging.
-                    // If an action cannot be built by default, it's not available.
-                    actions.extend(self.action_registry.build_action_type(action_type).ok());
-                }
+        for node_id in self.dispatch_path(target) {
+            let node = &self.nodes[node_id.0];
+            for DispatchActionListener { action_type, .. } in &node.action_listeners {
+                // Intentionally silence these errors without logging.
+                // If an action cannot be built by default, it's not available.
+                actions.extend(self.action_registry.build_action_type(action_type).ok());
             }
         }
         actions
@@ -234,6 +232,11 @@ impl DispatchTree {
 
     pub fn focusable_node_id(&self, target: FocusId) -> Option<DispatchNodeId> {
         self.focusable_node_ids.get(&target).copied()
+    }
+
+    pub fn root_node_id(&self) -> DispatchNodeId {
+        debug_assert!(!self.nodes.is_empty());
+        DispatchNodeId(0)
     }
 
     fn active_node_id(&self) -> DispatchNodeId {
