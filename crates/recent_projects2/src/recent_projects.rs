@@ -1,23 +1,19 @@
 mod highlighted_workspace_location;
 
 use fuzzy::{StringMatch, StringMatchCandidate};
-use gpui::{
-    actions,
-    anyhow::Result,
-    elements::{Flex, ParentElement},
-    AnyElement, AppContext, Element, Task, ViewContext, WeakViewHandle,
-};
+use gpui::{actions, AppContext, Result, Task, ViewContext, WeakView};
 use highlighted_workspace_location::HighlightedWorkspaceLocation;
 use ordered_float::OrderedFloat;
-use picker::{Picker, PickerDelegate, PickerEvent};
+use picker::{Picker, PickerDelegate};
 use std::sync::Arc;
+use ui::{prelude::*, ListItem};
 use util::paths::PathExt;
 use workspace::{
     notifications::simple_message_notification::MessageNotification, Workspace, WorkspaceLocation,
     WORKSPACE_DB,
 };
 
-actions!(projects, [OpenRecent]);
+actions!(OpenRecent);
 
 pub fn init(cx: &mut AppContext) {
     cx.add_async_action(toggle);
@@ -66,7 +62,7 @@ fn toggle(
 }
 
 pub fn build_recent_projects(
-    workspace: WeakViewHandle<Workspace>,
+    workspace: WeakView<Workspace>,
     workspaces: Vec<WorkspaceLocation>,
     cx: &mut ViewContext<RecentProjects>,
 ) -> RecentProjects {
@@ -80,7 +76,7 @@ pub fn build_recent_projects(
 pub type RecentProjects = Picker<RecentProjectsDelegate>;
 
 pub struct RecentProjectsDelegate {
-    workspace: WeakViewHandle<Workspace>,
+    workspace: WeakView<Workspace>,
     workspace_locations: Vec<WorkspaceLocation>,
     selected_match_index: usize,
     matches: Vec<StringMatch>,
@@ -89,7 +85,7 @@ pub struct RecentProjectsDelegate {
 
 impl RecentProjectsDelegate {
     fn new(
-        workspace: WeakViewHandle<Workspace>,
+        workspace: WeakView<Workspace>,
         workspace_locations: Vec<WorkspaceLocation>,
         render_paths: bool,
     ) -> Self {
@@ -104,6 +100,8 @@ impl RecentProjectsDelegate {
 }
 
 impl PickerDelegate for RecentProjectsDelegate {
+    type ListItem = ListItem;
+
     fn placeholder_text(&self) -> Arc<str> {
         "Recent Projects...".into()
     }
@@ -166,7 +164,7 @@ impl PickerDelegate for RecentProjectsDelegate {
         if let Some((selected_match, workspace)) = self
             .matches
             .get(self.selected_index())
-            .zip(self.workspace.upgrade(cx))
+            .zip(self.workspace.upgrade())
         {
             let workspace_location = &self.workspace_locations[selected_match.candidate_id];
             workspace
@@ -175,7 +173,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                         .open_workspace_for_paths(workspace_location.paths().as_ref().clone(), cx)
                 })
                 .detach_and_log_err(cx);
-            cx.emit(PickerEvent::Dismiss);
+            self.dismissed(cx);
         }
     }
 
@@ -184,32 +182,26 @@ impl PickerDelegate for RecentProjectsDelegate {
     fn render_match(
         &self,
         ix: usize,
-        mouse_state: &mut gpui::MouseState,
         selected: bool,
-        cx: &gpui::AppContext,
-    ) -> AnyElement<Picker<Self>> {
-        let theme = theme::current(cx);
-        let style = theme.picker.item.in_state(selected).style_for(mouse_state);
-
-        let string_match = &self.matches[ix];
+        cx: &mut ViewContext<Picker<Self>>,
+    ) -> Option<Self::ListItem> {
+        let Some(r#match) = self.matches.get(ix) else {
+            return None;
+        };
 
         let highlighted_location = HighlightedWorkspaceLocation::new(
-            &string_match,
-            &self.workspace_locations[string_match.candidate_id],
+            &r#match,
+            &self.workspace_locations[r#match.candidate_id],
         );
 
-        Flex::column()
-            .with_child(highlighted_location.names.render(style.label.clone()))
-            .with_children(
-                highlighted_location
-                    .paths
-                    .into_iter()
-                    .filter(|_| self.render_paths)
-                    .map(|highlighted_path| highlighted_path.render(style.label.clone())),
-            )
-            .flex(1., false)
-            .contained()
-            .with_style(style.container)
-            .into_any_named("match")
+        Some(
+            ListItem::new(ix).inset(true).selected(selected).child(
+                v_stack()
+                    .child(highlighted_location.names)
+                    .when(self.render_paths, |this| {
+                        this.children(highlighted_location.paths)
+                    }),
+            ),
+        )
     }
 }

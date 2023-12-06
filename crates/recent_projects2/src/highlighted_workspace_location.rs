@@ -1,13 +1,11 @@
 use std::path::Path;
 
 use fuzzy::StringMatch;
-use gpui::{
-    elements::{Label, LabelStyle},
-    AnyElement, Element,
-};
+use ui::{prelude::*, HighlightedLabel};
 use util::paths::PathExt;
 use workspace::WorkspaceLocation;
 
+#[derive(IntoElement)]
 pub struct HighlightedText {
     pub text: String,
     pub highlight_positions: Vec<usize>,
@@ -42,11 +40,13 @@ impl HighlightedText {
             char_count,
         }
     }
+}
 
-    pub fn render<V: 'static>(self, style: impl Into<LabelStyle>) -> AnyElement<V> {
-        Label::new(self.text, style)
-            .with_highlights(self.highlight_positions)
-            .into_any()
+impl RenderOnce for HighlightedText {
+    type Rendered = HighlightedLabel;
+
+    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
+        HighlightedLabel::new(self.text, self.highlight_positions)
     }
 }
 
