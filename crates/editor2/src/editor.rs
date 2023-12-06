@@ -8176,6 +8176,17 @@ impl Editor {
         self.buffer.read(cx).read(cx).text()
     }
 
+    pub fn text_option(&self, cx: &AppContext) -> Option<String> {
+        let text = self.buffer.read(cx).read(cx).text();
+        let text = text.trim();
+
+        if text.is_empty() {
+            return None;
+        }
+
+        Some(text.to_string())
+    }
+
     pub fn set_text(&mut self, text: impl Into<Arc<str>>, cx: &mut ViewContext<Self>) {
         self.transact(cx, |this, cx| {
             this.buffer

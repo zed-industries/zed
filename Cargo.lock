@@ -3186,6 +3186,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "client2",
+ "db2",
  "editor2",
  "futures 0.3.28",
  "gpui2",

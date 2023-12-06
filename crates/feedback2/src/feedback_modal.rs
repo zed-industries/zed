@@ -1,29 +1,50 @@
-use std::ops::RangeInclusive;
+use std::{ops::RangeInclusive, sync::Arc};
 
+use anyhow::bail;
+use client::{Client, ZED_SECRET_CLIENT_TOKEN, ZED_SERVER_URL};
+use db::kvp::KEY_VALUE_STORE;
 use editor::{Editor, EditorEvent};
+use futures::AsyncReadExt;
 use gpui::{
-    div, red, rems, AppContext, DismissEvent, Div, EventEmitter, FocusHandle, FocusableView, Model,
-    Render, View, ViewContext,
+    div, red, rems, serde_json, AppContext, DismissEvent, Div, EventEmitter, FocusHandle,
+    FocusableView, Model, PromptLevel, Render, Task, View, ViewContext,
 };
+use isahc::Request;
 use language::Buffer;
 use project::Project;
+use regex::Regex;
+use serde_derive::Serialize;
 use ui::{prelude::*, Button, ButtonStyle, Label, Tooltip};
 use util::ResultExt;
-use workspace::{item::Item, Workspace};
+use workspace::Workspace;
 
-use crate::{feedback_editor::GiveFeedback, system_specs::SystemSpecs, OpenZedCommunityRepo};
+use crate::{system_specs::SystemSpecs, GiveFeedback, OpenZedCommunityRepo};
 
+const DATABASE_KEY_NAME: &str = "email_address";
+const EMAIL_REGEX: &str = r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b";
 const FEEDBACK_CHAR_LIMIT: RangeInclusive<usize> = 10..=5000;
 const FEEDBACK_SUBMISSION_ERROR_TEXT: &str =
     "Feedback failed to submit, see error log for details.";
+
+#[derive(Serialize)]
+struct FeedbackRequestBody<'a> {
+    feedback_text: &'a str,
+    email: Option<String>,
+    metrics_id: Option<Arc<str>>,
+    installation_id: Option<Arc<str>>,
+    system_specs: SystemSpecs,
+    is_staff: bool,
+    token: &'a str,
+}
 
 pub struct FeedbackModal {
     system_specs: SystemSpecs,
     feedback_editor: View<Editor>,
     email_address_editor: View<Editor>,
     project: Model<Project>,
-    pub allow_submission: bool,
     character_count: usize,
+    allow_submission: bool,
+    pub pending_submission: bool,
 }
 
 impl FocusableView for FeedbackModal {
@@ -75,8 +96,14 @@ impl FeedbackModal {
         let email_address_editor = cx.build_view(|cx| {
             let mut editor = Editor::single_line(cx);
             editor.set_placeholder_text("Email address (optional)", cx);
+
+            if let Ok(Some(email_address)) = KEY_VALUE_STORE.read_kvp(DATABASE_KEY_NAME) {
+                editor.set_text(email_address, cx)
+            }
+
             editor
         });
+
         let feedback_editor = cx.build_view(|cx| {
             let mut editor = Editor::for_buffer(buffer, Some(project.clone()), cx);
             editor.set_vertical_scroll_margin(5, cx);
@@ -107,92 +134,116 @@ impl FeedbackModal {
             feedback_editor,
             email_address_editor,
             project,
-            allow_submission: true,
+            allow_submission: false,
+            pending_submission: false,
             character_count: 0,
         }
     }
 
-    // fn release(&mut self, cx: &mut WindowContext) {
-    //     let scroll_position = self.prev_scroll_position.take();
-    //     self.active_editor.update(cx, |editor, cx| {
-    //         editor.highlight_rows(None);
-    //         if let Some(scroll_position) = scroll_position {
-    //             editor.set_scroll_position(scroll_position, cx);
-    //         }
-    //         cx.notify();
-    //     })
-    // }
+    pub fn submit(&mut self, cx: &mut ViewContext<Self>) -> Task<anyhow::Result<()>> {
+        if !self.allow_submission {
+            return Task::ready(Ok(()));
+        }
+        let feedback_text = self.feedback_editor.read(cx).text(cx).trim().to_string();
+        let email = self.email_address_editor.read(cx).text_option(cx);
 
-    // fn on_feedback_editor_event(
-    //     &mut self,
-    //     _: View<Editor>,
-    //     event: &editor::EditorEvent,
-    //     cx: &mut ViewContext<Self>,
-    // ) {
-    //     match event {
-    //         // todo!() this isn't working...
-    //         editor::EditorEvent::Blurred => cx.emit(DismissEvent),
-    //         editor::EditorEvent::BufferEdited { .. } => self.highlight_current_line(cx),
-    //         _ => {}
-    //     }
-    // }
+        if let Some(email) = email.clone() {
+            cx.spawn(|_, _| KEY_VALUE_STORE.write_kvp(DATABASE_KEY_NAME.to_string(), email.clone()))
+                .detach()
+        }
 
-    // fn highlight_current_line(&mut self, cx: &mut ViewContext<Self>) {
-    //     if let Some(point) = self.point_from_query(cx) {
-    //         self.active_editor.update(cx, |active_editor, cx| {
-    //             let snapshot = active_editor.snapshot(cx).display_snapshot;
-    //             let point = snapshot.buffer_snapshot.clip_point(point, Bias::Left);
-    //             let display_point = point.to_display_point(&snapshot);
-    //             let row = display_point.row();
-    //             active_editor.highlight_rows(Some(row..row + 1));
-    //             active_editor.request_autoscroll(Autoscroll::center(), cx);
-    //         });
-    //         cx.notify();
-    //     }
-    // }
+        let answer = cx.prompt(
+            PromptLevel::Info,
+            "Ready to submit your feedback?",
+            &["Yes, Submit!", "No"],
+        );
+        let client = cx.global::<Arc<Client>>().clone();
+        let specs = self.system_specs.clone();
+        cx.spawn(|this, mut cx| async move {
+            let answer = answer.await.ok();
+            if answer == Some(0) {
+                this.update(&mut cx, |feedback_editor, cx| {
+                    feedback_editor.set_pending_submission(true, cx);
+                })
+                .log_err();
+                match FeedbackModal::submit_feedback(&feedback_text, email, client, specs).await {
+                    Ok(_) => {}
+                    Err(error) => {
+                        log::error!("{}", error);
+                        this.update(&mut cx, |feedback_editor, cx| {
+                            let prompt = cx.prompt(
+                                PromptLevel::Critical,
+                                FEEDBACK_SUBMISSION_ERROR_TEXT,
+                                &["OK"],
+                            );
+                            cx.spawn(|_, _cx| async move {
+                                prompt.await.ok();
+                            })
+                            .detach();
+                            feedback_editor.set_pending_submission(false, cx);
+                        })
+                        .log_err();
+                    }
+                }
+            }
+        })
+        .detach();
+        Task::ready(Ok(()))
+    }
 
-    // fn point_from_query(&self, cx: &ViewContext<Self>) -> Option<Point> {
-    //     let line_editor = self.line_editor.read(cx).text(cx);
-    //     let mut components = line_editor
-    //         .splitn(2, FILE_ROW_COLUMN_DELIMITER)
-    //         .map(str::trim)
-    //         .fuse();
-    //     let row = components.next().and_then(|row| row.parse::<u32>().ok())?;
-    //     let column = components.next().and_then(|col| col.parse::<u32>().ok());
-    //     Some(Point::new(
-    //         row.saturating_sub(1),
-    //         column.unwrap_or(0).saturating_sub(1),
-    //     ))
-    // }
+    fn set_pending_submission(&mut self, pending_submission: bool, cx: &mut ViewContext<Self>) {
+        self.pending_submission = pending_submission;
+        cx.notify();
+    }
 
-    // fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
-    //     cx.emit(DismissEvent);
-    // }
-
-    // fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
-    //     if let Some(point) = self.point_from_query(cx) {
-    //         self.active_editor.update(cx, |editor, cx| {
-    //             let snapshot = editor.snapshot(cx).display_snapshot;
-    //             let point = snapshot.buffer_snapshot.clip_point(point, Bias::Left);
-    //             editor.change_selections(Some(Autoscroll::center()), cx, |s| {
-    //                 s.select_ranges([point..point])
-    //             });
-    //             editor.focus(cx);
-    //             cx.notify();
-    //         });
-    //         self.prev_scroll_position.take();
-    //     }
-
-    //     cx.emit(DismissEvent);
-    // }
+    async fn submit_feedback(
+        feedback_text: &str,
+        email: Option<String>,
+        zed_client: Arc<Client>,
+        system_specs: SystemSpecs,
+    ) -> anyhow::Result<()> {
+        let feedback_endpoint = format!("{}/api/feedback", *ZED_SERVER_URL);
+        let telemetry = zed_client.telemetry();
+        let metrics_id = telemetry.metrics_id();
+        let installation_id = telemetry.installation_id();
+        let is_staff = telemetry.is_staff();
+        let http_client = zed_client.http_client();
+        let request = FeedbackRequestBody {
+            feedback_text: &feedback_text,
+            email,
+            metrics_id,
+            installation_id,
+            system_specs,
+            is_staff: is_staff.unwrap_or(false),
+            token: ZED_SECRET_CLIENT_TOKEN,
+        };
+        let json_bytes = serde_json::to_vec(&request)?;
+        let request = Request::post(feedback_endpoint)
+            .header("content-type", "application/json")
+            .body(json_bytes.into())?;
+        let mut response = http_client.send(request).await?;
+        let mut body = String::new();
+        response.body_mut().read_to_string(&mut body).await?;
+        let response_status = response.status();
+        if !response_status.is_success() {
+            bail!("Feedback API failed with error: {}", response_status)
+        }
+        Ok(())
+    }
 }
 
 impl Render for FeedbackModal {
     type Element = Div;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-        let character_count_error = (self.character_count < *FEEDBACK_CHAR_LIMIT.start())
-            || (self.character_count > *FEEDBACK_CHAR_LIMIT.end());
+        let valid_email_address = match self.email_address_editor.read(cx).text_option(cx) {
+            Some(email_address) => Regex::new(EMAIL_REGEX).unwrap().is_match(&email_address),
+            None => true,
+        };
+
+        self.allow_submission = FEEDBACK_CHAR_LIMIT.contains(&self.character_count)
+            && valid_email_address
+            && !self.pending_submission;
 
         let dismiss = cx.listener(|_, _, cx| cx.emit(DismissEvent));
         // let open_community_issues =
@@ -268,7 +319,7 @@ impl Render for FeedbackModal {
                                         cx,
                                     )
                                 })
-                                .when(character_count_error, |this| this.disabled(true)),
+                                .when(!self.allow_submission, |this| this.disabled(true)),
                         ),
                     )
 
