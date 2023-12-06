@@ -2474,6 +2474,7 @@ impl Render for ConversationEditor {
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         div()
+            .key_context("ConversationEditor")
             .size_full()
             .relative()
             .capture_action(cx.listener(ConversationEditor::cancel_last_assist))
