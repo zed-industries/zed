@@ -1,3 +1,4 @@
+mod app_menu;
 mod keystroke;
 #[cfg(target_os = "macos")]
 mod mac;
@@ -5,10 +6,10 @@ mod mac;
 mod test;
 
 use crate::{
-    point, size, AnyWindowHandle, BackgroundExecutor, Bounds, DevicePixels, Font, FontId,
-    FontMetrics, FontRun, ForegroundExecutor, GlobalPixels, GlyphId, InputEvent, LineLayout,
-    Pixels, Point, RenderGlyphParams, RenderImageParams, RenderSvgParams, Result, Scene,
-    SharedString, Size, TaskLabel,
+    point, size, Action, AnyWindowHandle, BackgroundExecutor, Bounds, DevicePixels, Font, FontId,
+    FontMetrics, FontRun, ForegroundExecutor, GlobalPixels, GlyphId, InputEvent, Keymap,
+    LineLayout, Pixels, Point, RenderGlyphParams, RenderImageParams, RenderSvgParams, Result,
+    Scene, SharedString, Size, TaskLabel,
 };
 use anyhow::{anyhow, bail};
 use async_task::Runnable;
@@ -32,6 +33,7 @@ use std::{
 };
 use uuid::Uuid;
 
+pub use app_menu::*;
 pub use keystroke::*;
 #[cfg(target_os = "macos")]
 pub use mac::*;
@@ -44,7 +46,7 @@ pub(crate) fn current_platform() -> Rc<dyn Platform> {
     Rc::new(MacPlatform::new())
 }
 
-pub trait Platform: 'static {
+pub(crate) trait Platform: 'static {
     fn background_executor(&self) -> BackgroundExecutor;
     fn foreground_executor(&self) -> ForegroundExecutor;
     fn text_system(&self) -> Arc<dyn PlatformTextSystem>;
@@ -59,7 +61,7 @@ pub trait Platform: 'static {
 
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>>;
     fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>>;
-    fn main_window(&self) -> Option<AnyWindowHandle>;
+    fn active_window(&self) -> Option<AnyWindowHandle>;
     fn open_window(
         &self,
         handle: AnyWindowHandle,
@@ -89,6 +91,11 @@ pub trait Platform: 'static {
     fn on_quit(&self, callback: Box<dyn FnMut()>);
     fn on_reopen(&self, callback: Box<dyn FnMut()>);
     fn on_event(&self, callback: Box<dyn FnMut(InputEvent) -> bool>);
+
+    fn set_menus(&self, menus: Vec<Menu>, keymap: &Keymap);
+    fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>);
+    fn on_will_open_app_menu(&self, callback: Box<dyn FnMut()>);
+    fn on_validate_app_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>);
 
     fn os_name(&self) -> &'static str;
     fn os_version(&self) -> Result<SemanticVersion>;

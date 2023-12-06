@@ -49,7 +49,10 @@ impl CommandPalette {
             .filter_map(|action| {
                 let name = gpui::remove_the_2(action.name());
                 let namespace = name.split("::").next().unwrap_or("malformed action name");
-                if filter.is_some_and(|f| f.filtered_namespaces.contains(namespace)) {
+                if filter.is_some_and(|f| {
+                    f.hidden_namespaces.contains(namespace)
+                        || f.hidden_action_types.contains(&action.type_id())
+                }) {
                     return None;
                 }
 
@@ -433,7 +436,7 @@ mod tests {
         cx.update(|cx| {
             cx.set_global(CommandPaletteFilter::default());
             cx.update_global::<CommandPaletteFilter, _>(|filter, _| {
-                filter.filtered_namespaces.insert("editor");
+                filter.hidden_namespaces.insert("editor");
             })
         });
 

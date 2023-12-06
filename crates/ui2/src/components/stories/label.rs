@@ -23,5 +23,9 @@ impl Render for LabelStory {
                 "Héllo, world!",
                 vec![0, 1, 3, 8, 9, 13],
             ))
+            .child(Story::label("Highlighted with `color`"))
+            .child(
+                HighlightedLabel::new("Hello, world!", vec![0, 1, 2, 7, 8, 12]).color(Color::Error),
+            )
     }
 }

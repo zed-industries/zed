@@ -28,7 +28,7 @@ pub(crate) struct DispatchTree {
 pub(crate) struct DispatchNode {
     pub key_listeners: SmallVec<[KeyListener; 2]>,
     pub action_listeners: SmallVec<[DispatchActionListener; 16]>,
-    pub context: KeyContext,
+    pub context: Option<KeyContext>,
     parent: Option<DispatchNodeId>,
 }
 
@@ -61,7 +61,7 @@ impl DispatchTree {
         self.keystroke_matchers.clear();
     }
 
-    pub fn push_node(&mut self, context: KeyContext) {
+    pub fn push_node(&mut self, context: Option<KeyContext>) {
         let parent = self.node_stack.last().copied();
         let node_id = DispatchNodeId(self.nodes.len());
         self.nodes.push(DispatchNode {
@@ -69,34 +69,34 @@ impl DispatchTree {
             ..Default::default()
         });
         self.node_stack.push(node_id);
-        if !context.is_empty() {
-            self.active_node().context = context.clone();
+        if let Some(context) = context {
+            self.active_node().context = Some(context.clone());
             self.context_stack.push(context);
         }
     }
 
     pub fn pop_node(&mut self) {
         let node_id = self.node_stack.pop().unwrap();
-        if !self.nodes[node_id.0].context.is_empty() {
+        if self.nodes[node_id.0].context.is_some() {
             self.context_stack.pop();
         }
     }
 
-    pub fn clear_keystroke_matchers(&mut self) {
+    pub fn clear_pending_keystrokes(&mut self) {
         self.keystroke_matchers.clear();
     }
 
     /// Preserve keystroke matchers from previous frames to support multi-stroke
     /// bindings across multiple frames.
-    pub fn preserve_keystroke_matchers(&mut self, old_tree: &mut Self, focus_id: Option<FocusId>) {
+    pub fn preserve_pending_keystrokes(&mut self, old_tree: &mut Self, focus_id: Option<FocusId>) {
         if let Some(node_id) = focus_id.and_then(|focus_id| self.focusable_node_id(focus_id)) {
             let dispatch_path = self.dispatch_path(node_id);
 
             self.context_stack.clear();
             for node_id in dispatch_path {
                 let node = self.node(node_id);
-                if !node.context.is_empty() {
-                    self.context_stack.push(node.context.clone());
+                if let Some(context) = node.context.clone() {
+                    self.context_stack.push(context);
                 }
 
                 if let Some((context_stack, matcher)) = old_tree
@@ -148,19 +148,31 @@ impl DispatchTree {
         false
     }
 
-    pub fn available_actions(&self, target: FocusId) -> Vec<Box<dyn Action>> {
+    pub fn available_actions(&self, target: DispatchNodeId) -> Vec<Box<dyn Action>> {
         let mut actions = Vec::new();
-        if let Some(node) = self.focusable_node_ids.get(&target) {
-            for node_id in self.dispatch_path(*node) {
-                let node = &self.nodes[node_id.0];
-                for DispatchActionListener { action_type, .. } in &node.action_listeners {
-                    // Intentionally silence these errors without logging.
-                    // If an action cannot be built by default, it's not available.
-                    actions.extend(self.action_registry.build_action_type(action_type).ok());
-                }
+        for node_id in self.dispatch_path(target) {
+            let node = &self.nodes[node_id.0];
+            for DispatchActionListener { action_type, .. } in &node.action_listeners {
+                // Intentionally silence these errors without logging.
+                // If an action cannot be built by default, it's not available.
+                actions.extend(self.action_registry.build_action_type(action_type).ok());
             }
         }
         actions
+    }
+
+    pub fn is_action_available(&self, action: &dyn Action, target: DispatchNodeId) -> bool {
+        for node_id in self.dispatch_path(target) {
+            let node = &self.nodes[node_id.0];
+            if node
+                .action_listeners
+                .iter()
+                .any(|listener| listener.action_type == action.as_any().type_id())
+            {
+                return true;
+            }
+        }
+        false
     }
 
     pub fn bindings_for_action(
@@ -234,6 +246,11 @@ impl DispatchTree {
 
     pub fn focusable_node_id(&self, target: FocusId) -> Option<DispatchNodeId> {
         self.focusable_node_ids.get(&target).copied()
+    }
+
+    pub fn root_node_id(&self) -> DispatchNodeId {
+        debug_assert!(!self.nodes.is_empty());
+        DispatchNodeId(0)
     }
 
     fn active_node_id(&self) -> DispatchNodeId {

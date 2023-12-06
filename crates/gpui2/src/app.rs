@@ -15,10 +15,10 @@ use smol::future::FutureExt;
 pub use test_context::*;
 
 use crate::{
-    current_platform, image_cache::ImageCache, Action, ActionRegistry, Any, AnyView,
-    AnyWindowHandle, AppMetadata, AssetSource, BackgroundExecutor, ClipboardItem, Context,
+    current_platform, image_cache::ImageCache, init_app_menus, Action, ActionRegistry, Any,
+    AnyView, AnyWindowHandle, AppMetadata, AssetSource, BackgroundExecutor, ClipboardItem, Context,
     DispatchPhase, DisplayId, Entity, EventEmitter, FocusEvent, FocusHandle, FocusId,
-    ForegroundExecutor, KeyBinding, Keymap, LayoutId, PathPromptOptions, Pixels, Platform,
+    ForegroundExecutor, KeyBinding, Keymap, LayoutId, Menu, PathPromptOptions, Pixels, Platform,
     PlatformDisplay, Point, Render, SharedString, SubscriberSet, Subscription, SvgRenderer, Task,
     TextStyle, TextStyleRefinement, TextSystem, View, ViewContext, Window, WindowContext,
     WindowHandle, WindowId,
@@ -39,7 +39,10 @@ use std::{
     sync::{atomic::Ordering::SeqCst, Arc},
     time::Duration,
 };
-use util::http::{self, HttpClient};
+use util::{
+    http::{self, HttpClient},
+    ResultExt,
+};
 
 /// Temporary(?) wrapper around RefCell<AppContext> to help us debug any double borrows.
 /// Strongly consider removing after stabilization.
@@ -201,7 +204,7 @@ pub struct AppContext {
     pub(crate) windows: SlotMap<WindowId, Option<Window>>,
     pub(crate) keymap: Arc<Mutex<Keymap>>,
     pub(crate) global_action_listeners:
-        HashMap<TypeId, Vec<Box<dyn Fn(&dyn Action, DispatchPhase, &mut Self)>>>,
+        HashMap<TypeId, Vec<Rc<dyn Fn(&dyn Any, DispatchPhase, &mut Self)>>>,
     pending_effects: VecDeque<Effect>,
     pub(crate) pending_notifications: HashSet<EntityId>,
     pub(crate) pending_global_notifications: HashSet<TypeId>,
@@ -274,6 +277,8 @@ impl AppContext {
                 propagate_event: true,
             }),
         });
+
+        init_app_menus(platform.as_ref(), &mut *app.borrow_mut());
 
         platform.on_quit(Box::new({
             let cx = app.clone();
@@ -423,6 +428,10 @@ impl AppContext {
             .values()
             .filter_map(|window| Some(window.as_ref()?.handle.clone()))
             .collect()
+    }
+
+    pub fn active_window(&self) -> Option<AnyWindowHandle> {
+        self.platform.active_window()
     }
 
     /// Opens a new window with the given option and the root view returned by the given function.
@@ -962,9 +971,9 @@ impl AppContext {
         self.global_action_listeners
             .entry(TypeId::of::<A>())
             .or_default()
-            .push(Box::new(move |action, phase, cx| {
+            .push(Rc::new(move |action, phase, cx| {
                 if phase == DispatchPhase::Bubble {
-                    let action = action.as_any().downcast_ref().unwrap();
+                    let action = action.downcast_ref().unwrap();
                     listener(action, cx)
                 }
             }));
@@ -1014,6 +1023,90 @@ impl AppContext {
         );
         activate();
         subscription
+    }
+
+    pub(crate) fn clear_pending_keystrokes(&mut self) {
+        for window in self.windows() {
+            window
+                .update(self, |_, cx| {
+                    cx.window
+                        .current_frame
+                        .dispatch_tree
+                        .clear_pending_keystrokes()
+                })
+                .ok();
+        }
+    }
+
+    pub fn is_action_available(&mut self, action: &dyn Action) -> bool {
+        if let Some(window) = self.active_window() {
+            if let Ok(window_action_available) =
+                window.update(self, |_, cx| cx.is_action_available(action))
+            {
+                return window_action_available;
+            }
+        }
+
+        self.global_action_listeners
+            .contains_key(&action.as_any().type_id())
+    }
+
+    pub fn set_menus(&mut self, menus: Vec<Menu>) {
+        self.platform.set_menus(menus, &self.keymap.lock());
+    }
+
+    pub fn dispatch_action(&mut self, action: &dyn Action) {
+        if let Some(active_window) = self.active_window() {
+            active_window
+                .update(self, |_, cx| cx.dispatch_action(action.boxed_clone()))
+                .log_err();
+        } else {
+            self.propagate_event = true;
+
+            if let Some(mut global_listeners) = self
+                .global_action_listeners
+                .remove(&action.as_any().type_id())
+            {
+                for listener in &global_listeners {
+                    listener(action.as_any(), DispatchPhase::Capture, self);
+                    if !self.propagate_event {
+                        break;
+                    }
+                }
+
+                global_listeners.extend(
+                    self.global_action_listeners
+                        .remove(&action.as_any().type_id())
+                        .unwrap_or_default(),
+                );
+
+                self.global_action_listeners
+                    .insert(action.as_any().type_id(), global_listeners);
+            }
+
+            if self.propagate_event {
+                if let Some(mut global_listeners) = self
+                    .global_action_listeners
+                    .remove(&action.as_any().type_id())
+                {
+                    for listener in global_listeners.iter().rev() {
+                        listener(action.as_any(), DispatchPhase::Bubble, self);
+                        if !self.propagate_event {
+                            break;
+                        }
+                    }
+
+                    global_listeners.extend(
+                        self.global_action_listeners
+                            .remove(&action.as_any().type_id())
+                            .unwrap_or_default(),
+                    );
+
+                    self.global_action_listeners
+                        .insert(action.as_any().type_id(), global_listeners);
+                }
+            }
+        }
     }
 }
 

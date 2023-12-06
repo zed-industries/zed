@@ -2803,35 +2803,46 @@ impl Element for EditorElement {
 
         let focus_handle = editor.focus_handle(cx);
         let dispatch_context = self.editor.read(cx).dispatch_context(cx);
-        cx.with_key_dispatch(dispatch_context, Some(focus_handle.clone()), |_, cx| {
-            self.register_actions(cx);
-            self.register_key_listeners(cx);
+        cx.with_key_dispatch(
+            Some(dispatch_context),
+            Some(focus_handle.clone()),
+            |_, cx| {
+                self.register_actions(cx);
+                self.register_key_listeners(cx);
 
-            // We call with_z_index to establish a new stacking context.
-            cx.with_z_index(0, |cx| {
-                cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
-                    // Paint mouse listeners at z-index 0 so any elements we paint on top of the editor
-                    // take precedence.
-                    cx.with_z_index(0, |cx| {
-                        self.paint_mouse_listeners(bounds, gutter_bounds, text_bounds, &layout, cx);
+                // We call with_z_index to establish a new stacking context.
+                cx.with_z_index(0, |cx| {
+                    cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
+                        // Paint mouse listeners at z-index 0 so any elements we paint on top of the editor
+                        // take precedence.
+                        cx.with_z_index(0, |cx| {
+                            self.paint_mouse_listeners(
+                                bounds,
+                                gutter_bounds,
+                                text_bounds,
+                                &layout,
+                                cx,
+                            );
+                        });
+                        let input_handler =
+                            ElementInputHandler::new(bounds, self.editor.clone(), cx);
+                        cx.handle_input(&focus_handle, input_handler);
+
+                        self.paint_background(gutter_bounds, text_bounds, &layout, cx);
+                        if layout.gutter_size.width > Pixels::ZERO {
+                            self.paint_gutter(gutter_bounds, &mut layout, cx);
+                        }
+                        self.paint_text(text_bounds, &mut layout, cx);
+
+                        if !layout.blocks.is_empty() {
+                            cx.with_element_id(Some("editor_blocks"), |cx| {
+                                self.paint_blocks(bounds, &mut layout, cx);
+                            })
+                        }
                     });
-                    let input_handler = ElementInputHandler::new(bounds, self.editor.clone(), cx);
-                    cx.handle_input(&focus_handle, input_handler);
-
-                    self.paint_background(gutter_bounds, text_bounds, &layout, cx);
-                    if layout.gutter_size.width > Pixels::ZERO {
-                        self.paint_gutter(gutter_bounds, &mut layout, cx);
-                    }
-                    self.paint_text(text_bounds, &mut layout, cx);
-
-                    if !layout.blocks.is_empty() {
-                        cx.with_element_id(Some("editor_blocks"), |cx| {
-                            self.paint_blocks(bounds, &mut layout, cx);
-                        })
-                    }
                 });
-            });
-        })
+            },
+        )
     }
 }
 

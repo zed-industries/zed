@@ -22,8 +22,7 @@ use node_runtime::RealNodeRuntime;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use settings::{
-    default_settings, handle_keymap_file_changes, handle_settings_file_changes, watch_config_file,
-    Settings, SettingsStore,
+    default_settings, handle_settings_file_changes, watch_config_file, Settings, SettingsStore,
 };
 use simplelog::ConfigBuilder;
 use smol::process::Command;
@@ -51,8 +50,9 @@ use uuid::Uuid;
 use welcome::{show_welcome_experience, FIRST_OPEN};
 use workspace::{AppState, WorkspaceStore};
 use zed2::{
-    build_window_options, ensure_only_instance, handle_cli_connection, initialize_workspace,
-    languages, Assets, IsOnlyInstance, OpenListener, OpenRequest,
+    app_menus, build_window_options, ensure_only_instance, handle_cli_connection,
+    handle_keymap_file_changes, initialize_workspace, languages, Assets, IsOnlyInstance,
+    OpenListener, OpenRequest,
 };
 
 mod open_listener;
@@ -224,7 +224,7 @@ fn main() {
         // feedback::init(cx);
         welcome::init(cx);
 
-        // cx.set_menus(menus::menus());
+        cx.set_menus(app_menus());
         initialize_workspace(app_state.clone(), cx);
 
         if stdout_is_a_pty() {
