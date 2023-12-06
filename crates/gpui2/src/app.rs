@@ -860,7 +860,6 @@ impl AppContext {
     }
 
     /// Remove the global of the given type from the app context. Does not notify global observers.
-    #[cfg(any(test, feature = "test-support"))]
     pub fn remove_global<G: Any>(&mut self) -> G {
         let global_type = TypeId::of::<G>();
         *self

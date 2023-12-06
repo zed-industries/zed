@@ -27,7 +27,7 @@ pub struct ThemeSettings {
 }
 
 #[derive(Default)]
-pub struct AdjustedBufferFontSize(Option<Pixels>);
+pub struct AdjustedBufferFontSize(Pixels);
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ThemeSettingsContent {
@@ -69,12 +69,10 @@ impl BufferLineHeight {
 }
 
 impl ThemeSettings {
-    pub fn buffer_font_size(&self, cx: &mut AppContext) -> Pixels {
-        let font_size = *cx
-            .default_global::<AdjustedBufferFontSize>()
-            .0
-            .get_or_insert(self.buffer_font_size.into());
-        font_size.max(MIN_FONT_SIZE)
+    pub fn buffer_font_size(&self, cx: &AppContext) -> Pixels {
+        cx.try_global::<AdjustedBufferFontSize>()
+            .map_or(self.buffer_font_size, |size| size.0)
+            .max(MIN_FONT_SIZE)
     }
 
     pub fn line_height(&self) -> f32 {
@@ -83,9 +81,9 @@ impl ThemeSettings {
 }
 
 pub fn adjusted_font_size(size: Pixels, cx: &mut AppContext) -> Pixels {
-    if let Some(adjusted_size) = cx.default_global::<AdjustedBufferFontSize>().0 {
+    if let Some(AdjustedBufferFontSize(adjusted_size)) = cx.try_global::<AdjustedBufferFontSize>() {
         let buffer_font_size = ThemeSettings::get_global(cx).buffer_font_size;
-        let delta = adjusted_size - buffer_font_size;
+        let delta = *adjusted_size - buffer_font_size;
         size + delta
     } else {
         size
@@ -95,18 +93,19 @@ pub fn adjusted_font_size(size: Pixels, cx: &mut AppContext) -> Pixels {
 
 pub fn adjust_font_size(cx: &mut AppContext, f: fn(&mut Pixels)) {
     let buffer_font_size = ThemeSettings::get_global(cx).buffer_font_size;
-    let adjusted_size = cx
-        .default_global::<AdjustedBufferFontSize>()
-        .0
-        .get_or_insert(buffer_font_size);
-    f(adjusted_size);
-    *adjusted_size = (*adjusted_size).max(MIN_FONT_SIZE - buffer_font_size);
+    let mut adjusted_size = cx
+        .try_global::<AdjustedBufferFontSize>()
+        .map_or(buffer_font_size, |adjusted_size| adjusted_size.0);
+
+    f(&mut adjusted_size);
+    adjusted_size = adjusted_size.max(MIN_FONT_SIZE);
+    cx.set_global(AdjustedBufferFontSize(adjusted_size));
     cx.refresh();
 }
 
 pub fn reset_font_size(cx: &mut AppContext) {
     if cx.has_global::<AdjustedBufferFontSize>() {
-        cx.global_mut::<AdjustedBufferFontSize>().0 = None;
+        cx.remove_global::<AdjustedBufferFontSize>();
         cx.refresh();
     }
 }

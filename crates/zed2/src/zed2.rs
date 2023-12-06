@@ -235,14 +235,13 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                     .open_urls(&[action.url.clone()])
             })
             .register_action(|_, action: &OpenBrowser, cx| cx.open_url(&action.url))
-            //todo!(buffer font size)
-            // cx.add_global_action(move |_: &IncreaseBufferFontSize, cx| {
-            //     theme::adjust_font_size(cx, |size| *size += 1.0)
-            // });
-            // cx.add_global_action(move |_: &DecreaseBufferFontSize, cx| {
-            //     theme::adjust_font_size(cx, |size| *size -= 1.0)
-            // });
-            // cx.add_global_action(move |_: &ResetBufferFontSize, cx| theme::reset_font_size(cx));
+            .register_action(move |_, _: &IncreaseBufferFontSize, cx| {
+                theme::adjust_font_size(cx, |size| *size += px(1.0))
+            })
+            .register_action(move |_, _: &DecreaseBufferFontSize, cx| {
+                theme::adjust_font_size(cx, |size| *size -= px(1.0))
+            })
+            .register_action(move |_, _: &ResetBufferFontSize, cx| theme::reset_font_size(cx))
             .register_action(|_, _: &install_cli::Install, cx| {
                 cx.spawn(|_, cx| async move {
                     install_cli::install_cli(cx.deref())
