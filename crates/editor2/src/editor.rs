@@ -1696,6 +1696,11 @@ impl Editor {
         let focus_handle = cx.focus_handle();
         cx.on_focus(&focus_handle, Self::handle_focus).detach();
         cx.on_blur(&focus_handle, Self::handle_blur).detach();
+        cx.on_release(|this, cx| {
+            //todo!()
+            //cx.emit_global(EditorReleased(self.handle.clone()));
+        })
+        .detach();
 
         let mut this = Self {
             handle: cx.view().downgrade(),
@@ -9240,14 +9245,6 @@ pub struct EditorFocused(pub View<Editor>);
 pub struct EditorBlurred(pub View<Editor>);
 pub struct EditorReleased(pub WeakView<Editor>);
 
-// impl Entity for Editor {
-//     type Event = Event;
-
-//     fn release(&mut self, cx: &mut AppContext) {
-//         cx.emit_global(EditorReleased(self.handle.clone()));
-//     }
-// }
-//
 impl EventEmitter<EditorEvent> for Editor {}
 
 impl FocusableView for Editor {

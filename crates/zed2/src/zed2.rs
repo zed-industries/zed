@@ -10,6 +10,9 @@ pub use assets::*;
 use breadcrumbs::Breadcrumbs;
 use collections::VecDeque;
 use editor::{Editor, MultiBuffer};
+use feedback::{
+    feedback_info_text::FeedbackInfoText, submit_feedback_button::SubmitFeedbackButton,
+};
 use gpui::{
     actions, point, px, AppContext, Context, FocusableView, PromptLevel, TitlebarOptions,
     ViewContext, VisualContext, WindowBounds, WindowKind, WindowOptions,
@@ -110,11 +113,12 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                             //     toolbar.add_item(diagnostic_editor_controls, cx);
                             //     let project_search_bar = cx.add_view(|_| ProjectSearchBar::new());
                             //     toolbar.add_item(project_search_bar, cx);
-                            // let submit_feedback_button =
-                            //     cx.build_view(|_| SubmitFeedbackButton::new());
-                            //     toolbar.add_item(submit_feedback_button, cx);
-                            //     let feedback_info_text = cx.add_view(|_| FeedbackInfoText::new());
-                            //     toolbar.add_item(feedback_info_text, cx);
+                            let submit_feedback_button =
+                                cx.build_view(|_| SubmitFeedbackButton::new());
+                            // todo!(tool bar does not display or fire correctly right now, this is only stubbed in)
+                            toolbar.add_item(submit_feedback_button, cx);
+                            let feedback_info_text = cx.build_view(|_| FeedbackInfoText::new());
+                            toolbar.add_item(feedback_info_text, cx);
                             //     let lsp_log_item =
                             //         cx.add_view(|_| language_tools::LspLogToolbarItemView::new());
                             //     toolbar.add_item(lsp_log_item, cx);

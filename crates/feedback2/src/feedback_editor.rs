@@ -1,21 +1,29 @@
-use std::{ops::RangeInclusive, sync::Arc};
-
+use crate::system_specs::SystemSpecs;
 use anyhow::bail;
 use client::{Client, ZED_SECRET_CLIENT_TOKEN, ZED_SERVER_URL};
-use editor::Editor;
+use editor::{Anchor, Editor, EditorEvent};
 use futures::AsyncReadExt;
 use gpui::{
-    actions, serde_json, AppContext, Model, PromptLevel, Task, View, ViewContext, VisualContext,
+    actions, serde_json, AnyElement, AnyView, AppContext, Div, EntityId, EventEmitter,
+    FocusableView, Model, PromptLevel, Task, View, ViewContext, WindowContext,
 };
 use isahc::Request;
-use language::Buffer;
-use project::Project;
+use language::{Buffer, Event};
+use project::{search::SearchQuery, Project};
 use regex::Regex;
-use serde_derive::Serialize;
+use serde::Serialize;
+use std::{
+    any::TypeId,
+    ops::{Range, RangeInclusive},
+    sync::Arc,
+};
+use ui::{prelude::*, Icon, IconElement, Label};
 use util::ResultExt;
-use workspace::Workspace;
-
-use crate::system_specs::SystemSpecs;
+use workspace::{
+    item::{Item, ItemEvent, ItemHandle},
+    searchable::{SearchEvent, SearchableItem, SearchableItemHandle},
+    Workspace,
+};
 
 const FEEDBACK_CHAR_LIMIT: RangeInclusive<usize> = 10..=5000;
 const FEEDBACK_SUBMISSION_ERROR_TEXT: &str =
@@ -24,12 +32,10 @@ const FEEDBACK_SUBMISSION_ERROR_TEXT: &str =
 actions!(GiveFeedback, SubmitFeedback);
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_views(|workspace: &mut Workspace, cx| {
-        workspace.register_action(
-            move |workspace: &mut Workspace, _: &GiveFeedback, cx: &mut ViewContext<Workspace>| {
-                FeedbackEditor::deploy(workspace, cx);
-            },
-        );
+    cx.observe_new_views(|workspace: &mut Workspace, _| {
+        workspace.register_action(|workspace, _: &GiveFeedback, cx| {
+            FeedbackEditor::deploy(workspace, cx);
+        });
     })
     .detach();
 }
@@ -53,6 +59,9 @@ pub(crate) struct FeedbackEditor {
     pub allow_submission: bool,
 }
 
+impl EventEmitter<Event> for FeedbackEditor {}
+impl EventEmitter<EditorEvent> for FeedbackEditor {}
+
 impl FeedbackEditor {
     fn new(
         system_specs: SystemSpecs,
@@ -66,8 +75,11 @@ impl FeedbackEditor {
             editor
         });
 
-        cx.subscribe(&editor, |_, _, e, cx| cx.emit(e.clone()))
-            .detach();
+        cx.subscribe(
+            &editor,
+            |&mut _, _, e: &EditorEvent, cx: &mut ViewContext<_>| cx.emit(e.clone()),
+        )
+        .detach();
 
         Self {
             system_specs: system_specs.clone(),
@@ -101,11 +113,15 @@ impl FeedbackEditor {
         };
 
         if let Some(error) = error {
-            cx.prompt(PromptLevel::Critical, &error, &["OK"]);
+            let prompt = cx.prompt(PromptLevel::Critical, &error, &["OK"]);
+            cx.spawn(|_, _cx| async move {
+                prompt.await.ok();
+            })
+            .detach();
             return Task::ready(Ok(()));
         }
 
-        let mut answer = cx.prompt(
+        let answer = cx.prompt(
             PromptLevel::Info,
             "Ready to submit your feedback?",
             &["Yes, Submit!", "No"],
@@ -115,7 +131,7 @@ impl FeedbackEditor {
         let specs = self.system_specs.clone();
 
         cx.spawn(|this, mut cx| async move {
-            let answer = answer.recv().await;
+            let answer = answer.await.ok();
 
             if answer == Some(0) {
                 this.update(&mut cx, |feedback_editor, cx| {
@@ -125,18 +141,22 @@ impl FeedbackEditor {
 
                 match FeedbackEditor::submit_feedback(&feedback_text, client, specs).await {
                     Ok(_) => {
-                        this.update(&mut cx, |_, cx| cx.emit(editor::EditorEvent::Closed))
+                        this.update(&mut cx, |_, cx| cx.emit(Event::Closed))
                             .log_err();
                     }
 
                     Err(error) => {
                         log::error!("{}", error);
                         this.update(&mut cx, |feedback_editor, cx| {
-                            cx.prompt(
+                            let prompt = cx.prompt(
                                 PromptLevel::Critical,
                                 FEEDBACK_SUBMISSION_ERROR_TEXT,
                                 &["OK"],
                             );
+                            cx.spawn(|_, _cx| async move {
+                                prompt.await.ok();
+                            })
+                            .detach();
                             feedback_editor.set_allow_submission(true, cx);
                         })
                         .log_err();
@@ -234,200 +254,232 @@ impl FeedbackEditor {
     }
 }
 
-// impl View for FeedbackEditor {
-//     fn ui_name() -> &'static str {
-//         "FeedbackEditor"
-//     }
+// TODO
+impl Render for FeedbackEditor {
+    type Element = Div;
 
-//     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-//         ChildView::new(&self.editor, cx).into_any()
-//     }
+    fn render(&mut self, _: &mut ViewContext<Self>) -> Self::Element {
+        div().size_full().child(self.editor.clone())
+    }
+}
 
-//     fn focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
-//         if cx.is_self_focused() {
-//             cx.focus(&self.editor);
-//         }
-//     }
-// }
+impl EventEmitter<ItemEvent> for FeedbackEditor {}
 
-// impl Entity for FeedbackEditor {
-//     type Event = editor::Event;
-// }
+impl FocusableView for FeedbackEditor {
+    fn focus_handle(&self, cx: &AppContext) -> gpui::FocusHandle {
+        self.editor.focus_handle(cx)
+    }
+}
 
-// impl Item for FeedbackEditor {
-//     fn tab_tooltip_text(&self, _: &AppContext) -> Option<Cow<str>> {
-//         Some("Send Feedback".into())
-//     }
+impl Item for FeedbackEditor {
+    fn tab_tooltip_text(&self, _: &AppContext) -> Option<SharedString> {
+        Some("Send Feedback".into())
+    }
 
-//     fn tab_content<T: 'static>(
-//         &self,
-//         _: Option<usize>,
-//         style: &theme::Tab,
-//         _: &AppContext,
-//     ) -> AnyElement<T> {
-//         Flex::row()
-//             .with_child(
-//                 Svg::new("icons/feedback.svg")
-//                     .with_color(style.label.text.color)
-//                     .constrained()
-//                     .with_width(style.type_icon_width)
-//                     .aligned()
-//                     .contained()
-//                     .with_margin_right(style.spacing),
-//             )
-//             .with_child(
-//                 Label::new("Send Feedback", style.label.clone())
-//                     .aligned()
-//                     .contained(),
-//             )
-//             .into_any()
-//     }
+    fn tab_content(&self, detail: Option<usize>, cx: &WindowContext) -> AnyElement {
+        h_stack()
+            .gap_1()
+            .child(IconElement::new(Icon::Envelope).color(Color::Accent))
+            .child(Label::new("Send Feedback".to_string()))
+            .into_any_element()
+    }
 
-//     fn for_each_project_item(&self, cx: &AppContext, f: &mut dyn FnMut(usize, &dyn project::Item)) {
-//         self.editor.for_each_project_item(cx, f)
-//     }
+    fn for_each_project_item(
+        &self,
+        cx: &AppContext,
+        f: &mut dyn FnMut(EntityId, &dyn project::Item),
+    ) {
+        self.editor.for_each_project_item(cx, f)
+    }
 
-//     fn is_singleton(&self, _: &AppContext) -> bool {
-//         true
-//     }
+    fn is_singleton(&self, _: &AppContext) -> bool {
+        true
+    }
 
-//     fn can_save(&self, _: &AppContext) -> bool {
-//         true
-//     }
+    fn can_save(&self, _: &AppContext) -> bool {
+        true
+    }
 
-//     fn save(
-//         &mut self,
-//         _: ModelHandle<Project>,
-//         cx: &mut ViewContext<Self>,
-//     ) -> Task<anyhow::Result<()>> {
-//         self.submit(cx)
-//     }
+    fn save(
+        &mut self,
+        _project: Model<Project>,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<anyhow::Result<()>> {
+        self.submit(cx)
+    }
 
-//     fn save_as(
-//         &mut self,
-//         _: ModelHandle<Project>,
-//         _: std::path::PathBuf,
-//         cx: &mut ViewContext<Self>,
-//     ) -> Task<anyhow::Result<()>> {
-//         self.submit(cx)
-//     }
+    fn save_as(
+        &mut self,
+        _: Model<Project>,
+        _: std::path::PathBuf,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<anyhow::Result<()>> {
+        self.submit(cx)
+    }
 
-//     fn reload(
-//         &mut self,
-//         _: ModelHandle<Project>,
-//         _: &mut ViewContext<Self>,
-//     ) -> Task<anyhow::Result<()>> {
-//         Task::Ready(Some(Ok(())))
-//     }
+    fn reload(&mut self, _: Model<Project>, _: &mut ViewContext<Self>) -> Task<anyhow::Result<()>> {
+        Task::Ready(Some(Ok(())))
+    }
 
-//     fn clone_on_split(
-//         &self,
-//         _workspace_id: workspace::WorkspaceId,
-//         cx: &mut ViewContext<Self>,
-//     ) -> Option<Self>
-//     where
-//         Self: Sized,
-//     {
-//         let buffer = self
-//             .editor
-//             .read(cx)
-//             .buffer()
-//             .read(cx)
-//             .as_singleton()
-//             .expect("Feedback buffer is only ever singleton");
+    fn clone_on_split(
+        &self,
+        _workspace_id: workspace::WorkspaceId,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<View<Self>>
+    where
+        Self: Sized,
+    {
+        let buffer = self
+            .editor
+            .read(cx)
+            .buffer()
+            .read(cx)
+            .as_singleton()
+            .expect("Feedback buffer is only ever singleton");
 
-//         Some(Self::new(
-//             self.system_specs.clone(),
-//             self.project.clone(),
-//             buffer.clone(),
-//             cx,
-//         ))
-//     }
+        Some(cx.build_view(|cx| {
+            Self::new(
+                self.system_specs.clone(),
+                self.project.clone(),
+                buffer.clone(),
+                cx,
+            )
+        }))
+    }
 
-//     fn as_searchable(&self, handle: &ViewHandle<Self>) -> Option<Box<dyn SearchableItemHandle>> {
-//         Some(Box::new(handle.clone()))
-//     }
+    fn as_searchable(&self, handle: &View<Self>) -> Option<Box<dyn SearchableItemHandle>> {
+        Some(Box::new(handle.clone()))
+    }
 
-//     fn act_as_type<'a>(
-//         &'a self,
-//         type_id: TypeId,
-//         self_handle: &'a ViewHandle<Self>,
-//         _: &'a AppContext,
-//     ) -> Option<&'a AnyViewHandle> {
-//         if type_id == TypeId::of::<Self>() {
-//             Some(self_handle)
-//         } else if type_id == TypeId::of::<Editor>() {
-//             Some(&self.editor)
-//         } else {
-//             None
-//         }
-//     }
+    fn act_as_type<'a>(
+        &'a self,
+        type_id: TypeId,
+        self_handle: &'a View<Self>,
+        cx: &'a AppContext,
+    ) -> Option<AnyView> {
+        if type_id == TypeId::of::<Self>() {
+            Some(self_handle.to_any())
+        } else if type_id == TypeId::of::<Editor>() {
+            Some(self.editor.to_any())
+        } else {
+            None
+        }
+    }
 
-//     fn to_item_events(event: &Self::Event) -> SmallVec<[ItemEvent; 2]> {
-//         Editor::to_item_events(event)
-//     }
-// }
+    fn deactivated(&mut self, _: &mut ViewContext<Self>) {}
 
-// impl SearchableItem for FeedbackEditor {
-//     type Match = Range<Anchor>;
+    fn workspace_deactivated(&mut self, _: &mut ViewContext<Self>) {}
 
-//     fn to_search_event(
-//         &mut self,
-//         event: &Self::Event,
-//         cx: &mut ViewContext<Self>,
-//     ) -> Option<workspace::searchable::SearchEvent> {
-//         self.editor
-//             .update(cx, |editor, cx| editor.to_search_event(event, cx))
-//     }
+    fn navigate(&mut self, _: Box<dyn std::any::Any>, _: &mut ViewContext<Self>) -> bool {
+        false
+    }
 
-//     fn clear_matches(&mut self, cx: &mut ViewContext<Self>) {
-//         self.editor
-//             .update(cx, |editor, cx| editor.clear_matches(cx))
-//     }
+    fn tab_description(&self, _: usize, _: &AppContext) -> Option<ui::prelude::SharedString> {
+        None
+    }
 
-//     fn update_matches(&mut self, matches: Vec<Self::Match>, cx: &mut ViewContext<Self>) {
-//         self.editor
-//             .update(cx, |editor, cx| editor.update_matches(matches, cx))
-//     }
+    fn set_nav_history(&mut self, _: workspace::ItemNavHistory, _: &mut ViewContext<Self>) {}
 
-//     fn query_suggestion(&mut self, cx: &mut ViewContext<Self>) -> String {
-//         self.editor
-//             .update(cx, |editor, cx| editor.query_suggestion(cx))
-//     }
+    fn is_dirty(&self, _: &AppContext) -> bool {
+        false
+    }
 
-//     fn activate_match(
-//         &mut self,
-//         index: usize,
-//         matches: Vec<Self::Match>,
-//         cx: &mut ViewContext<Self>,
-//     ) {
-//         self.editor
-//             .update(cx, |editor, cx| editor.activate_match(index, matches, cx))
-//     }
+    fn has_conflict(&self, _: &AppContext) -> bool {
+        false
+    }
 
-//     fn select_matches(&mut self, matches: Vec<Self::Match>, cx: &mut ViewContext<Self>) {
-//         self.editor
-//             .update(cx, |e, cx| e.select_matches(matches, cx))
-//     }
-//     fn replace(&mut self, matches: &Self::Match, query: &SearchQuery, cx: &mut ViewContext<Self>) {
-//         self.editor
-//             .update(cx, |e, cx| e.replace(matches, query, cx));
-//     }
-//     fn find_matches(
-//         &mut self,
-//         query: Arc<project::search::SearchQuery>,
-//         cx: &mut ViewContext<Self>,
-//     ) -> Task<Vec<Self::Match>> {
-//         self.editor
-//             .update(cx, |editor, cx| editor.find_matches(query, cx))
-//     }
+    fn breadcrumb_location(&self) -> workspace::ToolbarItemLocation {
+        workspace::ToolbarItemLocation::Hidden
+    }
 
-//     fn active_match_index(
-//         &mut self,
-//         matches: Vec<Self::Match>,
-//         cx: &mut ViewContext<Self>,
-//     ) -> Option<usize> {
-//         self.editor
-//             .update(cx, |editor, cx| editor.active_match_index(matches, cx))
-//     }
-// }
+    fn breadcrumbs(
+        &self,
+        _theme: &theme::Theme,
+        _cx: &AppContext,
+    ) -> Option<Vec<workspace::item::BreadcrumbText>> {
+        None
+    }
+
+    fn added_to_workspace(&mut self, _workspace: &mut Workspace, _cx: &mut ViewContext<Self>) {}
+
+    fn serialized_item_kind() -> Option<&'static str> {
+        Some("feedback")
+    }
+
+    fn deserialize(
+        _project: gpui::Model<Project>,
+        _workspace: gpui::WeakView<Workspace>,
+        _workspace_id: workspace::WorkspaceId,
+        _item_id: workspace::ItemId,
+        _cx: &mut ViewContext<workspace::Pane>,
+    ) -> Task<anyhow::Result<View<Self>>> {
+        unimplemented!(
+            "deserialize() must be implemented if serialized_item_kind() returns Some(_)"
+        )
+    }
+
+    fn show_toolbar(&self) -> bool {
+        true
+    }
+
+    fn pixel_position_of_cursor(&self, _: &AppContext) -> Option<gpui::Point<gpui::Pixels>> {
+        None
+    }
+}
+
+impl EventEmitter<SearchEvent> for FeedbackEditor {}
+
+impl SearchableItem for FeedbackEditor {
+    type Match = Range<Anchor>;
+
+    fn clear_matches(&mut self, cx: &mut ViewContext<Self>) {
+        self.editor
+            .update(cx, |editor, cx| editor.clear_matches(cx))
+    }
+
+    fn update_matches(&mut self, matches: Vec<Self::Match>, cx: &mut ViewContext<Self>) {
+        self.editor
+            .update(cx, |editor, cx| editor.update_matches(matches, cx))
+    }
+
+    fn query_suggestion(&mut self, cx: &mut ViewContext<Self>) -> String {
+        self.editor
+            .update(cx, |editor, cx| editor.query_suggestion(cx))
+    }
+
+    fn activate_match(
+        &mut self,
+        index: usize,
+        matches: Vec<Self::Match>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.editor
+            .update(cx, |editor, cx| editor.activate_match(index, matches, cx))
+    }
+
+    fn select_matches(&mut self, matches: Vec<Self::Match>, cx: &mut ViewContext<Self>) {
+        self.editor
+            .update(cx, |e, cx| e.select_matches(matches, cx))
+    }
+    fn replace(&mut self, matches: &Self::Match, query: &SearchQuery, cx: &mut ViewContext<Self>) {
+        self.editor
+            .update(cx, |e, cx| e.replace(matches, query, cx));
+    }
+    fn find_matches(
+        &mut self,
+        query: Arc<project::search::SearchQuery>,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Vec<Self::Match>> {
+        self.editor
+            .update(cx, |editor, cx| editor.find_matches(query, cx))
+    }
+
+    fn active_match_index(
+        &mut self,
+        matches: Vec<Self::Match>,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<usize> {
+        self.editor
+            .update(cx, |editor, cx| editor.active_match_index(matches, cx))
+    }
+}

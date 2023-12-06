@@ -1,28 +1,36 @@
-// use gpui::{
-//     elements::{Flex, Label, MouseEventHandler, ParentElement, Text},
-//     platform::{CursorStyle, MouseButton},
-//     AnyElement, Element, Entity, View, ViewContext, ViewHandle,
-// };
-// use workspace::{item::ItemHandle, ToolbarItemLocation, ToolbarItemView};
+use gpui::{Div, EventEmitter, View, ViewContext};
+use ui::{prelude::*, Label};
+use workspace::{item::ItemHandle, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 
-// use crate::{feedback_editor::FeedbackEditor, open_zed_community_repo, OpenZedCommunityRepo};
+use crate::feedback_editor::FeedbackEditor;
 
-// pub struct FeedbackInfoText {
-//     active_item: Option<ViewHandle<FeedbackEditor>>,
-// }
+pub struct FeedbackInfoText {
+    active_item: Option<View<FeedbackEditor>>,
+}
 
-// impl FeedbackInfoText {
-//     pub fn new() -> Self {
-//         Self {
-//             active_item: Default::default(),
-//         }
-//     }
-// }
+impl FeedbackInfoText {
+    pub fn new() -> Self {
+        Self {
+            active_item: Default::default(),
+        }
+    }
+}
 
-// impl Entity for FeedbackInfoText {
-//     type Event = ();
-// }
+// TODO
+impl Render for FeedbackInfoText {
+    type Element = Div;
 
+    fn render(&mut self, _: &mut ViewContext<Self>) -> Self::Element {
+        // TODO - get this into the toolbar area like before - ensure things work the same when horizontally shrinking app
+        div()
+            .size_full()
+            .child(Label::new("Share your feedback. Include your email for replies. For issues and discussions, visit the ").color(Color::Muted))
+            .child(Label::new("community repo").color(Color::Muted)) // TODO - this needs to be a link
+            .child(Label::new(".").color(Color::Muted))
+    }
+}
+
+// TODO - delete
 // impl View for FeedbackInfoText {
 //     fn ui_name() -> &'static str {
 //         "FeedbackInfoText"
@@ -73,22 +81,25 @@
 //     }
 // }
 
-// impl ToolbarItemView for FeedbackInfoText {
-//     fn set_active_pane_item(
-//         &mut self,
-//         active_pane_item: Option<&dyn ItemHandle>,
-//         cx: &mut ViewContext<Self>,
-//     ) -> workspace::ToolbarItemLocation {
-//         cx.notify();
-//         if let Some(feedback_editor) = active_pane_item.and_then(|i| i.downcast::<FeedbackEditor>())
-//         {
-//             self.active_item = Some(feedback_editor);
-//             ToolbarItemLocation::PrimaryLeft {
-//                 flex: Some((1., false)),
-//             }
-//         } else {
-//             self.active_item = None;
-//             ToolbarItemLocation::Hidden
-//         }
-//     }
-// }
+impl EventEmitter<ToolbarItemEvent> for FeedbackInfoText {}
+
+impl ToolbarItemView for FeedbackInfoText {
+    fn set_active_pane_item(
+        &mut self,
+        active_pane_item: Option<&dyn ItemHandle>,
+        cx: &mut ViewContext<Self>,
+    ) -> workspace::ToolbarItemLocation {
+        cx.notify();
+
+        if let Some(feedback_editor) = active_pane_item.and_then(|i| i.downcast::<FeedbackEditor>())
+        {
+            dbg!("Editor");
+            self.active_item = Some(feedback_editor);
+            ToolbarItemLocation::PrimaryLeft
+        } else {
+            dbg!("no editor");
+            self.active_item = None;
+            ToolbarItemLocation::Hidden
+        }
+    }
+}

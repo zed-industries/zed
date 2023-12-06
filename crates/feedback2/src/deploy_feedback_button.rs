@@ -1,18 +1,18 @@
 use gpui::{AnyElement, Render, ViewContext, WeakView};
 use ui::{prelude::*, ButtonCommon, Icon, IconButton, Tooltip};
-use workspace::{StatusItemView, Workspace};
+use workspace::{item::ItemHandle, StatusItemView, Workspace};
 
-use crate::feedback_modal::FeedbackModal;
+use crate::feedback_editor::FeedbackEditor;
 
 pub struct DeployFeedbackButton {
-    _active: bool,
+    active: bool,
     workspace: WeakView<Workspace>,
 }
 
 impl DeployFeedbackButton {
     pub fn new(workspace: &Workspace) -> Self {
         DeployFeedbackButton {
-            _active: false,
+            active: false,
             workspace: workspace.weak_handle(),
         }
     }
@@ -22,37 +22,34 @@ impl Render for DeployFeedbackButton {
     type Element = AnyElement;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-        let is_open = self
-            .workspace
-            .upgrade()
-            .and_then(|workspace| {
-                workspace.update(cx, |workspace, cx| {
-                    workspace.active_modal::<FeedbackModal>(cx)
-                })
-            })
-            .is_some();
+        let active = self.active;
 
         IconButton::new("give-feedback", Icon::Envelope)
             .style(ui::ButtonStyle::Subtle)
-            .selected(is_open)
             .tooltip(|cx| Tooltip::text("Give Feedback", cx))
-            .on_click(cx.listener(|this, _, cx| {
+            .on_click(cx.listener(move |this, _, cx| {
                 let Some(workspace) = this.workspace.upgrade() else {
                     return;
                 };
-                workspace.update(cx, |workspace, cx| {
-                    workspace.toggle_modal(cx, |cx| FeedbackModal::new(cx))
-                })
+
+                if !active {
+                    workspace.update(cx, |workspace, cx| FeedbackEditor::deploy(workspace, cx))
+                }
             }))
             .into_any_element()
     }
 }
+
 impl StatusItemView for DeployFeedbackButton {
-    fn set_active_pane_item(
-        &mut self,
-        _active_pane_item: Option<&dyn workspace::item::ItemHandle>,
-        _cx: &mut ViewContext<Self>,
-    ) {
-        // no-op
+    fn set_active_pane_item(&mut self, item: Option<&dyn ItemHandle>, cx: &mut ViewContext<Self>) {
+        if let Some(item) = item {
+            if let Some(_) = item.downcast::<FeedbackEditor>() {
+                self.active = true;
+                cx.notify();
+                return;
+            }
+        }
+        self.active = false;
+        cx.notify();
     }
 }

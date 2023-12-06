@@ -5,7 +5,7 @@ use workspace::Workspace;
 pub mod deploy_feedback_button;
 pub mod feedback_editor;
 pub mod feedback_info_text;
-pub mod feedback_modal;
+// pub mod feedback_modal;
 pub mod submit_feedback_button;
 
 mod system_specs;
