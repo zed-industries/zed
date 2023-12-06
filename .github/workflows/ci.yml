@@ -11,6 +11,11 @@ on:
         branches:
             - "**"
 
+concurrency:
+    # Allow only one workflow per any non-`main` branch.
+    group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}
+    cancel-in-progress: true
+
 env:
     CARGO_TERM_COLOR: always
     CARGO_INCREMENTAL: 0
