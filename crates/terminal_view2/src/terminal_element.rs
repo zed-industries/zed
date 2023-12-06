@@ -638,7 +638,7 @@ impl TerminalElement {
         let connection = self.terminal.clone();
 
         let mut this = self
-            .on_mouse_down(MouseButton::Left, {
+            .on_mouse_down_weird(MouseButton::Left, {
                 let connection = connection.clone();
                 let focus = focus.clone();
                 move |e, cx| {
@@ -814,6 +814,7 @@ impl Element for TerminalElement {
         state: &mut Self::State,
         cx: &mut WindowContext<'_>,
     ) {
+        dbg!(bounds);
         let mut layout = self.compute_layout(bounds, cx);
 
         let theme = cx.theme();
@@ -832,54 +833,51 @@ impl Element for TerminalElement {
         let mut this = self.register_mouse_listeners(origin, layout.mode, bounds, cx);
         let interactivity = mem::take(&mut this.interactivity);
 
-        cx.with_z_index(0, |cx| {
-            interactivity.paint(bounds, bounds.size, state, cx, |_, _, cx| {
-                this.register_key_listeners(cx);
+        interactivity.paint(bounds, bounds.size, state, cx, |_, _, cx| {
+            this.register_key_listeners(cx);
 
-                for rect in &layout.rects {
-                    rect.paint(origin, &layout, cx);
-                }
+            for rect in &layout.rects {
+                rect.paint(origin, &layout, cx);
+            }
 
-                cx.with_z_index(1, |cx| {
-                    for (relative_highlighted_range, color) in
-                        layout.relative_highlighted_ranges.iter()
+            cx.with_z_index(1, |cx| {
+                for (relative_highlighted_range, color) in layout.relative_highlighted_ranges.iter()
+                {
+                    if let Some((start_y, highlighted_range_lines)) =
+                        to_highlighted_range_lines(relative_highlighted_range, &layout, origin)
                     {
-                        if let Some((start_y, highlighted_range_lines)) =
-                            to_highlighted_range_lines(relative_highlighted_range, &layout, origin)
-                        {
-                            let hr = HighlightedRange {
-                                start_y, //Need to change this
-                                line_height: layout.size.line_height,
-                                lines: highlighted_range_lines,
-                                color: color.clone(),
-                                //Copied from editor. TODO: move to theme or something
-                                corner_radius: 0.15 * layout.size.line_height,
-                            };
-                            hr.paint(bounds, cx);
-                        }
+                        let hr = HighlightedRange {
+                            start_y, //Need to change this
+                            line_height: layout.size.line_height,
+                            lines: highlighted_range_lines,
+                            color: color.clone(),
+                            //Copied from editor. TODO: move to theme or something
+                            corner_radius: 0.15 * layout.size.line_height,
+                        };
+                        hr.paint(bounds, cx);
                     }
-                });
-
-                cx.with_z_index(2, |cx| {
-                    for cell in &layout.cells {
-                        cell.paint(origin, &layout, bounds, cx);
-                    }
-                });
-
-                if this.cursor_visible {
-                    cx.with_z_index(3, |cx| {
-                        if let Some(cursor) = &layout.cursor {
-                            cursor.paint(origin, cx);
-                        }
-                    });
-                }
-
-                if let Some(element) = layout.hyperlink_tooltip.take() {
-                    let width: AvailableSpace = bounds.size.width.into();
-                    let height: AvailableSpace = bounds.size.height.into();
-                    element.draw(origin, Size { width, height }, cx)
                 }
             });
+
+            cx.with_z_index(2, |cx| {
+                for cell in &layout.cells {
+                    cell.paint(origin, &layout, bounds, cx);
+                }
+            });
+
+            if this.cursor_visible {
+                cx.with_z_index(3, |cx| {
+                    if let Some(cursor) = &layout.cursor {
+                        cursor.paint(origin, cx);
+                    }
+                });
+            }
+
+            if let Some(element) = layout.hyperlink_tooltip.take() {
+                let width: AvailableSpace = bounds.size.width.into();
+                let height: AvailableSpace = bounds.size.height.into();
+                element.draw(origin, Size { width, height }, cx)
+            }
         });
     }
 }

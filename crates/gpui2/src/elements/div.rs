@@ -1,10 +1,10 @@
 use crate::{
-    green, point, px, red, Action, AnyDrag, AnyDragState, AnyElement, AnyTooltip, AnyView,
-    AppContext, BorrowAppContext, BorrowWindow, Bounds, ClickEvent, DispatchPhase, Element,
-    ElementId, FocusEvent, FocusHandle, IntoElement, KeyContext, KeyDownEvent, KeyUpEvent,
-    LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels,
-    Point, Render, ScrollWheelEvent, SharedString, Size, StackingOrder, Style, StyleRefinement,
-    Styled, Task, View, Visibility, WindowContext,
+    point, px, Action, AnyDrag, AnyDragState, AnyElement, AnyTooltip, AnyView, AppContext,
+    BorrowAppContext, BorrowWindow, Bounds, ClickEvent, DispatchPhase, Element, ElementId,
+    FocusEvent, FocusHandle, IntoElement, KeyContext, KeyDownEvent, KeyUpEvent, LayoutId,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point,
+    Render, ScrollWheelEvent, SharedString, Size, StackingOrder, Style, StyleRefinement, Styled,
+    Task, View, Visibility, WindowContext,
 };
 use collections::HashMap;
 use refineable::Refineable;
@@ -88,6 +88,32 @@ pub trait InteractiveElement: Sized + Element {
                     && event.button == button
                     && bounds.visibly_contains(&event.position, cx)
                 {
+                    (listener)(event, cx)
+                }
+            },
+        ));
+        self
+    }
+
+    fn on_mouse_down_weird(
+        mut self,
+        button: MouseButton,
+        listener: impl Fn(&MouseDownEvent, &mut WindowContext) + 'static,
+    ) -> Self {
+        self.interactivity().mouse_down_listeners.push(Box::new(
+            move |event, bounds, phase, cx| {
+                dbg!("HEREEEE");
+
+                let contains = dbg!(dbg!(&bounds.bounds).contains_point(dbg!(&event.position)))
+                    && dbg!(cx.was_top_layer(&event.position, &bounds.stacking_order));
+                dbg!(contains);
+
+                if phase == DispatchPhase::Bubble
+                    && event.button == button
+                    && bounds.visibly_contains(&event.position, cx)
+                {
+                    dbg!("HEREEEE2");
+
                     (listener)(event, cx)
                 }
             },
@@ -767,7 +793,7 @@ pub struct Interactivity {
     pub tooltip_builder: Option<TooltipBuilder>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct InteractiveBounds {
     pub bounds: Bounds<Pixels>,
     pub stacking_order: StackingOrder,

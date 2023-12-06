@@ -266,18 +266,18 @@ impl TerminalView {
         .detach();
 
         let focus = cx.focus_handle();
-        let focus_in = cx.on_focus_in(&focus, |this, cx| {
-            this.has_new_content = false;
-            this.terminal.read(cx).focus_in();
-            this.blink_cursors(this.blink_epoch, cx);
-            cx.notify();
-        });
-        let focus_out = cx.on_focus_out(&focus, |this, cx| {
-            this.terminal.update(cx, |terminal, _| {
-                terminal.focus_out();
-            });
-            cx.notify();
-        });
+        // let focus_in = cx.on_focus_in(&focus, |this, cx| {
+        //     this.has_new_content = false;
+        //     this.terminal.read(cx).focus_in();
+        //     this.blink_cursors(this.blink_epoch, cx);
+        //     cx.notify();
+        // });
+        // let focus_out = cx.on_focus_out(&focus, |this, cx| {
+        //     this.terminal.update(cx, |terminal, _| {
+        //         terminal.focus_out();
+        //     });
+        //     cx.notify();
+        // });
 
         Self {
             terminal,
@@ -291,7 +291,7 @@ impl TerminalView {
             blink_epoch: 0,
             can_navigate_to_selected_word: false,
             workspace_id,
-            _subscriptions: vec![focus_in, focus_out],
+            _subscriptions: vec![/*focus_in, focus_out*/],
         }
     }
 
