@@ -1,4 +1,4 @@
-// use assistant::{assistant_panel::InlineAssist, AssistantPanel};
+use assistant::{AssistantPanel, InlineAssist};
 use editor::Editor;
 
 use gpui::{
@@ -15,7 +15,6 @@ pub struct QuickActionBar {
     buffer_search_bar: View<BufferSearchBar>,
     active_item: Option<Box<dyn ItemHandle>>,
     _inlay_hints_enabled_subscription: Option<Subscription>,
-    #[allow(unused)]
     workspace: WeakView<Workspace>,
 }
 
@@ -56,21 +55,25 @@ impl Render for QuickActionBar {
             "toggle inline assistant",
             Icon::MagicWand,
             false,
-            Box::new(gpui::NoAction),
+            Box::new(InlineAssist),
             "Inline assistant",
-            |_, _cx| todo!(),
+            {
+                let workspace = self.workspace.clone();
+                move |_, cx| {
+                    if let Some(workspace) = workspace.upgrade() {
+                        workspace.update(cx, |workspace, cx| {
+                            AssistantPanel::inline_assist(workspace, &InlineAssist, cx);
+                        });
+                    }
+                }
+            },
         );
         h_stack()
             .id("quick action bar")
             .p_1()
             .gap_2()
             .child(search_button)
-            .child(
-                div()
-                    .border()
-                    .border_color(gpui::red())
-                    .child(assistant_button),
-            )
+            .child(assistant_button)
     }
 }
 
