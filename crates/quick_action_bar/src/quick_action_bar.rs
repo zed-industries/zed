@@ -13,7 +13,7 @@ use workspace::{item::ItemHandle, ToolbarItemLocation, ToolbarItemView, Workspac
 pub struct QuickActionBar {
     buffer_search_bar: ViewHandle<BufferSearchBar>,
     active_item: Option<Box<dyn ItemHandle>>,
-    _inlay_hints_enabled_subscription: Option<Subscription>,
+    inlay_hints_enabled_subscription: Option<Subscription>,
     workspace: WeakViewHandle<Workspace>,
 }
 
@@ -22,7 +22,7 @@ impl QuickActionBar {
         Self {
             buffer_search_bar,
             active_item: None,
-            _inlay_hints_enabled_subscription: None,
+            inlay_hints_enabled_subscription: None,
             workspace: workspace.weak_handle(),
         }
     }
@@ -161,12 +161,12 @@ impl ToolbarItemView for QuickActionBar {
         match active_pane_item {
             Some(active_item) => {
                 self.active_item = Some(active_item.boxed_clone());
-                self._inlay_hints_enabled_subscription.take();
+                self.inlay_hints_enabled_subscription.take();
 
                 if let Some(editor) = active_item.downcast::<Editor>() {
                     let mut inlay_hints_enabled = editor.read(cx).inlay_hints_enabled();
                     let mut supports_inlay_hints = editor.read(cx).supports_inlay_hints(cx);
-                    self._inlay_hints_enabled_subscription =
+                    self.inlay_hints_enabled_subscription =
                         Some(cx.observe(&editor, move |_, editor, cx| {
                             let editor = editor.read(cx);
                             let new_inlay_hints_enabled = editor.inlay_hints_enabled();
