@@ -136,6 +136,7 @@ resolver = "2"
 [workspace.dependencies]
 anyhow = { version = "1.0.57" }
 async-trait = { version = "0.1" }
+async-compression = { version = "0.4", features = ["gzip", "futures-io"] }
 # TODO: Switch back to the published version of `ctor` once:
 #       1. A new version of `ctor` is published with this change: https://github.com/mmastrac/rust-ctor/pull/295
 #       2. We've confirmed it's fine to update to the latest version of `ctor` (we're currently on v0.1.20).
