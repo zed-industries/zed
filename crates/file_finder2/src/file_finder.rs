@@ -720,7 +720,9 @@ impl PickerDelegate for FileFinderDelegate {
             ListItem::new(ix).inset(true).selected(selected).child(
                 v_stack()
                     .child(HighlightedLabel::new(file_name, file_name_positions))
-                    .child(HighlightedLabel::new(full_path, full_path_positions)),
+                    .child(
+                        HighlightedLabel::new(full_path, full_path_positions).color(Color::Muted),
+                    ),
             ),
         )
     }
