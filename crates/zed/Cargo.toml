@@ -78,7 +78,7 @@ workspace = { path = "../workspace" }
 welcome = { path = "../welcome" }
 zed-actions = {path = "../zed-actions"}
 anyhow.workspace = true
-async-compression = { version = "0.3", features = ["gzip", "futures-bufread"] }
+async-compression.workspace = true
 async-tar = "0.4.2"
 async-recursion = "0.3"
 async-trait.workspace = true
