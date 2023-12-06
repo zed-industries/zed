@@ -109,7 +109,7 @@ impl PickerDelegate for CommandPaletteDelegate {
                     let filtered = cx.read(|cx| {
                         if cx.has_global::<CommandPaletteFilter>() {
                             let filter = cx.global::<CommandPaletteFilter>();
-                            filter.filtered_namespaces.contains(action.namespace())
+                            filter.hidden_namespaces.contains(action.namespace())
                         } else {
                             false
                         }
@@ -430,7 +430,7 @@ mod tests {
         // Add namespace filter, and redeploy the palette
         cx.update(|cx| {
             cx.update_default_global::<CommandPaletteFilter, _, _>(|filter, _| {
-                filter.filtered_namespaces.insert("editor");
+                filter.hidden_namespaces.insert("editor");
             })
         });
 
