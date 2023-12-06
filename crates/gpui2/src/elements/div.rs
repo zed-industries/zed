@@ -1,10 +1,10 @@
 use crate::{
-    point, px, Action, AnyDrag, AnyDragState, AnyElement, AnyTooltip, AnyView, AppContext,
-    BorrowAppContext, BorrowWindow, Bounds, ClickEvent, DispatchPhase, Element, ElementId,
-    FocusEvent, FocusHandle, IntoElement, KeyContext, KeyDownEvent, KeyUpEvent, LayoutId,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point,
-    Render, ScrollWheelEvent, SharedString, Size, StackingOrder, Style, StyleRefinement, Styled,
-    Task, View, Visibility, WindowContext,
+    green, point, px, red, Action, AnyDrag, AnyDragState, AnyElement, AnyTooltip, AnyView,
+    AppContext, BorrowAppContext, BorrowWindow, Bounds, ClickEvent, DispatchPhase, Element,
+    ElementId, FocusEvent, FocusHandle, IntoElement, KeyContext, KeyDownEvent, KeyUpEvent,
+    LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels,
+    Point, Render, ScrollWheelEvent, SharedString, Size, StackingOrder, Style, StyleRefinement,
+    Styled, Task, View, Visibility, WindowContext,
 };
 use collections::HashMap;
 use refineable::Refineable;
@@ -1363,7 +1363,7 @@ impl GroupBounds {
 }
 
 pub struct Focusable<E> {
-    element: E,
+    pub element: E,
 }
 
 impl<E: InteractiveElement> FocusableElement for Focusable<E> {}

@@ -1,10 +1,11 @@
 use editor::{Cursor, HighlightedRange, HighlightedRangeLine};
 use gpui::{
     black, div, point, px, red, relative, transparent_black, AnyElement, AvailableSpace, Bounds,
-    Element, ElementId, FocusHandle, Font, FontStyle, FontWeight, HighlightStyle, Hsla,
-    InteractiveElement, InteractiveElementState, IntoElement, LayoutId, ModelContext, Pixels,
-    Point, Rgba, ShapedLine, Size, StatefulInteractiveElement, Styled, TextRun, TextStyle,
-    TextSystem, UnderlineStyle, WeakModel, WhiteSpace, WindowContext,
+    DispatchPhase, Element, ElementId, FocusHandle, Font, FontStyle, FontWeight, HighlightStyle,
+    Hsla, InteractiveElement, InteractiveElementState, IntoElement, LayoutId, ModelContext,
+    ModifiersChangedEvent, MouseButton, Pixels, Point, Rgba, ShapedLine, Size,
+    StatefulInteractiveElement, Styled, TextRun, TextStyle, TextSystem, UnderlineStyle, View,
+    WeakModel, WhiteSpace, WindowContext,
 };
 use itertools::Itertools;
 use language::CursorShape;
@@ -25,6 +26,8 @@ use ui::Tooltip;
 
 use std::mem;
 use std::{fmt::Debug, ops::RangeInclusive};
+
+use crate::TerminalView;
 
 ///The information generated during layout that is necessary for painting
 pub struct LayoutState {
@@ -146,6 +149,7 @@ impl LayoutRect {
 ///We need to keep a reference to the view for mouse events, do we need it for any other terminal stuff, or can we move that to connection?
 pub struct TerminalElement {
     terminal: WeakModel<Terminal>,
+    terminal_view: View<TerminalView>,
     focus: FocusHandle,
     focused: bool,
     cursor_visible: bool,
@@ -164,6 +168,7 @@ impl StatefulInteractiveElement for TerminalElement {}
 impl TerminalElement {
     pub fn new(
         terminal: WeakModel<Terminal>,
+        terminal_view: View<TerminalView>,
         focus: FocusHandle,
         focused: bool,
         cursor_visible: bool,
@@ -171,12 +176,15 @@ impl TerminalElement {
     ) -> TerminalElement {
         TerminalElement {
             terminal,
+            terminal_view,
             focused,
-            focus,
+            focus: focus.clone(),
             cursor_visible,
             can_navigate_to_selected_word,
             interactivity: Default::default(),
         }
+        .track_focus(&focus)
+        .element
     }
 
     //Vec<Range<AlacPoint>> -> Clip out the parts of the ranges
@@ -601,7 +609,25 @@ impl TerminalElement {
         }
     }
 
-    fn paint_mouse_listeners(
+    fn register_key_listeners(&self, cx: &mut WindowContext) {
+        cx.on_key_event({
+            let this = self.terminal.clone();
+            move |event: &ModifiersChangedEvent, phase, cx| {
+                if phase != DispatchPhase::Bubble {
+                    return;
+                }
+
+                let handled = this
+                    .update(cx, |term, _| term.try_modifiers_change(&event.modifiers))
+                    .ok();
+                if handled == Some(true) {
+                    cx.notify();
+                }
+            }
+        });
+    }
+
+    fn register_mouse_listeners(
         self,
         origin: Point<Pixels>,
         mode: TermMode,
@@ -611,133 +637,153 @@ impl TerminalElement {
         let focus = self.focus.clone();
         let connection = self.terminal.clone();
 
-        self.on_mouse_down(gpui::MouseButton::Left, {
-            let connection = connection.clone();
-            let focus = focus.clone();
-            move |e, cx| {
-                cx.focus(&focus);
-                //todo!(context menu)
-                // v.context_menu.update(cx, |menu, _cx| menu.delay_cancel());
-                if let Some(conn_handle) = connection.upgrade() {
-                    conn_handle.update(cx, |terminal, cx| {
-                        terminal.mouse_down(&e, origin);
-
-                        cx.notify();
-                    })
-                }
-            }
-        })
-        .on_drag_event({
-            let connection = connection.clone();
-            let focus = focus.clone();
-            move |e, cx| {
-                if focus.is_focused(cx) {
+        let mut this = self
+            .on_mouse_down(MouseButton::Left, {
+                let connection = connection.clone();
+                let focus = focus.clone();
+                move |e, cx| {
+                    dbg!("here");
+                    cx.focus(&focus);
+                    //todo!(context menu)
+                    // v.context_menu.update(cx, |menu, _cx| menu.delay_cancel());
                     if let Some(conn_handle) = connection.upgrade() {
                         conn_handle.update(cx, |terminal, cx| {
-                            terminal.mouse_drag(e, origin, bounds);
+                            terminal.mouse_down(&e, origin);
+
                             cx.notify();
                         })
                     }
                 }
-            }
-        })
-        .on_mouse_up(
-            gpui::MouseButton::Left,
-            TerminalElement::generic_button_handler(
-                connection.clone(),
-                origin,
-                focus.clone(),
-                move |terminal, origin, e, cx| {
-                    terminal.mouse_up(&e, origin, cx);
-                },
-            ),
-        )
-        .on_click({
-            let connection = connection.clone();
-            move |e, cx| {
-                if e.down.button == gpui::MouseButton::Right {
-                    let mouse_mode = if let Some(conn_handle) = connection.upgrade() {
-                        conn_handle.update(cx, |terminal, _cx| {
-                            terminal.mouse_mode(e.down.modifiers.shift)
-                        })
-                    } else {
-                        // If we can't get the model handle, probably can't deploy the context menu
-                        true
-                    };
-                    if !mouse_mode {
-                        //todo!(context menu)
-                        // view.deploy_context_menu(e.position, cx);
+            })
+            .on_drag_event({
+                let connection = connection.clone();
+                let focus = focus.clone();
+                move |e, cx| {
+                    dbg!("here");
+
+                    if focus.is_focused(cx) {
+                        if let Some(conn_handle) = connection.upgrade() {
+                            conn_handle.update(cx, |terminal, cx| {
+                                terminal.mouse_drag(e, origin, bounds);
+                                cx.notify();
+                            })
+                        }
                     }
                 }
-            }
-        })
+            })
+            .on_mouse_up(
+                MouseButton::Left,
+                TerminalElement::generic_button_handler(
+                    connection.clone(),
+                    origin,
+                    focus.clone(),
+                    move |terminal, origin, e, cx| {
+                        terminal.mouse_up(&e, origin, cx);
+                    },
+                ),
+            )
+            .on_click({
+                let connection = connection.clone();
+                move |e, cx| {
+                    dbg!("here");
 
-        //     .on_move(move |event, _: &mut TerminalView, cx| {
-        //         if cx.is_self_focused() {
-        //             if let Some(conn_handle) = connection.upgrade() {
-        //                 conn_handle.update(cx, |terminal, cx| {
-        //                     terminal.mouse_move(&event, origin);
-        //                     cx.notify();
-        //                 })
-        //             }
-        //         }
-        //     })
-        //     .on_scroll(move |event, _: &mut TerminalView, cx| {
-        //         if let Some(conn_handle) = connection.upgrade() {
-        //             conn_handle.update(cx, |terminal, cx| {
-        //                 terminal.scroll_wheel(event, origin);
-        //                 cx.notify();
-        //             })
-        //         }
-        //     });
+                    if e.down.button == MouseButton::Right {
+                        let mouse_mode = if let Some(conn_handle) = connection.upgrade() {
+                            conn_handle.update(cx, |terminal, _cx| {
+                                terminal.mouse_mode(e.down.modifiers.shift)
+                            })
+                        } else {
+                            // If we can't get the model handle, probably can't deploy the context menu
+                            true
+                        };
+                        if !mouse_mode {
+                            //todo!(context menu)
+                            // view.deploy_context_menu(e.position, cx);
+                        }
+                    }
+                }
+            })
+            .on_mouse_move({
+                let connection = connection.clone();
+                let focus = focus.clone();
+                move |e, cx| {
+                    dbg!("here");
 
-        // // Mouse mode handlers:
-        // // All mouse modes need the extra click handlers
-        // if mode.intersects(TermMode::MOUSE_MODE) {
-        //     region = region
-        //         .on_down(
-        //             MouseButton::Right,
-        //             TerminalElement::generic_button_handler(
-        //                 connection,
-        //                 origin,
-        //                 move |terminal, origin, e, _cx| {
-        //                     terminal.mouse_down(&e, origin);
-        //                 },
-        //             ),
-        //         )
-        //         .on_down(
-        //             MouseButton::Middle,
-        //             TerminalElement::generic_button_handler(
-        //                 connection,
-        //                 origin,
-        //                 move |terminal, origin, e, _cx| {
-        //                     terminal.mouse_down(&e, origin);
-        //                 },
-        //             ),
-        //         )
-        //         .on_up(
-        //             MouseButton::Right,
-        //             TerminalElement::generic_button_handler(
-        //                 connection,
-        //                 origin,
-        //                 move |terminal, origin, e, cx| {
-        //                     terminal.mouse_up(&e, origin, cx);
-        //                 },
-        //             ),
-        //         )
-        //         .on_up(
-        //             MouseButton::Middle,
-        //             TerminalElement::generic_button_handler(
-        //                 connection,
-        //                 origin,
-        //                 move |terminal, origin, e, cx| {
-        //                     terminal.mouse_up(&e, origin, cx);
-        //                 },
-        //             ),
-        //         )
-        // }
+                    if focus.is_focused(cx) {
+                        if let Some(conn_handle) = connection.upgrade() {
+                            conn_handle.update(cx, |terminal, cx| {
+                                terminal.mouse_move(&e, origin);
+                                cx.notify();
+                            })
+                        }
+                    }
+                }
+            })
+            .on_scroll_wheel({
+                let connection = connection.clone();
+                move |e, cx| {
+                    dbg!("here");
 
-        // cx.scene().push_mouse_region(region);
+                    if let Some(conn_handle) = connection.upgrade() {
+                        conn_handle.update(cx, |terminal, cx| {
+                            terminal.scroll_wheel(e, origin);
+                            cx.notify();
+                        })
+                    }
+                }
+            });
+
+        // Mouse mode handlers:
+        // All mouse modes need the extra click handlers
+        if mode.intersects(TermMode::MOUSE_MODE) {
+            this = this
+                .on_mouse_down(
+                    MouseButton::Right,
+                    TerminalElement::generic_button_handler(
+                        connection.clone(),
+                        origin,
+                        focus.clone(),
+                        move |terminal, origin, e, _cx| {
+                            terminal.mouse_down(&e, origin);
+                        },
+                    ),
+                )
+                .on_mouse_down(
+                    MouseButton::Middle,
+                    TerminalElement::generic_button_handler(
+                        connection.clone(),
+                        origin,
+                        focus.clone(),
+                        move |terminal, origin, e, _cx| {
+                            terminal.mouse_down(&e, origin);
+                        },
+                    ),
+                )
+                .on_mouse_up(
+                    MouseButton::Right,
+                    TerminalElement::generic_button_handler(
+                        connection.clone(),
+                        origin,
+                        focus.clone(),
+                        move |terminal, origin, e, cx| {
+                            terminal.mouse_up(&e, origin, cx);
+                        },
+                    ),
+                )
+                .on_mouse_up(
+                    MouseButton::Middle,
+                    TerminalElement::generic_button_handler(
+                        connection,
+                        origin,
+                        focus,
+                        move |terminal, origin, e, cx| {
+                            terminal.mouse_up(&e, origin, cx);
+                        },
+                    ),
+                )
+        }
+
+        this
     }
 }
 
@@ -762,11 +808,18 @@ impl Element for TerminalElement {
         (layout_id, interactive_state)
     }
 
-    fn paint(self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut WindowContext<'_>) {
+    fn paint(
+        mut self,
+        bounds: Bounds<Pixels>,
+        state: &mut Self::State,
+        cx: &mut WindowContext<'_>,
+    ) {
         let mut layout = self.compute_layout(bounds, cx);
 
         let theme = cx.theme();
 
+        let dispatch_context = self.terminal_view.read(cx).dispatch_context(cx);
+        self.interactivity().key_context = dispatch_context;
         cx.paint_quad(
             bounds,
             Default::default(),
@@ -776,10 +829,13 @@ impl Element for TerminalElement {
         );
         let origin = bounds.origin + Point::new(layout.gutter, px(0.));
 
-        let this = self.paint_mouse_listeners(origin, layout.mode, bounds, cx);
+        let mut this = self.register_mouse_listeners(origin, layout.mode, bounds, cx);
+        let interactivity = mem::take(&mut this.interactivity);
 
-        this.interactivity
-            .paint(bounds, bounds.size, state, cx, |_, _, cx| {
+        cx.with_z_index(0, |cx| {
+            interactivity.paint(bounds, bounds.size, state, cx, |_, _, cx| {
+                this.register_key_listeners(cx);
+
                 for rect in &layout.rects {
                     rect.paint(origin, &layout, cx);
                 }
@@ -824,47 +880,8 @@ impl Element for TerminalElement {
                     element.draw(origin, Size { width, height }, cx)
                 }
             });
+        });
     }
-
-    // todo!() remove?
-    // fn metadata(&self) -> Option<&dyn std::any::Any> {
-    //     None
-    // }
-
-    // fn debug(
-    //     &self,
-    //     _: Bounds<Pixels>,
-    //     _: &Self::State,
-    //     _: &Self::PaintState,
-    //     _: &TerminalView,
-    //     _: &gpui::ViewContext<TerminalView>,
-    // ) -> gpui::serde_json::Value {
-    //     json!({
-    //         "type": "TerminalElement",
-    //     })
-    // }
-
-    // fn rect_for_text_range(
-    //     &self,
-    //     _: Range<usize>,
-    //     bounds: Bounds<Pixels>,
-    //     _: Bounds<Pixels>,
-    //     layout: &Self::State,
-    //     _: &Self::PaintState,
-    //     _: &TerminalView,
-    //     _: &gpui::ViewContext<TerminalView>,
-    // ) -> Option<Bounds<Pixels>> {
-    //     // Use the same origin that's passed to `Cursor::paint` in the paint
-    //     // method bove.
-    //     let mut origin = bounds.origin() + point(layout.size.cell_width, 0.);
-
-    //     // TODO - Why is it necessary to move downward one line to get correct
-    //     // positioning? I would think that we'd want the same rect that is
-    //     // painted for the cursor.
-    //     origin += point(0., layout.size.line_height);
-
-    //     Some(layout.cursor.as_ref()?.bounding_rect(origin))
-    // }
 }
 
 impl IntoElement for TerminalElement {

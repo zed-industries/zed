@@ -976,7 +976,6 @@ impl Terminal {
     }
 
     pub fn try_sync(&mut self, cx: &mut ModelContext<Self>) {
-        println!("trying to sync");
         let term = self.term.clone();
 
         let mut terminal = if let Some(term) = term.try_lock_unfair() {
@@ -1235,7 +1234,7 @@ impl Terminal {
     }
 
     ///Scroll the terminal
-    pub fn scroll_wheel(&mut self, e: ScrollWheelEvent, origin: Point<Pixels>) {
+    pub fn scroll_wheel(&mut self, e: &ScrollWheelEvent, origin: Point<Pixels>) {
         let mouse_mode = self.mouse_mode(e.shift);
 
         if let Some(scroll_lines) = self.determine_scroll_lines(&e, mouse_mode) {
