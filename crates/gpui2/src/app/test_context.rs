@@ -545,6 +545,10 @@ pub struct VisualTestContext<'a> {
 }
 
 impl<'a> VisualTestContext<'a> {
+    pub fn update<R>(&mut self, f: impl FnOnce(&mut WindowContext) -> R) -> R {
+        self.cx.update_window(self.window, |_, cx| f(cx)).unwrap()
+    }
+
     pub fn from_window(window: AnyWindowHandle, cx: &'a mut TestAppContext) -> Self {
         Self { cx, window }
     }
