@@ -19,7 +19,6 @@ use workspace::{
 actions!(OpenRecent);
 
 pub fn init(cx: &mut AppContext) {
-    // cx.add_async_action(toggle);
     cx.observe_new_views(RecentProjects::register).detach();
 }
 
@@ -75,7 +74,11 @@ impl RecentProjects {
     fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
         workspace.register_action(|workspace, _: &OpenRecent, cx| {
             let Some(recent_projects) = workspace.active_modal::<Self>(cx) else {
-                toggle(workspace, &OpenRecent, cx);
+                // TODO(Marshall): Is this how we should be handling this?
+                // The previous code was using `cx.add_async_action` to invoke `toggle`.
+                if let Some(handler) = toggle(workspace, &OpenRecent, cx) {
+                    handler.detach_and_log_err(cx);
+                }
                 return;
             };
 
