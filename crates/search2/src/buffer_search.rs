@@ -10,9 +10,9 @@ use collections::HashMap;
 use editor::{Editor, EditorMode};
 use futures::channel::oneshot;
 use gpui::{
-    actions, div, red, Action, AppContext, Div, EventEmitter, InteractiveElement as _, IntoElement,
-    ParentElement as _, Render, Styled, Subscription, Task, View, ViewContext, VisualContext as _,
-    WeakView, WindowContext,
+    actions, div, red, Action, AppContext, Div, EventEmitter, FocusableView,
+    InteractiveElement as _, IntoElement, ParentElement as _, Render, Styled, Subscription, Task,
+    View, ViewContext, VisualContext as _, WeakView, WindowContext,
 };
 use project::search::SearchQuery;
 use serde::Deserialize;
@@ -248,6 +248,12 @@ impl Render for BufferSearchBar {
                         Direction::Next,
                     )),
             )
+    }
+}
+
+impl FocusableView for BufferSearchBar {
+    fn focus_handle(&self, cx: &AppContext) -> gpui::FocusHandle {
+        self.query_editor.focus_handle(cx)
     }
 }
 

@@ -2835,7 +2835,7 @@ impl InlineAssistant {
                     )
                 })?;
 
-                if answer.next().await == Some(0) {
+                if answer.await? == 0 {
                     this.update(&mut cx, |this, _| {
                         this.semantic_permissioned = Some(true);
                     })?;
@@ -2875,7 +2875,7 @@ impl InlineAssistant {
                 // This has to be updated to accomodate for semantic_permissions
                 if semantic_permissioned.await.unwrap_or(false) {
                     semantic_index
-                        .update(&mut cx, |index, cx| index.index_project(project, cx))
+                        .update(&mut cx, |index, cx| index.index_project(project, cx))?
                         .await
                 } else {
                     Err(anyhow!("project is not permissioned for semantic indexing"))
@@ -3453,7 +3453,7 @@ fn report_assistant_event(
         .default_open_ai_model
         .clone();
 
-    let telemetry_settings = TelemetrySettings::get_global(cx);
+    let telemetry_settings = TelemetrySettings::get_global(cx).clone();
 
     telemetry.report_assistant_event(
         telemetry_settings,

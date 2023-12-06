@@ -176,7 +176,7 @@ pub(crate) mod tests {
     use super::*;
     use std::sync::Arc;
 
-    use gpui::AppContext;
+    use gpui::{AppContext, Context};
     use indoc::indoc;
     use language::{language_settings, tree_sitter_rust, Buffer, Language, LanguageConfig, Point};
     use settings::SettingsStore;
@@ -253,7 +253,7 @@ pub(crate) mod tests {
             }
         "};
         let buffer =
-            cx.add_model(|cx| Buffer::new(0, 0, text).with_language(Arc::new(rust_lang()), cx));
+            cx.build_model(|cx| Buffer::new(0, 0, text).with_language(Arc::new(rust_lang()), cx));
         let snapshot = buffer.read(cx).snapshot();
 
         assert_eq!(
