@@ -11889,7 +11889,7 @@ dependencies = [
 
 [[package]]
 name = "zed2"
-version = "0.109.0"
+version = "2.0.0"
 dependencies = [
  "activity_indicator2",
  "ai2",
