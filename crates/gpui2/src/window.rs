@@ -1350,6 +1350,8 @@ impl<'a> WindowContext<'a> {
                 .dispatch_tree
                 .dispatch_path(node_id);
 
+            let mut actions: Vec<Box<dyn Action>> = Vec::new();
+
             // Capture phase
             let mut context_stack: SmallVec<[KeyContext; 16]> = SmallVec::new();
             self.propagate_event = true;
@@ -1384,20 +1386,24 @@ impl<'a> WindowContext<'a> {
                 let node = self.window.current_frame.dispatch_tree.node(*node_id);
                 if !node.context.is_empty() {
                     if let Some(key_down_event) = event.downcast_ref::<KeyDownEvent>() {
-                        if let Some(action) = self
+                        if let Some(found) = self
                             .window
                             .current_frame
                             .dispatch_tree
                             .dispatch_key(&key_down_event.keystroke, &context_stack)
                         {
-                            self.dispatch_action_on_node(*node_id, action);
-                            if !self.propagate_event {
-                                return;
-                            }
+                            actions.push(found.boxed_clone())
                         }
                     }
 
                     context_stack.pop();
+                }
+            }
+
+            for action in actions {
+                self.dispatch_action_on_node(node_id, action);
+                if !self.propagate_event {
+                    return;
                 }
             }
         }
@@ -1427,7 +1433,6 @@ impl<'a> WindowContext<'a> {
                 }
             }
         }
-
         // Bubble phase
         for node_id in dispatch_path.iter().rev() {
             let node = self.window.current_frame.dispatch_tree.node(*node_id);
@@ -1505,9 +1510,30 @@ impl<'a> WindowContext<'a> {
 
     pub fn bindings_for_action(&self, action: &dyn Action) -> Vec<KeyBinding> {
         self.window
-            .current_frame
+            .previous_frame
             .dispatch_tree
-            .bindings_for_action(action)
+            .bindings_for_action(
+                action,
+                &self.window.previous_frame.dispatch_tree.context_stack,
+            )
+    }
+
+    pub fn bindings_for_action_in(
+        &self,
+        action: &dyn Action,
+        focus_handle: &FocusHandle,
+    ) -> Vec<KeyBinding> {
+        let dispatch_tree = &self.window.previous_frame.dispatch_tree;
+
+        let Some(node_id) = dispatch_tree.focusable_node_id(focus_handle.id) else {
+            return vec![];
+        };
+        let context_stack = dispatch_tree
+            .dispatch_path(node_id)
+            .into_iter()
+            .map(|node_id| dispatch_tree.node(node_id).context.clone())
+            .collect();
+        dispatch_tree.bindings_for_action(action, &context_stack)
     }
 
     pub fn listener_for<V: Render, E>(
@@ -2742,6 +2768,7 @@ pub enum ElementId {
     Integer(usize),
     Name(SharedString),
     FocusHandle(FocusId),
+    NamedInteger(SharedString, usize),
 }
 
 impl ElementId {
@@ -2789,5 +2816,17 @@ impl From<&'static str> for ElementId {
 impl<'a> From<&'a FocusHandle> for ElementId {
     fn from(handle: &'a FocusHandle) -> Self {
         ElementId::FocusHandle(handle.id)
+    }
+}
+
+impl From<(&'static str, EntityId)> for ElementId {
+    fn from((name, id): (&'static str, EntityId)) -> Self {
+        ElementId::NamedInteger(name.into(), id.as_u64() as usize)
+    }
+}
+
+impl From<(&'static str, usize)> for ElementId {
+    fn from((name, id): (&'static str, usize)) -> Self {
+        ElementId::NamedInteger(name.into(), id)
     }
 }

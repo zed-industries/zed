@@ -7,6 +7,7 @@ use std::{
 use crate::DisplayId;
 use collections::HashMap;
 use parking_lot::Mutex;
+pub use sys::CVSMPTETime as SmtpeTime;
 pub use sys::CVTimeStamp as VideoTimestamp;
 
 pub(crate) struct MacDisplayLinker {
@@ -153,7 +154,7 @@ mod sys {
         kCVTimeStampTopField | kCVTimeStampBottomField;
 
     #[repr(C)]
-    #[derive(Clone, Copy)]
+    #[derive(Clone, Copy, Default)]
     pub struct CVSMPTETime {
         pub subframes: i16,
         pub subframe_divisor: i16,

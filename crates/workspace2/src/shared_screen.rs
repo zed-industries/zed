@@ -1,5 +1,9 @@
-use crate::participant::{Frame, RemoteVideoTrack};
+use crate::{
+    item::{Item, ItemEvent},
+    ItemNavHistory, WorkspaceId,
+};
 use anyhow::Result;
+use call::participant::{Frame, RemoteVideoTrack};
 use client::{proto::PeerId, User};
 use futures::StreamExt;
 use gpui::{
@@ -9,7 +13,6 @@ use gpui::{
 };
 use std::sync::{Arc, Weak};
 use ui::{h_stack, Icon, IconElement};
-use workspace::{item::Item, ItemNavHistory, WorkspaceId};
 
 pub enum Event {
     Close,
@@ -56,7 +59,6 @@ impl SharedScreen {
 }
 
 impl EventEmitter<Event> for SharedScreen {}
-impl EventEmitter<workspace::item::ItemEvent> for SharedScreen {}
 
 impl FocusableView for SharedScreen {
     fn focus_handle(&self, _: &AppContext) -> FocusHandle {
@@ -76,9 +78,12 @@ impl Render for SharedScreen {
 }
 
 impl Item for SharedScreen {
+    type Event = Event;
+
     fn tab_tooltip_text(&self, _: &AppContext) -> Option<SharedString> {
         Some(format!("{}'s screen", self.user.github_login).into())
     }
+
     fn deactivated(&mut self, cx: &mut ViewContext<Self>) {
         if let Some(nav_history) = self.nav_history.as_mut() {
             nav_history.push::<()>(None, cx);
@@ -107,5 +112,11 @@ impl Item for SharedScreen {
     ) -> Option<View<Self>> {
         let track = self.track.upgrade()?;
         Some(cx.build_view(|cx| Self::new(&track, self.peer_id, self.user.clone(), cx)))
+    }
+
+    fn to_item_events(event: &Self::Event, mut f: impl FnMut(ItemEvent)) {
+        match event {
+            Event::Close => f(ItemEvent::CloseItem),
+        }
     }
 }

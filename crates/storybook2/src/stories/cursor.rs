@@ -102,7 +102,6 @@ impl Render for CursorStory {
                         .w_64()
                         .h_8()
                         .bg(gpui::red())
-                        .hover(|style| style.bg(gpui::blue()))
                         .active(|style| style.bg(gpui::green()))
                         .text_sm()
                         .child(Story::label(name)),

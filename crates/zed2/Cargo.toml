@@ -50,12 +50,12 @@ menu = { package = "menu2", path = "../menu2" }
 # language_tools = { path = "../language_tools" }
 node_runtime = { path = "../node_runtime" }
 # assistant = { path = "../assistant" }
-# outline = { path = "../outline" }
+outline = { package = "outline2", path = "../outline2" }
 # plugin_runtime = { path = "../plugin_runtime",optional = true }
 project = { package = "project2", path = "../project2" }
 project_panel = { package = "project_panel2", path = "../project_panel2" }
 # project_symbols = { path = "../project_symbols" }
-# quick_action_bar = { path = "../quick_action_bar" }
+quick_action_bar = { package = "quick_action_bar2", path = "../quick_action_bar2" }
 # recent_projects = { path = "../recent_projects" }
 rope = { package = "rope2", path = "../rope2"}
 rpc = { package = "rpc2", path = "../rpc2" }

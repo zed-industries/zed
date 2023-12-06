@@ -1222,7 +1222,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-broadcast",
- "async-trait",
  "audio2",
  "client2",
  "collections",
@@ -1242,9 +1241,7 @@ dependencies = [
  "serde_json",
  "settings2",
  "smallvec",
- "ui2",
  "util",
- "workspace2",
 ]
 
 [[package]]
@@ -6166,6 +6163,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "outline2"
+version = "0.1.0"
+dependencies = [
+ "editor2",
+ "fuzzy2",
+ "gpui2",
+ "language2",
+ "ordered-float 2.10.0",
+ "picker2",
+ "postage",
+ "settings2",
+ "smol",
+ "text2",
+ "theme2",
+ "ui2",
+ "util",
+ "workspace2",
+]
+
+[[package]]
 name = "overload"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7053,6 +7070,17 @@ dependencies = [
  "search",
  "theme",
  "workspace",
+]
+
+[[package]]
+name = "quick_action_bar2"
+version = "0.1.0"
+dependencies = [
+ "editor2",
+ "gpui2",
+ "search2",
+ "ui2",
+ "workspace2",
 ]
 
 [[package]]
@@ -8214,6 +8242,57 @@ dependencies = [
  "unindent",
  "util",
  "workspace",
+]
+
+[[package]]
+name = "semantic_index2"
+version = "0.1.0"
+dependencies = [
+ "ai2",
+ "anyhow",
+ "async-trait",
+ "client2",
+ "collections",
+ "ctor",
+ "env_logger 0.9.3",
+ "futures 0.3.28",
+ "globset",
+ "gpui2",
+ "language2",
+ "lazy_static",
+ "log",
+ "ndarray",
+ "node_runtime",
+ "ordered-float 2.10.0",
+ "parking_lot 0.11.2",
+ "postage",
+ "pretty_assertions",
+ "project2",
+ "rand 0.8.5",
+ "rpc2",
+ "rusqlite",
+ "rust-embed",
+ "schemars",
+ "serde",
+ "serde_json",
+ "settings2",
+ "sha1",
+ "smol",
+ "tempdir",
+ "tiktoken-rs",
+ "tree-sitter",
+ "tree-sitter-cpp",
+ "tree-sitter-elixir",
+ "tree-sitter-json 0.20.0",
+ "tree-sitter-lua",
+ "tree-sitter-php",
+ "tree-sitter-ruby",
+ "tree-sitter-rust",
+ "tree-sitter-toml",
+ "tree-sitter-typescript",
+ "unindent",
+ "util",
+ "workspace2",
 ]
 
 [[package]]
@@ -11515,7 +11594,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-recursion 1.0.5",
- "async-trait",
  "bincode",
  "call2",
  "client2",
@@ -11819,10 +11897,12 @@ dependencies = [
  "menu2",
  "node_runtime",
  "num_cpus",
+ "outline2",
  "parking_lot 0.11.2",
  "postage",
  "project2",
  "project_panel2",
+ "quick_action_bar2",
  "rand 0.8.5",
  "regex",
  "rope2",

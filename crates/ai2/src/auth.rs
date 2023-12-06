@@ -7,7 +7,7 @@ pub enum ProviderCredential {
     NotNeeded,
 }
 
-pub trait CredentialProvider {
+pub trait CredentialProvider: Send + Sync {
     fn has_credentials(&self) -> bool;
     fn retrieve_credentials(&self, cx: &mut AppContext) -> ProviderCredential;
     fn save_credentials(&self, cx: &mut AppContext, credential: ProviderCredential);

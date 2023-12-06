@@ -32,10 +32,10 @@ use std::{
 };
 use text::Selection;
 use theme::{ActiveTheme, Theme};
-use ui::{Color, Label};
+use ui::{h_stack, Color, Label};
 use util::{paths::PathExt, paths::FILE_ROW_COLUMN_DELIMITER, ResultExt, TryFutureExt};
 use workspace::{
-    item::{BreadcrumbText, FollowEvent, FollowableEvents, FollowableItemHandle},
+    item::{BreadcrumbText, FollowEvent, FollowableItemHandle},
     StatusItemView,
 };
 use workspace::{
@@ -46,27 +46,7 @@ use workspace::{
 
 pub const MAX_TAB_TITLE_LEN: usize = 24;
 
-impl FollowableEvents for EditorEvent {
-    fn to_follow_event(&self) -> Option<workspace::item::FollowEvent> {
-        match self {
-            EditorEvent::Edited => Some(FollowEvent::Unfollow),
-            EditorEvent::SelectionsChanged { local }
-            | EditorEvent::ScrollPositionChanged { local, .. } => {
-                if *local {
-                    Some(FollowEvent::Unfollow)
-                } else {
-                    None
-                }
-            }
-            _ => None,
-        }
-    }
-}
-
-impl EventEmitter<ItemEvent> for Editor {}
-
 impl FollowableItem for Editor {
-    type FollowableEvent = EditorEvent;
     fn remote_id(&self) -> Option<ViewId> {
         self.remote_id
     }
@@ -241,9 +221,24 @@ impl FollowableItem for Editor {
         }))
     }
 
+    fn to_follow_event(event: &EditorEvent) -> Option<workspace::item::FollowEvent> {
+        match event {
+            EditorEvent::Edited => Some(FollowEvent::Unfollow),
+            EditorEvent::SelectionsChanged { local }
+            | EditorEvent::ScrollPositionChanged { local, .. } => {
+                if *local {
+                    Some(FollowEvent::Unfollow)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
     fn add_event_to_update_proto(
         &self,
-        event: &Self::FollowableEvent,
+        event: &EditorEvent,
         update: &mut Option<proto::update_view::Variant>,
         cx: &WindowContext,
     ) -> bool {
@@ -528,6 +523,8 @@ fn deserialize_anchor(buffer: &MultiBufferSnapshot, anchor: proto::EditorAnchor)
 }
 
 impl Item for Editor {
+    type Event = EditorEvent;
+
     fn navigate(&mut self, data: Box<dyn std::any::Any>, cx: &mut ViewContext<Self>) -> bool {
         if let Ok(data) = data.downcast::<NavigationData>() {
             let newest_selection = self.selections.newest::<Point>(cx);
@@ -586,28 +583,25 @@ impl Item for Editor {
     fn tab_content(&self, detail: Option<usize>, cx: &WindowContext) -> AnyElement {
         let theme = cx.theme();
 
-        AnyElement::new(
-            div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap_2()
-                .child(Label::new(self.title(cx).to_string()))
-                .children(detail.and_then(|detail| {
-                    let path = path_for_buffer(&self.buffer, detail, false, cx)?;
-                    let description = path.to_string_lossy();
+        let description = detail.and_then(|detail| {
+            let path = path_for_buffer(&self.buffer, detail, false, cx)?;
+            let description = path.to_string_lossy();
+            let description = description.trim();
 
-                    Some(
-                        div().child(
-                            Label::new(util::truncate_and_trailoff(
-                                &description,
-                                MAX_TAB_TITLE_LEN,
-                            ))
-                            .color(Color::Muted),
-                        ),
-                    )
-                })),
-        )
+            if description.is_empty() {
+                return None;
+            }
+
+            Some(util::truncate_and_trailoff(&description, MAX_TAB_TITLE_LEN))
+        });
+
+        h_stack()
+            .gap_2()
+            .child(Label::new(self.title(cx).to_string()))
+            .when_some(description, |this, description| {
+                this.child(Label::new(description).color(Color::Muted))
+            })
+            .into_any_element()
     }
 
     fn for_each_project_item(
@@ -839,6 +833,40 @@ impl Item for Editor {
 
     fn serialized_item_kind() -> Option<&'static str> {
         Some("Editor")
+    }
+
+    fn to_item_events(event: &EditorEvent, mut f: impl FnMut(ItemEvent)) {
+        match event {
+            EditorEvent::Closed => f(ItemEvent::CloseItem),
+
+            EditorEvent::Saved | EditorEvent::TitleChanged => {
+                f(ItemEvent::UpdateTab);
+                f(ItemEvent::UpdateBreadcrumbs);
+            }
+
+            EditorEvent::Reparsed => {
+                f(ItemEvent::UpdateBreadcrumbs);
+            }
+
+            EditorEvent::SelectionsChanged { local } if *local => {
+                f(ItemEvent::UpdateBreadcrumbs);
+            }
+
+            EditorEvent::DirtyChanged => {
+                f(ItemEvent::UpdateTab);
+            }
+
+            EditorEvent::BufferEdited => {
+                f(ItemEvent::Edit);
+                f(ItemEvent::UpdateBreadcrumbs);
+            }
+
+            EditorEvent::ExcerptsAdded { .. } | EditorEvent::ExcerptsRemoved { .. } => {
+                f(ItemEvent::Edit);
+            }
+
+            _ => {}
+        }
     }
 
     fn deserialize(

@@ -1132,6 +1132,7 @@ mod tests {
                 })
             })
             .await
+            .unwrap()
             .unwrap();
 
         (wt, entry)

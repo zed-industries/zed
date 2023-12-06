@@ -1,5 +1,5 @@
 use crate::{
-    item::{Item, ItemHandle, ItemSettings, WeakItemHandle},
+    item::{ClosePosition, Item, ItemHandle, ItemSettings, WeakItemHandle},
     toolbar::Toolbar,
     workspace_settings::{AutosaveSetting, WorkspaceSettings},
     NewCenterTerminal, NewFile, NewSearch, SplitDirection, ToggleZoom, Workspace,
@@ -27,7 +27,8 @@ use std::{
 };
 
 use ui::{
-    h_stack, prelude::*, right_click_menu, Color, Icon, IconButton, IconElement, Label, Tooltip,
+    h_stack, prelude::*, right_click_menu, ButtonSize, Color, Icon, IconButton, IconSize,
+    Indicator, Label, Tooltip,
 };
 use ui::{v_stack, ContextMenu};
 use util::truncate_and_remove_front;
@@ -537,18 +538,21 @@ impl Pane {
 
     pub(crate) fn open_item(
         &mut self,
-        project_entry_id: ProjectEntryId,
+        project_entry_id: Option<ProjectEntryId>,
         focus_item: bool,
         cx: &mut ViewContext<Self>,
         build_item: impl FnOnce(&mut ViewContext<Pane>) -> Box<dyn ItemHandle>,
     ) -> Box<dyn ItemHandle> {
         let mut existing_item = None;
-        for (index, item) in self.items.iter().enumerate() {
-            if item.is_singleton(cx) && item.project_entry_ids(cx).as_slice() == [project_entry_id]
-            {
-                let item = item.boxed_clone();
-                existing_item = Some((index, item));
-                break;
+        if let Some(project_entry_id) = project_entry_id {
+            for (index, item) in self.items.iter().enumerate() {
+                if item.is_singleton(cx)
+                    && item.project_entry_ids(cx).as_slice() == [project_entry_id]
+                {
+                    let item = item.boxed_clone();
+                    existing_item = Some((index, item));
+                    break;
+                }
             }
         }
 
@@ -1415,22 +1419,7 @@ impl Pane {
         cx: &mut ViewContext<'_, Pane>,
     ) -> impl IntoElement {
         let label = item.tab_content(Some(detail), cx);
-        let close_icon = || {
-            let id = item.item_id();
-
-            div()
-                .id(ix)
-                .invisible()
-                .group_hover("", |style| style.visible())
-                .child(
-                    IconButton::new("close_tab", Icon::Close).on_click(cx.listener(
-                        move |pane, _, cx| {
-                            pane.close_item_by_id(id, SaveIntent::Close, cx)
-                                .detach_and_log_err(cx);
-                        },
-                    )),
-                )
-        };
+        let close_side = &ItemSettings::get_global(cx).close_position;
 
         let (text_color, tab_bg, tab_hover_bg, tab_active_bg) = match ix == self.active_item_index {
             false => (
@@ -1447,109 +1436,129 @@ impl Pane {
             ),
         };
 
-        let close_right = ItemSettings::get_global(cx).close_position.right();
         let is_active = ix == self.active_item_index;
 
+        let indicator = {
+            let indicator_color = match (item.has_conflict(cx), item.is_dirty(cx)) {
+                (true, _) => Some(Color::Warning),
+                (_, true) => Some(Color::Accent),
+                (false, false) => None,
+            };
+
+            h_stack()
+                .w_3()
+                .h_3()
+                .justify_center()
+                .absolute()
+                .map(|this| match close_side {
+                    ClosePosition::Left => this.right_1(),
+                    ClosePosition::Right => this.left_1(),
+                })
+                .when_some(indicator_color, |this, indicator_color| {
+                    this.child(Indicator::dot().color(indicator_color))
+                })
+        };
+
+        let close_button = {
+            let id = item.item_id();
+
+            h_stack()
+                .invisible()
+                .w_3()
+                .h_3()
+                .justify_center()
+                .absolute()
+                .map(|this| match close_side {
+                    ClosePosition::Left => this.left_1(),
+                    ClosePosition::Right => this.right_1(),
+                })
+                .group_hover("", |style| style.visible())
+                .child(
+                    // TODO: Fix button size
+                    IconButton::new("close tab", Icon::Close)
+                        .icon_color(Color::Muted)
+                        .size(ButtonSize::None)
+                        .icon_size(IconSize::XSmall)
+                        .on_click(cx.listener(move |pane, _, cx| {
+                            pane.close_item_by_id(id, SaveIntent::Close, cx)
+                                .detach_and_log_err(cx);
+                        })),
+                )
+        };
+
         let tab = div()
-            .group("")
-            .id(ix)
-            .cursor_pointer()
-            .when_some(item.tab_tooltip_text(cx), |div, text| {
-                div.tooltip(move |cx| cx.build_view(|cx| Tooltip::new(text.clone())).into())
-            })
-            .on_click(cx.listener(move |v: &mut Self, e, cx| v.activate_item(ix, true, true, cx)))
-            // .on_drag(move |pane, cx| pane.render_tab(ix, item.boxed_clone(), detail, cx))
-            // .drag_over::<DraggedTab>(|d| d.bg(cx.theme().colors().element_drop_target))
-            // .on_drop(|_view, state: View<DraggedTab>, cx| {
-            //     eprintln!("{:?}", state.read(cx));
-            // })
-            .flex()
-            .items_center()
-            .justify_center()
-            // todo!("Nate - I need to do some work to balance all the items in the tab once things stablize")
-            .map(|this| {
-                if close_right {
-                    this.pl_3().pr_1()
-                } else {
-                    this.pr_1().pr_3()
-                }
-            })
-            .py_1()
-            .bg(tab_bg)
             .border_color(cx.theme().colors().border)
-            .text_color(if is_active {
-                cx.theme().colors().text
-            } else {
-                cx.theme().colors().text_muted
-            })
+            .bg(tab_bg)
+            // 30px @ 16px/rem
+            .h(rems(1.875))
             .map(|this| {
+                let is_first_item = ix == 0;
                 let is_last_item = ix == self.items.len() - 1;
                 match ix.cmp(&self.active_item_index) {
-                    cmp::Ordering::Less => this.border_l().mr_px(),
-                    cmp::Ordering::Greater => {
-                        if is_last_item {
-                            this.mr_px().ml_px()
+                    cmp::Ordering::Less => {
+                        if is_first_item {
+                            this.pl_px().pr_px().border_b()
                         } else {
-                            this.border_r().ml_px()
+                            this.border_l().pr_px().border_b()
                         }
                     }
-                    cmp::Ordering::Equal => this.border_l().border_r(),
+                    cmp::Ordering::Greater => {
+                        if is_last_item {
+                            this.pr_px().pl_px().border_b()
+                        } else {
+                            this.border_r().pl_px().border_b()
+                        }
+                    }
+                    cmp::Ordering::Equal => {
+                        if is_first_item {
+                            this.pl_px().border_r().pb_px()
+                        } else {
+                            this.border_l().border_r().pb_px()
+                        }
+                    }
                 }
             })
-            // .hover(|h| h.bg(tab_hover_bg))
-            // .active(|a| a.bg(tab_active_bg))
             .child(
-                div()
-                    .flex()
-                    .items_center()
+                h_stack()
+                    .group("")
+                    .id(ix)
+                    .relative()
+                    .h_full()
+                    .cursor_pointer()
+                    .when_some(item.tab_tooltip_text(cx), |div, text| {
+                        div.tooltip(move |cx| cx.build_view(|cx| Tooltip::new(text.clone())).into())
+                    })
+                    .on_click(
+                        cx.listener(move |v: &mut Self, e, cx| v.activate_item(ix, true, true, cx)),
+                    )
+                    // .on_drag(move |pane, cx| pane.render_tab(ix, item.boxed_clone(), detail, cx))
+                    // .drag_over::<DraggedTab>(|d| d.bg(cx.theme().colors().element_drop_target))
+                    // .on_drop(|_view, state: View<DraggedTab>, cx| {
+                    //     eprintln!("{:?}", state.read(cx));
+                    // })
+                    .px_5()
+                    // .hover(|h| h.bg(tab_hover_bg))
+                    // .active(|a| a.bg(tab_active_bg))
                     .gap_1()
                     .text_color(text_color)
-                    .children(
-                        item.has_conflict(cx)
-                            .then(|| {
-                                div().border().border_color(gpui::red()).child(
-                                    IconElement::new(Icon::ExclamationTriangle)
-                                        .size(ui::IconSize::Small)
-                                        .color(Color::Warning),
-                                )
-                            })
-                            .or(item.is_dirty(cx).then(|| {
-                                div().border().border_color(gpui::red()).child(
-                                    IconElement::new(Icon::ExclamationTriangle)
-                                        .size(ui::IconSize::Small)
-                                        .color(Color::Info),
-                                )
-                            })),
-                    )
-                    .children((!close_right).then(|| close_icon()))
-                    .child(label)
-                    .children(close_right.then(|| close_icon())),
+                    .child(indicator)
+                    .child(close_button)
+                    .child(label),
             );
 
         right_click_menu(ix).trigger(tab).menu(|cx| {
             ContextMenu::build(cx, |menu, cx| {
-                menu.action(
-                    "Close Active Item",
-                    CloseActiveItem { save_intent: None }.boxed_clone(),
-                    cx,
-                )
-                .action("Close Inactive Items", CloseInactiveItems.boxed_clone(), cx)
-                .action("Close Clean Items", CloseCleanItems.boxed_clone(), cx)
-                .action(
-                    "Close Items To The Left",
-                    CloseItemsToTheLeft.boxed_clone(),
-                    cx,
-                )
-                .action(
-                    "Close Items To The Right",
-                    CloseItemsToTheRight.boxed_clone(),
-                    cx,
-                )
-                .action(
-                    "Close All Items",
-                    CloseAllItems { save_intent: None }.boxed_clone(),
-                    cx,
-                )
+                menu.action("Close", CloseActiveItem { save_intent: None }.boxed_clone())
+                    .action("Close Others", CloseInactiveItems.boxed_clone())
+                    .separator()
+                    .action("Close Left", CloseItemsToTheLeft.boxed_clone())
+                    .action("Close Right", CloseItemsToTheRight.boxed_clone())
+                    .separator()
+                    .action("Close Clean", CloseCleanItems.boxed_clone())
+                    .action(
+                        "Close All",
+                        CloseAllItems { save_intent: None }.boxed_clone(),
+                    )
             })
         })
     }
@@ -1569,125 +1578,118 @@ impl Pane {
             // Left Side
             .child(
                 h_stack()
-                    .px_2()
                     .flex()
                     .flex_none()
                     .gap_1()
+                    .px_1()
+                    .border_b()
+                    .border_r()
+                    .border_color(cx.theme().colors().border)
                     // Nav Buttons
                     .child(
-                        div().border().border_color(gpui::red()).child(
-                            IconButton::new("navigate_backward", Icon::ArrowLeft)
-                                .on_click({
-                                    let view = cx.view().clone();
-                                    move |_, cx| view.update(cx, Self::navigate_backward)
-                                })
-                                .disabled(!self.can_navigate_backward()),
-                        ),
+                        IconButton::new("navigate_backward", Icon::ArrowLeft)
+                            .icon_size(IconSize::Small)
+                            .on_click({
+                                let view = cx.view().clone();
+                                move |_, cx| view.update(cx, Self::navigate_backward)
+                            })
+                            .disabled(!self.can_navigate_backward()),
                     )
                     .child(
-                        div().border().border_color(gpui::red()).child(
-                            IconButton::new("navigate_forward", Icon::ArrowRight)
-                                .on_click({
-                                    let view = cx.view().clone();
-                                    move |_, cx| view.update(cx, Self::navigate_backward)
-                                })
-                                .disabled(!self.can_navigate_forward()),
-                        ),
+                        IconButton::new("navigate_forward", Icon::ArrowRight)
+                            .icon_size(IconSize::Small)
+                            .on_click({
+                                let view = cx.view().clone();
+                                move |_, cx| view.update(cx, Self::navigate_backward)
+                            })
+                            .disabled(!self.can_navigate_forward()),
                     ),
             )
             .child(
-                div().flex_1().h_full().child(
-                    div().id("tabs").flex().overflow_x_scroll().children(
-                        self.items
-                            .iter()
-                            .enumerate()
-                            .zip(self.tab_details(cx))
-                            .map(|((ix, item), detail)| self.render_tab(ix, item, detail, cx)),
+                div()
+                    .relative()
+                    .flex_1()
+                    .h_full()
+                    .overflow_hidden_x()
+                    .child(
+                        div()
+                            .absolute()
+                            .top_0()
+                            .left_0()
+                            .z_index(1)
+                            .size_full()
+                            .border_b()
+                            .border_color(cx.theme().colors().border),
+                    )
+                    .child(
+                        h_stack().id("tabs").z_index(2).children(
+                            self.items
+                                .iter()
+                                .enumerate()
+                                .zip(self.tab_details(cx))
+                                .map(|((ix, item), detail)| self.render_tab(ix, item, detail, cx)),
+                        ),
                     ),
-                ),
             )
             // Right Side
             .child(
-                div()
-                    .px_1()
+                h_stack()
                     .flex()
                     .flex_none()
-                    .gap_2()
-                    // Nav Buttons
+                    .gap_1()
+                    .px_1()
+                    .border_b()
+                    .border_l()
+                    .border_color(cx.theme().colors().border)
                     .child(
                         div()
                             .flex()
                             .items_center()
                             .gap_px()
                             .child(
-                                div()
-                                    .bg(gpui::blue())
-                                    .border()
-                                    .border_color(gpui::red())
-                                    .child(IconButton::new("plus", Icon::Plus).on_click(
-                                        cx.listener(|this, _, cx| {
-                                            let menu = ContextMenu::build(cx, |menu, cx| {
-                                                menu.action("New File", NewFile.boxed_clone(), cx)
-                                                    .action(
-                                                        "New Terminal",
-                                                        NewCenterTerminal.boxed_clone(),
-                                                        cx,
-                                                    )
-                                                    .action(
-                                                        "New Search",
-                                                        NewSearch.boxed_clone(),
-                                                        cx,
-                                                    )
-                                            });
-                                            cx.subscribe(
-                                                &menu,
-                                                |this, _, event: &DismissEvent, cx| {
-                                                    this.focus(cx);
-                                                    this.new_item_menu = None;
-                                                },
-                                            )
-                                            .detach();
-                                            this.new_item_menu = Some(menu);
-                                        }),
-                                    ))
-                                    .when_some(self.new_item_menu.as_ref(), |el, new_item_menu| {
-                                        el.child(Self::render_menu_overlay(new_item_menu))
-                                    }),
-                            )
-                            .child(
-                                div()
-                                    .border()
-                                    .border_color(gpui::red())
-                                    .child(IconButton::new("split", Icon::Split).on_click(
-                                        cx.listener(|this, _, cx| {
-                                            let menu = ContextMenu::build(cx, |menu, cx| {
-                                                menu.action(
-                                                    "Split Right",
-                                                    SplitRight.boxed_clone(),
-                                                    cx,
+                                IconButton::new("plus", Icon::Plus)
+                                    .icon_size(IconSize::Small)
+                                    .on_click(cx.listener(|this, _, cx| {
+                                        let menu = ContextMenu::build(cx, |menu, cx| {
+                                            menu.action("New File", NewFile.boxed_clone())
+                                                .action(
+                                                    "New Terminal",
+                                                    NewCenterTerminal.boxed_clone(),
                                                 )
-                                                .action("Split Left", SplitLeft.boxed_clone(), cx)
-                                                .action("Split Up", SplitUp.boxed_clone(), cx)
-                                                .action("Split Down", SplitDown.boxed_clone(), cx)
-                                            });
-                                            cx.subscribe(
-                                                &menu,
-                                                |this, _, event: &DismissEvent, cx| {
-                                                    this.focus(cx);
-                                                    this.split_item_menu = None;
-                                                },
-                                            )
-                                            .detach();
-                                            this.split_item_menu = Some(menu);
-                                        }),
-                                    ))
-                                    .when_some(
-                                        self.split_item_menu.as_ref(),
-                                        |el, split_item_menu| {
-                                            el.child(Self::render_menu_overlay(split_item_menu))
-                                        },
-                                    ),
-                            ),
+                                                .action("New Search", NewSearch.boxed_clone())
+                                        });
+                                        cx.subscribe(&menu, |this, _, event: &DismissEvent, cx| {
+                                            this.focus(cx);
+                                            this.new_item_menu = None;
+                                        })
+                                        .detach();
+                                        this.new_item_menu = Some(menu);
+                                    })),
+                            )
+                            .when_some(self.new_item_menu.as_ref(), |el, new_item_menu| {
+                                el.child(Self::render_menu_overlay(new_item_menu))
+                            })
+                            .child(
+                                IconButton::new("split", Icon::Split)
+                                    .icon_size(IconSize::Small)
+                                    .on_click(cx.listener(|this, _, cx| {
+                                        let menu = ContextMenu::build(cx, |menu, cx| {
+                                            menu.action("Split Right", SplitRight.boxed_clone())
+                                                .action("Split Left", SplitLeft.boxed_clone())
+                                                .action("Split Up", SplitUp.boxed_clone())
+                                                .action("Split Down", SplitDown.boxed_clone())
+                                        });
+                                        cx.subscribe(&menu, |this, _, event: &DismissEvent, cx| {
+                                            this.focus(cx);
+                                            this.split_item_menu = None;
+                                        })
+                                        .detach();
+                                        this.split_item_menu = Some(menu);
+                                    })),
+                            )
+                            .when_some(self.split_item_menu.as_ref(), |el, split_item_menu| {
+                                el.child(Self::render_menu_overlay(split_item_menu))
+                            }),
                     ),
             )
     }
@@ -2105,6 +2107,8 @@ impl Render for Pane {
         v_stack()
             .key_context("Pane")
             .track_focus(&self.focus_handle)
+            .size_full()
+            .overflow_hidden()
             .on_focus_in({
                 let this = this.clone();
                 move |event, cx| {
@@ -2172,7 +2176,6 @@ impl Render for Pane {
                 pane.close_all_items(action, cx)
                     .map(|task| task.detach_and_log_err(cx));
             }))
-            .size_full()
             .on_action(
                 cx.listener(|pane: &mut Self, action: &CloseActiveItem, cx| {
                     pane.close_active_item(action, cx)

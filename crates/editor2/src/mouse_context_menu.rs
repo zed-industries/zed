@@ -37,19 +37,18 @@ pub fn deploy_context_menu(
     });
 
     let context_menu = ui::ContextMenu::build(cx, |menu, cx| {
-        menu.action("Rename Symbol", Box::new(Rename), cx)
-            .action("Go to Definition", Box::new(GoToDefinition), cx)
-            .action("Go to Type Definition", Box::new(GoToTypeDefinition), cx)
-            .action("Find All References", Box::new(FindAllReferences), cx)
+        menu.action("Rename Symbol", Box::new(Rename))
+            .action("Go to Definition", Box::new(GoToDefinition))
+            .action("Go to Type Definition", Box::new(GoToTypeDefinition))
+            .action("Find All References", Box::new(FindAllReferences))
             .action(
                 "Code Actions",
                 Box::new(ToggleCodeActions {
                     deployed_from_indicator: false,
                 }),
-                cx,
             )
             .separator()
-            .action("Reveal in Finder", Box::new(RevealInFinder), cx)
+            .action("Reveal in Finder", Box::new(RevealInFinder))
     });
     let context_menu_focus = context_menu.focus_handle(cx);
     cx.focus(&context_menu_focus);

@@ -510,10 +510,9 @@ async fn test_joining_channels_and_calling_multiple_users_simultaneously(
 
     // Simultaneously join channel 1 and then channel 2
     active_call_a
-        .update(cx_a, |call, cx| call.join_channel(channel_1, None, cx))
+        .update(cx_a, |call, cx| call.join_channel(channel_1, cx))
         .detach();
-    let join_channel_2 =
-        active_call_a.update(cx_a, |call, cx| call.join_channel(channel_2, None, cx));
+    let join_channel_2 = active_call_a.update(cx_a, |call, cx| call.join_channel(channel_2, cx));
 
     join_channel_2.await.unwrap();
 
@@ -539,8 +538,7 @@ async fn test_joining_channels_and_calling_multiple_users_simultaneously(
         call.invite(client_c.user_id().unwrap(), None, cx)
     });
 
-    let join_channel =
-        active_call_a.update(cx_a, |call, cx| call.join_channel(channel_1, None, cx));
+    let join_channel = active_call_a.update(cx_a, |call, cx| call.join_channel(channel_1, cx));
 
     b_invite.await.unwrap();
     c_invite.await.unwrap();
@@ -569,8 +567,7 @@ async fn test_joining_channels_and_calling_multiple_users_simultaneously(
         .unwrap();
 
     // Simultaneously join channel 1 and call user B and user C from client A.
-    let join_channel =
-        active_call_a.update(cx_a, |call, cx| call.join_channel(channel_1, None, cx));
+    let join_channel = active_call_a.update(cx_a, |call, cx| call.join_channel(channel_1, cx));
 
     let b_invite = active_call_a.update(cx_a, |call, cx| {
         call.invite(client_b.user_id().unwrap(), None, cx)
@@ -2784,11 +2781,10 @@ async fn test_fs_operations(
 
     let entry = project_b
         .update(cx_b, |project, cx| {
-            project
-                .create_entry((worktree_id, "c.txt"), false, cx)
-                .unwrap()
+            project.create_entry((worktree_id, "c.txt"), false, cx)
         })
         .await
+        .unwrap()
         .unwrap();
 
     worktree_a.read_with(cx_a, |worktree, _| {
@@ -2815,8 +2811,8 @@ async fn test_fs_operations(
         .update(cx_b, |project, cx| {
             project.rename_entry(entry.id, Path::new("d.txt"), cx)
         })
-        .unwrap()
         .await
+        .unwrap()
         .unwrap();
 
     worktree_a.read_with(cx_a, |worktree, _| {
@@ -2841,11 +2837,10 @@ async fn test_fs_operations(
 
     let dir_entry = project_b
         .update(cx_b, |project, cx| {
-            project
-                .create_entry((worktree_id, "DIR"), true, cx)
-                .unwrap()
+            project.create_entry((worktree_id, "DIR"), true, cx)
         })
         .await
+        .unwrap()
         .unwrap();
 
     worktree_a.read_with(cx_a, |worktree, _| {
@@ -2870,27 +2865,24 @@ async fn test_fs_operations(
 
     project_b
         .update(cx_b, |project, cx| {
-            project
-                .create_entry((worktree_id, "DIR/e.txt"), false, cx)
-                .unwrap()
+            project.create_entry((worktree_id, "DIR/e.txt"), false, cx)
         })
         .await
+        .unwrap()
         .unwrap();
     project_b
         .update(cx_b, |project, cx| {
-            project
-                .create_entry((worktree_id, "DIR/SUBDIR"), true, cx)
-                .unwrap()
+            project.create_entry((worktree_id, "DIR/SUBDIR"), true, cx)
         })
         .await
+        .unwrap()
         .unwrap();
     project_b
         .update(cx_b, |project, cx| {
-            project
-                .create_entry((worktree_id, "DIR/SUBDIR/f.txt"), false, cx)
-                .unwrap()
+            project.create_entry((worktree_id, "DIR/SUBDIR/f.txt"), false, cx)
         })
         .await
+        .unwrap()
         .unwrap();
 
     worktree_a.read_with(cx_a, |worktree, _| {
@@ -2931,11 +2923,10 @@ async fn test_fs_operations(
 
     project_b
         .update(cx_b, |project, cx| {
-            project
-                .copy_entry(entry.id, Path::new("f.txt"), cx)
-                .unwrap()
+            project.copy_entry(entry.id, Path::new("f.txt"), cx)
         })
         .await
+        .unwrap()
         .unwrap();
 
     worktree_a.read_with(cx_a, |worktree, _| {

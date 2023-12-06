@@ -9,22 +9,21 @@ mod panel_settings;
 
 use std::{rc::Rc, sync::Arc};
 
+use call::{report_call_event_for_room, ActiveCall, Room};
 pub use collab_panel::CollabPanel;
 pub use collab_titlebar_item::CollabTitlebarItem;
 use gpui::{
-    point, AppContext, GlobalPixels, Pixels, PlatformDisplay, Size, WindowBounds, WindowKind,
-    WindowOptions,
+    actions, point, AppContext, GlobalPixels, Pixels, PlatformDisplay, Size, Task, WindowBounds,
+    WindowKind, WindowOptions,
 };
 pub use panel_settings::{
     ChatPanelSettings, CollaborationPanelSettings, NotificationPanelSettings,
 };
 use settings::Settings;
+use util::ResultExt;
 use workspace::AppState;
 
-// actions!(
-//     collab,
-//     [ToggleScreenSharing, ToggleMute, ToggleDeafen, LeaveCall]
-// );
+actions!(ToggleScreenSharing, ToggleMute, ToggleDeafen, LeaveCall);
 
 pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
     CollaborationPanelSettings::register(cx);
@@ -42,61 +41,61 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
     // cx.add_global_action(toggle_deafen);
 }
 
-// pub fn toggle_screen_sharing(_: &ToggleScreenSharing, cx: &mut AppContext) {
-//     let call = ActiveCall::global(cx).read(cx);
-//     if let Some(room) = call.room().cloned() {
-//         let client = call.client();
-//         let toggle_screen_sharing = room.update(cx, |room, cx| {
-//             if room.is_screen_sharing() {
-//                 report_call_event_for_room(
-//                     "disable screen share",
-//                     room.id(),
-//                     room.channel_id(),
-//                     &client,
-//                     cx,
-//                 );
-//                 Task::ready(room.unshare_screen(cx))
-//             } else {
-//                 report_call_event_for_room(
-//                     "enable screen share",
-//                     room.id(),
-//                     room.channel_id(),
-//                     &client,
-//                     cx,
-//                 );
-//                 room.share_screen(cx)
-//             }
-//         });
-//         toggle_screen_sharing.detach_and_log_err(cx);
-//     }
-// }
+pub fn toggle_screen_sharing(_: &ToggleScreenSharing, cx: &mut AppContext) {
+    let call = ActiveCall::global(cx).read(cx);
+    if let Some(room) = call.room().cloned() {
+        let client = call.client();
+        let toggle_screen_sharing = room.update(cx, |room, cx| {
+            if room.is_screen_sharing() {
+                report_call_event_for_room(
+                    "disable screen share",
+                    room.id(),
+                    room.channel_id(),
+                    &client,
+                    cx,
+                );
+                Task::ready(room.unshare_screen(cx))
+            } else {
+                report_call_event_for_room(
+                    "enable screen share",
+                    room.id(),
+                    room.channel_id(),
+                    &client,
+                    cx,
+                );
+                room.share_screen(cx)
+            }
+        });
+        toggle_screen_sharing.detach_and_log_err(cx);
+    }
+}
 
-// pub fn toggle_mute(_: &ToggleMute, cx: &mut AppContext) {
-//     let call = ActiveCall::global(cx).read(cx);
-//     if let Some(room) = call.room().cloned() {
-//         let client = call.client();
-//         room.update(cx, |room, cx| {
-//             let operation = if room.is_muted(cx) {
-//                 "enable microphone"
-//             } else {
-//                 "disable microphone"
-//             };
-//             report_call_event_for_room(operation, room.id(), room.channel_id(), &client, cx);
+pub fn toggle_mute(_: &ToggleMute, cx: &mut AppContext) {
+    let call = ActiveCall::global(cx).read(cx);
+    if let Some(room) = call.room().cloned() {
+        let client = call.client();
+        room.update(cx, |room, cx| {
+            let operation = if room.is_muted(cx) {
+                "enable microphone"
+            } else {
+                "disable microphone"
+            };
+            report_call_event_for_room(operation, room.id(), room.channel_id(), &client, cx);
 
-//             room.toggle_mute(cx)
-//         })
-//         .map(|task| task.detach_and_log_err(cx))
-//         .log_err();
-//     }
-// }
+            room.toggle_mute(cx)
+        })
+        .map(|task| task.detach_and_log_err(cx))
+        .log_err();
+    }
+}
 
-// pub fn toggle_deafen(_: &ToggleDeafen, cx: &mut AppContext) {
-//     if let Some(room) = ActiveCall::global(cx).read(cx).room().cloned() {
-//         room.update(cx, Room::toggle_deafen)
-//             .map(|task| task.detach_and_log_err(cx))
-//             .log_err();
-//     }
-// }
+pub fn toggle_deafen(_: &ToggleDeafen, cx: &mut AppContext) {
+    if let Some(room) = ActiveCall::global(cx).read(cx).room().cloned() {
+        room.update(cx, Room::toggle_deafen)
+            .map(|task| task.detach_and_log_err(cx))
+            .log_err();
+    }
+}
 
 fn notification_window_options(
     screen: Rc<dyn PlatformDisplay>,
