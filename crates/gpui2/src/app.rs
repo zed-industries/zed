@@ -1,3 +1,4 @@
+
 mod async_context;
 mod entity_map;
 mod model_context;
@@ -286,19 +287,7 @@ impl AppContext {
         app.borrow_mut()
             .spawn(|cx| async move {
                 while let Some(display_id) = draw_rx.next().await {
-                    cx.update(|cx| {
-                        let mut handles = Vec::new();
-                        for window in cx.windows.values().filter_map(|w| w.as_ref()) {
-                            if window.dirty && window.platform_window.display().id() == display_id {
-                                handles.push(window.handle);
-                            }
-                        }
-
-                        for handle in handles {
-                            handle.update(cx, |_, cx| cx.draw()).unwrap();
-                        }
-                    })
-                    .ok();
+                    cx.update(|cx| cx.on_frame_request(display_id)).ok();
                 }
             })
             .detach();
@@ -311,6 +300,25 @@ impl AppContext {
         }));
 
         app
+    }
+
+    fn on_frame_request(&mut self, display_id: DisplayId) {
+        if let Some(callbacks) = self.next_frame_callbacks.remove(&display_id) {
+            for callback in callbacks {
+                callback(self);
+            }
+        }
+
+        let mut handles = Vec::new();
+        for window in self.windows.values().filter_map(|w| w.as_ref()) {
+            if window.dirty && window.platform_window.display().id() == display_id {
+                handles.push(window.handle);
+            }
+        }
+
+        for handle in handles {
+            handle.update(self, |_, cx| cx.draw()).unwrap();
+        }
     }
 
     /// Quit the application gracefully. Handlers registered with `ModelContext::on_app_quit`
@@ -585,23 +593,28 @@ impl AppContext {
                     Effect::Notify { emitter } => {
                         self.apply_notify_effect(emitter);
                     }
+
                     Effect::Emit {
                         emitter,
                         event_type,
                         event,
                     } => self.apply_emit_effect(emitter, event_type, event),
+
                     Effect::FocusChanged {
                         window_handle,
                         focused,
                     } => {
                         self.apply_focus_changed_effect(window_handle, focused);
                     }
+
                     Effect::Refresh => {
                         self.apply_refresh_effect();
                     }
+
                     Effect::NotifyGlobalObservers { global_type } => {
                         self.apply_notify_global_observers_effect(global_type);
                     }
+
                     Effect::Defer { callback } => {
                         self.apply_defer_effect(callback);
                     }

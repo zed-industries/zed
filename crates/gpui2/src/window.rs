@@ -534,45 +534,6 @@ impl<'a> WindowContext<'a> {
         let handle = self.window.handle;
         let display_id = self.window.display_id;
 
-        if !self.frame_consumers.contains_key(&display_id) {
-            let (tx, mut rx) = mpsc::unbounded::<()>();
-            self.platform.set_display_link_output_callback(
-                display_id,
-                Box::new(move |_current_time, _output_time| _ = tx.unbounded_send(())),
-            );
-
-            let consumer_task = self.app.spawn(|cx| async move {
-                while rx.next().await.is_some() {
-                    cx.update(|cx| {
-                        for callback in cx
-                            .next_frame_callbacks
-                            .get_mut(&display_id)
-                            .unwrap()
-                            .drain(..)
-                            .collect::<SmallVec<[_; 32]>>()
-                        {
-                            callback(cx);
-                        }
-                    })
-                    .ok();
-
-                    // Flush effects, then stop the display link if no new next_frame_callbacks have been added.
-
-                    // cx.update(|cx| {
-                    //     if cx.next_frame_callbacks.is_empty() {
-                    //         cx.platform.stop_display_link(display_id);
-                    //     }
-                    // })
-                    // .ok();
-                }
-            });
-            self.frame_consumers.insert(display_id, consumer_task);
-        }
-
-        // if self.next_frame_callbacks.is_empty() {
-        //     self.platform.start_display_link(display_id);
-        // }
-
         self.next_frame_callbacks
             .entry(display_id)
             .or_default()
