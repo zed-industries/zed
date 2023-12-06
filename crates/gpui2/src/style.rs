@@ -385,7 +385,7 @@ impl Default for Style {
             min_size: Size::auto(),
             max_size: Size::auto(),
             aspect_ratio: None,
-            gap: Size::zero(),
+            gap: Size::default(),
             // Aligment
             align_items: None,
             align_self: None,

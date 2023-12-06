@@ -8,6 +8,18 @@ use std::{
     ops::{Add, Div, Mul, MulAssign, Sub},
 };
 
+/// Describes a location in a 2D cartesian coordinate space.
+///
+/// It holds two public fields, `x` and `y`, which represent the coordinates in the space.
+/// The type `T` for the coordinates can be any type that implements `Default`, `Clone`, and `Debug`.
+///
+/// # Examples
+///
+/// ```
+/// # use zed::Point;
+/// let point = Point { x: 10, y: 20 };
+/// println!("{:?}", point); // Outputs: Point { x: 10, y: 20 }
+/// ```
 #[derive(Refineable, Default, Add, AddAssign, Sub, SubAssign, Copy, Debug, PartialEq, Eq, Hash)]
 #[refineable(Debug)]
 #[repr(C)]
@@ -16,19 +28,66 @@ pub struct Point<T: Default + Clone + Debug> {
     pub y: T,
 }
 
+/// Constructs a new `Point<T>` with the given x and y coordinates.
+///
+/// # Arguments
+///
+/// * `x` - The x coordinate of the point.
+/// * `y` - The y coordinate of the point.
+///
+/// # Returns
+///
+/// Returns a `Point<T>` with the specified coordinates.
+///
+/// # Examples
+///
+/// ```
+/// # use zed::Point;
+/// let p = point(10, 20);
+/// assert_eq!(p.x, 10);
+/// assert_eq!(p.y, 20);
+/// ```
 pub fn point<T: Clone + Debug + Default>(x: T, y: T) -> Point<T> {
     Point { x, y }
 }
 
 impl<T: Clone + Debug + Default> Point<T> {
+    /// Creates a new `Point` with the specified `x` and `y` coordinates.
+    ///
+    /// # Arguments
+    ///
+    /// * `x` - The horizontal coordinate of the point.
+    /// * `y` - The vertical coordinate of the point.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let p = Point::new(10, 20);
+    /// assert_eq!(p.x, 10);
+    /// assert_eq!(p.y, 20);
+    /// ```
     pub const fn new(x: T, y: T) -> Self {
         Self { x, y }
     }
 
-    pub fn zero() -> Self {
-        Self::new(T::default(), T::default())
-    }
-
+    /// Transforms the point to a `Point<U>` by applying the given function to both coordinates.
+    ///
+    /// This method allows for converting a `Point<T>` to a `Point<U>` by specifying a closure
+    /// that defines how to convert between the two types. The closure is applied to both the `x`
+    /// and `y` coordinates, resulting in a new point of the desired type.
+    ///
+    /// # Arguments
+    ///
+    /// * `f` - A closure that takes a value of type `T` and returns a value of type `U`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use zed::Point;
+    /// let p = Point { x: 3, y: 4 };
+    /// let p_float = p.map(|coord| coord as f32);
+    /// assert_eq!(p_float, Point { x: 3.0, y: 4.0 });
+    /// ```
     pub fn map<U: Clone + Default + Debug>(&self, f: impl Fn(T) -> U) -> Point<U> {
         Point {
             x: f(self.x.clone()),
@@ -38,6 +97,21 @@ impl<T: Clone + Debug + Default> Point<T> {
 }
 
 impl Point<Pixels> {
+    /// Scales the point by a given factor, which is typically derived from the resolution
+    /// of a target display to ensure proper sizing of UI elements.
+    ///
+    /// # Arguments
+    ///
+    /// * `factor` - The scaling factor to apply to both the x and y coordinates.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use zed::{Point, Pixels, ScaledPixels};
+    /// let p = Point { x: Pixels(10.0), y: Pixels(20.0) };
+    /// let scaled_p = p.scale(1.5);
+    /// assert_eq!(scaled_p, Point { x: ScaledPixels(15.0), y: ScaledPixels(30.0) });
+    /// ```
     pub fn scale(&self, factor: f32) -> Point<ScaledPixels> {
         Point {
             x: self.x.scale(factor),
@@ -45,6 +119,16 @@ impl Point<Pixels> {
         }
     }
 
+    /// Calculates the Euclidean distance from the origin (0, 0) to this point.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use zed::Point;
+    /// # use zed::Pixels;
+    /// let p = Point { x: Pixels(3.0), y: Pixels(4.0) };
+    /// assert_eq!(p.magnitude(), 5.0);
+    /// ```
     pub fn magnitude(&self) -> f64 {
         ((self.x.0.powi(2) + self.y.0.powi(2)) as f64).sqrt()
     }
@@ -95,14 +179,29 @@ impl<T> Point<T>
 where
     T: PartialOrd + Clone + Default + Debug,
 {
+    /// Returns a new point with the maximum values of each dimension from `self` and `other`.
+    ///
+    /// # Arguments
+    ///
+    /// * `other` - A reference to another `Point` to compare with `self`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use zed::Point;
+    /// let p1 = Point { x: 3, y: 7 };
+    /// let p2 = Point { x: 5, y: 2 };
+    /// let max_point = p1.max(&p2);
+    /// assert_eq!(max_point, Point { x: 5, y: 7 });
+    /// ```
     pub fn max(&self, other: &Self) -> Self {
         Point {
-            x: if self.x >= other.x {
+            x: if self.x > other.x {
                 self.x.clone()
             } else {
                 other.x.clone()
             },
-            y: if self.y >= other.y {
+            y: if self.y > other.y {
                 self.y.clone()
             } else {
                 other.y.clone()
@@ -110,6 +209,21 @@ where
         }
     }
 
+    /// Returns a new point with the minimum values of each dimension from `self` and `other`.
+    ///
+    /// # Arguments
+    ///
+    /// * `other` - A reference to another `Point` to compare with `self`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use zed::Point;
+    /// let p1 = Point { x: 3, y: 7 };
+    /// let p2 = Point { x: 5, y: 2 };
+    /// let min_point = p1.min(&p2);
+    /// assert_eq!(min_point, Point { x: 3, y: 2 });
+    /// ```
     pub fn min(&self, other: &Self) -> Self {
         Point {
             x: if self.x <= other.x {
@@ -125,6 +239,32 @@ where
         }
     }
 
+    /// Clamps the point to a specified range.
+    ///
+    /// Given a minimum point and a maximum point, this method constrains the current point
+    /// such that its coordinates do not exceed the range defined by the minimum and maximum points.
+    /// If the current point's coordinates are less than the minimum, they are set to the minimum.
+    /// If they are greater than the maximum, they are set to the maximum.
+    ///
+    /// # Arguments
+    ///
+    /// * `min` - A reference to a `Point` representing the minimum allowable coordinates.
+    /// * `max` - A reference to a `Point` representing the maximum allowable coordinates.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use zed::Point;
+    /// let p = Point { x: 10, y: 20 };
+    /// let min = Point { x: 0, y: 5 };
+    /// let max = Point { x: 15, y: 25 };
+    /// let clamped_p = p.clamp(&min, &max);
+    /// assert_eq!(clamped_p, Point { x: 10, y: 20 });
+    ///
+    /// let p_out_of_bounds = Point { x: -5, y: 30 };
+    /// let clamped_p_out_of_bounds = p_out_of_bounds.clamp(&min, &max);
+    /// assert_eq!(clamped_p_out_of_bounds, Point { x: 0, y: 25 });
+    /// ```
     pub fn clamp(&self, min: &Self, max: &Self) -> Self {
         self.max(min).min(max)
     }
@@ -139,6 +279,10 @@ impl<T: Clone + Default + Debug> Clone for Point<T> {
     }
 }
 
+/// A structure representing a two-dimensional size with width and height in a given unit.
+///
+/// This struct is generic over the type `T`, which can be any type that implements `Clone`, `Default`, and `Debug`.
+/// It is commonly used to specify dimensions for elements in a UI, such as a window or element.
 #[derive(Refineable, Default, Clone, Copy, PartialEq, Div, Hash, Serialize, Deserialize)]
 #[refineable(Debug)]
 #[repr(C)]
@@ -147,6 +291,21 @@ pub struct Size<T: Clone + Default + Debug> {
     pub height: T,
 }
 
+/// Constructs a new `Size<T>` with the provided width and height.
+///
+/// # Arguments
+///
+/// * `width` - The width component of the `Size`.
+/// * `height` - The height component of the `Size`.
+///
+/// # Examples
+///
+/// ```
+/// # use zed::Size;
+/// let my_size = size(10, 20);
+/// assert_eq!(my_size.width, 10);
+/// assert_eq!(my_size.height, 20);
+/// ```
 pub fn size<T>(width: T, height: T) -> Size<T>
 where
     T: Clone + Default + Debug,
@@ -158,6 +317,24 @@ impl<T> Size<T>
 where
     T: Clone + Default + Debug,
 {
+    /// Applies a function to the width and height of the size, producing a new `Size<U>`.
+    ///
+    /// This method allows for converting a `Size<T>` to a `Size<U>` by specifying a closure
+    /// that defines how to convert between the two types. The closure is applied to both the `width`
+    /// and `height`, resulting in a new size of the desired type.
+    ///
+    /// # Arguments
+    ///
+    /// * `f` - A closure that takes a value of type `T` and returns a value of type `U`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use zed::Size;
+    /// let my_size = Size { width: 10, height: 20 };
+    /// let my_new_size = my_size.map(|dimension| dimension as f32 * 1.5);
+    /// assert_eq!(my_new_size, Size { width: 15.0, height: 30.0 });
+    /// ```
     pub fn map<U>(&self, f: impl Fn(T) -> U) -> Size<U>
     where
         U: Clone + Default + Debug,
@@ -170,6 +347,24 @@ where
 }
 
 impl Size<Pixels> {
+    /// Scales the size by a given factor.
+    ///
+    /// This method multiplies both the width and height by the provided scaling factor,
+    /// resulting in a new `Size<ScaledPixels>` that is proportionally larger or smaller
+    /// depending on the factor.
+    ///
+    /// # Arguments
+    ///
+    /// * `factor` - The scaling factor to apply to the width and height.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use zed::{Size, Pixels, ScaledPixels};
+    /// let size = Size { width: Pixels(100.0), height: Pixels(50.0) };
+    /// let scaled_size = size.scale(2.0);
+    /// assert_eq!(scaled_size, Size { width: ScaledPixels(200.0), height: ScaledPixels(100.0) });
+    /// ```
     pub fn scale(&self, factor: f32) -> Size<ScaledPixels> {
         Size {
             width: self.width.scale(factor),
@@ -182,6 +377,21 @@ impl<T> Size<T>
 where
     T: PartialOrd + Clone + Default + Debug,
 {
+    /// Returns a new `Size` with the maximum width and height from `self` and `other`.
+    ///
+    /// # Arguments
+    ///
+    /// * `other` - A reference to another `Size` to compare with `self`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use zed::Size;
+    /// let size1 = Size { width: 30, height: 40 };
+    /// let size2 = Size { width: 50, height: 20 };
+    /// let max_size = size1.max(&size2);
+    /// assert_eq!(max_size, Size { width: 50, height: 40 });
+    /// ```
     pub fn max(&self, other: &Self) -> Self {
         Size {
             width: if self.width >= other.width {
@@ -286,6 +496,14 @@ impl From<Size<Pixels>> for Size<AbsoluteLength> {
 }
 
 impl Size<Length> {
+    /// Returns a `Size` with both width and height set to fill the available space.
+    ///
+    /// This function creates a `Size` instance where both the width and height are set to `Length::Definite(DefiniteLength::Fraction(1.0))`,
+    /// which represents 100% of the available space in both dimensions.
+    ///
+    /// # Returns
+    ///
+    /// A `Size<Length>` that will fill the available space when used in a layout.
     pub fn full() -> Self {
         Self {
             width: relative(1.).into(),
@@ -294,16 +512,16 @@ impl Size<Length> {
     }
 }
 
-impl Size<DefiniteLength> {
-    pub fn zero() -> Self {
-        Self {
-            width: px(0.).into(),
-            height: px(0.).into(),
-        }
-    }
-}
-
 impl Size<Length> {
+    /// Returns a `Size` with both width and height set to `auto`, which allows the layout engine to determine the size.
+    ///
+    /// This function creates a `Size` instance where both the width and height are set to `Length::Auto`,
+    /// indicating that their size should be computed based on the layout context, such as the content size or
+    /// available space.
+    ///
+    /// # Returns
+    ///
+    /// A `Size<Length>` with width and height set to `Length::Auto`.
     pub fn auto() -> Self {
         Self {
             width: Length::Auto,
@@ -312,6 +530,23 @@ impl Size<Length> {
     }
 }
 
+/// Represents a rectangular area in a 2D space with an origin point and a size.
+///
+/// The `Bounds` struct is generic over a type `T` which represents the type of the coordinate system.
+/// The origin is represented as a `Point<T>` which defines the upper-left corner of the rectangle,
+/// and the size is represented as a `Size<T>` which defines the width and height of the rectangle.
+///
+/// # Examples
+///
+/// ```
+/// # use zed::{Bounds, Point, Size};
+/// let origin = Point { x: 0, y: 0 };
+/// let size = Size { width: 10, height: 20 };
+/// let bounds = Bounds::new(origin, size);
+///
+/// assert_eq!(bounds.origin, origin);
+/// assert_eq!(bounds.size, size);
+/// ```
 #[derive(Refineable, Clone, Default, Debug, Eq, PartialEq)]
 #[refineable(Debug)]
 #[repr(C)]
@@ -324,6 +559,33 @@ impl<T> Bounds<T>
 where
     T: Clone + Debug + Sub<Output = T> + Default,
 {
+    /// Constructs a `Bounds` from two corner points: the upper-left and lower-right corners.
+    ///
+    /// This function calculates the origin and size of the `Bounds` based on the provided corner points.
+    /// The origin is set to the upper-left corner, and the size is determined by the difference between
+    /// the x and y coordinates of the lower-right and upper-left points.
+    ///
+    /// # Arguments
+    ///
+    /// * `upper_left` - A `Point<T>` representing the upper-left corner of the rectangle.
+    /// * `lower_right` - A `Point<T>` representing the lower-right corner of the rectangle.
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Bounds<T>` that encompasses the area defined by the two corner points.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use zed::{Bounds, Point};
+    /// let upper_left = Point { x: 0, y: 0 };
+    /// let lower_right = Point { x: 10, y: 10 };
+    /// let bounds = Bounds::from_corners(upper_left, lower_right);
+    ///
+    /// assert_eq!(bounds.origin, upper_left);
+    /// assert_eq!(bounds.size.width, 10);
+    /// assert_eq!(bounds.size.height, 10);
+    /// ```
     pub fn from_corners(upper_left: Point<T>, lower_right: Point<T>) -> Self {
         let origin = Point {
             x: upper_left.x.clone(),
@@ -336,6 +598,16 @@ where
         Bounds { origin, size }
     }
 
+    /// Creates a new `Bounds` with the specified origin and size.
+    ///
+    /// # Arguments
+    ///
+    /// * `origin` - A `Point<T>` representing the origin of the bounds.
+    /// * `size` - A `Size<T>` representing the size of the bounds.
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Bounds<T>` that has the given origin and size.
     pub fn new(origin: Point<T>, size: Size<T>) -> Self {
         Bounds { origin, size }
     }
@@ -345,6 +617,39 @@ impl<T> Bounds<T>
 where
     T: Clone + Debug + PartialOrd + Add<T, Output = T> + Sub<Output = T> + Default + Half,
 {
+    /// Checks if this `Bounds` intersects with another `Bounds`.
+    ///
+    /// Two `Bounds` instances intersect if they overlap in the 2D space they occupy.
+    /// This method checks if there is any overlapping area between the two bounds.
+    ///
+    /// # Arguments
+    ///
+    /// * `other` - A reference to another `Bounds` to check for intersection with.
+    ///
+    /// # Returns
+    ///
+    /// Returns `true` if there is any intersection between the two bounds, `false` otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use zed::{Bounds, Point, Size};
+    /// let bounds1 = Bounds {
+    ///     origin: Point { x: 0, y: 0 },
+    ///     size: Size { width: 10, height: 10 },
+    /// };
+    /// let bounds2 = Bounds {
+    ///     origin: Point { x: 5, y: 5 },
+    ///     size: Size { width: 10, height: 10 },
+    /// };
+    /// let bounds3 = Bounds {
+    ///     origin: Point { x: 20, y: 20 },
+    ///     size: Size { width: 10, height: 10 },
+    /// };
+    ///
+    /// assert_eq!(bounds1.intersects(&bounds2), true); // Overlapping bounds
+    /// assert_eq!(bounds1.intersects(&bounds3), false); // Non-overlapping bounds
+    /// ```
     pub fn intersects(&self, other: &Bounds<T>) -> bool {
         let my_lower_right = self.lower_right();
         let their_lower_right = other.lower_right();
@@ -355,6 +660,32 @@ where
             && my_lower_right.y > other.origin.y
     }
 
+    /// Dilates the bounds by a specified amount in all directions.
+    ///
+    /// This method expands the bounds by the given `amount`, increasing the size
+    /// and adjusting the origin so that the bounds grow outwards equally in all directions.
+    /// The resulting bounds will have its width and height increased by twice the `amount`
+    /// (since it grows in both directions), and the origin will be moved by `-amount`
+    /// in both the x and y directions.
+    ///
+    /// # Arguments
+    ///
+    /// * `amount` - The amount by which to dilate the bounds.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use zed::{Bounds, Point, Size};
+    /// let mut bounds = Bounds {
+    ///     origin: Point { x: 10, y: 10 },
+    ///     size: Size { width: 10, height: 10 },
+    /// };
+    /// bounds.dilate(5);
+    /// assert_eq!(bounds, Bounds {
+    ///     origin: Point { x: 5, y: 5 },
+    ///     size: Size { width: 20, height: 20 },
+    /// });
+    /// ```
     pub fn dilate(&mut self, amount: T) {
         self.origin.x = self.origin.x.clone() - amount.clone();
         self.origin.y = self.origin.y.clone() - amount.clone();
@@ -363,6 +694,27 @@ where
         self.size.height = self.size.height.clone() + double_amount;
     }
 
+    /// Returns the center point of the bounds.
+    ///
+    /// Calculates the center by taking the origin's x and y coordinates and adding half the width and height
+    /// of the bounds, respectively. The center is represented as a `Point<T>` where `T` is the type of the
+    /// coordinate system.
+    ///
+    /// # Returns
+    ///
+    /// A `Point<T>` representing the center of the bounds.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use zed::{Bounds, Point, Size};
+    /// let bounds = Bounds {
+    ///     origin: Point { x: 0, y: 0 },
+    ///     size: Size { width: 10, height: 20 },
+    /// };
+    /// let center = bounds.center();
+    /// assert_eq!(center, Point { x: 5, y: 10 });
+    /// ```
     pub fn center(&self) -> Point<T> {
         Point {
             x: self.origin.x.clone() + self.size.width.clone().half(),
@@ -372,12 +724,78 @@ where
 }
 
 impl<T: Clone + Default + Debug + PartialOrd + Add<T, Output = T> + Sub<Output = T>> Bounds<T> {
+    /// Calculates the intersection of two `Bounds` objects.
+    ///
+    /// This method computes the overlapping region of two `Bounds`. If the bounds do not intersect,
+    /// the resulting `Bounds` will have a size with width and height of zero.
+    ///
+    /// # Arguments
+    ///
+    /// * `other` - A reference to another `Bounds` to intersect with.
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Bounds` representing the intersection area. If there is no intersection,
+    /// the returned `Bounds` will have a size with width and height of zero.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use zed::{Bounds, Point, Size};
+    /// let bounds1 = Bounds {
+    ///     origin: Point { x: 0, y: 0 },
+    ///     size: Size { width: 10, height: 10 },
+    /// };
+    /// let bounds2 = Bounds {
+    ///     origin: Point { x: 5, y: 5 },
+    ///     size: Size { width: 10, height: 10 },
+    /// };
+    /// let intersection = bounds1.intersect(&bounds2);
+    ///
+    /// assert_eq!(intersection, Bounds {
+    ///     origin: Point { x: 5, y: 5 },
+    ///     size: Size { width: 5, height: 5 },
+    /// });
+    /// ```
     pub fn intersect(&self, other: &Self) -> Self {
         let upper_left = self.origin.max(&other.origin);
         let lower_right = self.lower_right().min(&other.lower_right());
         Self::from_corners(upper_left, lower_right)
     }
 
+    /// Computes the union of two `Bounds`.
+    ///
+    /// This method calculates the smallest `Bounds` that contains both the current `Bounds` and the `other` `Bounds`.
+    /// The resulting `Bounds` will have an origin that is the minimum of the origins of the two `Bounds`,
+    /// and a size that encompasses the furthest extents of both `Bounds`.
+    ///
+    /// # Arguments
+    ///
+    /// * `other` - A reference to another `Bounds` to create a union with.
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Bounds` representing the union of the two `Bounds`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use zed::{Bounds, Point, Size};
+    /// let bounds1 = Bounds {
+    ///     origin: Point { x: 0, y: 0 },
+    ///     size: Size { width: 10, height: 10 },
+    /// };
+    /// let bounds2 = Bounds {
+    ///     origin: Point { x: 5, y: 5 },
+    ///     size: Size { width: 15, height: 15 },
+    /// };
+    /// let union_bounds = bounds1.union(&bounds2);
+    ///
+    /// assert_eq!(union_bounds, Bounds {
+    ///     origin: Point { x: 0, y: 0 },
+    ///     size: Size { width: 20, height: 20 },
+    /// });
+    /// ```
     pub fn union(&self, other: &Self) -> Self {
         let top_left = self.origin.min(&other.origin);
         let bottom_right = self.lower_right().max(&other.lower_right());
@@ -432,22 +850,59 @@ impl<T> Bounds<T>
 where
     T: Add<T, Output = T> + Clone + Default + Debug,
 {
+    /// Returns the top edge of the bounds.
+    ///
+    /// # Returns
+    ///
+    /// A value of type `T` representing the y-coordinate of the top edge of the bounds.
     pub fn top(&self) -> T {
         self.origin.y.clone()
     }
 
+    /// Returns the bottom edge of the bounds.
+    ///
+    /// # Returns
+    ///
+    /// A value of type `T` representing the y-coordinate of the bottom edge of the bounds.
     pub fn bottom(&self) -> T {
         self.origin.y.clone() + self.size.height.clone()
     }
 
+    /// Returns the left edge of the bounds.
+    ///
+    /// # Returns
+    ///
+    /// A value of type `T` representing the x-coordinate of the left edge of the bounds.
     pub fn left(&self) -> T {
         self.origin.x.clone()
     }
 
+    /// Returns the right edge of the bounds.
+    ///
+    /// # Returns
+    ///
+    /// A value of type `T` representing the x-coordinate of the right edge of the bounds.
     pub fn right(&self) -> T {
         self.origin.x.clone() + self.size.width.clone()
     }
 
+    /// Returns the upper-right corner point of the bounds.
+    ///
+    /// # Returns
+    ///
+    /// A `Point<T>` representing the upper-right corner of the bounds.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use zed::{Bounds, Point, Size};
+    /// let bounds = Bounds {
+    ///     origin: Point { x: 0, y: 0 },
+    ///     size: Size { width: 10, height: 20 },
+    /// };
+    /// let upper_right = bounds.upper_right();
+    /// assert_eq!(upper_right, Point { x: 10, y: 0 });
+    /// ```
     pub fn upper_right(&self) -> Point<T> {
         Point {
             x: self.origin.x.clone() + self.size.width.clone(),
@@ -455,6 +910,23 @@ where
         }
     }
 
+    /// Returns the lower-right corner point of the bounds.
+    ///
+    /// # Returns
+    ///
+    /// A `Point<T>` representing the lower-right corner of the bounds.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use zed::{Bounds, Point, Size};
+    /// let bounds = Bounds {
+    ///     origin: Point { x: 0, y: 0 },
+    ///     size: Size { width: 10, height: 20 },
+    /// };
+    /// let lower_right = bounds.lower_right();
+    /// assert_eq!(lower_right, Point { x: 10, y: 20 });
+    /// ```
     pub fn lower_right(&self) -> Point<T> {
         Point {
             x: self.origin.x.clone() + self.size.width.clone(),
@@ -462,6 +934,23 @@ where
         }
     }
 
+    /// Returns the lower-left corner point of the bounds.
+    ///
+    /// # Returns
+    ///
+    /// A `Point<T>` representing the lower-left corner of the bounds.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use zed::{Bounds, Point, Size};
+    /// let bounds = Bounds {
+    ///     origin: Point { x: 0, y: 0 },
+    ///     size: Size { width: 10, height: 20 },
+    /// };
+    /// let lower_left = bounds.lower_left();
+    /// assert_eq!(lower_left, Point { x: 0, y: 20 });
+    /// ```
     pub fn lower_left(&self) -> Point<T> {
         Point {
             x: self.origin.x.clone(),
@@ -474,6 +963,35 @@ impl<T> Bounds<T>
 where
     T: Add<T, Output = T> + PartialOrd + Clone + Default + Debug,
 {
+    /// Checks if the given point is within the bounds.
+    ///
+    /// This method determines whether a point lies inside the rectangle defined by the bounds,
+    /// including the edges. The point is considered inside if its x-coordinate is greater than
+    /// or equal to the left edge and less than or equal to the right edge, and its y-coordinate
+    /// is greater than or equal to the top edge and less than or equal to the bottom edge of the bounds.
+    ///
+    /// # Arguments
+    ///
+    /// * `point` - A reference to a `Point<T>` that represents the point to check.
+    ///
+    /// # Returns
+    ///
+    /// Returns `true` if the point is within the bounds, `false` otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use zed::{Point, Bounds};
+    /// let bounds = Bounds {
+    ///     origin: Point { x: 0, y: 0 },
+    ///     size: Size { width: 10, height: 10 },
+    /// };
+    /// let inside_point = Point { x: 5, y: 5 };
+    /// let outside_point = Point { x: 15, y: 15 };
+    ///
+    /// assert!(bounds.contains_point(&inside_point));
+    /// assert!(!bounds.contains_point(&outside_point));
+    /// ```
     pub fn contains_point(&self, point: &Point<T>) -> bool {
         point.x >= self.origin.x
             && point.x <= self.origin.x.clone() + self.size.width.clone()
@@ -481,6 +999,34 @@ where
             && point.y <= self.origin.y.clone() + self.size.height.clone()
     }
 
+    /// Applies a function to the origin and size of the bounds, producing a new `Bounds<U>`.
+    ///
+    /// This method allows for converting a `Bounds<T>` to a `Bounds<U>` by specifying a closure
+    /// that defines how to convert between the two types. The closure is applied to the `origin` and
+    /// `size` fields, resulting in new bounds of the desired type.
+    ///
+    /// # Arguments
+    ///
+    /// * `f` - A closure that takes a value of type `T` and returns a value of type `U`.
+    ///
+    /// # Returns
+    ///
+    /// Returns a new `Bounds<U>` with the origin and size mapped by the provided function.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use zed::{Bounds, Point, Size};
+    /// let bounds = Bounds {
+    ///     origin: Point { x: 10.0, y: 10.0 },
+    ///     size: Size { width: 10.0, height: 20.0 },
+    /// };
+    /// let new_bounds = bounds.map(|value| value as f64 * 1.5);
+    ///
+    /// assert_eq!(new_bounds, Bounds {
+    ///     origin: Point { x: 15.0, y: 15.0 },
+    ///     size: Size { width: 15.0, height: 30.0 },
+    /// });
     pub fn map<U>(&self, f: impl Fn(T) -> U) -> Bounds<U>
     where
         U: Clone + Default + Debug,
@@ -493,6 +1039,36 @@ where
 }
 
 impl Bounds<Pixels> {
+    /// Scales the bounds by a given factor, typically used to adjust for display scaling.
+    ///
+    /// This method multiplies the origin and size of the bounds by the provided scaling factor,
+    /// resulting in a new `Bounds<ScaledPixels>` that is proportionally larger or smaller
+    /// depending on the scaling factor. This can be used to ensure that the bounds are properly
+    /// scaled for different display densities.
+    ///
+    /// # Arguments
+    ///
+    /// * `factor` - The scaling factor to apply to the origin and size, typically the display's scaling factor.
+    ///
+    /// # Returns
+    ///
+    /// Returns a new `Bounds<ScaledPixels>` that represents the scaled bounds.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use zed::{Bounds, Point, Size, Pixels};
+    /// let bounds = Bounds {
+    ///     origin: Point { x: Pixels(10.0), y: Pixels(20.0) },
+    ///     size: Size { width: Pixels(30.0), height: Pixels(40.0) },
+    /// };
+    /// let display_scale_factor = 2.0;
+    /// let scaled_bounds = bounds.scale(display_scale_factor);
+    /// assert_eq!(scaled_bounds, Bounds {
+    ///     origin: Point { x: ScaledPixels(20.0), y: ScaledPixels(40.0) },
+    ///     size: Size { width: ScaledPixels(60.0), height: ScaledPixels(80.0) },
+    /// });
+    /// ```
     pub fn scale(&self, factor: f32) -> Bounds<ScaledPixels> {
         Bounds {
             origin: self.origin.scale(factor),
@@ -503,6 +1079,26 @@ impl Bounds<Pixels> {
 
 impl<T: Clone + Debug + Copy + Default> Copy for Bounds<T> {}
 
+/// Represents the edges of a box in a 2D space, such as padding or margin.
+///
+/// Each field represents the size of the edge on one side of the box: `top`, `right`, `bottom`, and `left`.
+///
+/// # Examples
+///
+/// ```
+/// # use zed::Edges;
+/// let edges = Edges {
+///     top: 10.0,
+///     right: 20.0,
+///     bottom: 30.0,
+///     left: 40.0,
+/// };
+///
+/// assert_eq!(edges.top, 10.0);
+/// assert_eq!(edges.right, 20.0);
+/// assert_eq!(edges.bottom, 30.0);
+/// assert_eq!(edges.left, 40.0);
+/// ```
 #[derive(Refineable, Clone, Default, Debug, Eq, PartialEq)]
 #[refineable(Debug)]
 #[repr(C)]
@@ -545,6 +1141,30 @@ where
 impl<T: Clone + Default + Debug + Copy> Copy for Edges<T> {}
 
 impl<T: Clone + Default + Debug> Edges<T> {
+    /// Constructs `Edges` where all sides are set to the same specified value.
+    ///
+    /// This function creates an `Edges` instance with the `top`, `right`, `bottom`, and `left` fields all initialized
+    /// to the same value provided as an argument. This is useful when you want to have uniform edges around a box,
+    /// such as padding or margin with the same size on all sides.
+    ///
+    /// # Arguments
+    ///
+    /// * `value` - The value to set for all four sides of the edges.
+    ///
+    /// # Returns
+    ///
+    /// An `Edges` instance with all sides set to the given value.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use zed::Edges;
+    /// let uniform_edges = Edges::all(10.0);
+    /// assert_eq!(uniform_edges.top, 10.0);
+    /// assert_eq!(uniform_edges.right, 10.0);
+    /// assert_eq!(uniform_edges.bottom, 10.0);
+    /// assert_eq!(uniform_edges.left, 10.0);
+    /// ```
     pub fn all(value: T) -> Self {
         Self {
             top: value.clone(),
@@ -554,6 +1174,28 @@ impl<T: Clone + Default + Debug> Edges<T> {
         }
     }
 
+    /// Applies a function to each field of the `Edges`, producing a new `Edges<U>`.
+    ///
+    /// This method allows for converting an `Edges<T>` to an `Edges<U>` by specifying a closure
+    /// that defines how to convert between the two types. The closure is applied to each field
+    /// (`top`, `right`, `bottom`, `left`), resulting in new edges of the desired type.
+    ///
+    /// # Arguments
+    ///
+    /// * `f` - A closure that takes a reference to a value of type `T` and returns a value of type `U`.
+    ///
+    /// # Returns
+    ///
+    /// Returns a new `Edges<U>` with each field mapped by the provided function.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use zed::Edges;
+    /// let edges = Edges { top: 10, right: 20, bottom: 30, left: 40 };
+    /// let edges_float = edges.map(|&value| value as f32 * 1.1);
+    /// assert_eq!(edges_float, Edges { top: 11.0, right: 22.0, bottom: 33.0, left: 44.0 });
+    /// ```
     pub fn map<U>(&self, f: impl Fn(&T) -> U) -> Edges<U>
     where
         U: Clone + Default + Debug,
@@ -566,6 +1208,33 @@ impl<T: Clone + Default + Debug> Edges<T> {
         }
     }
 
+    /// Checks if any of the edges satisfy a given predicate.
+    ///
+    /// This method applies a predicate function to each field of the `Edges` and returns `true` if any field satisfies the predicate.
+    ///
+    /// # Arguments
+    ///
+    /// * `predicate` - A closure that takes a reference to a value of type `T` and returns a `bool`.
+    ///
+    /// # Returns
+    ///
+    /// Returns `true` if the predicate returns `true` for any of the edge values, `false` otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use zed::Edges;
+    /// let edges = Edges {
+    ///     top: 10,
+    ///     right: 0,
+    ///     bottom: 5,
+    ///     left: 0,
+    /// };
+    ///
+    /// assert!(edges.any(|value| *value == 0));
+    /// assert!(edges.any(|value| *value > 0));
+    /// assert!(!edges.any(|value| *value > 10));
+    /// ```
     pub fn any<F: Fn(&T) -> bool>(&self, predicate: F) -> bool {
         predicate(&self.top)
             || predicate(&self.right)
@@ -575,6 +1244,24 @@ impl<T: Clone + Default + Debug> Edges<T> {
 }
 
 impl Edges<Length> {
+    /// Sets the edges of the `Edges` struct to `auto`, which is a special value that allows the layout engine to automatically determine the size of the edges.
+    ///
+    /// This is typically used in layout contexts where the exact size of the edges is not important, or when the size should be calculated based on the content or container.
+    ///
+    /// # Returns
+    ///
+    /// Returns an `Edges<Length>` with all edges set to `Length::Auto`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use zed::Edges;
+    /// let auto_edges = Edges::auto();
+    /// assert_eq!(auto_edges.top, Length::Auto);
+    /// assert_eq!(auto_edges.right, Length::Auto);
+    /// assert_eq!(auto_edges.bottom, Length::Auto);
+    /// assert_eq!(auto_edges.left, Length::Auto);
+    /// ```
     pub fn auto() -> Self {
         Self {
             top: Length::Auto,
@@ -584,6 +1271,25 @@ impl Edges<Length> {
         }
     }
 
+    /// Sets the edges of the `Edges` struct to zero, which means no size or thickness.
+    ///
+    /// This is typically used when you want to specify that a box (like a padding or margin area)
+    /// should have no edges, effectively making it non-existent or invisible in layout calculations.
+    ///
+    /// # Returns
+    ///
+    /// Returns an `Edges<Length>` with all edges set to zero length.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use zed::Edges;
+    /// let no_edges = Edges::zero();
+    /// assert_eq!(no_edges.top, Length::Definite(DefiniteLength::from(Pixels(0.))));
+    /// assert_eq!(no_edges.right, Length::Definite(DefiniteLength::from(Pixels(0.))));
+    /// assert_eq!(no_edges.bottom, Length::Definite(DefiniteLength::from(Pixels(0.))));
+    /// assert_eq!(no_edges.left, Length::Definite(DefiniteLength::from(Pixels(0.))));
+    /// ```
     pub fn zero() -> Self {
         Self {
             top: px(0.).into(),
@@ -595,6 +1301,25 @@ impl Edges<Length> {
 }
 
 impl Edges<DefiniteLength> {
+    /// Sets the edges of the `Edges` struct to zero, which means no size or thickness.
+    ///
+    /// This is typically used when you want to specify that a box (like a padding or margin area)
+    /// should have no edges, effectively making it non-existent or invisible in layout calculations.
+    ///
+    /// # Returns
+    ///
+    /// Returns an `Edges<DefiniteLength>` with all edges set to zero length.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use zed::Edges;
+    /// let no_edges = Edges::zero();
+    /// assert_eq!(no_edges.top, DefiniteLength::from(zed::px(0.)));
+    /// assert_eq!(no_edges.right, DefiniteLength::from(zed::px(0.)));
+    /// assert_eq!(no_edges.bottom, DefiniteLength::from(zed::px(0.)));
+    /// assert_eq!(no_edges.left, DefiniteLength::from(zed::px(0.)));
+    /// ```
     pub fn zero() -> Self {
         Self {
             top: px(0.).into(),
@@ -604,6 +1329,42 @@ impl Edges<DefiniteLength> {
         }
     }
 
+    /// Converts the `DefiniteLength` to `Pixels` based on the parent size and the REM size.
+    ///
+    /// This method allows for a `DefiniteLength` value to be converted into pixels, taking into account
+    /// the size of the parent element (for percentage-based lengths) and the size of a rem unit (for rem-based lengths).
+    ///
+    /// # Arguments
+    ///
+    /// * `parent_size` - `Size<AbsoluteLength>` representing the size of the parent element.
+    /// * `rem_size` - `Pixels` representing the size of one REM unit.
+    ///
+    /// # Returns
+    ///
+    /// Returns an `Edges<Pixels>` representing the edges with lengths converted to pixels.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use zed::{Edges, DefiniteLength, px, AbsoluteLength, Size};
+    /// let edges = Edges {
+    ///     top: DefiniteLength::Absolute(AbsoluteLength::Pixels(px(10.0))),
+    ///     right: DefiniteLength::Fraction(0.5),
+    ///     bottom: DefiniteLength::Absolute(AbsoluteLength::Rems(rems(2.0))),
+    ///     left: DefiniteLength::Fraction(0.25),
+    /// };
+    /// let parent_size = Size {
+    ///     width: AbsoluteLength::Pixels(px(200.0)),
+    ///     height: AbsoluteLength::Pixels(px(100.0)),
+    /// };
+    /// let rem_size = px(16.0);
+    /// let edges_in_pixels = edges.to_pixels(parent_size, rem_size);
+    ///
+    /// assert_eq!(edges_in_pixels.top, px(10.0)); // Absolute length in pixels
+    /// assert_eq!(edges_in_pixels.right, px(100.0)); // 50% of parent width
+    /// assert_eq!(edges_in_pixels.bottom, px(32.0)); // 2 rems
+    /// assert_eq!(edges_in_pixels.left, px(50.0)); // 25% of parent width
+    /// ```
     pub fn to_pixels(&self, parent_size: Size<AbsoluteLength>, rem_size: Pixels) -> Edges<Pixels> {
         Edges {
             top: self.top.to_pixels(parent_size.height, rem_size),
@@ -615,6 +1376,25 @@ impl Edges<DefiniteLength> {
 }
 
 impl Edges<AbsoluteLength> {
+    /// Sets the edges of the `Edges` struct to zero, which means no size or thickness.
+    ///
+    /// This is typically used when you want to specify that a box (like a padding or margin area)
+    /// should have no edges, effectively making it non-existent or invisible in layout calculations.
+    ///
+    /// # Returns
+    ///
+    /// Returns an `Edges<AbsoluteLength>` with all edges set to zero length.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use zed::Edges;
+    /// let no_edges = Edges::zero();
+    /// assert_eq!(no_edges.top, AbsoluteLength::Pixels(Pixels(0.0)));
+    /// assert_eq!(no_edges.right, AbsoluteLength::Pixels(Pixels(0.0)));
+    /// assert_eq!(no_edges.bottom, AbsoluteLength::Pixels(Pixels(0.0)));
+    /// assert_eq!(no_edges.left, AbsoluteLength::Pixels(Pixels(0.0)));
+    /// ```
     pub fn zero() -> Self {
         Self {
             top: px(0.).into(),
@@ -624,6 +1404,37 @@ impl Edges<AbsoluteLength> {
         }
     }
 
+    /// Converts the `AbsoluteLength` to `Pixels` based on the `rem_size`.
+    ///
+    /// If the `AbsoluteLength` is already in pixels, it simply returns the corresponding `Pixels` value.
+    /// If the `AbsoluteLength` is in rems, it multiplies the number of rems by the `rem_size` to convert it to pixels.
+    ///
+    /// # Arguments
+    ///
+    /// * `rem_size` - The size of one rem unit in pixels.
+    ///
+    /// # Returns
+    ///
+    /// Returns an `Edges<Pixels>` representing the edges with lengths converted to pixels.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use zed::{Edges, AbsoluteLength, Pixels, px};
+    /// let edges = Edges {
+    ///     top: AbsoluteLength::Pixels(px(10.0)),
+    ///     right: AbsoluteLength::Rems(rems(1.0)),
+    ///     bottom: AbsoluteLength::Pixels(px(20.0)),
+    ///     left: AbsoluteLength::Rems(rems(2.0)),
+    /// };
+    /// let rem_size = px(16.0);
+    /// let edges_in_pixels = edges.to_pixels(rem_size);
+    ///
+    /// assert_eq!(edges_in_pixels.top, px(10.0)); // Already in pixels
+    /// assert_eq!(edges_in_pixels.right, px(16.0)); // 1 rem converted to pixels
+    /// assert_eq!(edges_in_pixels.bottom, px(20.0)); // Already in pixels
+    /// assert_eq!(edges_in_pixels.left, px(32.0)); // 2 rems converted to pixels
+    /// ```
     pub fn to_pixels(&self, rem_size: Pixels) -> Edges<Pixels> {
         Edges {
             top: self.top.to_pixels(rem_size),
@@ -635,6 +1446,34 @@ impl Edges<AbsoluteLength> {
 }
 
 impl Edges<Pixels> {
+    /// Scales the `Edges<Pixels>` by a given factor, returning `Edges<ScaledPixels>`.
+    ///
+    /// This method is typically used for adjusting the edge sizes for different display densities or scaling factors.
+    ///
+    /// # Arguments
+    ///
+    /// * `factor` - The scaling factor to apply to each edge.
+    ///
+    /// # Returns
+    ///
+    /// Returns a new `Edges<ScaledPixels>` where each edge is the result of scaling the original edge by the given factor.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use zed::{Edges, Pixels};
+    /// let edges = Edges {
+    ///     top: Pixels(10.0),
+    ///     right: Pixels(20.0),
+    ///     bottom: Pixels(30.0),
+    ///     left: Pixels(40.0),
+    /// };
+    /// let scaled_edges = edges.scale(2.0);
+    /// assert_eq!(scaled_edges.top, ScaledPixels(20.0));
+    /// assert_eq!(scaled_edges.right, ScaledPixels(40.0));
+    /// assert_eq!(scaled_edges.bottom, ScaledPixels(60.0));
+    /// assert_eq!(scaled_edges.left, ScaledPixels(80.0));
+    /// ```
     pub fn scale(&self, factor: f32) -> Edges<ScaledPixels> {
         Edges {
             top: self.top.scale(factor),
@@ -645,6 +1484,10 @@ impl Edges<Pixels> {
     }
 }
 
+/// Represents the corners of a box in a 2D space, such as border radius.
+///
+/// Each field represents the size of the corner on one side of the box: `top_left`, `top_right`, `bottom_right`, and `bottom_left`.
+/// ```
 #[derive(Refineable, Clone, Default, Debug, Eq, PartialEq)]
 #[refineable(Debug)]
 #[repr(C)]
@@ -659,6 +1502,30 @@ impl<T> Corners<T>
 where
     T: Clone + Default + Debug,
 {
+    /// Constructs `Corners` where all sides are set to the same specified value.
+    ///
+    /// This function creates a `Corners` instance with the `top_left`, `top_right`, `bottom_right`, and `bottom_left` fields all initialized
+    /// to the same value provided as an argument. This is useful when you want to have uniform corners around a box,
+    /// such as a uniform border radius on a rectangle.
+    ///
+    /// # Arguments
+    ///
+    /// * `value` - The value to set for all four corners.
+    ///
+    /// # Returns
+    ///
+    /// An `Corners` instance with all corners set to the given value.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use zed::Corners;
+    /// let uniform_corners = Corners::all(5.0);
+    /// assert_eq!(uniform_corners.top_left, 5.0);
+    /// assert_eq!(uniform_corners.top_right, 5.0);
+    /// assert_eq!(uniform_corners.bottom_right, 5.0);
+    /// assert_eq!(uniform_corners.bottom_left, 5.0);
+    /// ```
     pub fn all(value: T) -> Self {
         Self {
             top_left: value.clone(),
@@ -670,6 +1537,42 @@ where
 }
 
 impl Corners<AbsoluteLength> {
+    /// Converts the `AbsoluteLength` to `Pixels` based on the provided size and rem size, ensuring the resulting
+    /// `Pixels` do not exceed half of the maximum of the provided size's width and height.
+    ///
+    /// This method is particularly useful when dealing with corner radii, where the radius in pixels should not
+    /// exceed half the size of the box it applies to, to avoid the corners overlapping.
+    ///
+    /// # Arguments
+    ///
+    /// * `size` - The `Size<Pixels>` against which the maximum allowable radius is determined.
+    /// * `rem_size` - The size of one REM unit in pixels, used for conversion if the `AbsoluteLength` is in REMs.
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Corners<Pixels>` instance with each corner's length converted to pixels and clamped to the
+    /// maximum allowable radius based on the provided size.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use zed::{Corners, AbsoluteLength, Pixels, Size};
+    /// let corners = Corners {
+    ///     top_left: AbsoluteLength::Pixels(Pixels(15.0)),
+    ///     top_right: AbsoluteLength::Rems(Rems(1.0)),
+    ///     bottom_right: AbsoluteLength::Pixels(Pixels(20.0)),
+    ///     bottom_left: AbsoluteLength::Rems(Rems(2.0)),
+    /// };
+    /// let size = Size { width: Pixels(100.0), height: Pixels(50.0) };
+    /// let rem_size = Pixels(16.0);
+    /// let corners_in_pixels = corners.to_pixels(size, rem_size);
+    ///
+    /// // The resulting corners should not exceed half the size of the smallest dimension (50.0 / 2.0 = 25.0).
+    /// assert_eq!(corners_in_pixels.top_left, Pixels(15.0));
+    /// assert_eq!(corners_in_pixels.top_right, Pixels(16.0)); // 1 rem converted to pixels
+    /// assert_eq!(corners_in_pixels.bottom_right, Pixels(20.0).min(Pixels(25.0))); // Clamped to 25.0
+    /// assert_eq!(corners_in_pixels.bottom_left, Pixels(32.0).min(Pixels(25.0))); // 2 rems converted to pixels and clamped
+    /// ```
     pub fn to_pixels(&self, size: Size<Pixels>, rem_size: Pixels) -> Corners<Pixels> {
         let max = size.width.max(size.height) / 2.;
         Corners {
@@ -682,6 +1585,34 @@ impl Corners<AbsoluteLength> {
 }
 
 impl Corners<Pixels> {
+    /// Scales the `Corners<Pixels>` by a given factor, returning `Corners<ScaledPixels>`.
+    ///
+    /// This method is typically used for adjusting the corner sizes for different display densities or scaling factors.
+    ///
+    /// # Arguments
+    ///
+    /// * `factor` - The scaling factor to apply to each corner.
+    ///
+    /// # Returns
+    ///
+    /// Returns a new `Corners<ScaledPixels>` where each corner is the result of scaling the original corner by the given factor.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use zed::{Corners, Pixels};
+    /// let corners = Corners {
+    ///     top_left: Pixels(10.0),
+    ///     top_right: Pixels(20.0),
+    ///     bottom_right: Pixels(30.0),
+    ///     bottom_left: Pixels(40.0),
+    /// };
+    /// let scaled_corners = corners.scale(2.0);
+    /// assert_eq!(scaled_corners.top_left, ScaledPixels(20.0));
+    /// assert_eq!(scaled_corners.top_right, ScaledPixels(40.0));
+    /// assert_eq!(scaled_corners.bottom_right, ScaledPixels(60.0));
+    /// assert_eq!(scaled_corners.bottom_left, ScaledPixels(80.0));
+    /// ```
     pub fn scale(&self, factor: f32) -> Corners<ScaledPixels> {
         Corners {
             top_left: self.top_left.scale(factor),
@@ -693,6 +1624,38 @@ impl Corners<Pixels> {
 }
 
 impl<T: Clone + Default + Debug> Corners<T> {
+    /// Applies a function to each field of the `Corners`, producing a new `Corners<U>`.
+    ///
+    /// This method allows for converting a `Corners<T>` to a `Corners<U>` by specifying a closure
+    /// that defines how to convert between the two types. The closure is applied to each field
+    /// (`top_left`, `top_right`, `bottom_right`, `bottom_left`), resulting in new corners of the desired type.
+    ///
+    /// # Arguments
+    ///
+    /// * `f` - A closure that takes a reference to a value of type `T` and returns a value of type `U`.
+    ///
+    /// # Returns
+    ///
+    /// Returns a new `Corners<U>` with each field mapped by the provided function.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use zed::{Corners, Pixels};
+    /// let corners = Corners {
+    ///     top_left: Pixels(10.0),
+    ///     top_right: Pixels(20.0),
+    ///     bottom_right: Pixels(30.0),
+    ///     bottom_left: Pixels(40.0),
+    /// };
+    /// let corners_in_rems = corners.map(|&px| Rems(px.0 / 16.0));
+    /// assert_eq!(corners_in_rems, Corners {
+    ///     top_left: Rems(0.625),
+    ///     top_right: Rems(1.25),
+    ///     bottom_right: Rems(1.875),
+    ///     bottom_left: Rems(2.5),
+    /// });
+    /// ```
     pub fn map<U>(&self, f: impl Fn(&T) -> U) -> Corners<U>
     where
         U: Clone + Default + Debug,
@@ -737,6 +1700,28 @@ where
 
 impl<T> Copy for Corners<T> where T: Copy + Clone + Default + Debug {}
 
+/// Represents a length in pixels, the base unit of measurement in the UI framework.
+///
+/// `Pixels` is a value type that represents an absolute length in pixels, which is used
+/// for specifying sizes, positions, and distances in the UI. It is the fundamental unit
+/// of measurement for all visual elements and layout calculations.
+///
+/// The inner value is an `f32`, allowing for sub-pixel precision which can be useful for
+/// anti-aliasing and animations. However, when applied to actual pixel grids, the value
+/// is typically rounded to the nearest integer.
+///
+/// # Examples
+///
+/// ```
+/// use zed::Pixels;
+///
+/// // Define a length of 10 pixels
+/// let length = Pixels(10.0);
+///
+/// // Define a length and scale it by a factor of 2
+/// let scaled_length = length.scale(2.0);
+/// assert_eq!(scaled_length, Pixels(20.0));
+/// ```
 #[derive(
     Clone,
     Copy,
@@ -815,29 +1800,68 @@ impl MulAssign<f32> for Pixels {
 }
 
 impl Pixels {
+    /// Represents zero pixels.
     pub const ZERO: Pixels = Pixels(0.0);
+    /// The maximum value that can be represented by `Pixels`.
     pub const MAX: Pixels = Pixels(f32::MAX);
 
+    /// Floors the `Pixels` value to the nearest whole number.
+    ///
+    /// # Returns
+    ///
+    /// Returns a new `Pixels` instance with the floored value.
     pub fn floor(&self) -> Self {
         Self(self.0.floor())
     }
 
+    /// Rounds the `Pixels` value to the nearest whole number.
+    ///
+    /// # Returns
+    ///
+    /// Returns a new `Pixels` instance with the rounded value.
     pub fn round(&self) -> Self {
         Self(self.0.round())
     }
 
+    /// Returns the ceiling of the `Pixels` value to the nearest whole number.
+    ///
+    /// # Returns
+    ///
+    /// Returns a new `Pixels` instance with the ceiling value.
     pub fn ceil(&self) -> Self {
         Self(self.0.ceil())
     }
 
+    /// Scales the `Pixels` value by a given factor, producing `ScaledPixels`.
+    ///
+    /// This method is used when adjusting pixel values for display scaling factors,
+    /// such as high DPI (dots per inch) or Retina displays, where the pixel density is higher and
+    /// thus requires scaling to maintain visual consistency and readability.
+    ///
+    /// The resulting `ScaledPixels` represent the scaled value which can be used for rendering
+    /// calculations where display scaling is considered.
     pub fn scale(&self, factor: f32) -> ScaledPixels {
         ScaledPixels(self.0 * factor)
     }
 
+    /// Raises the `Pixels` value to a given power.
+    ///
+    /// # Arguments
+    ///
+    /// * `exponent` - The exponent to raise the `Pixels` value by.
+    ///
+    /// # Returns
+    ///
+    /// Returns a new `Pixels` instance with the value raised to the given exponent.
     pub fn pow(&self, exponent: f32) -> Self {
         Self(self.0.powf(exponent))
     }
 
+    /// Returns the absolute value of the `Pixels`.
+    ///
+    /// # Returns
+    ///
+    /// A new `Pixels` instance with the absolute value of the original `Pixels`.
     pub fn abs(&self) -> Self {
         Self(self.0.abs())
     }
@@ -925,6 +1949,13 @@ impl From<usize> for Pixels {
     }
 }
 
+/// Represents physical pixels on the display.
+///
+/// `DevicePixels` is a unit of measurement that refers to the actual pixels on a device's screen.
+/// This type is used when precise pixel manipulation is required, such as rendering graphics or
+/// interfacing with hardware that operates on the pixel level. Unlike logical pixels that may be
+/// affected by the device's scale factor, `DevicePixels` always correspond to real pixels on the
+/// display.
 #[derive(
     Add, AddAssign, Clone, Copy, Default, Div, Eq, Hash, Ord, PartialEq, PartialOrd, Sub, SubAssign,
 )]
@@ -932,6 +1963,28 @@ impl From<usize> for Pixels {
 pub struct DevicePixels(pub(crate) i32);
 
 impl DevicePixels {
+    /// Converts the `DevicePixels` value to the number of bytes needed to represent it in memory.
+    ///
+    /// This function is useful when working with graphical data that needs to be stored in a buffer,
+    /// such as images or framebuffers, where each pixel may be represented by a specific number of bytes.
+    ///
+    /// # Arguments
+    ///
+    /// * `bytes_per_pixel` - The number of bytes used to represent a single pixel.
+    ///
+    /// # Returns
+    ///
+    /// The number of bytes required to represent the `DevicePixels` value in memory.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use zed::DevicePixels;
+    /// let pixels = DevicePixels(10); // 10 device pixels
+    /// let bytes_per_pixel = 4; // Assume each pixel is represented by 4 bytes (e.g., RGBA)
+    /// let total_bytes = pixels.to_bytes(bytes_per_pixel);
+    /// assert_eq!(total_bytes, 40); // 10 pixels * 4 bytes/pixel = 40 bytes
+    /// ```
     pub fn to_bytes(&self, bytes_per_pixel: u8) -> u32 {
         self.0 as u32 * bytes_per_pixel as u32
     }
@@ -991,15 +2044,32 @@ impl From<usize> for DevicePixels {
     }
 }
 
+/// Represents scaled pixels that take into account the device's scale factor.
+///
+/// `ScaledPixels` are used to ensure that UI elements appear at the correct size on devices
+/// with different pixel densities. When a device has a higher scale factor (such as Retina displays),
+/// a single logical pixel may correspond to multiple physical pixels. By using `ScaledPixels`,
+/// dimensions and positions can be specified in a way that scales appropriately across different
+/// display resolutions.
 #[derive(Clone, Copy, Default, Add, AddAssign, Sub, SubAssign, Div, PartialEq, PartialOrd)]
 #[repr(transparent)]
 pub struct ScaledPixels(pub(crate) f32);
 
 impl ScaledPixels {
+    /// Floors the `ScaledPixels` value to the nearest whole number.
+    ///
+    /// # Returns
+    ///
+    /// Returns a new `ScaledPixels` instance with the floored value.
     pub fn floor(&self) -> Self {
         Self(self.0.floor())
     }
 
+    /// Rounds the `ScaledPixels` value to the nearest whole number.
+    ///
+    /// # Returns
+    ///
+    /// Returns a new `ScaledPixels` instance with the rounded value.
     pub fn ceil(&self) -> Self {
         Self(self.0.ceil())
     }
@@ -1031,6 +2101,12 @@ impl From<ScaledPixels> for f64 {
     }
 }
 
+/// Represents pixels in a global coordinate space, which can span across multiple displays.
+///
+/// `GlobalPixels` is used when dealing with a coordinate system that is not limited to a single
+/// display's boundaries. This type is particularly useful in multi-monitor setups where
+/// positioning and measurements need to be consistent and relative to a "global" origin point
+/// rather than being relative to any individual display.
 #[derive(Clone, Copy, Default, Add, AddAssign, Sub, SubAssign, Div, PartialEq, PartialOrd)]
 #[repr(transparent)]
 pub struct GlobalPixels(pub(crate) f32);
@@ -1065,6 +2141,14 @@ impl sqlez::bindable::Bind for GlobalPixels {
     }
 }
 
+/// Represents a length in rems, a unit based on the font-size of the window, which can be assigned with [WindowContext::set_rem_size].
+///
+/// Rems are used for defining lengths that are scalable and consistent across different UI elements.
+/// The value of `1rem` is typically equal to the font-size of the root element (often the `<html>` element in browsers),
+/// making it a flexible unit that adapts to the user's text size preferences. In this framework, `rems` serve a similar
+/// purpose, allowing for scalable and accessible design that can adjust to different display settings or user preferences.
+///
+/// For example, if the root element's font-size is `16px`, then `1rem` equals `16px`. A length of `2rems` would then be `32px`.
 #[derive(Clone, Copy, Default, Add, Sub, Mul, Div, Neg)]
 pub struct Rems(pub f32);
 
@@ -1082,17 +2166,26 @@ impl Debug for Rems {
     }
 }
 
+/// Represents an absolute length in pixels or rems.
+///
+/// `AbsoluteLength` can be either a fixed number of pixels, which is an absolute measurement not
+/// affected by the current font size, or a number of rems, which is relative to the font size of
+/// the root element. It is used for specifying dimensions that are either independent of or
+/// related to the typographic scale.
 #[derive(Clone, Copy, Debug, Neg)]
 pub enum AbsoluteLength {
+    /// A length in pixels.
     Pixels(Pixels),
+    /// A length in rems.
     Rems(Rems),
 }
 
 impl AbsoluteLength {
+    /// Checks if the absolute length is zero.
     pub fn is_zero(&self) -> bool {
         match self {
-            AbsoluteLength::Pixels(px) => px.0 == 0.,
-            AbsoluteLength::Rems(rems) => rems.0 == 0.,
+            AbsoluteLength::Pixels(px) => px.0 == 0.0,
+            AbsoluteLength::Rems(rems) => rems.0 == 0.0,
         }
     }
 }
@@ -1110,6 +2203,27 @@ impl From<Rems> for AbsoluteLength {
 }
 
 impl AbsoluteLength {
+    /// Converts an `AbsoluteLength` to `Pixels` based on a given `rem_size`.
+    ///
+    /// # Arguments
+    ///
+    /// * `rem_size` - The size of one rem in pixels.
+    ///
+    /// # Returns
+    ///
+    /// Returns the `AbsoluteLength` as `Pixels`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use zed::{AbsoluteLength, Pixels};
+    /// let length_in_pixels = AbsoluteLength::Pixels(Pixels(42.0));
+    /// let length_in_rems = AbsoluteLength::Rems(Rems(2.0));
+    /// let rem_size = Pixels(16.0);
+    ///
+    /// assert_eq!(length_in_pixels.to_pixels(rem_size), Pixels(42.0));
+    /// assert_eq!(length_in_rems.to_pixels(rem_size), Pixels(32.0));
+    /// ```
     pub fn to_pixels(&self, rem_size: Pixels) -> Pixels {
         match self {
             AbsoluteLength::Pixels(pixels) => *pixels,
@@ -1125,14 +2239,47 @@ impl Default for AbsoluteLength {
 }
 
 /// A non-auto length that can be defined in pixels, rems, or percent of parent.
+///
+/// This enum represents lengths that have a specific value, as opposed to lengths that are automatically
+/// determined by the context. It includes absolute lengths in pixels or rems, and relative lengths as a
+/// fraction of the parent's size.
 #[derive(Clone, Copy, Neg)]
 pub enum DefiniteLength {
+    /// An absolute length specified in pixels or rems.
     Absolute(AbsoluteLength),
-    /// A fraction of the parent's size between 0 and 1.
+    /// A relative length specified as a fraction of the parent's size, between 0 and 1.
     Fraction(f32),
 }
 
 impl DefiniteLength {
+    /// Converts the `DefiniteLength` to `Pixels` based on a given `base_size` and `rem_size`.
+    ///
+    /// If the `DefiniteLength` is an absolute length, it will be directly converted to `Pixels`.
+    /// If it is a fraction, the fraction will be multiplied by the `base_size` to get the length in pixels.
+    ///
+    /// # Arguments
+    ///
+    /// * `base_size` - The base size in `AbsoluteLength` to which the fraction will be applied.
+    /// * `rem_size` - The size of one rem in pixels, used to convert rems to pixels.
+    ///
+    /// # Returns
+    ///
+    /// Returns the `DefiniteLength` as `Pixels`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use zed::{DefiniteLength, AbsoluteLength, Pixels, px, rems};
+    /// let length_in_pixels = DefiniteLength::Absolute(AbsoluteLength::Pixels(px(42.0)));
+    /// let length_in_rems = DefiniteLength::Absolute(AbsoluteLength::Rems(rems(2.0)));
+    /// let length_as_fraction = DefiniteLength::Fraction(0.5);
+    /// let base_size = AbsoluteLength::Pixels(px(100.0));
+    /// let rem_size = px(16.0);
+    ///
+    /// assert_eq!(length_in_pixels.to_pixels(base_size, rem_size), Pixels(42.0));
+    /// assert_eq!(length_in_rems.to_pixels(base_size, rem_size), Pixels(32.0));
+    /// assert_eq!(length_as_fraction.to_pixels(base_size, rem_size), Pixels(50.0));
+    /// ```
     pub fn to_pixels(&self, base_size: AbsoluteLength, rem_size: Pixels) -> Pixels {
         match self {
             DefiniteLength::Absolute(size) => size.to_pixels(rem_size),
@@ -1180,7 +2327,9 @@ impl Default for DefiniteLength {
 /// A length that can be defined in pixels, rems, percent of parent, or auto.
 #[derive(Clone, Copy)]
 pub enum Length {
+    /// A definite length specified either in pixels, rems, or as a fraction of the parent's size.
     Definite(DefiniteLength),
+    /// An automatic length that is determined by the context in which it is used.
     Auto,
 }
 
@@ -1193,6 +2342,18 @@ impl Debug for Length {
     }
 }
 
+/// Constructs a `DefiniteLength` representing a relative fraction of a parent size.
+///
+/// This function creates a `DefiniteLength` that is a specified fraction of a parent's dimension.
+/// The fraction should be a floating-point number between 0.0 and 1.0, where 1.0 represents 100% of the parent's size.
+///
+/// # Arguments
+///
+/// * `fraction` - The fraction of the parent's size, between 0.0 and 1.0.
+///
+/// # Returns
+///
+/// A `DefiniteLength` representing the relative length as a fraction of the parent's size.
 pub fn relative(fraction: f32) -> DefiniteLength {
     DefiniteLength::Fraction(fraction).into()
 }
@@ -1202,14 +2363,43 @@ pub fn phi() -> DefiniteLength {
     relative(1.61803398875)
 }
 
+/// Constructs a `Rems` value representing a length in rems.
+///
+/// # Arguments
+///
+/// * `rems` - The number of rems for the length.
+///
+/// # Returns
+///
+/// A `Rems` representing the specified number of rems.
 pub fn rems(rems: f32) -> Rems {
     Rems(rems)
 }
 
+/// Constructs a `Pixels` value representing a length in pixels.
+///
+/// # Arguments
+///
+/// * `pixels` - The number of pixels for the length.
+///
+/// # Returns
+///
+/// A `Pixels` representing the specified number of pixels.
 pub const fn px(pixels: f32) -> Pixels {
     Pixels(pixels)
 }
 
+/// Returns a `Length` representing an automatic length.
+///
+/// The `auto` length is often used in layout calculations where the length should be determined
+/// by the layout context itself rather than being explicitly set. This is commonly used in CSS
+/// for properties like `width`, `height`, `margin`, `padding`, etc., where `auto` can be used
+/// to instruct the layout engine to calculate the size based on other factors like the size of the
+/// container or the intrinsic size of the content.
+///
+/// # Returns
+///
+/// A `Length` variant set to `Auto`.
 pub fn auto() -> Length {
     Length::Auto
 }
@@ -1250,7 +2440,17 @@ impl From<()> for Length {
     }
 }
 
+/// Provides a trait for types that can calculate half of their value.
+///
+/// The `Half` trait is used for types that can be evenly divided, returning a new instance of the same type
+/// representing half of the original value. This is commonly used for types that represent measurements or sizes,
+/// such as lengths or pixels, where halving is a frequent operation during layout calculations or animations.
 pub trait Half {
+    /// Returns half of the current value.
+    ///
+    /// # Returns
+    ///
+    /// A new instance of the implementing type, representing half of the original value.
     fn half(&self) -> Self;
 }
 
@@ -1290,7 +2490,18 @@ impl Half for GlobalPixels {
     }
 }
 
+/// A trait for checking if a value is zero.
+///
+/// This trait provides a method to determine if a value is considered to be zero.
+/// It is implemented for various numeric and length-related types where the concept
+/// of zero is applicable. This can be useful for comparisons, optimizations, or
+/// determining if an operation has a neutral effect.
 pub trait IsZero {
+    /// Determines if the value is zero.
+    ///
+    /// # Returns
+    ///
+    /// Returns `true` if the value is zero, `false` otherwise.
     fn is_zero(&self) -> bool;
 }
 

@@ -1167,7 +1167,7 @@ impl<'a> WindowContext<'a> {
                 }
 
                 let available_space = cx.window.viewport_size.map(Into::into);
-                root_view.draw(Point::zero(), available_space, cx);
+                root_view.draw(Point::default(), available_space, cx);
             })
         });
 

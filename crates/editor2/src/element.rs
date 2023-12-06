@@ -485,7 +485,7 @@ impl EditorElement {
         let modifiers = event.modifiers;
         if editor.has_pending_selection() && event.pressed_button == Some(MouseButton::Left) {
             let point_for_position = position_map.point_for_position(text_bounds, event.position);
-            let mut scroll_delta = gpui::Point::<f32>::zero();
+            let mut scroll_delta = gpui::Point::<f32>::default();
             let vertical_margin = position_map.line_height.min(text_bounds.size.height / 3.0);
             let top = text_bounds.origin.y + vertical_margin;
             let bottom = text_bounds.lower_left().y - vertical_margin;
@@ -511,7 +511,7 @@ impl EditorElement {
                     position: point_for_position.previous_valid,
                     goal_column: point_for_position.exact_unclipped.column(),
                     scroll_position: (position_map.snapshot.scroll_position() + scroll_delta)
-                        .clamp(&gpui::Point::zero(), &position_map.scroll_max),
+                        .clamp(&gpui::Point::default(), &position_map.scroll_max),
                 },
                 cx,
             );
