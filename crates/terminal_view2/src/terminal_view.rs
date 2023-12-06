@@ -9,10 +9,9 @@ pub mod terminal_panel;
 // use crate::terminal_element::TerminalElement;
 use editor::{scroll::autoscroll::Autoscroll, Editor};
 use gpui::{
-    actions, div, point, px, size, Action, AnyElement, AppContext, Bounds, Div, EventEmitter,
-    FocusEvent, FocusHandle, Focusable, FocusableElement, FocusableView, Font, FontStyle,
-    FontWeight, InputHandler, KeyContext, KeyDownEvent, Keystroke, Model, MouseButton,
-    MouseDownEvent, Pixels, Render, Task, View, VisualContext, WeakView, Subscription
+    actions, div, Action, AnyElement, AppContext, Div, EventEmitter, FocusEvent, FocusHandle,
+    Focusable, FocusableElement, FocusableView, KeyContext, KeyDownEvent, Keystroke, Model,
+    MouseButton, MouseDownEvent, Pixels, Render, Subscription, Task, View, VisualContext, WeakView,
 };
 use language::Bias;
 use persistence::TERMINAL_DB;
@@ -26,7 +25,6 @@ use terminal::{
     Event, MaybeNavigationTarget, Terminal,
 };
 use terminal_element::TerminalElement;
-use theme::ThemeSettings;
 use ui::{h_stack, prelude::*, ContextMenu, Icon, IconElement, Label};
 use util::{paths::PathLikeWithPosition, ResultExt};
 use workspace::{
@@ -624,7 +622,7 @@ impl Render for TerminalView {
     type Element = Focusable<Div>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-        let terminal_handle = self.terminal.clone().downgrade();
+        let terminal_handle = self.terminal.clone();
         let this_view = cx.view().clone();
 
         let self_id = cx.entity_id();
@@ -670,124 +668,6 @@ impl Render for TerminalView {
             .track_focus(&self.focus_handle)
             .on_focus_in(cx.listener(Self::focus_in))
             .on_focus_out(cx.listener(Self::focus_out))
-    }
-}
-
-//todo!(Implement IME)
-impl InputHandler for TerminalView {
-    fn text_for_range(
-        &mut self,
-        range: std::ops::Range<usize>,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<String> {
-        None
-    }
-
-    fn selected_text_range(
-        &mut self,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<std::ops::Range<usize>> {
-        if self
-            .terminal
-            .read(cx)
-            .last_content
-            .mode
-            .contains(TermMode::ALT_SCREEN)
-        {
-            None
-        } else {
-            Some(0..0)
-        }
-    }
-
-    fn marked_text_range(&self, _cx: &mut ViewContext<Self>) -> Option<std::ops::Range<usize>> {
-        None
-    }
-
-    fn unmark_text(&mut self, _cx: &mut ViewContext<Self>) {}
-
-    fn replace_text_in_range(
-        &mut self,
-        _: Option<std::ops::Range<usize>>,
-        text: &str,
-        cx: &mut ViewContext<Self>,
-    ) {
-        self.terminal.update(cx, |terminal, _| {
-            terminal.input(text.into());
-        });
-    }
-
-    fn replace_and_mark_text_in_range(
-        &mut self,
-        _range: Option<std::ops::Range<usize>>,
-        _new_text: &str,
-        _new_selected_range: Option<std::ops::Range<usize>>,
-        _cx: &mut ViewContext<Self>,
-    ) {
-    }
-
-    // todo!(Check that this works correctly, why aren't we reading the range?)
-    fn bounds_for_range(
-        &mut self,
-        _range_utf16: std::ops::Range<usize>,
-        bounds: gpui::Bounds<Pixels>,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<gpui::Bounds<Pixels>> {
-        let settings = ThemeSettings::get_global(cx).clone();
-
-        let buffer_font_size = settings.buffer_font_size(cx);
-
-        let terminal_settings = TerminalSettings::get_global(cx);
-        let font_family = terminal_settings
-            .font_family
-            .as_ref()
-            .map(|string| string.clone().into())
-            .unwrap_or(settings.buffer_font.family);
-
-        let line_height = terminal_settings
-            .line_height
-            .value()
-            .to_pixels(cx.rem_size());
-
-        let font_size = terminal_settings.font_size.clone();
-        let features = terminal_settings
-            .font_features
-            .clone()
-            .unwrap_or(settings.buffer_font.features.clone());
-
-        let font_size =
-            font_size.map_or(buffer_font_size, |size| theme::adjusted_font_size(size, cx));
-
-        let font_id = cx
-            .text_system()
-            .font_id(&Font {
-                family: font_family,
-                style: FontStyle::Normal,
-                weight: FontWeight::NORMAL,
-                features,
-            })
-            .unwrap();
-
-        let cell_width = cx
-            .text_system()
-            .advance(font_id, font_size, 'm')
-            .unwrap()
-            .width;
-
-        let mut origin = bounds.origin + point(cell_width, px(0.));
-
-        // TODO - Why is it necessary to move downward one line to get correct
-        // positioning? I would think that we'd want the same rect that is
-        // painted for the cursor.
-        origin += point(px(0.), line_height);
-
-        let cursor = Bounds {
-            origin,
-            //todo!(correctly calculate this width and height based on the text the line is over)
-            size: size(cell_width, line_height),
-        };
-
-        Some(cursor)
     }
 }
 

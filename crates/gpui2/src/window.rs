@@ -1231,6 +1231,7 @@ impl<'a> WindowContext<'a> {
     /// Rotate the current frame and the previous frame, then clear the current frame.
     /// We repopulate all state in the current frame during each paint.
     fn start_frame(&mut self) {
+        self.window.platform_window.clear_input_handler();
         self.text_system().start_frame();
 
         let window = &mut *self.window;

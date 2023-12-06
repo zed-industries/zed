@@ -1,11 +1,11 @@
 use editor::{Cursor, HighlightedRange, HighlightedRangeLine};
 use gpui::{
-    black, div, point, px, red, relative, transparent_black, AnyElement, AvailableSpace, Bounds,
-    DispatchPhase, Element, ElementId, ElementInputHandler, FocusHandle, Font, FontStyle,
+    black, div, point, px, red, relative, transparent_black, AnyElement, AsyncWindowContext,
+    AvailableSpace, Bounds, DispatchPhase, Element, ElementId, FocusHandle, Font, FontStyle,
     FontWeight, HighlightStyle, Hsla, InteractiveElement, InteractiveElementState, IntoElement,
-    LayoutId, ModelContext, ModifiersChangedEvent, MouseButton, Pixels, Point, Rgba, ShapedLine,
-    Size, StatefulInteractiveElement, Styled, TextRun, TextStyle, TextSystem, UnderlineStyle, View,
-    WeakModel, WhiteSpace, WindowContext,
+    LayoutId, Model, ModelContext, ModifiersChangedEvent, MouseButton, Pixels,
+    PlatformInputHandler, Point, Rgba, ShapedLine, Size, StatefulInteractiveElement, Styled,
+    TextRun, TextStyle, TextSystem, UnderlineStyle, View, WhiteSpace, WindowContext,
 };
 use itertools::Itertools;
 use language::CursorShape;
@@ -148,7 +148,7 @@ impl LayoutRect {
 ///The GPUI element that paints the terminal.
 ///We need to keep a reference to the view for mouse events, do we need it for any other terminal stuff, or can we move that to connection?
 pub struct TerminalElement {
-    terminal: WeakModel<Terminal>,
+    terminal: Model<Terminal>,
     terminal_view: View<TerminalView>,
     focus: FocusHandle,
     focused: bool,
@@ -167,7 +167,7 @@ impl StatefulInteractiveElement for TerminalElement {}
 
 impl TerminalElement {
     pub fn new(
-        terminal: WeakModel<Terminal>,
+        terminal: Model<Terminal>,
         terminal_view: View<TerminalView>,
         focus: FocusHandle,
         focused: bool,
@@ -461,16 +461,11 @@ impl TerminalElement {
             TerminalSize::new(line_height, cell_width, size)
         };
 
-        let search_matches = if let Some(terminal_model) = self.terminal.upgrade() {
-            terminal_model.read(cx).matches.clone()
-        } else {
-            Default::default()
-        };
+        let search_matches = self.terminal.read(cx).matches.clone();
 
         let background_color = theme.colors().background;
-        let terminal_handle = self.terminal.upgrade().unwrap();
 
-        let last_hovered_word = terminal_handle.update(cx, |terminal, cx| {
+        let last_hovered_word = self.terminal.update(cx, |terminal, cx| {
             terminal.set_size(dimensions);
             terminal.try_sync(cx);
             if self.can_navigate_to_selected_word && terminal.can_navigate_to_selected_word() {
@@ -495,7 +490,7 @@ impl TerminalElement {
             selection,
             cursor,
             ..
-        } = &terminal_handle.read(cx).last_content;
+        } = &self.terminal.read(cx).last_content;
 
         // searches, highlights to a single range representations
         let mut relative_highlighted_ranges = Vec::new();
@@ -592,20 +587,18 @@ impl TerminalElement {
     }
 
     fn generic_button_handler<E>(
-        connection: WeakModel<Terminal>,
+        connection: Model<Terminal>,
         origin: Point<Pixels>,
         focus_handle: FocusHandle,
         f: impl Fn(&mut Terminal, Point<Pixels>, &E, &mut ModelContext<Terminal>),
     ) -> impl Fn(&E, &mut WindowContext) {
         move |event, cx| {
             cx.focus(&focus_handle);
-            if let Some(conn_handle) = connection.upgrade() {
-                conn_handle.update(cx, |terminal, cx| {
-                    f(terminal, origin, event, cx);
+            connection.update(cx, |terminal, cx| {
+                f(terminal, origin, event, cx);
 
-                    cx.notify();
-                })
-            }
+                cx.notify();
+            })
         }
     }
 
@@ -617,10 +610,10 @@ impl TerminalElement {
                     return;
                 }
 
-                let handled = this
-                    .update(cx, |term, _| term.try_modifiers_change(&event.modifiers))
-                    .ok();
-                if handled == Some(true) {
+                let handled =
+                    this.update(cx, |term, _| term.try_modifiers_change(&event.modifiers));
+
+                if handled {
                     cx.notify();
                 }
             }
@@ -645,13 +638,11 @@ impl TerminalElement {
                     cx.focus(&focus);
                     //todo!(context menu)
                     // v.context_menu.update(cx, |menu, _cx| menu.delay_cancel());
-                    if let Some(conn_handle) = connection.upgrade() {
-                        conn_handle.update(cx, |terminal, cx| {
-                            terminal.mouse_down(&e, origin);
+                    connection.update(cx, |terminal, cx| {
+                        terminal.mouse_down(&e, origin);
 
-                            cx.notify();
-                        })
-                    }
+                        cx.notify();
+                    })
                 }
             })
             .on_mouse_move({
@@ -660,12 +651,10 @@ impl TerminalElement {
                 move |e, cx| {
                     if e.pressed_button.is_some() {
                         if focus.is_focused(cx) {
-                            if let Some(conn_handle) = connection.upgrade() {
-                                conn_handle.update(cx, |terminal, cx| {
-                                    terminal.mouse_drag(e, origin, bounds);
-                                    cx.notify();
-                                })
-                            }
+                            connection.update(cx, |terminal, cx| {
+                                terminal.mouse_drag(e, origin, bounds);
+                                cx.notify();
+                            })
                         }
                     }
                 }
@@ -685,14 +674,10 @@ impl TerminalElement {
                 let connection = connection.clone();
                 move |e, cx| {
                     if e.down.button == MouseButton::Right {
-                        let mouse_mode = if let Some(conn_handle) = connection.upgrade() {
-                            conn_handle.update(cx, |terminal, _cx| {
-                                terminal.mouse_mode(e.down.modifiers.shift)
-                            })
-                        } else {
-                            // If we can't get the model handle, probably can't deploy the context menu
-                            true
-                        };
+                        let mouse_mode = connection.update(cx, |terminal, _cx| {
+                            terminal.mouse_mode(e.down.modifiers.shift)
+                        });
+
                         if !mouse_mode {
                             //todo!(context menu)
                             // view.deploy_context_menu(e.position, cx);
@@ -705,24 +690,20 @@ impl TerminalElement {
                 let focus = focus.clone();
                 move |e, cx| {
                     if focus.is_focused(cx) {
-                        if let Some(conn_handle) = connection.upgrade() {
-                            conn_handle.update(cx, |terminal, cx| {
-                                terminal.mouse_move(&e, origin);
-                                cx.notify();
-                            })
-                        }
+                        connection.update(cx, |terminal, cx| {
+                            terminal.mouse_move(&e, origin);
+                            cx.notify();
+                        })
                     }
                 }
             })
             .on_scroll_wheel({
                 let connection = connection.clone();
                 move |e, cx| {
-                    if let Some(conn_handle) = connection.upgrade() {
-                        conn_handle.update(cx, |terminal, cx| {
-                            terminal.scroll_wheel(e, origin);
-                            cx.notify();
-                        })
-                    }
+                    connection.update(cx, |terminal, cx| {
+                        terminal.scroll_wheel(e, origin);
+                        cx.notify();
+                    })
                 }
             });
 
@@ -822,13 +803,21 @@ impl Element for TerminalElement {
         );
         let origin = bounds.origin + Point::new(layout.gutter, px(0.));
 
+        let terminal_input_handler = TerminalInputHandler {
+            cx: cx.to_async(),
+            terminal: self.terminal.clone(),
+            cursor_bounds: layout
+                .cursor
+                .as_ref()
+                .map(|cursor| cursor.bounding_rect(origin)),
+        };
+
         let mut this = self.register_mouse_listeners(origin, layout.mode, bounds, cx);
 
         let interactivity = mem::take(&mut this.interactivity);
 
         interactivity.paint(bounds, bounds.size, state, cx, |_, _, cx| {
-            let input_handler = ElementInputHandler::new(bounds, this.terminal_view.clone(), cx);
-            cx.handle_input(&this.focus, input_handler);
+            cx.handle_input(&this.focus, terminal_input_handler);
 
             this.register_key_listeners(cx);
 
@@ -887,6 +876,69 @@ impl IntoElement for TerminalElement {
 
     fn into_element(self) -> Self::Element {
         self
+    }
+}
+
+struct TerminalInputHandler {
+    cx: AsyncWindowContext,
+    terminal: Model<Terminal>,
+    cursor_bounds: Option<Bounds<Pixels>>,
+}
+
+impl PlatformInputHandler for TerminalInputHandler {
+    fn selected_text_range(&mut self) -> Option<std::ops::Range<usize>> {
+        self.cx
+            .update(|_, cx| {
+                if self
+                    .terminal
+                    .read(cx)
+                    .last_content
+                    .mode
+                    .contains(TermMode::ALT_SCREEN)
+                {
+                    None
+                } else {
+                    Some(0..0)
+                }
+            })
+            .ok()
+            .flatten()
+    }
+
+    fn marked_text_range(&mut self) -> Option<std::ops::Range<usize>> {
+        None
+    }
+
+    fn text_for_range(&mut self, range_utf16: std::ops::Range<usize>) -> Option<String> {
+        None
+    }
+
+    fn replace_text_in_range(
+        &mut self,
+        _replacement_range: Option<std::ops::Range<usize>>,
+        text: &str,
+    ) {
+        self.cx
+            .update(|_, cx| {
+                self.terminal.update(cx, |terminal, _| {
+                    terminal.input(text.into());
+                })
+            })
+            .ok();
+    }
+
+    fn replace_and_mark_text_in_range(
+        &mut self,
+        _range_utf16: Option<std::ops::Range<usize>>,
+        _new_text: &str,
+        _new_selected_range: Option<std::ops::Range<usize>>,
+    ) {
+    }
+
+    fn unmark_text(&mut self) {}
+
+    fn bounds_for_range(&mut self, _range_utf16: std::ops::Range<usize>) -> Option<Bounds<Pixels>> {
+        self.cursor_bounds
     }
 }
 

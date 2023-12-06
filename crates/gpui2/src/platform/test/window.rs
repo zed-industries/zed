@@ -89,6 +89,10 @@ impl PlatformWindow for TestWindow {
         self.input_handler = Some(Arc::new(Mutex::new(input_handler)));
     }
 
+    fn clear_input_handler(&mut self) {
+        self.input_handler = None;
+    }
+
     fn prompt(
         &self,
         _level: crate::PromptLevel,
