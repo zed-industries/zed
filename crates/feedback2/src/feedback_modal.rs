@@ -43,8 +43,7 @@ pub struct FeedbackModal {
     email_address_editor: View<Editor>,
     project: Model<Project>,
     character_count: usize,
-    allow_submission: bool,
-    pub pending_submission: bool,
+    pending_submission: bool,
 }
 
 impl FocusableView for FeedbackModal {
@@ -134,23 +133,14 @@ impl FeedbackModal {
             feedback_editor,
             email_address_editor,
             project,
-            allow_submission: false,
             pending_submission: false,
             character_count: 0,
         }
     }
 
     pub fn submit(&mut self, cx: &mut ViewContext<Self>) -> Task<anyhow::Result<()>> {
-        if !self.allow_submission {
-            return Task::ready(Ok(()));
-        }
         let feedback_text = self.feedback_editor.read(cx).text(cx).trim().to_string();
         let email = self.email_address_editor.read(cx).text_option(cx);
-
-        if let Some(email) = email.clone() {
-            cx.spawn(|_, _| KEY_VALUE_STORE.write_kvp(DATABASE_KEY_NAME.to_string(), email.clone()))
-                .detach()
-        }
 
         let answer = cx.prompt(
             PromptLevel::Info,
@@ -162,6 +152,12 @@ impl FeedbackModal {
         cx.spawn(|this, mut cx| async move {
             let answer = answer.await.ok();
             if answer == Some(0) {
+                if let Some(email) = email.clone() {
+                    let _ = KEY_VALUE_STORE
+                        .write_kvp(DATABASE_KEY_NAME.to_string(), email)
+                        .await;
+                }
+
                 this.update(&mut cx, |feedback_editor, cx| {
                     feedback_editor.set_pending_submission(true, cx);
                 })
@@ -241,7 +237,7 @@ impl Render for FeedbackModal {
             None => true,
         };
 
-        self.allow_submission = FEEDBACK_CHAR_LIMIT.contains(&self.character_count)
+        let allow_submission = FEEDBACK_CHAR_LIMIT.contains(&self.character_count)
             && valid_email_address
             && !self.pending_submission;
 
@@ -311,6 +307,11 @@ impl Render for FeedbackModal {
                             Button::new("send_feedback", "Send Feedback")
                                 .color(Color::Accent)
                                 .style(ButtonStyle::Filled)
+                                // .on_click(|_, cx| {
+                                //     cx.build_view(|cx, this| {
+                                //         FeedbackModal::submit(cx)
+                                //     })
+                                // })
                                 .tooltip(|cx| {
                                     Tooltip::with_meta(
                                         "Submit feedback to the Zed team.",
@@ -319,7 +320,7 @@ impl Render for FeedbackModal {
                                         cx,
                                     )
                                 })
-                                .when(!self.allow_submission, |this| this.disabled(true)),
+                                .when(!allow_submission, |this| this.disabled(true)),
                         ),
                     )
 
