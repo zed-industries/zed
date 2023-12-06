@@ -804,6 +804,22 @@ impl<'a> WindowContext<'a> {
         );
     }
 
+    pub fn is_action_available(&self, action: &dyn Action) -> bool {
+        let target = self
+            .focused()
+            .and_then(|focused_handle| {
+                self.window
+                    .current_frame
+                    .dispatch_tree
+                    .focusable_node_id(focused_handle.id)
+            })
+            .unwrap_or_else(|| self.window.current_frame.dispatch_tree.root_node_id());
+        self.window
+            .current_frame
+            .dispatch_tree
+            .is_action_available(action, target)
+    }
+
     /// The position of the mouse relative to the window.
     pub fn mouse_position(&self) -> Point<Pixels> {
         self.window.mouse_position

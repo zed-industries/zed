@@ -161,17 +161,15 @@ impl DispatchTree {
         actions
     }
 
-    pub fn is_action_available(&self, action: &dyn Action, target: FocusId) -> bool {
-        if let Some(node) = self.focusable_node_ids.get(&target) {
-            for node_id in self.dispatch_path(*node) {
-                let node = &self.nodes[node_id.0];
-                if node
-                    .action_listeners
-                    .iter()
-                    .any(|listener| listener.action_type == action.as_any().type_id())
-                {
-                    return true;
-                }
+    pub fn is_action_available(&self, action: &dyn Action, target: DispatchNodeId) -> bool {
+        for node_id in self.dispatch_path(target) {
+            let node = &self.nodes[node_id.0];
+            if node
+                .action_listeners
+                .iter()
+                .any(|listener| listener.action_type == action.as_any().type_id())
+            {
+                return true;
             }
         }
         false

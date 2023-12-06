@@ -1040,20 +1040,10 @@ impl AppContext {
 
     pub fn is_action_available(&mut self, action: &dyn Action) -> bool {
         if let Some(window) = self.active_window() {
-            let window_action_available = window
-                .update(self, |_, cx| {
-                    if let Some(focus_id) = cx.window.focus {
-                        cx.window
-                            .current_frame
-                            .dispatch_tree
-                            .is_action_available(action, focus_id)
-                    } else {
-                        false
-                    }
-                })
-                .unwrap_or(false);
-            if window_action_available {
-                return true;
+            if let Ok(window_action_available) =
+                window.update(self, |_, cx| cx.is_action_available(action))
+            {
+                return window_action_available;
             }
         }
 
@@ -1075,44 +1065,19 @@ impl AppContext {
     }
 
     pub fn dispatch_action(&mut self, action: &dyn Action) {
-        self.propagate_event = true;
+        if let Some(active_window) = self.active_window() {
+            active_window
+                .update(self, |_, cx| cx.dispatch_action(action.boxed_clone()))
+                .log_err();
+        } else {
+            self.propagate_event = true;
 
-        if let Some(mut global_listeners) = self
-            .global_action_listeners
-            .remove(&action.as_any().type_id())
-        {
-            for listener in &global_listeners {
-                listener(action, DispatchPhase::Capture, self);
-                if !self.propagate_event {
-                    break;
-                }
-            }
-
-            global_listeners.extend(
-                self.global_action_listeners
-                    .remove(&action.as_any().type_id())
-                    .unwrap_or_default(),
-            );
-
-            self.global_action_listeners
-                .insert(action.as_any().type_id(), global_listeners);
-        }
-
-        if self.propagate_event {
-            if let Some(active_window) = self.active_window() {
-                active_window
-                    .update(self, |_, cx| cx.dispatch_action(action.boxed_clone()))
-                    .log_err();
-            }
-        }
-
-        if self.propagate_event {
             if let Some(mut global_listeners) = self
                 .global_action_listeners
                 .remove(&action.as_any().type_id())
             {
-                for listener in global_listeners.iter().rev() {
-                    listener(action, DispatchPhase::Bubble, self);
+                for listener in &global_listeners {
+                    listener(action.as_any(), DispatchPhase::Capture, self);
                     if !self.propagate_event {
                         break;
                     }
@@ -1126,6 +1091,29 @@ impl AppContext {
 
                 self.global_action_listeners
                     .insert(action.as_any().type_id(), global_listeners);
+            }
+
+            if self.propagate_event {
+                if let Some(mut global_listeners) = self
+                    .global_action_listeners
+                    .remove(&action.as_any().type_id())
+                {
+                    for listener in global_listeners.iter().rev() {
+                        listener(action.as_any(), DispatchPhase::Bubble, self);
+                        if !self.propagate_event {
+                            break;
+                        }
+                    }
+
+                    global_listeners.extend(
+                        self.global_action_listeners
+                            .remove(&action.as_any().type_id())
+                            .unwrap_or_default(),
+                    );
+
+                    self.global_action_listeners
+                        .insert(action.as_any().type_id(), global_listeners);
+                }
             }
         }
     }
