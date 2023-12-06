@@ -129,6 +129,9 @@ impl RenderOnce for HighlightedLabel {
             ));
         }
 
+        let mut text_style = cx.text_style().clone();
+        text_style.color = self.color.color(cx);
+
         div()
             .flex()
             .when(self.strikethrough, |this| {
@@ -146,7 +149,7 @@ impl RenderOnce for HighlightedLabel {
                 LabelSize::Default => this.text_ui(),
                 LabelSize::Small => this.text_ui_sm(),
             })
-            .child(StyledText::new(self.label).with_highlights(&cx.text_style(), highlights))
+            .child(StyledText::new(self.label).with_highlights(&text_style, highlights))
     }
 }
 
