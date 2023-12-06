@@ -439,7 +439,7 @@ pub fn init(cx: &mut AppContext) {
             })
             .detach();
         }
-    })
+    });
 }
 
 trait InvalidationRegion {
