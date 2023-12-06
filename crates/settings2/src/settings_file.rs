@@ -124,6 +124,17 @@ pub fn update_settings_file<T: Settings>(
 
 pub fn load_default_keymap(cx: &mut AppContext) {
     for path in ["keymaps/default.json", "keymaps/vim.json"] {
+        // TODO: Remove this conditional when we're ready to add Vim support.
+        // Right now we're avoiding loading the Vim keymap to silence the warnings
+        // about invalid action bindings.
+        if path.contains("vim") {
+            let _: Option<()> = Err(format!(
+                "TODO: Skipping {path} until we're ready to add Vim support"
+            ))
+            .log_err();
+            continue;
+        }
+
         KeymapFile::load_asset(path, cx).unwrap();
     }
 
