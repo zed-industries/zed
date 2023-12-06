@@ -1,11 +1,13 @@
 #![allow(unused_variables, unused_mut)]
 //todo!()
 
+mod app_menus;
 mod assets;
 pub mod languages;
 mod only_instance;
 mod open_listener;
 
+pub use app_menus::*;
 pub use assets::*;
 use breadcrumbs::Breadcrumbs;
 use collections::VecDeque;
@@ -18,9 +20,10 @@ pub use only_instance::*;
 pub use open_listener::*;
 
 use anyhow::{anyhow, Context as _};
+use futures::{channel::mpsc, StreamExt};
 use project_panel::ProjectPanel;
 use quick_action_bar::QuickActionBar;
-use settings::{initial_local_settings_content, Settings};
+use settings::{initial_local_settings_content, load_default_keymap, KeymapFile, Settings};
 use std::{borrow::Cow, ops::Deref, sync::Arc};
 use terminal_view::terminal_panel::TerminalPanel;
 use util::{
@@ -563,6 +566,42 @@ fn open_log_file(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
             .detach();
         })
         .detach();
+}
+
+pub fn handle_keymap_file_changes(
+    mut user_keymap_file_rx: mpsc::UnboundedReceiver<String>,
+    cx: &mut AppContext,
+) {
+    cx.spawn(move |cx| async move {
+        //  let mut settings_subscription = None;
+        while let Some(user_keymap_content) = user_keymap_file_rx.next().await {
+            if let Some(keymap_content) = KeymapFile::parse(&user_keymap_content).log_err() {
+                cx.update(|cx| reload_keymaps(cx, &keymap_content)).ok();
+
+                // todo!()
+                // let mut old_base_keymap = cx.read(|cx| *settings::get::<BaseKeymap>(cx));
+                // drop(settings_subscription);
+                // settings_subscription = Some(cx.update(|cx| {
+                //     cx.observe_global::<SettingsStore, _>(move |cx| {
+                //         let new_base_keymap = *settings::get::<BaseKeymap>(cx);
+                //         if new_base_keymap != old_base_keymap {
+                //             old_base_keymap = new_base_keymap.clone();
+                //             reload_keymaps(cx, &keymap_content);
+                //         }
+                //     })
+                // }));
+            }
+        }
+    })
+    .detach();
+}
+
+fn reload_keymaps(cx: &mut AppContext, keymap_content: &KeymapFile) {
+    // todo!()
+    // cx.clear_bindings();
+    load_default_keymap(cx);
+    keymap_content.clone().add_to_cx(cx).log_err();
+    cx.set_menus(app_menus());
 }
 
 fn open_local_settings_file(
