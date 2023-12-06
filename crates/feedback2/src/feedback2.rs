@@ -5,7 +5,7 @@ use workspace::Workspace;
 pub mod deploy_feedback_button;
 pub mod feedback_editor;
 pub mod feedback_info_text;
-// pub mod feedback_modal;
+pub mod feedback_modal;
 pub mod submit_feedback_button;
 
 mod system_specs;
@@ -18,7 +18,9 @@ actions!(
 );
 
 pub fn init(cx: &mut AppContext) {
-    feedback_editor::init(cx);
+    // TODO - a way to combine these two into one?
+    cx.observe_new_views(feedback_modal::FeedbackModal::register)
+        .detach();
 
     cx.observe_new_views(|workspace: &mut Workspace, _cx| {
         workspace

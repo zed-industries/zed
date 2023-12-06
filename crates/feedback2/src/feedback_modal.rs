@@ -1,20 +1,34 @@
-use gpui::{
-    div, rems, AppContext, DismissEvent, Div, EventEmitter, FocusHandle, FocusableView, Render,
-    ViewContext,
-};
-use ui::{prelude::*, Button, ButtonStyle, Label, Tooltip};
-use workspace::Workspace;
+use std::ops::RangeInclusive;
 
-use crate::feedback_editor::GiveFeedback;
+use editor::{Editor, EditorEvent};
+use gpui::{
+    div, red, rems, AppContext, DismissEvent, Div, EventEmitter, FocusHandle, FocusableView, Model,
+    Render, View, ViewContext,
+};
+use language::Buffer;
+use project::Project;
+use ui::{prelude::*, Button, ButtonStyle, Label, Tooltip};
+use util::ResultExt;
+use workspace::{item::Item, Workspace};
+
+use crate::{feedback_editor::GiveFeedback, system_specs::SystemSpecs, OpenZedCommunityRepo};
+
+const FEEDBACK_CHAR_LIMIT: RangeInclusive<usize> = 10..=5000;
+const FEEDBACK_SUBMISSION_ERROR_TEXT: &str =
+    "Feedback failed to submit, see error log for details.";
 
 pub struct FeedbackModal {
-    // editor: View<Editor>,
-    tmp_focus_handle: FocusHandle, // TODO: should be editor.focus_handle(cx)
+    system_specs: SystemSpecs,
+    feedback_editor: View<Editor>,
+    email_address_editor: View<Editor>,
+    project: Model<Project>,
+    pub allow_submission: bool,
+    character_count: usize,
 }
 
 impl FocusableView for FeedbackModal {
-    fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
-        self.tmp_focus_handle.clone()
+    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+        self.feedback_editor.focus_handle(cx)
     }
 }
 impl EventEmitter<DismissEvent> for FeedbackModal {}
@@ -23,28 +37,78 @@ impl FeedbackModal {
     pub fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
         let _handle = cx.view().downgrade();
         workspace.register_action(move |workspace, _: &GiveFeedback, cx| {
-            workspace.toggle_modal(cx, move |cx| FeedbackModal::new(cx));
+            let markdown = workspace
+                .app_state()
+                .languages
+                .language_for_name("Markdown");
+
+            let project = workspace.project().clone();
+
+            cx.spawn(|workspace, mut cx| async move {
+                let markdown = markdown.await.log_err();
+                let buffer = project
+                    .update(&mut cx, |project, cx| {
+                        project.create_buffer("", markdown, cx)
+                    })?
+                    .expect("creating buffers on a local workspace always succeeds");
+
+                workspace.update(&mut cx, |workspace, cx| {
+                    let system_specs = SystemSpecs::new(cx);
+
+                    workspace.toggle_modal(cx, move |cx| {
+                        FeedbackModal::new(system_specs, project, buffer, cx)
+                    });
+                })?;
+
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
         });
     }
 
-    pub fn new(cx: &mut ViewContext<Self>) -> Self {
-        // let line_editor = cx.build_view(|cx| Editor::single_line(cx));
-        // let line_editor_change = cx.subscribe(&line_editor, Self::on_line_editor_event);
+    pub fn new(
+        system_specs: SystemSpecs,
+        project: Model<Project>,
+        buffer: Model<Buffer>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
+        let email_address_editor = cx.build_view(|cx| {
+            let mut editor = Editor::single_line(cx);
+            editor.set_placeholder_text("Email address (optional)", cx);
+            editor
+        });
+        let feedback_editor = cx.build_view(|cx| {
+            let mut editor = Editor::for_buffer(buffer, Some(project.clone()), cx);
+            editor.set_vertical_scroll_margin(5, cx);
+            editor
+        });
 
-        // let editor = active_editor.read(cx);
-        // let cursor = editor.selections.last::<Point>(cx).head();
-        // let last_line = editor.buffer().read(cx).snapshot(cx).max_point().row;
-        // let scroll_position = active_editor.update(cx, |editor, cx| editor.scroll_position(cx));
+        cx.subscribe(
+            &feedback_editor,
+            |this, editor, event: &EditorEvent, cx| match event {
+                EditorEvent::Edited => {
+                    this.character_count = editor
+                        .read(cx)
+                        .buffer()
+                        .read(cx)
+                        .as_singleton()
+                        .expect("Feedback editor is never a multi-buffer")
+                        .read(cx)
+                        .len();
+                    cx.notify();
+                }
+                _ => {}
+            },
+        )
+        .detach();
 
-        // let current_text = format!(
-        //     "line {} of {} (column {})",
-        //     cursor.row + 1,
-        //     last_line + 1,
-        //     cursor.column + 1,
-        // );
         Self {
-            // editor: line_editor,
-            tmp_focus_handle: cx.focus_handle(),
+            system_specs: system_specs.clone(),
+            feedback_editor,
+            email_address_editor,
+            project,
+            allow_submission: true,
+            character_count: 0,
         }
     }
 
@@ -127,7 +191,13 @@ impl Render for FeedbackModal {
     type Element = Div;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+        let character_count_error = (self.character_count < *FEEDBACK_CHAR_LIMIT.start())
+            || (self.character_count > *FEEDBACK_CHAR_LIMIT.end());
+
         let dismiss = cx.listener(|_, _, cx| cx.emit(DismissEvent));
+        // let open_community_issues =
+        //     cx.listener(|_, _, cx| cx.dispatch_action(Box::new(OpenZedCommunityRepo)));
+        // let open_community_discussions = cx.listener(|_, _, cx| cx.emit(DismissEvent));
 
         v_stack()
             .elevation_3(cx)
@@ -136,81 +206,72 @@ impl Render for FeedbackModal {
             .h(rems(40.))
             .p_2()
             .gap_2()
-            .child(h_stack().child(Label::new("Give Feedback").color(Color::Default)))
+            .child(
+                v_stack().child(
+                    div()
+                        .size_full()
+                        .border()
+                        .border_color(red())
+                        .child(Label::new("Give Feedback").color(Color::Default))
+                        .child(Label::new("This editor supports markdown").color(Color::Muted)),
+                ),
+            )
             .child(
                 div()
                     .flex_1()
                     .bg(cx.theme().colors().editor_background)
                     .border()
                     .border_color(cx.theme().colors().border)
-                    .child("editor"),
+                    .child(self.feedback_editor.clone()),
+            )
+            .child(
+                div().border().border_color(red()).child(
+                    Label::new(format!(
+                        "{} / {} Characters",
+                        self.character_count,
+                        FEEDBACK_CHAR_LIMIT.end()
+                    ))
+                    .color(Color::Default),
+                ),
+            )
+            .child(                div()
+                .bg(cx.theme().colors().editor_background)
+                .border()
+                .border_color(cx.theme().colors().border)
+                .child(self.email_address_editor.clone())
             )
             .child(
                 h_stack()
-                    .justify_end()
+                    .justify_between()
                     .gap_1()
-                    .child(
-                        Button::new("cancel_feedback", "Cancel")
-                            .style(ButtonStyle::Subtle)
-                            .color(Color::Muted)
-                            .on_click(dismiss),
+                    .child(Button::new("community_repo", "Community Repo")
+                        .style(ButtonStyle::Filled)
+                        .color(Color::Muted)
+                        // .on_click(cx.dispatch_action(Box::new(OpenZedCommunityRepo)))
                     )
-                    .child(
-                        Button::new("send_feedback", "Send Feedback")
-                            .color(Color::Accent)
-                            .style(ButtonStyle::Filled)
-                            .tooltip(|cx| {
-                                Tooltip::with_meta(
-                                    "Submit feedback to the Zed team.",
-                                    None,
-                                    "Provide an email address if you want us to be able to reply.",
-                                    cx,
-                                )
-                            }),
-                    ),
+                    .child(h_stack().justify_between().gap_1()
+                        .child(
+                            Button::new("cancel_feedback", "Cancel")
+                                .style(ButtonStyle::Subtle)
+                                .color(Color::Muted)
+                                .on_click(dismiss),
+                        )
+                        .child(
+                            Button::new("send_feedback", "Send Feedback")
+                                .color(Color::Accent)
+                                .style(ButtonStyle::Filled)
+                                .tooltip(|cx| {
+                                    Tooltip::with_meta(
+                                        "Submit feedback to the Zed team.",
+                                        None,
+                                        "Provide an email address if you want us to be able to reply.",
+                                        cx,
+                                    )
+                                })
+                                .when(character_count_error, |this| this.disabled(true)),
+                        ),
+                    )
+
             )
-
-        // Header
-        // - has some info, maybe some links
-        // Body
-        // - Markdown Editor
-        // - Email address
-        // Footer
-        // - CTA buttons (Send, Cancel)
-
-        // div()
-        //     .elevation_2(cx)
-        //     .key_context(
-        //         "FeedbackModal
-        //         ",
-        //     )
-        //     .on_action(cx.listener(Self::cancel))
-        //     .on_action(cx.listener(Self::confirm))
-        //     .w_96()
-        //     .child(
-        //         v_stack()
-        //             .px_1()
-        //             .pt_0p5()
-        //             .gap_px()
-        //             .child(
-        //                 v_stack()
-        //                     .py_0p5()
-        //                     .px_1()
-        //                     .child(div().px_1().py_0p5().child(self.line_editor.clone())),
-        //             )
-        //             .child(
-        //                 div()
-        //                     .h_px()
-        //                     .w_full()
-        //                     .bg(cx.theme().colors().element_background),
-        //             )
-        //             .child(
-        //                 h_stack()
-        //                     .justify_between()
-        //                     .px_2()
-        //                     .py_1()
-        //                     .child(Label::new(self.current_text.clone()).color(Color::Muted)),
-        //             ),
-        //     )
     }
 }
