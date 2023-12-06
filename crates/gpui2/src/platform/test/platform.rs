@@ -214,17 +214,11 @@ impl Platform for TestPlatform {
 
     fn set_menus(&self, _menus: Vec<crate::Menu>, _keymap: &Keymap) {}
 
-    fn on_app_menu_action(&self, _callback: Box<dyn FnMut(&dyn crate::Action)>) {
-        unimplemented!()
-    }
+    fn on_app_menu_action(&self, _callback: Box<dyn FnMut(&dyn crate::Action)>) {}
 
-    fn on_will_open_app_menu(&self, _callback: Box<dyn FnMut()>) {
-        unimplemented!()
-    }
+    fn on_will_open_app_menu(&self, _callback: Box<dyn FnMut()>) {}
 
-    fn on_validate_app_menu_command(&self, _callback: Box<dyn FnMut(&dyn crate::Action) -> bool>) {
-        unimplemented!()
-    }
+    fn on_validate_app_menu_command(&self, _callback: Box<dyn FnMut(&dyn crate::Action) -> bool>) {}
 
     fn os_name(&self) -> &'static str {
         "test"
