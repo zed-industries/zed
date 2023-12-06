@@ -499,6 +499,8 @@ pub struct EditorStyle {
     pub scrollbar_width: Pixels,
     pub syntax: Arc<SyntaxTheme>,
     pub diagnostic_style: DiagnosticStyle,
+    pub hints_style: HighlightStyle,
+    pub suggestions_style: HighlightStyle,
 }
 
 type CompletionId = usize;
@@ -7640,6 +7642,18 @@ impl Editor {
                                                     .editor_style
                                                     .diagnostic_style
                                                     .clone(),
+                                                // todo!("what about the rest of the highlight style parts for inlays and suggestions?")
+                                                hints_style: HighlightStyle {
+                                                    color: Some(cx.theme().status().hint),
+                                                    font_weight: Some(FontWeight::BOLD),
+                                                    fade_out: Some(0.6),
+                                                    ..HighlightStyle::default()
+                                                },
+                                                suggestions_style: HighlightStyle {
+                                                    color: Some(cx.theme().status().predictive),
+                                                    fade_out: Some(0.6),
+                                                    ..HighlightStyle::default()
+                                                },
                                             },
                                         ))
                                         .into_any_element()
@@ -9302,6 +9316,19 @@ impl Render for Editor {
                 scrollbar_width: px(12.),
                 syntax: cx.theme().syntax().clone(),
                 diagnostic_style: cx.theme().diagnostic_style(),
+                // TODO kb find `HighlightStyle` usages
+                // todo!("what about the rest of the highlight style parts?")
+                hints_style: HighlightStyle {
+                    color: Some(cx.theme().status().hint),
+                    font_weight: Some(FontWeight::BOLD),
+                    fade_out: Some(0.6),
+                    ..HighlightStyle::default()
+                },
+                suggestions_style: HighlightStyle {
+                    color: Some(cx.theme().status().predictive),
+                    fade_out: Some(0.6),
+                    ..HighlightStyle::default()
+                },
             },
         )
     }
