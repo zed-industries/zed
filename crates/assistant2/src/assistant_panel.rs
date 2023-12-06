@@ -2562,6 +2562,10 @@ impl Render for InlineAssistant {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         let measurements = self.measurements.get();
         h_stack()
+            .w_full()
+            .py_2()
+            .border_y_1()
+            .border_color(cx.theme().colors().border)
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::toggle_include_conversation))
@@ -2617,7 +2621,8 @@ impl Render for InlineAssistant {
                     }),
             )
             .child(
-                div()
+                h_stack()
+                    .w_full()
                     .ml(measurements.anchor_x - measurements.gutter_width)
                     .child(self.render_prompt_editor(cx)),
             )
