@@ -104,7 +104,7 @@ pub struct OpenAIResponseStreamEvent {
 
 pub async fn stream_completion(
     credential: ProviderCredential,
-    executor: Arc<BackgroundExecutor>,
+    executor: BackgroundExecutor,
     request: Box<dyn CompletionRequest>,
 ) -> Result<impl Stream<Item = Result<OpenAIResponseStreamEvent>>> {
     let api_key = match credential {
@@ -197,11 +197,11 @@ pub async fn stream_completion(
 pub struct OpenAICompletionProvider {
     model: OpenAILanguageModel,
     credential: Arc<RwLock<ProviderCredential>>,
-    executor: Arc<BackgroundExecutor>,
+    executor: BackgroundExecutor,
 }
 
 impl OpenAICompletionProvider {
-    pub fn new(model_name: &str, executor: Arc<BackgroundExecutor>) -> Self {
+    pub fn new(model_name: &str, executor: BackgroundExecutor) -> Self {
         let model = OpenAILanguageModel::load(model_name);
         let credential = Arc::new(RwLock::new(ProviderCredential::NoCredentials));
         Self {

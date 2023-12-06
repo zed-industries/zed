@@ -10,15 +10,15 @@ use collections::HashMap;
 use editor::{Editor, EditorMode};
 use futures::channel::oneshot;
 use gpui::{
-    actions, div, red, Action, AppContext, Div, EventEmitter, InteractiveElement as _, IntoElement,
-    ParentElement as _, Render, Styled, Subscription, Task, View, ViewContext, VisualContext as _,
-    WeakView, WindowContext,
+    actions, div, red, Action, AppContext, Div, EventEmitter, FocusableView,
+    InteractiveElement as _, IntoElement, ParentElement as _, Render, Styled, Subscription, Task,
+    View, ViewContext, VisualContext as _, WeakView, WindowContext,
 };
 use project::search::SearchQuery;
 use serde::Deserialize;
 use std::{any::Any, sync::Arc};
 
-use ui::{h_stack, Icon, IconButton, IconElement};
+use ui::{h_stack, Clickable, Icon, IconButton, IconElement};
 use util::ResultExt;
 use workspace::{
     item::ItemHandle,
@@ -161,16 +161,6 @@ impl Render for BufferSearchBar {
 
                 Some(ui::Label::new(message))
             });
-        let nav_button_for_direction = |icon, direction| {
-            render_nav_button(
-                icon,
-                self.active_match_index.is_some(),
-                cx.listener(move |this, _, cx| match direction {
-                    Direction::Prev => this.select_prev_match(&Default::default(), cx),
-                    Direction::Next => this.select_next_match(&Default::default(), cx),
-                }),
-            )
-        };
         let should_show_replace_input = self.replace_enabled && supported_options.replacement;
         let replace_all = should_show_replace_input
             .then(|| super::render_replace_button(ReplaceAll, ui::Icon::ReplaceAll));
@@ -237,17 +227,29 @@ impl Render for BufferSearchBar {
                 h_stack()
                     .gap_0p5()
                     .flex_none()
-                    .child(self.render_action_button())
+                    .child(self.render_action_button(cx))
                     .children(match_count)
-                    .child(nav_button_for_direction(
+                    .child(render_nav_button(
                         ui::Icon::ChevronLeft,
-                        Direction::Prev,
+                        self.active_match_index.is_some(),
+                        cx.listener(move |this, _, cx| {
+                            this.select_prev_match(&Default::default(), cx);
+                        }),
                     ))
-                    .child(nav_button_for_direction(
+                    .child(render_nav_button(
                         ui::Icon::ChevronRight,
-                        Direction::Next,
+                        self.active_match_index.is_some(),
+                        cx.listener(move |this, _, cx| {
+                            this.select_next_match(&Default::default(), cx);
+                        }),
                     )),
             )
+    }
+}
+
+impl FocusableView for BufferSearchBar {
+    fn focus_handle(&self, cx: &AppContext) -> gpui::FocusHandle {
+        self.query_editor.focus_handle(cx)
     }
 }
 
@@ -311,13 +313,7 @@ impl BufferSearchBar {
             pane.update(cx, |this, cx| {
                 this.toolbar().update(cx, |this, cx| {
                     if let Some(search_bar) = this.item_of_type::<BufferSearchBar>() {
-                        search_bar.update(cx, |this, cx| {
-                            if this.is_dismissed() {
-                                this.show(cx);
-                            } else {
-                                this.dismiss(&Dismiss, cx);
-                            }
-                        });
+                        search_bar.update(cx, |this, cx| this.toggle(cx));
                         return;
                     }
                     let view = cx.build_view(|cx| BufferSearchBar::new(cx));
@@ -481,6 +477,14 @@ impl BufferSearchBar {
         false
     }
 
+    pub fn toggle(&mut self, cx: &mut ViewContext<Self>) {
+        if self.is_dismissed() {
+            self.show(cx);
+        } else {
+            self.dismiss(&Dismiss, cx);
+        }
+    }
+
     pub fn show(&mut self, cx: &mut ViewContext<Self>) -> bool {
         if self.active_searchable_item.is_none() {
             return false;
@@ -582,12 +586,14 @@ impl BufferSearchBar {
         self.update_matches(cx)
     }
 
-    fn render_action_button(&self) -> impl IntoElement {
+    fn render_action_button(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         // let tooltip_style = theme.tooltip.clone();
 
         // let style = theme.search.action_button.clone();
 
-        IconButton::new(0, ui::Icon::SelectAll).action(Box::new(SelectAllMatches))
+        IconButton::new("select-all", ui::Icon::SelectAll).on_click(cx.listener(|this, _, cx| {
+            this.select_all_matches(&SelectAllMatches, cx);
+        }))
     }
 
     pub fn activate_search_mode(&mut self, mode: SearchMode, cx: &mut ViewContext<Self>) {
