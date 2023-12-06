@@ -1,10 +1,10 @@
 use gpui::{
-    Component, Element, EventEmitter, IntoElement, ParentElement, Render, StyledText, Subscription,
+    Div, Element, EventEmitter, IntoElement, ParentElement, Render, StyledText, Subscription,
     ViewContext, WeakView,
 };
 use itertools::Itertools;
 use theme::ActiveTheme;
-use ui::{ButtonCommon, ButtonLike, ButtonStyle, Clickable, Disableable, Label};
+use ui::{prelude::*, ButtonLike, ButtonStyle, Label};
 use workspace::{
     item::{ItemEvent, ItemHandle},
     ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
@@ -36,54 +36,51 @@ impl EventEmitter<Event> for Breadcrumbs {}
 impl EventEmitter<ToolbarItemEvent> for Breadcrumbs {}
 
 impl Render for Breadcrumbs {
-    type Element = Component<ButtonLike>;
+    type Element = Div;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-        let button = ButtonLike::new("breadcrumbs")
-            .style(ButtonStyle::Transparent)
-            .disabled(true);
+        let element = h_stack().text_ui();
 
-        let active_item = match &self.active_item {
-            Some(active_item) => active_item,
-            None => return button.into_element(),
+        let Some(active_item) = &self
+            .active_item
+            .as_ref()
+            .filter(|item| item.downcast::<editor::Editor>().is_some())
+        else {
+            return element;
         };
-        let not_editor = active_item.downcast::<editor::Editor>().is_none();
 
-        let breadcrumbs = match active_item.breadcrumbs(cx.theme(), cx) {
-            Some(breadcrumbs) => breadcrumbs,
-            None => return button.into_element(),
-        }
-        .into_iter()
-        .map(|breadcrumb| {
-            StyledText::new(breadcrumb.text)
-                .with_highlights(&cx.text_style(), breadcrumb.highlights.unwrap_or_default())
+        let Some(segments) = active_item.breadcrumbs(cx.theme(), cx) else {
+            return element;
+        };
+
+        let highlighted_segments = segments.into_iter().map(|segment| {
+            StyledText::new(segment.text)
+                .with_highlights(&cx.text_style(), segment.highlights.unwrap_or_default())
                 .into_any()
         });
+        let breadcrumbs = Itertools::intersperse_with(highlighted_segments, || {
+            Label::new("›").into_any_element()
+        });
 
-        let button = button.children(Itertools::intersperse_with(breadcrumbs, || {
-            Label::new(" › ").into_any_element()
-        }));
-
-        if not_editor || !self.pane_focused {
-            return button.into_element();
-        }
-
-        // let this = cx.view().downgrade();
-        button
-            .style(ButtonStyle::Filled)
-            .disabled(false)
-            .on_click(move |_, _cx| {
-                todo!("outline::toggle");
-                // this.update(cx, |this, cx| {
-                //     if let Some(workspace) = this.workspace.upgrade() {
-                //         workspace.update(cx, |_workspace, _cx| {
-                //             outline::toggle(workspace, &Default::default(), cx)
-                //         })
-                //     }
-                // })
-                // .ok();
-            })
-            .into_element()
+        element.child(
+            ButtonLike::new("toggle outline view")
+                .style(ButtonStyle::Subtle)
+                .child(h_stack().gap_1().children(breadcrumbs))
+                // We disable the button when it is not focused
+                // due to ... @julia what was the reason again?
+                .disabled(!self.pane_focused)
+                .on_click(move |_, _cx| {
+                    todo!("outline::toggle");
+                    // this.update(cx, |this, cx| {
+                    //     if let Some(workspace) = this.workspace.upgrade() {
+                    //         workspace.update(cx, |_workspace, _cx| {
+                    //             outline::toggle(workspace, &Default::default(), cx)
+                    //         })
+                    //     }
+                    // })
+                    // .ok();
+                }),
+        )
     }
 }
 

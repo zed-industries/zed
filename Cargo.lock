@@ -2118,6 +2118,7 @@ dependencies = [
  "settings2",
  "smol",
  "theme2",
+ "ui2",
  "util",
 ]
 
@@ -11705,7 +11706,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.116.0"
+version = "0.117.0"
 dependencies = [
  "activity_indicator",
  "ai",

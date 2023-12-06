@@ -259,6 +259,8 @@ impl FocusableView for WelcomePage {
 }
 
 impl Item for WelcomePage {
+    type Event = ItemEvent;
+
     fn tab_content(&self, _: Option<usize>, _: &WindowContext) -> AnyElement {
         "Welcome to Zed!".into_any()
     }
@@ -277,5 +279,9 @@ impl Item for WelcomePage {
             workspace: self.workspace.clone(),
             _settings_subscription: cx.observe_global::<SettingsStore>(move |_, cx| cx.notify()),
         }))
+    }
+
+    fn to_item_events(event: &Self::Event, mut f: impl FnMut(workspace::item::ItemEvent)) {
+        f(*event)
     }
 }

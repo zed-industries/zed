@@ -6,7 +6,7 @@ use gpui::{
 };
 use text::{Bias, Point};
 use theme::ActiveTheme;
-use ui::{h_stack, v_stack, Color, Label, StyledExt};
+use ui::{h_stack, prelude::*, v_stack, Label};
 use util::paths::FILE_ROW_COLUMN_DELIMITER;
 
 actions!(Toggle);

@@ -92,6 +92,7 @@ pub enum Icon {
     Shift,
     Option,
     Return,
+    ZedXCopilot,
 }
 
 impl Icon {
@@ -120,6 +121,7 @@ impl Icon {
             Icon::Close => "icons/x.svg",
             Icon::Collab => "icons/user_group_16.svg",
             Icon::Copilot => "icons/copilot.svg",
+
             Icon::CopilotInit => "icons/copilot_init.svg",
             Icon::CopilotError => "icons/copilot_error.svg",
             Icon::CopilotDisabled => "icons/copilot_disabled.svg",
@@ -166,6 +168,7 @@ impl Icon {
             Icon::Shift => "icons/shift.svg",
             Icon::Option => "icons/option.svg",
             Icon::Return => "icons/return.svg",
+            Icon::ZedXCopilot => "icons/zed_x_copilot.svg",
         }
     }
 }
