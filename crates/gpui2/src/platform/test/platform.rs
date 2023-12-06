@@ -212,9 +212,7 @@ impl Platform for TestPlatform {
         unimplemented!()
     }
 
-    fn set_menus(&self, _menus: Vec<crate::Menu>, _keymap: &Keymap) {
-        unimplemented!()
-    }
+    fn set_menus(&self, _menus: Vec<crate::Menu>, _keymap: &Keymap) {}
 
     fn on_app_menu_action(&self, _callback: Box<dyn FnMut(&dyn crate::Action)>) {
         unimplemented!()
