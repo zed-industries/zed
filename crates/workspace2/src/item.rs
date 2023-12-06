@@ -78,7 +78,7 @@ impl Settings for ItemSettings {
     }
 }
 
-#[derive(Eq, PartialEq, Hash, Debug)]
+#[derive(Clone, Copy, Eq, PartialEq, Hash, Debug)]
 pub enum ItemEvent {
     CloseItem,
     UpdateTab,
@@ -92,7 +92,9 @@ pub struct BreadcrumbText {
     pub highlights: Option<Vec<(Range<usize>, HighlightStyle)>>,
 }
 
-pub trait Item: FocusableView + EventEmitter<ItemEvent> {
+pub trait Item: FocusableView + EventEmitter<Self::Event> {
+    type Event;
+
     fn deactivated(&mut self, _: &mut ViewContext<Self>) {}
     fn workspace_deactivated(&mut self, _: &mut ViewContext<Self>) {}
     fn navigate(&mut self, _: Box<dyn Any>, _: &mut ViewContext<Self>) -> bool {
@@ -155,6 +157,8 @@ pub trait Item: FocusableView + EventEmitter<ItemEvent> {
         unimplemented!("reload() must be implemented if can_save() returns true")
     }
 
+    fn to_item_events(event: &Self::Event, f: impl FnMut(ItemEvent));
+
     fn act_as_type<'a>(
         &'a self,
         type_id: TypeId,
@@ -206,12 +210,12 @@ pub trait Item: FocusableView + EventEmitter<ItemEvent> {
 }
 
 pub trait ItemHandle: 'static + Send {
-    fn focus_handle(&self, cx: &WindowContext) -> FocusHandle;
     fn subscribe_to_item_events(
         &self,
         cx: &mut WindowContext,
-        handler: Box<dyn Fn(&ItemEvent, &mut WindowContext) + Send>,
+        handler: Box<dyn Fn(ItemEvent, &mut WindowContext)>,
     ) -> gpui::Subscription;
+    fn focus_handle(&self, cx: &WindowContext) -> FocusHandle;
     fn tab_tooltip_text(&self, cx: &AppContext) -> Option<SharedString>;
     fn tab_description(&self, detail: usize, cx: &AppContext) -> Option<SharedString>;
     fn tab_content(&self, detail: Option<usize>, cx: &WindowContext) -> AnyElement;
@@ -285,18 +289,18 @@ impl dyn ItemHandle {
 }
 
 impl<T: Item> ItemHandle for View<T> {
-    fn focus_handle(&self, cx: &WindowContext) -> FocusHandle {
-        self.focus_handle(cx)
-    }
-
     fn subscribe_to_item_events(
         &self,
         cx: &mut WindowContext,
-        handler: Box<dyn Fn(&ItemEvent, &mut WindowContext) + Send>,
+        handler: Box<dyn Fn(ItemEvent, &mut WindowContext)>,
     ) -> gpui::Subscription {
         cx.subscribe(self, move |_, event, cx| {
-            handler(event, cx);
+            T::to_item_events(event, |item_event| handler(item_event, cx));
         })
+    }
+
+    fn focus_handle(&self, cx: &WindowContext) -> FocusHandle {
+        self.focus_handle(cx)
     }
 
     fn tab_tooltip_text(&self, cx: &AppContext) -> Option<SharedString> {
@@ -461,7 +465,7 @@ impl<T: Item> ItemHandle for View<T> {
                         }
                     }
 
-                    match event {
+                    T::to_item_events(event, |event| match event {
                         ItemEvent::CloseItem => {
                             pane.update(cx, |pane, cx| {
                                 pane.close_item_by_id(item.item_id(), crate::SaveIntent::Close, cx)
@@ -489,7 +493,7 @@ impl<T: Item> ItemHandle for View<T> {
                         }
 
                         _ => {}
-                    }
+                    });
                 }));
 
             cx.on_blur(&self.focus_handle(cx), move |workspace, cx| {
@@ -655,12 +659,7 @@ pub enum FollowEvent {
     Unfollow,
 }
 
-pub trait FollowableEvents {
-    fn to_follow_event(&self) -> Option<FollowEvent>;
-}
-
 pub trait FollowableItem: Item {
-    type FollowableEvent: FollowableEvents;
     fn remote_id(&self) -> Option<ViewId>;
     fn to_state_proto(&self, cx: &WindowContext) -> Option<proto::view::Variant>;
     fn from_state_proto(
@@ -670,9 +669,10 @@ pub trait FollowableItem: Item {
         state: &mut Option<proto::view::Variant>,
         cx: &mut WindowContext,
     ) -> Option<Task<Result<View<Self>>>>;
+    fn to_follow_event(event: &Self::Event) -> Option<FollowEvent>;
     fn add_event_to_update_proto(
         &self,
-        event: &Self::FollowableEvent,
+        event: &Self::Event,
         update: &mut Option<proto::update_view::Variant>,
         cx: &WindowContext,
     ) -> bool;
@@ -683,7 +683,6 @@ pub trait FollowableItem: Item {
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>>;
     fn is_project_item(&self, cx: &WindowContext) -> bool;
-
     fn set_leader_peer_id(&mut self, leader_peer_id: Option<PeerId>, cx: &mut ViewContext<Self>);
 }
 
@@ -739,10 +738,7 @@ impl<T: FollowableItem> FollowableItemHandle for View<T> {
     }
 
     fn to_follow_event(&self, event: &dyn Any) -> Option<FollowEvent> {
-        event
-            .downcast_ref()
-            .map(T::FollowableEvent::to_follow_event)
-            .flatten()
+        T::to_follow_event(event.downcast_ref()?)
     }
 
     fn apply_update_proto(
@@ -929,6 +925,12 @@ pub mod test {
     }
 
     impl Item for TestItem {
+        type Event = ItemEvent;
+
+        fn to_item_events(event: &Self::Event, mut f: impl FnMut(ItemEvent)) {
+            f(*event)
+        }
+
         fn tab_description(&self, detail: usize, _: &AppContext) -> Option<SharedString> {
             self.tab_descriptions.as_ref().and_then(|descriptions| {
                 let description = *descriptions.get(detail).or_else(|| descriptions.last())?;

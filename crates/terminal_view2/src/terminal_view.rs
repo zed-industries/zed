@@ -736,6 +736,8 @@ impl InputHandler for TerminalView {
 }
 
 impl Item for TerminalView {
+    type Event = ItemEvent;
+
     fn tab_tooltip_text(&self, cx: &AppContext) -> Option<SharedString> {
         Some(self.terminal().read(cx).title().into())
     }
@@ -842,6 +844,10 @@ impl Item for TerminalView {
         //     ))
         //     .detach();
         self.workspace_id = workspace.database_id();
+    }
+
+    fn to_item_events(event: &Self::Event, mut f: impl FnMut(ItemEvent)) {
+        f(*event)
     }
 }
 
@@ -1170,6 +1176,7 @@ mod tests {
                 })
             })
             .await
+            .unwrap()
             .unwrap();
 
         (wt, entry)

@@ -7113,6 +7113,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "quick_action_bar2"
+version = "0.1.0"
+dependencies = [
+ "editor2",
+ "gpui2",
+ "search2",
+ "ui2",
+ "workspace2",
+]
+
+[[package]]
 name = "quote"
 version = "1.0.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11932,6 +11943,7 @@ dependencies = [
  "postage",
  "project2",
  "project_panel2",
+ "quick_action_bar2",
  "rand 0.8.5",
  "regex",
  "rope2",
