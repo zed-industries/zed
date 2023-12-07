@@ -62,16 +62,6 @@ impl MacDisplayLinker {
             log::warn!("No DisplayLink callback registered for {:?}", display_id)
         }
     }
-
-    pub fn stop(&mut self, display_id: DisplayId) {
-        if let Some(link) = self.links.get_mut(&display_id) {
-            unsafe {
-                link.system_link.stop();
-            }
-        } else {
-            log::warn!("No DisplayLink callback registered for {:?}", display_id)
-        }
-    }
 }
 
 unsafe extern "C" fn trampoline(

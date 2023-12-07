@@ -14,10 +14,7 @@ use crate::{
 use anyhow::{anyhow, Context as _, Result};
 use collections::HashMap;
 use derive_more::{Deref, DerefMut};
-use futures::{
-    channel::{mpsc, oneshot},
-    StreamExt,
-};
+use futures::channel::oneshot;
 use media::core_video::CVImageBuffer;
 use parking_lot::RwLock;
 use slotmap::SlotMap;
@@ -280,7 +277,9 @@ impl Window {
 
         cx.platform.set_display_link_output_callback(display_id, {
             let tx = cx.draw_tx.clone();
+            let draw_displays = cx.draw_displays.clone();
             Box::new(move |_, _| {
+                draw_displays.lock().insert(display_id);
                 tx.unbounded_send(display_id).ok();
             })
         });

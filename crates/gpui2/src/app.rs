@@ -1,4 +1,3 @@
-
 mod async_context;
 mod entity_map;
 mod model_context;
@@ -10,7 +9,6 @@ use derive_more::{Deref, DerefMut};
 pub use entity_map::*;
 pub use model_context::*;
 use refineable::Refineable;
-use smallvec::SmallVec;
 use smol::future::FutureExt;
 #[cfg(any(test, feature = "test-support"))]
 pub use test_context::*;
@@ -186,6 +184,7 @@ pub struct AppContext {
     pub(crate) this: Weak<AppCell>,
     pub(crate) platform: Rc<dyn Platform>,
     pub(crate) draw_tx: UnboundedSender<DisplayId>,
+    pub(crate) draw_displays: Arc<Mutex<HashSet<DisplayId>>>,
     app_metadata: AppMetadata,
     text_system: Arc<TextSystem>,
     flushing_effects: bool,
@@ -194,7 +193,6 @@ pub struct AppContext {
     pub(crate) active_drag: Option<AnyDrag>,
     pub(crate) active_tooltip: Option<AnyTooltip>,
     pub(crate) next_frame_callbacks: HashMap<DisplayId, Vec<FrameCallback>>,
-    pub(crate) frame_consumers: HashMap<DisplayId, Task<()>>,
     pub(crate) background_executor: BackgroundExecutor,
     pub(crate) foreground_executor: ForegroundExecutor,
     pub(crate) svg_renderer: SvgRenderer,
@@ -244,12 +242,14 @@ impl AppContext {
         };
 
         let (draw_tx, mut draw_rx) = futures::channel::mpsc::unbounded::<DisplayId>();
+        let draw_displays = Arc::new(Mutex::new(HashSet::default()));
 
         let app = Rc::new_cyclic(|this| AppCell {
             app: RefCell::new(AppContext {
                 this: this.clone(),
                 platform: platform.clone(),
                 draw_tx,
+                draw_displays: draw_displays.clone(),
                 app_metadata,
                 text_system,
                 actions: Rc::new(ActionRegistry::default()),
@@ -258,7 +258,6 @@ impl AppContext {
                 active_drag: None,
                 active_tooltip: None,
                 next_frame_callbacks: HashMap::default(),
-                frame_consumers: HashMap::default(),
                 background_executor: executor,
                 foreground_executor,
                 svg_renderer: SvgRenderer::new(asset_source.clone()),
@@ -286,8 +285,15 @@ impl AppContext {
 
         app.borrow_mut()
             .spawn(|cx| async move {
-                while let Some(display_id) = draw_rx.next().await {
-                    cx.update(|cx| cx.on_frame_request(display_id)).ok();
+                let mut display_ids = Vec::new();
+                while let Some(_) = draw_rx.next().await {
+                    display_ids.extend(draw_displays.lock().drain());
+                    cx.update(|cx| {
+                        for display_id in display_ids.drain(..) {
+                            cx.on_frame_request(display_id);
+                        }
+                    })
+                    .ok();
                 }
             })
             .detach();
