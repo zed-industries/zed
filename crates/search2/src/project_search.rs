@@ -324,7 +324,7 @@ impl EventEmitter<ViewEvent> for ProjectSearchView {}
 impl Render for ProjectSearchView {
     type Element = Div;
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-        div().child(Label::new("xd"))
+        div().child(self.results_editor.clone())
     }
 }
 // impl Entity for ProjectSearchView {
@@ -1688,6 +1688,7 @@ impl Render for ProjectSearchBar {
             .child(
                 h_stack()
                     .min_w_80()
+                    .on_action(cx.listener(|this, action, cx| this.confirm(action, cx)))
                     .on_action(cx.listener(|this, _: &ToggleFilters, cx| {
                         this.toggle_filters(cx);
                     }))
@@ -1697,7 +1698,7 @@ impl Render for ProjectSearchBar {
                     .on_action(cx.listener(|this, _: &ToggleCaseSensitive, cx| {
                         this.toggle_search_option(SearchOptions::CASE_SENSITIVE, cx);
                     }))
-                    .on_action(cx.listener(|this, action: &ToggleReplace, cx| {
+                    .on_action(cx.listener(|this, action, cx| {
                         this.toggle_replace(action, cx);
                     }))
                     .on_action(cx.listener(|this, action: &ActivateTextMode, cx| {
@@ -1760,6 +1761,7 @@ impl Render for ProjectSearchBar {
         let replace_column = if search.replace_enabled {
             h_stack()
                 .bg(white())
+                .p_1()
                 .flex_1()
                 .border_2()
                 .rounded_lg()
@@ -1772,24 +1774,34 @@ impl Render for ProjectSearchBar {
         let actions_column = h_stack()
             .when(search.replace_enabled, |this| {
                 this.children([
-                    IconButton::new("project-search-replace-next", Icon::ReplaceNext),
-                    IconButton::new("project-search-replace-all", Icon::ReplaceAll),
+                    IconButton::new("project-search-replace-next", Icon::ReplaceNext).on_click(
+                        |_, cx| {
+                            cx.dispatch_action(ReplaceNext.boxed_clone());
+                        },
+                    ),
+                    IconButton::new("project-search-replace-all", Icon::ReplaceAll).on_click(
+                        |_, cx| {
+                            cx.dispatch_action(ReplaceAll.boxed_clone());
+                        },
+                    ),
                 ])
             })
             .when_some(search.active_match_index, |this, index| {
                 let match_quantity = search.model.read(cx).match_ranges.len();
                 debug_assert!(match_quantity > index);
-                this.child(IconButton::new(
-                    "project-search-select-all",
-                    Icon::SelectAll,
-                ))
+                this.child(
+                    IconButton::new("project-search-select-all", Icon::SelectAll)
+                        .on_click(|_, cx| cx.dispatch_action(SelectAll.boxed_clone())),
+                )
                 .child(Label::new(format!("{index}/{match_quantity}")))
             })
             .children([
                 IconButton::new("project-search-prev-match", Icon::ChevronLeft)
-                    .disabled(search.active_match_index.is_none()),
+                    .disabled(search.active_match_index.is_none())
+                    .on_click(|_, cx| cx.dispatch_action(SelectPrevMatch.boxed_clone())),
                 IconButton::new("project-search-next-match", Icon::ChevronRight)
-                    .disabled(search.active_match_index.is_none()),
+                    .disabled(search.active_match_index.is_none())
+                    .on_click(|_, cx| cx.dispatch_action(SelectNextMatch.boxed_clone())),
             ]);
         h_stack()
             .size_full()
