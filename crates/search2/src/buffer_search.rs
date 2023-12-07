@@ -183,6 +183,12 @@ impl Render for BufferSearchBar {
                             .on_action(cx.listener(Self::replace_all))
                     })
             })
+            .when(self.supported_options().case, |this| {
+                this.on_action(cx.listener(Self::toggle_case_sensitive))
+            })
+            .when(self.supported_options().word, |this| {
+                this.on_action(cx.listener(Self::toggle_whole_word))
+            })
             .w_full()
             .p_1()
             .child(
