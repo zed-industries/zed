@@ -8192,7 +8192,7 @@ impl Editor {
     }
 
     pub fn text_option(&self, cx: &AppContext) -> Option<String> {
-        let text = text.text(cx).trim();
+        let text = self.text(cx).trim();
 
         if text.is_empty() {
             return None;
