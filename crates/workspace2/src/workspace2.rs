@@ -566,9 +566,9 @@ impl Workspace {
 
         cx.emit(Event::WorkspaceCreated(weak_handle.clone()));
 
-        let left_dock = cx.build_view(|_| Dock::new(DockPosition::Left));
-        let bottom_dock = cx.build_view(|_| Dock::new(DockPosition::Bottom));
-        let right_dock = cx.build_view(|_| Dock::new(DockPosition::Right));
+        let left_dock = cx.build_view(|cx| Dock::new(DockPosition::Left, cx));
+        let bottom_dock = cx.build_view(|cx| Dock::new(DockPosition::Bottom, cx));
+        let right_dock = cx.build_view(|cx| Dock::new(DockPosition::Right, cx));
         let left_dock_buttons =
             cx.build_view(|cx| PanelButtons::new(left_dock.clone(), weak_handle.clone(), cx));
         let bottom_dock_buttons =

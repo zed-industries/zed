@@ -4,12 +4,12 @@ use crate::{
     DevicePixels, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity, EntityId,
     EventEmitter, FileDropEvent, Flatten, FocusEvent, FontId, GlobalElementId, GlyphId, Hsla,
     ImageData, InputEvent, IsZero, KeyBinding, KeyContext, KeyDownEvent, LayoutId, Model,
-    ModelContext, Modifiers, MonochromeSprite, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInputHandler,
-    PlatformWindow, Point, PolychromeSprite, PromptLevel, Quad, Render, RenderGlyphParams,
-    RenderImageParams, RenderSvgParams, ScaledPixels, SceneBuilder, Shadow, SharedString, Size,
-    Style, SubscriberSet, Subscription, Surface, TaffyLayoutEngine, Task, Underline,
-    UnderlineStyle, View, VisualContext, WeakView, WindowBounds, WindowOptions, SUBPIXEL_VARIANTS,
+    ModelContext, Modifiers, MonochromeSprite, MouseButton, MouseMoveEvent, MouseUpEvent, Path,
+    Pixels, PlatformAtlas, PlatformDisplay, PlatformInputHandler, PlatformWindow, Point,
+    PolychromeSprite, PromptLevel, Quad, Render, RenderGlyphParams, RenderImageParams,
+    RenderSvgParams, ScaledPixels, SceneBuilder, Shadow, SharedString, Size, Style, SubscriberSet,
+    Subscription, Surface, TaffyLayoutEngine, Task, Underline, UnderlineStyle, View, VisualContext,
+    WeakView, WindowBounds, WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::HashMap;
@@ -1269,10 +1269,9 @@ impl<'a> WindowContext<'a> {
                             cursor_offset: position,
                         });
                     }
-                    InputEvent::MouseDown(MouseDownEvent {
+                    InputEvent::MouseMove(MouseMoveEvent {
                         position,
-                        button: MouseButton::Left,
-                        click_count: 1,
+                        pressed_button: Some(MouseButton::Left),
                         modifiers: Modifiers::default(),
                     })
                 }
@@ -1285,6 +1284,7 @@ impl<'a> WindowContext<'a> {
                     })
                 }
                 FileDropEvent::Submit { position } => {
+                    self.activate(true);
                     self.window.mouse_position = position;
                     InputEvent::MouseUp(MouseUpEvent {
                         button: MouseButton::Left,

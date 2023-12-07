@@ -1,9 +1,9 @@
 use editor::{Cursor, HighlightedRange, HighlightedRangeLine};
 use gpui::{
     black, div, point, px, red, relative, transparent_black, AnyElement, AsyncWindowContext,
-    AvailableSpace, Bounds, DispatchPhase, Element, ElementId, FocusHandle, Font, FontStyle,
-    FontWeight, HighlightStyle, Hsla, InteractiveElement, InteractiveElementState, IntoElement,
-    LayoutId, Model, ModelContext, ModifiersChangedEvent, MouseButton, Pixels,
+    AvailableSpace, Bounds, DispatchPhase, Element, ElementId, ExternalPaths, FocusHandle, Font,
+    FontStyle, FontWeight, HighlightStyle, Hsla, InteractiveElement, InteractiveElementState,
+    IntoElement, LayoutId, Model, ModelContext, ModifiersChangedEvent, MouseButton, Pixels,
     PlatformInputHandler, Point, Rgba, ShapedLine, Size, StatefulInteractiveElement, Styled,
     TextRun, TextStyle, TextSystem, UnderlineStyle, View, WhiteSpace, WindowContext,
 };
@@ -643,13 +643,11 @@ impl TerminalElement {
                 let connection = connection.clone();
                 let focus = focus.clone();
                 move |e, cx| {
-                    if e.pressed_button.is_some() {
-                        if focus.is_focused(cx) {
-                            connection.update(cx, |terminal, cx| {
-                                terminal.mouse_drag(e, origin, bounds);
-                                cx.notify();
-                            })
-                        }
+                    if e.pressed_button.is_some() && focus.is_focused(cx) && !cx.has_active_drag() {
+                        connection.update(cx, |terminal, cx| {
+                            terminal.mouse_drag(e, origin, bounds);
+                            cx.notify();
+                        })
                     }
                 }
             })
@@ -806,7 +804,28 @@ impl Element for TerminalElement {
                 .map(|cursor| cursor.bounding_rect(origin)),
         };
 
-        let mut this = self.register_mouse_listeners(origin, layout.mode, bounds, cx);
+        let terminal_focus_handle = self.focus.clone();
+        let terminal_handle = self.terminal.clone();
+        let mut this: TerminalElement = self
+            .register_mouse_listeners(origin, layout.mode, bounds, cx)
+            .drag_over::<ExternalPaths>(|style| {
+                // todo!() why does not it work? z-index of elements?
+                style.bg(cx.theme().colors().ghost_element_hover)
+            })
+            .on_drop::<ExternalPaths>(move |external_paths, cx| {
+                cx.focus(&terminal_focus_handle);
+                let mut new_text = external_paths
+                    .read(cx)
+                    .paths()
+                    .iter()
+                    .map(|path| format!(" {path:?}"))
+                    .join("");
+                new_text.push(' ');
+                terminal_handle.update(cx, |terminal, _| {
+                    // todo!() long paths are not displayed properly albeit the text is there
+                    terminal.paste(&new_text);
+                });
+            });
 
         let interactivity = mem::take(&mut this.interactivity);
 
