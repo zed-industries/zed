@@ -8252,6 +8252,7 @@ dependencies = [
  "menu2",
  "postage",
  "project2",
+ "semantic_index2",
  "serde",
  "serde_derive",
  "serde_json",

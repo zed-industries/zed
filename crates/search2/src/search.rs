@@ -13,12 +13,12 @@ use ui::{ButtonStyle, Icon, IconButton};
 pub mod buffer_search;
 mod history;
 mod mode;
-//pub mod project_search;
+pub mod project_search;
 pub(crate) mod search_bar;
 
 pub fn init(cx: &mut AppContext) {
     buffer_search::init(cx);
-    //project_search::init(cx);
+    project_search::init(cx);
 }
 
 actions!(
@@ -44,6 +44,7 @@ bitflags! {
         const NONE = 0b000;
         const WHOLE_WORD = 0b001;
         const CASE_SENSITIVE = 0b010;
+        const INCLUDE_IGNORED = 0b100;
     }
 }
 
