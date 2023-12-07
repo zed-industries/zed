@@ -152,11 +152,18 @@ impl FeedbackModal {
         cx.spawn(|this, mut cx| async move {
             let answer = answer.await.ok();
             if answer == Some(0) {
-                if let Some(email) = email.clone() {
-                    let _ = KEY_VALUE_STORE
-                        .write_kvp(DATABASE_KEY_NAME.to_string(), email)
-                        .await;
-                }
+                match email.clone() {
+                    Some(email) => {
+                        let _ = KEY_VALUE_STORE
+                            .write_kvp(DATABASE_KEY_NAME.to_string(), email)
+                            .await;
+                    }
+                    None => {
+                        let _ = KEY_VALUE_STORE
+                            .delete_kvp(DATABASE_KEY_NAME.to_string())
+                            .await;
+                    }
+                };
 
                 this.update(&mut cx, |feedback_editor, cx| {
                     feedback_editor.set_pending_submission(true, cx);
