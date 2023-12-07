@@ -261,7 +261,6 @@ impl TerminalElement {
                         let cell_style = TerminalElement::cell_style(
                             &cell,
                             fg,
-                            bg,
                             theme,
                             text_style,
                             text_system,
@@ -274,7 +273,6 @@ impl TerminalElement {
                                 text_style.font_size.to_pixels(cx.rem_size()),
                                 &[cell_style],
                             )
-                            //todo!() Can we remove this unwrap?
                             .unwrap();
 
                         cells.push(LayoutCell::new(
@@ -324,7 +322,7 @@ impl TerminalElement {
     fn cell_style(
         indexed: &IndexedCell,
         fg: terminal::alacritty_terminal::ansi::Color,
-        bg: terminal::alacritty_terminal::ansi::Color,
+        // bg: terminal::alacritty_terminal::ansi::Color,
         colors: &Theme,
         text_style: &TextStyle,
         text_system: &TextSystem,
@@ -332,7 +330,7 @@ impl TerminalElement {
     ) -> TextRun {
         let flags = indexed.cell.flags;
         let fg = convert_color(&fg, &colors);
-        let bg = convert_color(&bg, &colors);
+        // let bg = convert_color(&bg, &colors);
 
         let underline = (flags.intersects(Flags::ALL_UNDERLINES)
             || indexed.cell.hyperlink().is_some())
@@ -357,7 +355,7 @@ impl TerminalElement {
         let mut result = TextRun {
             len: indexed.c.len_utf8() as usize,
             color: fg,
-            background_color: Some(bg),
+            background_color: None,
             font: Font {
                 weight,
                 style,
@@ -383,10 +381,6 @@ impl TerminalElement {
 
     fn compute_layout(&self, bounds: Bounds<gpui::Pixels>, cx: &mut WindowContext) -> LayoutState {
         let settings = ThemeSettings::get_global(cx).clone();
-
-        //Setup layout information
-        // todo!(Terminal tooltips)
-        // let tooltip_style = settings.theme.tooltip.clone();
 
         let buffer_font_size = settings.buffer_font_size(cx);
 
