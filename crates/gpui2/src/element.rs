@@ -69,6 +69,24 @@ pub trait IntoElement: Sized {
         self.map(|this| if condition { then(this) } else { this })
     }
 
+    fn when_else(
+        self,
+        condition: bool,
+        then: impl FnOnce(Self) -> Self,
+        otherwise: impl FnOnce(Self) -> Self,
+    ) -> Self
+    where
+        Self: Sized,
+    {
+        self.map(|this| {
+            if condition {
+                then(this)
+            } else {
+                otherwise(this)
+            }
+        })
+    }
+
     fn when_some<T>(self, option: Option<T>, then: impl FnOnce(Self, T) -> Self) -> Self
     where
         Self: Sized,
