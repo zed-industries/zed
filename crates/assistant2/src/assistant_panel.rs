@@ -955,7 +955,7 @@ impl AssistantPanel {
     }
 
     fn render_split_button(cx: &mut ViewContext<Self>) -> impl IntoElement {
-        IconButton::new("split_button", Icon::Menu)
+        IconButton::new("split_button", Icon::SplitMessage)
             .on_click(cx.listener(|this, _event, cx| {
                 if let Some(active_editor) = this.active_editor() {
                     active_editor.update(cx, |editor, cx| editor.split(&Default::default(), cx));
@@ -965,7 +965,7 @@ impl AssistantPanel {
     }
 
     fn render_assist_button(cx: &mut ViewContext<Self>) -> impl IntoElement {
-        IconButton::new("assist_button", Icon::Menu)
+        IconButton::new("assist_button", Icon::MagicWand)
             .on_click(cx.listener(|this, _event, cx| {
                 if let Some(active_editor) = this.active_editor() {
                     active_editor.update(cx, |editor, cx| editor.assist(&Default::default(), cx));
@@ -975,7 +975,7 @@ impl AssistantPanel {
     }
 
     fn render_quote_button(cx: &mut ViewContext<Self>) -> impl IntoElement {
-        IconButton::new("quote_button", Icon::Menu)
+        IconButton::new("quote_button", Icon::Quote)
             .on_click(cx.listener(|this, _event, cx| {
                 if let Some(workspace) = this.workspace.upgrade() {
                     cx.window_context().defer(move |cx| {
@@ -989,7 +989,7 @@ impl AssistantPanel {
     }
 
     fn render_plus_button(cx: &mut ViewContext<Self>) -> impl IntoElement {
-        IconButton::new("plus_button", Icon::Menu)
+        IconButton::new("plus_button", Icon::Plus)
             .on_click(cx.listener(|this, _event, cx| {
                 this.new_conversation(cx);
             }))
@@ -998,7 +998,7 @@ impl AssistantPanel {
 
     fn render_zoom_button(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let zoomed = self.zoomed;
-        IconButton::new("zoom_button", Icon::Menu)
+        IconButton::new("zoom_button", Icon::MagnifyingGlass)
             .on_click(cx.listener(|this, _event, cx| {
                 this.toggle_zoom(&ToggleZoom, cx);
             }))
