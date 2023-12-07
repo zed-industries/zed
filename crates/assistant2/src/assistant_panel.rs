@@ -331,7 +331,7 @@ impl AssistantPanel {
 
         let measurements = Rc::new(Cell::new(BlockMeasurements::default()));
         let inline_assistant = cx.build_view(|cx| {
-            let assistant = InlineAssistant::new(
+            InlineAssistant::new(
                 inline_assist_id,
                 measurements.clone(),
                 self.include_conversation_in_next_inline_assist,
@@ -342,9 +342,7 @@ impl AssistantPanel {
                 self.retrieve_context_in_next_inline_assist,
                 self.semantic_index.clone(),
                 project.clone(),
-            );
-            assistant.focus_handle.focus(cx);
-            assistant
+            )
         });
         let block_id = editor.update(cx, |editor, cx| {
             editor.change_selections(None, cx, |selections| {
@@ -391,10 +389,7 @@ impl AssistantPanel {
                             if let Some(inline_assistant) = inline_assistant.upgrade() {
                                 if let EditorEvent::SelectionsChanged { local } = event {
                                     if *local
-                                        && inline_assistant
-                                            .read(cx)
-                                            .focus_handle
-                                            .contains_focused(cx)
+                                        && inline_assistant.focus_handle(cx).contains_focused(cx)
                                     {
                                         cx.focus_view(&editor);
                                     }
@@ -553,9 +548,12 @@ impl AssistantPanel {
     fn hide_inline_assist(&mut self, assist_id: usize, cx: &mut ViewContext<Self>) {
         if let Some(pending_assist) = self.pending_inline_assists.get_mut(&assist_id) {
             if let Some(editor) = pending_assist.editor.upgrade() {
-                if let Some((block_id, _)) = pending_assist.inline_assistant.take() {
+                if let Some((block_id, inline_assistant)) = pending_assist.inline_assistant.take() {
                     editor.update(cx, |editor, cx| {
                         editor.remove_blocks(HashSet::from_iter([block_id]), None, cx);
+                        if inline_assistant.focus_handle(cx).contains_focused(cx) {
+                            editor.focus(cx);
+                        }
                     });
                 }
             }
@@ -2029,7 +2027,6 @@ struct ConversationEditor {
     editor: View<Editor>,
     blocks: HashSet<BlockId>,
     scroll_position: Option<ScrollPosition>,
-    focus_handle: FocusHandle,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -2060,13 +2057,10 @@ impl ConversationEditor {
             editor
         });
 
-        let focus_handle = cx.focus_handle();
-
         let _subscriptions = vec![
             cx.observe(&conversation, |_, _, cx| cx.notify()),
             cx.subscribe(&conversation, Self::handle_conversation_event),
             cx.subscribe(&editor, Self::handle_editor_event),
-            cx.on_focus(&focus_handle, |this, cx| cx.focus_view(&this.editor)),
         ];
 
         let mut this = Self {
@@ -2076,7 +2070,6 @@ impl ConversationEditor {
             scroll_position: None,
             fs,
             workspace,
-            focus_handle,
             _subscriptions,
         };
         this.update_message_headers(cx);
@@ -2487,8 +2480,8 @@ impl Render for ConversationEditor {
 }
 
 impl FocusableView for ConversationEditor {
-    fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
-        self.focus_handle.clone()
+    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+        self.editor.focus_handle(cx)
     }
 }
 
@@ -2542,7 +2535,6 @@ struct InlineAssistant {
     prompt_editor: View<Editor>,
     workspace: WeakView<Workspace>,
     confirmed: bool,
-    focus_handle: FocusHandle,
     include_conversation: bool,
     measurements: Rc<Cell<BlockMeasurements>>,
     prompt_history: VecDeque<String>,
@@ -2638,8 +2630,8 @@ impl Render for InlineAssistant {
 }
 
 impl FocusableView for InlineAssistant {
-    fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
-        self.focus_handle.clone()
+    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+        self.prompt_editor.focus_handle(cx)
     }
 }
 
@@ -2665,12 +2657,11 @@ impl InlineAssistant {
             editor.set_placeholder_text(placeholder, cx);
             editor
         });
+        cx.focus_view(&prompt_editor);
 
-        let focus_handle = cx.focus_handle();
         let mut subscriptions = vec![
             cx.observe(&codegen, Self::handle_codegen_changed),
             cx.subscribe(&prompt_editor, Self::handle_prompt_editor_events),
-            cx.on_focus(&focus_handle, |this, cx| cx.focus_view(&this.prompt_editor)),
         ];
 
         if let Some(semantic_index) = semantic_index.clone() {
@@ -2682,7 +2673,6 @@ impl InlineAssistant {
             prompt_editor,
             workspace,
             confirmed: false,
-            focus_handle,
             include_conversation,
             measurements,
             prompt_history,
