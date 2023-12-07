@@ -1284,6 +1284,7 @@ impl<'a> WindowContext<'a> {
                     })
                 }
                 FileDropEvent::Submit { position } => {
+                    self.activate(true);
                     self.window.mouse_position = position;
                     InputEvent::MouseUp(MouseUpEvent {
                         button: MouseButton::Left,

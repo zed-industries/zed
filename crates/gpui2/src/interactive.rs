@@ -193,6 +193,12 @@ impl Deref for MouseExitEvent {
 #[derive(Debug, Clone, Default)]
 pub struct ExternalPaths(pub(crate) SmallVec<[PathBuf; 2]>);
 
+impl ExternalPaths {
+    pub fn paths(&self) -> &[PathBuf] {
+        &self.0
+    }
+}
+
 impl Render for ExternalPaths {
     type Element = Div;
 
