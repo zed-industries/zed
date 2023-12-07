@@ -12,7 +12,7 @@ use language::{Buffer, LanguageRegistry};
 use picker::{Picker, PickerDelegate};
 use project::Project;
 use std::sync::Arc;
-use ui::{v_stack, HighlightedLabel, ListItem, Selectable};
+use ui::{prelude::*, HighlightedLabel, ListItem};
 use util::ResultExt;
 use workspace::Workspace;
 
@@ -70,7 +70,7 @@ impl Render for LanguageSelector {
     type Element = Div;
 
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
-        v_stack().min_w_96().child(self.picker.clone())
+        v_stack().w(rems(34.)).child(self.picker.clone())
     }
 }
 
