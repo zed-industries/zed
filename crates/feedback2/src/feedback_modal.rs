@@ -256,12 +256,6 @@ impl Render for FeedbackModal {
         };
 
         let valid_character_count = FEEDBACK_CHAR_LIMIT.contains(&self.character_count);
-        let characters_remaining =
-            if valid_character_count || self.character_count > *FEEDBACK_CHAR_LIMIT.end() {
-                *FEEDBACK_CHAR_LIMIT.end() as i32 - self.character_count as i32
-            } else {
-                self.character_count as i32 - *FEEDBACK_CHAR_LIMIT.start() as i32
-            };
 
         let allow_submission =
             valid_character_count && valid_email_address && !self.pending_submission;
@@ -318,14 +312,14 @@ impl Render for FeedbackModal {
                 .child(
                     div().child(
                         Label::new(
-                            if !valid_character_count && characters_remaining < 0 {
-                                "Feedback must be at least 10 characters.".to_string()
-                            } else if !valid_character_count && characters_remaining > 5000 {
-                                "Feedback must be less than 5000 characters.".to_string()
+                            if self.character_count < *FEEDBACK_CHAR_LIMIT.start() {
+                                format!("Feedback must be at least {} characters.", FEEDBACK_CHAR_LIMIT.start())
+                            } else if self.character_count > *FEEDBACK_CHAR_LIMIT.end() {
+                                format!("Feedback must be less than {} characters.", FEEDBACK_CHAR_LIMIT.end())
                             } else {
                                 format!(
                                 "Characters: {}",
-                                characters_remaining
+                                *FEEDBACK_CHAR_LIMIT.end() - self.character_count
                                 )
                             }
                         )
