@@ -245,6 +245,8 @@ impl Render for FeedbackModal {
         // let open_community_issues =
         //     cx.listener(|_, _, cx| cx.dispatch_action(Box::new(OpenZedCommunityRepo)));
         // let open_community_discussions = cx.listener(|_, _, cx| cx.emit(DismissEvent));
+        let open_community_repo =
+            cx.listener(|_, _, cx| cx.dispatch_action(Box::new(OpenZedCommunityRepo)));
 
         v_stack()
             .elevation_3(cx)
@@ -294,7 +296,7 @@ impl Render for FeedbackModal {
                     .child(Button::new("community_repo", "Community Repo")
                         .style(ButtonStyle::Filled)
                         .color(Color::Muted)
-                        // .on_click(cx.dispatch_action(Box::new(OpenZedCommunityRepo)))
+                        .on_click(open_community_repo)
                     )
                     .child(h_stack().justify_between().gap_1()
                         .child(
