@@ -102,6 +102,31 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
         cx.subscribe(&workspace_handle, {
             move |workspace, _, event, cx| {
                 if let workspace::Event::PaneAdded(pane) = event {
+                    pane.update(cx, |pane, cx| {
+                        pane.toolbar().update(cx, |toolbar, cx| {
+                            let breadcrumbs = cx.build_view(|_| Breadcrumbs::new(workspace));
+                            toolbar.add_item(breadcrumbs, cx);
+                            let buffer_search_bar = cx.build_view(search::BufferSearchBar::new);
+                            toolbar.add_item(buffer_search_bar.clone(), cx);
+                            // todo!()
+                            //     let quick_action_bar = cx.add_view(|_| {
+                            //         QuickActionBar::new(buffer_search_bar, workspace)
+                            //     });
+                            //     toolbar.add_item(quick_action_bar, cx);
+                            let diagnostic_editor_controls =
+                                cx.build_view(|_| diagnostics::ToolbarControls::new());
+                            //     toolbar.add_item(diagnostic_editor_controls, cx);
+                            //     let project_search_bar = cx.add_view(|_| ProjectSearchBar::new());
+                            //     toolbar.add_item(project_search_bar, cx);
+                            //     let lsp_log_item =
+                            //         cx.add_view(|_| language_tools::LspLogToolbarItemView::new());
+                            //     toolbar.add_item(lsp_log_item, cx);
+                            //     let syntax_tree_item = cx
+                            //         .add_view(|_| language_tools::SyntaxTreeToolbarItemView::new());
+                            //     toolbar.add_item(syntax_tree_item, cx);
+                        })
+                    });
+
                     initialize_pane(workspace, pane, cx);
                 }
             }
@@ -125,6 +150,9 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
         let active_buffer_language =
             cx.build_view(|_| language_selector::ActiveBufferLanguage::new(workspace));
         //     let vim_mode_indicator = cx.add_view(|cx| vim::ModeIndicator::new(cx));
+        let feedback_button = cx
+            .build_view(|_| feedback::deploy_feedback_button::DeployFeedbackButton::new(workspace));
+        //     let cursor_position = cx.add_view(|_| editor::items::CursorPosition::new());
         //     let feedback_button = cx.add_view(|_| {
         //         feedback::deploy_feedback_button::DeployFeedbackButton::new(workspace)
         //     });
@@ -132,8 +160,8 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
         workspace.status_bar().update(cx, |status_bar, cx| {
             status_bar.add_left_item(diagnostic_summary, cx);
             status_bar.add_left_item(activity_indicator, cx);
-
-            // status_bar.add_right_item(feedback_button, cx);
+            status_bar.add_right_item(feedback_button, cx);
+            // status_bar.add_right_item(copilot, cx);
             status_bar.add_right_item(copilot, cx);
             status_bar.add_right_item(active_buffer_language, cx);
             // status_bar.add_right_item(vim_mode_indicator, cx);
