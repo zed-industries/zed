@@ -4188,14 +4188,14 @@ pub fn open_paths(
     });
     cx.spawn(move |mut cx| async move {
         if let Some(existing) = existing {
-            // // Ok((
-            //     existing.clone(),
-            //     cx.update_window_root(&existing, |workspace, cx| {
-            //         workspace.open_paths(abs_paths, true, cx)
-            //     })?
-            //     .await,
-            // ))
-            todo!()
+            Ok((
+                existing.clone(),
+                existing
+                    .update(&mut cx, |workspace, cx| {
+                        workspace.open_paths(abs_paths, true, cx)
+                    })?
+                    .await,
+            ))
         } else {
             cx.update(move |cx| {
                 Workspace::new_local(abs_paths, app_state.clone(), requesting_window, cx)
