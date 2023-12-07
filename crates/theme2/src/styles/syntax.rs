@@ -8,12 +8,6 @@ use crate::{
 #[derive(Clone, Default)]
 pub struct SyntaxTheme {
     pub highlights: Vec<(String, HighlightStyle)>,
-    // todo!("Remove this in favor of StatusColor.hint")
-    // If this should be overridable we should move it to ThemeColors
-    pub inlay_style: HighlightStyle,
-    // todo!("Remove this in favor of StatusColor.prediction")
-    // If this should be overridable we should move it to ThemeColors
-    pub suggestion_style: HighlightStyle,
 }
 
 impl SyntaxTheme {
@@ -22,8 +16,8 @@ impl SyntaxTheme {
             highlights: vec![
                 ("attribute".into(), cyan().light().step_11().into()),
                 ("boolean".into(), tomato().light().step_11().into()),
-                ("comment".into(), neutral().light().step_11().into()),
-                ("comment.doc".into(), iris().light().step_12().into()),
+                ("comment".into(), neutral().light().step_10().into()),
+                ("comment.doc".into(), iris().light().step_11().into()),
                 ("constant".into(), red().light().step_9().into()),
                 ("constructor".into(), red().light().step_9().into()),
                 ("embedded".into(), red().light().step_9().into()),
@@ -32,11 +26,11 @@ impl SyntaxTheme {
                 ("enum".into(), red().light().step_9().into()),
                 ("function".into(), red().light().step_9().into()),
                 ("hint".into(), red().light().step_9().into()),
-                ("keyword".into(), orange().light().step_11().into()),
+                ("keyword".into(), orange().light().step_9().into()),
                 ("label".into(), red().light().step_9().into()),
                 ("link_text".into(), red().light().step_9().into()),
                 ("link_uri".into(), red().light().step_9().into()),
-                ("number".into(), red().light().step_9().into()),
+                ("number".into(), purple().light().step_10().into()),
                 ("operator".into(), red().light().step_9().into()),
                 ("predictive".into(), red().light().step_9().into()),
                 ("preproc".into(), red().light().step_9().into()),
@@ -49,16 +43,16 @@ impl SyntaxTheme {
                 ),
                 (
                     "punctuation.delimiter".into(),
-                    neutral().light().step_11().into(),
+                    neutral().light().step_10().into(),
                 ),
                 (
                     "punctuation.list_marker".into(),
                     blue().light().step_11().into(),
                 ),
                 ("punctuation.special".into(), red().light().step_9().into()),
-                ("string".into(), jade().light().step_11().into()),
+                ("string".into(), jade().light().step_9().into()),
                 ("string.escape".into(), red().light().step_9().into()),
-                ("string.regex".into(), tomato().light().step_11().into()),
+                ("string.regex".into(), tomato().light().step_9().into()),
                 ("string.special".into(), red().light().step_9().into()),
                 (
                     "string.special.symbol".into(),
@@ -67,13 +61,11 @@ impl SyntaxTheme {
                 ("tag".into(), red().light().step_9().into()),
                 ("text.literal".into(), red().light().step_9().into()),
                 ("title".into(), red().light().step_9().into()),
-                ("type".into(), red().light().step_9().into()),
+                ("type".into(), cyan().light().step_9().into()),
                 ("variable".into(), red().light().step_9().into()),
                 ("variable.special".into(), red().light().step_9().into()),
                 ("variant".into(), red().light().step_9().into()),
             ],
-            inlay_style: tomato().light().step_1().into(), // todo!("nate: use a proper style")
-            suggestion_style: orange().light().step_1().into(), // todo!("nate: use proper style")
         }
     }
 
@@ -132,8 +124,6 @@ impl SyntaxTheme {
                 ("variable.special".into(), red().dark().step_11().into()),
                 ("variant".into(), red().dark().step_11().into()),
             ],
-            inlay_style: neutral().dark().step_11().into(), // todo!("nate: use a proper style")
-            suggestion_style: orange().dark().step_11().into(), // todo!("nate: use a proper style")
         }
     }
 
@@ -152,8 +142,6 @@ impl SyntaxTheme {
                     )
                 })
                 .collect(),
-            inlay_style: HighlightStyle::default(),
-            suggestion_style: HighlightStyle::default(),
         }
     }
 

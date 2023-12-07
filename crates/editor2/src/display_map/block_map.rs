@@ -993,7 +993,7 @@ mod tests {
     use super::*;
     use crate::display_map::inlay_map::InlayMap;
     use crate::display_map::{fold_map::FoldMap, tab_map::TabMap, wrap_map::WrapMap};
-    use gpui::{div, font, px, Element, Platform as _};
+    use gpui::{div, font, px, Element};
     use multi_buffer::MultiBuffer;
     use rand::prelude::*;
     use settings::SettingsStore;
@@ -1185,11 +1185,7 @@ mod tests {
     fn test_blocks_on_wrapped_lines(cx: &mut gpui::TestAppContext) {
         cx.update(|cx| init_test(cx));
 
-        let font_id = cx
-            .test_platform
-            .text_system()
-            .font_id(&font("Helvetica"))
-            .unwrap();
+        let font_id = cx.text_system().font_id(&font("Helvetica")).unwrap();
 
         let text = "one two three\nfour five six\nseven eight";
 

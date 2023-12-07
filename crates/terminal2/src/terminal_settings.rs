@@ -1,4 +1,4 @@
-use gpui::{AppContext, FontFeatures, Pixels};
+use gpui::{px, AbsoluteLength, AppContext, FontFeatures, Pixels};
 use schemars::JsonSchema;
 use serde_derive::{Deserialize, Serialize};
 use std::{collections::HashMap, path::PathBuf};
@@ -114,12 +114,13 @@ pub enum TerminalLineHeight {
 }
 
 impl TerminalLineHeight {
-    pub fn value(&self) -> f32 {
-        match self {
+    pub fn value(&self) -> AbsoluteLength {
+        let value = match self {
             TerminalLineHeight::Comfortable => 1.618,
             TerminalLineHeight::Standard => 1.3,
             TerminalLineHeight::Custom(line_height) => f32::max(*line_height, 1.),
-        }
+        };
+        px(value).into()
     }
 }
 

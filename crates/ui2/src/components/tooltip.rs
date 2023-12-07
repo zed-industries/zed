@@ -84,6 +84,7 @@ impl Render for Tooltip {
                     .px_2()
                     .child(
                         h_stack()
+                            .gap_2()
                             .child(self.title.clone())
                             .when_some(self.key_binding.clone(), |this, key_binding| {
                                 this.justify_between().child(key_binding)

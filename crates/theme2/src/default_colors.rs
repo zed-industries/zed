@@ -5,7 +5,7 @@ use crate::ColorScale;
 use crate::{SystemColors, ThemeColors};
 
 pub(crate) fn neutral() -> ColorScaleSet {
-    slate()
+    sand()
 }
 
 impl ThemeColors {
@@ -29,12 +29,12 @@ impl ThemeColors {
             element_disabled: neutral().light_alpha().step_3(),
             drop_target_background: blue().light_alpha().step_2(),
             ghost_element_background: system.transparent,
-            ghost_element_hover: neutral().light_alpha().step_4(),
-            ghost_element_active: neutral().light_alpha().step_5(),
+            ghost_element_hover: neutral().light_alpha().step_3(),
+            ghost_element_active: neutral().light_alpha().step_4(),
             ghost_element_selected: neutral().light_alpha().step_5(),
             ghost_element_disabled: neutral().light_alpha().step_3(),
-            text: yellow().light().step_9(),
-            text_muted: neutral().light().step_11(),
+            text: neutral().light().step_12(),
+            text_muted: neutral().light().step_10(),
             text_placeholder: neutral().light().step_10(),
             text_disabled: neutral().light().step_9(),
             text_accent: blue().light().step_11(),
@@ -49,17 +49,19 @@ impl ThemeColors {
             tab_bar_background: neutral().light().step_2(),
             tab_active_background: neutral().light().step_1(),
             tab_inactive_background: neutral().light().step_2(),
+            search_match_background: neutral().light().step_2(), // todo!(this was inserted by Mikayla)
+
             editor_background: neutral().light().step_1(),
             editor_gutter_background: neutral().light().step_1(), // todo!("pick the right colors")
             editor_subheader_background: neutral().light().step_2(),
             editor_active_line_background: neutral().light_alpha().step_3(),
-            editor_line_number: neutral().light_alpha().step_3(), // todo!("pick the right colors")
-            editor_active_line_number: neutral().light_alpha().step_3(), // todo!("pick the right colors")
-            editor_highlighted_line_background: neutral().light_alpha().step_4(), // todo!("pick the right colors")
-            editor_invisible: neutral().light_alpha().step_4(), // todo!("pick the right colors")
-            editor_wrap_guide: neutral().light_alpha().step_4(), // todo!("pick the right colors")
-            editor_active_wrap_guide: neutral().light_alpha().step_4(), // todo!("pick the right colors")
-            editor_document_highlight_read_background: neutral().light_alpha().step_4(), // todo!("pick the right colors")
+            editor_line_number: neutral().light().step_10(),
+            editor_active_line_number: neutral().light().step_11(),
+            editor_highlighted_line_background: neutral().light_alpha().step_3(),
+            editor_invisible: neutral().light().step_10(),
+            editor_wrap_guide: neutral().light_alpha().step_7(),
+            editor_active_wrap_guide: neutral().light_alpha().step_8(), // todo!("pick the right colors")
+            editor_document_highlight_read_background: neutral().light_alpha().step_3(), // todo!("pick the right colors")
             editor_document_highlight_write_background: neutral().light_alpha().step_4(), // todo!("pick the right colors")
             terminal_background: neutral().light().step_1(),
             terminal_ansi_black: black().light().step_12(),
@@ -121,6 +123,8 @@ impl ThemeColors {
             tab_bar_background: neutral().dark().step_2(),
             tab_active_background: neutral().dark().step_1(),
             tab_inactive_background: neutral().dark().step_2(),
+            search_match_background: neutral().dark().step_2(), // todo!(this was inserted by Mikayla)
+
             editor_background: neutral().dark().step_1(),
             editor_gutter_background: neutral().dark().step_1(),
             editor_subheader_background: neutral().dark().step_3(),

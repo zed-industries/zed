@@ -1,13 +1,24 @@
-use gpui::{rems, svg, IntoElement, Svg};
+use gpui::{rems, svg, IntoElement, Rems, Svg};
 use strum::EnumIter;
 
 use crate::prelude::*;
 
 #[derive(Default, PartialEq, Copy, Clone)]
 pub enum IconSize {
+    XSmall,
     Small,
     #[default]
     Medium,
+}
+
+impl IconSize {
+    pub fn rems(self) -> Rems {
+        match self {
+            IconSize::XSmall => rems(12. / 16.),
+            IconSize::Small => rems(14. / 16.),
+            IconSize::Medium => rems(16. / 16.),
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Copy, Clone, EnumIter)]
@@ -81,6 +92,8 @@ pub enum Icon {
     Shift,
     Option,
     Return,
+    Update,
+    ZedXCopilot,
 }
 
 impl Icon {
@@ -109,6 +122,7 @@ impl Icon {
             Icon::Close => "icons/x.svg",
             Icon::Collab => "icons/user_group_16.svg",
             Icon::Copilot => "icons/copilot.svg",
+
             Icon::CopilotInit => "icons/copilot_init.svg",
             Icon::CopilotError => "icons/copilot_error.svg",
             Icon::CopilotDisabled => "icons/copilot_disabled.svg",
@@ -155,6 +169,8 @@ impl Icon {
             Icon::Shift => "icons/shift.svg",
             Icon::Option => "icons/option.svg",
             Icon::Return => "icons/return.svg",
+            Icon::Update => "icons/update.svg",
+            Icon::ZedXCopilot => "icons/zed_x_copilot.svg",
         }
     }
 }
@@ -170,13 +186,8 @@ impl RenderOnce for IconElement {
     type Rendered = Svg;
 
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {
-        let svg_size = match self.size {
-            IconSize::Small => rems(14. / 16.),
-            IconSize::Medium => rems(16. / 16.),
-        };
-
         svg()
-            .size(svg_size)
+            .size(self.size.rems())
             .flex_none()
             .path(self.path)
             .text_color(self.color.color(cx))

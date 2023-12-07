@@ -36,7 +36,7 @@ use std::{
 };
 use theme::ActiveTheme;
 pub use toolbar_controls::ToolbarControls;
-use ui::{h_stack, Color, HighlightedLabel, Icon, IconElement, Label};
+use ui::{h_stack, prelude::*, HighlightedLabel, Icon, IconElement, Label};
 use util::TryFutureExt;
 use workspace::{
     item::{BreadcrumbText, Item, ItemEvent, ItemHandle},
@@ -88,7 +88,7 @@ struct DiagnosticGroupState {
     block_count: usize,
 }
 
-impl EventEmitter<ItemEvent> for ProjectDiagnosticsEditor {}
+impl EventEmitter<EditorEvent> for ProjectDiagnosticsEditor {}
 
 impl Render for ProjectDiagnosticsEditor {
     type Element = Focusable<Div>;
@@ -158,7 +158,7 @@ impl ProjectDiagnosticsEditor {
         });
         let editor_event_subscription =
             cx.subscribe(&editor, |this, _editor, event: &EditorEvent, cx| {
-                Self::emit_item_event_for_editor_event(event, cx);
+                cx.emit(event.clone());
                 if event == &EditorEvent::Focused && this.path_states.is_empty() {
                     cx.focus(&this.focus_handle);
                 }
@@ -181,40 +181,6 @@ impl ProjectDiagnosticsEditor {
         };
         this.update_excerpts(None, cx);
         this
-    }
-
-    fn emit_item_event_for_editor_event(event: &EditorEvent, cx: &mut ViewContext<Self>) {
-        match event {
-            EditorEvent::Closed => cx.emit(ItemEvent::CloseItem),
-
-            EditorEvent::Saved | EditorEvent::TitleChanged => {
-                cx.emit(ItemEvent::UpdateTab);
-                cx.emit(ItemEvent::UpdateBreadcrumbs);
-            }
-
-            EditorEvent::Reparsed => {
-                cx.emit(ItemEvent::UpdateBreadcrumbs);
-            }
-
-            EditorEvent::SelectionsChanged { local } if *local => {
-                cx.emit(ItemEvent::UpdateBreadcrumbs);
-            }
-
-            EditorEvent::DirtyChanged => {
-                cx.emit(ItemEvent::UpdateTab);
-            }
-
-            EditorEvent::BufferEdited => {
-                cx.emit(ItemEvent::Edit);
-                cx.emit(ItemEvent::UpdateBreadcrumbs);
-            }
-
-            EditorEvent::ExcerptsAdded { .. } | EditorEvent::ExcerptsRemoved { .. } => {
-                cx.emit(ItemEvent::Edit);
-            }
-
-            _ => {}
-        }
     }
 
     fn deploy(workspace: &mut Workspace, _: &Deploy, cx: &mut ViewContext<Workspace>) {
@@ -333,8 +299,7 @@ impl ProjectDiagnosticsEditor {
 
                 this.update(&mut cx, |this, cx| {
                     this.summary = this.project.read(cx).diagnostic_summary(false, cx);
-                    cx.emit(ItemEvent::UpdateTab);
-                    cx.emit(ItemEvent::UpdateBreadcrumbs);
+                    cx.emit(EditorEvent::TitleChanged);
                 })?;
                 anyhow::Ok(())
             }
@@ -649,6 +614,12 @@ impl FocusableView for ProjectDiagnosticsEditor {
 }
 
 impl Item for ProjectDiagnosticsEditor {
+    type Event = EditorEvent;
+
+    fn to_item_events(event: &EditorEvent, f: impl FnMut(ItemEvent)) {
+        Editor::to_item_events(event, f)
+    }
+
     fn deactivated(&mut self, cx: &mut ViewContext<Self>) {
         self.editor.update(cx, |editor, cx| editor.deactivated(cx));
     }

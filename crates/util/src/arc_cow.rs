@@ -44,9 +44,15 @@ impl<'a, T: ?Sized> From<&'a T> for ArcCow<'a, T> {
     }
 }
 
-impl<T> From<Arc<T>> for ArcCow<'_, T> {
+impl<T: ?Sized> From<Arc<T>> for ArcCow<'_, T> {
     fn from(s: Arc<T>) -> Self {
         Self::Owned(s)
+    }
+}
+
+impl<T: ?Sized> From<&'_ Arc<T>> for ArcCow<'_, T> {
+    fn from(s: &'_ Arc<T>) -> Self {
+        Self::Owned(s.clone())
     }
 }
 

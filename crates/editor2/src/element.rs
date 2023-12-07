@@ -485,7 +485,7 @@ impl EditorElement {
         let modifiers = event.modifiers;
         if editor.has_pending_selection() && event.pressed_button == Some(MouseButton::Left) {
             let point_for_position = position_map.point_for_position(text_bounds, event.position);
-            let mut scroll_delta = gpui::Point::<f32>::zero();
+            let mut scroll_delta = gpui::Point::<f32>::default();
             let vertical_margin = position_map.line_height.min(text_bounds.size.height / 3.0);
             let top = text_bounds.origin.y + vertical_margin;
             let bottom = text_bounds.lower_left().y - vertical_margin;
@@ -511,7 +511,7 @@ impl EditorElement {
                     position: point_for_position.previous_valid,
                     goal_column: point_for_position.exact_unclipped.column(),
                     scroll_position: (position_map.snapshot.scroll_position() + scroll_delta)
-                        .clamp(&gpui::Point::zero(), &position_map.scroll_max),
+                        .clamp(&gpui::Point::default(), &position_map.scroll_max),
                 },
                 cx,
             );
@@ -2803,35 +2803,48 @@ impl Element for EditorElement {
 
         let focus_handle = editor.focus_handle(cx);
         let dispatch_context = self.editor.read(cx).dispatch_context(cx);
-        cx.with_key_dispatch(dispatch_context, Some(focus_handle.clone()), |_, cx| {
-            self.register_actions(cx);
-            self.register_key_listeners(cx);
+        cx.with_key_dispatch(
+            Some(dispatch_context),
+            Some(focus_handle.clone()),
+            |_, cx| {
+                self.register_actions(cx);
+                self.register_key_listeners(cx);
 
-            // We call with_z_index to establish a new stacking context.
-            cx.with_z_index(0, |cx| {
-                cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
-                    // Paint mouse listeners at z-index 0 so any elements we paint on top of the editor
-                    // take precedence.
-                    cx.with_z_index(0, |cx| {
-                        self.paint_mouse_listeners(bounds, gutter_bounds, text_bounds, &layout, cx);
+                // We call with_z_index to establish a new stacking context.
+                cx.with_z_index(0, |cx| {
+                    cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
+                        // Paint mouse listeners at z-index 0 so any elements we paint on top of the editor
+                        // take precedence.
+                        cx.with_z_index(0, |cx| {
+                            self.paint_mouse_listeners(
+                                bounds,
+                                gutter_bounds,
+                                text_bounds,
+                                &layout,
+                                cx,
+                            );
+                        });
+                        let input_handler =
+                            ElementInputHandler::new(bounds, self.editor.clone(), cx);
+                        cx.handle_input(&focus_handle, input_handler);
+
+                        self.paint_background(gutter_bounds, text_bounds, &layout, cx);
+                        if layout.gutter_size.width > Pixels::ZERO {
+                            self.paint_gutter(gutter_bounds, &mut layout, cx);
+                        }
+                        self.paint_text(text_bounds, &mut layout, cx);
+
+                        if !layout.blocks.is_empty() {
+                            cx.with_z_index(1, |cx| {
+                                cx.with_element_id(Some("editor_blocks"), |cx| {
+                                    self.paint_blocks(bounds, &mut layout, cx);
+                                })
+                            })
+                        }
                     });
-                    let input_handler = ElementInputHandler::new(bounds, self.editor.clone(), cx);
-                    cx.handle_input(&focus_handle, input_handler);
-
-                    self.paint_background(gutter_bounds, text_bounds, &layout, cx);
-                    if layout.gutter_size.width > Pixels::ZERO {
-                        self.paint_gutter(gutter_bounds, &mut layout, cx);
-                    }
-                    self.paint_text(text_bounds, &mut layout, cx);
-
-                    if !layout.blocks.is_empty() {
-                        cx.with_element_id(Some("editor_blocks"), |cx| {
-                            self.paint_blocks(bounds, &mut layout, cx);
-                        })
-                    }
                 });
-            });
-        })
+            },
+        )
     }
 }
 
@@ -3448,7 +3461,6 @@ mod tests {
             DisplayPoint::new(4, 0)..DisplayPoint::new(6, 0)
         );
         assert_eq!(local_selections[0].head, DisplayPoint::new(5, 0));
-        dbg!("Hi");
         // moves cursor on buffer boundary back two lines
         // and doesn't allow selection to bleed through
         assert_eq!(

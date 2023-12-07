@@ -4,6 +4,7 @@ members = [
     "crates/activity_indicator2",
     "crates/ai",
     "crates/assistant",
+    "crates/assistant2",
     "crates/audio",
     "crates/audio2",
     "crates/auto_update",
@@ -89,7 +90,9 @@ members = [
     "crates/project_panel",
     "crates/project_panel2",
     "crates/project_symbols",
+    "crates/quick_action_bar2",
     "crates/recent_projects",
+    "crates/recent_projects2",
     "crates/rope",
     "crates/rpc",
     "crates/rpc2",
@@ -134,6 +137,7 @@ resolver = "2"
 [workspace.dependencies]
 anyhow = { version = "1.0.57" }
 async-trait = { version = "0.1" }
+async-compression = { version = "0.4", features = ["gzip", "futures-io"] }
 # TODO: Switch back to the published version of `ctor` once:
 #       1. A new version of `ctor` is published with this change: https://github.com/mmastrac/rust-ctor/pull/295
 #       2. We've confirmed it's fine to update to the latest version of `ctor` (we're currently on v0.1.20).

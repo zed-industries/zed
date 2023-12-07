@@ -28,7 +28,8 @@ theme = { package = "theme2", path = "../theme2" }
 lsp = { package = "lsp2", path = "../lsp2" }
 node_runtime = { path = "../node_runtime"}
 util = { path = "../util" }
-async-compression = { version = "0.3", features = ["gzip", "futures-bufread"] }
+ui = { package = "ui2", path = "../ui2" }
+async-compression.workspace = true
 async-tar = "0.4.2"
 anyhow.workspace = true
 log.workspace = true

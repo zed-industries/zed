@@ -33,6 +33,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
     // vcs_menu::init(cx);
     collab_titlebar_item::init(cx);
     collab_panel::init(cx);
+    channel_view::init(cx);
     // chat_panel::init(cx);
     notifications::init(&app_state, cx);
 

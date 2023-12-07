@@ -51,5 +51,13 @@ impl Render for IconButtonStory {
                         .tooltip(|cx| Tooltip::text("Open messages", cx)),
                 ),
             )
+            .child(Story::label("Selected with `tooltip`"))
+            .child(
+                div().w_8().child(
+                    IconButton::new("selected_with_tooltip", Icon::InlayHint)
+                        .selected(true)
+                        .tooltip(|cx| Tooltip::text("Toggle inlay hints", cx)),
+                ),
+            )
     }
 }
