@@ -1269,10 +1269,9 @@ impl<'a> WindowContext<'a> {
                             cursor_offset: position,
                         });
                     }
-                    InputEvent::MouseDown(MouseDownEvent {
+                    InputEvent::MouseMove(MouseMoveEvent {
                         position,
-                        button: MouseButton::Left,
-                        click_count: 1,
+                        pressed_button: Some(MouseButton::Left),
                         modifiers: Modifiers::default(),
                     })
                 }
