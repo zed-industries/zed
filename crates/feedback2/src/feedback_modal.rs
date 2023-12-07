@@ -399,3 +399,5 @@ impl Render for FeedbackModal {
             )
     }
 }
+
+// TODO: Add compilation flags to enable debug mode, where we can simulate sending feedback that both succeeds and fails, so we can test the UI
