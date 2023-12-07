@@ -27,10 +27,10 @@ pub fn nord() -> UserThemeFamily {
                     elevated_surface_background: Some(rgba(0x2e3440ff).into()),
                     surface_background: Some(rgba(0x2e3440ff).into()),
                     background: Some(rgba(0x2e3440ff).into()),
-                    element_background: Some(rgba(0x88bfd0ee).into()),
+                    element_background: Some(rgba(0x88c0d0ee).into()),
                     element_hover: Some(rgba(0x3b4252ff).into()),
-                    element_selected: Some(rgba(0x88bfd0ff).into()),
-                    drop_target_background: Some(rgba(0x88bfd099).into()),
+                    element_selected: Some(rgba(0x88c0d0ff).into()),
+                    drop_target_background: Some(rgba(0x88c0d099).into()),
                     ghost_element_hover: Some(rgba(0x3b4252ff).into()),
                     text: Some(rgba(0xd8dee9ff).into()),
                     tab_inactive_background: Some(rgba(0x2e3440ff).into()),
@@ -45,7 +45,7 @@ pub fn nord() -> UserThemeFamily {
                     terminal_ansi_bright_green: Some(rgba(0xa3be8cff).into()),
                     terminal_ansi_bright_yellow: Some(rgba(0xebcb8bff).into()),
                     terminal_ansi_bright_blue: Some(rgba(0x81a1c1ff).into()),
-                    terminal_ansi_bright_magenta: Some(rgba(0xb48eacff).into()),
+                    terminal_ansi_bright_magenta: Some(rgba(0xb48eadff).into()),
                     terminal_ansi_bright_cyan: Some(rgba(0x8fbcbbff).into()),
                     terminal_ansi_bright_white: Some(rgba(0xeceff4ff).into()),
                     terminal_ansi_black: Some(rgba(0x3b4252ff).into()),
@@ -53,8 +53,8 @@ pub fn nord() -> UserThemeFamily {
                     terminal_ansi_green: Some(rgba(0xa3be8cff).into()),
                     terminal_ansi_yellow: Some(rgba(0xebcb8bff).into()),
                     terminal_ansi_blue: Some(rgba(0x81a1c1ff).into()),
-                    terminal_ansi_magenta: Some(rgba(0xb48eacff).into()),
-                    terminal_ansi_cyan: Some(rgba(0x88bfd0ff).into()),
+                    terminal_ansi_magenta: Some(rgba(0xb48eadff).into()),
+                    terminal_ansi_cyan: Some(rgba(0x88c0d0ff).into()),
                     terminal_ansi_white: Some(rgba(0xe5e9f0ff).into()),
                     ..Default::default()
                 },
@@ -85,7 +85,7 @@ pub fn nord() -> UserThemeFamily {
                         (
                             "comment".into(),
                             UserHighlightStyle {
-                                color: Some(rgba(0x606e87ff).into()),
+                                color: Some(rgba(0x616e88ff).into()),
                                 ..Default::default()
                             },
                         ),
@@ -106,7 +106,7 @@ pub fn nord() -> UserThemeFamily {
                         (
                             "function".into(),
                             UserHighlightStyle {
-                                color: Some(rgba(0x88bfd0ff).into()),
+                                color: Some(rgba(0x88c0d0ff).into()),
                                 ..Default::default()
                             },
                         ),
@@ -120,7 +120,7 @@ pub fn nord() -> UserThemeFamily {
                         (
                             "number".into(),
                             UserHighlightStyle {
-                                color: Some(rgba(0xb48eacff).into()),
+                                color: Some(rgba(0xb48eadff).into()),
                                 ..Default::default()
                             },
                         ),
