@@ -1,3 +1,4 @@
+mod color;
 mod theme_printer;
 mod util;
 mod vscode;

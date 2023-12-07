@@ -1,5 +1,5 @@
 use anyhow::Result;
-use gpui::{rgba, Hsla, Rgba};
+use gpui::rgba;
 use indexmap::IndexMap;
 use strum::IntoEnumIterator;
 use theme::{
@@ -7,15 +7,12 @@ use theme::{
     UserHighlightStyle, UserSyntaxTheme, UserTheme, UserThemeStylesRefinement,
 };
 
+use crate::color::try_parse_color;
 use crate::util::Traverse;
 use crate::vscode::VsCodeTheme;
 use crate::ThemeMetadata;
 
 use super::ZedSyntaxToken;
-
-pub(crate) fn try_parse_color(color: &str) -> Result<Hsla> {
-    Ok(Rgba::try_from(color)?.into())
-}
 
 pub(crate) fn try_parse_font_weight(font_style: &str) -> Option<UserFontWeight> {
     match font_style {
