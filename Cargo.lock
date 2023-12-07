@@ -377,6 +377,47 @@ dependencies = [
 ]
 
 [[package]]
+name = "assistant2"
+version = "0.1.0"
+dependencies = [
+ "ai2",
+ "anyhow",
+ "chrono",
+ "client2",
+ "collections",
+ "ctor",
+ "editor2",
+ "env_logger 0.9.3",
+ "fs2",
+ "futures 0.3.28",
+ "gpui2",
+ "indoc",
+ "isahc",
+ "language2",
+ "log",
+ "menu2",
+ "multi_buffer2",
+ "ordered-float 2.10.0",
+ "parking_lot 0.11.2",
+ "project2",
+ "rand 0.8.5",
+ "regex",
+ "schemars",
+ "search2",
+ "semantic_index2",
+ "serde",
+ "serde_json",
+ "settings2",
+ "smol",
+ "theme2",
+ "tiktoken-rs",
+ "ui2",
+ "util",
+ "uuid 1.4.1",
+ "workspace2",
+]
+
+[[package]]
 name = "async-broadcast"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -413,9 +454,9 @@ dependencies = [
 
 [[package]]
 name = "async-compression"
-version = "0.3.15"
+version = "0.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "942c7cd7ae39e91bde4820d74132e9862e62c2f386c3aa90ccf55949f5bad63a"
+checksum = "bc2d0cfb2a7388d34f590e76686704c494ed7aaceed62ee1ba35cbf363abc2a5"
 dependencies = [
  "flate2",
  "futures-core",
@@ -1702,7 +1743,7 @@ dependencies = [
 
 [[package]]
 name = "collab"
-version = "0.29.1"
+version = "0.30.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1789,7 +1830,7 @@ dependencies = [
  "clap 3.2.25",
  "client2",
  "clock",
- "collab_ui",
+ "collab_ui2",
  "collections",
  "ctor",
  "dashmap",
@@ -1918,6 +1959,7 @@ dependencies = [
  "postage",
  "pretty_assertions",
  "project2",
+ "recent_projects2",
  "rich_text2",
  "rpc2",
  "schemars",
@@ -7076,6 +7118,7 @@ dependencies = [
 name = "quick_action_bar2"
 version = "0.1.0"
 dependencies = [
+ "assistant2",
  "editor2",
  "gpui2",
  "search2",
@@ -7263,6 +7306,28 @@ dependencies = [
  "theme",
  "util",
  "workspace",
+]
+
+[[package]]
+name = "recent_projects2"
+version = "0.1.0"
+dependencies = [
+ "db",
+ "editor2",
+ "futures 0.3.28",
+ "fuzzy2",
+ "gpui2",
+ "language2",
+ "ordered-float 2.10.0",
+ "picker2",
+ "postage",
+ "settings2",
+ "smol",
+ "text2",
+ "theme2",
+ "ui2",
+ "util",
+ "workspace2",
 ]
 
 [[package]]
@@ -9490,6 +9555,7 @@ dependencies = [
  "terminal2",
  "theme2",
  "thiserror",
+ "ui2",
  "util",
  "workspace2",
 ]
@@ -11706,7 +11772,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.116.0"
+version = "0.117.0"
 dependencies = [
  "activity_indicator",
  "ai",
@@ -11847,11 +11913,12 @@ dependencies = [
 
 [[package]]
 name = "zed2"
-version = "0.109.0"
+version = "2.0.0"
 dependencies = [
  "activity_indicator2",
  "ai2",
  "anyhow",
+ "assistant2",
  "async-compression",
  "async-recursion 0.3.2",
  "async-tar",
@@ -11904,6 +11971,7 @@ dependencies = [
  "project_panel2",
  "quick_action_bar2",
  "rand 0.8.5",
+ "recent_projects2",
  "regex",
  "rope2",
  "rpc2",
@@ -11911,6 +11979,7 @@ dependencies = [
  "rust-embed",
  "schemars",
  "search2",
+ "semantic_index2",
  "serde",
  "serde_derive",
  "serde_json",

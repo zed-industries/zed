@@ -124,6 +124,17 @@ pub fn update_settings_file<T: Settings>(
 
 pub fn load_default_keymap(cx: &mut AppContext) {
     for path in ["keymaps/default.json", "keymaps/vim.json"] {
+        // TODO: Remove this conditional when we're ready to add Vim support.
+        // Right now we're avoiding loading the Vim keymap to silence the warnings
+        // about invalid action bindings.
+        if path.contains("vim") {
+            let _: Option<()> = Err(format!(
+                "TODO: Skipping {path} until we're ready to add Vim support"
+            ))
+            .log_err();
+            continue;
+        }
+
         KeymapFile::load_asset(path, cx).unwrap();
     }
 
@@ -131,40 +142,4 @@ pub fn load_default_keymap(cx: &mut AppContext) {
     // if let Some(asset_path) = settings::get::<BaseKeymap>(cx).asset_path() {
     //     KeymapFile::load_asset(asset_path, cx).unwrap();
     // }
-}
-
-pub fn handle_keymap_file_changes(
-    mut user_keymap_file_rx: mpsc::UnboundedReceiver<String>,
-    cx: &mut AppContext,
-) {
-    cx.spawn(move |cx| async move {
-        //  let mut settings_subscription = None;
-        while let Some(user_keymap_content) = user_keymap_file_rx.next().await {
-            if let Some(keymap_content) = KeymapFile::parse(&user_keymap_content).log_err() {
-                cx.update(|cx| reload_keymaps(cx, &keymap_content)).ok();
-
-                // todo!()
-                // let mut old_base_keymap = cx.read(|cx| *settings::get::<BaseKeymap>(cx));
-                // drop(settings_subscription);
-                // settings_subscription = Some(cx.update(|cx| {
-                //     cx.observe_global::<SettingsStore, _>(move |cx| {
-                //         let new_base_keymap = *settings::get::<BaseKeymap>(cx);
-                //         if new_base_keymap != old_base_keymap {
-                //             old_base_keymap = new_base_keymap.clone();
-                //             reload_keymaps(cx, &keymap_content);
-                //         }
-                //     })
-                // }));
-            }
-        }
-    })
-    .detach();
-}
-
-fn reload_keymaps(cx: &mut AppContext, keymap_content: &KeymapFile) {
-    // todo!()
-    // cx.clear_bindings();
-    load_default_keymap(cx);
-    keymap_content.clone().add_to_cx(cx).log_err();
-    // cx.set_menus(menus::menus());
 }

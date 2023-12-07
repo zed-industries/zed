@@ -559,6 +559,8 @@ pub type KeyDownListener = Box<dyn Fn(&KeyDownEvent, DispatchPhase, &mut WindowC
 
 pub type KeyUpListener = Box<dyn Fn(&KeyUpEvent, DispatchPhase, &mut WindowContext) + 'static>;
 
+pub type DragEventListener = Box<dyn Fn(&MouseMoveEvent, &mut WindowContext) + 'static>;
+
 pub type ActionListener = Box<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext) + 'static>;
 
 pub fn div() -> Div {
@@ -751,7 +753,7 @@ pub struct Interactivity {
     pub tooltip_builder: Option<TooltipBuilder>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct InteractiveBounds {
     pub bounds: Bounds<Pixels>,
     pub stacking_order: StackingOrder,
@@ -899,11 +901,14 @@ impl Interactivity {
                                     .active_drag
                                     .take()
                                     .expect("checked for type drag state type above");
+
                                 listener(drag.view.clone(), cx);
                                 cx.notify();
                                 cx.stop_propagation();
                             }
                         }
+                    } else {
+                        cx.active_drag = None;
                     }
                 }
             });
@@ -1324,7 +1329,7 @@ impl GroupBounds {
 }
 
 pub struct Focusable<E> {
-    element: E,
+    pub element: E,
 }
 
 impl<E: InteractiveElement> FocusableElement for Focusable<E> {}

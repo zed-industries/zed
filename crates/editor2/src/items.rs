@@ -32,7 +32,7 @@ use std::{
 };
 use text::Selection;
 use theme::{ActiveTheme, Theme};
-use ui::{h_stack, Color, Label};
+use ui::{h_stack, prelude::*, Label};
 use util::{paths::PathExt, paths::FILE_ROW_COLUMN_DELIMITER, ResultExt, TryFutureExt};
 use workspace::{
     item::{BreadcrumbText, FollowEvent, FollowableItemHandle},
@@ -939,7 +939,7 @@ impl SearchableItem for Editor {
     fn update_matches(&mut self, matches: Vec<Range<Anchor>>, cx: &mut ViewContext<Self>) {
         self.highlight_background::<BufferSearchHighlights>(
             matches,
-            |theme| theme.title_bar_background, // todo: update theme
+            |theme| theme.search_match_background,
             cx,
         );
     }

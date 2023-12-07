@@ -4,8 +4,8 @@ use crate::TerminalView;
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
     actions, div, serde_json, AppContext, AsyncWindowContext, Div, Entity, EventEmitter,
-    FocusHandle, FocusableView, ParentElement, Render, Subscription, Task, View, ViewContext,
-    VisualContext, WeakView, WindowContext,
+    FocusHandle, FocusableView, ParentElement, Render, Styled, Subscription, Task, View,
+    ViewContext, VisualContext, WeakView, WindowContext,
 };
 use project::Fs;
 use serde::{Deserialize, Serialize};
@@ -339,7 +339,7 @@ impl Render for TerminalPanel {
     type Element = Div;
 
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
-        div().child(self.pane.clone())
+        div().size_full().child(self.pane.clone())
     }
 }
 
@@ -413,10 +413,6 @@ impl Panel for TerminalPanel {
         } else {
             Some(count.to_string())
         }
-    }
-
-    fn has_focus(&self, cx: &WindowContext) -> bool {
-        self.pane.read(cx).has_focus(cx)
     }
 
     fn persistent_name() -> &'static str {

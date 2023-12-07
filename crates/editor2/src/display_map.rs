@@ -24,7 +24,7 @@ use lsp::DiagnosticSeverity;
 use std::{any::TypeId, borrow::Cow, fmt::Debug, num::NonZeroU32, ops::Range, sync::Arc};
 use sum_tree::{Bias, TreeMap};
 use tab_map::TabMap;
-use theme::{SyntaxTheme, Theme};
+use theme::{StatusColors, SyntaxTheme, Theme};
 use wrap_map::WrapMap;
 
 pub use block_map::{
@@ -513,8 +513,8 @@ impl DisplaySnapshot {
         self.chunks(
             display_rows,
             language_aware,
-            Some(editor_style.syntax.inlay_style),
-            Some(editor_style.syntax.suggestion_style),
+            Some(editor_style.inlays_style),
+            Some(editor_style.suggestions_style),
         )
         .map(|chunk| {
             let mut highlight_style = chunk

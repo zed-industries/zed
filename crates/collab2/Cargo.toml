@@ -81,7 +81,7 @@ settings = { package = "settings2", path = "../settings2", features = ["test-sup
 theme = { package = "theme2", path = "../theme2" }
 workspace = { package = "workspace2", path = "../workspace2", features = ["test-support"] }
 
-collab_ui = { path = "../collab_ui", features = ["test-support"] }
+collab_ui = { path = "../collab_ui2", package = "collab_ui2", features = ["test-support"] }
 
 async-trait.workspace = true
 pretty_assertions.workspace = true

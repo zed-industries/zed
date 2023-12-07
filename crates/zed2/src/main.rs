@@ -22,8 +22,7 @@ use node_runtime::RealNodeRuntime;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use settings::{
-    default_settings, handle_keymap_file_changes, handle_settings_file_changes, watch_config_file,
-    Settings, SettingsStore,
+    default_settings, handle_settings_file_changes, watch_config_file, Settings, SettingsStore,
 };
 use simplelog::ConfigBuilder;
 use smol::process::Command;
@@ -51,8 +50,9 @@ use uuid::Uuid;
 use welcome::{show_welcome_experience, FIRST_OPEN};
 use workspace::{AppState, WorkspaceStore};
 use zed2::{
-    build_window_options, ensure_only_instance, handle_cli_connection, initialize_workspace,
-    languages, Assets, IsOnlyInstance, OpenListener, OpenRequest,
+    app_menus, build_window_options, ensure_only_instance, handle_cli_connection,
+    handle_keymap_file_changes, initialize_workspace, languages, Assets, IsOnlyInstance,
+    OpenListener, OpenRequest,
 };
 
 mod open_listener;
@@ -161,11 +161,11 @@ fn main() {
             node_runtime.clone(),
             cx,
         );
-        // assistant::init(cx);
+        assistant::init(cx);
         // component_test::init(cx);
 
-        // cx.spawn(|_| watch_languages(fs.clone(), languages.clone()))
-        //     .detach();
+        cx.spawn(|_| watch_languages(fs.clone(), languages.clone()))
+            .detach();
         watch_file_types(fs.clone(), cx);
 
         languages.set_theme(cx.theme().clone());
@@ -186,10 +186,10 @@ fn main() {
             .report_app_event(telemetry_settings, event_operation);
 
         let app_state = Arc::new(AppState {
-            languages,
+            languages: languages.clone(),
             client: client.clone(),
             user_store: user_store.clone(),
-            fs,
+            fs: fs.clone(),
             build_window_options,
             workspace_store,
             node_runtime,
@@ -200,7 +200,7 @@ fn main() {
         auto_update::init(http.clone(), client::ZED_SERVER_URL.clone(), cx);
 
         workspace::init(app_state.clone(), cx);
-        // recent_projects::init(cx);
+        recent_projects::init(cx);
 
         go_to_line::init(cx);
         file_finder::init(cx);
@@ -210,7 +210,7 @@ fn main() {
         channel::init(&client, user_store.clone(), cx);
         // diagnostics::init(cx);
         search::init(cx);
-        // semantic_index::init(fs.clone(), http.clone(), languages.clone(), cx);
+        semantic_index::init(fs.clone(), http.clone(), languages.clone(), cx);
         // vim::init(cx);
         terminal_view::init(cx);
 
@@ -224,7 +224,7 @@ fn main() {
         // feedback::init(cx);
         welcome::init(cx);
 
-        // cx.set_menus(menus::menus());
+        cx.set_menus(app_menus());
         initialize_workspace(app_state.clone(), cx);
 
         if stdout_is_a_pty() {

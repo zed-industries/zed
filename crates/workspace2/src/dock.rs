@@ -26,6 +26,7 @@ pub trait Panel: FocusableView + EventEmitter<PanelEvent> {
     fn set_position(&mut self, position: DockPosition, cx: &mut ViewContext<Self>);
     fn size(&self, cx: &WindowContext) -> f32;
     fn set_size(&mut self, size: Option<f32>, cx: &mut ViewContext<Self>);
+    // todo!("We should have a icon tooltip method, rather than using persistant_name")
     fn icon(&self, cx: &WindowContext) -> Option<ui::Icon>;
     fn toggle_action(&self) -> Box<dyn Action>;
     fn icon_label(&self, _: &WindowContext) -> Option<String> {
@@ -36,7 +37,6 @@ pub trait Panel: FocusableView + EventEmitter<PanelEvent> {
     }
     fn set_zoomed(&mut self, _zoomed: bool, _cx: &mut ViewContext<Self>) {}
     fn set_active(&mut self, _active: bool, _cx: &mut ViewContext<Self>) {}
-    fn has_focus(&self, cx: &WindowContext) -> bool;
 }
 
 pub trait PanelHandle: Send + Sync {
@@ -53,7 +53,6 @@ pub trait PanelHandle: Send + Sync {
     fn icon(&self, cx: &WindowContext) -> Option<ui::Icon>;
     fn toggle_action(&self, cx: &WindowContext) -> Box<dyn Action>;
     fn icon_label(&self, cx: &WindowContext) -> Option<String>;
-    fn has_focus(&self, cx: &WindowContext) -> bool;
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle;
     fn to_any(&self) -> AnyView;
 }
@@ -112,10 +111,6 @@ where
 
     fn icon_label(&self, cx: &WindowContext) -> Option<String> {
         self.read(cx).icon_label(cx)
-    }
-
-    fn has_focus(&self, cx: &WindowContext) -> bool {
-        self.read(cx).has_focus(cx)
     }
 
     fn to_any(&self) -> AnyView {
@@ -319,7 +314,7 @@ impl Dock {
                 }
                 PanelEvent::ZoomIn => {
                     this.set_panel_zoomed(&panel.to_any(), true, cx);
-                    if !panel.has_focus(cx) {
+                    if !panel.focus_handle(cx).contains_focused(cx) {
                         cx.focus_view(&panel);
                     }
                     workspace
@@ -729,7 +724,10 @@ impl Render for PanelButtons {
                         .trigger(
                             IconButton::new(name, icon)
                                 .selected(is_active_button)
-                                .action(action.boxed_clone())
+                                .on_click({
+                                    let action = action.boxed_clone();
+                                    move |_, cx| cx.dispatch_action(action.boxed_clone())
+                                })
                                 .tooltip(move |cx| {
                                     Tooltip::for_action(tooltip.clone(), &*action, cx)
                                 }),
@@ -760,7 +758,7 @@ pub mod test {
         pub position: DockPosition,
         pub zoomed: bool,
         pub active: bool,
-        pub has_focus: bool,
+        pub focus_handle: FocusHandle,
         pub size: f32,
     }
     actions!(ToggleTestPanel);
@@ -768,12 +766,12 @@ pub mod test {
     impl EventEmitter<PanelEvent> for TestPanel {}
 
     impl TestPanel {
-        pub fn new(position: DockPosition) -> Self {
+        pub fn new(position: DockPosition, cx: &mut WindowContext) -> Self {
             Self {
                 position,
                 zoomed: false,
                 active: false,
-                has_focus: false,
+                focus_handle: cx.focus_handle(),
                 size: 300.,
             }
         }
@@ -832,15 +830,11 @@ pub mod test {
         fn set_active(&mut self, active: bool, _cx: &mut ViewContext<Self>) {
             self.active = active;
         }
-
-        fn has_focus(&self, _cx: &WindowContext) -> bool {
-            self.has_focus
-        }
     }
 
     impl FocusableView for TestPanel {
-        fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
-            unimplemented!()
+        fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
+            self.focus_handle.clone()
         }
     }
 }

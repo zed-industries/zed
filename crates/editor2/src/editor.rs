@@ -92,6 +92,7 @@ use std::{
     ops::{ControlFlow, Deref, DerefMut, Range, RangeInclusive},
     path::Path,
     sync::Arc,
+    sync::Weak,
     time::{Duration, Instant},
 };
 pub use sum_tree::Bias;
@@ -420,6 +421,25 @@ pub fn init(cx: &mut AppContext) {
         },
     )
     .detach();
+
+    cx.on_action(move |_: &workspace::NewFile, cx| {
+        let app_state = cx.global::<Weak<workspace::AppState>>();
+        if let Some(app_state) = app_state.upgrade() {
+            workspace::open_new(&app_state, cx, |workspace, cx| {
+                Editor::new_file(workspace, &Default::default(), cx)
+            })
+            .detach();
+        }
+    });
+    cx.on_action(move |_: &workspace::NewWindow, cx| {
+        let app_state = cx.global::<Weak<workspace::AppState>>();
+        if let Some(app_state) = app_state.upgrade() {
+            workspace::open_new(&app_state, cx, |workspace, cx| {
+                Editor::new_file(workspace, &Default::default(), cx)
+            })
+            .detach();
+        }
+    });
 }
 
 trait InvalidationRegion {
@@ -479,6 +499,8 @@ pub struct EditorStyle {
     pub scrollbar_width: Pixels,
     pub syntax: Arc<SyntaxTheme>,
     pub diagnostic_style: DiagnosticStyle,
+    pub inlays_style: HighlightStyle,
+    pub suggestions_style: HighlightStyle,
 }
 
 type CompletionId = usize;
@@ -1960,14 +1982,14 @@ impl Editor {
         cx.notify();
     }
 
-    //     pub fn set_cursor_shape(&mut self, cursor_shape: CursorShape, cx: &mut ViewContext<Self>) {
-    //         self.cursor_shape = cursor_shape;
-    //         cx.notify();
-    //     }
+    pub fn set_cursor_shape(&mut self, cursor_shape: CursorShape, cx: &mut ViewContext<Self>) {
+        self.cursor_shape = cursor_shape;
+        cx.notify();
+    }
 
-    //     pub fn set_collapse_matches(&mut self, collapse_matches: bool) {
-    //         self.collapse_matches = collapse_matches;
-    //     }
+    pub fn set_collapse_matches(&mut self, collapse_matches: bool) {
+        self.collapse_matches = collapse_matches;
+    }
 
     pub fn range_for_match<T: std::marker::Copy>(&self, range: &Range<T>) -> Range<T> {
         if self.collapse_matches {
@@ -1976,56 +1998,47 @@ impl Editor {
         range.clone()
     }
 
-    //     pub fn set_clip_at_line_ends(&mut self, clip: bool, cx: &mut ViewContext<Self>) {
-    //         if self.display_map.read(cx).clip_at_line_ends != clip {
-    //             self.display_map
-    //                 .update(cx, |map, _| map.clip_at_line_ends = clip);
-    //         }
-    //     }
+    pub fn set_clip_at_line_ends(&mut self, clip: bool, cx: &mut ViewContext<Self>) {
+        if self.display_map.read(cx).clip_at_line_ends != clip {
+            self.display_map
+                .update(cx, |map, _| map.clip_at_line_ends = clip);
+        }
+    }
 
-    //     pub fn set_keymap_context_layer<Tag: 'static>(
-    //         &mut self,
-    //         context: KeymapContext,
-    //         cx: &mut ViewContext<Self>,
-    //     ) {
-    //         self.keymap_context_layers
-    //             .insert(TypeId::of::<Tag>(), context);
-    //         cx.notify();
-    //     }
+    pub fn set_keymap_context_layer<Tag: 'static>(
+        &mut self,
+        context: KeyContext,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.keymap_context_layers
+            .insert(TypeId::of::<Tag>(), context);
+        cx.notify();
+    }
 
-    //     pub fn remove_keymap_context_layer<Tag: 'static>(&mut self, cx: &mut ViewContext<Self>) {
-    //         self.keymap_context_layers.remove(&TypeId::of::<Tag>());
-    //         cx.notify();
-    //     }
+    pub fn remove_keymap_context_layer<Tag: 'static>(&mut self, cx: &mut ViewContext<Self>) {
+        self.keymap_context_layers.remove(&TypeId::of::<Tag>());
+        cx.notify();
+    }
 
-    //     pub fn set_input_enabled(&mut self, input_enabled: bool) {
-    //         self.input_enabled = input_enabled;
-    //     }
+    pub fn set_input_enabled(&mut self, input_enabled: bool) {
+        self.input_enabled = input_enabled;
+    }
 
-    //     pub fn set_autoindent(&mut self, autoindent: bool) {
-    //         if autoindent {
-    //             self.autoindent_mode = Some(AutoindentMode::EachLine);
-    //         } else {
-    //             self.autoindent_mode = None;
-    //         }
-    //     }
+    pub fn set_autoindent(&mut self, autoindent: bool) {
+        if autoindent {
+            self.autoindent_mode = Some(AutoindentMode::EachLine);
+        } else {
+            self.autoindent_mode = None;
+        }
+    }
 
-    //     pub fn read_only(&self) -> bool {
-    //         self.read_only
-    //     }
+    pub fn read_only(&self) -> bool {
+        self.read_only
+    }
 
-    //     pub fn set_read_only(&mut self, read_only: bool) {
-    //         self.read_only = read_only;
-    //     }
-
-    //     pub fn set_field_editor_style(
-    //         &mut self,
-    //         style: Option<Arc<GetFieldEditorTheme>>,
-    //         cx: &mut ViewContext<Self>,
-    //     ) {
-    //         self.get_field_editor_theme = style;
-    //         cx.notify();
-    //     }
+    pub fn set_read_only(&mut self, read_only: bool) {
+        self.read_only = read_only;
+    }
 
     fn selections_did_change(
         &mut self,
@@ -7629,6 +7642,18 @@ impl Editor {
                                                     .editor_style
                                                     .diagnostic_style
                                                     .clone(),
+                                                // todo!("what about the rest of the highlight style parts for inlays and suggestions?")
+                                                inlays_style: HighlightStyle {
+                                                    color: Some(cx.theme().status().hint),
+                                                    font_weight: Some(FontWeight::BOLD),
+                                                    fade_out: Some(0.6),
+                                                    ..HighlightStyle::default()
+                                                },
+                                                suggestions_style: HighlightStyle {
+                                                    color: Some(cx.theme().status().predictive),
+                                                    fade_out: Some(0.6),
+                                                    ..HighlightStyle::default()
+                                                },
                                             },
                                         ))
                                         .into_any_element()
@@ -9266,7 +9291,7 @@ impl Render for Editor {
                 color: cx.theme().colors().text,
                 font_family: settings.buffer_font.family.clone(),
                 font_features: settings.buffer_font.features,
-                font_size: settings.buffer_font_size.into(),
+                font_size: settings.buffer_font_size(cx).into(),
                 font_weight: FontWeight::NORMAL,
                 font_style: FontStyle::Normal,
                 line_height: relative(settings.buffer_line_height.value()),
@@ -9291,6 +9316,19 @@ impl Render for Editor {
                 scrollbar_width: px(12.),
                 syntax: cx.theme().syntax().clone(),
                 diagnostic_style: cx.theme().diagnostic_style(),
+                // TODO kb find `HighlightStyle` usages
+                // todo!("what about the rest of the highlight style parts?")
+                inlays_style: HighlightStyle {
+                    color: Some(cx.theme().status().hint),
+                    font_weight: Some(FontWeight::BOLD),
+                    fade_out: Some(0.6),
+                    ..HighlightStyle::default()
+                },
+                suggestions_style: HighlightStyle {
+                    color: Some(cx.theme().status().predictive),
+                    fade_out: Some(0.6),
+                    ..HighlightStyle::default()
+                },
             },
         )
     }

@@ -29,7 +29,7 @@ lsp = { package = "lsp2", path = "../lsp2" }
 node_runtime = { path = "../node_runtime"}
 util = { path = "../util" }
 ui = { package = "ui2", path = "../ui2" }
-async-compression = { version = "0.3", features = ["gzip", "futures-bufread"] }
+async-compression.workspace = true
 async-tar = "0.4.2"
 anyhow.workspace = true
 log.workspace = true

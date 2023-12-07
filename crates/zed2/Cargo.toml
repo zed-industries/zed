@@ -2,7 +2,7 @@
 description = "The fast, collaborative code editor."
 edition = "2021"
 name = "zed2"
-version = "0.109.0"
+version = "2.0.0"
 publish = false
 
 [lib]
@@ -49,14 +49,14 @@ lsp = { package = "lsp2", path = "../lsp2" }
 menu = { package = "menu2", path = "../menu2" }
 # language_tools = { path = "../language_tools" }
 node_runtime = { path = "../node_runtime" }
-# assistant = { path = "../assistant" }
+assistant = { package = "assistant2", path = "../assistant2" }
 outline = { package = "outline2", path = "../outline2" }
 # plugin_runtime = { path = "../plugin_runtime",optional = true }
 project = { package = "project2", path = "../project2" }
 project_panel = { package = "project_panel2", path = "../project_panel2" }
 # project_symbols = { path = "../project_symbols" }
 quick_action_bar = { package = "quick_action_bar2", path = "../quick_action_bar2" }
-# recent_projects = { path = "../recent_projects" }
+recent_projects = { package = "recent_projects2", path = "../recent_projects2" }
 rope = { package = "rope2", path = "../rope2"}
 rpc = { package = "rpc2", path = "../rpc2" }
 settings = { package = "settings2", path = "../settings2" }
@@ -68,13 +68,13 @@ terminal_view = { package = "terminal_view2", path = "../terminal_view2" }
 theme = { package = "theme2", path = "../theme2" }
 theme_selector = { package = "theme_selector2", path = "../theme_selector2" }
 util = { path = "../util" }
-# semantic_index = { path = "../semantic_index" }
+semantic_index = { package = "semantic_index2", path = "../semantic_index2" }
 # vim = { path = "../vim" }
 workspace = { package = "workspace2", path = "../workspace2" }
 welcome = { package = "welcome2", path = "../welcome2" }
 zed_actions = {package = "zed_actions2", path = "../zed_actions2"}
 anyhow.workspace = true
-async-compression = { version = "0.3", features = ["gzip", "futures-bufread"] }
+async-compression.workspace = true
 async-tar = "0.4.2"
 async-recursion = "0.3"
 async-trait.workspace = true

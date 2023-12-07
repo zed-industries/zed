@@ -191,6 +191,7 @@ use workspace::{
     Workspace,
 };
 
+use crate::channel_view::ChannelView;
 use crate::{face_pile::FacePile, CollaborationPanelSettings};
 
 use self::channel_modal::ChannelModal;
@@ -1935,8 +1936,7 @@ impl CollabPanel {
 
     fn open_channel_notes(&mut self, channel_id: ChannelId, cx: &mut ViewContext<Self>) {
         if let Some(workspace) = self.workspace.upgrade() {
-            todo!();
-            // ChannelView::open(action.channel_id, workspace, cx).detach();
+            ChannelView::open(channel_id, workspace, cx).detach();
         }
     }
 
@@ -2619,6 +2619,9 @@ impl CollabPanel {
                                                     } else {
                                                         Color::Muted
                                                     })
+                                                    .on_click(cx.listener(move |this, _, cx| {
+                                                        this.open_channel_notes(channel_id, cx)
+                                                    }))
                                                     .tooltip(|cx| {
                                                         Tooltip::text("Open channel notes", cx)
                                                     }),
@@ -3202,10 +3205,6 @@ impl Panel for CollabPanel {
 
     fn toggle_action(&self) -> Box<dyn gpui::Action> {
         Box::new(ToggleFocus)
-    }
-
-    fn has_focus(&self, cx: &gpui::WindowContext) -> bool {
-        self.focus_handle.contains_focused(cx)
     }
 
     fn persistent_name() -> &'static str {

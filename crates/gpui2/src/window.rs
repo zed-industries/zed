@@ -430,7 +430,7 @@ impl<'a> WindowContext<'a> {
         self.window
             .current_frame
             .dispatch_tree
-            .clear_keystroke_matchers();
+            .clear_pending_keystrokes();
         self.app.push_effect(Effect::FocusChanged {
             window_handle: self.window.handle,
             focused: Some(focus_id),
@@ -804,6 +804,22 @@ impl<'a> WindowContext<'a> {
         );
     }
 
+    pub fn is_action_available(&self, action: &dyn Action) -> bool {
+        let target = self
+            .focused()
+            .and_then(|focused_handle| {
+                self.window
+                    .current_frame
+                    .dispatch_tree
+                    .focusable_node_id(focused_handle.id)
+            })
+            .unwrap_or_else(|| self.window.current_frame.dispatch_tree.root_node_id());
+        self.window
+            .current_frame
+            .dispatch_tree
+            .is_action_available(action, target)
+    }
+
     /// The position of the mouse relative to the window.
     pub fn mouse_position(&self) -> Point<Pixels> {
         self.window.mouse_position
@@ -1167,7 +1183,7 @@ impl<'a> WindowContext<'a> {
                 }
 
                 let available_space = cx.window.viewport_size.map(Into::into);
-                root_view.draw(Point::zero(), available_space, cx);
+                root_view.draw(Point::default(), available_space, cx);
             })
         });
 
@@ -1176,8 +1192,8 @@ impl<'a> WindowContext<'a> {
                 let offset = cx.mouse_position() - active_drag.cursor_offset;
                 let available_space = size(AvailableSpace::MinContent, AvailableSpace::MinContent);
                 active_drag.view.draw(offset, available_space, cx);
-                cx.active_drag = Some(active_drag);
             });
+            self.active_drag = Some(active_drag);
         } else if let Some(active_tooltip) = self.app.active_tooltip.take() {
             self.with_z_index(1, |cx| {
                 let available_space = size(AvailableSpace::MinContent, AvailableSpace::MinContent);
@@ -1190,7 +1206,7 @@ impl<'a> WindowContext<'a> {
         self.window
             .current_frame
             .dispatch_tree
-            .preserve_keystroke_matchers(
+            .preserve_pending_keystrokes(
                 &mut self.window.previous_frame.dispatch_tree,
                 self.window.focus,
             );
@@ -1212,6 +1228,7 @@ impl<'a> WindowContext<'a> {
     /// Rotate the current frame and the previous frame, then clear the current frame.
     /// We repopulate all state in the current frame during each paint.
     fn start_frame(&mut self) {
+        self.window.platform_window.clear_input_handler();
         self.text_system().start_frame();
 
         let window = &mut *self.window;
@@ -1377,8 +1394,8 @@ impl<'a> WindowContext<'a> {
         for node_id in &dispatch_path {
             let node = self.window.current_frame.dispatch_tree.node(*node_id);
 
-            if !node.context.is_empty() {
-                context_stack.push(node.context.clone());
+            if let Some(context) = node.context.clone() {
+                context_stack.push(context);
             }
 
             for key_listener in node.key_listeners.clone() {
@@ -1402,7 +1419,7 @@ impl<'a> WindowContext<'a> {
 
             // Match keystrokes
             let node = self.window.current_frame.dispatch_tree.node(*node_id);
-            if !node.context.is_empty() {
+            if node.context.is_some() {
                 if let Some(key_down_event) = event.downcast_ref::<KeyDownEvent>() {
                     if let Some(found) = self
                         .window
@@ -1547,7 +1564,7 @@ impl<'a> WindowContext<'a> {
         let context_stack = dispatch_tree
             .dispatch_path(node_id)
             .into_iter()
-            .map(|node_id| dispatch_tree.node(node_id).context.clone())
+            .filter_map(|node_id| dispatch_tree.node(node_id).context.clone())
             .collect();
         dispatch_tree.bindings_for_action(action, &context_stack)
     }

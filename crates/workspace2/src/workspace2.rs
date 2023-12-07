@@ -45,9 +45,10 @@ use node_runtime::NodeRuntime;
 use notifications::{simple_message_notification::MessageNotification, NotificationHandle};
 pub use pane::*;
 pub use pane_group::*;
+use persistence::DB;
 pub use persistence::{
     model::{ItemId, SerializedWorkspace, WorkspaceLocation},
-    WorkspaceDb, DB,
+    WorkspaceDb, DB as WORKSPACE_DB,
 };
 use postage::stream::Stream;
 use project::{Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
@@ -65,7 +66,7 @@ use std::{
     time::Duration,
 };
 use theme::{ActiveTheme, ThemeSettings};
-pub use toolbar::{ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
+pub use toolbar::{Toolbar, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 pub use ui;
 use util::ResultExt;
 use uuid::Uuid;
@@ -1542,7 +1543,7 @@ impl Workspace {
 
             if let Some(active_panel) = dock.active_panel() {
                 if was_visible {
-                    if active_panel.has_focus(cx) {
+                    if active_panel.focus_handle(cx).contains_focused(cx) {
                         focus_center = true;
                     }
                 } else {
@@ -1589,7 +1590,9 @@ impl Workspace {
     /// Focus the panel of the given type if it isn't already focused. If it is
     /// already focused, then transfer focus back to the workspace center.
     pub fn toggle_panel_focus<T: Panel>(&mut self, cx: &mut ViewContext<Self>) {
-        self.focus_or_unfocus_panel::<T>(cx, |panel, cx| !panel.has_focus(cx));
+        self.focus_or_unfocus_panel::<T>(cx, |panel, cx| {
+            !panel.focus_handle(cx).contains_focused(cx)
+        });
     }
 
     /// Focus or unfocus the given panel type, depending on the given callback.
@@ -1681,7 +1684,7 @@ impl Workspace {
                 if Some(dock.position()) != dock_to_reveal {
                     if let Some(panel) = dock.active_panel() {
                         if panel.is_zoomed(cx) {
-                            focus_center |= panel.has_focus(cx);
+                            focus_center |= panel.focus_handle(cx).contains_focused(cx);
                             dock.set_open(false, cx);
                         }
                     }
@@ -2075,6 +2078,7 @@ impl Workspace {
                 }
                 if &pane == self.active_pane() {
                     self.active_item_path_changed(cx);
+                    self.update_active_view_for_followers(cx);
                 }
             }
             pane::Event::ChangeItemTitle => {
@@ -2754,18 +2758,18 @@ impl Workspace {
     fn update_active_view_for_followers(&mut self, cx: &mut ViewContext<Self>) {
         let mut is_project_item = true;
         let mut update = proto::UpdateActiveView::default();
-        if self.active_pane.read(cx).has_focus(cx) {
-            let item = self
-                .active_item(cx)
-                .and_then(|item| item.to_followable_item_handle(cx));
-            if let Some(item) = item {
-                is_project_item = item.is_project_item(cx);
-                update = proto::UpdateActiveView {
-                    id: item
-                        .remote_id(&self.app_state.client, cx)
-                        .map(|id| id.to_proto()),
-                    leader_id: self.leader_for_pane(&self.active_pane),
-                };
+
+        if let Some(item) = self.active_item(cx) {
+            if item.focus_handle(cx).contains_focused(cx) {
+                if let Some(item) = item.to_followable_item_handle(cx) {
+                    is_project_item = item.is_project_item(cx);
+                    update = proto::UpdateActiveView {
+                        id: item
+                            .remote_id(&self.app_state.client, cx)
+                            .map(|id| id.to_proto()),
+                        leader_id: self.leader_for_pane(&self.active_pane),
+                    };
+                }
             }
         }
 
