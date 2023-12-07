@@ -370,39 +370,6 @@ impl<E: Element> DrawableElement<E> {
     }
 }
 
-// impl<V: 'static, E: Element> Element for DrawableElement<V, E> {
-//     type State = <E::Element as Element>::State;
-
-//     fn layout(
-//         &mut self,
-//         element_state: Option<Self::State>,
-//         cx: &mut WindowContext,
-//     ) -> (LayoutId, Self::State) {
-
-//     }
-
-//     fn paint(
-//         self,
-//         bounds: Bounds<Pixels>,
-//         element_state: &mut Self::State,
-//         cx: &mut WindowContext,
-//     ) {
-//         todo!()
-//     }
-// }
-
-// impl<V: 'static, E: 'static + Element> RenderOnce for DrawableElement<V, E> {
-//     type Element = Self;
-
-//     fn element_id(&self) -> Option<ElementId> {
-//         self.element.as_ref()?.element_id()
-//     }
-
-//     fn render_once(self) -> Self::Element {
-//         self
-//     }
-// }
-
 impl<E> ElementObject for Option<DrawableElement<E>>
 where
     E: Element,

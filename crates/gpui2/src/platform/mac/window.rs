@@ -750,6 +750,10 @@ impl PlatformWindow for MacWindow {
         self.0.as_ref().lock().input_handler = Some(input_handler);
     }
 
+    fn clear_input_handler(&mut self) {
+        self.0.as_ref().lock().input_handler = None;
+    }
+
     fn prompt(&self, level: PromptLevel, msg: &str, answers: &[&str]) -> oneshot::Receiver<usize> {
         // macOs applies overrides to modal window buttons after they are added.
         // Two most important for this logic are:

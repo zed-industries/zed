@@ -1192,8 +1192,8 @@ impl<'a> WindowContext<'a> {
                 let offset = cx.mouse_position() - active_drag.cursor_offset;
                 let available_space = size(AvailableSpace::MinContent, AvailableSpace::MinContent);
                 active_drag.view.draw(offset, available_space, cx);
-                cx.active_drag = Some(active_drag);
             });
+            self.active_drag = Some(active_drag);
         } else if let Some(active_tooltip) = self.app.active_tooltip.take() {
             self.with_z_index(1, |cx| {
                 let available_space = size(AvailableSpace::MinContent, AvailableSpace::MinContent);
@@ -1228,6 +1228,7 @@ impl<'a> WindowContext<'a> {
     /// Rotate the current frame and the previous frame, then clear the current frame.
     /// We repopulate all state in the current frame during each paint.
     fn start_frame(&mut self) {
+        self.window.platform_window.clear_input_handler();
         self.text_system().start_frame();
 
         let window = &mut *self.window;
