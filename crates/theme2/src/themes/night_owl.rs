@@ -62,6 +62,7 @@ pub fn night_owl() -> UserThemeFamily {
                         deleted: Some(rgba(0xef524fff).into()),
                         error: Some(rgba(0xef524fff).into()),
                         hidden: Some(rgba(0x5f7e97ff).into()),
+                        hint: Some(rgba(0x969696ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -242,6 +243,7 @@ pub fn night_owl() -> UserThemeFamily {
                         deleted: Some(rgba(0x403f53ff).into()),
                         error: Some(rgba(0x403f53ff).into()),
                         hidden: Some(rgba(0x403f53ff).into()),
+                        hint: Some(rgba(0x969696ff).into()),
                         warning: Some(rgba(0xdaa900ff).into()),
                         ..Default::default()
                     },

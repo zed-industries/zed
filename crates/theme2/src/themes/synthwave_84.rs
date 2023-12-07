@@ -47,6 +47,7 @@ pub fn synthwave_84() -> UserThemeFamily {
                 status: StatusColorsRefinement {
                     deleted: Some(rgba(0xfe444fff).into()),
                     error: Some(rgba(0xfe444fff).into()),
+                    hint: Some(rgba(0x969696ff).into()),
                     warning: Some(rgba(0x71f1b7bb).into()),
                     ..Default::default()
                 },

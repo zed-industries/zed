@@ -62,6 +62,7 @@ pub fn rose_pine() -> UserThemeFamily {
                         deleted: Some(rgba(0xeb6f92ff).into()),
                         error: Some(rgba(0xeb6f92ff).into()),
                         hidden: Some(rgba(0x908caaff).into()),
+                        hint: Some(rgba(0x908caaff).into()),
                         warning: Some(rgba(0xf5c177ff).into()),
                         ..Default::default()
                     },
@@ -228,6 +229,7 @@ pub fn rose_pine() -> UserThemeFamily {
                         deleted: Some(rgba(0xeb6f92ff).into()),
                         error: Some(rgba(0xeb6f92ff).into()),
                         hidden: Some(rgba(0x908caaff).into()),
+                        hint: Some(rgba(0x908caaff).into()),
                         warning: Some(rgba(0xf5c177ff).into()),
                         ..Default::default()
                     },
@@ -394,6 +396,7 @@ pub fn rose_pine() -> UserThemeFamily {
                         deleted: Some(rgba(0xb3627aff).into()),
                         error: Some(rgba(0xb3627aff).into()),
                         hidden: Some(rgba(0x797593ff).into()),
+                        hint: Some(rgba(0x797593ff).into()),
                         warning: Some(rgba(0xea9d34ff).into()),
                         ..Default::default()
                     },

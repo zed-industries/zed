@@ -59,6 +59,7 @@ pub fn solarized() -> UserThemeFamily {
                         deleted: Some(rgba(0xffeaeaff).into()),
                         error: Some(rgba(0xffeaeaff).into()),
                         hidden: Some(rgba(0x93a1a1ff).into()),
+                        hint: Some(rgba(0x969696ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -243,6 +244,7 @@ pub fn solarized() -> UserThemeFamily {
                     },
                     status: StatusColorsRefinement {
                         hidden: Some(rgba(0x586e75ff).into()),
+                        hint: Some(rgba(0x969696ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {

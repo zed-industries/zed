@@ -62,6 +62,7 @@ pub fn ayu() -> UserThemeFamily {
                         deleted: Some(rgba(0xe65050ff).into()),
                         error: Some(rgba(0xe65050ff).into()),
                         hidden: Some(rgba(0x8a9199ff).into()),
+                        hint: Some(rgba(0x969696ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -324,6 +325,7 @@ pub fn ayu() -> UserThemeFamily {
                         deleted: Some(rgba(0xff6565ff).into()),
                         error: Some(rgba(0xff6565ff).into()),
                         hidden: Some(rgba(0x707a8cff).into()),
+                        hint: Some(rgba(0x969696ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -586,6 +588,7 @@ pub fn ayu() -> UserThemeFamily {
                         deleted: Some(rgba(0xd95757ff).into()),
                         error: Some(rgba(0xd95757ff).into()),
                         hidden: Some(rgba(0x565b66ff).into()),
+                        hint: Some(rgba(0x969696ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {

@@ -1,5 +1,5 @@
 use anyhow::Result;
-use gpui::{Hsla, Rgba};
+use gpui::{rgba, Hsla, Rgba};
 use indexmap::IndexMap;
 use strum::IntoEnumIterator;
 use theme::{
@@ -66,6 +66,11 @@ impl VsCodeThemeConverter {
     fn convert_status_colors(&self) -> Result<StatusColorsRefinement> {
         let vscode_colors = &self.theme.colors;
 
+        let vscode_base_status_colors = StatusColorsRefinement {
+            hint: Some(rgba(0x969696ff).into()),
+            ..Default::default()
+        };
+
         Ok(StatusColorsRefinement {
             // conflict: None,
             // created: None,
@@ -81,6 +86,11 @@ impl VsCodeThemeConverter {
                 .tab_inactive_foreground
                 .as_ref()
                 .traverse(|color| try_parse_color(&color))?,
+            hint: vscode_colors
+                .editor_inlay_hint_foreground
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?
+                .or(vscode_base_status_colors.hint),
             // ignored: None,
             // info: None,
             // modified: None,

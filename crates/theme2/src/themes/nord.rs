@@ -62,6 +62,7 @@ pub fn nord() -> UserThemeFamily {
                     deleted: Some(rgba(0xbf616aff).into()),
                     error: Some(rgba(0xbf616aff).into()),
                     hidden: Some(rgba(0xd8dee966).into()),
+                    hint: Some(rgba(0xd8dee9ff).into()),
                     warning: Some(rgba(0xebcb8bff).into()),
                     ..Default::default()
                 },
