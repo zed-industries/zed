@@ -1110,6 +1110,10 @@ impl AppContext {
             }
         }
     }
+
+    pub fn has_active_drag(&self) -> bool {
+        self.active_drag.is_some()
+    }
 }
 
 impl Context for AppContext {

@@ -1,9 +1,9 @@
 use editor::{Cursor, HighlightedRange, HighlightedRangeLine};
 use gpui::{
     black, div, point, px, red, relative, transparent_black, AnyElement, AsyncWindowContext,
-    AvailableSpace, Bounds, DispatchPhase, Element, ElementId, FocusHandle, Font, FontStyle,
-    FontWeight, HighlightStyle, Hsla, InteractiveElement, InteractiveElementState, IntoElement,
-    LayoutId, Model, ModelContext, ModifiersChangedEvent, MouseButton, Pixels,
+    AvailableSpace, Bounds, DispatchPhase, Element, ElementId, ExternalPaths, FocusHandle, Font,
+    FontStyle, FontWeight, HighlightStyle, Hsla, InteractiveElement, InteractiveElementState,
+    IntoElement, LayoutId, Model, ModelContext, ModifiersChangedEvent, MouseButton, Pixels,
     PlatformInputHandler, Point, Rgba, ShapedLine, Size, StatefulInteractiveElement, Styled,
     TextRun, TextStyle, TextSystem, UnderlineStyle, View, WhiteSpace, WindowContext,
 };
@@ -643,13 +643,11 @@ impl TerminalElement {
                 let connection = connection.clone();
                 let focus = focus.clone();
                 move |e, cx| {
-                    if e.pressed_button.is_some() {
-                        if focus.is_focused(cx) {
-                            connection.update(cx, |terminal, cx| {
-                                terminal.mouse_drag(e, origin, bounds);
-                                cx.notify();
-                            })
-                        }
+                    if e.pressed_button.is_some() && focus.is_focused(cx) && !cx.has_active_drag() {
+                        connection.update(cx, |terminal, cx| {
+                            terminal.mouse_drag(e, origin, bounds);
+                            cx.notify();
+                        })
                     }
                 }
             })
