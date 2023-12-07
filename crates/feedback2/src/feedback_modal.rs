@@ -241,10 +241,21 @@ impl Render for FeedbackModal {
             && valid_email_address
             && !self.pending_submission;
 
-        let dismiss = cx.listener(|_, _, cx| cx.emit(DismissEvent));
-        // let open_community_issues =
-        //     cx.listener(|_, _, cx| cx.dispatch_action(Box::new(OpenZedCommunityRepo)));
-        // let open_community_discussions = cx.listener(|_, _, cx| cx.emit(DismissEvent));
+        let dismiss = cx.listener(|_, _, cx| {
+            // TODO
+            // if self.feedback_editor.read(cx).text_option(cx).is_some() {
+            //     let answer = cx.prompt(PromptLevel::Info, "Exit feedback?", &["Yes", "No"]);
+            //     cx.spawn(|_, cx| async move {
+            //         let answer = answer.await.ok();
+            //         if answer == Some(0) {
+            //             cx.emit(DismissEvent);
+            //         }
+            //     })
+            //     .detach();
+            // }
+
+            cx.emit(DismissEvent);
+        });
         let open_community_repo =
             cx.listener(|_, _, cx| cx.dispatch_action(Box::new(OpenZedCommunityRepo)));
 
