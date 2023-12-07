@@ -9,9 +9,9 @@ pub mod terminal_panel;
 // use crate::terminal_element::TerminalElement;
 use editor::{scroll::autoscroll::Autoscroll, Editor};
 use gpui::{
-    actions, div, Action, AnyElement, AppContext, Div, EventEmitter, FocusEvent, FocusHandle,
-    Focusable, FocusableElement, FocusableView, KeyContext, KeyDownEvent, Keystroke, Model,
-    MouseButton, MouseDownEvent, Pixels, Render, Subscription, Task, View, VisualContext, WeakView,
+    div, Action, AnyElement, AppContext, Div, EventEmitter, FocusEvent, FocusHandle, Focusable,
+    FocusableElement, FocusableView, KeyContext, KeyDownEvent, Keystroke, Model, MouseButton,
+    MouseDownEvent, Pixels, Render, Subscription, Task, View, VisualContext, WeakView,
 };
 use language::Bias;
 use persistence::TERMINAL_DB;
@@ -22,7 +22,7 @@ use terminal::{
         term::{search::RegexSearch, TermMode},
     },
     terminal_settings::{TerminalBlink, TerminalSettings, WorkingDirectory},
-    Event, MaybeNavigationTarget, Terminal,
+    Clear, Copy, Event, MaybeNavigationTarget, Paste, ShowCharacterPalette, Terminal,
 };
 use terminal_element::TerminalElement;
 use ui::{h_stack, prelude::*, ContextMenu, Icon, IconElement, Label};
@@ -59,8 +59,6 @@ pub struct SendText(String);
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Action)]
 pub struct SendKeystroke(String);
-
-actions!(Clear, Copy, Paste, ShowCharacterPalette, SearchTest);
 
 pub fn init(cx: &mut AppContext) {
     terminal_panel::init(cx);
