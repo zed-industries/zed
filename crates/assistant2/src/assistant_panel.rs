@@ -891,8 +891,9 @@ impl AssistantPanel {
                 if search_bar.show(cx) {
                     search_bar.search_suggested(cx);
                     if action.focus {
+                        let focus_handle = search_bar.focus_handle(cx);
                         search_bar.select_query(cx);
-                        cx.focus_self();
+                        cx.focus(&focus_handle);
                     }
                     propagate = false
                 }
@@ -1028,6 +1029,8 @@ impl AssistantPanel {
     }
 
     fn open_conversation(&mut self, path: PathBuf, cx: &mut ViewContext<Self>) -> Task<Result<()>> {
+        cx.focus(&self.focus_handle);
+
         if let Some(ix) = self.editor_index_for_path(&path, cx) {
             self.set_active_editor_index(Some(ix), cx);
             return Task::ready(Ok(()));
