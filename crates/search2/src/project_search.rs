@@ -324,10 +324,14 @@ impl EventEmitter<ViewEvent> for ProjectSearchView {}
 impl Render for ProjectSearchView {
     type Element = Div;
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-        div()
-            .flex_1()
-            .size_full()
-            .child(self.results_editor.clone())
+        if self.has_matches() {
+            div()
+                .flex_1()
+                .size_full()
+                .child(self.results_editor.clone())
+        } else {
+            div()
+        }
     }
 }
 // impl Entity for ProjectSearchView {
