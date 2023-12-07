@@ -1814,34 +1814,34 @@ impl Editor {
         this
     }
 
-    fn dispatch_context(&self, cx: &AppContext) -> KeyContext {
-        let mut dispatch_context = KeyContext::default();
-        dispatch_context.add("Editor");
+    fn key_context(&self, cx: &AppContext) -> KeyContext {
+        let mut key_context = KeyContext::default();
+        key_context.add("Editor");
         let mode = match self.mode {
             EditorMode::SingleLine => "single_line",
             EditorMode::AutoHeight { .. } => "auto_height",
             EditorMode::Full => "full",
         };
-        dispatch_context.set("mode", mode);
+        key_context.set("mode", mode);
         if self.pending_rename.is_some() {
-            dispatch_context.add("renaming");
+            key_context.add("renaming");
         }
         if self.context_menu_visible() {
             match self.context_menu.read().as_ref() {
                 Some(ContextMenu::Completions(_)) => {
-                    dispatch_context.add("menu");
-                    dispatch_context.add("showing_completions")
+                    key_context.add("menu");
+                    key_context.add("showing_completions")
                 }
                 Some(ContextMenu::CodeActions(_)) => {
-                    dispatch_context.add("menu");
-                    dispatch_context.add("showing_code_actions")
+                    key_context.add("menu");
+                    key_context.add("showing_code_actions")
                 }
                 None => {}
             }
         }
 
         for layer in self.keymap_context_layers.values() {
-            dispatch_context.extend(layer);
+            key_context.extend(layer);
         }
 
         if let Some(extension) = self
@@ -1850,10 +1850,10 @@ impl Editor {
             .as_singleton()
             .and_then(|buffer| buffer.read(cx).file()?.path().extension()?.to_str())
         {
-            dispatch_context.set("extension", extension.to_string());
+            key_context.set("extension", extension.to_string());
         }
 
-        dispatch_context
+        key_context
     }
 
     pub fn new_file(
