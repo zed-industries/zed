@@ -307,11 +307,8 @@ impl Render for FeedbackModal {
                             Button::new("send_feedback", "Send Feedback")
                                 .color(Color::Accent)
                                 .style(ButtonStyle::Filled)
-                                // .on_click(|_, cx| {
-                                //     cx.build_view(|cx, this| {
-                                //         FeedbackModal::submit(cx)
-                                //     })
-                                // })
+                                // TODO - error handling - show modal on error
+                                .on_click(cx.listener(|this, _, cx| {let _ = this.submit(cx);}))
                                 .tooltip(|cx| {
                                     Tooltip::with_meta(
                                         "Submit feedback to the Zed team.",
