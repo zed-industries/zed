@@ -9,10 +9,9 @@ pub mod terminal_panel;
 // use crate::terminal_element::TerminalElement;
 use editor::{scroll::autoscroll::Autoscroll, Editor};
 use gpui::{
-    actions, div, Action, AnyElement, AppContext, Div, Element, EventEmitter, FocusEvent,
-    FocusHandle, Focusable, FocusableElement, FocusableView, InputHandler, InteractiveElement,
-    KeyDownEvent, Keystroke, Model, MouseButton, MouseDownEvent, ParentElement, Pixels, Render,
-    SharedString, Styled, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
+    div, Action, AnyElement, AppContext, Div, EventEmitter, FocusEvent, FocusHandle, Focusable,
+    FocusableElement, FocusableView, KeyContext, KeyDownEvent, Keystroke, Model, MouseButton,
+    MouseDownEvent, Pixels, Render, Subscription, Task, View, VisualContext, WeakView,
 };
 use language::Bias;
 use persistence::TERMINAL_DB;
@@ -23,15 +22,16 @@ use terminal::{
         term::{search::RegexSearch, TermMode},
     },
     terminal_settings::{TerminalBlink, TerminalSettings, WorkingDirectory},
-    Event, MaybeNavigationTarget, Terminal,
+    Clear, Copy, Event, MaybeNavigationTarget, Paste, ShowCharacterPalette, Terminal,
 };
+use terminal_element::TerminalElement;
+use ui::{h_stack, prelude::*, ContextMenu, Icon, IconElement, Label};
 use util::{paths::PathLikeWithPosition, ResultExt};
 use workspace::{
     item::{BreadcrumbText, Item, ItemEvent},
     notifications::NotifyResultExt,
     register_deserializable_item,
     searchable::{SearchEvent, SearchOptions, SearchableItem},
-    ui::{ContextMenu, Icon, IconElement, Label},
     CloseActiveItem, NewCenterTerminal, Pane, ToolbarItemLocation, Workspace, WorkspaceId,
 };
 
@@ -59,8 +59,6 @@ pub struct SendText(String);
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Action)]
 pub struct SendKeystroke(String);
-
-actions!(Clear, Copy, Paste, ShowCharacterPalette, SearchTest);
 
 pub fn init(cx: &mut AppContext) {
     terminal_panel::init(cx);
@@ -90,6 +88,7 @@ pub struct TerminalView {
     blink_epoch: usize,
     can_navigate_to_selected_word: bool,
     workspace_id: WorkspaceId,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl EventEmitter<Event> for TerminalView {}
@@ -261,6 +260,20 @@ impl TerminalView {
         })
         .detach();
 
+        let focus = cx.focus_handle();
+        // let focus_in = cx.on_focus_in(&focus, |this, cx| {
+        //     this.has_new_content = false;
+        //     this.terminal.read(cx).focus_in();
+        //     this.blink_cursors(this.blink_epoch, cx);
+        //     cx.notify();
+        // });
+        // let focus_out = cx.on_focus_out(&focus, |this, cx| {
+        //     this.terminal.update(cx, |terminal, _| {
+        //         terminal.focus_out();
+        //     });
+        //     cx.notify();
+        // });
+
         Self {
             terminal,
             has_new_content: true,
@@ -273,6 +286,7 @@ impl TerminalView {
             blink_epoch: 0,
             can_navigate_to_selected_word: false,
             workspace_id,
+            _subscriptions: vec![/*focus_in, focus_out*/],
         }
     }
 
@@ -302,8 +316,7 @@ impl TerminalView {
             menu.action("Clear", Box::new(Clear))
                 .action("Close", Box::new(CloseActiveItem { save_intent: None }))
         }));
-        dbg!(&position);
-        // todo!()
+        // todo!(context menus)
         //     self.context_menu
         //         .show(position, AnchorCorner::TopLeft, menu_entries, cx);
         //     cx.notify();
@@ -448,6 +461,81 @@ impl TerminalView {
             });
         }
     }
+
+    fn dispatch_context(&self, cx: &AppContext) -> KeyContext {
+        let mut dispatch_context = KeyContext::default();
+        dispatch_context.add("Terminal");
+
+        let mode = self.terminal.read(cx).last_content.mode;
+        dispatch_context.set(
+            "screen",
+            if mode.contains(TermMode::ALT_SCREEN) {
+                "alt"
+            } else {
+                "normal"
+            },
+        );
+
+        if mode.contains(TermMode::APP_CURSOR) {
+            dispatch_context.add("DECCKM");
+        }
+        if mode.contains(TermMode::APP_KEYPAD) {
+            dispatch_context.add("DECPAM");
+        } else {
+            dispatch_context.add("DECPNM");
+        }
+        if mode.contains(TermMode::SHOW_CURSOR) {
+            dispatch_context.add("DECTCEM");
+        }
+        if mode.contains(TermMode::LINE_WRAP) {
+            dispatch_context.add("DECAWM");
+        }
+        if mode.contains(TermMode::ORIGIN) {
+            dispatch_context.add("DECOM");
+        }
+        if mode.contains(TermMode::INSERT) {
+            dispatch_context.add("IRM");
+        }
+        //LNM is apparently the name for this. https://vt100.net/docs/vt510-rm/LNM.html
+        if mode.contains(TermMode::LINE_FEED_NEW_LINE) {
+            dispatch_context.add("LNM");
+        }
+        if mode.contains(TermMode::FOCUS_IN_OUT) {
+            dispatch_context.add("report_focus");
+        }
+        if mode.contains(TermMode::ALTERNATE_SCROLL) {
+            dispatch_context.add("alternate_scroll");
+        }
+        if mode.contains(TermMode::BRACKETED_PASTE) {
+            dispatch_context.add("bracketed_paste");
+        }
+        if mode.intersects(TermMode::MOUSE_MODE) {
+            dispatch_context.add("any_mouse_reporting");
+        }
+        {
+            let mouse_reporting = if mode.contains(TermMode::MOUSE_REPORT_CLICK) {
+                "click"
+            } else if mode.contains(TermMode::MOUSE_DRAG) {
+                "drag"
+            } else if mode.contains(TermMode::MOUSE_MOTION) {
+                "motion"
+            } else {
+                "off"
+            };
+            dispatch_context.set("mouse_reporting", mouse_reporting);
+        }
+        {
+            let format = if mode.contains(TermMode::SGR_MOUSE) {
+                "sgr"
+            } else if mode.contains(TermMode::UTF8_MOUSE) {
+                "utf8"
+            } else {
+                "normal"
+            };
+            dispatch_context.set("mouse_format", format);
+        };
+        dispatch_context
+    }
 }
 
 fn possible_open_targets(
@@ -532,17 +620,20 @@ impl Render for TerminalView {
     type Element = Focusable<Div>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-        let terminal_handle = self.terminal.clone().downgrade();
+        let terminal_handle = self.terminal.clone();
+        let this_view = cx.view().clone();
 
         let self_id = cx.entity_id();
         let focused = self.focus_handle.is_focused(cx);
 
         div()
+            .size_full()
             .relative()
             .child(
                 div()
                     .z_index(0)
                     .absolute()
+                    .size_full()
                     .on_key_down(cx.listener(Self::key_down))
                     .on_action(cx.listener(TerminalView::send_text))
                     .on_action(cx.listener(TerminalView::send_keystroke))
@@ -551,15 +642,14 @@ impl Render for TerminalView {
                     .on_action(cx.listener(TerminalView::clear))
                     .on_action(cx.listener(TerminalView::show_character_palette))
                     .on_action(cx.listener(TerminalView::select_all))
-                    // todo!()
-                    .child(
-                        "TERMINAL HERE", //     TerminalElement::new(
-                                         //     terminal_handle,
-                                         //     focused,
-                                         //     self.should_show_cursor(focused, cx),
-                                         //     self.can_navigate_to_selected_word,
-                                         // )
-                    )
+                    .child(TerminalElement::new(
+                        terminal_handle,
+                        this_view,
+                        self.focus_handle.clone(),
+                        focused,
+                        self.should_show_cursor(focused, cx),
+                        self.can_navigate_to_selected_word,
+                    ))
                     .on_mouse_down(
                         MouseButton::Right,
                         cx.listener(|this, event: &MouseDownEvent, cx| {
@@ -579,162 +669,6 @@ impl Render for TerminalView {
     }
 }
 
-// impl View for TerminalView {
-//todo!()
-// fn modifiers_changed(
-//     &mut self,
-//     event: &ModifiersChangedEvent,
-//     cx: &mut ViewContext<Self>,
-// ) -> bool {
-//     let handled = self
-//         .terminal()
-//         .update(cx, |term, _| term.try_modifiers_change(&event.modifiers));
-//     if handled {
-//         cx.notify();
-//     }
-//     handled
-// }
-// }
-
-// todo!()
-// fn update_keymap_context(&self, keymap: &mut KeymapContext, cx: &gpui::AppContext) {
-//     Self::reset_to_default_keymap_context(keymap);
-
-//     let mode = self.terminal.read(cx).last_content.mode;
-//     keymap.add_key(
-//         "screen",
-//         if mode.contains(TermMode::ALT_SCREEN) {
-//             "alt"
-//         } else {
-//             "normal"
-//         },
-//     );
-
-//     if mode.contains(TermMode::APP_CURSOR) {
-//         keymap.add_identifier("DECCKM");
-//     }
-//     if mode.contains(TermMode::APP_KEYPAD) {
-//         keymap.add_identifier("DECPAM");
-//     } else {
-//         keymap.add_identifier("DECPNM");
-//     }
-//     if mode.contains(TermMode::SHOW_CURSOR) {
-//         keymap.add_identifier("DECTCEM");
-//     }
-//     if mode.contains(TermMode::LINE_WRAP) {
-//         keymap.add_identifier("DECAWM");
-//     }
-//     if mode.contains(TermMode::ORIGIN) {
-//         keymap.add_identifier("DECOM");
-//     }
-//     if mode.contains(TermMode::INSERT) {
-//         keymap.add_identifier("IRM");
-//     }
-//     //LNM is apparently the name for this. https://vt100.net/docs/vt510-rm/LNM.html
-//     if mode.contains(TermMode::LINE_FEED_NEW_LINE) {
-//         keymap.add_identifier("LNM");
-//     }
-//     if mode.contains(TermMode::FOCUS_IN_OUT) {
-//         keymap.add_identifier("report_focus");
-//     }
-//     if mode.contains(TermMode::ALTERNATE_SCROLL) {
-//         keymap.add_identifier("alternate_scroll");
-//     }
-//     if mode.contains(TermMode::BRACKETED_PASTE) {
-//         keymap.add_identifier("bracketed_paste");
-//     }
-//     if mode.intersects(TermMode::MOUSE_MODE) {
-//         keymap.add_identifier("any_mouse_reporting");
-//     }
-//     {
-//         let mouse_reporting = if mode.contains(TermMode::MOUSE_REPORT_CLICK) {
-//             "click"
-//         } else if mode.contains(TermMode::MOUSE_DRAG) {
-//             "drag"
-//         } else if mode.contains(TermMode::MOUSE_MOTION) {
-//             "motion"
-//         } else {
-//             "off"
-//         };
-//         keymap.add_key("mouse_reporting", mouse_reporting);
-//     }
-//     {
-//         let format = if mode.contains(TermMode::SGR_MOUSE) {
-//             "sgr"
-//         } else if mode.contains(TermMode::UTF8_MOUSE) {
-//             "utf8"
-//         } else {
-//             "normal"
-//         };
-//         keymap.add_key("mouse_format", format);
-//     }
-// }
-
-impl InputHandler for TerminalView {
-    fn text_for_range(
-        &mut self,
-        range: std::ops::Range<usize>,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<String> {
-        todo!()
-    }
-
-    fn selected_text_range(
-        &mut self,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<std::ops::Range<usize>> {
-        if self
-            .terminal
-            .read(cx)
-            .last_content
-            .mode
-            .contains(TermMode::ALT_SCREEN)
-        {
-            None
-        } else {
-            Some(0..0)
-        }
-    }
-
-    fn marked_text_range(&self, cx: &mut ViewContext<Self>) -> Option<std::ops::Range<usize>> {
-        todo!()
-    }
-
-    fn unmark_text(&mut self, cx: &mut ViewContext<Self>) {
-        todo!()
-    }
-
-    fn replace_text_in_range(
-        &mut self,
-        _: Option<std::ops::Range<usize>>,
-        text: &str,
-        cx: &mut ViewContext<Self>,
-    ) {
-        self.terminal.update(cx, |terminal, _| {
-            terminal.input(text.into());
-        });
-    }
-
-    fn replace_and_mark_text_in_range(
-        &mut self,
-        range: Option<std::ops::Range<usize>>,
-        new_text: &str,
-        new_selected_range: Option<std::ops::Range<usize>>,
-        cx: &mut ViewContext<Self>,
-    ) {
-        todo!()
-    }
-
-    fn bounds_for_range(
-        &mut self,
-        range_utf16: std::ops::Range<usize>,
-        element_bounds: gpui::Bounds<Pixels>,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<gpui::Bounds<Pixels>> {
-        todo!()
-    }
-}
-
 impl Item for TerminalView {
     type Event = ItemEvent;
 
@@ -745,7 +679,8 @@ impl Item for TerminalView {
     fn tab_content(&self, _detail: Option<usize>, cx: &WindowContext) -> AnyElement {
         let title = self.terminal().read(cx).title();
 
-        div()
+        h_stack()
+            .gap_2()
             .child(IconElement::new(Icon::Terminal))
             .child(Label::new(title))
             .into_any()
@@ -778,7 +713,7 @@ impl Item for TerminalView {
         false
     }
 
-    // todo!()
+    // todo!(search)
     // fn as_searchable(&self, handle: &View<Self>) -> Option<Box<dyn SearchableItemHandle>> {
     //     Some(Box::new(handle.clone()))
     // }
@@ -808,22 +743,23 @@ impl Item for TerminalView {
         let window = cx.window_handle();
         cx.spawn(|pane, mut cx| async move {
             let cwd = None;
-            // todo!()
-            // TERMINAL_DB
-            // .get_working_directory(item_id, workspace_id)
-            // .log_err()
-            // .flatten()
-            // .or_else(|| {
-            //     cx.read(|cx| {
-            //         let strategy = TerminalSettings::get_global(cx).working_directory.clone();
-            //         workspace
-            //             .upgrade()
-            //             .map(|workspace| {
-            //                 get_working_directory(workspace.read(cx), cx, strategy)
-            //             })
-            //             .flatten()
-            //     })
-            // });
+            TERMINAL_DB
+                .get_working_directory(item_id, workspace_id)
+                .log_err()
+                .flatten()
+                .or_else(|| {
+                    cx.update(|_, cx| {
+                        let strategy = TerminalSettings::get_global(cx).working_directory.clone();
+                        workspace
+                            .upgrade()
+                            .map(|workspace| {
+                                get_working_directory(workspace.read(cx), cx, strategy)
+                            })
+                            .flatten()
+                    })
+                    .ok()
+                    .flatten()
+                });
 
             let terminal = project.update(&mut cx, |project, cx| {
                 project.create_terminal(cwd, window, cx)
@@ -835,14 +771,13 @@ impl Item for TerminalView {
     }
 
     fn added_to_workspace(&mut self, workspace: &mut Workspace, cx: &mut ViewContext<Self>) {
-        // todo!()
-        // cx.background()
-        //     .spawn(TERMINAL_DB.update_workspace_id(
-        //         workspace.database_id(),
-        //         self.workspace_id,
-        //         cx.view_id(),
-        //     ))
-        //     .detach();
+        cx.background_executor()
+            .spawn(TERMINAL_DB.update_workspace_id(
+                workspace.database_id(),
+                self.workspace_id,
+                cx.entity_id().as_u64(),
+            ))
+            .detach();
         self.workspace_id = workspace.database_id();
     }
 

@@ -49,6 +49,8 @@ impl ThemeColors {
             tab_bar_background: neutral().light().step_2(),
             tab_active_background: neutral().light().step_1(),
             tab_inactive_background: neutral().light().step_2(),
+            search_match_background: neutral().light().step_2(), // todo!(this was inserted by Mikayla)
+
             editor_background: neutral().light().step_1(),
             editor_gutter_background: neutral().light().step_1(), // todo!("pick the right colors")
             editor_subheader_background: neutral().light().step_2(),
@@ -121,6 +123,8 @@ impl ThemeColors {
             tab_bar_background: neutral().dark().step_2(),
             tab_active_background: neutral().dark().step_1(),
             tab_inactive_background: neutral().dark().step_2(),
+            search_match_background: neutral().dark().step_2(), // todo!(this was inserted by Mikayla)
+
             editor_background: neutral().dark().step_1(),
             editor_gutter_background: neutral().dark().step_1(),
             editor_subheader_background: neutral().dark().step_3(),

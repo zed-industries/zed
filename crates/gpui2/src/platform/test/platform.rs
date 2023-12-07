@@ -1,6 +1,6 @@
 use crate::{
     AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId, ForegroundExecutor,
-    Platform, PlatformDisplay, PlatformTextSystem, TestDisplay, TestWindow, WindowOptions,
+    Keymap, Platform, PlatformDisplay, PlatformTextSystem, TestDisplay, TestWindow, WindowOptions,
 };
 use anyhow::{anyhow, Result};
 use collections::VecDeque;
@@ -127,7 +127,7 @@ impl Platform for TestPlatform {
         self.displays().iter().find(|d| d.id() == id).cloned()
     }
 
-    fn main_window(&self) -> Option<crate::AnyWindowHandle> {
+    fn active_window(&self) -> Option<crate::AnyWindowHandle> {
         unimplemented!()
     }
 
@@ -211,6 +211,14 @@ impl Platform for TestPlatform {
     fn on_event(&self, _callback: Box<dyn FnMut(crate::InputEvent) -> bool>) {
         unimplemented!()
     }
+
+    fn set_menus(&self, _menus: Vec<crate::Menu>, _keymap: &Keymap) {}
+
+    fn on_app_menu_action(&self, _callback: Box<dyn FnMut(&dyn crate::Action)>) {}
+
+    fn on_will_open_app_menu(&self, _callback: Box<dyn FnMut()>) {}
+
+    fn on_validate_app_menu_command(&self, _callback: Box<dyn FnMut(&dyn crate::Action) -> bool>) {}
 
     fn os_name(&self) -> &'static str {
         "test"

@@ -66,11 +66,11 @@ impl PlatformWindow for TestWindow {
     }
 
     fn titlebar_height(&self) -> Pixels {
-        todo!()
+        unimplemented!()
     }
 
     fn appearance(&self) -> WindowAppearance {
-        todo!()
+        unimplemented!()
     }
 
     fn display(&self) -> std::rc::Rc<dyn crate::PlatformDisplay> {
@@ -78,7 +78,7 @@ impl PlatformWindow for TestWindow {
     }
 
     fn mouse_position(&self) -> Point<Pixels> {
-        Point::zero()
+        Point::default()
     }
 
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
@@ -87,6 +87,10 @@ impl PlatformWindow for TestWindow {
 
     fn set_input_handler(&mut self, input_handler: Box<dyn crate::PlatformInputHandler>) {
         self.input_handler = Some(Arc::new(Mutex::new(input_handler)));
+    }
+
+    fn clear_input_handler(&mut self) {
+        self.input_handler = None;
     }
 
     fn prompt(
@@ -99,7 +103,7 @@ impl PlatformWindow for TestWindow {
     }
 
     fn activate(&self) {
-        todo!()
+        unimplemented!()
     }
 
     fn set_title(&mut self, title: &str) {
@@ -107,23 +111,23 @@ impl PlatformWindow for TestWindow {
     }
 
     fn set_edited(&mut self, _edited: bool) {
-        todo!()
+        unimplemented!()
     }
 
     fn show_character_palette(&self) {
-        todo!()
+        unimplemented!()
     }
 
     fn minimize(&self) {
-        todo!()
+        unimplemented!()
     }
 
     fn zoom(&self) {
-        todo!()
+        unimplemented!()
     }
 
     fn toggle_full_screen(&self) {
-        todo!()
+        unimplemented!()
     }
 
     fn on_input(&self, callback: Box<dyn FnMut(crate::InputEvent) -> bool>) {
@@ -139,7 +143,7 @@ impl PlatformWindow for TestWindow {
     }
 
     fn on_fullscreen(&self, _callback: Box<dyn FnMut(bool)>) {
-        todo!()
+        unimplemented!()
     }
 
     fn on_moved(&self, callback: Box<dyn FnMut()>) {
@@ -147,19 +151,19 @@ impl PlatformWindow for TestWindow {
     }
 
     fn on_should_close(&self, _callback: Box<dyn FnMut() -> bool>) {
-        todo!()
+        unimplemented!()
     }
 
     fn on_close(&self, _callback: Box<dyn FnOnce()>) {
-        todo!()
+        unimplemented!()
     }
 
     fn on_appearance_changed(&self, _callback: Box<dyn FnMut()>) {
-        todo!()
+        unimplemented!()
     }
 
     fn is_topmost_for_position(&self, _position: crate::Point<Pixels>) -> bool {
-        todo!()
+        unimplemented!()
     }
 
     fn draw(&self, scene: crate::Scene) {
@@ -223,7 +227,7 @@ impl PlatformAtlas for TestAtlas {
                 },
                 tile_id: TileId(tile_id),
                 bounds: crate::Bounds {
-                    origin: Point::zero(),
+                    origin: Point::default(),
                     size,
                 },
             },

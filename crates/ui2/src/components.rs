@@ -13,6 +13,7 @@ mod popover;
 mod popover_menu;
 mod right_click_menu;
 mod stack;
+mod tab;
 mod tooltip;
 
 #[cfg(feature = "stories")]
@@ -33,6 +34,7 @@ pub use popover::*;
 pub use popover_menu::*;
 pub use right_click_menu::*;
 pub use stack::*;
+pub use tab::*;
 pub use tooltip::*;
 
 #[cfg(feature = "stories")]

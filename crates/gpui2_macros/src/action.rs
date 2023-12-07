@@ -38,6 +38,7 @@ pub fn action(input: TokenStream) -> TokenStream {
 
     let build_impl = if is_unit_struct {
         quote! {
+            let _ = value;
             Ok(std::boxed::Box::new(Self {}))
         }
     } else {

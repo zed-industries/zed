@@ -10,7 +10,7 @@ doctest = false
 
 [dependencies]
 util = { path = "../util" }
-async-compression = { version = "0.3", features = ["gzip", "futures-bufread"] }
+async-compression.workspace = true
 async-tar = "0.4.2"
 futures.workspace = true
 async-trait.workspace = true

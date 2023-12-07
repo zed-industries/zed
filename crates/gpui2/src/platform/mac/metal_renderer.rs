@@ -325,7 +325,7 @@ impl MetalRenderer {
                 .entry(tile.texture_id)
                 .or_insert(Vec::new())
                 .extend(path.vertices.iter().map(|vertex| PathVertex {
-                    xy_position: vertex.xy_position - path.bounds.origin
+                    xy_position: vertex.xy_position - clipped_bounds.origin
                         + tile.bounds.origin.map(Into::into),
                     st_position: vertex.st_position,
                     content_mask: ContentMask {
@@ -544,9 +544,10 @@ impl MetalRenderer {
             if let Some((path, tile)) = paths_and_tiles.peek() {
                 if prev_texture_id.map_or(true, |texture_id| texture_id == tile.texture_id) {
                     prev_texture_id = Some(tile.texture_id);
+                    let origin = path.bounds.intersect(&path.content_mask.bounds).origin;
                     sprites.push(PathSprite {
                         bounds: Bounds {
-                            origin: path.bounds.origin.map(|p| p.floor()),
+                            origin: origin.map(|p| p.floor()),
                             size: tile.bounds.size.map(Into::into),
                         },
                         color: path.color,

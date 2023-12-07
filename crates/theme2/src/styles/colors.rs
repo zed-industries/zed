@@ -114,6 +114,7 @@ pub struct ThemeColors {
     pub tab_bar_background: Hsla,
     pub tab_inactive_background: Hsla,
     pub tab_active_background: Hsla,
+    pub search_match_background: Hsla,
     // pub panel_background: Hsla,
     // pub pane_focused_border: Hsla,
     // /// The color of the scrollbar thumb.

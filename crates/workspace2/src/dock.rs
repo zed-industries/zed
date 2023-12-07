@@ -26,6 +26,7 @@ pub trait Panel: FocusableView + EventEmitter<PanelEvent> {
     fn set_position(&mut self, position: DockPosition, cx: &mut ViewContext<Self>);
     fn size(&self, cx: &WindowContext) -> f32;
     fn set_size(&mut self, size: Option<f32>, cx: &mut ViewContext<Self>);
+    // todo!("We should have a icon tooltip method, rather than using persistant_name")
     fn icon(&self, cx: &WindowContext) -> Option<ui::Icon>;
     fn toggle_action(&self) -> Box<dyn Action>;
     fn icon_label(&self, _: &WindowContext) -> Option<String> {
@@ -36,7 +37,6 @@ pub trait Panel: FocusableView + EventEmitter<PanelEvent> {
     }
     fn set_zoomed(&mut self, _zoomed: bool, _cx: &mut ViewContext<Self>) {}
     fn set_active(&mut self, _active: bool, _cx: &mut ViewContext<Self>) {}
-    fn has_focus(&self, cx: &WindowContext) -> bool;
 }
 
 pub trait PanelHandle: Send + Sync {
@@ -53,7 +53,6 @@ pub trait PanelHandle: Send + Sync {
     fn icon(&self, cx: &WindowContext) -> Option<ui::Icon>;
     fn toggle_action(&self, cx: &WindowContext) -> Box<dyn Action>;
     fn icon_label(&self, cx: &WindowContext) -> Option<String>;
-    fn has_focus(&self, cx: &WindowContext) -> bool;
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle;
     fn to_any(&self) -> AnyView;
 }
@@ -114,10 +113,6 @@ where
         self.read(cx).icon_label(cx)
     }
 
-    fn has_focus(&self, cx: &WindowContext) -> bool {
-        self.read(cx).has_focus(cx)
-    }
-
     fn to_any(&self) -> AnyView {
         self.clone().into()
     }
@@ -138,13 +133,13 @@ pub struct Dock {
     panel_entries: Vec<PanelEntry>,
     is_open: bool,
     active_panel_index: usize,
+    focus_handle: FocusHandle,
+    focus_subscription: Subscription,
 }
 
 impl FocusableView for Dock {
-    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
-        self.panel_entries[self.active_panel_index]
-            .panel
-            .focus_handle(cx)
+    fn focus_handle(&self, _: &AppContext) -> FocusHandle {
+        self.focus_handle.clone()
     }
 }
 
@@ -195,12 +190,20 @@ pub struct PanelButtons {
 }
 
 impl Dock {
-    pub fn new(position: DockPosition) -> Self {
+    pub fn new(position: DockPosition, cx: &mut ViewContext<'_, Self>) -> Self {
+        let focus_handle = cx.focus_handle();
+        let focus_subscription = cx.on_focus(&focus_handle, |dock, cx| {
+            if let Some(active_entry) = dock.panel_entries.get(dock.active_panel_index) {
+                active_entry.panel.focus_handle(cx).focus(cx)
+            }
+        });
         Self {
             position,
             panel_entries: Default::default(),
             active_panel_index: 0,
             is_open: false,
+            focus_handle,
+            focus_subscription,
         }
     }
 
@@ -212,6 +215,7 @@ impl Dock {
         self.is_open
     }
 
+    // todo!()
     //     pub fn has_focus(&self, cx: &WindowContext) -> bool {
     //         self.visible_panel()
     //             .map_or(false, |panel| panel.has_focus(cx))
@@ -319,7 +323,7 @@ impl Dock {
                 }
                 PanelEvent::ZoomIn => {
                     this.set_panel_zoomed(&panel.to_any(), true, cx);
-                    if !panel.has_focus(cx) {
+                    if !panel.focus_handle(cx).contains_focused(cx) {
                         cx.focus_view(&panel);
                     }
                     workspace
@@ -729,7 +733,10 @@ impl Render for PanelButtons {
                         .trigger(
                             IconButton::new(name, icon)
                                 .selected(is_active_button)
-                                .action(action.boxed_clone())
+                                .on_click({
+                                    let action = action.boxed_clone();
+                                    move |_, cx| cx.dispatch_action(action.boxed_clone())
+                                })
                                 .tooltip(move |cx| {
                                     Tooltip::for_action(tooltip.clone(), &*action, cx)
                                 }),
@@ -760,7 +767,7 @@ pub mod test {
         pub position: DockPosition,
         pub zoomed: bool,
         pub active: bool,
-        pub has_focus: bool,
+        pub focus_handle: FocusHandle,
         pub size: f32,
     }
     actions!(ToggleTestPanel);
@@ -768,12 +775,12 @@ pub mod test {
     impl EventEmitter<PanelEvent> for TestPanel {}
 
     impl TestPanel {
-        pub fn new(position: DockPosition) -> Self {
+        pub fn new(position: DockPosition, cx: &mut WindowContext) -> Self {
             Self {
                 position,
                 zoomed: false,
                 active: false,
-                has_focus: false,
+                focus_handle: cx.focus_handle(),
                 size: 300.,
             }
         }
@@ -832,15 +839,11 @@ pub mod test {
         fn set_active(&mut self, active: bool, _cx: &mut ViewContext<Self>) {
             self.active = active;
         }
-
-        fn has_focus(&self, _cx: &WindowContext) -> bool {
-            self.has_focus
-        }
     }
 
     impl FocusableView for TestPanel {
-        fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
-            unimplemented!()
+        fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
+            self.focus_handle.clone()
         }
     }
 }

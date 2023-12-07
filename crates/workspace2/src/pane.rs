@@ -28,10 +28,10 @@ use std::{
 
 use ui::{
     h_stack, prelude::*, right_click_menu, ButtonSize, Color, Icon, IconButton, IconSize,
-    Indicator, Label, Tooltip,
+    Indicator, Label, Tab, TabPosition, Tooltip,
 };
 use ui::{v_stack, ContextMenu};
-use util::truncate_and_remove_front;
+use util::{maybe, truncate_and_remove_front};
 
 #[derive(PartialEq, Clone, Copy, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -1438,43 +1438,49 @@ impl Pane {
 
         let is_active = ix == self.active_item_index;
 
-        let indicator = {
+        let indicator = maybe!({
             let indicator_color = match (item.has_conflict(cx), item.is_dirty(cx)) {
-                (true, _) => Some(Color::Warning),
-                (_, true) => Some(Color::Accent),
-                (false, false) => None,
+                (true, _) => Color::Warning,
+                (_, true) => Color::Accent,
+                (false, false) => return None,
             };
 
-            h_stack()
-                .w_3()
-                .h_3()
-                .justify_center()
-                .absolute()
-                .map(|this| match close_side {
-                    ClosePosition::Left => this.right_1(),
-                    ClosePosition::Right => this.left_1(),
-                })
-                .when_some(indicator_color, |this, indicator_color| {
-                    this.child(Indicator::dot().color(indicator_color))
-                })
-        };
+            Some(Indicator::dot().color(indicator_color))
+        });
 
-        let close_button = {
-            let id = item.item_id();
+        let id = item.item_id();
 
-            h_stack()
-                .invisible()
-                .w_3()
-                .h_3()
-                .justify_center()
-                .absolute()
-                .map(|this| match close_side {
-                    ClosePosition::Left => this.left_1(),
-                    ClosePosition::Right => this.right_1(),
+        let is_first_item = ix == 0;
+        let is_last_item = ix == self.items.len() - 1;
+        let position_relative_to_active_item = ix.cmp(&self.active_item_index);
+
+        let tab =
+            Tab::new(ix)
+                .position(if is_first_item {
+                    TabPosition::First
+                } else if is_last_item {
+                    TabPosition::Last
+                } else {
+                    TabPosition::Middle(position_relative_to_active_item)
                 })
-                .group_hover("", |style| style.visible())
-                .child(
-                    // TODO: Fix button size
+                .close_side(match close_side {
+                    ClosePosition::Left => ui::TabCloseSide::Start,
+                    ClosePosition::Right => ui::TabCloseSide::End,
+                })
+                .selected(ix == self.active_item_index())
+                .on_click(cx.listener(move |pane: &mut Self, event, cx| {
+                    pane.activate_item(ix, true, true, cx)
+                }))
+                // .on_drag(move |pane, cx| pane.render_tab(ix, item.boxed_clone(), detail, cx))
+                // .drag_over::<DraggedTab>(|d| d.bg(cx.theme().colors().element_drop_target))
+                // .on_drop(|_view, state: View<DraggedTab>, cx| {
+                //     eprintln!("{:?}", state.read(cx));
+                // })
+                .when_some(item.tab_tooltip_text(cx), |tab, text| {
+                    tab.tooltip(move |cx| Tooltip::text(text.clone(), cx))
+                })
+                .start_slot::<Indicator>(indicator)
+                .end_slot(
                     IconButton::new("close tab", Icon::Close)
                         .icon_color(Color::Muted)
                         .size(ButtonSize::None)
@@ -1484,67 +1490,7 @@ impl Pane {
                                 .detach_and_log_err(cx);
                         })),
                 )
-        };
-
-        let tab = div()
-            .border_color(cx.theme().colors().border)
-            .bg(tab_bg)
-            // 30px @ 16px/rem
-            .h(rems(1.875))
-            .map(|this| {
-                let is_first_item = ix == 0;
-                let is_last_item = ix == self.items.len() - 1;
-                match ix.cmp(&self.active_item_index) {
-                    cmp::Ordering::Less => {
-                        if is_first_item {
-                            this.pl_px().pr_px().border_b()
-                        } else {
-                            this.border_l().pr_px().border_b()
-                        }
-                    }
-                    cmp::Ordering::Greater => {
-                        if is_last_item {
-                            this.pr_px().pl_px().border_b()
-                        } else {
-                            this.border_r().pl_px().border_b()
-                        }
-                    }
-                    cmp::Ordering::Equal => {
-                        if is_first_item {
-                            this.pl_px().border_r().pb_px()
-                        } else {
-                            this.border_l().border_r().pb_px()
-                        }
-                    }
-                }
-            })
-            .child(
-                h_stack()
-                    .group("")
-                    .id(ix)
-                    .relative()
-                    .h_full()
-                    .cursor_pointer()
-                    .when_some(item.tab_tooltip_text(cx), |div, text| {
-                        div.tooltip(move |cx| cx.build_view(|cx| Tooltip::new(text.clone())).into())
-                    })
-                    .on_click(
-                        cx.listener(move |v: &mut Self, e, cx| v.activate_item(ix, true, true, cx)),
-                    )
-                    // .on_drag(move |pane, cx| pane.render_tab(ix, item.boxed_clone(), detail, cx))
-                    // .drag_over::<DraggedTab>(|d| d.bg(cx.theme().colors().element_drop_target))
-                    // .on_drop(|_view, state: View<DraggedTab>, cx| {
-                    //     eprintln!("{:?}", state.read(cx));
-                    // })
-                    .px_5()
-                    // .hover(|h| h.bg(tab_hover_bg))
-                    // .active(|a| a.bg(tab_active_bg))
-                    .gap_1()
-                    .text_color(text_color)
-                    .child(indicator)
-                    .child(close_button)
-                    .child(label),
-            );
+                .child(label);
 
         right_click_menu(ix).trigger(tab).menu(|cx| {
             ContextMenu::build(cx, |menu, cx| {

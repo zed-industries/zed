@@ -1,4 +1,4 @@
-use gpui::{px, Styled, WindowContext};
+use gpui::{hsla, px, Styled, WindowContext};
 use settings::Settings;
 use theme::ThemeSettings;
 
@@ -70,8 +70,7 @@ pub trait StyledExt: Styled + Sized {
     /// or other places that text needs to match the user's buffer font size.
     fn text_buffer(self, cx: &mut WindowContext) -> Self {
         let settings = ThemeSettings::get_global(cx);
-
-        self.text_size(settings.buffer_font_size)
+        self.text_size(settings.buffer_font_size(cx))
     }
 
     /// The [`Surface`](ui2::ElevationIndex::Surface) elevation level, located above the app background, is the standard level for all elements
@@ -103,6 +102,30 @@ pub trait StyledExt: Styled + Sized {
     /// Examples: Settings Modal, Channel Management, Wizards/Setup UI, Dialogs
     fn elevation_3(self, cx: &mut WindowContext) -> Self {
         elevated(self, cx, ElevationIndex::ModalSurface)
+    }
+
+    fn debug_bg_red(self) -> Self {
+        self.bg(gpui::red())
+    }
+
+    fn debug_bg_green(self) -> Self {
+        self.bg(gpui::green())
+    }
+
+    fn debug_bg_blue(self) -> Self {
+        self.bg(gpui::blue())
+    }
+
+    fn debug_bg_yellow(self) -> Self {
+        self.bg(hsla(60. / 360., 1., 0.5, 1.))
+    }
+
+    fn debug_bg_cyan(self) -> Self {
+        self.bg(hsla(160. / 360., 1., 0.5, 1.))
+    }
+
+    fn debug_bg_magenta(self) -> Self {
+        self.bg(hsla(300. / 360., 1., 0.5, 1.))
     }
 }
 

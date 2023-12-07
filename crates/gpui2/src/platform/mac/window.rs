@@ -662,7 +662,7 @@ impl MacWindow {
         }
     }
 
-    pub fn main_window() -> Option<AnyWindowHandle> {
+    pub fn active_window() -> Option<AnyWindowHandle> {
         unsafe {
             let app = NSApplication::sharedApplication(nil);
             let main_window: id = msg_send![app, mainWindow];
@@ -748,6 +748,10 @@ impl PlatformWindow for MacWindow {
 
     fn set_input_handler(&mut self, input_handler: Box<dyn PlatformInputHandler>) {
         self.0.as_ref().lock().input_handler = Some(input_handler);
+    }
+
+    fn clear_input_handler(&mut self) {
+        self.0.as_ref().lock().input_handler = None;
     }
 
     fn prompt(&self, level: PromptLevel, msg: &str, answers: &[&str]) -> oneshot::Receiver<usize> {

@@ -1,12 +1,15 @@
 #![allow(unused_variables, unused_mut)]
 //todo!()
 
+mod app_menus;
 mod assets;
 pub mod languages;
 mod only_instance;
 mod open_listener;
 
+pub use app_menus::*;
 pub use assets::*;
+use assistant::AssistantPanel;
 use breadcrumbs::Breadcrumbs;
 use collections::VecDeque;
 use editor::{Editor, MultiBuffer};
@@ -18,9 +21,10 @@ pub use only_instance::*;
 pub use open_listener::*;
 
 use anyhow::{anyhow, Context as _};
+use futures::{channel::mpsc, StreamExt};
 use project_panel::ProjectPanel;
 use quick_action_bar::QuickActionBar;
-use settings::{initial_local_settings_content, Settings};
+use settings::{initial_local_settings_content, load_default_keymap, KeymapFile, Settings};
 use std::{borrow::Cow, ops::Deref, sync::Arc};
 use terminal_view::terminal_panel::TerminalPanel;
 use util::{
@@ -121,15 +125,15 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
         let active_buffer_language =
             cx.build_view(|_| language_selector::ActiveBufferLanguage::new(workspace));
         //     let vim_mode_indicator = cx.add_view(|cx| vim::ModeIndicator::new(cx));
-        //     let feedback_button = cx.add_view(|_| {
-        //         feedback::deploy_feedback_button::DeployFeedbackButton::new(workspace)
-        //     });
+        let feedback_button = cx
+            .build_view(|_| feedback::deploy_feedback_button::DeployFeedbackButton::new(workspace));
+        //     let cursor_position = cx.add_view(|_| editor::items::CursorPosition::new());
         let cursor_position = cx.build_view(|_| editor::items::CursorPosition::new());
         workspace.status_bar().update(cx, |status_bar, cx| {
             status_bar.add_left_item(diagnostic_summary, cx);
             status_bar.add_left_item(activity_indicator, cx);
-
-            // status_bar.add_right_item(feedback_button, cx);
+            status_bar.add_right_item(feedback_button, cx);
+            // status_bar.add_right_item(copilot, cx);
             status_bar.add_right_item(copilot, cx);
             status_bar.add_right_item(active_buffer_language, cx);
             // status_bar.add_right_item(vim_mode_indicator, cx);
@@ -153,7 +157,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
         cx.spawn(|workspace_handle, mut cx| async move {
             let project_panel = ProjectPanel::load(workspace_handle.clone(), cx.clone());
             let terminal_panel = TerminalPanel::load(workspace_handle.clone(), cx.clone());
-            // let assistant_panel = AssistantPanel::load(workspace_handle.clone(), cx.clone());
+            let assistant_panel = AssistantPanel::load(workspace_handle.clone(), cx.clone());
             let channels_panel =
                 collab_ui::collab_panel::CollabPanel::load(workspace_handle.clone(), cx.clone());
             // let chat_panel =
@@ -165,14 +169,14 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             let (
                 project_panel,
                 terminal_panel,
-                //     assistant_panel,
+                assistant_panel,
                 channels_panel,
                 //     chat_panel,
                 //     notification_panel,
             ) = futures::try_join!(
                 project_panel,
                 terminal_panel,
-                //     assistant_panel,
+                assistant_panel,
                 channels_panel,
                 //     chat_panel,
                 //     notification_panel,
@@ -182,25 +186,25 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 let project_panel_position = project_panel.position(cx);
                 workspace.add_panel(project_panel, cx);
                 workspace.add_panel(terminal_panel, cx);
-                //     workspace.add_panel(assistant_panel, cx);
+                workspace.add_panel(assistant_panel, cx);
                 workspace.add_panel(channels_panel, cx);
                 //     workspace.add_panel(chat_panel, cx);
                 //     workspace.add_panel(notification_panel, cx);
 
-                //     if !was_deserialized
-                //         && workspace
-                //             .project()
-                //             .read(cx)
-                //             .visible_worktrees(cx)
-                //             .any(|tree| {
-                //                 tree.read(cx)
-                //                     .root_entry()
-                //                     .map_or(false, |entry| entry.is_dir())
-                //             })
-                //     {
-                // workspace.toggle_dock(project_panel_position, cx);
-                //     }
-                // cx.focus_self();
+                // if !was_deserialized
+                //     && workspace
+                //         .project()
+                //         .read(cx)
+                //         .visible_worktrees(cx)
+                //         .any(|tree| {
+                //             tree.read(cx)
+                //                 .root_entry()
+                //                 .map_or(false, |entry| entry.is_dir())
+                //         })
+                // {
+                //     workspace.toggle_dock(project_panel_position, cx);
+                // }
+                cx.focus_self();
             })
         })
         .detach();
@@ -231,14 +235,13 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                     .open_urls(&[action.url.clone()])
             })
             .register_action(|_, action: &OpenBrowser, cx| cx.open_url(&action.url))
-            //todo!(buffer font size)
-            // cx.add_global_action(move |_: &IncreaseBufferFontSize, cx| {
-            //     theme::adjust_font_size(cx, |size| *size += 1.0)
-            // });
-            // cx.add_global_action(move |_: &DecreaseBufferFontSize, cx| {
-            //     theme::adjust_font_size(cx, |size| *size -= 1.0)
-            // });
-            // cx.add_global_action(move |_: &ResetBufferFontSize, cx| theme::reset_font_size(cx));
+            .register_action(move |_, _: &IncreaseBufferFontSize, cx| {
+                theme::adjust_font_size(cx, |size| *size += px(1.0))
+            })
+            .register_action(move |_, _: &DecreaseBufferFontSize, cx| {
+                theme::adjust_font_size(cx, |size| *size -= px(1.0))
+            })
+            .register_action(move |_, _: &ResetBufferFontSize, cx| theme::reset_font_size(cx))
             .register_action(|_, _: &install_cli::Install, cx| {
                 cx.spawn(|_, cx| async move {
                     install_cli::install_cli(cx.deref())
@@ -425,11 +428,6 @@ fn initialize_pane(workspace: &mut Workspace, pane: &View<Pane>, cx: &mut ViewCo
             //     toolbar.add_item(diagnostic_editor_controls, cx);
             //     let project_search_bar = cx.add_view(|_| ProjectSearchBar::new());
             //     toolbar.add_item(project_search_bar, cx);
-            //     let submit_feedback_button =
-            //         cx.add_view(|_| SubmitFeedbackButton::new());
-            //     toolbar.add_item(submit_feedback_button, cx);
-            //     let feedback_info_text = cx.add_view(|_| FeedbackInfoText::new());
-            //     toolbar.add_item(feedback_info_text, cx);
             //     let lsp_log_item =
             //         cx.add_view(|_| language_tools::LspLogToolbarItemView::new());
             //     toolbar.add_item(lsp_log_item, cx);
@@ -563,6 +561,42 @@ fn open_log_file(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
             .detach();
         })
         .detach();
+}
+
+pub fn handle_keymap_file_changes(
+    mut user_keymap_file_rx: mpsc::UnboundedReceiver<String>,
+    cx: &mut AppContext,
+) {
+    cx.spawn(move |cx| async move {
+        //  let mut settings_subscription = None;
+        while let Some(user_keymap_content) = user_keymap_file_rx.next().await {
+            if let Some(keymap_content) = KeymapFile::parse(&user_keymap_content).log_err() {
+                cx.update(|cx| reload_keymaps(cx, &keymap_content)).ok();
+
+                // todo!()
+                // let mut old_base_keymap = cx.read(|cx| *settings::get::<BaseKeymap>(cx));
+                // drop(settings_subscription);
+                // settings_subscription = Some(cx.update(|cx| {
+                //     cx.observe_global::<SettingsStore, _>(move |cx| {
+                //         let new_base_keymap = *settings::get::<BaseKeymap>(cx);
+                //         if new_base_keymap != old_base_keymap {
+                //             old_base_keymap = new_base_keymap.clone();
+                //             reload_keymaps(cx, &keymap_content);
+                //         }
+                //     })
+                // }));
+            }
+        }
+    })
+    .detach();
+}
+
+fn reload_keymaps(cx: &mut AppContext, keymap_content: &KeymapFile) {
+    // todo!()
+    // cx.clear_bindings();
+    load_default_keymap(cx);
+    keymap_content.clone().add_to_cx(cx).log_err();
+    cx.set_menus(app_menus());
 }
 
 fn open_local_settings_file(

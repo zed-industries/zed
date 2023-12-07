@@ -50,13 +50,23 @@ use std::{
 use thiserror::Error;
 
 use gpui::{
-    px, AnyWindowHandle, AppContext, Bounds, ClipboardItem, EventEmitter, Hsla, Keystroke,
+    actions, px, AnyWindowHandle, AppContext, Bounds, ClipboardItem, EventEmitter, Hsla, Keystroke,
     ModelContext, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
     Point, ScrollWheelEvent, Size, Task, TouchPhase,
 };
 
 use crate::mappings::{colors::to_alac_rgb, keys::to_esc_str};
 use lazy_static::lazy_static;
+
+actions!(
+    Clear,
+    Copy,
+    Paste,
+    ShowCharacterPalette,
+    SearchTest,
+    SendText,
+    SendKeystroke,
+);
 
 ///Scrolling is unbearably sluggish by default. Alacritty supports a configurable
 ///Scroll multiplier that is set to 3 by default. This will be removed when I
@@ -1103,7 +1113,12 @@ impl Terminal {
         }
     }
 
-    pub fn mouse_drag(&mut self, e: MouseMoveEvent, origin: Point<Pixels>, region: Bounds<Pixels>) {
+    pub fn mouse_drag(
+        &mut self,
+        e: &MouseMoveEvent,
+        origin: Point<Pixels>,
+        region: Bounds<Pixels>,
+    ) {
         let position = e.position - origin;
         self.last_mouse_position = Some(position);
 
@@ -1129,7 +1144,7 @@ impl Terminal {
         }
     }
 
-    fn drag_line_delta(&mut self, e: MouseMoveEvent, region: Bounds<Pixels>) -> Option<Pixels> {
+    fn drag_line_delta(&mut self, e: &MouseMoveEvent, region: Bounds<Pixels>) -> Option<Pixels> {
         //TODO: Why do these need to be doubled? Probably the same problem that the IME has
         let top = region.origin.y + (self.last_content.size.line_height * 2.);
         let bottom = region.lower_left().y - (self.last_content.size.line_height * 2.);
@@ -1229,7 +1244,7 @@ impl Terminal {
     }
 
     ///Scroll the terminal
-    pub fn scroll_wheel(&mut self, e: ScrollWheelEvent, origin: Point<Pixels>) {
+    pub fn scroll_wheel(&mut self, e: &ScrollWheelEvent, origin: Point<Pixels>) {
         let mouse_mode = self.mouse_mode(e.shift);
 
         if let Some(scroll_lines) = self.determine_scroll_lines(&e, mouse_mode) {

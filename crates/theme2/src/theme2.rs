@@ -150,3 +150,9 @@ pub struct DiagnosticStyle {
     pub hint: Hsla,
     pub ignored: Hsla,
 }
+
+pub fn color_alpha(color: Hsla, alpha: f32) -> Hsla {
+    let mut color = color;
+    color.a = alpha;
+    color
+}

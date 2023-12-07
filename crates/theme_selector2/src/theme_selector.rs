@@ -68,7 +68,7 @@ impl Render for ThemeSelector {
     type Element = Div;
 
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
-        v_stack().min_w_96().child(self.picker.clone())
+        v_stack().w(rems(34.)).child(self.picker.clone())
     }
 }
 
@@ -187,6 +187,10 @@ impl PickerDelegate for ThemeSelectorDelegate {
             Self::set_theme(self.original_theme.clone(), cx);
             self.selection_completed = true;
         }
+
+        self.view
+            .update(cx, |_, cx| cx.emit(DismissEvent))
+            .log_err();
     }
 
     fn selected_index(&self) -> usize {

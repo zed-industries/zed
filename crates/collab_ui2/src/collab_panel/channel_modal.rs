@@ -11,7 +11,7 @@ use gpui::{
 };
 use picker::{Picker, PickerDelegate};
 use std::sync::Arc;
-use ui::v_stack;
+use ui::prelude::*;
 use util::TryFutureExt;
 
 actions!(
@@ -151,7 +151,7 @@ impl Render for ChannelModal {
     type Element = Div;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-        v_stack().min_w_96().child(self.picker.clone())
+        v_stack().w(rems(34.)).child(self.picker.clone())
         // let theme = &theme::current(cx).collab_panel.tabbed_modal;
 
         // let mode = self.picker.read(cx).delegate().mode;
