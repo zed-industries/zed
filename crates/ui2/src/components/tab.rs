@@ -21,13 +21,22 @@ pub enum TabPosition {
     Last,
 }
 
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum TabCloseSide {
+    Start,
+    End,
+}
+
 #[derive(IntoElement)]
 pub struct Tab {
     id: ElementId,
-    position: TabPosition,
     selected: bool,
+    position: TabPosition,
+    close_side: TabCloseSide,
     on_click: Option<Rc<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
     tooltip: Option<Box<dyn Fn(&mut WindowContext) -> AnyView + 'static>>,
+    start_slot: Option<AnyElement>,
+    end_slot: Option<AnyElement>,
     children: SmallVec<[AnyElement; 2]>,
 }
 
@@ -37,14 +46,22 @@ impl Tab {
             id: id.into(),
             selected: false,
             position: TabPosition::First,
+            close_side: TabCloseSide::End,
             on_click: None,
             tooltip: None,
+            start_slot: None,
+            end_slot: None,
             children: SmallVec::new(),
         }
     }
 
     pub fn position(mut self, position: TabPosition) -> Self {
         self.position = position;
+        self
+    }
+
+    pub fn close_side(mut self, close_side: TabCloseSide) -> Self {
+        self.close_side = close_side;
         self
     }
 
@@ -55,6 +72,16 @@ impl Tab {
 
     pub fn tooltip(mut self, tooltip: impl Fn(&mut WindowContext) -> AnyView + 'static) -> Self {
         self.tooltip = Some(Box::new(tooltip));
+        self
+    }
+
+    pub fn start_slot<E: IntoElement>(mut self, element: impl Into<Option<E>>) -> Self {
+        self.start_slot = element.into().map(IntoElement::into_any_element);
+        self
+    }
+
+    pub fn end_slot<E: IntoElement>(mut self, element: impl Into<Option<E>>) -> Self {
+        self.end_slot = element.into().map(IntoElement::into_any_element);
         self
     }
 }
@@ -139,8 +166,32 @@ impl RenderOnce for Tab {
                     .when_some(self.tooltip, |tab, tooltip| {
                         tab.tooltip(move |cx| tooltip(cx))
                     })
-                    // .child(indicator)
-                    // .child(close_button)
+                    .child(
+                        h_stack()
+                            .w_3()
+                            .h_3()
+                            .justify_center()
+                            .absolute()
+                            .map(|this| match self.close_side {
+                                TabCloseSide::Start => this.right_1(),
+                                TabCloseSide::End => this.left_1(),
+                            })
+                            .children(self.start_slot),
+                    )
+                    .child(
+                        h_stack()
+                            .invisible()
+                            .w_3()
+                            .h_3()
+                            .justify_center()
+                            .absolute()
+                            .map(|this| match self.close_side {
+                                TabCloseSide::Start => this.left_1(),
+                                TabCloseSide::End => this.right_1(),
+                            })
+                            .group_hover("", |style| style.visible())
+                            .children(self.end_slot),
+                    )
                     .children(self.children),
             )
     }
