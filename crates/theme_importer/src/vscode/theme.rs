@@ -163,6 +163,18 @@ pub struct VsCodeColors {
     pub editor_foreground: Option<String>,
     #[serde(rename = "editor.background")]
     pub editor_background: Option<String>,
+    #[serde(rename = "editorInlayHint.foreground")]
+    pub editor_inlay_hint_foreground: Option<String>,
+    #[serde(rename = "editorInlayHint.background")]
+    pub editor_inlay_hint_background: Option<String>,
+    #[serde(rename = "editorInlayHint.parameterForeground")]
+    pub editor_inlay_hint_parameter_foreground: Option<String>,
+    #[serde(rename = "editorInlayHint.parameterBackground")]
+    pub editor_inlay_hint_parameter_background: Option<String>,
+    #[serde(rename = "editorInlayHint.typForeground")]
+    pub editor_inlay_hint_typ_foreground: Option<String>,
+    #[serde(rename = "editorInlayHint.typBackground")]
+    pub editor_inlay_hint_typ_background: Option<String>,
     #[serde(rename = "editorLineNumber.foreground")]
     pub editor_line_number_foreground: Option<String>,
     #[serde(rename = "editor.selectionBackground")]

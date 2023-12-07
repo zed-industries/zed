@@ -283,11 +283,14 @@ impl<'a> Debug for StatusColorsRefinementPrinter<'a> {
             ("deleted", self.0.deleted),
             ("error", self.0.error),
             ("hidden", self.0.hidden),
+            ("hint", self.0.hint),
             ("ignored", self.0.ignored),
             ("info", self.0.info),
             ("modified", self.0.modified),
+            ("predictive", self.0.predictive),
             ("renamed", self.0.renamed),
             ("success", self.0.success),
+            ("unreachable", self.0.unreachable),
             ("warning", self.0.warning),
         ];
 

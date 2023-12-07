@@ -62,6 +62,7 @@ pub fn palenight() -> UserThemeFamily {
                         deleted: Some(rgba(0xef524fff).into()),
                         error: Some(rgba(0xef524fff).into()),
                         hidden: Some(rgba(0x9199c8ff).into()),
+                        hint: Some(rgba(0x969696ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -268,6 +269,7 @@ pub fn palenight() -> UserThemeFamily {
                         deleted: Some(rgba(0xef524fff).into()),
                         error: Some(rgba(0xef524fff).into()),
                         hidden: Some(rgba(0x9199c8ff).into()),
+                        hint: Some(rgba(0x969696ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -474,6 +476,7 @@ pub fn palenight() -> UserThemeFamily {
                         deleted: Some(rgba(0xef524fff).into()),
                         error: Some(rgba(0xef524fff).into()),
                         hidden: Some(rgba(0x9199c8ff).into()),
+                        hint: Some(rgba(0x969696ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {

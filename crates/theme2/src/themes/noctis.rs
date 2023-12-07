@@ -63,6 +63,7 @@ pub fn noctis() -> UserThemeFamily {
                         deleted: Some(rgba(0xe34d1bff).into()),
                         error: Some(rgba(0xe34d1bff).into()),
                         hidden: Some(rgba(0x9fb6c6ff).into()),
+                        hint: Some(rgba(0x969696ff).into()),
                         warning: Some(rgba(0xffa857ff).into()),
                         ..Default::default()
                     },
@@ -282,6 +283,7 @@ pub fn noctis() -> UserThemeFamily {
                         deleted: Some(rgba(0xe34d1bff).into()),
                         error: Some(rgba(0xe34d1bff).into()),
                         hidden: Some(rgba(0xbbaab0ff).into()),
+                        hint: Some(rgba(0x969696ff).into()),
                         warning: Some(rgba(0xffa857ff).into()),
                         ..Default::default()
                     },
@@ -501,6 +503,7 @@ pub fn noctis() -> UserThemeFamily {
                         deleted: Some(rgba(0xff3f00ff).into()),
                         error: Some(rgba(0xff3f00ff).into()),
                         hidden: Some(rgba(0x70838dff).into()),
+                        hint: Some(rgba(0x969696ff).into()),
                         warning: Some(rgba(0xe07a52ff).into()),
                         ..Default::default()
                     },
@@ -720,6 +723,7 @@ pub fn noctis() -> UserThemeFamily {
                         deleted: Some(rgba(0xff3f00ff).into()),
                         error: Some(rgba(0xff3f00ff).into()),
                         hidden: Some(rgba(0x74708dff).into()),
+                        hint: Some(rgba(0x969696ff).into()),
                         warning: Some(rgba(0xe07a52ff).into()),
                         ..Default::default()
                     },
@@ -939,6 +943,7 @@ pub fn noctis() -> UserThemeFamily {
                         deleted: Some(rgba(0xff3f00ff).into()),
                         error: Some(rgba(0xff3f00ff).into()),
                         hidden: Some(rgba(0x878476ff).into()),
+                        hint: Some(rgba(0x969696ff).into()),
                         warning: Some(rgba(0xe07a52ff).into()),
                         ..Default::default()
                     },
@@ -1158,6 +1163,7 @@ pub fn noctis() -> UserThemeFamily {
                         deleted: Some(rgba(0xb96245ff).into()),
                         error: Some(rgba(0xb96245ff).into()),
                         hidden: Some(rgba(0x96a8b6ff).into()),
+                        hint: Some(rgba(0x969696ff).into()),
                         warning: Some(rgba(0xffa857ff).into()),
                         ..Default::default()
                     },
@@ -1377,6 +1383,7 @@ pub fn noctis() -> UserThemeFamily {
                         deleted: Some(rgba(0xe34d1bff).into()),
                         error: Some(rgba(0xe34d1bff).into()),
                         hidden: Some(rgba(0x87a7abff).into()),
+                        hint: Some(rgba(0x969696ff).into()),
                         warning: Some(rgba(0xffa487ff).into()),
                         ..Default::default()
                     },
@@ -1596,6 +1603,7 @@ pub fn noctis() -> UserThemeFamily {
                         deleted: Some(rgba(0xe34d1bff).into()),
                         error: Some(rgba(0xe34d1bff).into()),
                         hidden: Some(rgba(0x87a7abff).into()),
+                        hint: Some(rgba(0x969696ff).into()),
                         warning: Some(rgba(0xffa487ff).into()),
                         ..Default::default()
                     },
@@ -1815,6 +1823,7 @@ pub fn noctis() -> UserThemeFamily {
                         deleted: Some(rgba(0xe34d1bff).into()),
                         error: Some(rgba(0xe34d1bff).into()),
                         hidden: Some(rgba(0x87a7abff).into()),
+                        hint: Some(rgba(0x969696ff).into()),
                         warning: Some(rgba(0xffa487ff).into()),
                         ..Default::default()
                     },
@@ -2034,6 +2043,7 @@ pub fn noctis() -> UserThemeFamily {
                         deleted: Some(rgba(0xe34d1bff).into()),
                         error: Some(rgba(0xe34d1bff).into()),
                         hidden: Some(rgba(0xa9a5c0ff).into()),
+                        hint: Some(rgba(0x969696ff).into()),
                         warning: Some(rgba(0xffa857ff).into()),
                         ..Default::default()
                     },
@@ -2253,6 +2263,7 @@ pub fn noctis() -> UserThemeFamily {
                         deleted: Some(rgba(0xe34d1bff).into()),
                         error: Some(rgba(0xe34d1bff).into()),
                         hidden: Some(rgba(0xb3a5c0ff).into()),
+                        hint: Some(rgba(0x969696ff).into()),
                         warning: Some(rgba(0xffa857ff).into()),
                         ..Default::default()
                     },

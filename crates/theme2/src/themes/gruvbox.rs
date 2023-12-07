@@ -61,6 +61,7 @@ pub fn gruvbox() -> UserThemeFamily {
                         deleted: Some(rgba(0xfb4833ff).into()),
                         error: Some(rgba(0xfb4833ff).into()),
                         hidden: Some(rgba(0xa89984ff).into()),
+                        hint: Some(rgba(0x969696ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -251,6 +252,7 @@ pub fn gruvbox() -> UserThemeFamily {
                         deleted: Some(rgba(0xfb4833ff).into()),
                         error: Some(rgba(0xfb4833ff).into()),
                         hidden: Some(rgba(0xa89984ff).into()),
+                        hint: Some(rgba(0x969696ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -441,6 +443,7 @@ pub fn gruvbox() -> UserThemeFamily {
                         deleted: Some(rgba(0xfb4833ff).into()),
                         error: Some(rgba(0xfb4833ff).into()),
                         hidden: Some(rgba(0xa89984ff).into()),
+                        hint: Some(rgba(0x969696ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -631,6 +634,7 @@ pub fn gruvbox() -> UserThemeFamily {
                         deleted: Some(rgba(0x9d0006ff).into()),
                         error: Some(rgba(0x9d0006ff).into()),
                         hidden: Some(rgba(0x7c6f64ff).into()),
+                        hint: Some(rgba(0x969696ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -821,6 +825,7 @@ pub fn gruvbox() -> UserThemeFamily {
                         deleted: Some(rgba(0x9d0006ff).into()),
                         error: Some(rgba(0x9d0006ff).into()),
                         hidden: Some(rgba(0x7c6f64ff).into()),
+                        hint: Some(rgba(0x969696ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -1011,6 +1016,7 @@ pub fn gruvbox() -> UserThemeFamily {
                         deleted: Some(rgba(0x9d0006ff).into()),
                         error: Some(rgba(0x9d0006ff).into()),
                         hidden: Some(rgba(0x7c6f64ff).into()),
+                        hint: Some(rgba(0x969696ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {

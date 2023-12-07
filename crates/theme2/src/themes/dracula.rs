@@ -62,6 +62,7 @@ pub fn dracula() -> UserThemeFamily {
                     deleted: Some(rgba(0xff5555ff).into()),
                     error: Some(rgba(0xff5555ff).into()),
                     hidden: Some(rgba(0x6272a4ff).into()),
+                    hint: Some(rgba(0x969696ff).into()),
                     warning: Some(rgba(0xffb76bff).into()),
                     ..Default::default()
                 },
