@@ -188,7 +188,7 @@ pub struct AppContext {
     flushing_effects: bool,
     pending_updates: usize,
     pub(crate) actions: Rc<ActionRegistry>,
-    pub(crate) active_drag: Option<AnyDragState>,
+    pub(crate) active_drag: Option<AnyDrag>,
     pub(crate) active_tooltip: Option<AnyTooltip>,
     pub(crate) next_frame_callbacks: HashMap<DisplayId, Vec<FrameCallback>>,
     pub(crate) frame_consumers: HashMap<DisplayId, Task<()>>,
@@ -1262,34 +1262,6 @@ impl<G: 'static> DerefMut for GlobalLease<G> {
 pub struct AnyDrag {
     pub view: AnyView,
     pub cursor_offset: Point<Pixels>,
-}
-
-pub enum AnyDragState {
-    EventListener,
-    AnyDrag(AnyDrag),
-}
-
-impl AnyDragState {
-    pub fn any_drag(&self) -> Option<&AnyDrag> {
-        match self {
-            AnyDragState::EventListener => None,
-            AnyDragState::AnyDrag(any_drag) => Some(any_drag),
-        }
-    }
-
-    pub fn entity_id(&self) -> Option<EntityId> {
-        match self {
-            AnyDragState::EventListener => None,
-            AnyDragState::AnyDrag(any_drag) => Some(any_drag.view.entity_id()),
-        }
-    }
-
-    pub fn entity_type(&self) -> Option<TypeId> {
-        match self {
-            AnyDragState::EventListener => None,
-            AnyDragState::AnyDrag(any_drag) => Some(any_drag.view.entity_type()),
-        }
-    }
 }
 
 #[derive(Clone)]

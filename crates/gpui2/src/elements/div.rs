@@ -1,10 +1,10 @@
 use crate::{
-    point, px, Action, AnyDrag, AnyDragState, AnyElement, AnyTooltip, AnyView, AppContext,
-    BorrowAppContext, BorrowWindow, Bounds, ClickEvent, DispatchPhase, Element, ElementId,
-    FocusEvent, FocusHandle, IntoElement, KeyContext, KeyDownEvent, KeyUpEvent, LayoutId,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point,
-    Render, ScrollWheelEvent, SharedString, Size, StackingOrder, Style, StyleRefinement, Styled,
-    Task, View, Visibility, WindowContext,
+    point, px, Action, AnyDrag, AnyElement, AnyTooltip, AnyView, AppContext, BorrowAppContext,
+    BorrowWindow, Bounds, ClickEvent, DispatchPhase, Element, ElementId, FocusEvent, FocusHandle,
+    IntoElement, KeyContext, KeyDownEvent, KeyUpEvent, LayoutId, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, Render, ScrollWheelEvent,
+    SharedString, Size, StackingOrder, Style, StyleRefinement, Styled, Task, View, Visibility,
+    WindowContext,
 };
 use collections::HashMap;
 use refineable::Refineable;
@@ -415,19 +415,6 @@ pub trait StatefulInteractiveElement: InteractiveElement {
         self
     }
 
-    fn on_drag_event(
-        mut self,
-        listener: impl Fn(&MouseMoveEvent, &mut WindowContext) + 'static,
-    ) -> Self
-    where
-        Self: Sized,
-    {
-        self.interactivity()
-            .drag_event_listeners
-            .push(Box::new(listener));
-        self
-    }
-
     fn on_hover(mut self, listener: impl Fn(&bool, &mut WindowContext) + 'static) -> Self
     where
         Self: Sized,
@@ -761,7 +748,6 @@ pub struct Interactivity {
     pub action_listeners: SmallVec<[(TypeId, ActionListener); 8]>,
     pub drop_listeners: SmallVec<[(TypeId, Box<DropListener>); 2]>,
     pub click_listeners: SmallVec<[ClickListener; 2]>,
-    pub drag_event_listeners: SmallVec<[DragEventListener; 1]>,
     pub drag_listener: Option<DragListener>,
     pub hover_listener: Option<Box<dyn Fn(&bool, &mut WindowContext)>>,
     pub tooltip_builder: Option<TooltipBuilder>,
@@ -906,11 +892,8 @@ impl Interactivity {
                 if phase == DispatchPhase::Bubble
                     && interactive_bounds.visibly_contains(&event.position, &cx)
                 {
-                    if let Some(drag_state_type) = cx
-                        .active_drag
-                        .as_ref()
-                        .and_then(|drag| drag.any_drag())
-                        .map(|drag| drag.view.entity_type())
+                    if let Some(drag_state_type) =
+                        cx.active_drag.as_ref().map(|drag| drag.view.entity_type())
                     {
                         for (drop_state_type, listener) in &drop_listeners {
                             if *drop_state_type == drag_state_type {
@@ -918,7 +901,7 @@ impl Interactivity {
                                     .active_drag
                                     .take()
                                     .expect("checked for type drag state type above");
-                                let drag = drag.any_drag().expect("checked for any drag above");
+
                                 listener(drag.view.clone(), cx);
                                 cx.notify();
                                 cx.stop_propagation();
@@ -933,16 +916,12 @@ impl Interactivity {
 
         let click_listeners = mem::take(&mut self.click_listeners);
         let drag_listener = mem::take(&mut self.drag_listener);
-        let drag_event_listeners = mem::take(&mut self.drag_event_listeners);
 
-        if !click_listeners.is_empty()
-            || drag_listener.is_some()
-            || !drag_event_listeners.is_empty()
-        {
+        if !click_listeners.is_empty() || drag_listener.is_some() {
             let pending_mouse_down = element_state.pending_mouse_down.clone();
             let mouse_down = pending_mouse_down.borrow().clone();
             if let Some(mouse_down) = mouse_down {
-                if !drag_event_listeners.is_empty() || drag_listener.is_some() {
+                if let Some(drag_listener) = drag_listener {
                     let active_state = element_state.clicked_state.clone();
                     let interactive_bounds = interactive_bounds.clone();
 
@@ -950,29 +929,17 @@ impl Interactivity {
                         if cx.active_drag.is_some() {
                             if phase == DispatchPhase::Capture {
                                 cx.notify();
-                            } else if interactive_bounds.visibly_contains(&event.position, cx)
-                                && (event.position - mouse_down.position).magnitude()
-                                    > DRAG_THRESHOLD
-                            {
-                                for listener in &drag_event_listeners {
-                                    listener(event, cx);
-                                }
                             }
                         } else if phase == DispatchPhase::Bubble
                             && interactive_bounds.visibly_contains(&event.position, cx)
                             && (event.position - mouse_down.position).magnitude() > DRAG_THRESHOLD
                         {
                             *active_state.borrow_mut() = ElementClickedState::default();
-                            if let Some(drag_listener) = &drag_listener {
-                                let cursor_offset = event.position - bounds.origin;
-                                let drag = drag_listener(cursor_offset, cx);
-                                cx.active_drag = Some(AnyDragState::AnyDrag(drag));
-                                cx.notify();
-                                cx.stop_propagation();
-                            }
-                            for listener in &drag_event_listeners {
-                                listener(event, cx);
-                            }
+                            let cursor_offset = event.position - bounds.origin;
+                            let drag = drag_listener(cursor_offset, cx);
+                            cx.active_drag = Some(drag);
+                            cx.notify();
+                            cx.stop_propagation();
                         }
                     });
                 }
@@ -1235,7 +1202,7 @@ impl Interactivity {
             if let Some(drag) = cx.active_drag.take() {
                 for (state_type, group_drag_style) in &self.group_drag_over_styles {
                     if let Some(group_bounds) = GroupBounds::get(&group_drag_style.group, cx) {
-                        if Some(*state_type) == drag.entity_type()
+                        if *state_type == drag.view.entity_type()
                             && group_bounds.contains_point(&mouse_position)
                         {
                             style.refine(&group_drag_style.style);
@@ -1244,7 +1211,7 @@ impl Interactivity {
                 }
 
                 for (state_type, drag_over_style) in &self.drag_over_styles {
-                    if Some(*state_type) == drag.entity_type()
+                    if *state_type == drag.view.entity_type()
                         && bounds
                             .intersect(&cx.content_mask().bounds)
                             .contains_point(&mouse_position)
@@ -1301,7 +1268,6 @@ impl Default for Interactivity {
             action_listeners: SmallVec::new(),
             drop_listeners: SmallVec::new(),
             click_listeners: SmallVec::new(),
-            drag_event_listeners: SmallVec::new(),
             drag_listener: None,
             hover_listener: None,
             tooltip_builder: None,

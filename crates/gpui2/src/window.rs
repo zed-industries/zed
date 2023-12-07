@@ -1188,14 +1188,11 @@ impl<'a> WindowContext<'a> {
         });
 
         if let Some(active_drag) = self.app.active_drag.take() {
-            if let Some(active_drag) = active_drag.any_drag() {
-                self.with_z_index(1, |cx| {
-                    let offset = cx.mouse_position() - active_drag.cursor_offset;
-                    let available_space =
-                        size(AvailableSpace::MinContent, AvailableSpace::MinContent);
-                    active_drag.view.draw(offset, available_space, cx);
-                });
-            }
+            self.with_z_index(1, |cx| {
+                let offset = cx.mouse_position() - active_drag.cursor_offset;
+                let available_space = size(AvailableSpace::MinContent, AvailableSpace::MinContent);
+                active_drag.view.draw(offset, available_space, cx);
+            });
             self.active_drag = Some(active_drag);
         } else if let Some(active_tooltip) = self.app.active_tooltip.take() {
             self.with_z_index(1, |cx| {
@@ -1273,10 +1270,10 @@ impl<'a> WindowContext<'a> {
                 FileDropEvent::Entered { position, files } => {
                     self.window.mouse_position = position;
                     if self.active_drag.is_none() {
-                        self.active_drag = Some(crate::AnyDragState::AnyDrag(AnyDrag {
+                        self.active_drag = Some(AnyDrag {
                             view: self.build_view(|_| files).into(),
                             cursor_offset: position,
-                        }));
+                        });
                     }
                     InputEvent::MouseDown(MouseDownEvent {
                         position,
