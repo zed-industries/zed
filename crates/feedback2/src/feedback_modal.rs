@@ -329,11 +329,11 @@ impl Render for FeedbackModal {
                                 )
                             }
                         )
-                        .map(|this|
+                        .color(
                             if valid_character_count {
-                                this.color(Color::Success)
+                                Color::Success
                             } else {
-                                this.color(Color::Error)
+                                Color::Error
                             }
                         )
                     )
