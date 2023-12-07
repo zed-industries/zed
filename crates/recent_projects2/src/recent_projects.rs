@@ -97,7 +97,7 @@ impl Render for RecentProjects {
     type Element = Div;
 
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
-        v_stack().w_96().child(self.picker.clone())
+        v_stack().w(rems(34.)).child(self.picker.clone())
     }
 }
 

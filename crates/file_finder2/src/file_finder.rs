@@ -2,7 +2,7 @@ use collections::HashMap;
 use editor::{scroll::autoscroll::Autoscroll, Bias, Editor};
 use fuzzy::{CharBag, PathMatch, PathMatchCandidate};
 use gpui::{
-    actions, AppContext, DismissEvent, Div, EventEmitter, FocusHandle, FocusableView, Model,
+    actions, rems, AppContext, DismissEvent, Div, EventEmitter, FocusHandle, FocusableView, Model,
     ParentElement, Render, Styled, Task, View, ViewContext, VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};
@@ -15,7 +15,7 @@ use std::{
     },
 };
 use text::Point;
-use ui::{prelude::*, v_stack, HighlightedLabel, ListItem};
+use ui::{prelude::*, HighlightedLabel, ListItem};
 use util::{paths::PathLikeWithPosition, post_inc, ResultExt};
 use workspace::Workspace;
 
@@ -119,7 +119,7 @@ impl Render for FileFinder {
     type Element = Div;
 
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
-        v_stack().w_96().child(self.picker.clone())
+        v_stack().w(rems(34.)).child(self.picker.clone())
     }
 }
 
@@ -720,7 +720,9 @@ impl PickerDelegate for FileFinderDelegate {
             ListItem::new(ix).inset(true).selected(selected).child(
                 v_stack()
                     .child(HighlightedLabel::new(file_name, file_name_positions))
-                    .child(HighlightedLabel::new(full_path, full_path_positions)),
+                    .child(
+                        HighlightedLabel::new(full_path, full_path_positions).color(Color::Muted),
+                    ),
             ),
         )
     }

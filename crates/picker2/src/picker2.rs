@@ -1,6 +1,6 @@
 use editor::Editor;
 use gpui::{
-    div, prelude::*, uniform_list, AnyElement, AppContext, Div, FocusHandle, FocusableView,
+    div, prelude::*, rems, uniform_list, AnyElement, AppContext, Div, FocusHandle, FocusableView,
     MouseButton, MouseDownEvent, Render, Task, UniformListScrollHandle, View, ViewContext,
     WindowContext,
 };
@@ -193,10 +193,27 @@ impl<D: PickerDelegate> Render for Picker<D> {
     type Element = Div;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+        let picker_editor = h_stack()
+            .overflow_hidden()
+            .flex_none()
+            .h_9()
+            .px_3()
+            .child(self.editor.clone());
+
+        let empty_state = div().p_1().child(
+            h_stack()
+                // TODO: This number matches the height of the uniform list items.
+                // Align these two with a less magic number.
+                .h(rems(1.4375))
+                .px_2()
+                .child(Label::new("No matches").color(Color::Muted)),
+        );
+
         div()
             .key_context("picker")
             .size_full()
-            .elevation_2(cx)
+            .overflow_hidden()
+            .elevation_3(cx)
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::select_prev))
             .on_action(cx.listener(Self::select_first))
@@ -205,10 +222,7 @@ impl<D: PickerDelegate> Render for Picker<D> {
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::secondary_confirm))
             .child(
-                v_stack()
-                    .py_0p5()
-                    .px_1()
-                    .child(div().px_1().py_0p5().child(self.editor.clone())),
+                picker_editor
             )
             .child(Divider::horizontal())
             .when(self.delegate.match_count() > 0, |el| {
@@ -256,11 +270,7 @@ impl<D: PickerDelegate> Render for Picker<D> {
             })
             .when(self.delegate.match_count() == 0, |el| {
                 el.child(
-                    v_stack().p_1().grow().child(
-                        div()
-                            .px_1()
-                            .child(Label::new("No matches").color(Color::Muted)),
-                    ),
+                    empty_state
                 )
             })
     }

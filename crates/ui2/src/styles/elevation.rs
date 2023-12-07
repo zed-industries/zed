@@ -37,7 +37,7 @@ impl ElevationIndex {
 
             ElevationIndex::ElevatedSurface => smallvec![BoxShadow {
                 color: hsla(0., 0., 0., 0.12),
-                offset: point(px(0.), px(1.)),
+                offset: point(px(0.), px(2.)),
                 blur_radius: px(3.),
                 spread_radius: px(0.),
             }],
@@ -45,13 +45,19 @@ impl ElevationIndex {
             ElevationIndex::ModalSurface => smallvec![
                 BoxShadow {
                     color: hsla(0., 0., 0., 0.12),
-                    offset: point(px(0.), px(1.)),
+                    offset: point(px(0.), px(2.)),
                     blur_radius: px(3.),
                     spread_radius: px(0.),
                 },
                 BoxShadow {
-                    color: hsla(0., 0., 0., 0.20),
-                    offset: point(px(3.), px(1.)),
+                    color: hsla(0., 0., 0., 0.08),
+                    offset: point(px(0.), px(3.)),
+                    blur_radius: px(6.),
+                    spread_radius: px(0.),
+                },
+                BoxShadow {
+                    color: hsla(0., 0., 0., 0.04),
+                    offset: point(px(0.), px(6.)),
                     blur_radius: px(12.),
                     spread_radius: px(0.),
                 },

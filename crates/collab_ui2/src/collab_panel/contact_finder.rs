@@ -7,7 +7,7 @@ use gpui::{
 use picker::{Picker, PickerDelegate};
 use std::sync::Arc;
 use theme::ActiveTheme as _;
-use ui::{h_stack, v_stack, Label};
+use ui::prelude::*;
 use util::{ResultExt as _, TryFutureExt};
 
 pub fn init(cx: &mut AppContext) {
@@ -58,7 +58,7 @@ impl Render for ContactFinder {
                     .bg(cx.theme().colors().element_background),
             )
             .child(self.picker.clone())
-            .w_96()
+            .w(rems(34.))
     }
 
     // fn focus_in(&mut self, _: gpui::AnyViewHandle, cx: &mut ViewContext<Self>) {
