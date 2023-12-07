@@ -342,7 +342,10 @@ impl RenderOnce for ButtonLike {
             .when_some(self.width, |this, width| this.w(width))
             .rounded_md()
             .gap_1()
-            .px_1()
+            .map(|this| match self.size {
+                ButtonSize::Default | ButtonSize::Compact => this.px_1(),
+                ButtonSize::None => this,
+            })
             .bg(self.style.enabled(cx).background)
             .when(!self.disabled, |this| {
                 this.cursor_pointer()

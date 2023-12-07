@@ -1481,7 +1481,6 @@ impl Pane {
                 })
                 .start_slot::<Indicator>(indicator)
                 .end_slot(
-                    // TODO: Fix button size
                     IconButton::new("close tab", Icon::Close)
                         .icon_color(Color::Muted)
                         .size(ButtonSize::None)
