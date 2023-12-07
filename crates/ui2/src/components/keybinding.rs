@@ -98,11 +98,13 @@ impl RenderOnce for Key {
 
         div()
             .py_0()
-            .when_else(
-                single_char,
-                |el| el.w(rems(14. / 16.)).flex().flex_none().justify_center(),
-                |el| el.px_0p5(),
-            )
+            .map(|el| {
+                if single_char {
+                    el.w(rems(14. / 16.)).flex().flex_none().justify_center()
+                } else {
+                    el.px_0p5()
+                }
+            })
             .h(rems(14. / 16.))
             .text_ui()
             .line_height(relative(1.))
