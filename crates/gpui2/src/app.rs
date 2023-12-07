@@ -646,8 +646,6 @@ impl AppContext {
     }
 
     /// Repeatedly called during `flush_effects` to handle a focused handle being dropped.
-    /// For now, we simply blur the window if this happens, but we may want to support invoking
-    /// a window blur handler to restore focus to some logical element.
     fn release_dropped_focus_handles(&mut self) {
         for window_handle in self.windows() {
             window_handle

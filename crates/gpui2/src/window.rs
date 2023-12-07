@@ -2419,6 +2419,29 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         subscription
     }
 
+    /// Register a listener to be called when the window loses focus.
+    /// Unlike [on_focus_changed], returns a subscription and persists until the subscription
+    /// is dropped.
+    pub fn on_window_focus_lost(
+        &mut self,
+        mut listener: impl FnMut(&mut V, &mut ViewContext<V>) + 'static,
+    ) -> Subscription {
+        let view = self.view.downgrade();
+        let (subscription, activate) = self.window.focus_listeners.insert(
+            (),
+            Box::new(move |event, cx| {
+                view.update(cx, |view, cx| {
+                    if event.blurred.is_none() && event.focused.is_none() {
+                        listener(view, cx)
+                    }
+                })
+                .is_ok()
+            }),
+        );
+        self.app.defer(move |_| activate());
+        subscription
+    }
+
     /// Register a listener to be called when the given focus handle or one of its descendants loses focus.
     /// Unlike [on_focus_changed], returns a subscription and persists until the subscription
     /// is dropped.
