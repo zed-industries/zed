@@ -1,6 +1,6 @@
 use gpui::{AnyView, DefiniteLength};
 
-use crate::prelude::*;
+use crate::{prelude::*, IconPosition};
 use crate::{
     ButtonCommon, ButtonLike, ButtonSize, ButtonStyle, Icon, IconSize, Label, LineHeightStyle,
 };
@@ -14,6 +14,7 @@ pub struct Button {
     label_color: Option<Color>,
     selected_label: Option<SharedString>,
     icon: Option<Icon>,
+    icon_position: Option<IconPosition>,
     icon_size: Option<IconSize>,
     icon_color: Option<Color>,
     selected_icon: Option<Icon>,
@@ -27,6 +28,7 @@ impl Button {
             label_color: None,
             selected_label: None,
             icon: None,
+            icon_position: None,
             icon_size: None,
             icon_color: None,
             selected_icon: None,
@@ -45,6 +47,11 @@ impl Button {
 
     pub fn icon(mut self, icon: impl Into<Option<Icon>>) -> Self {
         self.icon = icon.into();
+        self
+    }
+
+    pub fn icon_position(mut self, icon_position: impl Into<Option<IconPosition>>) -> Self {
+        self.icon_position = icon_position.into();
         self
     }
 
@@ -141,19 +148,30 @@ impl RenderOnce for Button {
             self.label_color.unwrap_or_default()
         };
 
-        self.base
-            .children(self.icon.map(|icon| {
-                ButtonIcon::new(icon)
-                    .disabled(is_disabled)
-                    .selected(is_selected)
-                    .selected_icon(self.selected_icon)
-                    .size(self.icon_size)
-                    .color(self.icon_color)
-            }))
-            .child(
-                Label::new(label)
-                    .color(label_color)
-                    .line_height_style(LineHeightStyle::UILabel),
-            )
+        self.base.child(
+            h_stack()
+                .gap_1()
+                .map(|this| {
+                    if self.icon_position == Some(IconPosition::End) {
+                        this.flex_row_reverse()
+                    } else {
+                        this
+                    }
+                })
+                .flex_row_reverse()
+                .child(
+                    Label::new(label)
+                        .color(label_color)
+                        .line_height_style(LineHeightStyle::UILabel),
+                )
+                .children(self.icon.map(|icon| {
+                    ButtonIcon::new(icon)
+                        .disabled(is_disabled)
+                        .selected(is_selected)
+                        .selected_icon(self.selected_icon)
+                        .size(self.icon_size)
+                        .color(self.icon_color)
+                })),
+        )
     }
 }

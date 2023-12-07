@@ -6,15 +6,15 @@ use db::kvp::KEY_VALUE_STORE;
 use editor::{Editor, EditorEvent};
 use futures::AsyncReadExt;
 use gpui::{
-    div, red, rems, serde_json, AppContext, DismissEvent, Div, EventEmitter, FocusHandle,
-    FocusableView, Model, PromptLevel, Render, Task, View, ViewContext,
+    div, rems, serde_json, AppContext, DismissEvent, Div, EventEmitter, FocusHandle, FocusableView,
+    Model, PromptLevel, Render, Task, View, ViewContext,
 };
 use isahc::Request;
 use language::Buffer;
 use project::Project;
 use regex::Regex;
 use serde_derive::Serialize;
-use ui::{prelude::*, Button, ButtonStyle, Label, Tooltip};
+use ui::{prelude::*, Button, ButtonStyle, IconPosition, Label, Tooltip};
 use util::ResultExt;
 use workspace::Workspace;
 
@@ -285,29 +285,22 @@ impl Render for FeedbackModal {
         let open_community_repo =
             cx.listener(|_, _, cx| cx.dispatch_action(Box::new(OpenZedCommunityRepo)));
 
-        // TODO: Nate UI pass
         v_stack()
             .elevation_3(cx)
             .key_context("GiveFeedback")
             .on_action(cx.listener(Self::cancel))
             .min_w(rems(40.))
             .max_w(rems(96.))
-            .min_h(rems(24.))
-            .max_h(rems(42.))
-            .gap_2()
+            .h(rems(32.))
             .child(
                 v_stack()
-                                .p_4()
-                    .child(
-                    div()
-                        .size_full()
-                        .child(Label::new("Give Feedback").color(Color::Default))
-                        .child(Label::new("This editor supports markdown").color(Color::Muted)),
-                ),
+                    .px_4()
+                    .pt_4()
+                    .pb_2()
+                    .child(Label::new("Give Feedback").color(Color::Default))
+                    .child(Label::new("This editor supports markdown").color(Color::Muted)),
             )
-            .child(v_stack()
-                .p_4()
-                .child(
+            .child(
                     div()
                         .flex_1()
                         .bg(cx.theme().colors().editor_background)
@@ -317,37 +310,49 @@ impl Render for FeedbackModal {
                 )
                 .child(
                     div().child(
-                        Label::new(format!(
-                            "Characters: {}",
-                            characters_remaining
-                        ))
+                        Label::new(
+                            if !valid_character_count && characters_remaining < 0 {
+                                "Feedback must be at least 10 characters.".to_string()
+                            } else if !valid_character_count && characters_remaining > 5000 {
+                                "Feedback must be less than 5000 characters.".to_string()
+                            } else {
+                                format!(
+                                "Characters: {}",
+                                characters_remaining
+                                )
+                            }
+                        )
                         .map(|this|
                             if valid_character_count {
                                 this.color(Color::Success)
                             } else {
                                 this.color(Color::Error)
-
                             }
                         )
-                    ),
-                )
-                .child(
-                    div()
+                    )
+                    .child(
+                    v_stack()
+                        .p_4()
+                        .child(
+                    h_stack()
                     .bg(cx.theme().colors().editor_background)
                     .border()
                     .border_color(cx.theme().colors().border)
-                    .child(self.email_address_editor.clone())
+                    .child(self.email_address_editor.clone()))
                 )
                 .child(
                     h_stack()
+                        .p_4()
                         .justify_between()
                         .gap_1()
                         .child(Button::new("community_repo", "Community Repo")
-                            .style(ButtonStyle::Filled)
-                            .color(Color::Muted)
+                            .style(ButtonStyle::Transparent)
+                            .icon(Icon::ExternalLink)
+                            .icon_position(IconPosition::End)
+                            .icon_size(IconSize::Small)
                             .on_click(open_community_repo)
                         )
-                        .child(h_stack().justify_between().gap_1()
+                        .child(h_stack().gap_1()
                             .child(
                                 Button::new("cancel_feedback", "Cancel")
                                     .style(ButtonStyle::Subtle)
