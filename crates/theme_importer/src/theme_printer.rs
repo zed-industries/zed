@@ -1,11 +1,13 @@
 use std::fmt::{self, Debug};
 
-use gpui::{Hsla, Rgba};
+use gpui::Hsla;
 use theme::{
     Appearance, PlayerColor, PlayerColors, StatusColorsRefinement, SystemColors,
     ThemeColorsRefinement, UserHighlightStyle, UserSyntaxTheme, UserTheme, UserThemeFamily,
     UserThemeStylesRefinement,
 };
+
+use crate::color::pack_color;
 
 struct RawSyntaxPrinter<'a>(&'a str);
 
@@ -19,7 +21,7 @@ struct HslaPrinter(Hsla);
 
 impl Debug for HslaPrinter {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:?}", IntoPrinter(&Rgba::from(self.0)))
+        write!(f, "rgba({:#010x}).into()", pack_color(self.0))
     }
 }
 

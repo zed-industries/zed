@@ -13,6 +13,7 @@ gpui = { package = "gpui2", path = "../gpui2" }
 indexmap = "1.6.2"
 json_comments = "0.2.2"
 log.workspace = true
+palette = "0.7.3"
 rust-embed.workspace = true
 serde.workspace = true
 simplelog = "0.9"
