@@ -133,13 +133,13 @@ pub struct Dock {
     panel_entries: Vec<PanelEntry>,
     is_open: bool,
     active_panel_index: usize,
+    focus_handle: FocusHandle,
+    focus_subscription: Subscription,
 }
 
 impl FocusableView for Dock {
-    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
-        self.panel_entries[self.active_panel_index]
-            .panel
-            .focus_handle(cx)
+    fn focus_handle(&self, _: &AppContext) -> FocusHandle {
+        self.focus_handle.clone()
     }
 }
 
@@ -190,12 +190,20 @@ pub struct PanelButtons {
 }
 
 impl Dock {
-    pub fn new(position: DockPosition) -> Self {
+    pub fn new(position: DockPosition, cx: &mut ViewContext<'_, Self>) -> Self {
+        let focus_handle = cx.focus_handle();
+        let focus_subscription = cx.on_focus(&focus_handle, |dock, cx| {
+            if let Some(active_entry) = dock.panel_entries.get(dock.active_panel_index) {
+                active_entry.panel.focus_handle(cx).focus(cx)
+            }
+        });
         Self {
             position,
             panel_entries: Default::default(),
             active_panel_index: 0,
             is_open: false,
+            focus_handle,
+            focus_subscription,
         }
     }
 
@@ -207,6 +215,7 @@ impl Dock {
         self.is_open
     }
 
+    // todo!()
     //     pub fn has_focus(&self, cx: &WindowContext) -> bool {
     //         self.visible_panel()
     //             .map_or(false, |panel| panel.has_focus(cx))

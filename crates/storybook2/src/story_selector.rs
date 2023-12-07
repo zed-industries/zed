@@ -28,6 +28,7 @@ pub enum ComponentStory {
     ListHeader,
     ListItem,
     Scroll,
+    Tab,
     Text,
     ZIndex,
     Picker,
@@ -53,6 +54,7 @@ impl ComponentStory {
             Self::ListItem => cx.build_view(|_| ui::ListItemStory).into(),
             Self::Scroll => ScrollStory::view(cx).into(),
             Self::Text => TextStory::view(cx).into(),
+            Self::Tab => cx.build_view(|_| ui::TabStory).into(),
             Self::ZIndex => cx.build_view(|_| ZIndexStory).into(),
             Self::Picker => PickerStory::new(cx).into(),
         }

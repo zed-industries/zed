@@ -170,14 +170,25 @@ impl Render for BufferSearchBar {
 
         h_stack()
             .key_context("BufferSearchBar")
-            .when(in_replace, |this| {
-                this.key_context("in_replace")
-                    .on_action(cx.listener(Self::replace_next))
-                    .on_action(cx.listener(Self::replace_all))
-            })
             .on_action(cx.listener(Self::previous_history_query))
             .on_action(cx.listener(Self::next_history_query))
             .on_action(cx.listener(Self::dismiss))
+            .on_action(cx.listener(Self::select_next_match))
+            .on_action(cx.listener(Self::select_prev_match))
+            .when(self.supported_options().replacement, |this| {
+                this.on_action(cx.listener(Self::toggle_replace))
+                    .when(in_replace, |this| {
+                        this.key_context("in_replace")
+                            .on_action(cx.listener(Self::replace_next))
+                            .on_action(cx.listener(Self::replace_all))
+                    })
+            })
+            .when(self.supported_options().case, |this| {
+                this.on_action(cx.listener(Self::toggle_case_sensitive))
+            })
+            .when(self.supported_options().word, |this| {
+                this.on_action(cx.listener(Self::toggle_whole_word))
+            })
             .w_full()
             .p_1()
             .child(
@@ -305,7 +316,7 @@ impl BufferSearchBar {
 
         let handle = cx.view().downgrade();
 
-        editor.register_action(move |a: &Deploy, cx| {
+        editor.register_action(move |deploy: &Deploy, cx| {
             let Some(pane) = handle.upgrade().and_then(|editor| editor.read(cx).pane(cx)) else {
                 return;
             };
@@ -313,12 +324,12 @@ impl BufferSearchBar {
             pane.update(cx, |this, cx| {
                 this.toolbar().update(cx, |this, cx| {
                     if let Some(search_bar) = this.item_of_type::<BufferSearchBar>() {
-                        search_bar.update(cx, |this, cx| this.toggle(cx));
+                        search_bar.update(cx, |this, cx| this.toggle(deploy, cx));
                         return;
                     }
                     let view = cx.build_view(|cx| BufferSearchBar::new(cx));
                     this.add_item(view.clone(), cx);
-                    view.update(cx, |this, cx| this.deploy(a, cx));
+                    view.update(cx, |this, cx| this.deploy(deploy, cx));
                     cx.notify();
                 })
             });
@@ -468,7 +479,7 @@ impl BufferSearchBar {
             self.search_suggested(cx);
             if deploy.focus {
                 self.select_query(cx);
-                let handle = cx.focus_handle();
+                let handle = self.query_editor.focus_handle(cx);
                 cx.focus(&handle);
             }
             return true;
@@ -477,9 +488,9 @@ impl BufferSearchBar {
         false
     }
 
-    pub fn toggle(&mut self, cx: &mut ViewContext<Self>) {
+    pub fn toggle(&mut self, action: &Deploy, cx: &mut ViewContext<Self>) {
         if self.is_dismissed() {
-            self.show(cx);
+            self.deploy(action, cx);
         } else {
             self.dismiss(&Dismiss, cx);
         }

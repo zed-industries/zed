@@ -4,12 +4,12 @@ use crate::{
     DevicePixels, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity, EntityId,
     EventEmitter, FileDropEvent, Flatten, FocusEvent, FontId, GlobalElementId, GlyphId, Hsla,
     ImageData, InputEvent, IsZero, KeyBinding, KeyContext, KeyDownEvent, LayoutId, Model,
-    ModelContext, Modifiers, MonochromeSprite, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInputHandler,
-    PlatformWindow, Point, PolychromeSprite, PromptLevel, Quad, Render, RenderGlyphParams,
-    RenderImageParams, RenderSvgParams, ScaledPixels, SceneBuilder, Shadow, SharedString, Size,
-    Style, SubscriberSet, Subscription, Surface, TaffyLayoutEngine, Task, Underline,
-    UnderlineStyle, View, VisualContext, WeakView, WindowBounds, WindowOptions, SUBPIXEL_VARIANTS,
+    ModelContext, Modifiers, MonochromeSprite, MouseButton, MouseMoveEvent, MouseUpEvent, Path,
+    Pixels, PlatformAtlas, PlatformDisplay, PlatformInputHandler, PlatformWindow, Point,
+    PolychromeSprite, PromptLevel, Quad, Render, RenderGlyphParams, RenderImageParams,
+    RenderSvgParams, ScaledPixels, SceneBuilder, Shadow, SharedString, Size, Style, SubscriberSet,
+    Subscription, Surface, TaffyLayoutEngine, Task, Underline, UnderlineStyle, View, VisualContext,
+    WeakView, WindowBounds, WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::HashMap;
@@ -90,7 +90,7 @@ impl FocusId {
     /// Obtains whether this handle contains the given handle in the most recently rendered frame.
     pub(crate) fn contains(&self, other: Self, cx: &WindowContext) -> bool {
         cx.window
-            .current_frame
+            .rendered_frame
             .dispatch_tree
             .focus_contains(*self, other)
     }
@@ -212,8 +212,8 @@ pub struct Window {
     layout_engine: Option<TaffyLayoutEngine>,
     pub(crate) root_view: Option<AnyView>,
     pub(crate) element_id_stack: GlobalElementId,
-    pub(crate) previous_frame: Frame,
-    pub(crate) current_frame: Frame,
+    pub(crate) rendered_frame: Frame,
+    pub(crate) next_frame: Frame,
     pub(crate) focus_handles: Arc<RwLock<SlotMap<FocusId, AtomicUsize>>>,
     pub(crate) focus_listeners: SubscriberSet<(), AnyWindowFocusListener>,
     default_prevented: bool,
@@ -249,7 +249,7 @@ pub(crate) struct Frame {
 }
 
 impl Frame {
-    pub fn new(dispatch_tree: DispatchTree) -> Self {
+    fn new(dispatch_tree: DispatchTree) -> Self {
         Frame {
             element_states: HashMap::default(),
             mouse_listeners: HashMap::default(),
@@ -261,6 +261,14 @@ impl Frame {
             content_mask_stack: Vec::new(),
             element_offset_stack: Vec::new(),
         }
+    }
+
+    fn clear(&mut self) {
+        self.element_states.clear();
+        self.mouse_listeners.values_mut().for_each(Vec::clear);
+        self.focus_listeners.clear();
+        self.dispatch_tree.clear();
+        self.depth_map.clear();
     }
 }
 
@@ -330,8 +338,8 @@ impl Window {
             layout_engine: Some(TaffyLayoutEngine::new()),
             root_view: None,
             element_id_stack: GlobalElementId::default(),
-            previous_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
-            current_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
+            rendered_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
+            next_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
             focus_handles: Arc::new(RwLock::new(SlotMap::with_key())),
             focus_listeners: SubscriberSet::new(),
             default_prevented: true,
@@ -428,7 +436,7 @@ impl<'a> WindowContext<'a> {
 
         self.window.focus = Some(focus_id);
         self.window
-            .current_frame
+            .rendered_frame
             .dispatch_tree
             .clear_pending_keystrokes();
         self.app.push_effect(Effect::FocusChanged {
@@ -459,11 +467,11 @@ impl<'a> WindowContext<'a> {
             let node_id = focus_handle
                 .and_then(|handle| {
                     cx.window
-                        .current_frame
+                        .rendered_frame
                         .dispatch_tree
                         .focusable_node_id(handle.id)
                 })
-                .unwrap_or_else(|| cx.window.current_frame.dispatch_tree.root_node_id());
+                .unwrap_or_else(|| cx.window.rendered_frame.dispatch_tree.root_node_id());
 
             cx.propagate_event = true;
             cx.dispatch_action_on_node(node_id, action);
@@ -743,7 +751,7 @@ impl<'a> WindowContext<'a> {
         self.window.default_prevented
     }
 
-    /// Register a mouse event listener on the window for the current frame. The type of event
+    /// Register a mouse event listener on the window for the next frame. The type of event
     /// is determined by the first parameter of the given listener. When the next frame is rendered
     /// the listener will be cleared.
     ///
@@ -753,9 +761,9 @@ impl<'a> WindowContext<'a> {
         &mut self,
         handler: impl Fn(&Event, DispatchPhase, &mut WindowContext) + 'static,
     ) {
-        let order = self.window.current_frame.z_index_stack.clone();
+        let order = self.window.next_frame.z_index_stack.clone();
         self.window
-            .current_frame
+            .next_frame
             .mouse_listeners
             .entry(TypeId::of::<Event>())
             .or_default()
@@ -767,7 +775,7 @@ impl<'a> WindowContext<'a> {
             ))
     }
 
-    /// Register a key event listener on the window for the current frame. The type of event
+    /// Register a key event listener on the window for the next frame. The type of event
     /// is determined by the first parameter of the given listener. When the next frame is rendered
     /// the listener will be cleared.
     ///
@@ -778,7 +786,7 @@ impl<'a> WindowContext<'a> {
         handler: impl Fn(&Event, DispatchPhase, &mut WindowContext) + 'static,
     ) {
         self.window
-            .current_frame
+            .next_frame
             .dispatch_tree
             .on_key_event(Rc::new(move |event, phase, cx| {
                 if let Some(event) = event.downcast_ref::<Event>() {
@@ -787,7 +795,7 @@ impl<'a> WindowContext<'a> {
             }));
     }
 
-    /// Register an action listener on the window for the current frame. The type of action
+    /// Register an action listener on the window for the next frame. The type of action
     /// is determined by the first parameter of the given listener. When the next frame is rendered
     /// the listener will be cleared.
     ///
@@ -798,7 +806,7 @@ impl<'a> WindowContext<'a> {
         action_type: TypeId,
         handler: impl Fn(&dyn Any, DispatchPhase, &mut WindowContext) + 'static,
     ) {
-        self.window.current_frame.dispatch_tree.on_action(
+        self.window.next_frame.dispatch_tree.on_action(
             action_type,
             Rc::new(move |action, phase, cx| handler(action, phase, cx)),
         );
@@ -809,13 +817,13 @@ impl<'a> WindowContext<'a> {
             .focused()
             .and_then(|focused_handle| {
                 self.window
-                    .current_frame
+                    .rendered_frame
                     .dispatch_tree
                     .focusable_node_id(focused_handle.id)
             })
-            .unwrap_or_else(|| self.window.current_frame.dispatch_tree.root_node_id());
+            .unwrap_or_else(|| self.window.rendered_frame.dispatch_tree.root_node_id());
         self.window
-            .current_frame
+            .rendered_frame
             .dispatch_tree
             .is_action_available(action, target)
     }
@@ -832,16 +840,16 @@ impl<'a> WindowContext<'a> {
     /// Called during painting to invoke the given closure in a new stacking context. The given
     /// z-index is interpreted relative to the previous call to `stack`.
     pub fn with_z_index<R>(&mut self, z_index: u32, f: impl FnOnce(&mut Self) -> R) -> R {
-        self.window.current_frame.z_index_stack.push(z_index);
+        self.window.next_frame.z_index_stack.push(z_index);
         let result = f(self);
-        self.window.current_frame.z_index_stack.pop();
+        self.window.next_frame.z_index_stack.pop();
         result
     }
 
     /// Called during painting to track which z-index is on top at each pixel position
     pub fn add_opaque_layer(&mut self, bounds: Bounds<Pixels>) {
-        let stacking_order = self.window.current_frame.z_index_stack.clone();
-        let depth_map = &mut self.window.current_frame.depth_map;
+        let stacking_order = self.window.next_frame.z_index_stack.clone();
+        let depth_map = &mut self.window.next_frame.depth_map;
         match depth_map.binary_search_by(|(level, _)| stacking_order.cmp(&level)) {
             Ok(i) | Err(i) => depth_map.insert(i, (stacking_order, bounds)),
         }
@@ -850,7 +858,7 @@ impl<'a> WindowContext<'a> {
     /// Returns true if the top-most opaque layer painted over this point was part of the
     /// same layer as the given stacking order.
     pub fn was_top_layer(&self, point: &Point<Pixels>, level: &StackingOrder) -> bool {
-        for (stack, bounds) in self.window.previous_frame.depth_map.iter() {
+        for (stack, bounds) in self.window.rendered_frame.depth_map.iter() {
             if bounds.contains_point(point) {
                 return level.starts_with(stack) || stack.starts_with(level);
             }
@@ -861,10 +869,10 @@ impl<'a> WindowContext<'a> {
 
     /// Called during painting to get the current stacking order.
     pub fn stacking_order(&self) -> &StackingOrder {
-        &self.window.current_frame.z_index_stack
+        &self.window.next_frame.z_index_stack
     }
 
-    /// Paint one or more drop shadows into the scene for the current frame at the current z-index.
+    /// Paint one or more drop shadows into the scene for the next frame at the current z-index.
     pub fn paint_shadows(
         &mut self,
         bounds: Bounds<Pixels>,
@@ -878,8 +886,8 @@ impl<'a> WindowContext<'a> {
             let mut shadow_bounds = bounds;
             shadow_bounds.origin += shadow.offset;
             shadow_bounds.dilate(shadow.spread_radius);
-            window.current_frame.scene_builder.insert(
-                &window.current_frame.z_index_stack,
+            window.next_frame.scene_builder.insert(
+                &window.next_frame.z_index_stack,
                 Shadow {
                     order: 0,
                     bounds: shadow_bounds.scale(scale_factor),
@@ -892,7 +900,7 @@ impl<'a> WindowContext<'a> {
         }
     }
 
-    /// Paint one or more quads into the scene for the current frame at the current stacking context.
+    /// Paint one or more quads into the scene for the next frame at the current stacking context.
     /// Quads are colored rectangular regions with an optional background, border, and corner radius.
     pub fn paint_quad(
         &mut self,
@@ -906,8 +914,8 @@ impl<'a> WindowContext<'a> {
         let content_mask = self.content_mask();
 
         let window = &mut *self.window;
-        window.current_frame.scene_builder.insert(
-            &window.current_frame.z_index_stack,
+        window.next_frame.scene_builder.insert(
+            &window.next_frame.z_index_stack,
             Quad {
                 order: 0,
                 bounds: bounds.scale(scale_factor),
@@ -920,20 +928,20 @@ impl<'a> WindowContext<'a> {
         );
     }
 
-    /// Paint the given `Path` into the scene for the current frame at the current z-index.
+    /// Paint the given `Path` into the scene for the next frame at the current z-index.
     pub fn paint_path(&mut self, mut path: Path<Pixels>, color: impl Into<Hsla>) {
         let scale_factor = self.scale_factor();
         let content_mask = self.content_mask();
         path.content_mask = content_mask;
         path.color = color.into();
         let window = &mut *self.window;
-        window.current_frame.scene_builder.insert(
-            &window.current_frame.z_index_stack,
-            path.scale(scale_factor),
-        );
+        window
+            .next_frame
+            .scene_builder
+            .insert(&window.next_frame.z_index_stack, path.scale(scale_factor));
     }
 
-    /// Paint an underline into the scene for the current frame at the current z-index.
+    /// Paint an underline into the scene for the next frame at the current z-index.
     pub fn paint_underline(
         &mut self,
         origin: Point<Pixels>,
@@ -952,8 +960,8 @@ impl<'a> WindowContext<'a> {
         };
         let content_mask = self.content_mask();
         let window = &mut *self.window;
-        window.current_frame.scene_builder.insert(
-            &window.current_frame.z_index_stack,
+        window.next_frame.scene_builder.insert(
+            &window.next_frame.z_index_stack,
             Underline {
                 order: 0,
                 bounds: bounds.scale(scale_factor),
@@ -965,7 +973,7 @@ impl<'a> WindowContext<'a> {
         );
     }
 
-    /// Paint a monochrome (non-emoji) glyph into the scene for the current frame at the current z-index.
+    /// Paint a monochrome (non-emoji) glyph into the scene for the next frame at the current z-index.
     /// The y component of the origin is the baseline of the glyph.
     pub fn paint_glyph(
         &mut self,
@@ -1005,8 +1013,8 @@ impl<'a> WindowContext<'a> {
             };
             let content_mask = self.content_mask().scale(scale_factor);
             let window = &mut *self.window;
-            window.current_frame.scene_builder.insert(
-                &window.current_frame.z_index_stack,
+            window.next_frame.scene_builder.insert(
+                &window.next_frame.z_index_stack,
                 MonochromeSprite {
                     order: 0,
                     bounds,
@@ -1019,7 +1027,7 @@ impl<'a> WindowContext<'a> {
         Ok(())
     }
 
-    /// Paint an emoji glyph into the scene for the current frame at the current z-index.
+    /// Paint an emoji glyph into the scene for the next frame at the current z-index.
     /// The y component of the origin is the baseline of the glyph.
     pub fn paint_emoji(
         &mut self,
@@ -1056,8 +1064,8 @@ impl<'a> WindowContext<'a> {
             let content_mask = self.content_mask().scale(scale_factor);
             let window = &mut *self.window;
 
-            window.current_frame.scene_builder.insert(
-                &window.current_frame.z_index_stack,
+            window.next_frame.scene_builder.insert(
+                &window.next_frame.z_index_stack,
                 PolychromeSprite {
                     order: 0,
                     bounds,
@@ -1071,7 +1079,7 @@ impl<'a> WindowContext<'a> {
         Ok(())
     }
 
-    /// Paint a monochrome SVG into the scene for the current frame at the current stacking context.
+    /// Paint a monochrome SVG into the scene for the next frame at the current stacking context.
     pub fn paint_svg(
         &mut self,
         bounds: Bounds<Pixels>,
@@ -1098,8 +1106,8 @@ impl<'a> WindowContext<'a> {
         let content_mask = self.content_mask().scale(scale_factor);
 
         let window = &mut *self.window;
-        window.current_frame.scene_builder.insert(
-            &window.current_frame.z_index_stack,
+        window.next_frame.scene_builder.insert(
+            &window.next_frame.z_index_stack,
             MonochromeSprite {
                 order: 0,
                 bounds,
@@ -1112,7 +1120,7 @@ impl<'a> WindowContext<'a> {
         Ok(())
     }
 
-    /// Paint an image into the scene for the current frame at the current z-index.
+    /// Paint an image into the scene for the next frame at the current z-index.
     pub fn paint_image(
         &mut self,
         bounds: Bounds<Pixels>,
@@ -1134,8 +1142,8 @@ impl<'a> WindowContext<'a> {
         let corner_radii = corner_radii.scale(scale_factor);
 
         let window = &mut *self.window;
-        window.current_frame.scene_builder.insert(
-            &window.current_frame.z_index_stack,
+        window.next_frame.scene_builder.insert(
+            &window.next_frame.z_index_stack,
             PolychromeSprite {
                 order: 0,
                 bounds,
@@ -1148,14 +1156,14 @@ impl<'a> WindowContext<'a> {
         Ok(())
     }
 
-    /// Paint a surface into the scene for the current frame at the current z-index.
+    /// Paint a surface into the scene for the next frame at the current z-index.
     pub fn paint_surface(&mut self, bounds: Bounds<Pixels>, image_buffer: CVImageBuffer) {
         let scale_factor = self.scale_factor();
         let bounds = bounds.scale(scale_factor);
         let content_mask = self.content_mask().scale(scale_factor);
         let window = &mut *self.window;
-        window.current_frame.scene_builder.insert(
-            &window.current_frame.z_index_stack,
+        window.next_frame.scene_builder.insert(
+            &window.next_frame.z_index_stack,
             Surface {
                 order: 0,
                 bounds,
@@ -1167,15 +1175,17 @@ impl<'a> WindowContext<'a> {
 
     /// Draw pixels to the display for this window based on the contents of its scene.
     pub(crate) fn draw(&mut self) {
+        self.text_system().start_frame();
+        self.window.platform_window.clear_input_handler();
+        self.window.layout_engine.as_mut().unwrap().clear();
+        self.window.next_frame.clear();
         let root_view = self.window.root_view.take().unwrap();
-
-        self.start_frame();
 
         self.with_z_index(0, |cx| {
             cx.with_key_dispatch(Some(KeyContext::default()), None, |_, cx| {
                 for (action_type, action_listeners) in &cx.app.global_action_listeners {
                     for action_listener in action_listeners.iter().cloned() {
-                        cx.window.current_frame.dispatch_tree.on_action(
+                        cx.window.next_frame.dispatch_tree.on_action(
                             *action_type,
                             Rc::new(move |action, phase, cx| action_listener(action, phase, cx)),
                         )
@@ -1204,16 +1214,18 @@ impl<'a> WindowContext<'a> {
         }
 
         self.window
-            .current_frame
+            .next_frame
             .dispatch_tree
             .preserve_pending_keystrokes(
-                &mut self.window.previous_frame.dispatch_tree,
+                &mut self.window.rendered_frame.dispatch_tree,
                 self.window.focus,
             );
-
         self.window.root_view = Some(root_view);
-        let scene = self.window.current_frame.scene_builder.build();
 
+        let window = &mut self.window;
+        mem::swap(&mut window.rendered_frame, &mut window.next_frame);
+
+        let scene = self.window.rendered_frame.scene_builder.build();
         self.window.platform_window.draw(scene);
         let cursor_style = self
             .window
@@ -1223,24 +1235,6 @@ impl<'a> WindowContext<'a> {
         self.platform.set_cursor_style(cursor_style);
 
         self.window.dirty = false;
-    }
-
-    /// Rotate the current frame and the previous frame, then clear the current frame.
-    /// We repopulate all state in the current frame during each paint.
-    fn start_frame(&mut self) {
-        self.window.platform_window.clear_input_handler();
-        self.text_system().start_frame();
-
-        let window = &mut *self.window;
-        window.layout_engine.as_mut().unwrap().clear();
-
-        mem::swap(&mut window.previous_frame, &mut window.current_frame);
-        let frame = &mut window.current_frame;
-        frame.element_states.clear();
-        frame.mouse_listeners.values_mut().for_each(Vec::clear);
-        frame.focus_listeners.clear();
-        frame.dispatch_tree.clear();
-        frame.depth_map.clear();
     }
 
     /// Dispatch a mouse or keyboard event on the window.
@@ -1275,10 +1269,9 @@ impl<'a> WindowContext<'a> {
                             cursor_offset: position,
                         });
                     }
-                    InputEvent::MouseDown(MouseDownEvent {
+                    InputEvent::MouseMove(MouseMoveEvent {
                         position,
-                        button: MouseButton::Left,
-                        click_count: 1,
+                        pressed_button: Some(MouseButton::Left),
                         modifiers: Modifiers::default(),
                     })
                 }
@@ -1291,6 +1284,7 @@ impl<'a> WindowContext<'a> {
                     })
                 }
                 FileDropEvent::Submit { position } => {
+                    self.activate(true);
                     self.window.mouse_position = position;
                     InputEvent::MouseUp(MouseUpEvent {
                         button: MouseButton::Left,
@@ -1321,7 +1315,7 @@ impl<'a> WindowContext<'a> {
     fn dispatch_mouse_event(&mut self, event: &dyn Any) {
         if let Some(mut handlers) = self
             .window
-            .current_frame
+            .rendered_frame
             .mouse_listeners
             .remove(&event.type_id())
         {
@@ -1351,17 +1345,8 @@ impl<'a> WindowContext<'a> {
                 self.active_drag = None;
             }
 
-            // Just in case any handlers added new handlers, which is weird, but possible.
-            handlers.extend(
-                self.window
-                    .current_frame
-                    .mouse_listeners
-                    .get_mut(&event.type_id())
-                    .into_iter()
-                    .flat_map(|handlers| handlers.drain(..)),
-            );
             self.window
-                .current_frame
+                .rendered_frame
                 .mouse_listeners
                 .insert(event.type_id(), handlers);
         }
@@ -1373,15 +1358,15 @@ impl<'a> WindowContext<'a> {
             .focus
             .and_then(|focus_id| {
                 self.window
-                    .current_frame
+                    .rendered_frame
                     .dispatch_tree
                     .focusable_node_id(focus_id)
             })
-            .unwrap_or_else(|| self.window.current_frame.dispatch_tree.root_node_id());
+            .unwrap_or_else(|| self.window.rendered_frame.dispatch_tree.root_node_id());
 
         let dispatch_path = self
             .window
-            .current_frame
+            .rendered_frame
             .dispatch_tree
             .dispatch_path(node_id);
 
@@ -1392,7 +1377,7 @@ impl<'a> WindowContext<'a> {
         self.propagate_event = true;
 
         for node_id in &dispatch_path {
-            let node = self.window.current_frame.dispatch_tree.node(*node_id);
+            let node = self.window.rendered_frame.dispatch_tree.node(*node_id);
 
             if let Some(context) = node.context.clone() {
                 context_stack.push(context);
@@ -1409,7 +1394,7 @@ impl<'a> WindowContext<'a> {
         // Bubble phase
         for node_id in dispatch_path.iter().rev() {
             // Handle low level key events
-            let node = self.window.current_frame.dispatch_tree.node(*node_id);
+            let node = self.window.rendered_frame.dispatch_tree.node(*node_id);
             for key_listener in node.key_listeners.clone() {
                 key_listener(event, DispatchPhase::Bubble, self);
                 if !self.propagate_event {
@@ -1418,12 +1403,12 @@ impl<'a> WindowContext<'a> {
             }
 
             // Match keystrokes
-            let node = self.window.current_frame.dispatch_tree.node(*node_id);
+            let node = self.window.rendered_frame.dispatch_tree.node(*node_id);
             if node.context.is_some() {
                 if let Some(key_down_event) = event.downcast_ref::<KeyDownEvent>() {
                     if let Some(found) = self
                         .window
-                        .current_frame
+                        .rendered_frame
                         .dispatch_tree
                         .dispatch_key(&key_down_event.keystroke, &context_stack)
                     {
@@ -1446,13 +1431,13 @@ impl<'a> WindowContext<'a> {
     fn dispatch_action_on_node(&mut self, node_id: DispatchNodeId, action: Box<dyn Action>) {
         let dispatch_path = self
             .window
-            .current_frame
+            .rendered_frame
             .dispatch_tree
             .dispatch_path(node_id);
 
         // Capture phase
         for node_id in &dispatch_path {
-            let node = self.window.current_frame.dispatch_tree.node(*node_id);
+            let node = self.window.rendered_frame.dispatch_tree.node(*node_id);
             for DispatchActionListener {
                 action_type,
                 listener,
@@ -1469,7 +1454,7 @@ impl<'a> WindowContext<'a> {
         }
         // Bubble phase
         for node_id in dispatch_path.iter().rev() {
-            let node = self.window.current_frame.dispatch_tree.node(*node_id);
+            let node = self.window.rendered_frame.dispatch_tree.node(*node_id);
             for DispatchActionListener {
                 action_type,
                 listener,
@@ -1529,25 +1514,25 @@ impl<'a> WindowContext<'a> {
             .focus
             .and_then(|focus_id| {
                 self.window
-                    .current_frame
+                    .rendered_frame
                     .dispatch_tree
                     .focusable_node_id(focus_id)
             })
-            .unwrap_or_else(|| self.window.current_frame.dispatch_tree.root_node_id());
+            .unwrap_or_else(|| self.window.rendered_frame.dispatch_tree.root_node_id());
 
         self.window
-            .current_frame
+            .rendered_frame
             .dispatch_tree
             .available_actions(node_id)
     }
 
     pub fn bindings_for_action(&self, action: &dyn Action) -> Vec<KeyBinding> {
         self.window
-            .previous_frame
+            .rendered_frame
             .dispatch_tree
             .bindings_for_action(
                 action,
-                &self.window.previous_frame.dispatch_tree.context_stack,
+                &self.window.rendered_frame.dispatch_tree.context_stack,
             )
     }
 
@@ -1556,7 +1541,7 @@ impl<'a> WindowContext<'a> {
         action: &dyn Action,
         focus_handle: &FocusHandle,
     ) -> Vec<KeyBinding> {
-        let dispatch_tree = &self.window.previous_frame.dispatch_tree;
+        let dispatch_tree = &self.window.rendered_frame.dispatch_tree;
 
         let Some(node_id) = dispatch_tree.focusable_node_id(focus_handle.id) else {
             return vec![];
@@ -1599,24 +1584,21 @@ impl<'a> WindowContext<'a> {
         f: impl FnOnce(Option<FocusHandle>, &mut Self) -> R,
     ) -> R {
         let window = &mut self.window;
-        window
-            .current_frame
-            .dispatch_tree
-            .push_node(context.clone());
+        window.next_frame.dispatch_tree.push_node(context.clone());
         if let Some(focus_handle) = focus_handle.as_ref() {
             window
-                .current_frame
+                .next_frame
                 .dispatch_tree
                 .make_focusable(focus_handle.id);
         }
         let result = f(focus_handle, self);
 
-        self.window.current_frame.dispatch_tree.pop_node();
+        self.window.next_frame.dispatch_tree.pop_node();
 
         result
     }
 
-    /// Register a focus listener for the current frame only. It will be cleared
+    /// Register a focus listener for the next frame only. It will be cleared
     /// on the next frame render. You should use this method only from within elements,
     /// and we may want to enforce that better via a different context type.
     // todo!() Move this to `FrameContext` to emphasize its individuality?
@@ -1625,7 +1607,7 @@ impl<'a> WindowContext<'a> {
         listener: impl Fn(&FocusEvent, &mut WindowContext) + 'static,
     ) {
         self.window
-            .current_frame
+            .next_frame
             .focus_listeners
             .push(Box::new(move |event, cx| {
                 listener(event, cx);
@@ -1876,12 +1858,9 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
     ) -> R {
         if let Some(mask) = mask {
             let mask = mask.intersect(&self.content_mask());
-            self.window_mut()
-                .current_frame
-                .content_mask_stack
-                .push(mask);
+            self.window_mut().next_frame.content_mask_stack.push(mask);
             let result = f(self);
-            self.window_mut().current_frame.content_mask_stack.pop();
+            self.window_mut().next_frame.content_mask_stack.pop();
             result
         } else {
             f(self)
@@ -1897,12 +1876,9 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
                 size: self.window().viewport_size,
             },
         };
-        self.window_mut()
-            .current_frame
-            .content_mask_stack
-            .push(mask);
+        self.window_mut().next_frame.content_mask_stack.push(mask);
         let result = f(self);
-        self.window_mut().current_frame.content_mask_stack.pop();
+        self.window_mut().next_frame.content_mask_stack.pop();
         result
     }
 
@@ -1929,26 +1905,26 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
         f: impl FnOnce(&mut Self) -> R,
     ) -> R {
         self.window_mut()
-            .current_frame
+            .next_frame
             .element_offset_stack
             .push(offset);
         let result = f(self);
-        self.window_mut().current_frame.element_offset_stack.pop();
+        self.window_mut().next_frame.element_offset_stack.pop();
         result
     }
 
     /// Obtain the current element offset.
     fn element_offset(&self) -> Point<Pixels> {
         self.window()
-            .current_frame
+            .next_frame
             .element_offset_stack
             .last()
             .copied()
             .unwrap_or_default()
     }
 
-    /// Update or intialize state for an element with the given id that lives across multiple
-    /// frames. If an element with this id existed in the previous frame, its state will be passed
+    /// Update or initialize state for an element with the given id that lives across multiple
+    /// frames. If an element with this id existed in the rendered frame, its state will be passed
     /// to the given closure. The state returned by the closure will be stored so it can be referenced
     /// when drawing the next frame.
     fn with_element_state<S, R>(
@@ -1964,12 +1940,12 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
 
             if let Some(any) = cx
                 .window_mut()
-                .current_frame
+                .next_frame
                 .element_states
                 .remove(&global_id)
                 .or_else(|| {
                     cx.window_mut()
-                        .previous_frame
+                        .rendered_frame
                         .element_states
                         .remove(&global_id)
                 })
@@ -2011,7 +1987,7 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
                 let (result, state) = f(Some(state), cx);
                 state_box.replace(state);
                 cx.window_mut()
-                    .current_frame
+                    .next_frame
                     .element_states
                     .insert(global_id, ElementStateBox {
                         inner: state_box,
@@ -2023,7 +1999,7 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
             } else {
                 let (result, state) = f(None, cx);
                 cx.window_mut()
-                    .current_frame
+                    .next_frame
                     .element_states
                     .insert(global_id,
                         ElementStateBox {
@@ -2042,7 +2018,7 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
     /// Obtain the current content mask.
     fn content_mask(&self) -> ContentMask<Pixels> {
         self.window()
-            .current_frame
+            .next_frame
             .content_mask_stack
             .last()
             .cloned()
@@ -2130,9 +2106,9 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     }
 
     pub fn with_z_index<R>(&mut self, z_index: u32, f: impl FnOnce(&mut Self) -> R) -> R {
-        self.window.current_frame.z_index_stack.push(z_index);
+        self.window.next_frame.z_index_stack.push(z_index);
         let result = f(self);
-        self.window.current_frame.z_index_stack.pop();
+        self.window.next_frame.z_index_stack.pop();
         result
     }
 

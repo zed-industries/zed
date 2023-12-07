@@ -275,36 +275,48 @@ impl EditorElement {
         register_action(view, cx, Editor::copy_relative_path);
         register_action(view, cx, Editor::copy_highlight_json);
         register_action(view, cx, |editor, action, cx| {
-            editor
-                .format(action, cx)
-                .map(|task| task.detach_and_log_err(cx));
+            if let Some(task) = editor.format(action, cx) {
+                task.detach_and_log_err(cx);
+            } else {
+                cx.propagate();
+            }
         });
         register_action(view, cx, Editor::restart_language_server);
         register_action(view, cx, Editor::show_character_palette);
         register_action(view, cx, |editor, action, cx| {
-            editor
-                .confirm_completion(action, cx)
-                .map(|task| task.detach_and_log_err(cx));
+            if let Some(task) = editor.confirm_completion(action, cx) {
+                task.detach_and_log_err(cx);
+            } else {
+                cx.propagate();
+            }
         });
         register_action(view, cx, |editor, action, cx| {
-            editor
-                .confirm_code_action(action, cx)
-                .map(|task| task.detach_and_log_err(cx));
+            if let Some(task) = editor.confirm_code_action(action, cx) {
+                task.detach_and_log_err(cx);
+            } else {
+                cx.propagate();
+            }
         });
         register_action(view, cx, |editor, action, cx| {
-            editor
-                .rename(action, cx)
-                .map(|task| task.detach_and_log_err(cx));
+            if let Some(task) = editor.rename(action, cx) {
+                task.detach_and_log_err(cx);
+            } else {
+                cx.propagate();
+            }
         });
         register_action(view, cx, |editor, action, cx| {
-            editor
-                .confirm_rename(action, cx)
-                .map(|task| task.detach_and_log_err(cx));
+            if let Some(task) = editor.confirm_rename(action, cx) {
+                task.detach_and_log_err(cx);
+            } else {
+                cx.propagate();
+            }
         });
         register_action(view, cx, |editor, action, cx| {
-            editor
-                .find_all_references(action, cx)
-                .map(|task| task.detach_and_log_err(cx));
+            if let Some(task) = editor.find_all_references(action, cx) {
+                task.detach_and_log_err(cx);
+            } else {
+                cx.propagate();
+            }
         });
         register_action(view, cx, Editor::next_copilot_suggestion);
         register_action(view, cx, Editor::previous_copilot_suggestion);
@@ -2802,49 +2814,38 @@ impl Element for EditorElement {
         };
 
         let focus_handle = editor.focus_handle(cx);
-        let dispatch_context = self.editor.read(cx).dispatch_context(cx);
-        cx.with_key_dispatch(
-            Some(dispatch_context),
-            Some(focus_handle.clone()),
-            |_, cx| {
-                self.register_actions(cx);
-                self.register_key_listeners(cx);
+        let key_context = self.editor.read(cx).key_context(cx);
+        cx.with_key_dispatch(Some(key_context), Some(focus_handle.clone()), |_, cx| {
+            self.register_actions(cx);
+            self.register_key_listeners(cx);
 
-                // We call with_z_index to establish a new stacking context.
-                cx.with_z_index(0, |cx| {
-                    cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
-                        // Paint mouse listeners at z-index 0 so any elements we paint on top of the editor
-                        // take precedence.
-                        cx.with_z_index(0, |cx| {
-                            self.paint_mouse_listeners(
-                                bounds,
-                                gutter_bounds,
-                                text_bounds,
-                                &layout,
-                                cx,
-                            );
-                        });
-                        let input_handler =
-                            ElementInputHandler::new(bounds, self.editor.clone(), cx);
-                        cx.handle_input(&focus_handle, input_handler);
-
-                        self.paint_background(gutter_bounds, text_bounds, &layout, cx);
-                        if layout.gutter_size.width > Pixels::ZERO {
-                            self.paint_gutter(gutter_bounds, &mut layout, cx);
-                        }
-                        self.paint_text(text_bounds, &mut layout, cx);
-
-                        if !layout.blocks.is_empty() {
-                            cx.with_z_index(1, |cx| {
-                                cx.with_element_id(Some("editor_blocks"), |cx| {
-                                    self.paint_blocks(bounds, &mut layout, cx);
-                                })
-                            })
-                        }
+            // We call with_z_index to establish a new stacking context.
+            cx.with_z_index(0, |cx| {
+                cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
+                    // Paint mouse listeners at z-index 0 so any elements we paint on top of the editor
+                    // take precedence.
+                    cx.with_z_index(0, |cx| {
+                        self.paint_mouse_listeners(bounds, gutter_bounds, text_bounds, &layout, cx);
                     });
+                    let input_handler = ElementInputHandler::new(bounds, self.editor.clone(), cx);
+                    cx.handle_input(&focus_handle, input_handler);
+
+                    self.paint_background(gutter_bounds, text_bounds, &layout, cx);
+                    if layout.gutter_size.width > Pixels::ZERO {
+                        self.paint_gutter(gutter_bounds, &mut layout, cx);
+                    }
+                    self.paint_text(text_bounds, &mut layout, cx);
+
+                    if !layout.blocks.is_empty() {
+                        cx.with_z_index(1, |cx| {
+                            cx.with_element_id(Some("editor_blocks"), |cx| {
+                                self.paint_blocks(bounds, &mut layout, cx);
+                            })
+                        })
+                    }
                 });
-            },
-        )
+            });
+        })
     }
 }
 

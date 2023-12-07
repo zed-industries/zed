@@ -98,11 +98,11 @@ impl RenderOnce for Key {
 
         div()
             .py_0()
-            .map(|el| {
+            .map(|this| {
                 if single_char {
-                    el.w(rems(14. / 16.)).flex().flex_none().justify_center()
+                    this.w(rems(14. / 16.)).flex().flex_none().justify_center()
                 } else {
-                    el.px_0p5()
+                    this.px_0p5()
                 }
             })
             .h(rems(14. / 16.))

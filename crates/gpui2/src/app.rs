@@ -704,14 +704,13 @@ impl AppContext {
                     let focus_changed = focused.is_some() || blurred.is_some();
                     let event = FocusEvent { focused, blurred };
 
-                    let mut listeners = mem::take(&mut cx.window.current_frame.focus_listeners);
+                    let mut listeners = mem::take(&mut cx.window.rendered_frame.focus_listeners);
                     if focus_changed {
                         for listener in &mut listeners {
                             listener(&event, cx);
                         }
                     }
-                    listeners.extend(cx.window.current_frame.focus_listeners.drain(..));
-                    cx.window.current_frame.focus_listeners = listeners;
+                    cx.window.rendered_frame.focus_listeners = listeners;
 
                     if focus_changed {
                         cx.window
@@ -1029,9 +1028,13 @@ impl AppContext {
             window
                 .update(self, |_, cx| {
                     cx.window
-                        .current_frame
+                        .rendered_frame
                         .dispatch_tree
-                        .clear_pending_keystrokes()
+                        .clear_pending_keystrokes();
+                    cx.window
+                        .next_frame
+                        .dispatch_tree
+                        .clear_pending_keystrokes();
                 })
                 .ok();
         }
@@ -1106,6 +1109,10 @@ impl AppContext {
                 }
             }
         }
+    }
+
+    pub fn has_active_drag(&self) -> bool {
+        self.active_drag.is_some()
     }
 }
 

@@ -5,7 +5,7 @@ use gpui::{
     Action, ClickEvent, Div, ElementId, EventEmitter, InteractiveElement, ParentElement, Render,
     Stateful, Styled, Subscription, View, ViewContext, WeakView,
 };
-use search::BufferSearchBar;
+use search::{buffer_search, BufferSearchBar};
 use ui::{prelude::*, ButtonSize, ButtonStyle, Icon, IconButton, IconSize, Tooltip};
 use workspace::{
     item::ItemHandle, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
@@ -64,12 +64,14 @@ impl Render for QuickActionBar {
             "toggle buffer search",
             Icon::MagnifyingGlass,
             !self.buffer_search_bar.read(cx).is_dismissed(),
-            Box::new(search::buffer_search::Deploy { focus: false }),
+            Box::new(buffer_search::Deploy { focus: false }),
             "Buffer Search",
             {
                 let buffer_search_bar = self.buffer_search_bar.clone();
                 move |_, cx| {
-                    buffer_search_bar.update(cx, |search_bar, cx| search_bar.toggle(cx));
+                    buffer_search_bar.update(cx, |search_bar, cx| {
+                        search_bar.toggle(&buffer_search::Deploy { focus: true }, cx)
+                    });
                 }
             },
         ))

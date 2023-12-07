@@ -187,6 +187,10 @@ impl PickerDelegate for ThemeSelectorDelegate {
             Self::set_theme(self.original_theme.clone(), cx);
             self.selection_completed = true;
         }
+
+        self.view
+            .update(cx, |_, cx| cx.emit(DismissEvent))
+            .log_err();
     }
 
     fn selected_index(&self) -> usize {
