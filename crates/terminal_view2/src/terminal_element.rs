@@ -804,7 +804,28 @@ impl Element for TerminalElement {
                 .map(|cursor| cursor.bounding_rect(origin)),
         };
 
-        let mut this = self.register_mouse_listeners(origin, layout.mode, bounds, cx);
+        let terminal_focus_handle = self.focus.clone();
+        let terminal_handle = self.terminal.clone();
+        let mut this: TerminalElement = self
+            .register_mouse_listeners(origin, layout.mode, bounds, cx)
+            .drag_over::<ExternalPaths>(|style| {
+                // todo!() why does not it work? z-index of elements?
+                style.bg(cx.theme().colors().ghost_element_hover)
+            })
+            .on_drop::<ExternalPaths>(move |external_paths, cx| {
+                cx.focus(&terminal_focus_handle);
+                let mut new_text = external_paths
+                    .read(cx)
+                    .paths()
+                    .iter()
+                    .map(|path| format!(" {path:?}"))
+                    .join("");
+                new_text.push(' ');
+                terminal_handle.update(cx, |terminal, _| {
+                    // todo!() long paths are not displayed properly albeit the text is there
+                    terminal.paste(&new_text);
+                });
+            });
 
         let interactivity = mem::take(&mut this.interactivity);
 
