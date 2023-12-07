@@ -270,6 +270,8 @@ impl Render for FeedbackModal {
             .elevation_3(cx)
             .min_w(rems(40.))
             .max_w(rems(96.))
+            .border()
+            .border_color(red())
             .h(rems(40.))
             .p_2()
             .gap_2()
@@ -277,8 +279,6 @@ impl Render for FeedbackModal {
                 v_stack().child(
                     div()
                         .size_full()
-                        .border()
-                        .border_color(red())
                         .child(Label::new("Give Feedback").color(Color::Default))
                         .child(Label::new("This editor supports markdown").color(Color::Muted)),
                 ),
@@ -292,7 +292,7 @@ impl Render for FeedbackModal {
                     .child(self.feedback_editor.clone()),
             )
             .child(
-                div().border().border_color(red()).child(
+                div().child(
                     Label::new(format!(
                         "{} / {} Characters",
                         self.character_count,
