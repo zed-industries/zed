@@ -244,9 +244,16 @@ impl Render for FeedbackModal {
             None => true,
         };
 
-        let allow_submission = FEEDBACK_CHAR_LIMIT.contains(&self.character_count)
-            && valid_email_address
-            && !self.pending_submission;
+        let valid_character_count = FEEDBACK_CHAR_LIMIT.contains(&self.character_count);
+        let characters_remaining =
+            if valid_character_count || self.character_count > *FEEDBACK_CHAR_LIMIT.end() {
+                *FEEDBACK_CHAR_LIMIT.end() as i32 - self.character_count as i32
+            } else {
+                self.character_count as i32 - *FEEDBACK_CHAR_LIMIT.start() as i32
+            };
+
+        let allow_submission =
+            valid_character_count && valid_email_address && !self.pending_submission;
 
         let dismiss = cx.listener(|_, _, cx| {
             // TODO
@@ -294,11 +301,11 @@ impl Render for FeedbackModal {
             .child(
                 div().child(
                     Label::new(format!(
-                        "{} / {} Characters",
-                        self.character_count,
-                        FEEDBACK_CHAR_LIMIT.end()
+                        "Characters: {}",
+                        characters_remaining
                     ))
-                    .color(Color::Default),
+                    .when(valid_character_count, |this| this.color(Color::Success))
+                    .when(!valid_character_count, |this| this.color(Color::Error))
                 ),
             )
             .child(                div()
