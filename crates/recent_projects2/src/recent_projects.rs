@@ -22,44 +22,6 @@ pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(RecentProjects::register).detach();
 }
 
-fn toggle(
-    _: &mut Workspace,
-    _: &OpenRecent,
-    cx: &mut ViewContext<Workspace>,
-) -> Option<Task<Result<()>>> {
-    Some(cx.spawn(|workspace, mut cx| async move {
-        let workspace_locations: Vec<_> = cx
-            .background_executor()
-            .spawn(async {
-                WORKSPACE_DB
-                    .recent_workspaces_on_disk()
-                    .await
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|(_, location)| location)
-                    .collect()
-            })
-            .await;
-
-        workspace.update(&mut cx, |workspace, cx| {
-            if !workspace_locations.is_empty() {
-                let weak_workspace = cx.view().downgrade();
-                workspace.toggle_modal(cx, |cx| {
-                    let delegate =
-                        RecentProjectsDelegate::new(weak_workspace, workspace_locations, true);
-
-                    RecentProjects::new(delegate, cx)
-                });
-            } else {
-                workspace.show_notification(0, cx, |cx| {
-                    cx.build_view(|_| MessageNotification::new("No recent projects to open."))
-                })
-            }
-        })?;
-        Ok(())
-    }))
-}
-
 pub struct RecentProjects {
     picker: View<Picker<RecentProjectsDelegate>>,
 }
@@ -74,9 +36,7 @@ impl RecentProjects {
     fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
         workspace.register_action(|workspace, _: &OpenRecent, cx| {
             let Some(recent_projects) = workspace.active_modal::<Self>(cx) else {
-                // TODO(Marshall): Is this how we should be handling this?
-                // The previous code was using `cx.add_async_action` to invoke `toggle`.
-                if let Some(handler) = toggle(workspace, &OpenRecent, cx) {
+                if let Some(handler) = Self::open(workspace, cx) {
                     handler.detach_and_log_err(cx);
                 }
                 return;
@@ -88,6 +48,40 @@ impl RecentProjects {
                     .update(cx, |picker, cx| picker.cycle_selection(cx))
             });
         });
+    }
+
+    fn open(_: &mut Workspace, cx: &mut ViewContext<Workspace>) -> Option<Task<Result<()>>> {
+        Some(cx.spawn(|workspace, mut cx| async move {
+            let workspace_locations: Vec<_> = cx
+                .background_executor()
+                .spawn(async {
+                    WORKSPACE_DB
+                        .recent_workspaces_on_disk()
+                        .await
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(|(_, location)| location)
+                        .collect()
+                })
+                .await;
+
+            workspace.update(&mut cx, |workspace, cx| {
+                if !workspace_locations.is_empty() {
+                    let weak_workspace = cx.view().downgrade();
+                    workspace.toggle_modal(cx, |cx| {
+                        let delegate =
+                            RecentProjectsDelegate::new(weak_workspace, workspace_locations, true);
+
+                        RecentProjects::new(delegate, cx)
+                    });
+                } else {
+                    workspace.show_notification(0, cx, |cx| {
+                        cx.build_view(|_| MessageNotification::new("No recent projects to open."))
+                    })
+                }
+            })?;
+            Ok(())
+        }))
     }
 }
 
