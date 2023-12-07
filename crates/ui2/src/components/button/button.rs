@@ -158,7 +158,6 @@ impl RenderOnce for Button {
                         this
                     }
                 })
-                .flex_row_reverse()
                 .child(
                     Label::new(label)
                         .color(label_color)

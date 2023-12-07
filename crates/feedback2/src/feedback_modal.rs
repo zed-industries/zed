@@ -104,6 +104,11 @@ impl FeedbackModal {
 
         let feedback_editor = cx.build_view(|cx| {
             let mut editor = Editor::for_buffer(buffer, Some(project.clone()), cx);
+            editor.set_placeholder_text(
+                "You can use markdown to add links or organize feedback.",
+                cx,
+            );
+            // editor.set_show_gutter(false, cx);
             editor.set_vertical_scroll_margin(5, cx);
             editor
         });
@@ -292,19 +297,21 @@ impl Render for FeedbackModal {
             .min_w(rems(40.))
             .max_w(rems(96.))
             .h(rems(32.))
+            .p_4()
+            .gap_4()
             .child(
                 v_stack()
-                    .px_4()
-                    .pt_4()
-                    .pb_2()
-                    .child(Label::new("Give Feedback").color(Color::Default))
-                    .child(Label::new("This editor supports markdown").color(Color::Muted)),
+                    .child(
+                        // TODO: Add Headline component to `ui2`
+                        div().text_xl().child("Share Feedback"))
             )
             .child(
                     div()
                         .flex_1()
                         .bg(cx.theme().colors().editor_background)
+                        .p_2()
                         .border()
+                        .rounded_md()
                         .border_color(cx.theme().colors().border)
                         .child(self.feedback_editor.clone()),
                 )
@@ -330,19 +337,18 @@ impl Render for FeedbackModal {
                             }
                         )
                     )
-                    .child(
-                    v_stack()
-                        .p_4()
+
                         .child(
                     h_stack()
                     .bg(cx.theme().colors().editor_background)
+                    .p_2()
                     .border()
+                    .rounded_md()
                     .border_color(cx.theme().colors().border)
                     .child(self.email_address_editor.clone()))
-                )
+
                 .child(
                     h_stack()
-                        .p_4()
                         .justify_between()
                         .gap_1()
                         .child(Button::new("community_repo", "Community Repo")
