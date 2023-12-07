@@ -514,6 +514,11 @@ impl Workspace {
             cx.notify()
         })
         .detach();
+        cx.on_window_focus_lost(|this, cx| {
+            let focus_handle = this.focus_handle(cx);
+            cx.focus(&focus_handle);
+        })
+        .detach();
 
         let weak_handle = cx.view().downgrade();
         let pane_history_timestamp = Arc::new(AtomicUsize::new(0));
