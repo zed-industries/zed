@@ -1717,11 +1717,6 @@ impl Editor {
         let focus_handle = cx.focus_handle();
         cx.on_focus(&focus_handle, Self::handle_focus).detach();
         cx.on_blur(&focus_handle, Self::handle_blur).detach();
-        cx.on_release(|this, cx| {
-            //todo!()
-            //cx.emit_global(EditorReleased(self.handle.clone()));
-        })
-        .detach();
 
         let mut this = Self {
             handle: cx.view().downgrade(),
@@ -8197,8 +8192,7 @@ impl Editor {
     }
 
     pub fn text_option(&self, cx: &AppContext) -> Option<String> {
-        let text = self.buffer.read(cx).read(cx).text();
-        let text = text.trim();
+        let text = text.text(cx).trim();
 
         if text.is_empty() {
             return None;
