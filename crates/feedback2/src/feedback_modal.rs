@@ -41,7 +41,6 @@ pub struct FeedbackModal {
     system_specs: SystemSpecs,
     feedback_editor: View<Editor>,
     email_address_editor: View<Editor>,
-    project: Model<Project>,
     character_count: usize,
     pending_submission: bool,
 }
@@ -132,7 +131,6 @@ impl FeedbackModal {
             system_specs: system_specs.clone(),
             feedback_editor,
             email_address_editor,
-            project,
             pending_submission: false,
             character_count: 0,
         }
