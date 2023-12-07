@@ -162,24 +162,24 @@ impl FeedbackModal {
                     feedback_editor.set_pending_submission(true, cx);
                 })
                 .log_err();
-                match FeedbackModal::submit_feedback(&feedback_text, email, client, specs).await {
-                    Ok(_) => {}
-                    Err(error) => {
-                        log::error!("{}", error);
-                        this.update(&mut cx, |feedback_editor, cx| {
-                            let prompt = cx.prompt(
-                                PromptLevel::Critical,
-                                FEEDBACK_SUBMISSION_ERROR_TEXT,
-                                &["OK"],
-                            );
-                            cx.spawn(|_, _cx| async move {
-                                prompt.await.ok();
-                            })
-                            .detach();
-                            feedback_editor.set_pending_submission(false, cx);
+
+                if let Err(error) =
+                    FeedbackModal::submit_feedback(&feedback_text, email, client, specs).await
+                {
+                    log::error!("{}", error);
+                    this.update(&mut cx, |feedback_editor, cx| {
+                        let prompt = cx.prompt(
+                            PromptLevel::Critical,
+                            FEEDBACK_SUBMISSION_ERROR_TEXT,
+                            &["OK"],
+                        );
+                        cx.spawn(|_, _cx| async move {
+                            prompt.await.ok();
                         })
-                        .log_err();
-                    }
+                        .detach();
+                        feedback_editor.set_pending_submission(false, cx);
+                    })
+                    .log_err();
                 }
             }
         })
