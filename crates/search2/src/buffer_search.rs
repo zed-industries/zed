@@ -11,8 +11,8 @@ use editor::{Editor, EditorMode};
 use futures::channel::oneshot;
 use gpui::{
     actions, div, red, Action, AppContext, Div, EventEmitter, FocusableView,
-    InteractiveElement as _, IntoElement, KeyContext, ParentElement as _, Render, Styled,
-    Subscription, Task, View, ViewContext, VisualContext as _, WeakView, WindowContext,
+    InteractiveElement as _, IntoElement, ParentElement as _, Render, Styled, Subscription, Task,
+    View, ViewContext, VisualContext as _, WeakView, WindowContext,
 };
 use project::search::SearchQuery;
 use serde::Deserialize;
