@@ -3195,6 +3195,7 @@ dependencies = [
  "language2",
  "lazy_static",
  "log",
+ "menu2",
  "postage",
  "project2",
  "regex",

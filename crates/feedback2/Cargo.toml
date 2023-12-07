@@ -14,16 +14,17 @@ test-support = []
 client = { package = "client2", path = "../client2" }
 db = { package = "db2", path = "../db2" }
 editor = { package = "editor2", path = "../editor2" }
-language = { package = "language2", path = "../language2" }
 gpui = { package = "gpui2", path = "../gpui2" }
+language = { package = "language2", path = "../language2" }
+menu = { package = "menu2", path = "../menu2" }
 project = { package = "project2", path = "../project2" }
 regex.workspace = true
 search = { package = "search2", path = "../search2" }
 settings = { package = "settings2", path = "../settings2" }
 theme = { package = "theme2", path = "../theme2" }
+ui = { package = "ui2", path = "../ui2" }
 util = { path = "../util" }
 workspace = { package = "workspace2", path = "../workspace2"}
-ui = { package = "ui2", path = "../ui2" }
 
 log.workspace = true
 futures.workspace = true

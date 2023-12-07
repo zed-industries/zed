@@ -231,6 +231,14 @@ impl FeedbackModal {
         }
         Ok(())
     }
+
+    // TODO: Escape button calls dismiss
+    // TODO: Should do same as hitting cancel / clicking outside of modal
+    //     Close immediately if no text in field
+    //     Ask to close if text in the field
+    fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
+        cx.emit(DismissEvent);
+    }
 }
 
 impl Render for FeedbackModal {
@@ -253,26 +261,35 @@ impl Render for FeedbackModal {
         let allow_submission =
             valid_character_count && valid_email_address && !self.pending_submission;
 
-        let dismiss = cx.listener(|_, _, cx| {
-            // TODO
-            // if self.feedback_editor.read(cx).text_option(cx).is_some() {
-            //     let answer = cx.prompt(PromptLevel::Info, "Exit feedback?", &["Yes", "No"]);
-            //     cx.spawn(|_, cx| async move {
-            //         let answer = answer.await.ok();
-            //         if answer == Some(0) {
-            //             cx.emit(DismissEvent);
-            //         }
-            //     })
-            //     .detach();
-            // }
+        let has_feedback = self.feedback_editor.read(cx).text_option(cx).is_some();
 
+        let submit_button_text = if self.pending_submission {
+            "Sending..."
+        } else {
+            "Send Feedback"
+        };
+        let dismiss = cx.listener(|_, _, cx| {
             cx.emit(DismissEvent);
+        });
+        // TODO: get the "are you sure you want to dismiss?" prompt here working
+        let dismiss_prompt = cx.listener(|_, _, _| {
+            // let answer = cx.prompt(PromptLevel::Info, "Exit feedback?", &["Yes", "No"]);
+            // cx.spawn(|_, _| async move {
+            //     let answer = answer.await.ok();
+            //     if answer == Some(0) {
+            //         cx.emit(DismissEvent);
+            //     }
+            // })
+            // .detach();
         });
         let open_community_repo =
             cx.listener(|_, _, cx| cx.dispatch_action(Box::new(OpenZedCommunityRepo)));
 
+        // TODO: Nate UI pass
         v_stack()
             .elevation_3(cx)
+            .key_context("GiveFeedback")
+            .on_action(cx.listener(Self::cancel))
             .min_w(rems(40.))
             .max_w(rems(96.))
             .border()
@@ -302,11 +319,15 @@ impl Render for FeedbackModal {
                         "Characters: {}",
                         characters_remaining
                     ))
-                    .when(valid_character_count, |this| this.color(Color::Success))
-                    .when(!valid_character_count, |this| this.color(Color::Error))
+                    .when_else(
+                        valid_character_count,
+                        |this| this.color(Color::Success),
+                        |this| this.color(Color::Error)
+                    )
                 ),
             )
-            .child(                div()
+            .child(
+                div()
                 .bg(cx.theme().colors().editor_background)
                 .border()
                 .border_color(cx.theme().colors().border)
@@ -326,14 +347,24 @@ impl Render for FeedbackModal {
                             Button::new("cancel_feedback", "Cancel")
                                 .style(ButtonStyle::Subtle)
                                 .color(Color::Muted)
-                                .on_click(dismiss),
+                                // TODO: replicate this logic when clicking outside the modal
+                                // TODO: Will require somehow overriding the modal dismal default behavior
+                                .when_else(
+                                    has_feedback,
+                                    |this| this.on_click(dismiss_prompt),
+                                    |this| this.on_click(dismiss)
+                                )
                         )
                         .child(
-                            Button::new("send_feedback", "Send Feedback")
+                            Button::new("send_feedback", submit_button_text)
                                 .color(Color::Accent)
                                 .style(ButtonStyle::Filled)
-                                // TODO - error handling - show modal on error
-                                .on_click(cx.listener(|this, _, cx| {let _ = this.submit(cx);}))
+                                // TODO: Ensure that while submitting, "Sending..." is shown and disable the button
+                                // TODO: If submit errors: show popup with error, don't close modal, set text back to "Send Feedback", and re-enable button
+                                // TODO: If submit is successful, close the modal
+                                .on_click(cx.listener(|this, _, cx| {
+                                    let _ = this.submit(cx);
+                                }))
                                 .tooltip(|cx| {
                                     Tooltip::with_meta(
                                         "Submit feedback to the Zed team.",
@@ -342,7 +373,7 @@ impl Render for FeedbackModal {
                                         cx,
                                     )
                                 })
-                                .when(!allow_submission, |this| this.disabled(true)),
+                                .when(!allow_submission, |this| this.disabled(true))
                         ),
                     )
 

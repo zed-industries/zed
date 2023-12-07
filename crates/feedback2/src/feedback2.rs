@@ -17,11 +17,11 @@ actions!(
 );
 
 pub fn init(cx: &mut AppContext) {
-    // TODO - a way to combine these two into one?
+    // TODO: a way to combine these two into one?
     cx.observe_new_views(feedback_modal::FeedbackModal::register)
         .detach();
 
-    cx.observe_new_views(|workspace: &mut Workspace, _cx| {
+    cx.observe_new_views(|workspace: &mut Workspace, _| {
         workspace
             .register_action(|_, _: &CopySystemSpecsIntoClipboard, cx| {
                     let specs = SystemSpecs::new(&cx).to_string();
