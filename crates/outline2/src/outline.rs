@@ -5,18 +5,20 @@ use editor::{
 use fuzzy::StringMatch;
 use gpui::{
     actions, div, rems, AppContext, DismissEvent, Div, EventEmitter, FocusHandle, FocusableView,
-    FontWeight, ParentElement, Point, Render, Styled, StyledText, Task, TextStyle, View,
-    ViewContext, VisualContext, WeakView, WindowContext,
+    FontStyle, FontWeight, HighlightStyle, ParentElement, Point, Render, Styled, StyledText, Task,
+    TextStyle, View, ViewContext, VisualContext, WeakView, WhiteSpace, WindowContext,
 };
 use language::Outline;
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
+use settings::Settings;
 use std::{
     cmp::{self, Reverse},
     sync::Arc,
 };
-use theme::ActiveTheme;
-use ui::{v_stack, ListItem, Selectable};
+
+use theme::{color_alpha, ActiveTheme, ThemeSettings};
+use ui::{prelude::*, ListItem};
 use util::ResultExt;
 use workspace::Workspace;
 
@@ -253,24 +255,47 @@ impl PickerDelegate for OutlineViewDelegate {
         &self,
         ix: usize,
         selected: bool,
-        _: &mut ViewContext<Picker<Self>>,
+        cx: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
+        let settings = ThemeSettings::get_global(cx);
+
+        // TODO: We probably shouldn't need to build a whole new text style here
+        // but I'm not sure how to get the current one and modify it.
+        // Before this change TextStyle::default() was used here, which was giving us the wrong font and text color.
+        let text_style = TextStyle {
+            color: cx.theme().colors().text,
+            font_family: settings.buffer_font.family.clone(),
+            font_features: settings.buffer_font.features,
+            font_size: settings.buffer_font_size(cx).into(),
+            font_weight: FontWeight::NORMAL,
+            font_style: FontStyle::Normal,
+            line_height: relative(1.).into(),
+            background_color: None,
+            underline: None,
+            white_space: WhiteSpace::Normal,
+        };
+
+        let mut highlight_style = HighlightStyle::default();
+        highlight_style.background_color = Some(color_alpha(cx.theme().colors().text_accent, 0.3));
+
         let mat = &self.matches[ix];
         let outline_item = &self.outline.items[mat.candidate_id];
 
         let highlights = gpui::combine_highlights(
-            mat.ranges().map(|range| (range, FontWeight::BOLD.into())),
+            mat.ranges().map(|range| (range, highlight_style)),
             outline_item.highlight_ranges.iter().cloned(),
         );
 
-        let styled_text = StyledText::new(outline_item.text.clone())
-            .with_highlights(&TextStyle::default(), highlights);
+        let styled_text =
+            StyledText::new(outline_item.text.clone()).with_highlights(&text_style, highlights);
 
         Some(
-            ListItem::new(ix)
-                .inset(true)
-                .selected(selected)
-                .child(div().pl(rems(outline_item.depth as f32)).child(styled_text)),
+            ListItem::new(ix).inset(true).selected(selected).child(
+                div()
+                    .text_ui()
+                    .pl(rems(outline_item.depth as f32))
+                    .child(styled_text),
+            ),
         )
     }
 }
