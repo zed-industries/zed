@@ -88,12 +88,8 @@ impl Render for CollabTitlebarItem {
                     .child(self.render_project_name(cx))
                     .children(self.render_project_branch(cx))
                     .when_some(
-                        current_user
-                            .clone()
-                            .zip(client.peer_id())
-                            .zip(room.clone())
-                            .zip(project_id),
-                        |this, (((current_user, peer_id), room), project_id)| {
+                        current_user.clone().zip(client.peer_id()).zip(room.clone()),
+                        |this, ((current_user, peer_id), room)| {
                             let player_colors = cx.theme().players();
                             let room = room.read(cx);
                             let mut remote_participants =
@@ -103,7 +99,7 @@ impl Render for CollabTitlebarItem {
                             this.children(self.render_collaborator(
                                 &current_user,
                                 peer_id,
-                                ParticipantLocation::SharedProject { project_id },
+                                true,
                                 room.is_speaking(),
                                 room.is_muted(cx),
                                 &room,
@@ -112,10 +108,15 @@ impl Render for CollabTitlebarItem {
                             ))
                             .children(
                                 remote_participants.iter().filter_map(|collaborator| {
+                                    let is_present = project_id.map_or(false, |project_id| {
+                                        collaborator.location
+                                            == ParticipantLocation::SharedProject { project_id }
+                                    });
+
                                     let face_pile = self.render_collaborator(
                                         &collaborator.user,
                                         collaborator.peer_id,
-                                        collaborator.location.clone(),
+                                        is_present,
                                         collaborator.speaking,
                                         collaborator.muted,
                                         &room,
@@ -412,14 +413,14 @@ impl CollabTitlebarItem {
         &self,
         user: &Arc<User>,
         peer_id: PeerId,
-        location: ParticipantLocation,
+        is_present: bool,
         is_speaking: bool,
         is_muted: bool,
         room: &Room,
-        project_id: u64,
+        project_id: Option<u64>,
         current_user: &Arc<User>,
     ) -> Option<FacePile> {
-        let followers = room.followers_for(peer_id, project_id);
+        let followers = project_id.map_or(&[] as &[_], |id| room.followers_for(peer_id, id));
         let mut pile = FacePile::default();
         pile.extend(
             user.avatar
@@ -428,9 +429,7 @@ impl CollabTitlebarItem {
                     div()
                         .child(
                             Avatar::data(avatar.clone())
-                                .grayscale(
-                                    location != ParticipantLocation::SharedProject { project_id },
-                                )
+                                .grayscale(!is_present)
                                 .border_color(if is_speaking {
                                     gpui::blue()
                                 } else if is_muted {
