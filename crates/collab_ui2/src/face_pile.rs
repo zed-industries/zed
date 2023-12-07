@@ -1,8 +1,9 @@
 use gpui::{
-    div, AnyElement, Div, IntoElement as _, ParentElement as _, RenderOnce, Styled, WindowContext,
+    div, AnyElement, Div, ElementId, IntoElement, ParentElement as _, RenderOnce, Styled,
+    WindowContext,
 };
 
-#[derive(Default)]
+#[derive(Default, IntoElement)]
 pub struct FacePile {
     pub faces: Vec<AnyElement>,
 }

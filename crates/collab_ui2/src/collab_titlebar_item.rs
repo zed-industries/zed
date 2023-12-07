@@ -1,15 +1,14 @@
 use crate::face_pile::FacePile;
-use call::{ActiveCall, Room};
+use call::{ActiveCall, ParticipantLocation, Room};
 use client::{proto::PeerId, Client, ParticipantIndex, User, UserStore};
 use gpui::{
-    actions, canvas, div, point, px, rems, AppContext, Div, Element, InteractiveElement,
-    IntoElement, Model, ParentElement, Path, Render, RenderOnce, Stateful,
-    StatefulInteractiveElement, Styled, Subscription, ViewContext, VisualContext, WeakView,
-    WindowBounds,
+    actions, canvas, div, point, px, rems, AppContext, Div, Element, Hsla, InteractiveElement,
+    IntoElement, Model, ParentElement, Path, Render, Stateful, StatefulInteractiveElement, Styled,
+    Subscription, ViewContext, VisualContext, WeakView, WindowBounds,
 };
 use project::{Project, RepositoryEntry};
 use std::sync::Arc;
-use theme::ActiveTheme;
+use theme::{ActiveTheme, PlayerColors};
 use ui::{
     h_stack, popover_menu, prelude::*, Avatar, Button, ButtonLike, ButtonStyle, ContextMenu, Icon,
     IconButton, IconElement, KeyBinding, Tooltip,
@@ -43,11 +42,8 @@ pub fn init(cx: &mut AppContext) {
 
 pub struct CollabTitlebarItem {
     project: Model<Project>,
-    #[allow(unused)] // todo!()
     user_store: Model<UserStore>,
-    #[allow(unused)] // todo!()
     client: Arc<Client>,
-    #[allow(unused)] // todo!()
     workspace: WeakView<Workspace>,
     //branch_popover: Option<ViewHandle<BranchList>>,
     //project_popover: Option<ViewHandle<recent_projects::RecentProjects>>,
@@ -92,62 +88,64 @@ impl Render for CollabTitlebarItem {
                     .child(self.render_project_name(cx))
                     .children(self.render_project_branch(cx))
                     .when_some(
-                        current_user.clone().zip(room.clone()).zip(project_id),
-                        |this, ((current_user, room), project_id)| {
-                            let remote_participants = room
-                                .read(cx)
-                                .remote_participants()
-                                .values()
-                                .map(|participant| {
-                                    (
-                                        participant.user.clone(),
-                                        participant.participant_index,
-                                        participant.peer_id,
-                                    )
-                                })
-                                .collect::<Vec<_>>();
+                        current_user
+                            .clone()
+                            .zip(client.peer_id())
+                            .zip(room.clone())
+                            .zip(project_id),
+                        |this, (((current_user, peer_id), room), project_id)| {
+                            let player_colors = cx.theme().players();
+                            let room = room.read(cx);
+                            let mut remote_participants =
+                                room.remote_participants().values().collect::<Vec<_>>();
+                            remote_participants.sort_by_key(|p| p.participant_index.0);
 
-                            this.children(
-                                self.render_collaborator(
-                                    &current_user,
-                                    client.peer_id().expect("todo!()"),
-                                    &room,
-                                    project_id,
-                                    &remote_participants,
-                                    cx,
-                                )
-                                .map(|pile| pile.render(cx)),
-                            )
+                            this.children(self.render_collaborator(
+                                &current_user,
+                                peer_id,
+                                ParticipantLocation::SharedProject { project_id },
+                                room.is_speaking(),
+                                room.is_muted(cx),
+                                &room,
+                                project_id,
+                                &current_user,
+                            ))
                             .children(
-                                remote_participants.iter().filter_map(
-                                    |(user, participant_index, peer_id)| {
-                                        let peer_id = *peer_id;
-                                        let face_pile = self
-                                            .render_collaborator(
-                                                user,
-                                                peer_id,
-                                                &room,
-                                                project_id,
-                                                &remote_participants,
-                                                cx,
-                                            )?
-                                            .render(cx);
-                                        Some(
-                                            v_stack()
-                                                .id(("collaborator", user.id))
-                                                .child(face_pile)
-                                                .child(render_color_ribbon(*participant_index, cx))
-                                                .cursor_pointer()
-                                                .on_click(cx.listener(move |this, _, cx| {
+                                remote_participants.iter().filter_map(|collaborator| {
+                                    // collaborator.is_
+
+                                    let face_pile = self.render_collaborator(
+                                        &collaborator.user,
+                                        collaborator.peer_id,
+                                        collaborator.location.clone(),
+                                        collaborator.speaking,
+                                        collaborator.muted,
+                                        &room,
+                                        project_id,
+                                        &current_user,
+                                    )?;
+
+                                    Some(
+                                        v_stack()
+                                            .id(("collaborator", collaborator.user.id))
+                                            .child(face_pile)
+                                            .child(render_color_ribbon(
+                                                collaborator.participant_index,
+                                                player_colors,
+                                            ))
+                                            .cursor_pointer()
+                                            .on_click({
+                                                let peer_id = collaborator.peer_id;
+                                                cx.listener(move |this, _, cx| {
                                                     this.workspace
                                                         .update(cx, |workspace, cx| {
                                                             workspace.follow(peer_id, cx);
                                                         })
                                                         .ok();
-                                                })),
-                                        )
-                                    },
-                                ),
+                                                })
+                                            }),
+                                    )
+                                }),
                             )
                         },
                     ),
@@ -280,15 +278,8 @@ impl Render for CollabTitlebarItem {
     }
 }
 
-fn render_color_ribbon(
-    participant_index: ParticipantIndex,
-    cx: &mut WindowContext,
-) -> gpui::Canvas {
-    let color = cx
-        .theme()
-        .players()
-        .color_for_participant(participant_index.0)
-        .cursor;
+fn render_color_ribbon(participant_index: ParticipantIndex, colors: &PlayerColors) -> gpui::Canvas {
+    let color = colors.color_for_participant(participant_index.0).cursor;
     canvas(move |bounds, cx| {
         let mut path = Path::new(bounds.lower_left());
         let height = bounds.size.height;
@@ -417,25 +408,45 @@ impl CollabTitlebarItem {
         &self,
         user: &Arc<User>,
         peer_id: PeerId,
-        room: &Model<Room>,
+        location: ParticipantLocation,
+        is_speaking: bool,
+        is_muted: bool,
+        room: &Room,
         project_id: u64,
-        collaborators: &[(Arc<User>, ParticipantIndex, PeerId)],
-        cx: &mut WindowContext,
+        current_user: &Arc<User>,
     ) -> Option<FacePile> {
-        let room = room.read(cx);
         let followers = room.followers_for(peer_id, project_id);
-
         let mut pile = FacePile::default();
         pile.extend(
             user.avatar
                 .clone()
-                .map(|avatar| div().child(Avatar::data(avatar.clone())).into_any_element())
+                .map(|avatar| {
+                    div()
+                        .child(
+                            Avatar::data(avatar.clone())
+                                .grayscale(
+                                    location != ParticipantLocation::SharedProject { project_id },
+                                )
+                                .border_color(if is_speaking {
+                                    gpui::blue()
+                                } else if is_muted {
+                                    gpui::red()
+                                } else {
+                                    Hsla::default()
+                                }),
+                        )
+                        .into_any_element()
+                })
                 .into_iter()
                 .chain(followers.iter().filter_map(|follower_peer_id| {
-                    let follower = collaborators
-                        .iter()
-                        .find(|(_, _, peer_id)| *peer_id == *follower_peer_id)?
-                        .0
+                    let follower = room
+                        .remote_participants()
+                        .values()
+                        .find_map(|p| (p.peer_id == *follower_peer_id).then_some(&p.user))
+                        .or_else(|| {
+                            (self.client.peer_id() == Some(*follower_peer_id))
+                                .then_some(current_user)
+                        })?
                         .clone();
                     follower
                         .avatar
