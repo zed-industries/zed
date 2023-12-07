@@ -319,10 +319,12 @@ impl Render for FeedbackModal {
                         "Characters: {}",
                         characters_remaining
                     ))
-                    .when_else(
-                        valid_character_count,
-                        |this| this.color(Color::Success),
-                        |this| this.color(Color::Error)
+                    .color(
+                        if valid_character_count {
+                            Color::Success
+                        } else {
+                            Color::Error
+                        }
                     )
                 ),
             )
@@ -349,11 +351,13 @@ impl Render for FeedbackModal {
                                 .color(Color::Muted)
                                 // TODO: replicate this logic when clicking outside the modal
                                 // TODO: Will require somehow overriding the modal dismal default behavior
-                                .when_else(
-                                    has_feedback,
-                                    |this| this.on_click(dismiss_prompt),
-                                    |this| this.on_click(dismiss)
-                                )
+                                .map(|this| {
+                                    if has_feedback {
+                                        this.on_click(dismiss_prompt)
+                                    } else {
+                                        this.on_click(dismiss)
+                                    }
+                                })
                         )
                         .child(
                             Button::new("send_feedback", submit_button_text)
