@@ -165,7 +165,7 @@ impl Render for BufferSearchBar {
         let replace_all = should_show_replace_input
             .then(|| super::render_replace_button(ReplaceAll, ui::Icon::ReplaceAll));
         let replace_next = should_show_replace_input
-            .then(|| super::render_replace_button(ReplaceNext, ui::Icon::Replace));
+            .then(|| super::render_replace_button(ReplaceNext, ui::Icon::ReplaceNext));
         let in_replace = self.replacement_editor.focus_handle(cx).is_focused(cx);
 
         h_stack()

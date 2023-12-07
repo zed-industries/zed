@@ -13,9 +13,10 @@ use editor::{
     MultiBuffer, SelectAll, MAX_TAB_TITLE_LEN,
 };
 use gpui::{
-    actions, div, Action, AnyElement, AnyView, AppContext, Context as _, Div, Element, Entity,
-    EntityId, EventEmitter, FocusableView, Model, ModelContext, PromptLevel, Render, SharedString,
-    Subscription, Task, View, ViewContext, VisualContext, WeakModel, WeakView, WindowContext,
+    actions, div, white, Action, AnyElement, AnyView, AppContext, Context as _, Div, Element,
+    Entity, EntityId, EventEmitter, FocusableView, InteractiveElement, IntoElement, Model,
+    ModelContext, ParentElement, PromptLevel, Render, SharedString, Styled, Subscription, Task,
+    View, ViewContext, VisualContext, WeakModel, WeakView, WindowContext,
 };
 use menu::Confirm;
 use project::{
@@ -34,6 +35,11 @@ use std::{
     path::PathBuf,
     sync::Arc,
     time::{Duration, Instant},
+};
+use theme::ActiveTheme;
+use ui::{
+    h_stack, v_stack, Button, Clickable, Color, Disableable, Icon, IconButton, IconElement, Label,
+    Selectable,
 };
 use util::{paths::PathMatcher, ResultExt as _};
 use workspace::{
@@ -318,7 +324,7 @@ impl EventEmitter<ViewEvent> for ProjectSearchView {}
 impl Render for ProjectSearchView {
     type Element = Div;
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-        div()
+        div().child(Label::new("xd"))
     }
 }
 // impl Entity for ProjectSearchView {
@@ -569,36 +575,23 @@ impl Item for ProjectSearchView {
     }
 
     fn tab_content(&self, _: Option<usize>, cx: &WindowContext<'_>) -> AnyElement {
-        // Flex::row()
-        //     .with_child(
-        //         Svg::new("icons/magnifying_glass.svg")
-        //             .with_color(tab_theme.label.text.color)
-        //             .constrained()
-        //             .with_width(tab_theme.type_icon_width)
-        //             .aligned()
-        //             .contained()
-        //             .with_margin_right(tab_theme.spacing),
-        //     )
-        //     .with_child({
-        //         let tab_name: Option<Cow<_>> = self
-        //             .model
-        //             .read(cx)
-        //             .search_history
-        //             .current()
-        //             .as_ref()
-        //             .map(|query| {
-        //                 let query_text = util::truncate_and_trailoff(query, MAX_TAB_TITLE_LEN);
-        //                 query_text.into()
-        //             });
-        //         Label::new(
-        //             tab_name
-        //                 .filter(|name| !name.is_empty())
-        //                 .unwrap_or("Project search".into()),
-        //             tab_theme.label.clone(),
-        //         )
-        //         .aligned()
-        //     })
-        div().into_any()
+        let last_query: Option<SharedString> = self
+            .model
+            .read(cx)
+            .search_history
+            .current()
+            .as_ref()
+            .map(|query| {
+                let query_text = util::truncate_and_trailoff(query, MAX_TAB_TITLE_LEN);
+                query_text.into()
+            });
+        let tab_name = last_query
+            .filter(|query| !query.is_empty())
+            .unwrap_or_else(|| "Project search".into());
+        h_stack()
+            .child(IconElement::new(Icon::MagnifyingGlass))
+            .child(Label::new(tab_name))
+            .into_any()
     }
 
     fn for_each_project_item(
@@ -1686,7 +1679,127 @@ impl Render for ProjectSearchBar {
     type Element = Div;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-        div()
+        let Some(search) = self.active_project_search.clone() else {
+            return div();
+        };
+        let search = search.read(cx);
+        let query_column = v_stack()
+            .flex_1()
+            .child(
+                h_stack()
+                    .min_w_80()
+                    .on_action(cx.listener(|this, _: &ToggleFilters, cx| {
+                        this.toggle_filters(cx);
+                    }))
+                    .on_action(cx.listener(|this, _: &ToggleWholeWord, cx| {
+                        this.toggle_search_option(SearchOptions::WHOLE_WORD, cx);
+                    }))
+                    .on_action(cx.listener(|this, _: &ToggleCaseSensitive, cx| {
+                        this.toggle_search_option(SearchOptions::CASE_SENSITIVE, cx);
+                    }))
+                    .on_action(cx.listener(|this, action: &ToggleReplace, cx| {
+                        this.toggle_replace(action, cx);
+                    }))
+                    .on_action(cx.listener(|this, action: &ActivateTextMode, cx| {
+                        this.activate_search_mode(SearchMode::Text, cx)
+                    }))
+                    .on_action(cx.listener(|this, action: &ActivateRegexMode, cx| {
+                        this.activate_search_mode(SearchMode::Regex, cx)
+                    }))
+                    .child(IconElement::new(Icon::MagnifyingGlass))
+                    .child(search.query_editor.clone())
+                    .child(
+                        h_stack()
+                            .child(
+                                IconButton::new("project-search-filter-button", Icon::Filter)
+                                    .on_click(|_, cx| {
+                                        cx.dispatch_action(ToggleFilters.boxed_clone())
+                                    }),
+                            )
+                            .child(IconButton::new(
+                                "project-search-case-sensitive",
+                                Icon::CaseSensitive,
+                            ))
+                            .child(IconButton::new(
+                                "project-search-whole-word",
+                                Icon::WholeWord,
+                            )),
+                    )
+                    .border_2()
+                    .bg(white())
+                    .rounded_lg(),
+            )
+            .when(search.filters_enabled, |this| {
+                this.child(
+                    h_stack()
+                        .child(search.included_files_editor.clone())
+                        .child(search.excluded_files_editor.clone()),
+                )
+            });
+        let mode_column = h_stack()
+            .child(
+                h_stack()
+                    .child(
+                        Button::new("project-search-text-button", "Text")
+                            .selected(search.current_mode == SearchMode::Text)
+                            .on_click(|_, cx| cx.dispatch_action(ActivateTextMode.boxed_clone())),
+                    )
+                    .child(
+                        Button::new("project-search-regex-button", "Regex")
+                            .selected(search.current_mode == SearchMode::Regex)
+                            .on_click(|_, cx| cx.dispatch_action(ActivateRegexMode.boxed_clone())),
+                    ),
+            )
+            .child(
+                IconButton::new("project-search-toggle-replace", Icon::Replace).on_click(
+                    |_, cx| {
+                        cx.dispatch_action(ToggleReplace.boxed_clone());
+                    },
+                ),
+            );
+        let replace_column = if search.replace_enabled {
+            h_stack()
+                .bg(white())
+                .flex_1()
+                .border_2()
+                .rounded_lg()
+                .child(IconElement::new(Icon::Replace).size(ui::IconSize::Small))
+                .child(search.replacement_editor.clone())
+        } else {
+            // Fill out the space if we don't have a replacement editor.
+            h_stack().size_full()
+        };
+        let actions_column = h_stack()
+            .when(search.replace_enabled, |this| {
+                this.children([
+                    IconButton::new("project-search-replace-next", Icon::ReplaceNext),
+                    IconButton::new("project-search-replace-all", Icon::ReplaceAll),
+                ])
+            })
+            .when_some(search.active_match_index, |this, index| {
+                let match_quantity = search.model.read(cx).match_ranges.len();
+                debug_assert!(match_quantity > index);
+                this.child(IconButton::new(
+                    "project-search-select-all",
+                    Icon::SelectAll,
+                ))
+                .child(Label::new(format!("{index}/{match_quantity}")))
+            })
+            .children([
+                IconButton::new("project-search-prev-match", Icon::ChevronLeft)
+                    .disabled(search.active_match_index.is_none()),
+                IconButton::new("project-search-next-match", Icon::ChevronRight)
+                    .disabled(search.active_match_index.is_none()),
+            ]);
+        h_stack()
+            .size_full()
+            .p_1()
+            .m_2()
+            .justify_between()
+            .child(query_column)
+            .child(mode_column)
+            .child(replace_column)
+            .child(actions_column)
     }
 }
 // impl Entity for ProjectSearchBar {
