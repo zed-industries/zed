@@ -86,7 +86,8 @@ mod test {
 
         // no panic when blurring an editor in a different window.
         cx.update_editor(|editor1, cx| {
-            editor1.focus_out(cx.handle().into_any(), cx);
+            todo!()
+            // editor1.focus_out(cx.handle().into_any(), cx);
         });
     }
 }

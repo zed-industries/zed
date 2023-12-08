@@ -69,7 +69,7 @@ theme = { package = "theme2", path = "../theme2" }
 theme_selector = { package = "theme_selector2", path = "../theme_selector2" }
 util = { path = "../util" }
 semantic_index = { package = "semantic_index2", path = "../semantic_index2" }
-# vim = { path = "../vim" }
+vim = { package = "vim2", path = "../vim2" }
 workspace = { package = "workspace2", path = "../workspace2" }
 welcome = { package = "welcome2", path = "../welcome2" }
 zed_actions = {package = "zed_actions2", path = "../zed_actions2"}

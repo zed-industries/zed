@@ -124,7 +124,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             activity_indicator::ActivityIndicator::new(workspace, app_state.languages.clone(), cx);
         let active_buffer_language =
             cx.build_view(|_| language_selector::ActiveBufferLanguage::new(workspace));
-        //     let vim_mode_indicator = cx.add_view(|cx| vim::ModeIndicator::new(cx));
+        let vim_mode_indicator = cx.build_view(|cx| vim::ModeIndicator::new(cx));
         let feedback_button = cx
             .build_view(|_| feedback::deploy_feedback_button::DeployFeedbackButton::new(workspace));
         //     let cursor_position = cx.add_view(|_| editor::items::CursorPosition::new());
@@ -136,13 +136,13 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             // status_bar.add_right_item(copilot, cx);
             status_bar.add_right_item(copilot, cx);
             status_bar.add_right_item(active_buffer_language, cx);
-            // status_bar.add_right_item(vim_mode_indicator, cx);
+            status_bar.add_right_item(vim_mode_indicator, cx);
             status_bar.add_right_item(cursor_position, cx);
         });
 
         auto_update::notify_of_any_new_update(cx);
 
-        //     vim::observe_keystrokes(cx);
+        vim::observe_keystrokes(cx);
 
         let handle = cx.view().downgrade();
         cx.on_window_should_close(move |cx| {

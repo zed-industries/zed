@@ -1,0 +1,53 @@
+[package]
+name = "vim2"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+path = "src/vim.rs"
+doctest = false
+
+[features]
+neovim = ["nvim-rs", "async-compat", "async-trait", "tokio"]
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_derive.workspace = true
+itertools = "0.10"
+log.workspace = true
+
+async-compat = { version = "0.2.1", "optional" = true }
+async-trait = { workspace = true, "optional" = true }
+nvim-rs = { git = "https://github.com/KillTheMule/nvim-rs", branch = "master", features = ["use_tokio"], optional = true }
+tokio = { version = "1.15", "optional" = true }
+serde_json.workspace = true
+
+collections = { path = "../collections" }
+command_palette = { package = "command_palette2", path = "../command_palette2" }
+editor = { package = "editor2", path = "../editor2" }
+gpui = { package = "gpui2", path = "../gpui2" }
+language = { package = "language2", path = "../language2" }
+search = { package = "search2", path = "../search2" }
+settings = { package = "settings2", path = "../settings2" }
+workspace = { package = "workspace2", path = "../workspace2" }
+theme = { package = "theme2", path = "../theme2" }
+ui = { package = "ui2", path = "../ui2"}
+diagnostics = { package = "diagnostics2", path = "../diagnostics2" }
+zed_actions = { package = "zed_actions2", path = "../zed_actions2" }
+
+[dev-dependencies]
+indoc.workspace = true
+parking_lot.workspace = true
+futures.workspace = true
+
+editor = { package = "editor2", path = "../editor2", features = ["test-support"] }
+gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"] }
+language = { package = "language2", path = "../language2", features = ["test-support"] }
+project = { package = "project2", path = "../project2", features = ["test-support"] }
+util = { path = "../util", features = ["test-support"] }
+settings = { package = "settings2", path = "../settings2" }
+workspace = { package = "workspace2", path = "../workspace2", features = ["test-support"] }
+theme = { package = "theme2", path = "../theme2", features = ["test-support"] }
+lsp = { package = "lsp2", path = "../lsp2", features = ["test-support"] }
