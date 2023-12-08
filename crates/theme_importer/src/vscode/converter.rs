@@ -141,6 +141,14 @@ impl VsCodeThemeConverter {
                 .editor_background
                 .as_ref()
                 .traverse(|color| try_parse_color(&color))?,
+            title_bar_background: vscode_colors
+                .title_bar_active_background
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
+            status_bar_background: vscode_colors
+                .status_bar_background
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
             element_background: vscode_colors
                 .button_background
                 .as_ref()
@@ -175,12 +183,20 @@ impl VsCodeThemeConverter {
                         .ok()
                         .flatten()
                 }),
+            tab_bar_background: vscode_colors
+                .panel_background
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
             tab_active_background: vscode_colors
                 .tab_active_background
                 .as_ref()
                 .traverse(|color| try_parse_color(&color))?,
             tab_inactive_background: vscode_colors
                 .tab_inactive_background
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
+            toolbar_background: vscode_colors
+                .panel_background
                 .as_ref()
                 .traverse(|color| try_parse_color(&color))?,
             editor_background: vscode_colors
