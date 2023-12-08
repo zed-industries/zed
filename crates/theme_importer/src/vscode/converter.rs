@@ -153,7 +153,7 @@ impl VsCodeThemeConverter {
                 .as_ref()
                 .traverse(|color| try_parse_color(&color))?,
             elevated_surface_background: vscode_colors
-                .panel_background
+                .dropdown_background
                 .as_ref()
                 .traverse(|color| try_parse_color(&color))?,
             surface_background: vscode_colors

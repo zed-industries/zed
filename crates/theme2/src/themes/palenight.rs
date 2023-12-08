@@ -583,7 +583,7 @@ pub fn palenight() -> UserThemeFamily {
                         border_selected: Some(rgba(0x2c2f40ff).into()),
                         border_transparent: Some(rgba(0x2c2f40ff).into()),
                         border_disabled: Some(rgba(0x2c2f40ff).into()),
-                        elevated_surface_background: Some(rgba(0x25293aff).into()),
+                        elevated_surface_background: Some(rgba(0x292d3eff).into()),
                         surface_background: Some(rgba(0x25293aff).into()),
                         background: Some(rgba(0x292d3eff).into()),
                         element_background: Some(rgba(0x7e57c2cc).into()),

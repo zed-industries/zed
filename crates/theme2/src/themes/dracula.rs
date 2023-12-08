@@ -24,7 +24,7 @@ pub fn dracula() -> UserThemeFamily {
                     border_selected: Some(rgba(0xbd93f9ff).into()),
                     border_transparent: Some(rgba(0xbd93f9ff).into()),
                     border_disabled: Some(rgba(0xbd93f9ff).into()),
-                    elevated_surface_background: Some(rgba(0x282a36ff).into()),
+                    elevated_surface_background: Some(rgba(0x343746ff).into()),
                     surface_background: Some(rgba(0x282a36ff).into()),
                     background: Some(rgba(0x282a36ff).into()),
                     element_background: Some(rgba(0x44475aff).into()),

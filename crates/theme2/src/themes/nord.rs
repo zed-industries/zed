@@ -24,7 +24,7 @@ pub fn nord() -> UserThemeFamily {
                     border_selected: Some(rgba(0x3b4252ff).into()),
                     border_transparent: Some(rgba(0x3b4252ff).into()),
                     border_disabled: Some(rgba(0x3b4252ff).into()),
-                    elevated_surface_background: Some(rgba(0x2e3440ff).into()),
+                    elevated_surface_background: Some(rgba(0x3b4252ff).into()),
                     surface_background: Some(rgba(0x2e3440ff).into()),
                     background: Some(rgba(0x2e3440ff).into()),
                     element_background: Some(rgba(0x88c0d0ee).into()),
