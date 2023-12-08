@@ -1230,203 +1230,189 @@ impl EditorElement {
         bounds.upper_right().x - self.style.scrollbar_width
     }
 
-    // fn paint_scrollbar(
-    //     &mut self,
-    //     bounds: Bounds<Pixels>,
-    //     layout: &mut LayoutState,
-    //     editor: &Editor,
-    //     cx: &mut ViewContext<Editor>,
-    // ) {
-    //     enum ScrollbarMouseHandlers {}
-    //     if layout.mode != EditorMode::Full {
-    //         return;
-    //     }
+    fn paint_scrollbar(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        layout: &mut LayoutState,
+        cx: &mut WindowContext,
+    ) {
+        if layout.mode != EditorMode::Full {
+            return;
+        }
 
-    //     let style = &self.style.theme.scrollbar;
+        let top = bounds.origin.y;
+        let bottom = bounds.lower_left().y;
+        let right = bounds.lower_right().x;
+        let left = self.scrollbar_left(&bounds);
+        let row_range = &layout.scrollbar_row_range;
+        let max_row = layout.max_row as f32 + (row_range.end - row_range.start);
 
-    //     let top = bounds.min_y;
-    //     let bottom = bounds.max_y;
-    //     let right = bounds.max_x;
-    //     let left = self.scrollbar_left(&bounds);
-    //     let row_range = &layout.scrollbar_row_range;
-    //     let max_row = layout.max_row as f32 + (row_range.end - row_range.start);
+        let mut height = bounds.size.height;
+        let mut first_row_y_offset = px(0.0);
 
-    //     let mut height = bounds.height();
-    //     let mut first_row_y_offset = 0.0;
+        // Impose a minimum height on the scrollbar thumb
+        let row_height = height / max_row;
+        let min_thumb_height = layout.position_map.line_height;
+        let thumb_height = (row_range.end - row_range.start) * row_height;
+        if thumb_height < min_thumb_height {
+            first_row_y_offset = (min_thumb_height - thumb_height) / 2.0;
+            height -= min_thumb_height - thumb_height;
+        }
 
-    //     // Impose a minimum height on the scrollbar thumb
-    //     let row_height = height / max_row;
-    //     let min_thumb_height =
-    //         style.min_height_factor * cx.font_cache.line_height(self.style.text.font_size);
-    //     let thumb_height = (row_range.end - row_range.start) * row_height;
-    //     if thumb_height < min_thumb_height {
-    //         first_row_y_offset = (min_thumb_height - thumb_height) / 2.0;
-    //         height -= min_thumb_height - thumb_height;
-    //     }
+        let y_for_row = |row: f32| -> Pixels { top + first_row_y_offset + row * row_height };
 
-    //     let y_for_row = |row: f32| -> f32 { top + first_row_y_offset + row * row_height };
+        let thumb_top = y_for_row(row_range.start) - first_row_y_offset;
+        let thumb_bottom = y_for_row(row_range.end) + first_row_y_offset;
+        let track_bounds = Bounds::from_corners(point(left, top), point(right, bottom));
+        let thumb_bounds = Bounds::from_corners(point(left, thumb_top), point(right, thumb_bottom));
 
-    //     let thumb_top = y_for_row(row_range.start) - first_row_y_offset;
-    //     let thumb_bottom = y_for_row(row_range.end) + first_row_y_offset;
-    //     let track_bounds = Bounds::<Pixels>::from_points(point(left, top), point(right, bottom));
-    //     let thumb_bounds = Bounds::<Pixels>::from_points(point(left, thumb_top), point(right, thumb_bottom));
+        if layout.show_scrollbars {
+            cx.paint_quad(
+                track_bounds,
+                Corners::default(),
+                gpui::blue(),        // todo!("style.track.background_color")
+                Edges::default(),    // todo!("style.track.border")
+                transparent_black(), // todo!("style.track.border")
+            );
+            let scrollbar_settings = EditorSettings::get_global(cx).scrollbar;
+            if layout.is_singleton && scrollbar_settings.selections {
+                let start_anchor = Anchor::min();
+                let end_anchor = Anchor::max();
+                let background_ranges = self
+                    .editor
+                    .read(cx)
+                    .background_highlight_row_ranges::<crate::items::BufferSearchHighlights>(
+                        start_anchor..end_anchor,
+                        &layout.position_map.snapshot,
+                        50000,
+                    );
+                for range in background_ranges {
+                    let start_y = y_for_row(range.start().row() as f32);
+                    let mut end_y = y_for_row(range.end().row() as f32);
+                    if end_y - start_y < px(1.) {
+                        end_y = start_y + px(1.);
+                    }
+                    let bounds = Bounds::from_corners(point(left, start_y), point(right, end_y));
+                    cx.paint_quad(
+                        bounds,
+                        Corners::default(),
+                        gpui::yellow(), // todo!("theme.editor.scrollbar")
+                        Edges {
+                            top: Pixels::ZERO,
+                            right: px(1.),
+                            bottom: Pixels::ZERO,
+                            left: px(1.),
+                        },
+                        gpui::green(), // todo!("style.thumb.border.color")
+                    );
+                }
+            }
 
-    //     if layout.show_scrollbars {
-    //         cx.paint_quad(Quad {
-    //             bounds: track_bounds,
-    //             border: style.track.border.into(),
-    //             background: style.track.background_color,
-    //             ..Default::default()
-    //         });
-    //         let scrollbar_settings = settings::get::<EditorSettings>(cx).scrollbar;
-    //         let theme = theme::current(cx);
-    //         let scrollbar_theme = &theme.editor.scrollbar;
-    //         if layout.is_singleton && scrollbar_settings.selections {
-    //             let start_anchor = Anchor::min();
-    //             let end_anchor = Anchor::max;
-    //             let color = scrollbar_theme.selections;
-    //             let border = Border {
-    //                 width: 1.,
-    //                 color: style.thumb.border.color,
-    //                 overlay: false,
-    //                 top: false,
-    //                 right: true,
-    //                 bottom: false,
-    //                 left: true,
-    //             };
-    //             let mut push_region = |start: DisplayPoint, end: DisplayPoint| {
-    //                 let start_y = y_for_row(start.row() as f32);
-    //                 let mut end_y = y_for_row(end.row() as f32);
-    //                 if end_y - start_y < 1. {
-    //                     end_y = start_y + 1.;
-    //                 }
-    //                 let bounds = Bounds::<Pixels>::from_points(point(left, start_y), point(right, end_y));
+            if layout.is_singleton && scrollbar_settings.git_diff {
+                for hunk in layout
+                    .position_map
+                    .snapshot
+                    .buffer_snapshot
+                    .git_diff_hunks_in_range(0..(max_row.floor() as u32))
+                {
+                    let start_display = Point::new(hunk.buffer_range.start, 0)
+                        .to_display_point(&layout.position_map.snapshot.display_snapshot);
+                    let end_display = Point::new(hunk.buffer_range.end, 0)
+                        .to_display_point(&layout.position_map.snapshot.display_snapshot);
+                    let start_y = y_for_row(start_display.row() as f32);
+                    let mut end_y = if hunk.buffer_range.start == hunk.buffer_range.end {
+                        y_for_row((end_display.row() + 1) as f32)
+                    } else {
+                        y_for_row((end_display.row()) as f32)
+                    };
 
-    //                 cx.paint_quad(Quad {
-    //                     bounds,
-    //                     background: Some(color),
-    //                     border: border.into(),
-    //                     corner_radii: style.thumb.corner_radii.into(),
-    //                 })
-    //             };
-    //             let background_ranges = editor
-    //                 .background_highlight_row_ranges::<crate::items::BufferSearchHighlights>(
-    //                     start_anchor..end_anchor,
-    //                     &layout.position_map.snapshot,
-    //                     50000,
-    //                 );
-    //             for row in background_ranges {
-    //                 let start = row.start();
-    //                 let end = row.end();
-    //                 push_region(*start, *end);
-    //             }
-    //         }
+                    if end_y - start_y < px(1.) {
+                        end_y = start_y + px(1.);
+                    }
+                    let bounds = Bounds::from_corners(point(left, start_y), point(right, end_y));
 
-    //         if layout.is_singleton && scrollbar_settings.git_diff {
-    //             let diff_style = scrollbar_theme.git.clone();
-    //             for hunk in layout
-    //                 .position_map
-    //                 .snapshot
-    //                 .buffer_snapshot
-    //                 .git_diff_hunks_in_range(0..(max_row.floor() as u32))
-    //             {
-    //                 let start_display = Point::new(hunk.buffer_range.start, 0)
-    //                     .to_display_point(&layout.position_map.snapshot.display_snapshot);
-    //                 let end_display = Point::new(hunk.buffer_range.end, 0)
-    //                     .to_display_point(&layout.position_map.snapshot.display_snapshot);
-    //                 let start_y = y_for_row(start_display.row() as f32);
-    //                 let mut end_y = if hunk.buffer_range.start == hunk.buffer_range.end {
-    //                     y_for_row((end_display.row() + 1) as f32)
-    //                 } else {
-    //                     y_for_row((end_display.row()) as f32)
-    //                 };
+                    let color = match hunk.status() {
+                        DiffHunkStatus::Added => gpui::green(), // todo!("use the right color")
+                        DiffHunkStatus::Modified => gpui::yellow(), // todo!("use the right color")
+                        DiffHunkStatus::Removed => gpui::red(), // todo!("use the right color")
+                    };
+                    cx.paint_quad(
+                        bounds,
+                        Corners::default(),
+                        color,
+                        Edges {
+                            top: Pixels::ZERO,
+                            right: px(1.),
+                            bottom: Pixels::ZERO,
+                            left: px(1.),
+                        },
+                        gpui::green(), // todo!("style.thumb.border.color")
+                    );
+                }
+            }
 
-    //                 if end_y - start_y < 1. {
-    //                     end_y = start_y + 1.;
-    //                 }
-    //                 let bounds = Bounds::<Pixels>::from_points(point(left, start_y), point(right, end_y));
+            cx.paint_quad(
+                thumb_bounds,
+                Corners::default(),
+                gpui::black(), // todo!("style.thumb.background_color")
+                Edges {
+                    top: Pixels::ZERO,
+                    right: px(1.),
+                    bottom: Pixels::ZERO,
+                    left: px(1.),
+                },
+                gpui::green(), // todo!("style.thumb.border.color")
+            );
+        }
 
-    //                 let color = match hunk.status() {
-    //                     DiffHunkStatus::Added => diff_style.inserted,
-    //                     DiffHunkStatus::Modified => diff_style.modified,
-    //                     DiffHunkStatus::Removed => diff_style.deleted,
-    //                 };
+        // cx.scene().push_cursor_region(CursorRegion {
+        //     bounds: track_bounds,
+        //     style: CursorStyle::Arrow,
+        // });
+        // let region_id = cx.view_id();
+        // cx.scene().push_mouse_region(
+        //     MouseRegion::new::<ScrollbarMouseHandlers>(region_id, region_id, track_bounds)
+        //         .on_move(move |event, editor: &mut Editor, cx| {
+        //             if event.pressed_button.is_none() {
+        //                 editor.scroll_manager.show_scrollbar(cx);
+        //             }
+        //         })
+        //         .on_down(MouseButton::Left, {
+        //             let row_range = row_range.clone();
+        //             move |event, editor: &mut Editor, cx| {
+        //                 let y = event.position.y;
+        //                 if y < thumb_top || thumb_bottom < y {
+        //                     let center_row = ((y - top) * max_row as f32 / height).round() as u32;
+        //                     let top_row = center_row
+        //                         .saturating_sub((row_range.end - row_range.start) as u32 / 2);
+        //                     let mut position = editor.scroll_position(cx);
+        //                     position.set_y(top_row as f32);
+        //                     editor.set_scroll_position(position, cx);
+        //                 } else {
+        //                     editor.scroll_manager.show_scrollbar(cx);
+        //                 }
+        //             }
+        //         })
+        //         .on_drag(MouseButton::Left, {
+        //             move |event, editor: &mut Editor, cx| {
+        //                 if event.end {
+        //                     return;
+        //                 }
 
-    //                 let border = Border {
-    //                     width: 1.,
-    //                     color: style.thumb.border.color,
-    //                     overlay: false,
-    //                     top: false,
-    //                     right: true,
-    //                     bottom: false,
-    //                     left: true,
-    //                 };
-
-    //                 cx.paint_quad(Quad {
-    //                     bounds,
-    //                     background: Some(color),
-    //                     border: border.into(),
-    //                     corner_radii: style.thumb.corner_radii.into(),
-    //                 })
-    //             }
-    //         }
-
-    //         cx.paint_quad(Quad {
-    //             bounds: thumb_bounds,
-    //             border: style.thumb.border.into(),
-    //             background: style.thumb.background_color,
-    //             corner_radii: style.thumb.corner_radii.into(),
-    //         });
-    //     }
-
-    //     cx.scene().push_cursor_region(CursorRegion {
-    //         bounds: track_bounds,
-    //         style: CursorStyle::Arrow,
-    //     });
-    //     let region_id = cx.view_id();
-    //     cx.scene().push_mouse_region(
-    //         MouseRegion::new::<ScrollbarMouseHandlers>(region_id, region_id, track_bounds)
-    //             .on_move(move |event, editor: &mut Editor, cx| {
-    //                 if event.pressed_button.is_none() {
-    //                     editor.scroll_manager.show_scrollbar(cx);
-    //                 }
-    //             })
-    //             .on_down(MouseButton::Left, {
-    //                 let row_range = row_range.clone();
-    //                 move |event, editor: &mut Editor, cx| {
-    //                     let y = event.position.y;
-    //                     if y < thumb_top || thumb_bottom < y {
-    //                         let center_row = ((y - top) * max_row as f32 / height).round() as u32;
-    //                         let top_row = center_row
-    //                             .saturating_sub((row_range.end - row_range.start) as u32 / 2);
-    //                         let mut position = editor.scroll_position(cx);
-    //                         position.set_y(top_row as f32);
-    //                         editor.set_scroll_position(position, cx);
-    //                     } else {
-    //                         editor.scroll_manager.show_scrollbar(cx);
-    //                     }
-    //                 }
-    //             })
-    //             .on_drag(MouseButton::Left, {
-    //                 move |event, editor: &mut Editor, cx| {
-    //                     if event.end {
-    //                         return;
-    //                     }
-
-    //                     let y = event.prev_mouse_position.y;
-    //                     let new_y = event.position.y;
-    //                     if thumb_top < y && y < thumb_bottom {
-    //                         let mut position = editor.scroll_position(cx);
-    //                         position.set_y(position.y + (new_y - y) * (max_row as f32) / height);
-    //                         if position.y < 0.0 {
-    //                             position.set_y(0.);
-    //                         }
-    //                         editor.set_scroll_position(position, cx);
-    //                     }
-    //                 }
-    //             }),
-    //     );
-    // }
+        //                 let y = event.prev_mouse_position.y;
+        //                 let new_y = event.position.y;
+        //                 if thumb_top < y && y < thumb_bottom {
+        //                     let mut position = editor.scroll_position(cx);
+        //                     position.set_y(position.y + (new_y - y) * (max_row as f32) / height);
+        //                     if position.y < 0.0 {
+        //                         position.set_y(0.);
+        //                     }
+        //                     editor.set_scroll_position(position, cx);
+        //                 }
+        //             }
+        //         }),
+        // );
+    }
 
     #[allow(clippy::too_many_arguments)]
     fn paint_highlighted_range(
@@ -2840,9 +2826,11 @@ impl Element for EditorElement {
                         cx.with_z_index(1, |cx| {
                             cx.with_element_id(Some("editor_blocks"), |cx| {
                                 self.paint_blocks(bounds, &mut layout, cx);
-                            })
+                            });
                         })
                     }
+
+                    self.paint_scrollbar(bounds, &mut layout, cx);
                 });
             });
         })
