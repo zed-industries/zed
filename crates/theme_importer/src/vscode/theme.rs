@@ -161,6 +161,7 @@ pub struct VsCodeColors {
     )]
     pub focus_border: Option<String>,
 
+    #[serde(default, deserialize_with = "empty_string_as_none")]
     pub foreground: Option<String>,
 
     #[serde(
