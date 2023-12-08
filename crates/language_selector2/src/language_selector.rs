@@ -14,7 +14,7 @@ use project::Project;
 use std::sync::Arc;
 use ui::{prelude::*, HighlightedLabel, ListItem};
 use util::ResultExt;
-use workspace::Workspace;
+use workspace::{ModalView, Workspace};
 
 actions!(Toggle);
 
@@ -81,6 +81,7 @@ impl FocusableView for LanguageSelector {
 }
 
 impl EventEmitter<DismissEvent> for LanguageSelector {}
+impl ModalView for LanguageSelector {}
 
 pub struct LanguageSelectorDelegate {
     language_selector: WeakView<LanguageSelector>,

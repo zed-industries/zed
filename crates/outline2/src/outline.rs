@@ -20,7 +20,7 @@ use std::{
 use theme::{color_alpha, ActiveTheme, ThemeSettings};
 use ui::{prelude::*, ListItem};
 use util::ResultExt;
-use workspace::Workspace;
+use workspace::{ModalView, Workspace};
 
 actions!(Toggle);
 
@@ -57,6 +57,7 @@ impl FocusableView for OutlineView {
 }
 
 impl EventEmitter<DismissEvent> for OutlineView {}
+impl ModalView for OutlineView {}
 
 impl Render for OutlineView {
     type Element = Div;

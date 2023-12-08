@@ -3414,7 +3414,7 @@ impl Workspace {
         self.modal_layer.read(cx).active_modal()
     }
 
-    pub fn toggle_modal<V: ManagedView, B>(&mut self, cx: &mut ViewContext<Self>, build: B)
+    pub fn toggle_modal<V: ModalView, B>(&mut self, cx: &mut ViewContext<Self>, build: B)
     where
         B: FnOnce(&mut ViewContext<V>) -> V,
     {

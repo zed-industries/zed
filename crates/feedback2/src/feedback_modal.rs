@@ -4,7 +4,7 @@ use anyhow::bail;
 use client::{Client, ZED_SECRET_CLIENT_TOKEN, ZED_SERVER_URL};
 use db::kvp::KEY_VALUE_STORE;
 use editor::{Editor, EditorEvent};
-use futures::AsyncReadExt;
+use futures::{AsyncReadExt, Future};
 use gpui::{
     div, rems, serde_json, AppContext, DismissEvent, Div, EventEmitter, FocusHandle, FocusableView,
     Model, PromptLevel, Render, Task, View, ViewContext,
@@ -16,7 +16,7 @@ use regex::Regex;
 use serde_derive::Serialize;
 use ui::{prelude::*, Button, ButtonStyle, IconPosition, Tooltip};
 use util::ResultExt;
-use workspace::Workspace;
+use workspace::{ModalView, Workspace};
 
 use crate::{system_specs::SystemSpecs, GiveFeedback, OpenZedCommunityRepo};
 
@@ -51,6 +51,13 @@ impl FocusableView for FeedbackModal {
     }
 }
 impl EventEmitter<DismissEvent> for FeedbackModal {}
+
+impl ModalView for FeedbackModal {
+    fn dismiss(&mut self, cx: &mut ViewContext<Self>) -> Task<bool> {
+        let prompt = Self::prompt_dismiss(cx);
+        cx.spawn(|_, _| prompt)
+    }
+}
 
 impl FeedbackModal {
     pub fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
@@ -105,7 +112,7 @@ impl FeedbackModal {
         let feedback_editor = cx.build_view(|cx| {
             let mut editor = Editor::for_buffer(buffer, Some(project.clone()), cx);
             editor.set_placeholder_text(
-                "You can use markdown to add links or organize feedback.",
+                "You can use markdown to organize your feedback wiht add code and links, or organize feedback.",
                 cx,
             );
             // editor.set_show_gutter(false, cx);
@@ -238,11 +245,29 @@ impl FeedbackModal {
     }
 
     // TODO: Escape button calls dismiss
-    // TODO: Should do same as hitting cancel / clicking outside of modal
-    //     Close immediately if no text in field
-    //     Ask to close if text in the field
     fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
-        cx.emit(DismissEvent);
+        self.dismiss_event(cx)
+    }
+
+    fn dismiss_event(&mut self, cx: &mut ViewContext<Self>) {
+        let has_feedback = self.feedback_editor.read(cx).text_option(cx).is_some();
+        let dismiss = Self::prompt_dismiss(cx);
+
+        cx.spawn(|this, mut cx| async move {
+            if !has_feedback || (has_feedback && dismiss.await) {
+                this.update(&mut cx, |_, cx| cx.emit(DismissEvent)).ok();
+            }
+        })
+        .detach()
+    }
+
+    fn prompt_dismiss(cx: &mut ViewContext<Self>) -> impl Future<Output = bool> {
+        let answer = cx.prompt(PromptLevel::Info, "Discard feedback?", &["Yes", "No"]);
+
+        async {
+            let answer = answer.await.ok();
+            answer == Some(0)
+        }
     }
 }
 
@@ -260,27 +285,12 @@ impl Render for FeedbackModal {
         let allow_submission =
             valid_character_count && valid_email_address && !self.pending_submission;
 
-        let has_feedback = self.feedback_editor.read(cx).text_option(cx).is_some();
-
         let submit_button_text = if self.pending_submission {
             "Submitting..."
         } else {
             "Submit"
         };
-        let dismiss = cx.listener(|_, _, cx| {
-            cx.emit(DismissEvent);
-        });
-        // TODO: get the "are you sure you want to dismiss?" prompt here working
-        let dismiss_prompt = cx.listener(|_, _, _| {
-            // let answer = cx.prompt(PromptLevel::Info, "Exit feedback?", &["Yes", "No"]);
-            // cx.spawn(|_, _| async move {
-            //     let answer = answer.await.ok();
-            //     if answer == Some(0) {
-            //         cx.emit(DismissEvent);
-            //     }
-            // })
-            // .detach();
-        });
+
         let open_community_repo =
             cx.listener(|_, _, cx| cx.dispatch_action(Box::new(OpenZedCommunityRepo)));
 
@@ -364,15 +374,9 @@ impl Render for FeedbackModal {
                                         Button::new("cancel_feedback", "Cancel")
                                             .style(ButtonStyle::Subtle)
                                             .color(Color::Muted)
-                                            // TODO: replicate this logic when clicking outside the modal
-                                            // TODO: Will require somehow overriding the modal dismal default behavior
-                                            .map(|this| {
-                                                if has_feedback {
-                                                    this.on_click(dismiss_prompt)
-                                                } else {
-                                                    this.on_click(dismiss)
-                                                }
-                                            }),
+                                            .on_click(cx.listener(move |this, _, cx| {
+                                                this.dismiss_event(cx)
+                                            })),
                                     )
                                     .child(
                                         Button::new("send_feedback", submit_button_text)
@@ -402,3 +406,4 @@ impl Render for FeedbackModal {
 
 // TODO: Add compilation flags to enable debug mode, where we can simulate sending feedback that both succeeds and fails, so we can test the UI
 // TODO: Maybe store email address whenever the modal is closed, versus just on submit, so users can remove it if they want without submitting
+// TODO: Fix bug of being asked twice to discard feedback when clicking cancel

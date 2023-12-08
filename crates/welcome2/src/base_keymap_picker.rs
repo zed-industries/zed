@@ -10,7 +10,7 @@ use settings::{update_settings_file, Settings};
 use std::sync::Arc;
 use ui::{prelude::*, ListItem};
 use util::ResultExt;
-use workspace::{ui::HighlightedLabel, Workspace};
+use workspace::{ui::HighlightedLabel, ModalView, Workspace};
 
 actions!(ToggleBaseKeymapSelector);
 
@@ -47,6 +47,7 @@ impl FocusableView for BaseKeymapSelector {
 }
 
 impl EventEmitter<DismissEvent> for BaseKeymapSelector {}
+impl ModalView for BaseKeymapSelector {}
 
 impl BaseKeymapSelector {
     pub fn new(

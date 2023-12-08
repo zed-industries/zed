@@ -17,9 +17,11 @@ use std::{
 use text::Point;
 use ui::{prelude::*, HighlightedLabel, ListItem};
 use util::{paths::PathLikeWithPosition, post_inc, ResultExt};
-use workspace::Workspace;
+use workspace::{ModalView, Workspace};
 
 actions!(Toggle);
+
+impl ModalView for FileFinder {}
 
 pub struct FileFinder {
     picker: View<Picker<FileFinderDelegate>>,

@@ -16,7 +16,7 @@ use util::{
     channel::{parse_zed_link, ReleaseChannel, RELEASE_CHANNEL},
     ResultExt,
 };
-use workspace::Workspace;
+use workspace::{ModalView, Workspace};
 use zed_actions::OpenZedURL;
 
 actions!(Toggle);
@@ -25,6 +25,8 @@ pub fn init(cx: &mut AppContext) {
     cx.set_global(HitCounts::default());
     cx.observe_new_views(CommandPalette::register).detach();
 }
+
+impl ModalView for CommandPalette {}
 
 pub struct CommandPalette {
     picker: View<Picker<CommandPaletteDelegate>>,
