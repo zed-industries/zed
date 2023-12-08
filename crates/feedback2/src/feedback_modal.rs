@@ -4,7 +4,7 @@ use anyhow::bail;
 use client::{Client, ZED_SECRET_CLIENT_TOKEN, ZED_SERVER_URL};
 use db::kvp::KEY_VALUE_STORE;
 use editor::{Editor, EditorEvent};
-use futures::{AsyncReadExt, Future};
+use futures::AsyncReadExt;
 use gpui::{
     div, rems, serde_json, AppContext, DismissEvent, Div, EventEmitter, FocusHandle, FocusableView,
     Model, PromptLevel, Render, Task, View, ViewContext,
@@ -54,8 +54,15 @@ impl EventEmitter<DismissEvent> for FeedbackModal {}
 
 impl ModalView for FeedbackModal {
     fn dismiss(&mut self, cx: &mut ViewContext<Self>) -> Task<bool> {
-        let prompt = Self::prompt_dismiss(cx);
-        cx.spawn(|_, _| prompt)
+        let has_feedback = self.feedback_editor.read(cx).text_option(cx).is_some();
+
+        if !has_feedback {
+            return cx.spawn(|_, _| async { true });
+        }
+
+        let answer = cx.prompt(PromptLevel::Info, "Discard feedback?", &["Yes", "No"]);
+
+        cx.spawn(|_, _| async { answer.await.ok() == Some(0) })
     }
 }
 
@@ -246,28 +253,7 @@ impl FeedbackModal {
 
     // TODO: Escape button calls dismiss
     fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
-        self.dismiss_event(cx)
-    }
-
-    fn dismiss_event(&mut self, cx: &mut ViewContext<Self>) {
-        let has_feedback = self.feedback_editor.read(cx).text_option(cx).is_some();
-        let dismiss = Self::prompt_dismiss(cx);
-
-        cx.spawn(|this, mut cx| async move {
-            if !has_feedback || (has_feedback && dismiss.await) {
-                this.update(&mut cx, |_, cx| cx.emit(DismissEvent)).ok();
-            }
-        })
-        .detach()
-    }
-
-    fn prompt_dismiss(cx: &mut ViewContext<Self>) -> impl Future<Output = bool> {
-        let answer = cx.prompt(PromptLevel::Info, "Discard feedback?", &["Yes", "No"]);
-
-        async {
-            let answer = answer.await.ok();
-            answer == Some(0)
-        }
+        cx.emit(DismissEvent)
     }
 }
 
@@ -374,8 +360,14 @@ impl Render for FeedbackModal {
                                         Button::new("cancel_feedback", "Cancel")
                                             .style(ButtonStyle::Subtle)
                                             .color(Color::Muted)
-                                            .on_click(cx.listener(move |this, _, cx| {
-                                                this.dismiss_event(cx)
+                                            .on_click(cx.listener(move |_, _, cx| {
+                                                cx.spawn(|this, mut cx| async move {
+                                                    this.update(&mut cx, |_, cx| {
+                                                        cx.emit(DismissEvent)
+                                                    })
+                                                    .ok();
+                                                })
+                                                .detach();
                                             })),
                                     )
                                     .child(
