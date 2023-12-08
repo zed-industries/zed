@@ -63,10 +63,14 @@ pub fn night_owl() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
+                        conflict: Some(rgba(0xffeb95cc).into()),
+                        created: Some(rgba(0xc5e478ff).into()),
                         deleted: Some(rgba(0xef5350ff).into()),
                         error: Some(rgba(0xef5350ff).into()),
                         hidden: Some(rgba(0x5f7e97ff).into()),
                         hint: Some(rgba(0x969696ff).into()),
+                        ignored: Some(rgba(0x395a75ff).into()),
+                        modified: Some(rgba(0xa2bffcff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {

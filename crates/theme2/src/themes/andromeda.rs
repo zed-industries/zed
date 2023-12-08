@@ -63,6 +63,7 @@ pub fn andromeda() -> UserThemeFamily {
                         error: Some(rgba(0xfc644dff).into()),
                         hidden: Some(rgba(0x746f77ff).into()),
                         hint: Some(rgba(0x969696ff).into()),
+                        ignored: Some(rgba(0x555555ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -267,6 +268,7 @@ pub fn andromeda() -> UserThemeFamily {
                         error: Some(rgba(0xfc644dff).into()),
                         hidden: Some(rgba(0x746f77ff).into()),
                         hint: Some(rgba(0x969696ff).into()),
+                        ignored: Some(rgba(0x555555ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {

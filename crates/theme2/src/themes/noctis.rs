@@ -64,10 +64,14 @@ pub fn noctis() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
+                        conflict: Some(rgba(0xffc180ff).into()),
+                        created: Some(rgba(0x40d4e7ff).into()),
                         deleted: Some(rgba(0xe34e1cff).into()),
                         error: Some(rgba(0xe34e1cff).into()),
                         hidden: Some(rgba(0x9fb6c6ff).into()),
                         hint: Some(rgba(0x969696ff).into()),
+                        ignored: Some(rgba(0x5b788bff).into()),
+                        modified: Some(rgba(0x49e9a6ff).into()),
                         warning: Some(rgba(0xffa857ff).into()),
                         ..Default::default()
                     },
@@ -330,10 +334,14 @@ pub fn noctis() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
+                        conflict: Some(rgba(0xffc180ff).into()),
+                        created: Some(rgba(0x40d4e7ff).into()),
                         deleted: Some(rgba(0xe34e1cff).into()),
                         error: Some(rgba(0xe34e1cff).into()),
                         hidden: Some(rgba(0xbbaab0ff).into()),
                         hint: Some(rgba(0x969696ff).into()),
+                        ignored: Some(rgba(0x5b788bff).into()),
+                        modified: Some(rgba(0x49e9a6ff).into()),
                         warning: Some(rgba(0xffa857ff).into()),
                         ..Default::default()
                     },
@@ -596,10 +604,14 @@ pub fn noctis() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
+                        conflict: Some(rgba(0xe9a149ff).into()),
+                        created: Some(rgba(0x00c6e0ff).into()),
                         deleted: Some(rgba(0xff4000ff).into()),
                         error: Some(rgba(0xff4000ff).into()),
                         hidden: Some(rgba(0x71838eff).into()),
                         hint: Some(rgba(0x969696ff).into()),
+                        ignored: Some(rgba(0xa8a28faa).into()),
+                        modified: Some(rgba(0x14b832ff).into()),
                         warning: Some(rgba(0xe07a52ff).into()),
                         ..Default::default()
                     },
@@ -862,10 +874,14 @@ pub fn noctis() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
+                        conflict: Some(rgba(0xe9a149ff).into()),
+                        created: Some(rgba(0x00c6e0ff).into()),
                         deleted: Some(rgba(0xff4000ff).into()),
                         error: Some(rgba(0xff4000ff).into()),
                         hidden: Some(rgba(0x75718eff).into()),
                         hint: Some(rgba(0x969696ff).into()),
+                        ignored: Some(rgba(0xa8a28faa).into()),
+                        modified: Some(rgba(0x14b832ff).into()),
                         warning: Some(rgba(0xe07a52ff).into()),
                         ..Default::default()
                     },
@@ -1128,10 +1144,14 @@ pub fn noctis() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
+                        conflict: Some(rgba(0xe9a149ff).into()),
+                        created: Some(rgba(0x00c6e0ff).into()),
                         deleted: Some(rgba(0xff4000ff).into()),
                         error: Some(rgba(0xff4000ff).into()),
                         hidden: Some(rgba(0x888477ff).into()),
                         hint: Some(rgba(0x969696ff).into()),
+                        ignored: Some(rgba(0xa8a28faa).into()),
+                        modified: Some(rgba(0x14b832ff).into()),
                         warning: Some(rgba(0xe07a52ff).into()),
                         ..Default::default()
                     },
@@ -1394,10 +1414,14 @@ pub fn noctis() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
+                        conflict: Some(rgba(0xdfc09fff).into()),
+                        created: Some(rgba(0x6fb0b8ff).into()),
                         deleted: Some(rgba(0xb96346ff).into()),
                         error: Some(rgba(0xb96346ff).into()),
                         hidden: Some(rgba(0x96a8b6ff).into()),
                         hint: Some(rgba(0x969696ff).into()),
+                        ignored: Some(rgba(0x5b788bff).into()),
+                        modified: Some(rgba(0x72c09fff).into()),
                         warning: Some(rgba(0xffa857ff).into()),
                         ..Default::default()
                     },
@@ -1660,10 +1684,14 @@ pub fn noctis() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
+                        conflict: Some(rgba(0xe4b781ff).into()),
+                        created: Some(rgba(0x40d4e7ff).into()),
                         deleted: Some(rgba(0xe34e1cff).into()),
                         error: Some(rgba(0xe34e1cff).into()),
                         hidden: Some(rgba(0x87a7abff).into()),
                         hint: Some(rgba(0x969696ff).into()),
+                        ignored: Some(rgba(0x5b858bff).into()),
+                        modified: Some(rgba(0x49e9a6ff).into()),
                         warning: Some(rgba(0xffa487ff).into()),
                         ..Default::default()
                     },
@@ -1926,10 +1954,14 @@ pub fn noctis() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
+                        conflict: Some(rgba(0xe4b781ff).into()),
+                        created: Some(rgba(0x40d4e7ff).into()),
                         deleted: Some(rgba(0xe34e1cff).into()),
                         error: Some(rgba(0xe34e1cff).into()),
                         hidden: Some(rgba(0x87a7abff).into()),
                         hint: Some(rgba(0x969696ff).into()),
+                        ignored: Some(rgba(0x647e82ff).into()),
+                        modified: Some(rgba(0x49e9a6ff).into()),
                         warning: Some(rgba(0xffa487ff).into()),
                         ..Default::default()
                     },
@@ -2192,10 +2224,14 @@ pub fn noctis() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
+                        conflict: Some(rgba(0xe4b781ff).into()),
+                        created: Some(rgba(0x40d4e7ff).into()),
                         deleted: Some(rgba(0xe34e1cff).into()),
                         error: Some(rgba(0xe34e1cff).into()),
                         hidden: Some(rgba(0x87a7abff).into()),
                         hint: Some(rgba(0x969696ff).into()),
+                        ignored: Some(rgba(0x647e82ff).into()),
+                        modified: Some(rgba(0x49e9a6ff).into()),
                         warning: Some(rgba(0xffa487ff).into()),
                         ..Default::default()
                     },
@@ -2458,10 +2494,14 @@ pub fn noctis() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
+                        conflict: Some(rgba(0xffc180ff).into()),
+                        created: Some(rgba(0x40d4e7ff).into()),
                         deleted: Some(rgba(0xe34e1cff).into()),
                         error: Some(rgba(0xe34e1cff).into()),
                         hidden: Some(rgba(0xa9a5c0ff).into()),
                         hint: Some(rgba(0x969696ff).into()),
+                        ignored: Some(rgba(0x5b788bff).into()),
+                        modified: Some(rgba(0x49e9a6ff).into()),
                         warning: Some(rgba(0xffa857ff).into()),
                         ..Default::default()
                     },
@@ -2724,10 +2764,14 @@ pub fn noctis() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
+                        conflict: Some(rgba(0xffc180ff).into()),
+                        created: Some(rgba(0x40d4e7ff).into()),
                         deleted: Some(rgba(0xe34e1cff).into()),
                         error: Some(rgba(0xe34e1cff).into()),
                         hidden: Some(rgba(0xb3a5c0ff).into()),
                         hint: Some(rgba(0x969696ff).into()),
+                        ignored: Some(rgba(0x5b788bff).into()),
+                        modified: Some(rgba(0x49e9a6ff).into()),
                         warning: Some(rgba(0xffa857ff).into()),
                         ..Default::default()
                     },
