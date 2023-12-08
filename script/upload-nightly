@@ -20,7 +20,7 @@ function uploadToSpaces
   string="PUT\n\n${content_type}\n${date}\n${acl}\n${storage_type}\n/${SPACE}/${space_path}/${file_name}"
   signature=$(echo -en "${string}" | openssl sha1 -hmac "${DIGITALOCEAN_SPACES_SECRET_KEY}" -binary | base64)
 
-  curl -vv -s -X PUT -T "$file_to_upload" \
+  curl --fail -vv -s -X PUT -T "$file_to_upload" \
     -H "Host: ${SPACE}.${REGION}.digitaloceanspaces.com" \
     -H "Date: $date" \
     -H "Content-Type: $content_type" \
