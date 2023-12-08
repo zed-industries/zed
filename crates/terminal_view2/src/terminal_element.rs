@@ -5,7 +5,7 @@ use gpui::{
     FontStyle, FontWeight, HighlightStyle, Hsla, InteractiveElement, InteractiveElementState,
     IntoElement, LayoutId, Model, ModelContext, ModifiersChangedEvent, MouseButton, Pixels,
     PlatformInputHandler, Point, Rgba, ShapedLine, Size, StatefulInteractiveElement, Styled,
-    TextRun, TextStyle, TextSystem, UnderlineStyle, View, WhiteSpace, WindowContext,
+    TextRun, TextStyle, TextSystem, UnderlineStyle, WhiteSpace, WindowContext,
 };
 use itertools::Itertools;
 use language::CursorShape;
@@ -26,8 +26,6 @@ use ui::Tooltip;
 
 use std::mem;
 use std::{fmt::Debug, ops::RangeInclusive};
-
-use crate::TerminalView;
 
 ///The information generated during layout that is necessary for painting
 pub struct LayoutState {
@@ -149,7 +147,6 @@ impl LayoutRect {
 ///We need to keep a reference to the view for mouse events, do we need it for any other terminal stuff, or can we move that to connection?
 pub struct TerminalElement {
     terminal: Model<Terminal>,
-    terminal_view: View<TerminalView>,
     focus: FocusHandle,
     focused: bool,
     cursor_visible: bool,
@@ -168,7 +165,6 @@ impl StatefulInteractiveElement for TerminalElement {}
 impl TerminalElement {
     pub fn new(
         terminal: Model<Terminal>,
-        terminal_view: View<TerminalView>,
         focus: FocusHandle,
         focused: bool,
         cursor_visible: bool,
@@ -176,7 +172,6 @@ impl TerminalElement {
     ) -> TerminalElement {
         TerminalElement {
             terminal,
-            terminal_view,
             focused,
             focus: focus.clone(),
             cursor_visible,
@@ -774,18 +769,11 @@ impl Element for TerminalElement {
         (layout_id, interactive_state)
     }
 
-    fn paint(
-        mut self,
-        bounds: Bounds<Pixels>,
-        state: &mut Self::State,
-        cx: &mut WindowContext<'_>,
-    ) {
+    fn paint(self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut WindowContext<'_>) {
         let mut layout = self.compute_layout(bounds, cx);
 
         let theme = cx.theme();
 
-        let dispatch_context = self.terminal_view.read(cx).dispatch_context(cx);
-        self.interactivity().key_context = Some(dispatch_context);
         cx.paint_quad(
             bounds,
             Default::default(),

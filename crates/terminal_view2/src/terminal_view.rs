@@ -9,9 +9,10 @@ pub mod terminal_panel;
 // use crate::terminal_element::TerminalElement;
 use editor::{scroll::autoscroll::Autoscroll, Editor};
 use gpui::{
-    div, Action, AnyElement, AppContext, Div, EventEmitter, FocusEvent, FocusHandle, Focusable,
-    FocusableElement, FocusableView, KeyContext, KeyDownEvent, Keystroke, Model, MouseButton,
-    MouseDownEvent, Pixels, Render, Subscription, Task, View, VisualContext, WeakView,
+    div, overlay, Action, AnyElement, AppContext, DismissEvent, Div, EventEmitter, FocusEvent,
+    FocusHandle, Focusable, FocusableElement, FocusableView, KeyContext, KeyDownEvent, Keystroke,
+    Model, MouseButton, MouseDownEvent, Pixels, Render, Styled, Subscription, Task, View,
+    VisualContext, WeakView,
 };
 use language::Bias;
 use persistence::TERMINAL_DB;
@@ -81,7 +82,7 @@ pub struct TerminalView {
     has_new_content: bool,
     //Currently using iTerm bell, show bell emoji in tab until input is received
     has_bell: bool,
-    context_menu: Option<View<ContextMenu>>,
+    context_menu: Option<(View<ContextMenu>, gpui::Point<Pixels>, Subscription)>,
     blink_state: bool,
     blinking_on: bool,
     blinking_paused: bool,
@@ -312,14 +313,24 @@ impl TerminalView {
         position: gpui::Point<Pixels>,
         cx: &mut ViewContext<Self>,
     ) {
-        self.context_menu = Some(ContextMenu::build(cx, |menu, cx| {
+        let context_menu = ContextMenu::build(cx, |menu, cx| {
             menu.action("Clear", Box::new(Clear))
                 .action("Close", Box::new(CloseActiveItem { save_intent: None }))
-        }));
-        // todo!(context menus)
-        //     self.context_menu
-        //         .show(position, AnchorCorner::TopLeft, menu_entries, cx);
-        //     cx.notify();
+        });
+
+        cx.focus_view(&context_menu);
+        let subscription =
+            cx.subscribe(&context_menu, |this, _, _: &DismissEvent, cx| {
+                if this.context_menu.as_ref().is_some_and(|context_menu| {
+                    context_menu.0.focus_handle(cx).contains_focused(cx)
+                }) {
+                    cx.focus_self();
+                }
+                this.context_menu.take();
+                cx.notify();
+            });
+
+        self.context_menu = Some((context_menu, position, subscription));
     }
 
     fn show_character_palette(&mut self, _: &ShowCharacterPalette, cx: &mut ViewContext<Self>) {
@@ -621,7 +632,6 @@ impl Render for TerminalView {
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         let terminal_handle = self.terminal.clone();
-        let this_view = cx.view().clone();
 
         let self_id = cx.entity_id();
         let focused = self.focus_handle.is_focused(cx);
@@ -629,43 +639,41 @@ impl Render for TerminalView {
         div()
             .size_full()
             .relative()
-            .child(
-                div()
-                    .z_index(0)
-                    .absolute()
-                    .size_full()
-                    .on_key_down(cx.listener(Self::key_down))
-                    .on_action(cx.listener(TerminalView::send_text))
-                    .on_action(cx.listener(TerminalView::send_keystroke))
-                    .on_action(cx.listener(TerminalView::copy))
-                    .on_action(cx.listener(TerminalView::paste))
-                    .on_action(cx.listener(TerminalView::clear))
-                    .on_action(cx.listener(TerminalView::show_character_palette))
-                    .on_action(cx.listener(TerminalView::select_all))
-                    .child(TerminalElement::new(
-                        terminal_handle,
-                        this_view,
-                        self.focus_handle.clone(),
-                        focused,
-                        self.should_show_cursor(focused, cx),
-                        self.can_navigate_to_selected_word,
-                    ))
-                    .on_mouse_down(
-                        MouseButton::Right,
-                        cx.listener(|this, event: &MouseDownEvent, cx| {
-                            this.deploy_context_menu(event.position, cx);
-                            cx.notify();
-                        }),
-                    ),
-            )
-            .children(
-                self.context_menu
-                    .clone()
-                    .map(|context_menu| div().z_index(1).absolute().child(context_menu)),
-            )
             .track_focus(&self.focus_handle)
+            .key_context(self.dispatch_context(cx))
+            .on_action(cx.listener(TerminalView::send_text))
+            .on_action(cx.listener(TerminalView::send_keystroke))
+            .on_action(cx.listener(TerminalView::copy))
+            .on_action(cx.listener(TerminalView::paste))
+            .on_action(cx.listener(TerminalView::clear))
+            .on_action(cx.listener(TerminalView::show_character_palette))
+            .on_action(cx.listener(TerminalView::select_all))
             .on_focus_in(cx.listener(Self::focus_in))
             .on_focus_out(cx.listener(Self::focus_out))
+            .on_key_down(cx.listener(Self::key_down))
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(|this, event: &MouseDownEvent, cx| {
+                    this.deploy_context_menu(event.position, cx);
+                    cx.notify();
+                }),
+            )
+            .child(
+                // TODO: Oddly this wrapper div is needed for TerminalElement to not steal events from the context menu
+                div().size_full().child(TerminalElement::new(
+                    terminal_handle,
+                    self.focus_handle.clone(),
+                    focused,
+                    self.should_show_cursor(focused, cx),
+                    self.can_navigate_to_selected_word,
+                )),
+            )
+            .children(self.context_menu.as_ref().map(|(menu, positon, _)| {
+                overlay()
+                    .position(*positon)
+                    .anchor(gpui::AnchorCorner::TopLeft)
+                    .child(menu.clone())
+            }))
     }
 }
 
