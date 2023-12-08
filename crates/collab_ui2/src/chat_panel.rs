@@ -19,6 +19,7 @@ use rich_text::RichText;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::sync::Arc;
+use theme::ActiveTheme as _;
 use time::{OffsetDateTime, UtcOffset};
 use ui::{
     h_stack, prelude::WindowContext, v_stack, Avatar, Button, ButtonCommon as _, Clickable, Icon,
@@ -317,7 +318,12 @@ impl ChatPanel {
             .child(
                 h_stack()
                     .w_full()
+                    .h_7()
                     .justify_between()
+                    .z_index(1)
+                    .bg(cx.theme().colors().background)
+                    .border()
+                    .border_color(gpui::red())
                     .child(Label::new(
                         self.active_chat
                             .as_ref()
@@ -339,7 +345,13 @@ impl ChatPanel {
                     ),
             )
             .child(div().grow().child(self.render_active_channel_messages(cx)))
-            .child(self.input_editor.clone())
+            .child(
+                div()
+                    .z_index(1)
+                    .p_2()
+                    .bg(cx.theme().colors().background)
+                    .child(self.input_editor.clone()),
+            )
             .into_any()
     }
 
