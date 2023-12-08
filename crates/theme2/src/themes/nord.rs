@@ -90,6 +90,13 @@ pub fn nord() -> UserThemeFamily {
                             },
                         ),
                         (
+                            "comment.doc".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0x616e88ff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
                             "constant".into(),
                             UserHighlightStyle {
                                 color: Some(rgba(0xebcb8bff).into()),

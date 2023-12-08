@@ -76,6 +76,14 @@ pub fn synthwave_84() -> UserThemeFamily {
                             },
                         ),
                         (
+                            "comment.doc".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0x848bbdff).into()),
+                                font_style: Some(UserFontStyle::Italic),
+                                ..Default::default()
+                            },
+                        ),
+                        (
                             "function".into(),
                             UserHighlightStyle {
                                 color: Some(rgba(0x36f9f6ff).into()),

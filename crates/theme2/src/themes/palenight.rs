@@ -90,6 +90,14 @@ pub fn palenight() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "comment.doc".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x697098ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "constant".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x82aaffff).into()),
@@ -289,6 +297,13 @@ pub fn palenight() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "comment.doc".into(),
+                                UserHighlightStyle {
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "constant".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x82aaffff).into()),
@@ -482,6 +497,14 @@ pub fn palenight() -> UserThemeFamily {
                             ),
                             (
                                 "comment".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x697098ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "comment.doc".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x697098ff).into()),
                                     font_style: Some(UserFontStyle::Italic),

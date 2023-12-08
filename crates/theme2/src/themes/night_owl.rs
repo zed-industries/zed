@@ -91,6 +91,14 @@ pub fn night_owl() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "comment.doc".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x637777ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "constant".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x82aaffff).into()),
@@ -242,6 +250,14 @@ pub fn night_owl() -> UserThemeFamily {
                             ),
                             (
                                 "comment".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x989fb1ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "comment.doc".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x989fb1ff).into()),
                                     font_style: Some(UserFontStyle::Italic),

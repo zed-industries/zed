@@ -170,6 +170,14 @@ impl ZedSyntaxToken {
         Some(matches)
     }
 
+    pub fn fallbacks(&self) -> &[Self] {
+        match self {
+            ZedSyntaxToken::CommentDoc => &[ZedSyntaxToken::Comment],
+            ZedSyntaxToken::VariableSpecial => &[ZedSyntaxToken::Variable],
+            _ => &[],
+        }
+    }
+
     pub fn to_vscode(&self) -> Vec<&'static str> {
         match self {
             ZedSyntaxToken::Attribute => vec!["entity.other.attribute-name"],
@@ -193,6 +201,7 @@ impl ZedSyntaxToken {
                 "variable.function",
                 "support.function",
             ],
+            ZedSyntaxToken::Hint => vec![],
             ZedSyntaxToken::Keyword => vec!["keyword"],
             ZedSyntaxToken::Label => vec![
                 "label",
@@ -204,7 +213,9 @@ impl ZedSyntaxToken {
             ZedSyntaxToken::LinkUri => vec!["markup.underline.link", "string.other.link"],
             ZedSyntaxToken::Number => vec!["constant.numeric", "number"],
             ZedSyntaxToken::Operator => vec!["operator", "keyword.operator"],
+            ZedSyntaxToken::Predictive => vec![],
             ZedSyntaxToken::Preproc => vec!["preproc"],
+            ZedSyntaxToken::Primary => vec![],
             ZedSyntaxToken::Property => vec![
                 "variable.member",
                 "support.type.property-name",
@@ -259,7 +270,6 @@ impl ZedSyntaxToken {
                 "variable.language",
             ],
             ZedSyntaxToken::Variant => vec!["variant"],
-            _ => vec![],
         }
     }
 }

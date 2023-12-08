@@ -90,6 +90,14 @@ pub fn ayu() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "comment.doc".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x787b8099).into()),
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "constant".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x4cbf99ff).into()),
@@ -353,6 +361,14 @@ pub fn ayu() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "comment.doc".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xb8cfe680).into()),
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "constant".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x95e6cbff).into()),
@@ -609,6 +625,14 @@ pub fn ayu() -> UserThemeFamily {
                             ),
                             (
                                 "comment".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xacb6bf8c).into()),
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "comment.doc".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xacb6bf8c).into()),
                                     font_style: Some(UserFontStyle::Italic),

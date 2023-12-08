@@ -275,11 +275,16 @@ impl VsCodeThemeConverter {
         let mut highlight_styles = IndexMap::new();
 
         for syntax_token in ZedSyntaxToken::iter() {
-            let Some(token_color) =
-                syntax_token.find_best_token_color_match(&self.theme.token_colors)
-            else {
-                log::warn!("No matching token color found for '{syntax_token}'");
+            let best_match = syntax_token
+                .find_best_token_color_match(&self.theme.token_colors)
+                .or_else(|| {
+                    syntax_token.fallbacks().iter().find_map(|fallback| {
+                        fallback.find_best_token_color_match(&self.theme.token_colors)
+                    })
+                });
 
+            let Some(token_color) = best_match else {
+                log::warn!("No matching token color found for '{syntax_token}'");
                 continue;
             };
 

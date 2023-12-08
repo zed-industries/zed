@@ -57,11 +57,13 @@ fn main() -> Result<()> {
     const OUT_PATH: &str = "crates/theme2/src/themes";
 
     let log_config = simplelog::ConfigBuilder::new()
+        .set_level_color(log::Level::Trace, simplelog::Color::Cyan)
         .set_level_color(log::Level::Info, simplelog::Color::Blue)
         .set_level_color(log::Level::Warn, simplelog::Color::Yellow)
+        .set_level_color(log::Level::Error, simplelog::Color::Red)
         .build();
 
-    TermLogger::init(LevelFilter::Info, log_config, TerminalMode::Mixed)
+    TermLogger::init(LevelFilter::Trace, log_config, TerminalMode::Mixed)
         .expect("could not initialize logger");
 
     log::info!("Loading themes source...");
