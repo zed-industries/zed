@@ -384,7 +384,7 @@ impl Render for FeedbackModal {
                                             .on_click(cx.listener(|this, _, cx| {
                                                 let _ = this.submit(cx);
                                             }))
-                                            .tooltip(|cx| {
+                                            .tooltip(move |cx| {
                                                 Tooltip::with_meta(
                                                     "Submit feedback to the Zed team.",
                                                     None,
