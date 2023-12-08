@@ -1,3 +1,4 @@
+use indexmap::IndexMap;
 use serde::Deserialize;
 use strum::EnumIter;
 
@@ -21,6 +22,7 @@ impl VsCodeTokenScope {
 
 #[derive(Debug, Deserialize)]
 pub struct VsCodeTokenColor {
+    pub name: Option<String>,
     pub scope: Option<VsCodeTokenScope>,
     pub settings: VsCodeTokenColorSettings,
 }
@@ -127,6 +129,47 @@ impl std::fmt::Display for ZedSyntaxToken {
 }
 
 impl ZedSyntaxToken {
+    pub fn find_best_token_color_match<'a>(
+        &self,
+        token_colors: &'a [VsCodeTokenColor],
+    ) -> Option<&'a VsCodeTokenColor> {
+        let mut ranked_matches = IndexMap::new();
+
+        for (ix, token_color) in token_colors.iter().enumerate() {
+            let Some(rank) = self.rank_match(token_color) else {
+                continue;
+            };
+
+            if rank > 0 {
+                ranked_matches.insert(ix, rank);
+            }
+        }
+
+        ranked_matches
+            .into_iter()
+            .max_by_key(|(_, rank)| *rank)
+            .map(|(ix, _)| &token_colors[ix])
+    }
+
+    fn rank_match(&self, token_color: &VsCodeTokenColor) -> Option<u32> {
+        let scopes_to_match = self.to_vscode();
+
+        let candidate_scopes = match token_color.scope.as_ref()? {
+            VsCodeTokenScope::One(scope) => vec![scope],
+            VsCodeTokenScope::Many(scopes) => scopes.iter().collect(),
+        };
+
+        let mut matches = 0;
+
+        for candidate_scope in candidate_scopes {
+            if scopes_to_match.contains(&candidate_scope.as_str()) {
+                matches += 1;
+            }
+        }
+
+        Some(matches)
+    }
+
     pub fn to_vscode(&self) -> Vec<&'static str> {
         match self {
             ZedSyntaxToken::Attribute => vec!["entity.other.attribute-name"],
@@ -218,5 +261,34 @@ impl ZedSyntaxToken {
             ZedSyntaxToken::Variant => vec!["variant"],
             _ => vec![],
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_scope_multimatch_with_no_matches() {
+        assert_eq!(
+            VsCodeTokenScope::Many(vec![
+                "entity.name.function".to_string(),
+                "variable.function".to_string()
+            ])
+            .multimatch(&["entity.name"]),
+            false
+        );
+    }
+
+    #[test]
+    fn test_scope_multimatch_with_one_match() {
+        assert_eq!(
+            VsCodeTokenScope::Many(vec![
+                "entity.name.function".to_string(),
+                "variable.function".to_string()
+            ])
+            .multimatch(&["entity.name.function"]),
+            true
+        );
     }
 }
