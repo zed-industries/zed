@@ -51,12 +51,12 @@ pub fn synthwave_84() -> UserThemeFamily {
                     ..Default::default()
                 },
                 status: StatusColorsRefinement {
-                    created: Some(rgba(0x72f1b8ff).into()),
-                    deleted: Some(rgba(0xfe4450ff).into()),
+                    created: Some(rgba(0x206d4bd6).into()),
+                    deleted: Some(rgba(0xfa2e46a4).into()),
                     error: Some(rgba(0xfe4450ff).into()),
                     hint: Some(rgba(0x969696ff).into()),
                     ignored: Some(rgba(0xffffff59).into()),
-                    modified: Some(rgba(0xb893ceee).into()),
+                    modified: Some(rgba(0xb893ce8f).into()),
                     warning: Some(rgba(0x72f1b8bb).into()),
                     ..Default::default()
                 },

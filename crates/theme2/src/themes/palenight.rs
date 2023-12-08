@@ -65,13 +65,13 @@ pub fn palenight() -> UserThemeFamily {
                     },
                     status: StatusColorsRefinement {
                         conflict: Some(rgba(0xffeb95cc).into()),
-                        created: Some(rgba(0xa9c77dff).into()),
+                        created: Some(rgba(0x9ccc65ff).into()),
                         deleted: Some(rgba(0xef5350ff).into()),
                         error: Some(rgba(0xef5350ff).into()),
                         hidden: Some(rgba(0x929ac9ff).into()),
                         hint: Some(rgba(0x969696ff).into()),
                         ignored: Some(rgba(0x69709890).into()),
-                        modified: Some(rgba(0xe2c08de6).into()),
+                        modified: Some(rgba(0xe2b93dff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -345,13 +345,13 @@ pub fn palenight() -> UserThemeFamily {
                     },
                     status: StatusColorsRefinement {
                         conflict: Some(rgba(0xffeb95cc).into()),
-                        created: Some(rgba(0xa9c77dff).into()),
+                        created: Some(rgba(0x9ccc65ff).into()),
                         deleted: Some(rgba(0xef5350ff).into()),
                         error: Some(rgba(0xef5350ff).into()),
                         hidden: Some(rgba(0x929ac9ff).into()),
                         hint: Some(rgba(0x969696ff).into()),
                         ignored: Some(rgba(0x69709890).into()),
-                        modified: Some(rgba(0xe2c08de6).into()),
+                        modified: Some(rgba(0xe2b93dff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -625,13 +625,13 @@ pub fn palenight() -> UserThemeFamily {
                     },
                     status: StatusColorsRefinement {
                         conflict: Some(rgba(0xffeb95cc).into()),
-                        created: Some(rgba(0xa9c77dff).into()),
+                        created: Some(rgba(0x9ccc65ff).into()),
                         deleted: Some(rgba(0xef5350ff).into()),
                         error: Some(rgba(0xef5350ff).into()),
                         hidden: Some(rgba(0x929ac9ff).into()),
                         hint: Some(rgba(0x969696ff).into()),
                         ignored: Some(rgba(0x69709890).into()),
-                        modified: Some(rgba(0xe2c08de6).into()),
+                        modified: Some(rgba(0xe2b93dff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {

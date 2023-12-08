@@ -60,11 +60,13 @@ pub fn andromeda() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
-                        deleted: Some(rgba(0xfc644dff).into()),
+                        created: Some(rgba(0x9bc53dbb).into()),
+                        deleted: Some(rgba(0xfc644dbb).into()),
                         error: Some(rgba(0xfc644dff).into()),
                         hidden: Some(rgba(0x746f77ff).into()),
                         hint: Some(rgba(0x969696ff).into()),
                         ignored: Some(rgba(0x555555ff).into()),
+                        modified: Some(rgba(0x5bc0ebbb).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -266,11 +268,13 @@ pub fn andromeda() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
-                        deleted: Some(rgba(0xfc644dff).into()),
+                        created: Some(rgba(0x9bc53dbb).into()),
+                        deleted: Some(rgba(0xfc644dbb).into()),
                         error: Some(rgba(0xfc644dff).into()),
                         hidden: Some(rgba(0x746f77ff).into()),
                         hint: Some(rgba(0x969696ff).into()),
                         ignored: Some(rgba(0x555555ff).into()),
+                        modified: Some(rgba(0x5bc0ebbb).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {

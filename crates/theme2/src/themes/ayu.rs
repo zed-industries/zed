@@ -64,13 +64,13 @@ pub fn ayu() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
-                        created: Some(rgba(0x6cbf43b3).into()),
-                        deleted: Some(rgba(0xe65050ff).into()),
+                        created: Some(rgba(0x6cbf43cc).into()),
+                        deleted: Some(rgba(0xff7383cc).into()),
                         error: Some(rgba(0xe65050ff).into()),
                         hidden: Some(rgba(0x8a9199ff).into()),
                         hint: Some(rgba(0x969696ff).into()),
                         ignored: Some(rgba(0x8a919980).into()),
-                        modified: Some(rgba(0x478accb3).into()),
+                        modified: Some(rgba(0x478acccc).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -364,13 +364,13 @@ pub fn ayu() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
-                        created: Some(rgba(0x87d96cb3).into()),
-                        deleted: Some(rgba(0xff6666ff).into()),
+                        created: Some(rgba(0x87d96ccc).into()),
+                        deleted: Some(rgba(0xf27983cc).into()),
                         error: Some(rgba(0xff6666ff).into()),
                         hidden: Some(rgba(0x707a8cff).into()),
                         hint: Some(rgba(0x969696ff).into()),
                         ignored: Some(rgba(0x707a8c80).into()),
-                        modified: Some(rgba(0x80bfffb3).into()),
+                        modified: Some(rgba(0x80bfffcc).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -664,13 +664,13 @@ pub fn ayu() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
-                        created: Some(rgba(0x7fd962b3).into()),
-                        deleted: Some(rgba(0xd95757ff).into()),
+                        created: Some(rgba(0x7fd962cc).into()),
+                        deleted: Some(rgba(0xf26d78cc).into()),
                         error: Some(rgba(0xd95757ff).into()),
                         hidden: Some(rgba(0x565b66ff).into()),
                         hint: Some(rgba(0x969696ff).into()),
                         ignored: Some(rgba(0x565b6680).into()),
-                        modified: Some(rgba(0x73b8ffb3).into()),
+                        modified: Some(rgba(0x73b8ffcc).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
