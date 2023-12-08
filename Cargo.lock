@@ -1154,6 +1154,7 @@ dependencies = [
  "gpui2",
  "itertools 0.10.5",
  "language2",
+ "outline2",
  "project2",
  "search2",
  "settings2",
