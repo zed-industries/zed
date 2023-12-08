@@ -32,7 +32,7 @@ impl Render for DeployFeedbackButton {
         IconButton::new("give-feedback", Icon::Envelope)
             .style(ui::ButtonStyle::Subtle)
             .selected(is_open)
-            .tooltip(|cx| Tooltip::text("Give Feedback", cx))
+            .tooltip(|cx| Tooltip::text("Share Feedback", cx))
             .on_click(|_, cx| {
                 cx.dispatch_action(Box::new(GiveFeedback));
             })

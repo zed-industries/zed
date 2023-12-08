@@ -5,8 +5,8 @@ use gpui::{
     div, AnyView, Div, IntoElement, ParentElement, Render, Styled, Subscription, View, ViewContext,
     WindowContext,
 };
+use ui::h_stack;
 use ui::prelude::*;
-use ui::{h_stack, Icon, IconButton};
 use util::ResultExt;
 
 pub trait StatusItemView: Render {
@@ -48,30 +48,7 @@ impl Render for StatusBar {
             .h_8()
             .bg(cx.theme().colors().status_bar_background)
             .child(h_stack().gap_1().child(self.render_left_tools(cx)))
-            .child(
-                h_stack()
-                    .gap_4()
-                    .child(
-                        h_stack().gap_1().child(
-                            // Feedback Tool
-                            div()
-                                .border()
-                                .border_color(gpui::red())
-                                .child(IconButton::new("status-feedback", Icon::Envelope)),
-                        ),
-                    )
-                    .child(
-                        // Right Dock
-                        h_stack().gap_1().child(
-                            // Terminal
-                            div()
-                                .border()
-                                .border_color(gpui::red())
-                                .child(IconButton::new("status-chat", Icon::MessageBubbles)),
-                        ),
-                    )
-                    .child(self.render_right_tools(cx)),
-            )
+            .child(h_stack().gap_4().child(self.render_right_tools(cx)))
     }
 }
 
