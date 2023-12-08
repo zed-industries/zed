@@ -385,17 +385,17 @@ impl EditorElement {
         gutter_bounds: Bounds<Pixels>,
         stacking_order: &StackingOrder,
         cx: &mut ViewContext<Editor>,
-    ) -> bool {
+    ) {
         let mut click_count = event.click_count;
         let modifiers = event.modifiers;
 
         if gutter_bounds.contains_point(&event.position) {
             click_count = 3; // Simulate triple-click when clicking the gutter to select lines
         } else if !text_bounds.contains_point(&event.position) {
-            return false;
+            return;
         }
         if !cx.was_top_layer(&event.position, stacking_order) {
-            return false;
+            return;
         }
 
         let point_for_position = position_map.point_for_position(text_bounds, event.position);
@@ -427,7 +427,7 @@ impl EditorElement {
             );
         }
 
-        true
+        cx.stop_propagation();
     }
 
     fn mouse_right_down(
@@ -436,9 +436,9 @@ impl EditorElement {
         position_map: &PositionMap,
         text_bounds: Bounds<Pixels>,
         cx: &mut ViewContext<Editor>,
-    ) -> bool {
+    ) {
         if !text_bounds.contains_point(&event.position) {
-            return false;
+            return;
         }
         let point_for_position = position_map.point_for_position(text_bounds, event.position);
         mouse_context_menu::deploy_context_menu(
@@ -447,7 +447,7 @@ impl EditorElement {
             point_for_position.previous_valid,
             cx,
         );
-        true
+        cx.stop_propagation();
     }
 
     fn mouse_up(
@@ -457,7 +457,7 @@ impl EditorElement {
         text_bounds: Bounds<Pixels>,
         stacking_order: &StackingOrder,
         cx: &mut ViewContext<Editor>,
-    ) -> bool {
+    ) {
         let end_selection = editor.has_pending_selection();
         let pending_nonempty_selections = editor.has_pending_nonempty_selection();
 
@@ -479,10 +479,10 @@ impl EditorElement {
                 go_to_fetched_definition(editor, point, split, cx);
             }
 
-            return true;
+            cx.stop_propagation();
+        } else if end_selection {
+            cx.stop_propagation();
         }
-
-        end_selection
     }
 
     fn mouse_moved(
@@ -493,7 +493,7 @@ impl EditorElement {
         gutter_bounds: Bounds<Pixels>,
         stacking_order: &StackingOrder,
         cx: &mut ViewContext<Editor>,
-    ) -> bool {
+    ) {
         let modifiers = event.modifiers;
         if editor.has_pending_selection() && event.pressed_button == Some(MouseButton::Left) {
             let point_for_position = position_map.point_for_position(text_bounds, event.position);
@@ -562,11 +562,13 @@ impl EditorElement {
                 }
             }
 
-            true
+            cx.stop_propagation();
         } else {
             update_go_to_definition_link(editor, None, modifiers.command, modifiers.shift, cx);
             hover_at(editor, None, cx);
-            gutter_hovered && was_top
+            if gutter_hovered && was_top {
+                cx.stop_propagation();
+            }
         }
     }
 
@@ -576,9 +578,9 @@ impl EditorElement {
         position_map: &PositionMap,
         bounds: &InteractiveBounds,
         cx: &mut ViewContext<Editor>,
-    ) -> bool {
+    ) {
         if !bounds.visibly_contains(&event.position, cx) {
-            return false;
+            return;
         }
 
         let line_height = position_map.line_height;
@@ -602,8 +604,7 @@ impl EditorElement {
         let y = f32::from((scroll_position.y * line_height - delta.y) / line_height);
         let scroll_position = point(x, y).clamp(&point(0., 0.), &position_map.scroll_max);
         editor.scroll(scroll_position, axis, cx);
-
-        true
+        cx.stop_propagation();
     }
 
     fn paint_background(
@@ -2438,12 +2439,9 @@ impl EditorElement {
                     return;
                 }
 
-                let handled = editor.update(cx, |editor, cx| {
+                editor.update(cx, |editor, cx| {
                     Self::scroll(editor, event, &position_map, &interactive_bounds, cx)
                 });
-                if handled {
-                    cx.stop_propagation();
-                }
             }
         });
 
@@ -2457,7 +2455,7 @@ impl EditorElement {
                     return;
                 }
 
-                let handled = match event.button {
+                match event.button {
                     MouseButton::Left => editor.update(cx, |editor, cx| {
                         Self::mouse_left_down(
                             editor,
@@ -2472,12 +2470,8 @@ impl EditorElement {
                     MouseButton::Right => editor.update(cx, |editor, cx| {
                         Self::mouse_right_down(editor, event, &position_map, text_bounds, cx)
                     }),
-                    _ => false,
+                    _ => {}
                 };
-
-                if handled {
-                    cx.stop_propagation()
-                }
             }
         });
 
@@ -2487,7 +2481,7 @@ impl EditorElement {
             let stacking_order = cx.stacking_order().clone();
 
             move |event: &MouseUpEvent, phase, cx| {
-                let handled = editor.update(cx, |editor, cx| {
+                editor.update(cx, |editor, cx| {
                     Self::mouse_up(
                         editor,
                         event,
@@ -2497,10 +2491,6 @@ impl EditorElement {
                         cx,
                     )
                 });
-
-                if handled {
-                    cx.stop_propagation()
-                }
             }
         });
         cx.on_mouse_event({
@@ -2513,7 +2503,7 @@ impl EditorElement {
                     return;
                 }
 
-                let stop_propogating = editor.update(cx, |editor, cx| {
+                editor.update(cx, |editor, cx| {
                     Self::mouse_moved(
                         editor,
                         event,
@@ -2524,10 +2514,6 @@ impl EditorElement {
                         cx,
                     )
                 });
-
-                if stop_propogating {
-                    cx.stop_propagation()
-                }
             }
         });
     }
