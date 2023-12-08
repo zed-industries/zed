@@ -1,6 +1,7 @@
 #[macro_use]
 mod action;
 mod app;
+
 mod assets;
 mod color;
 mod element;
@@ -15,6 +16,7 @@ mod keymap;
 mod platform;
 pub mod prelude;
 mod scene;
+mod shared_string;
 mod style;
 mod styled;
 mod subscription;
@@ -57,6 +59,7 @@ pub use scene::*;
 pub use serde;
 pub use serde_derive;
 pub use serde_json;
+pub use shared_string::*;
 pub use smallvec;
 pub use smol::Timer;
 pub use style::*;
@@ -76,6 +79,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     any::{Any, TypeId},
     borrow::{Borrow, BorrowMut},
+    sync::Arc,
 };
 use taffy::TaffyLayoutEngine;
 
@@ -208,63 +212,5 @@ impl<T> Flatten<T> for Result<Result<T>> {
 impl<T> Flatten<T> for Result<T> {
     fn flatten(self) -> Result<T> {
         self
-    }
-}
-
-#[derive(Deref, DerefMut, Eq, PartialEq, Hash, Clone)]
-pub struct SharedString(ArcCow<'static, str>);
-
-impl Default for SharedString {
-    fn default() -> Self {
-        Self(ArcCow::Owned("".into()))
-    }
-}
-
-impl AsRef<str> for SharedString {
-    fn as_ref(&self) -> &str {
-        &self.0
-    }
-}
-
-impl Borrow<str> for SharedString {
-    fn borrow(&self) -> &str {
-        self.as_ref()
-    }
-}
-
-impl std::fmt::Debug for SharedString {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.0.fmt(f)
-    }
-}
-
-impl std::fmt::Display for SharedString {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0.as_ref())
-    }
-}
-
-impl<T: Into<ArcCow<'static, str>>> From<T> for SharedString {
-    fn from(value: T) -> Self {
-        Self(value.into())
-    }
-}
-
-impl Serialize for SharedString {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        serializer.serialize_str(self.as_ref())
-    }
-}
-
-impl<'de> Deserialize<'de> for SharedString {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let s = String::deserialize(deserializer)?;
-        Ok(SharedString::from(s))
     }
 }

@@ -1,6 +1,6 @@
 use crate::{
     px, AnyElement, AvailableSpace, BorrowAppContext, DispatchPhase, Element, IntoElement, Pixels,
-    Point, ScrollWheelEvent, Size, Style, StyleRefinement, ViewContext, WindowContext,
+    Point, ScrollWheelEvent, Size, Style, StyleRefinement, WindowContext,
 };
 use collections::VecDeque;
 use std::{cell::RefCell, ops::Range, rc::Rc};
@@ -26,14 +26,14 @@ struct StateInner {
     render_item: Box<dyn FnMut(usize, &mut WindowContext) -> AnyElement>,
     items: SumTree<ListItem>,
     logical_scroll_top: Option<ListOffset>,
-    orientation: Orientation,
+    alignment: ListAlignment,
     overdraw: Pixels,
     #[allow(clippy::type_complexity)]
     scroll_handler: Option<Box<dyn FnMut(&ListScrollEvent, &mut WindowContext)>>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Orientation {
+pub enum ListAlignment {
     Top,
     Bottom,
 }
@@ -70,28 +70,23 @@ struct UnrenderedCount(usize);
 struct Height(Pixels);
 
 impl ListState {
-    pub fn new<F, V>(
+    pub fn new<F>(
         element_count: usize,
-        orientation: Orientation,
+        orientation: ListAlignment,
         overdraw: Pixels,
-        cx: &mut ViewContext<V>,
-        mut render_item: F,
+        render_item: F,
     ) -> Self
     where
-        F: 'static + FnMut(&mut V, usize, &mut ViewContext<V>) -> AnyElement,
-        V: 'static,
+        F: 'static + FnMut(usize, &mut WindowContext) -> AnyElement,
     {
         let mut items = SumTree::new();
         items.extend((0..element_count).map(|_| ListItem::Unrendered), &());
-        let view = cx.view().clone();
         Self(Rc::new(RefCell::new(StateInner {
             last_layout_width: None,
-            render_item: Box::new(move |ix, cx| {
-                view.update(cx, |view, cx| render_item(view, ix, cx))
-            }),
+            render_item: Box::new(render_item),
             items,
             logical_scroll_top: None,
-            orientation,
+            alignment: orientation,
             overdraw,
             scroll_handler: None,
         })))
@@ -179,7 +174,7 @@ impl StateInner {
             .max(px(0.))
             .min(scroll_max);
 
-        if self.orientation == Orientation::Bottom && new_scroll_top == scroll_max {
+        if self.alignment == ListAlignment::Bottom && new_scroll_top == scroll_max {
             self.logical_scroll_top = None;
         } else {
             let mut cursor = self.items.cursor::<ListItemSummary>();
@@ -208,12 +203,12 @@ impl StateInner {
 
     fn logical_scroll_top(&self) -> ListOffset {
         self.logical_scroll_top
-            .unwrap_or_else(|| match self.orientation {
-                Orientation::Top => ListOffset {
+            .unwrap_or_else(|| match self.alignment {
+                ListAlignment::Top => ListOffset {
                     item_ix: 0,
                     offset_in_item: px(0.),
                 },
-                Orientation::Bottom => ListOffset {
+                ListAlignment::Bottom => ListOffset {
                     item_ix: self.items.summary().count,
                     offset_in_item: px(0.),
                 },
@@ -344,12 +339,12 @@ impl Element for List {
                 offset_in_item: rendered_height - bounds.size.height,
             };
 
-            match state.orientation {
-                Orientation::Top => {
+            match state.alignment {
+                ListAlignment::Top => {
                     scroll_top.offset_in_item = scroll_top.offset_in_item.max(px(0.));
                     state.logical_scroll_top = Some(scroll_top);
                 }
-                Orientation::Bottom => {
+                ListAlignment::Bottom => {
                     scroll_top = ListOffset {
                         item_ix: cursor.start().0,
                         offset_in_item: rendered_height - bounds.size.height,

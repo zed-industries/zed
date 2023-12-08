@@ -852,7 +852,7 @@ impl CollabPanel {
                     .extend(channel_store.ordered_channels().enumerate().map(
                         |(ix, (_, channel))| StringMatchCandidate {
                             id: ix,
-                            string: channel.name.clone(),
+                            string: channel.name.clone().into(),
                             char_bag: channel.name.chars().collect(),
                         },
                     ));
@@ -2262,7 +2262,7 @@ impl CollabPanel {
                         }
                     };
 
-                    Some(channel.name.as_str())
+                    Some(channel.name.as_ref())
                 });
 
                 if let Some(name) = channel_name {
