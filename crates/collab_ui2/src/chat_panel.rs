@@ -8,8 +8,8 @@ use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
 use gpui::{
     actions, div, list, prelude::*, px, serde_json, AnyElement, AppContext, AsyncWindowContext,
-    ClickEvent, Div, EventEmitter, FocusableView, ListOffset, ListScrollEvent, ListState, Model,
-    Render, SharedString, Subscription, Task, View, ViewContext, VisualContext, WeakView,
+    ClickEvent, Div, ElementId, EventEmitter, FocusableView, ListOffset, ListScrollEvent,
+    ListState, Model, Render, Subscription, Task, View, ViewContext, VisualContext, WeakView,
 };
 use language::LanguageRegistry;
 use menu::Confirm;
@@ -342,10 +342,15 @@ impl ChatPanel {
             None
         };
 
+        let element_id: ElementId = match message.id {
+            ChannelMessageId::Saved(id) => ("saved-message", id).into(),
+            ChannelMessageId::Pending(id) => ("pending-message", id).into(),
+        };
+
         // todo!("render the text with markdown formatting")
         if is_continuation {
             h_stack()
-                .child(SharedString::from(text.text.clone()))
+                .child(text.element(element_id, cx))
                 .child(render_remove(message_id_to_remove, cx))
                 .mb_1()
                 .into_any()
@@ -370,7 +375,7 @@ impl ChatPanel {
                 )
                 .child(
                     h_stack()
-                        .child(SharedString::from(text.text.clone()))
+                        .child(text.element(element_id, cx))
                         .child(render_remove(None, cx)),
                 )
                 .mb_1()
@@ -629,7 +634,7 @@ mod tests {
     use super::*;
     use gpui::HighlightStyle;
     use pretty_assertions::assert_eq;
-    use rich_text::{BackgroundKind, Highlight, RenderedRegion};
+    use rich_text::Highlight;
     use util::test::marked_text_ranges;
 
     #[gpui::test]
@@ -675,19 +680,6 @@ mod tests {
                     .into()
                 ),
                 (ranges[3].clone(), Highlight::SelfMention)
-            ]
-        );
-        assert_eq!(
-            message.regions,
-            vec![
-                RenderedRegion {
-                    background_kind: Some(BackgroundKind::Mention),
-                    link_url: None
-                },
-                RenderedRegion {
-                    background_kind: Some(BackgroundKind::SelfMention),
-                    link_url: None
-                },
             ]
         );
     }
