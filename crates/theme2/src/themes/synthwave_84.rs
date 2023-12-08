@@ -221,8 +221,7 @@ pub fn synthwave_84() -> UserThemeFamily {
                         (
                             "variable".into(),
                             UserHighlightStyle {
-                                color: Some(rgba(0xfe4450ff).into()),
-                                font_weight: Some(UserFontWeight(700.0)),
+                                color: Some(rgba(0xff7edbff).into()),
                                 ..Default::default()
                             },
                         ),

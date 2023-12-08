@@ -111,7 +111,7 @@ pub fn rose_pine() -> UserThemeFamily {
                             (
                                 "constant".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xebbcbaff).into()),
+                                    color: Some(rgba(0x31748fff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -153,35 +153,35 @@ pub fn rose_pine() -> UserThemeFamily {
                             (
                                 "punctuation".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x6e6a86ff).into()),
+                                    color: Some(rgba(0x908caaff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "punctuation.bracket".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x6e6a86ff).into()),
+                                    color: Some(rgba(0x908caaff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "punctuation.delimiter".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x6e6a86ff).into()),
+                                    color: Some(rgba(0x908caaff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "punctuation.list_marker".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x6e6a86ff).into()),
+                                    color: Some(rgba(0x908caaff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "punctuation.special".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x6e6a86ff).into()),
+                                    color: Some(rgba(0x908caaff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -251,7 +251,8 @@ pub fn rose_pine() -> UserThemeFamily {
                             (
                                 "variable".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xc4a7e7ff).into()),
+                                    color: Some(rgba(0xebbcbaff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
                                     ..Default::default()
                                 },
                             ),
@@ -363,7 +364,7 @@ pub fn rose_pine() -> UserThemeFamily {
                             (
                                 "constant".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xea9a97ff).into()),
+                                    color: Some(rgba(0x3e8fb0ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -405,35 +406,35 @@ pub fn rose_pine() -> UserThemeFamily {
                             (
                                 "punctuation".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x6e6a86ff).into()),
+                                    color: Some(rgba(0x908caaff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "punctuation.bracket".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x6e6a86ff).into()),
+                                    color: Some(rgba(0x908caaff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "punctuation.delimiter".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x6e6a86ff).into()),
+                                    color: Some(rgba(0x908caaff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "punctuation.list_marker".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x6e6a86ff).into()),
+                                    color: Some(rgba(0x908caaff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "punctuation.special".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x6e6a86ff).into()),
+                                    color: Some(rgba(0x908caaff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -503,7 +504,8 @@ pub fn rose_pine() -> UserThemeFamily {
                             (
                                 "variable".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xc4a7e7ff).into()),
+                                    color: Some(rgba(0xea9a97ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
                                     ..Default::default()
                                 },
                             ),
@@ -615,7 +617,7 @@ pub fn rose_pine() -> UserThemeFamily {
                             (
                                 "constant".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xd7827eff).into()),
+                                    color: Some(rgba(0x286983ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -657,35 +659,35 @@ pub fn rose_pine() -> UserThemeFamily {
                             (
                                 "punctuation".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x9893a5ff).into()),
+                                    color: Some(rgba(0x797593ff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "punctuation.bracket".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x9893a5ff).into()),
+                                    color: Some(rgba(0x797593ff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "punctuation.delimiter".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x9893a5ff).into()),
+                                    color: Some(rgba(0x797593ff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "punctuation.list_marker".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x9893a5ff).into()),
+                                    color: Some(rgba(0x797593ff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "punctuation.special".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x9893a5ff).into()),
+                                    color: Some(rgba(0x797593ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -755,7 +757,8 @@ pub fn rose_pine() -> UserThemeFamily {
                             (
                                 "variable".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x907aa9ff).into()),
+                                    color: Some(rgba(0xd7827eff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
                                     ..Default::default()
                                 },
                             ),

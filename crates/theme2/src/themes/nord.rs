@@ -248,7 +248,7 @@ pub fn nord() -> UserThemeFamily {
                         (
                             "variable".into(),
                             UserHighlightStyle {
-                                color: Some(rgba(0xd8dee9ff).into()),
+                                color: Some(rgba(0x81a1c1ff).into()),
                                 ..Default::default()
                             },
                         ),

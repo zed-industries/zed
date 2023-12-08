@@ -125,6 +125,7 @@ pub fn night_owl() -> UserThemeFamily {
                                 "function".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x82aaffff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
                                     ..Default::default()
                                 },
                             ),
@@ -160,35 +161,40 @@ pub fn night_owl() -> UserThemeFamily {
                             (
                                 "punctuation".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x7fdbcaff).into()),
+                                    color: Some(rgba(0xc792eaff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "punctuation.bracket".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x7fdbcaff).into()),
+                                    color: Some(rgba(0xc792eaff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "punctuation.delimiter".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x7fdbcaff).into()),
+                                    color: Some(rgba(0xc792eaff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "punctuation.list_marker".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x7fdbcaff).into()),
+                                    color: Some(rgba(0xc792eaff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "punctuation.special".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x7fdbcaff).into()),
+                                    color: Some(rgba(0xc792eaff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
                                     ..Default::default()
                                 },
                             ),
@@ -251,7 +257,7 @@ pub fn night_owl() -> UserThemeFamily {
                             (
                                 "variable".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xd7dbe0ff).into()),
+                                    color: Some(rgba(0xc5e478ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -374,6 +380,7 @@ pub fn night_owl() -> UserThemeFamily {
                                 "function".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x4876d6ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
                                     ..Default::default()
                                 },
                             ),
@@ -410,6 +417,7 @@ pub fn night_owl() -> UserThemeFamily {
                                 "punctuation".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x994cc3ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
                                     ..Default::default()
                                 },
                             ),
@@ -417,6 +425,7 @@ pub fn night_owl() -> UserThemeFamily {
                                 "punctuation.bracket".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x994cc3ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
                                     ..Default::default()
                                 },
                             ),
@@ -424,6 +433,7 @@ pub fn night_owl() -> UserThemeFamily {
                                 "punctuation.delimiter".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x994cc3ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
                                     ..Default::default()
                                 },
                             ),
@@ -431,6 +441,7 @@ pub fn night_owl() -> UserThemeFamily {
                                 "punctuation.list_marker".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x994cc3ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
                                     ..Default::default()
                                 },
                             ),
@@ -438,6 +449,7 @@ pub fn night_owl() -> UserThemeFamily {
                                 "punctuation.special".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x994cc3ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
                                     ..Default::default()
                                 },
                             ),
@@ -500,7 +512,7 @@ pub fn night_owl() -> UserThemeFamily {
                             (
                                 "variable".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x403f53ff).into()),
+                                    color: Some(rgba(0x4876d6ff).into()),
                                     ..Default::default()
                                 },
                             ),
