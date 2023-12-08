@@ -89,6 +89,13 @@ pub fn andromeda() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "constant".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xee5d43ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "emphasis".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xc74dedff).into()),
@@ -275,6 +282,13 @@ pub fn andromeda() -> UserThemeFamily {
                                 "comment.doc".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xa0a1a7cc).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "constant".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xee5d43ff).into()),
                                     ..Default::default()
                                 },
                             ),

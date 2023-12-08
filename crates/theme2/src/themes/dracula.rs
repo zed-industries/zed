@@ -95,6 +95,13 @@ pub fn dracula() -> UserThemeFamily {
                             },
                         ),
                         (
+                            "constant".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0xbd93f9ff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
                             "emphasis".into(),
                             UserHighlightStyle {
                                 color: Some(rgba(0xf1fa8cff).into()),
