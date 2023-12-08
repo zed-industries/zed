@@ -65,7 +65,7 @@ pub fn rose_pine() -> UserThemeFamily {
                     },
                     status: StatusColorsRefinement {
                         conflict: Some(rgba(0xeb6f92ff).into()),
-                        created: Some(rgba(0xf6c177ff).into()),
+                        created: Some(rgba(0x9ccfd8ff).into()),
                         deleted: Some(rgba(0xeb6f92ff).into()),
                         error: Some(rgba(0xeb6f92ff).into()),
                         hidden: Some(rgba(0x908caaff).into()),
@@ -318,7 +318,7 @@ pub fn rose_pine() -> UserThemeFamily {
                     },
                     status: StatusColorsRefinement {
                         conflict: Some(rgba(0xeb6f92ff).into()),
-                        created: Some(rgba(0xf6c177ff).into()),
+                        created: Some(rgba(0x9ccfd8ff).into()),
                         deleted: Some(rgba(0xeb6f92ff).into()),
                         error: Some(rgba(0xeb6f92ff).into()),
                         hidden: Some(rgba(0x908caaff).into()),
@@ -571,7 +571,7 @@ pub fn rose_pine() -> UserThemeFamily {
                     },
                     status: StatusColorsRefinement {
                         conflict: Some(rgba(0xb4637aff).into()),
-                        created: Some(rgba(0xea9d34ff).into()),
+                        created: Some(rgba(0x56949fff).into()),
                         deleted: Some(rgba(0xb4637aff).into()),
                         error: Some(rgba(0xb4637aff).into()),
                         hidden: Some(rgba(0x797593ff).into()),

@@ -65,13 +65,13 @@ pub fn dracula() -> UserThemeFamily {
                 },
                 status: StatusColorsRefinement {
                     conflict: Some(rgba(0xffb86cff).into()),
-                    created: Some(rgba(0x50fa7bff).into()),
-                    deleted: Some(rgba(0xff5555ff).into()),
+                    created: Some(rgba(0x50fa7b80).into()),
+                    deleted: Some(rgba(0xff555580).into()),
                     error: Some(rgba(0xff5555ff).into()),
                     hidden: Some(rgba(0x6272a4ff).into()),
                     hint: Some(rgba(0x969696ff).into()),
                     ignored: Some(rgba(0x6272a4ff).into()),
-                    modified: Some(rgba(0x8be9fdff).into()),
+                    modified: Some(rgba(0x8be9fd80).into()),
                     warning: Some(rgba(0xffb86cff).into()),
                     ..Default::default()
                 },

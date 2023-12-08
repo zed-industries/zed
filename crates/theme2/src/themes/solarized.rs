@@ -62,7 +62,6 @@ pub fn solarized() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
-                        deleted: Some(rgba(0xffeaeaff).into()),
                         error: Some(rgba(0xffeaeaff).into()),
                         hidden: Some(rgba(0x93a1a1ff).into()),
                         hint: Some(rgba(0x969696ff).into()),
