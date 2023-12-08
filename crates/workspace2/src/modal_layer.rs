@@ -1,4 +1,3 @@
-use futures::FutureExt;
 use gpui::{
     div, prelude::*, px, AnyView, Div, FocusHandle, ManagedView, Render, Subscription, Task, View,
     ViewContext, WindowContext,
@@ -94,7 +93,6 @@ impl ModalLayer {
                 .ok();
             }
         })
-        .shared()
         .detach();
     }
 
