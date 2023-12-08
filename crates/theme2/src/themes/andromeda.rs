@@ -198,7 +198,7 @@ pub fn andromeda() -> UserThemeFamily {
                             (
                                 "type".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xee5d43ff).into()),
+                                    color: Some(rgba(0xffe66dff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -404,7 +404,7 @@ pub fn andromeda() -> UserThemeFamily {
                             (
                                 "type".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xee5d43ff).into()),
+                                    color: Some(rgba(0xffe66dff).into()),
                                     ..Default::default()
                                 },
                             ),

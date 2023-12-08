@@ -152,7 +152,7 @@ pub fn ayu() -> UserThemeFamily {
                             (
                                 "keyword".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x55b4d4ff).into()),
+                                    color: Some(rgba(0xfa8d3eff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -194,14 +194,14 @@ pub fn ayu() -> UserThemeFamily {
                             (
                                 "property".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x55b4d4ff).into()),
+                                    color: Some(rgba(0xf07171ff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "punctuation".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x55b4d480).into()),
+                                    color: Some(rgba(0x5c6166ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -229,7 +229,7 @@ pub fn ayu() -> UserThemeFamily {
                             (
                                 "punctuation.special".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x55b4d480).into()),
+                                    color: Some(rgba(0x5c6166ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -306,7 +306,7 @@ pub fn ayu() -> UserThemeFamily {
                             (
                                 "variable.special".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xf2ae49ff).into()),
+                                    color: Some(rgba(0xf07171ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -452,7 +452,7 @@ pub fn ayu() -> UserThemeFamily {
                             (
                                 "keyword".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x5ccfe6ff).into()),
+                                    color: Some(rgba(0xffad66ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -494,14 +494,14 @@ pub fn ayu() -> UserThemeFamily {
                             (
                                 "property".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x5ccfe6ff).into()),
+                                    color: Some(rgba(0xf28779ff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "punctuation".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x5ccfe680).into()),
+                                    color: Some(rgba(0xcccac2ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -529,7 +529,7 @@ pub fn ayu() -> UserThemeFamily {
                             (
                                 "punctuation.special".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x5ccfe680).into()),
+                                    color: Some(rgba(0xcccac2ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -606,7 +606,7 @@ pub fn ayu() -> UserThemeFamily {
                             (
                                 "variable.special".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xffd173ff).into()),
+                                    color: Some(rgba(0xf28779ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -752,7 +752,7 @@ pub fn ayu() -> UserThemeFamily {
                             (
                                 "keyword".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x39bae6ff).into()),
+                                    color: Some(rgba(0xff8f40ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -794,14 +794,14 @@ pub fn ayu() -> UserThemeFamily {
                             (
                                 "property".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x39bae6ff).into()),
+                                    color: Some(rgba(0xf07178ff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "punctuation".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x39bae680).into()),
+                                    color: Some(rgba(0xbfbdb6ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -829,7 +829,7 @@ pub fn ayu() -> UserThemeFamily {
                             (
                                 "punctuation.special".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x39bae680).into()),
+                                    color: Some(rgba(0xbfbdb6ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -906,7 +906,7 @@ pub fn ayu() -> UserThemeFamily {
                             (
                                 "variable.special".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xffb454ff).into()),
+                                    color: Some(rgba(0xf07178ff).into()),
                                     ..Default::default()
                                 },
                             ),

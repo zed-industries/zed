@@ -153,11 +153,20 @@ impl ZedSyntaxToken {
         .map(|scope| scope.as_str())
         .collect::<Vec<_>>();
 
+        let scopes_to_match = self.to_vscode();
+        let number_of_scopes_to_match = scopes_to_match.len();
+
         let mut matches = 0;
 
-        for scope in self.to_vscode() {
+        for (ix, scope) in scopes_to_match.into_iter().enumerate() {
+            // Assign each entry a weight that is inversely proportional to its
+            // position in the list.
+            //
+            // Entries towards the front are weighted higher than those towards the end.
+            let weight = (number_of_scopes_to_match - ix) as u32;
+
             if candidate_scopes.contains(&scope) {
-                matches += 1;
+                matches += 1 + weight;
             }
         }
 
@@ -202,13 +211,18 @@ impl ZedSyntaxToken {
                 "markup.bold markup.italic",
             ],
             ZedSyntaxToken::Enum => vec!["support.type.enum"],
-            ZedSyntaxToken::Function => vec!["entity.name.function", "variable.function"],
+            ZedSyntaxToken::Function => vec![
+                "entity.function",
+                "entity.name.function",
+                "variable.function",
+            ],
             ZedSyntaxToken::Hint => vec![],
             ZedSyntaxToken::Keyword => vec![
                 "keyword",
+                "keyword.other.fn.rust",
                 "keyword.control",
                 "keyword.control.fun",
-                "keyword.other.fn.rust",
+                "keyword.control.class",
                 "punctuation.accessor",
                 "entity.name.tag",
             ],

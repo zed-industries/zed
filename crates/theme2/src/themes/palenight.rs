@@ -188,35 +188,35 @@ pub fn palenight() -> UserThemeFamily {
                             (
                                 "punctuation".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x89ddffff).into()),
+                                    color: Some(rgba(0xc792eaff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "punctuation.bracket".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x89ddffff).into()),
+                                    color: Some(rgba(0xc792eaff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "punctuation.delimiter".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x89ddffff).into()),
+                                    color: Some(rgba(0xc792eaff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "punctuation.list_marker".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x89ddffff).into()),
+                                    color: Some(rgba(0xc792eaff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "punctuation.special".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x89ddffff).into()),
+                                    color: Some(rgba(0xc792eaff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -279,7 +279,7 @@ pub fn palenight() -> UserThemeFamily {
                             (
                                 "variable".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xff5572ff).into()),
+                                    color: Some(rgba(0xffcb6bff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -468,35 +468,35 @@ pub fn palenight() -> UserThemeFamily {
                             (
                                 "punctuation".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x89ddffff).into()),
+                                    color: Some(rgba(0xc792eaff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "punctuation.bracket".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x89ddffff).into()),
+                                    color: Some(rgba(0xc792eaff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "punctuation.delimiter".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x89ddffff).into()),
+                                    color: Some(rgba(0xc792eaff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "punctuation.list_marker".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x89ddffff).into()),
+                                    color: Some(rgba(0xc792eaff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "punctuation.special".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x89ddffff).into()),
+                                    color: Some(rgba(0xc792eaff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -559,7 +559,7 @@ pub fn palenight() -> UserThemeFamily {
                             (
                                 "variable".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xff5572ff).into()),
+                                    color: Some(rgba(0xffcb6bff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -748,35 +748,35 @@ pub fn palenight() -> UserThemeFamily {
                             (
                                 "punctuation".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x89ddffff).into()),
+                                    color: Some(rgba(0xc792eaff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "punctuation.bracket".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x89ddffff).into()),
+                                    color: Some(rgba(0xc792eaff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "punctuation.delimiter".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x89ddffff).into()),
+                                    color: Some(rgba(0xc792eaff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "punctuation.list_marker".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x89ddffff).into()),
+                                    color: Some(rgba(0xc792eaff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "punctuation.special".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x89ddffff).into()),
+                                    color: Some(rgba(0xc792eaff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -839,7 +839,7 @@ pub fn palenight() -> UserThemeFamily {
                             (
                                 "variable".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xff5572ff).into()),
+                                    color: Some(rgba(0xffcb6bff).into()),
                                     ..Default::default()
                                 },
                             ),
