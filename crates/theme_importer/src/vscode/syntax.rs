@@ -2,7 +2,7 @@ use indexmap::IndexMap;
 use serde::Deserialize;
 use strum::EnumIter;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Deserialize)]
 #[serde(untagged)]
 pub enum VsCodeTokenScope {
     One(String),

@@ -106,7 +106,7 @@ pub fn rose_pine() -> UserThemeFamily {
                             (
                                 "function".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xe0def4ff).into()),
+                                    color: Some(rgba(0xebbcbaff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -283,7 +283,7 @@ pub fn rose_pine() -> UserThemeFamily {
                             (
                                 "function".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xe0def4ff).into()),
+                                    color: Some(rgba(0xea9a97ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -460,7 +460,7 @@ pub fn rose_pine() -> UserThemeFamily {
                             (
                                 "function".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x575279ff).into()),
+                                    color: Some(rgba(0xd7827eff).into()),
                                     ..Default::default()
                                 },
                             ),

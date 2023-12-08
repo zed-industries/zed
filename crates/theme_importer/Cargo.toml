@@ -10,7 +10,7 @@ publish = false
 anyhow.workspace = true
 convert_case = "0.6.0"
 gpui = { package = "gpui2", path = "../gpui2" }
-indexmap = "1.6.2"
+indexmap = { version = "1.6.2", features = ["serde"] }
 json_comments = "0.2.2"
 log.workspace = true
 palette = { version = "0.7.3", default-features = false, features = ["std"] }
