@@ -95,6 +95,20 @@ pub fn dracula() -> UserThemeFamily {
                             },
                         ),
                         (
+                            "constant".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0xbd93f9ff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "constructor".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0xff79c6ff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
                             "emphasis".into(),
                             UserHighlightStyle {
                                 color: Some(rgba(0xf1fa8cff).into()),
@@ -140,6 +154,34 @@ pub fn dracula() -> UserThemeFamily {
                         ),
                         (
                             "string".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0xf1fa8cff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "string.escape".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0xf1fa8cff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "string.regex".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0xf1fa8cff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "string.special".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0xf1fa8cff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "string.special.symbol".into(),
                             UserHighlightStyle {
                                 color: Some(rgba(0xf1fa8cff).into()),
                                 ..Default::default()

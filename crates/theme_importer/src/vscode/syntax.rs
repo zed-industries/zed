@@ -168,6 +168,14 @@ impl ZedSyntaxToken {
         match self {
             ZedSyntaxToken::CommentDoc => &[ZedSyntaxToken::Comment],
             ZedSyntaxToken::VariableSpecial => &[ZedSyntaxToken::Variable],
+            ZedSyntaxToken::PunctuationBracket
+            | ZedSyntaxToken::PunctuationDelimiter
+            | ZedSyntaxToken::PunctuationListMarker
+            | ZedSyntaxToken::PunctuationSpecial => &[ZedSyntaxToken::Punctuation],
+            ZedSyntaxToken::StringEscape
+            | ZedSyntaxToken::StringRegex
+            | ZedSyntaxToken::StringSpecial
+            | ZedSyntaxToken::StringSpecialSymbol => &[ZedSyntaxToken::String],
             _ => &[],
         }
     }
@@ -178,9 +186,12 @@ impl ZedSyntaxToken {
             ZedSyntaxToken::Boolean => vec!["constant.language"],
             ZedSyntaxToken::Comment => vec!["comment"],
             ZedSyntaxToken::CommentDoc => vec!["comment.block.documentation"],
-            ZedSyntaxToken::Constant => vec!["constant.character"],
+            ZedSyntaxToken::Constant => vec!["constant", "constant.language", "constant.character"],
             ZedSyntaxToken::Constructor => {
-                vec!["entity.name.function.definition.special.constructor"]
+                vec![
+                    "entity.name.tag",
+                    "entity.name.function.definition.special.constructor",
+                ]
             }
             ZedSyntaxToken::Embedded => vec!["meta.embedded"],
             ZedSyntaxToken::Emphasis => vec!["markup.italic"],
@@ -190,11 +201,7 @@ impl ZedSyntaxToken {
                 "markup.bold markup.italic",
             ],
             ZedSyntaxToken::Enum => vec!["support.type.enum"],
-            ZedSyntaxToken::Function => vec![
-                "entity.name.function",
-                "variable.function",
-                "support.function",
-            ],
+            ZedSyntaxToken::Function => vec!["entity.name.function", "variable.function"],
             ZedSyntaxToken::Hint => vec![],
             ZedSyntaxToken::Keyword => vec![
                 "keyword",
@@ -215,7 +222,11 @@ impl ZedSyntaxToken {
             ZedSyntaxToken::Number => vec!["constant.numeric", "number"],
             ZedSyntaxToken::Operator => vec!["operator", "keyword.operator"],
             ZedSyntaxToken::Predictive => vec![],
-            ZedSyntaxToken::Preproc => vec!["preproc"],
+            ZedSyntaxToken::Preproc => vec![
+                "preproc",
+                "meta.preprocessor",
+                "punctuation.definition.preprocessor",
+            ],
             ZedSyntaxToken::Primary => vec![],
             ZedSyntaxToken::Property => vec![
                 "variable.member",
@@ -228,7 +239,6 @@ impl ZedSyntaxToken {
                 "punctuation.section",
                 "punctuation.accessor",
                 "punctuation.separator",
-                "punctuation.terminator",
                 "punctuation.definition.tag",
             ],
             ZedSyntaxToken::PunctuationBracket => vec![

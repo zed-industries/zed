@@ -86,6 +86,20 @@ pub fn synthwave_84() -> UserThemeFamily {
                             },
                         ),
                         (
+                            "constant".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0xf97e72ff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "constructor".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0x72f1b8ff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
                             "function".into(),
                             UserHighlightStyle {
                                 color: Some(rgba(0x36f9f6ff).into()),
@@ -143,6 +157,34 @@ pub fn synthwave_84() -> UserThemeFamily {
                         ),
                         (
                             "punctuation".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0x36f9f6ff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "punctuation.bracket".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0x36f9f6ff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "punctuation.delimiter".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0x36f9f6ff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "punctuation.list_marker".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0x36f9f6ff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "punctuation.special".into(),
                             UserHighlightStyle {
                                 color: Some(rgba(0x36f9f6ff).into()),
                                 ..Default::default()

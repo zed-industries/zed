@@ -89,6 +89,20 @@ pub fn andromeda() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "constant".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xee5d43ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "constructor".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xf92672ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "emphasis".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xc74dedff).into()),
@@ -132,6 +146,34 @@ pub fn andromeda() -> UserThemeFamily {
                             ),
                             (
                                 "string".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x96e072ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.escape".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x96e072ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.regex".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x96e072ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.special".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x96e072ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.special.symbol".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x96e072ff).into()),
                                     ..Default::default()
@@ -251,6 +293,20 @@ pub fn andromeda() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "constant".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xee5d43ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "constructor".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xf92672ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "emphasis".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xc74dedff).into()),
@@ -294,6 +350,34 @@ pub fn andromeda() -> UserThemeFamily {
                             ),
                             (
                                 "string".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x96e072ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.escape".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x96e072ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.regex".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x96e072ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.special".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x96e072ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.special.symbol".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x96e072ff).into()),
                                     ..Default::default()

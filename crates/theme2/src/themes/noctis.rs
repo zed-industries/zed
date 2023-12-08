@@ -97,7 +97,14 @@ pub fn noctis() -> UserThemeFamily {
                             (
                                 "constant".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xbecfdaff).into()),
+                                    color: Some(rgba(0x7060ebff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "constructor".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xe66533ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -144,6 +151,13 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "preproc".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xdf769bff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "property".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x16a3b6ff).into()),
@@ -158,7 +172,28 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "punctuation.bracket".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xbecfdaff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "punctuation.delimiter".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xbecfdaff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.list_marker".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xbecfdaff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.special".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xbecfdaff).into()),
                                     ..Default::default()
@@ -175,6 +210,27 @@ pub fn noctis() -> UserThemeFamily {
                                 "string.escape".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xbecfdaff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.regex".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x49e9a6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.special".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x49e9a6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.special.symbol".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x49e9a6ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -307,7 +363,14 @@ pub fn noctis() -> UserThemeFamily {
                             (
                                 "constant".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xcbbec2ff).into()),
+                                    color: Some(rgba(0x7060ebff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "constructor".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xe66533ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -354,6 +417,13 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "preproc".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xdf769bff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "property".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x16a3b6ff).into()),
@@ -368,7 +438,28 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "punctuation.bracket".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xcbbec2ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "punctuation.delimiter".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xcbbec2ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.list_marker".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xcbbec2ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.special".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xcbbec2ff).into()),
                                     ..Default::default()
@@ -385,6 +476,27 @@ pub fn noctis() -> UserThemeFamily {
                                 "string.escape".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xcbbec2ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.regex".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x49e9a6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.special".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x49e9a6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.special.symbol".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x49e9a6ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -517,7 +629,14 @@ pub fn noctis() -> UserThemeFamily {
                             (
                                 "constant".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x004d57ff).into()),
+                                    color: Some(rgba(0x5842ffff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "constructor".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xe64100ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -564,6 +683,13 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "preproc".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xff5792ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "property".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x0095a8ff).into()),
@@ -578,7 +704,28 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "punctuation.bracket".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x004d57ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "punctuation.delimiter".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x004d57ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.list_marker".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x004d57ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.special".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x004d57ff).into()),
                                     ..Default::default()
@@ -595,6 +742,27 @@ pub fn noctis() -> UserThemeFamily {
                                 "string.escape".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x004d57ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.regex".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x00b368ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.special".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x00b368ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.special.symbol".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x00b368ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -727,7 +895,14 @@ pub fn noctis() -> UserThemeFamily {
                             (
                                 "constant".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x0c006bff).into()),
+                                    color: Some(rgba(0x5842ffff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "constructor".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xe64100ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -774,6 +949,13 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "preproc".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xff5792ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "property".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x0095a8ff).into()),
@@ -788,7 +970,28 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "punctuation.bracket".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x0c006bff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "punctuation.delimiter".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x0c006bff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.list_marker".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x0c006bff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.special".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x0c006bff).into()),
                                     ..Default::default()
@@ -805,6 +1008,27 @@ pub fn noctis() -> UserThemeFamily {
                                 "string.escape".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x0c006bff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.regex".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x00b368ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.special".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x00b368ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.special.symbol".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x00b368ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -937,7 +1161,14 @@ pub fn noctis() -> UserThemeFamily {
                             (
                                 "constant".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x004d57ff).into()),
+                                    color: Some(rgba(0x5842ffff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "constructor".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xe64100ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -984,6 +1215,13 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "preproc".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xff5792ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "property".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x0095a8ff).into()),
@@ -998,7 +1236,28 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "punctuation.bracket".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x004d57ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "punctuation.delimiter".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x004d57ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.list_marker".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x004d57ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.special".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x004d57ff).into()),
                                     ..Default::default()
@@ -1015,6 +1274,27 @@ pub fn noctis() -> UserThemeFamily {
                                 "string.escape".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x004d57ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.regex".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x00b368ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.special".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x00b368ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.special.symbol".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x00b368ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -1147,7 +1427,14 @@ pub fn noctis() -> UserThemeFamily {
                             (
                                 "constant".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xc5cdd3ff).into()),
+                                    color: Some(rgba(0x7068b1ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "constructor".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xc37455ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -1194,6 +1481,13 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "preproc".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xc88da2ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "property".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x3f848dff).into()),
@@ -1208,7 +1502,28 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "punctuation.bracket".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xc5cdd3ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "punctuation.delimiter".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xc5cdd3ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.list_marker".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xc5cdd3ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.special".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xc5cdd3ff).into()),
                                     ..Default::default()
@@ -1225,6 +1540,27 @@ pub fn noctis() -> UserThemeFamily {
                                 "string.escape".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xc5cdd3ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.regex".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x72c09fff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.special".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x72c09fff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.special.symbol".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x72c09fff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -1357,7 +1693,14 @@ pub fn noctis() -> UserThemeFamily {
                             (
                                 "constant".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xb2cacdff).into()),
+                                    color: Some(rgba(0x7060ebff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "constructor".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xe66533ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -1404,6 +1747,13 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "preproc".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xdf769bff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "property".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x16a3b6ff).into()),
@@ -1418,7 +1768,28 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "punctuation.bracket".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xb2cacdff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "punctuation.delimiter".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xb2cacdff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.list_marker".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xb2cacdff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.special".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xb2cacdff).into()),
                                     ..Default::default()
@@ -1435,6 +1806,27 @@ pub fn noctis() -> UserThemeFamily {
                                 "string.escape".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xb2cacdff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.regex".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x49e9a6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.special".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x49e9a6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.special.symbol".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x49e9a6ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -1567,7 +1959,14 @@ pub fn noctis() -> UserThemeFamily {
                             (
                                 "constant".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xb2cacdff).into()),
+                                    color: Some(rgba(0x7060ebff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "constructor".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xe66533ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -1614,6 +2013,13 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "preproc".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xdf769bff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "property".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x16a3b6ff).into()),
@@ -1628,7 +2034,28 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "punctuation.bracket".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xb2cacdff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "punctuation.delimiter".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xb2cacdff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.list_marker".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xb2cacdff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.special".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xb2cacdff).into()),
                                     ..Default::default()
@@ -1645,6 +2072,27 @@ pub fn noctis() -> UserThemeFamily {
                                 "string.escape".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xb2cacdff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.regex".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x49e9a6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.special".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x49e9a6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.special.symbol".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x49e9a6ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -1777,7 +2225,14 @@ pub fn noctis() -> UserThemeFamily {
                             (
                                 "constant".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xb2cacdff).into()),
+                                    color: Some(rgba(0x7060ebff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "constructor".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xe66533ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -1824,6 +2279,13 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "preproc".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xdf769bff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "property".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x16a3b6ff).into()),
@@ -1838,7 +2300,28 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "punctuation.bracket".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xb2cacdff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "punctuation.delimiter".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xb2cacdff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.list_marker".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xb2cacdff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.special".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xb2cacdff).into()),
                                     ..Default::default()
@@ -1855,6 +2338,27 @@ pub fn noctis() -> UserThemeFamily {
                                 "string.escape".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xb2cacdff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.regex".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x49e9a6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.special".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x49e9a6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.special.symbol".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x49e9a6ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -1987,7 +2491,14 @@ pub fn noctis() -> UserThemeFamily {
                             (
                                 "constant".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xc5c2d6ff).into()),
+                                    color: Some(rgba(0x7060ebff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "constructor".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xe66533ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -2034,6 +2545,13 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "preproc".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xdf769bff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "property".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x16a3b6ff).into()),
@@ -2048,7 +2566,28 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "punctuation.bracket".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xc5c2d6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "punctuation.delimiter".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xc5c2d6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.list_marker".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xc5c2d6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.special".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xc5c2d6ff).into()),
                                     ..Default::default()
@@ -2065,6 +2604,27 @@ pub fn noctis() -> UserThemeFamily {
                                 "string.escape".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xc5c2d6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.regex".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x49e9a6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.special".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x49e9a6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.special.symbol".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x49e9a6ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -2197,7 +2757,14 @@ pub fn noctis() -> UserThemeFamily {
                             (
                                 "constant".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xccbfd9ff).into()),
+                                    color: Some(rgba(0x7060ebff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "constructor".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xe66533ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -2244,6 +2811,13 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "preproc".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xdf769bff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "property".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x16a3b6ff).into()),
@@ -2258,7 +2832,28 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "punctuation.bracket".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xccbfd9ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "punctuation.delimiter".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xccbfd9ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.list_marker".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xccbfd9ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.special".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xccbfd9ff).into()),
                                     ..Default::default()
@@ -2275,6 +2870,27 @@ pub fn noctis() -> UserThemeFamily {
                                 "string.escape".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xccbfd9ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.regex".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x49e9a6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.special".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x49e9a6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.special.symbol".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x49e9a6ff).into()),
                                     ..Default::default()
                                 },
                             ),

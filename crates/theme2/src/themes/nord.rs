@@ -103,7 +103,14 @@ pub fn nord() -> UserThemeFamily {
                         (
                             "constant".into(),
                             UserHighlightStyle {
-                                color: Some(rgba(0xebcb8bff).into()),
+                                color: Some(rgba(0x81a1c1ff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "constructor".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0x81a1c1ff).into()),
                                 ..Default::default()
                             },
                         ),
@@ -136,9 +143,23 @@ pub fn nord() -> UserThemeFamily {
                             },
                         ),
                         (
+                            "preproc".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0x5e81acff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
                             "punctuation".into(),
                             UserHighlightStyle {
-                                color: Some(rgba(0x81a1c1ff).into()),
+                                color: Some(rgba(0xeceff4ff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "punctuation.bracket".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0xeceff4ff).into()),
                                 ..Default::default()
                             },
                         ),
@@ -146,6 +167,20 @@ pub fn nord() -> UserThemeFamily {
                             "punctuation.delimiter".into(),
                             UserHighlightStyle {
                                 color: Some(rgba(0x81a1c1ff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "punctuation.list_marker".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0xeceff4ff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "punctuation.special".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0xeceff4ff).into()),
                                 ..Default::default()
                             },
                         ),
@@ -160,6 +195,27 @@ pub fn nord() -> UserThemeFamily {
                             "string.escape".into(),
                             UserHighlightStyle {
                                 color: Some(rgba(0xebcb8bff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "string.regex".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0xa3be8cff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "string.special".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0xa3be8cff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "string.special.symbol".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0xa3be8cff).into()),
                                 ..Default::default()
                             },
                         ),

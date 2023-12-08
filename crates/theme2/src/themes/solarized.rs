@@ -104,6 +104,13 @@ pub fn solarized() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "constructor".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x268bd2ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "embedded".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x93a1a1ff).into()),
@@ -146,6 +153,13 @@ pub fn solarized() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "preproc".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xb58900ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "property".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x839496ff).into()),
@@ -154,6 +168,34 @@ pub fn solarized() -> UserThemeFamily {
                             ),
                             (
                                 "punctuation".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x657b83ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.bracket".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x657b83ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.delimiter".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x657b83ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.list_marker".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x657b83ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.special".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x657b83ff).into()),
                                     ..Default::default()
@@ -170,6 +212,27 @@ pub fn solarized() -> UserThemeFamily {
                                 "string.escape".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xcb4b16ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.regex".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x2aa198ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.special".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x2aa198ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.special.symbol".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x2aa198ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -299,6 +362,13 @@ pub fn solarized() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "constructor".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x268bd2ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "embedded".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x657b83ff).into()),
@@ -341,6 +411,13 @@ pub fn solarized() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "preproc".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xb58900ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "punctuation.bracket".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x93a1a1ff).into()),
@@ -358,6 +435,27 @@ pub fn solarized() -> UserThemeFamily {
                                 "string.escape".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xcb4b16ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.regex".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x2aa198ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.special".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x2aa198ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.special.symbol".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x2aa198ff).into()),
                                     ..Default::default()
                                 },
                             ),
