@@ -286,7 +286,7 @@ pub fn night_owl() -> UserThemeFamily {
                         text: Some(rgba(0x403f53ff).into()),
                         status_bar_background: Some(rgba(0xf0f0f0ff).into()),
                         title_bar_background: Some(rgba(0xf0f0f0ff).into()),
-                        toolbar_background: Some(rgba(0xf0f0f0ff).into()),
+                        toolbar_background: Some(rgba(0xfbfbfbff).into()),
                         tab_bar_background: Some(rgba(0xf0f0f0ff).into()),
                         tab_inactive_background: Some(rgba(0xf0f0f0ff).into()),
                         tab_active_background: Some(rgba(0xf6f6f6ff).into()),
