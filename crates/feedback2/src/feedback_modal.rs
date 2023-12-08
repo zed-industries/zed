@@ -14,7 +14,7 @@ use language::Buffer;
 use project::Project;
 use regex::Regex;
 use serde_derive::Serialize;
-use ui::{prelude::*, Button, ButtonStyle, IconPosition, Label, Tooltip};
+use ui::{prelude::*, Button, ButtonStyle, IconPosition, Tooltip};
 use util::ResultExt;
 use workspace::Workspace;
 

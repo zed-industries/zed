@@ -6,7 +6,7 @@ use gpui::{
     WindowContext,
 };
 use ui::prelude::*;
-use ui::{h_stack, Icon, IconButton};
+use ui::{h_stack};
 use util::ResultExt;
 
 pub trait StatusItemView: Render {
