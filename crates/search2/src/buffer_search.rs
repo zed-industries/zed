@@ -11,14 +11,14 @@ use editor::{Editor, EditorMode};
 use futures::channel::oneshot;
 use gpui::{
     actions, div, red, Action, AppContext, Div, EventEmitter, FocusableView,
-    InteractiveElement as _, IntoElement, ParentElement as _, Render, Styled, Subscription, Task,
-    View, ViewContext, VisualContext as _, WeakView, WindowContext,
+    InteractiveElement as _, IntoElement, KeyContext, ParentElement as _, Render, Styled,
+    Subscription, Task, View, ViewContext, VisualContext as _, WeakView, WindowContext,
 };
 use project::search::SearchQuery;
 use serde::Deserialize;
 use std::{any::Any, sync::Arc};
 
-use ui::{h_stack, Clickable, Icon, IconButton, IconElement};
+use ui::{h_stack, ButtonCommon, Clickable, Icon, IconButton, IconElement, Tooltip};
 use util::ResultExt;
 use workspace::{
     item::ItemHandle,
@@ -131,13 +131,7 @@ impl Render for BufferSearchBar {
         let search_button_for_mode = |mode| {
             let is_active = self.current_mode == mode;
 
-            render_search_mode_button(
-                mode,
-                is_active,
-                cx.listener(move |this, _, cx| {
-                    this.activate_search_mode(mode, cx);
-                }),
-            )
+            render_search_mode_button(mode, is_active)
         };
         let search_option_button = |option| {
             let is_active = self.search_options.contains(option);
@@ -163,23 +157,35 @@ impl Render for BufferSearchBar {
             });
         let should_show_replace_input = self.replace_enabled && supported_options.replacement;
         let replace_all = should_show_replace_input
-            .then(|| super::render_replace_button(ReplaceAll, ui::Icon::ReplaceAll));
-        let replace_next = should_show_replace_input
-            .then(|| super::render_replace_button(ReplaceNext, ui::Icon::Replace));
+            .then(|| super::render_replace_button(ReplaceAll, ui::Icon::ReplaceAll, "Replace all"));
+        let replace_next = should_show_replace_input.then(|| {
+            super::render_replace_button(ReplaceNext, ui::Icon::ReplaceNext, "Replace next")
+        });
         let in_replace = self.replacement_editor.focus_handle(cx).is_focused(cx);
 
+        let mut key_context = KeyContext::default();
+        key_context.add("BufferSearchBar");
+        if in_replace {
+            key_context.add("in_replace");
+        }
+
         h_stack()
-            .key_context("BufferSearchBar")
+            .key_context(key_context)
             .on_action(cx.listener(Self::previous_history_query))
             .on_action(cx.listener(Self::next_history_query))
             .on_action(cx.listener(Self::dismiss))
             .on_action(cx.listener(Self::select_next_match))
             .on_action(cx.listener(Self::select_prev_match))
+            .on_action(cx.listener(|this, _: &ActivateRegexMode, cx| {
+                this.activate_search_mode(SearchMode::Regex, cx);
+            }))
+            .on_action(cx.listener(|this, _: &ActivateTextMode, cx| {
+                this.activate_search_mode(SearchMode::Text, cx);
+            }))
             .when(self.supported_options().replacement, |this| {
                 this.on_action(cx.listener(Self::toggle_replace))
                     .when(in_replace, |this| {
-                        this.key_context("in_replace")
-                            .on_action(cx.listener(Self::replace_next))
+                        this.on_action(cx.listener(Self::replace_next))
                             .on_action(cx.listener(Self::replace_all))
                     })
             })
@@ -238,21 +244,19 @@ impl Render for BufferSearchBar {
                 h_stack()
                     .gap_0p5()
                     .flex_none()
-                    .child(self.render_action_button(cx))
+                    .child(self.render_action_button())
                     .children(match_count)
                     .child(render_nav_button(
                         ui::Icon::ChevronLeft,
                         self.active_match_index.is_some(),
-                        cx.listener(move |this, _, cx| {
-                            this.select_prev_match(&Default::default(), cx);
-                        }),
+                        "Select previous match",
+                        &SelectPrevMatch,
                     ))
                     .child(render_nav_button(
                         ui::Icon::ChevronRight,
                         self.active_match_index.is_some(),
-                        cx.listener(move |this, _, cx| {
-                            this.select_next_match(&Default::default(), cx);
-                        }),
+                        "Select next match",
+                        &SelectNextMatch,
                     )),
             )
     }
@@ -597,14 +601,10 @@ impl BufferSearchBar {
         self.update_matches(cx)
     }
 
-    fn render_action_button(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        // let tooltip_style = theme.tooltip.clone();
-
-        // let style = theme.search.action_button.clone();
-
-        IconButton::new("select-all", ui::Icon::SelectAll).on_click(cx.listener(|this, _, cx| {
-            this.select_all_matches(&SelectAllMatches, cx);
-        }))
+    fn render_action_button(&self) -> impl IntoElement {
+        IconButton::new("select-all", ui::Icon::SelectAll)
+            .on_click(|_, cx| cx.dispatch_action(SelectAllMatches.boxed_clone()))
+            .tooltip(|cx| Tooltip::for_action("Select all matches", &SelectAllMatches, cx))
     }
 
     pub fn activate_search_mode(&mut self, mode: SearchMode, cx: &mut ViewContext<Self>) {
