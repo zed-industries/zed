@@ -36,7 +36,7 @@ pub fn dracula() -> UserThemeFamily {
                     status_bar_background: Some(rgba(0x191a21ff).into()),
                     title_bar_background: Some(rgba(0x21222cff).into()),
                     toolbar_background: Some(rgba(0x282a36ff).into()),
-                    tab_bar_background: Some(rgba(0x282a36ff).into()),
+                    tab_bar_background: Some(rgba(0x191a21ff).into()),
                     tab_inactive_background: Some(rgba(0x21222cff).into()),
                     tab_active_background: Some(rgba(0x282a36ff).into()),
                     editor_background: Some(rgba(0x282a36ff).into()),
