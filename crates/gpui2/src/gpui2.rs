@@ -72,6 +72,7 @@ pub use view::*;
 pub use window::*;
 
 use derive_more::{Deref, DerefMut};
+use serde::{Deserialize, Serialize};
 use std::{
     any::{Any, TypeId},
     borrow::{Borrow, BorrowMut},
@@ -246,5 +247,24 @@ impl std::fmt::Display for SharedString {
 impl<T: Into<ArcCow<'static, str>>> From<T> for SharedString {
     fn from(value: T) -> Self {
         Self(value.into())
+    }
+}
+
+impl Serialize for SharedString {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(self.as_ref())
+    }
+}
+
+impl<'de> Deserialize<'de> for SharedString {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        Ok(SharedString::from(s))
     }
 }

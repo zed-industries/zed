@@ -2,14 +2,12 @@ use channel::{ChannelId, ChannelMembership, ChannelStore, MessageParams};
 use client::UserId;
 use collections::HashMap;
 use editor::{AnchorRangeExt, Editor};
-use gpui::{
-    elements::ChildView, AnyElement, AsyncAppContext, Element, Entity, ModelHandle, Task, View,
-    ViewContext, ViewHandle, WeakViewHandle,
-};
+use gpui::{AnyView, AsyncAppContext, Model, Render, Task, View, ViewContext, WeakView};
 use language::{language_settings::SoftWrap, Buffer, BufferSnapshot, LanguageRegistry};
 use lazy_static::lazy_static;
 use project::search::SearchQuery;
 use std::{sync::Arc, time::Duration};
+use workspace::item::ItemHandle;
 
 const MENTIONS_DEBOUNCE_INTERVAL: Duration = Duration::from_millis(50);
 
@@ -19,8 +17,8 @@ lazy_static! {
 }
 
 pub struct MessageEditor {
-    pub editor: ViewHandle<Editor>,
-    channel_store: ModelHandle<ChannelStore>,
+    pub editor: View<Editor>,
+    channel_store: Model<ChannelStore>,
     users: HashMap<String, UserId>,
     mentions: Vec<UserId>,
     mentions_task: Option<Task<()>>,
@@ -30,8 +28,8 @@ pub struct MessageEditor {
 impl MessageEditor {
     pub fn new(
         language_registry: Arc<LanguageRegistry>,
-        channel_store: ModelHandle<ChannelStore>,
-        editor: ViewHandle<Editor>,
+        channel_store: Model<ChannelStore>,
+        editor: View<Editor>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         editor.update(cx, |editor, cx| {
@@ -132,7 +130,7 @@ impl MessageEditor {
 
     fn on_buffer_event(
         &mut self,
-        buffer: ModelHandle<Buffer>,
+        buffer: Model<Buffer>,
         event: &language::Event,
         cx: &mut ViewContext<Self>,
     ) {
@@ -146,7 +144,7 @@ impl MessageEditor {
     }
 
     async fn find_mentions(
-        this: WeakViewHandle<MessageEditor>,
+        this: WeakView<MessageEditor>,
         buffer: BufferSnapshot,
         mut cx: AsyncAppContext,
     ) {
@@ -180,11 +178,7 @@ impl MessageEditor {
                 }
 
                 editor.clear_highlights::<Self>(cx);
-                editor.highlight_text::<Self>(
-                    anchor_ranges,
-                    theme::current(cx).chat_panel.rich_text.mention_highlight,
-                    cx,
-                )
+                editor.highlight_text::<Self>(anchor_ranges, gpui::red().into(), cx)
             });
 
             this.mentions = mentioned_user_ids;
@@ -194,19 +188,11 @@ impl MessageEditor {
     }
 }
 
-impl Entity for MessageEditor {
-    type Event = ();
-}
+impl Render for MessageEditor {
+    type Element = AnyView;
 
-impl View for MessageEditor {
-    fn render(&mut self, cx: &mut ViewContext<'_, '_, Self>) -> AnyElement<Self> {
-        ChildView::new(&self.editor, cx).into_any()
-    }
-
-    fn focus_in(&mut self, _: gpui::AnyViewHandle, cx: &mut ViewContext<Self>) {
-        if cx.is_self_focused() {
-            cx.focus(&self.editor);
-        }
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+        self.editor.to_any()
     }
 }
 
@@ -297,7 +283,7 @@ mod tests {
             MessageEditor::new(
                 language_registry,
                 ChannelStore::global(cx),
-                cx.add_view(|cx| Editor::auto_height(4, None, cx)),
+                cx.add_view(|cx| Editor::auto_height(4, cx)),
                 cx,
             )
         });
