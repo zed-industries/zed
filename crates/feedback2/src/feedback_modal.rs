@@ -284,6 +284,10 @@ impl Render for FeedbackModal {
         let open_community_repo =
             cx.listener(|_, _, cx| cx.dispatch_action(Box::new(OpenZedCommunityRepo)));
 
+        // Moved this here because providing it inline breaks rustfmt
+        let provide_an_email_address =
+            "Provide an email address if you want us to be able to reply.";
+
         v_stack()
             .elevation_3(cx)
             .key_context("GiveFeedback")
@@ -293,103 +297,105 @@ impl Render for FeedbackModal {
             .h(rems(32.))
             .p_4()
             .gap_4()
+            .child(v_stack().child(
+                // TODO: Add Headline component to `ui2`
+                div().text_xl().child("Share Feedback"),
+            ))
             .child(
-                v_stack()
-                    .child(
-                        // TODO: Add Headline component to `ui2`
-                        div().text_xl().child("Share Feedback"))
-            )
-            .child(
-                    div()
-                        .flex_1()
-                        .bg(cx.theme().colors().editor_background)
-                        .p_2()
-                        .border()
-                        .rounded_md()
-                        .border_color(cx.theme().colors().border)
-                        .child(self.feedback_editor.clone()),
-                )
-                .child(
-                    div().child(
-                        Label::new(
-                            if self.character_count < *FEEDBACK_CHAR_LIMIT.start() {
-                                format!("Feedback must be at least {} characters.", FEEDBACK_CHAR_LIMIT.start())
-                            } else if self.character_count > *FEEDBACK_CHAR_LIMIT.end() {
-                                format!("Feedback must be less than {} characters.", FEEDBACK_CHAR_LIMIT.end())
-                            } else {
-                                format!(
-                                "Characters: {}",
-                                *FEEDBACK_CHAR_LIMIT.end() - self.character_count
-                                )
-                            }
-                        )
-                        .color(
-                            if valid_character_count {
-                                Color::Success
-                            } else {
-                                Color::Error
-                            }
-                        )
-                    )
-
-                        .child(
-                    h_stack()
+                div()
+                    .flex_1()
                     .bg(cx.theme().colors().editor_background)
                     .p_2()
                     .border()
                     .rounded_md()
                     .border_color(cx.theme().colors().border)
-                    .child(self.email_address_editor.clone()))
-
-                .child(
-                    h_stack()
-                        .justify_between()
-                        .gap_1()
-                        .child(Button::new("community_repo", "Community Repo")
-                            .style(ButtonStyle::Transparent)
-                            .icon(Icon::ExternalLink)
-                            .icon_position(IconPosition::End)
-                            .icon_size(IconSize::Small)
-                            .on_click(open_community_repo)
-                        )
-                        .child(h_stack().gap_1()
+                    .child(self.feedback_editor.clone()),
+            )
+            .child(
+                div()
+                    .child(
+                        Label::new(if self.character_count < *FEEDBACK_CHAR_LIMIT.start() {
+                            format!(
+                                "Feedback must be at least {} characters.",
+                                FEEDBACK_CHAR_LIMIT.start()
+                            )
+                        } else if self.character_count > *FEEDBACK_CHAR_LIMIT.end() {
+                            format!(
+                                "Feedback must be less than {} characters.",
+                                FEEDBACK_CHAR_LIMIT.end()
+                            )
+                        } else {
+                            format!(
+                                "Characters: {}",
+                                *FEEDBACK_CHAR_LIMIT.end() - self.character_count
+                            )
+                        })
+                        .color(if valid_character_count {
+                            Color::Success
+                        } else {
+                            Color::Error
+                        }),
+                    )
+                    .child(
+                        h_stack()
+                            .bg(cx.theme().colors().editor_background)
+                            .p_2()
+                            .border()
+                            .rounded_md()
+                            .border_color(cx.theme().colors().border)
+                            .child(self.email_address_editor.clone()),
+                    )
+                    .child(
+                        h_stack()
+                            .justify_between()
+                            .gap_1()
                             .child(
-                                Button::new("cancel_feedback", "Cancel")
-                                    .style(ButtonStyle::Subtle)
-                                    .color(Color::Muted)
-                                    // TODO: replicate this logic when clicking outside the modal
-                                    // TODO: Will require somehow overriding the modal dismal default behavior
-                                    .map(|this| {
-                                        if has_feedback {
-                                            this.on_click(dismiss_prompt)
-                                        } else {
-                                            this.on_click(dismiss)
-                                        }
-                                    })
+                                Button::new("community_repo", "Community Repo")
+                                    .style(ButtonStyle::Transparent)
+                                    .icon(Icon::ExternalLink)
+                                    .icon_position(IconPosition::End)
+                                    .icon_size(IconSize::Small)
+                                    .on_click(open_community_repo),
                             )
                             .child(
-                                Button::new("send_feedback", submit_button_text)
-                                    .color(Color::Accent)
-                                    .style(ButtonStyle::Filled)
-                                    // TODO: Ensure that while submitting, "Sending..." is shown and disable the button
-                                    // TODO: If submit errors: show popup with error, don't close modal, set text back to "Send Feedback", and re-enable button
-                                    // TODO: If submit is successful, close the modal
-                                    .on_click(cx.listener(|this, _, cx| {
-                                        let _ = this.submit(cx);
-                                    }))
-                                    .tooltip(|cx| {
-                                        Tooltip::with_meta(
-                                            "Submit feedback to the Zed team.",
-                                            None,
-                                            "Provide an email address if you want us to be able to reply.",
-                                            cx,
-                                        )
-                                    })
-                                    .when(!allow_submission, |this| this.disabled(true))
+                                h_stack()
+                                    .gap_1()
+                                    .child(
+                                        Button::new("cancel_feedback", "Cancel")
+                                            .style(ButtonStyle::Subtle)
+                                            .color(Color::Muted)
+                                            // TODO: replicate this logic when clicking outside the modal
+                                            // TODO: Will require somehow overriding the modal dismal default behavior
+                                            .map(|this| {
+                                                if has_feedback {
+                                                    this.on_click(dismiss_prompt)
+                                                } else {
+                                                    this.on_click(dismiss)
+                                                }
+                                            }),
+                                    )
+                                    .child(
+                                        Button::new("send_feedback", submit_button_text)
+                                            .color(Color::Accent)
+                                            .style(ButtonStyle::Filled)
+                                            // TODO: Ensure that while submitting, "Sending..." is shown and disable the button
+                                            // TODO: If submit errors: show popup with error, don't close modal, set text back to "Send Feedback", and re-enable button
+                                            // TODO: If submit is successful, close the modal
+                                            .on_click(cx.listener(|this, _, cx| {
+                                                let _ = this.submit(cx);
+                                            }))
+                                            .tooltip(|cx| {
+                                                Tooltip::with_meta(
+                                                    "Submit feedback to the Zed team.",
+                                                    None,
+                                                    provide_an_email_address,
+                                                    cx,
+                                                )
+                                            })
+                                            .when(!allow_submission, |this| this.disabled(true)),
+                                    ),
                             ),
-                        )
-
-                )
+                    ),
             )
     }
 }
