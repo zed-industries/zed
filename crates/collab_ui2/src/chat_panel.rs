@@ -347,40 +347,45 @@ impl ChatPanel {
             ChannelMessageId::Pending(id) => ("pending-message", id).into(),
         };
 
-        // todo!("render the text with markdown formatting")
-        if is_continuation {
-            h_stack()
-                .child(text.element(element_id, cx))
-                .child(render_remove(message_id_to_remove, cx))
-                .mb_1()
-                .into_any()
-        } else {
-            v_stack()
-                .child(
-                    h_stack()
-                        .children(
-                            message
-                                .sender
-                                .avatar
-                                .clone()
-                                .map(|avatar| Avatar::data(avatar)),
-                        )
-                        .child(Label::new(message.sender.github_login.clone()))
-                        .child(Label::new(format_timestamp(
-                            message.timestamp,
-                            now,
-                            self.local_timezone,
-                        )))
-                        .child(render_remove(message_id_to_remove, cx)),
-                )
-                .child(
-                    h_stack()
-                        .child(text.element(element_id, cx))
-                        .child(render_remove(None, cx)),
-                )
-                .mb_1()
-                .into_any()
+        let mut result = v_stack()
+            .w_full()
+            .id(element_id)
+            .relative()
+            .group("")
+            .mb_1();
+
+        if !is_continuation {
+            result = result.child(
+                h_stack()
+                    .children(
+                        message
+                            .sender
+                            .avatar
+                            .clone()
+                            .map(|avatar| Avatar::data(avatar)),
+                    )
+                    .child(Label::new(message.sender.github_login.clone()))
+                    .child(Label::new(format_timestamp(
+                        message.timestamp,
+                        now,
+                        self.local_timezone,
+                    ))),
+            );
         }
+
+        result
+            .child(text.element("body".into(), cx))
+            .child(
+                div()
+                    .invisible()
+                    .absolute()
+                    .top_1()
+                    .right_2()
+                    .w_8()
+                    .group_hover("", |this| this.visible())
+                    .child(render_remove(message_id_to_remove, cx)),
+            )
+            .into_any()
     }
 
     fn render_markdown_with_mentions(
