@@ -824,8 +824,8 @@ impl EditorElement {
             };
 
             let color = match status {
-                DiffHunkStatus::Added => gpui::green(), // todo!("use the appropriate color")
-                DiffHunkStatus::Modified => gpui::yellow(), // todo!("use the appropriate color")
+                DiffHunkStatus::Added => cx.theme().status().created,
+                DiffHunkStatus::Modified => cx.theme().status().modified,
 
                 //TODO: This rendering is entirely a horrible hack
                 DiffHunkStatus::Removed => {
@@ -842,7 +842,7 @@ impl EditorElement {
                     cx.paint_quad(
                         highlight_bounds,
                         Corners::all(1. * line_height),
-                        gpui::red(), // todo!("use the right color")
+                        cx.theme().status().deleted,
                         Edges::default(),
                         transparent_black(),
                     );
