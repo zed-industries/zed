@@ -19,12 +19,14 @@ pub fn synthwave_84() -> UserThemeFamily {
             styles: UserThemeStylesRefinement {
                 colors: ThemeColorsRefinement {
                     border_focused: Some(rgba(0x1f212bff).into()),
+                    elevated_surface_background: Some(rgba(0x232530ff).into()),
                     background: Some(rgba(0x262335ff).into()),
                     element_background: Some(rgba(0x614d85ff).into()),
                     element_hover: Some(rgba(0x37294d99).into()),
                     element_selected: Some(rgba(0xffffff20).into()),
                     drop_target_background: Some(rgba(0x34294f66).into()),
                     ghost_element_hover: Some(rgba(0x37294d99).into()),
+                    ghost_element_selected: Some(rgba(0xffffff20).into()),
                     text: Some(rgba(0xffffffff).into()),
                     status_bar_background: Some(rgba(0x241b2fff).into()),
                     title_bar_background: Some(rgba(0x241b2fff).into()),

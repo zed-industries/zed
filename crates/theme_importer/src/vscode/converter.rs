@@ -153,7 +153,7 @@ impl VsCodeThemeConverter {
                 .as_ref()
                 .traverse(|color| try_parse_color(&color))?,
             elevated_surface_background: vscode_colors
-                .panel_background
+                .dropdown_background
                 .as_ref()
                 .traverse(|color| try_parse_color(&color))?,
             surface_background: vscode_colors
@@ -183,6 +183,10 @@ impl VsCodeThemeConverter {
                 .traverse(|color| try_parse_color(&color))?,
             ghost_element_hover: vscode_colors
                 .list_hover_background
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
+            ghost_element_selected: vscode_colors
+                .list_active_selection_background
                 .as_ref()
                 .traverse(|color| try_parse_color(&color))?,
             drop_target_background: vscode_colors
