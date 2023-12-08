@@ -66,13 +66,7 @@ pub enum Event {
     Dismissed,
 }
 
-actions!(ToggleFocus, OpenChannelNotes, JoinCall);
-
-// pub fn init(cx: &mut AppContext) {
-// cx.add_action(ChatPanel::send);
-// cx.add_action(ChatPanel::open_notes);
-// cx.add_action(ChatPanel::join_call);
-// }
+actions!(ToggleFocus);
 
 impl ChatPanel {
     pub fn new(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) -> View<Self> {
@@ -91,30 +85,6 @@ impl ChatPanel {
         });
 
         let workspace_handle = workspace.weak_handle();
-
-        // let channel_select = cx.build_view(|cx| {
-        //     let channel_store = channel_store.clone();
-        //     let workspace = workspace_handle.clone();
-        //     Select::new(0, cx, {
-        //         move |ix, item_type, is_hovered, cx| {
-        //             Self::render_channel_name(
-        //                 &channel_store,
-        //                 ix,
-        //                 item_type,
-        //                 is_hovered,
-        //                 workspace,
-        //                 cx,
-        //             )
-        //         }
-        //     })
-        //     .with_style(move |cx| {
-        //         let style = &cx.theme().chat_panel.channel_select;
-        //         SelectStyle {
-        //             header: Default::default(),
-        //             menu: style.menu,
-        //         }
-        //     })
-        // });
 
         cx.build_view(|cx| {
             let view: View<ChatPanel> = cx.view().clone();
@@ -159,27 +129,6 @@ impl ChatPanel {
                     cx.notify();
                 },
             ));
-
-            // this.update_channel_count(cx);
-            // cx.observe(&this.channel_store, |this, _, cx| {
-            //     this.update_channel_count(cx)
-            // })
-            // .detach();
-
-            // cx.observe(&this.channel_select, |this, channel_select, cx| {
-            //     let selected_ix = channel_select.read(cx).selected_index();
-
-            //     let selected_channel_id = this
-            //         .channel_store
-            //         .read(cx)
-            //         .channel_at(selected_ix)
-            //         .map(|e| e.id);
-            //     if let Some(selected_channel_id) = selected_channel_id {
-            //         this.select_channel(selected_channel_id, None, cx)
-            //             .detach_and_log_err(cx);
-            //     }
-            // })
-            // .detach();
 
             this
         })
@@ -239,13 +188,6 @@ impl ChatPanel {
         );
     }
 
-    // fn update_channel_count(&mut self, cx: &mut ViewContext<Self>) {
-    //     let channel_count = self.channel_store.read(cx).channel_count();
-    //     self.channel_select.update(cx, |select, cx| {
-    //         select.set_item_count(channel_count, cx);
-    //     });
-    // }
-
     fn set_active_chat(&mut self, chat: Model<ChannelChat>, cx: &mut ViewContext<Self>) {
         if self.active_chat.as_ref().map(|e| &e.0) != Some(&chat) {
             let channel_id = chat.read(cx).channel_id;
@@ -262,11 +204,6 @@ impl ChatPanel {
             let subscription = cx.subscribe(&chat, Self::channel_did_change);
             self.active_chat = Some((chat, subscription));
             self.acknowledge_last_message(cx);
-            // self.channel_select.update(cx, |select, cx| {
-            //     if let Some(ix) = self.channel_store.read(cx).index_of_channel(channel_id) {
-            //         select.set_selected_index(ix, cx);
-            //     }
-            // });
             cx.notify();
         }
     }
@@ -457,81 +394,6 @@ impl ChatPanel {
 
         rich_text::render_markdown(message.body.clone(), &mentions, language_registry, None)
     }
-
-    // fn render_channel_name(
-    //     channel_store: &Model<ChannelStore>,
-    //     ix: usize,
-    //     item_type: ItemType,
-    //     is_hovered: bool,
-    //     workspace: WeakView<Workspace>,
-    //     cx: &mut ViewContext<Select>,
-    // ) -> AnyElement<Select> {
-    //     let theme = theme::current(cx);
-    //     let tooltip_style = &theme.tooltip;
-    //     let theme = &theme.chat_panel;
-    //     let style = match (&item_type, is_hovered) {
-    //         (ItemType::Header, _) => &theme.channel_select.header,
-    //         (ItemType::Selected, _) => &theme.channel_select.active_item,
-    //         (ItemType::Unselected, false) => &theme.channel_select.item,
-    //         (ItemType::Unselected, true) => &theme.channel_select.hovered_item,
-    //     };
-
-    //     let channel = &channel_store.read(cx).channel_at(ix).unwrap();
-    //     let channel_id = channel.id;
-
-    //     let mut row = Flex::row()
-    //         .with_child(
-    //             Label::new("#".to_string(), style.hash.text.clone())
-    //                 .contained()
-    //                 .with_style(style.hash.container),
-    //         )
-    //         .with_child(Label::new(channel.name.clone(), style.name.clone()));
-
-    //     if matches!(item_type, ItemType::Header) {
-    //         row.add_children([
-    //             MouseEventHandler::new::<OpenChannelNotes, _>(0, cx, |mouse_state, _| {
-    //                 render_icon_button(theme.icon_button.style_for(mouse_state), "icons/file.svg")
-    //             })
-    //             .on_click(MouseButton::Left, move |_, _, cx| {
-    //                 if let Some(workspace) = workspace.upgrade(cx) {
-    //                     ChannelView::open(channel_id, workspace, cx).detach();
-    //                 }
-    //             })
-    //             .with_tooltip::<OpenChannelNotes>(
-    //                 channel_id as usize,
-    //                 "Open Notes",
-    //                 Some(Box::new(OpenChannelNotes)),
-    //                 tooltip_style.clone(),
-    //                 cx,
-    //             )
-    //             .flex_float(),
-    //             MouseEventHandler::new::<ActiveCall, _>(0, cx, |mouse_state, _| {
-    //                 render_icon_button(
-    //                     theme.icon_button.style_for(mouse_state),
-    //                     "icons/speaker-loud.svg",
-    //                 )
-    //             })
-    //             .on_click(MouseButton::Left, move |_, _, cx| {
-    //                 ActiveCall::global(cx)
-    //                     .update(cx, |call, cx| call.join_channel(channel_id, cx))
-    //                     .detach_and_log_err(cx);
-    //             })
-    //             .with_tooltip::<ActiveCall>(
-    //                 channel_id as usize,
-    //                 "Join Call",
-    //                 Some(Box::new(JoinCall)),
-    //                 tooltip_style.clone(),
-    //                 cx,
-    //             )
-    //             .flex_float(),
-    //         ]);
-    //     }
-
-    //     row.align_children_center()
-    //         .contained()
-    //         .with_style(style.container)
-    //         .into_any()
-    // }
 
     fn render_sign_in_prompt(&self, cx: &mut ViewContext<Self>) -> AnyElement {
         Button::new("sign-in", "Sign in to use chat")
@@ -762,85 +624,71 @@ fn format_timestamp(
     }
 }
 
-// fn render_icon_button(style: &IconButton, svg_path: &'static str) -> impl Element<V> {
-//     todo!()
-//     // Svg::new(svg_path)
-//     //     .with_color(style.color)
-//     //     .constrained()
-//     //     .with_width(style.icon_width)
-//     //     .aligned()
-//     //     .constrained()
-//     //     .with_width(style.button_width)
-//     //     .with_height(style.button_width)
-//     //     .contained()
-//     //     .with_style(style.container)
-// }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::HighlightStyle;
+    use pretty_assertions::assert_eq;
+    use rich_text::{BackgroundKind, Highlight, RenderedRegion};
+    use util::test::marked_text_ranges;
 
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     use gpui::fonts::HighlightStyle;
-//     use pretty_assertions::assert_eq;
-//     use rich_text::{BackgroundKind, Highlight, RenderedRegion};
-//     use util::test::marked_text_ranges;
+    #[gpui::test]
+    fn test_render_markdown_with_mentions() {
+        let language_registry = Arc::new(LanguageRegistry::test());
+        let (body, ranges) = marked_text_ranges("*hi*, «@abc», let's **call** «@fgh»", false);
+        let message = channel::ChannelMessage {
+            id: ChannelMessageId::Saved(0),
+            body,
+            timestamp: OffsetDateTime::now_utc(),
+            sender: Arc::new(client::User {
+                github_login: "fgh".into(),
+                avatar: None,
+                id: 103,
+            }),
+            nonce: 5,
+            mentions: vec![(ranges[0].clone(), 101), (ranges[1].clone(), 102)],
+        };
 
-//     #[gpui::test]
-//     fn test_render_markdown_with_mentions() {
-//         let language_registry = Arc::new(LanguageRegistry::test());
-//         let (body, ranges) = marked_text_ranges("*hi*, «@abc», let's **call** «@fgh»", false);
-//         let message = channel::ChannelMessage {
-//             id: ChannelMessageId::Saved(0),
-//             body,
-//             timestamp: OffsetDateTime::now_utc(),
-//             sender: Arc::new(client::User {
-//                 github_login: "fgh".into(),
-//                 avatar: None,
-//                 id: 103,
-//             }),
-//             nonce: 5,
-//             mentions: vec![(ranges[0].clone(), 101), (ranges[1].clone(), 102)],
-//         };
+        let message = ChatPanel::render_markdown_with_mentions(&language_registry, 102, &message);
 
-//         let message = ChatPanel::render_markdown_with_mentions(&language_registry, 102, &message);
-
-//         // Note that the "'" was replaced with ’ due to smart punctuation.
-//         let (body, ranges) = marked_text_ranges("«hi», «@abc», let’s «call» «@fgh»", false);
-//         assert_eq!(message.text, body);
-//         assert_eq!(
-//             message.highlights,
-//             vec![
-//                 (
-//                     ranges[0].clone(),
-//                     HighlightStyle {
-//                         italic: Some(true),
-//                         ..Default::default()
-//                     }
-//                     .into()
-//                 ),
-//                 (ranges[1].clone(), Highlight::Mention),
-//                 (
-//                     ranges[2].clone(),
-//                     HighlightStyle {
-//                         weight: Some(gpui::fonts::Weight::BOLD),
-//                         ..Default::default()
-//                     }
-//                     .into()
-//                 ),
-//                 (ranges[3].clone(), Highlight::SelfMention)
-//             ]
-//         );
-//         assert_eq!(
-//             message.regions,
-//             vec![
-//                 RenderedRegion {
-//                     background_kind: Some(BackgroundKind::Mention),
-//                     link_url: None
-//                 },
-//                 RenderedRegion {
-//                     background_kind: Some(BackgroundKind::SelfMention),
-//                     link_url: None
-//                 },
-//             ]
-//         );
-//     }
-// }
+        // Note that the "'" was replaced with ’ due to smart punctuation.
+        let (body, ranges) = marked_text_ranges("«hi», «@abc», let’s «call» «@fgh»", false);
+        assert_eq!(message.text, body);
+        assert_eq!(
+            message.highlights,
+            vec![
+                (
+                    ranges[0].clone(),
+                    HighlightStyle {
+                        font_style: Some(gpui::FontStyle::Italic),
+                        ..Default::default()
+                    }
+                    .into()
+                ),
+                (ranges[1].clone(), Highlight::Mention),
+                (
+                    ranges[2].clone(),
+                    HighlightStyle {
+                        font_weight: Some(gpui::FontWeight::BOLD),
+                        ..Default::default()
+                    }
+                    .into()
+                ),
+                (ranges[3].clone(), Highlight::SelfMention)
+            ]
+        );
+        assert_eq!(
+            message.regions,
+            vec![
+                RenderedRegion {
+                    background_kind: Some(BackgroundKind::Mention),
+                    link_url: None
+                },
+                RenderedRegion {
+                    background_kind: Some(BackgroundKind::SelfMention),
+                    link_url: None
+                },
+            ]
+        );
+    }
+}
