@@ -278,17 +278,21 @@ impl VsCodeThemeConverter {
             let Some(token_color) =
                 syntax_token.find_best_token_color_match(&self.theme.token_colors)
             else {
-                eprintln!("No matching token color found for {syntax_token}");
+                eprintln!("No matching token color found for '{syntax_token}'");
 
                 continue;
             };
 
             println!(
-                "Matched {syntax_token} to {}",
+                "Matched '{syntax_token}' to '{}'",
                 token_color
                     .name
                     .clone()
-                    .unwrap_or_else(|| String::from("no name"))
+                    .or_else(|| token_color
+                        .scope
+                        .as_ref()
+                        .map(|scope| format!("{:?}", scope)))
+                    .unwrap_or_else(|| "no identifier".to_string())
             );
 
             let highlight_style = UserHighlightStyle {
