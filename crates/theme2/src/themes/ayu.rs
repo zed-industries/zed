@@ -109,6 +109,13 @@ pub fn ayu() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "constructor".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x55b4d4ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "embedded".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x5c6166ff).into()),
@@ -398,6 +405,13 @@ pub fn ayu() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "constructor".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x5ccfe6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "embedded".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xcccac2ff).into()),
@@ -683,6 +697,13 @@ pub fn ayu() -> UserThemeFamily {
                                 "constant".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xd2a6ffff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "constructor".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x39bae6ff).into()),
                                     ..Default::default()
                                 },
                             ),

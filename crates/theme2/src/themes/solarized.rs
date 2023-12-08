@@ -104,6 +104,13 @@ pub fn solarized() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "constructor".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x268bd2ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "embedded".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x93a1a1ff).into()),
@@ -351,6 +358,13 @@ pub fn solarized() -> UserThemeFamily {
                                 "constant".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xcb4b16ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "constructor".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x268bd2ff).into()),
                                     ..Default::default()
                                 },
                             ),

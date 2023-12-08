@@ -111,6 +111,13 @@ pub fn rose_pine() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "constructor".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x9ccfd8ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "function".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xebbcbaff).into()),
@@ -351,6 +358,13 @@ pub fn rose_pine() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "constructor".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x9ccfd8ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "function".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xea9a97ff).into()),
@@ -587,6 +601,13 @@ pub fn rose_pine() -> UserThemeFamily {
                                 "constant".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xd7827eff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "constructor".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x56949fff).into()),
                                     ..Default::default()
                                 },
                             ),

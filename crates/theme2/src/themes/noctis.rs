@@ -102,6 +102,13 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "constructor".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xe66533ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "function".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x16a3b6ff).into()),
@@ -357,6 +364,13 @@ pub fn noctis() -> UserThemeFamily {
                                 "constant".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x7060ebff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "constructor".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xe66533ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -620,6 +634,13 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "constructor".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xe64100ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "function".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x0095a8ff).into()),
@@ -875,6 +896,13 @@ pub fn noctis() -> UserThemeFamily {
                                 "constant".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x5842ffff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "constructor".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xe64100ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -1138,6 +1166,13 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "constructor".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xe64100ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "function".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x0095a8ff).into()),
@@ -1393,6 +1428,13 @@ pub fn noctis() -> UserThemeFamily {
                                 "constant".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x7068b1ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "constructor".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xc37455ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -1656,6 +1698,13 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "constructor".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xe66533ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "function".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x16a3b6ff).into()),
@@ -1911,6 +1960,13 @@ pub fn noctis() -> UserThemeFamily {
                                 "constant".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x7060ebff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "constructor".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xe66533ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -2174,6 +2230,13 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "constructor".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xe66533ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "function".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x16a3b6ff).into()),
@@ -2433,6 +2496,13 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "constructor".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xe66533ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "function".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x16a3b6ff).into()),
@@ -2688,6 +2758,13 @@ pub fn noctis() -> UserThemeFamily {
                                 "constant".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x7060ebff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "constructor".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xe66533ff).into()),
                                     ..Default::default()
                                 },
                             ),

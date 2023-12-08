@@ -110,6 +110,13 @@ pub fn night_owl() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "constructor".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xcaece6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "function".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x82aaffff).into()),
@@ -347,6 +354,13 @@ pub fn night_owl() -> UserThemeFamily {
                                 "constant".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x4876d6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "constructor".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x994cc3ff).into()),
                                     ..Default::default()
                                 },
                             ),

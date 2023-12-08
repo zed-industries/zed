@@ -99,6 +99,13 @@ pub fn gruvbox() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "constructor".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x8ec07cff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "emphasis.strong".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xfe8019ff).into()),
@@ -359,6 +366,13 @@ pub fn gruvbox() -> UserThemeFamily {
                                 "constant".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xd3869bff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "constructor".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x8ec07cff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -627,6 +641,13 @@ pub fn gruvbox() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "constructor".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x8ec07cff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "emphasis.strong".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xfe8019ff).into()),
@@ -887,6 +908,13 @@ pub fn gruvbox() -> UserThemeFamily {
                                 "constant".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x8f3f71ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "constructor".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x427b58ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -1155,6 +1183,13 @@ pub fn gruvbox() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "constructor".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x427b58ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "emphasis.strong".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xaf3a03ff).into()),
@@ -1415,6 +1450,13 @@ pub fn gruvbox() -> UserThemeFamily {
                                 "constant".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x8f3f71ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "constructor".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x427b58ff).into()),
                                     ..Default::default()
                                 },
                             ),

@@ -108,6 +108,13 @@ pub fn nord() -> UserThemeFamily {
                             },
                         ),
                         (
+                            "constructor".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0x81a1c1ff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
                             "function".into(),
                             UserHighlightStyle {
                                 color: Some(rgba(0x88c0d0ff).into()),
