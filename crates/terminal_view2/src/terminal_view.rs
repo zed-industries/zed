@@ -11,8 +11,8 @@ use editor::{scroll::autoscroll::Autoscroll, Editor};
 use gpui::{
     div, overlay, Action, AnyElement, AppContext, DismissEvent, Div, EventEmitter, FocusEvent,
     FocusHandle, Focusable, FocusableElement, FocusableView, KeyContext, KeyDownEvent, Keystroke,
-    Model, MouseButton, MouseDownEvent, Pixels, Render, Subscription, Task, View, VisualContext,
-    WeakView,
+    Model, MouseButton, MouseDownEvent, Pixels, Render, Styled, Subscription, Task, View,
+    VisualContext, WeakView,
 };
 use language::Bias;
 use persistence::TERMINAL_DB;
@@ -651,25 +651,22 @@ impl Render for TerminalView {
             .on_focus_in(cx.listener(Self::focus_in))
             .on_focus_out(cx.listener(Self::focus_out))
             .on_key_down(cx.listener(Self::key_down))
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(|this, event: &MouseDownEvent, cx| {
+                    this.deploy_context_menu(event.position, cx);
+                    cx.notify();
+                }),
+            )
             .child(
-                div()
-                    .z_index(0)
-                    .absolute()
-                    .size_full()
-                    .child(TerminalElement::new(
-                        terminal_handle,
-                        self.focus_handle.clone(),
-                        focused,
-                        self.should_show_cursor(focused, cx),
-                        self.can_navigate_to_selected_word,
-                    ))
-                    .on_mouse_down(
-                        MouseButton::Right,
-                        cx.listener(|this, event: &MouseDownEvent, cx| {
-                            this.deploy_context_menu(event.position, cx);
-                            cx.notify();
-                        }),
-                    ),
+                // TODO: Oddly this wrapper div is needed for TerminalElement to not steal events from the context menu
+                div().size_full().child(TerminalElement::new(
+                    terminal_handle,
+                    self.focus_handle.clone(),
+                    focused,
+                    self.should_show_cursor(focused, cx),
+                    self.can_navigate_to_selected_word,
+                )),
             )
             .children(self.context_menu.as_ref().map(|(menu, positon, _)| {
                 overlay()
