@@ -104,6 +104,13 @@ pub fn rose_pine() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "constant".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xebbcbaff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "function".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xebbcbaff).into()),
@@ -337,6 +344,13 @@ pub fn rose_pine() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "constant".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xea9a97ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "function".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xea9a97ff).into()),
@@ -566,6 +580,13 @@ pub fn rose_pine() -> UserThemeFamily {
                                 UserHighlightStyle {
                                     color: Some(rgba(0x9893a5ff).into()),
                                     font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "constant".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xd7827eff).into()),
                                     ..Default::default()
                                 },
                             ),

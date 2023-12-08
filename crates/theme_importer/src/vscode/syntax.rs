@@ -186,7 +186,7 @@ impl ZedSyntaxToken {
             ZedSyntaxToken::Boolean => vec!["constant.language"],
             ZedSyntaxToken::Comment => vec!["comment"],
             ZedSyntaxToken::CommentDoc => vec!["comment.block.documentation"],
-            ZedSyntaxToken::Constant => vec!["constant.character"],
+            ZedSyntaxToken::Constant => vec!["constant.language", "constant.character"],
             ZedSyntaxToken::Constructor => {
                 vec!["entity.name.function.definition.special.constructor"]
             }

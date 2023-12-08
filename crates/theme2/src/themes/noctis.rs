@@ -97,7 +97,7 @@ pub fn noctis() -> UserThemeFamily {
                             (
                                 "constant".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xbecfdaff).into()),
+                                    color: Some(rgba(0x7060ebff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -356,7 +356,7 @@ pub fn noctis() -> UserThemeFamily {
                             (
                                 "constant".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xcbbec2ff).into()),
+                                    color: Some(rgba(0x7060ebff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -615,7 +615,7 @@ pub fn noctis() -> UserThemeFamily {
                             (
                                 "constant".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x004d57ff).into()),
+                                    color: Some(rgba(0x5842ffff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -874,7 +874,7 @@ pub fn noctis() -> UserThemeFamily {
                             (
                                 "constant".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x0c006bff).into()),
+                                    color: Some(rgba(0x5842ffff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -1133,7 +1133,7 @@ pub fn noctis() -> UserThemeFamily {
                             (
                                 "constant".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x004d57ff).into()),
+                                    color: Some(rgba(0x5842ffff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -1392,7 +1392,7 @@ pub fn noctis() -> UserThemeFamily {
                             (
                                 "constant".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xc5cdd3ff).into()),
+                                    color: Some(rgba(0x7068b1ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -1651,7 +1651,7 @@ pub fn noctis() -> UserThemeFamily {
                             (
                                 "constant".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xb2cacdff).into()),
+                                    color: Some(rgba(0x7060ebff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -1910,7 +1910,7 @@ pub fn noctis() -> UserThemeFamily {
                             (
                                 "constant".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xb2cacdff).into()),
+                                    color: Some(rgba(0x7060ebff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -2169,7 +2169,7 @@ pub fn noctis() -> UserThemeFamily {
                             (
                                 "constant".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xb2cacdff).into()),
+                                    color: Some(rgba(0x7060ebff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -2428,7 +2428,7 @@ pub fn noctis() -> UserThemeFamily {
                             (
                                 "constant".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xc5c2d6ff).into()),
+                                    color: Some(rgba(0x7060ebff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -2687,7 +2687,7 @@ pub fn noctis() -> UserThemeFamily {
                             (
                                 "constant".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xccbfd9ff).into()),
+                                    color: Some(rgba(0x7060ebff).into()),
                                     ..Default::default()
                                 },
                             ),

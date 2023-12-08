@@ -86,6 +86,13 @@ pub fn synthwave_84() -> UserThemeFamily {
                             },
                         ),
                         (
+                            "constant".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0xf97e72ff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
                             "function".into(),
                             UserHighlightStyle {
                                 color: Some(rgba(0x36f9f6ff).into()),
