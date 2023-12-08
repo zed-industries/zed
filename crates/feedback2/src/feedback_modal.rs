@@ -245,18 +245,16 @@ impl FeedbackModal {
     }
 
     // TODO: Escape button calls dismiss
-    // TODO: Should do same as hitting cancel / clicking outside of modal
-    //     Close immediately if no text in field
-    //     Ask to close if text in the field
     fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
-        Self::dismiss_event(cx)
+        self.dismiss_event(cx)
     }
 
-    fn dismiss_event(cx: &mut ViewContext<Self>) {
+    fn dismiss_event(&mut self, cx: &mut ViewContext<Self>) {
+        let has_feedback = self.feedback_editor.read(cx).text_option(cx).is_some();
         let dismiss = Self::prompt_dismiss(cx);
 
         cx.spawn(|this, mut cx| async move {
-            if dismiss.await {
+            if !has_feedback || (has_feedback && dismiss.await) {
                 this.update(&mut cx, |_, cx| cx.emit(DismissEvent)).ok();
             }
         })
@@ -286,8 +284,6 @@ impl Render for FeedbackModal {
 
         let allow_submission =
             valid_character_count && valid_email_address && !self.pending_submission;
-
-        let has_feedback = self.feedback_editor.read(cx).text_option(cx).is_some();
 
         let submit_button_text = if self.pending_submission {
             "Submitting..."
@@ -378,19 +374,9 @@ impl Render for FeedbackModal {
                                         Button::new("cancel_feedback", "Cancel")
                                             .style(ButtonStyle::Subtle)
                                             .color(Color::Muted)
-                                            // TODO: replicate this logic when clicking outside the modal
-                                            // TODO: Will require somehow overriding the modal dismal default behavior
-                                            .map(|this| {
-                                                if has_feedback {
-                                                    this.on_click(cx.listener(|_, _, cx| {
-                                                        Self::dismiss_event(cx)
-                                                    }))
-                                                } else {
-                                                    this.on_click(cx.listener(|_, _, cx| {
-                                                        cx.emit(DismissEvent);
-                                                    }))
-                                                }
-                                            }),
+                                            .on_click(cx.listener(move |this, _, cx| {
+                                                this.dismiss_event(cx)
+                                            })),
                                     )
                                     .child(
                                         Button::new("send_feedback", submit_button_text)
@@ -420,3 +406,4 @@ impl Render for FeedbackModal {
 
 // TODO: Add compilation flags to enable debug mode, where we can simulate sending feedback that both succeeds and fails, so we can test the UI
 // TODO: Maybe store email address whenever the modal is closed, versus just on submit, so users can remove it if they want without submitting
+// TODO: Fix bug of being asked twice to discard feedback when clicking cancel
