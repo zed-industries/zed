@@ -469,6 +469,7 @@ impl TerminalElement {
                 .size_full()
                 .id("terminal-element")
                 .tooltip(move |cx| Tooltip::text(hovered_word.word.clone(), cx))
+                .into_any_element()
         });
 
         let TerminalContent {
@@ -570,7 +571,7 @@ impl TerminalElement {
             relative_highlighted_ranges,
             mode: *mode,
             display_offset: *display_offset,
-            hyperlink_tooltip: None, // todo!(tooltips)
+            hyperlink_tooltip,
             gutter,
         }
     }
