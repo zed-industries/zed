@@ -142,6 +142,13 @@ pub fn gruvbox() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "preproc".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xfe8019ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "property".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x689d6aff).into()),
@@ -388,6 +395,13 @@ pub fn gruvbox() -> UserThemeFamily {
                                 "operator".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x8ec07cff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "preproc".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xfe8019ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -642,6 +656,13 @@ pub fn gruvbox() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "preproc".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xfe8019ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "property".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x689d6aff).into()),
@@ -888,6 +909,13 @@ pub fn gruvbox() -> UserThemeFamily {
                                 "operator".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x427b58ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "preproc".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xaf3a03ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -1142,6 +1170,13 @@ pub fn gruvbox() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "preproc".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xaf3a03ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "property".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x689d6aff).into()),
@@ -1388,6 +1423,13 @@ pub fn gruvbox() -> UserThemeFamily {
                                 "operator".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x427b58ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "preproc".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xaf3a03ff).into()),
                                     ..Default::default()
                                 },
                             ),

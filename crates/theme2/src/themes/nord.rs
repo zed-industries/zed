@@ -136,6 +136,13 @@ pub fn nord() -> UserThemeFamily {
                             },
                         ),
                         (
+                            "preproc".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0x5e81acff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
                             "punctuation".into(),
                             UserHighlightStyle {
                                 color: Some(rgba(0xeceff4ff).into()),

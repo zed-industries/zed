@@ -219,7 +219,11 @@ impl ZedSyntaxToken {
             ZedSyntaxToken::Number => vec!["constant.numeric", "number"],
             ZedSyntaxToken::Operator => vec!["operator", "keyword.operator"],
             ZedSyntaxToken::Predictive => vec![],
-            ZedSyntaxToken::Preproc => vec!["preproc"],
+            ZedSyntaxToken::Preproc => vec![
+                "preproc",
+                "meta.preprocessor",
+                "punctuation.definition.preprocessor",
+            ],
             ZedSyntaxToken::Primary => vec![],
             ZedSyntaxToken::Property => vec![
                 "variable.member",

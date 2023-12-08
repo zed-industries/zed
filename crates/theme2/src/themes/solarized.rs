@@ -146,6 +146,13 @@ pub fn solarized() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "preproc".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xb58900ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "property".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x839496ff).into()),
@@ -386,6 +393,13 @@ pub fn solarized() -> UserThemeFamily {
                                 "number".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xd33682ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "preproc".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xb58900ff).into()),
                                     ..Default::default()
                                 },
                             ),
