@@ -1702,7 +1702,7 @@ dependencies = [
 
 [[package]]
 name = "collab"
-version = "0.29.1"
+version = "0.29.2"
 dependencies = [
  "anyhow",
  "async-trait",
