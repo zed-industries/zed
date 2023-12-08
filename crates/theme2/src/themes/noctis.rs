@@ -158,7 +158,28 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "punctuation.bracket".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xbecfdaff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "punctuation.delimiter".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xbecfdaff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.list_marker".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xbecfdaff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.special".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xbecfdaff).into()),
                                     ..Default::default()
@@ -368,7 +389,28 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "punctuation.bracket".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xcbbec2ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "punctuation.delimiter".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xcbbec2ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.list_marker".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xcbbec2ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.special".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xcbbec2ff).into()),
                                     ..Default::default()
@@ -578,7 +620,28 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "punctuation.bracket".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x004d57ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "punctuation.delimiter".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x004d57ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.list_marker".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x004d57ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.special".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x004d57ff).into()),
                                     ..Default::default()
@@ -788,7 +851,28 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "punctuation.bracket".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x0c006bff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "punctuation.delimiter".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x0c006bff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.list_marker".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x0c006bff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.special".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x0c006bff).into()),
                                     ..Default::default()
@@ -998,7 +1082,28 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "punctuation.bracket".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x004d57ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "punctuation.delimiter".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x004d57ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.list_marker".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x004d57ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.special".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x004d57ff).into()),
                                     ..Default::default()
@@ -1208,7 +1313,28 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "punctuation.bracket".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xc5cdd3ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "punctuation.delimiter".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xc5cdd3ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.list_marker".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xc5cdd3ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.special".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xc5cdd3ff).into()),
                                     ..Default::default()
@@ -1418,7 +1544,28 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "punctuation.bracket".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xb2cacdff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "punctuation.delimiter".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xb2cacdff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.list_marker".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xb2cacdff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.special".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xb2cacdff).into()),
                                     ..Default::default()
@@ -1628,7 +1775,28 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "punctuation.bracket".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xb2cacdff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "punctuation.delimiter".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xb2cacdff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.list_marker".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xb2cacdff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.special".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xb2cacdff).into()),
                                     ..Default::default()
@@ -1838,7 +2006,28 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "punctuation.bracket".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xb2cacdff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "punctuation.delimiter".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xb2cacdff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.list_marker".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xb2cacdff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.special".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xb2cacdff).into()),
                                     ..Default::default()
@@ -2048,7 +2237,28 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "punctuation.bracket".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xc5c2d6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "punctuation.delimiter".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xc5c2d6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.list_marker".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xc5c2d6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.special".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xc5c2d6ff).into()),
                                     ..Default::default()
@@ -2258,7 +2468,28 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "punctuation.bracket".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xccbfd9ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "punctuation.delimiter".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xccbfd9ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.list_marker".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xccbfd9ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.special".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xccbfd9ff).into()),
                                     ..Default::default()

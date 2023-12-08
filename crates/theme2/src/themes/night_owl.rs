@@ -153,6 +153,34 @@ pub fn night_owl() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "punctuation.bracket".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x7fdbcaff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.delimiter".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x7fdbcaff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.list_marker".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x7fdbcaff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.special".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x7fdbcaff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "string".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xecc48dff).into()),
@@ -339,6 +367,34 @@ pub fn night_owl() -> UserThemeFamily {
                             ),
                             (
                                 "punctuation".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x994cc3ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.bracket".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x994cc3ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.delimiter".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x994cc3ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.list_marker".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x994cc3ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.special".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x994cc3ff).into()),
                                     ..Default::default()

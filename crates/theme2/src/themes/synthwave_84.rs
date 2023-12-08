@@ -149,6 +149,34 @@ pub fn synthwave_84() -> UserThemeFamily {
                             },
                         ),
                         (
+                            "punctuation.bracket".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0x36f9f6ff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "punctuation.delimiter".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0x36f9f6ff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "punctuation.list_marker".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0x36f9f6ff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "punctuation.special".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0x36f9f6ff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
                             "tag".into(),
                             UserHighlightStyle {
                                 color: Some(rgba(0x72f1b8ff).into()),

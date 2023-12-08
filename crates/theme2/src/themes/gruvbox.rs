@@ -156,6 +156,34 @@ pub fn gruvbox() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "punctuation.bracket".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x83a598ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.delimiter".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x83a598ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.list_marker".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x83a598ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.special".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x83a598ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "string".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xb8bb26ff).into()),
@@ -351,6 +379,34 @@ pub fn gruvbox() -> UserThemeFamily {
                             ),
                             (
                                 "punctuation".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x83a598ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.bracket".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x83a598ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.delimiter".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x83a598ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.list_marker".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x83a598ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.special".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x83a598ff).into()),
                                     ..Default::default()
@@ -558,6 +614,34 @@ pub fn gruvbox() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "punctuation.bracket".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x83a598ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.delimiter".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x83a598ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.list_marker".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x83a598ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.special".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x83a598ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "string".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xb8bb26ff).into()),
@@ -753,6 +837,34 @@ pub fn gruvbox() -> UserThemeFamily {
                             ),
                             (
                                 "punctuation".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x076678ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.bracket".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x076678ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.delimiter".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x076678ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.list_marker".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x076678ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.special".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x076678ff).into()),
                                     ..Default::default()
@@ -960,6 +1072,34 @@ pub fn gruvbox() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "punctuation.bracket".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x076678ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.delimiter".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x076678ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.list_marker".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x076678ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.special".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x076678ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "string".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x79740eff).into()),
@@ -1155,6 +1295,34 @@ pub fn gruvbox() -> UserThemeFamily {
                             ),
                             (
                                 "punctuation".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x076678ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.bracket".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x076678ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.delimiter".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x076678ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.list_marker".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x076678ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.special".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x076678ff).into()),
                                     ..Default::default()

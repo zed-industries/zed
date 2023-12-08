@@ -168,6 +168,10 @@ impl ZedSyntaxToken {
         match self {
             ZedSyntaxToken::CommentDoc => &[ZedSyntaxToken::Comment],
             ZedSyntaxToken::VariableSpecial => &[ZedSyntaxToken::Variable],
+            ZedSyntaxToken::PunctuationBracket
+            | ZedSyntaxToken::PunctuationDelimiter
+            | ZedSyntaxToken::PunctuationListMarker
+            | ZedSyntaxToken::PunctuationSpecial => &[ZedSyntaxToken::Punctuation],
             _ => &[],
         }
     }
@@ -224,7 +228,6 @@ impl ZedSyntaxToken {
                 "punctuation.section",
                 "punctuation.accessor",
                 "punctuation.separator",
-                "punctuation.terminator",
                 "punctuation.definition.tag",
             ],
             ZedSyntaxToken::PunctuationBracket => vec![

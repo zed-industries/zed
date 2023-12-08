@@ -160,6 +160,34 @@ pub fn solarized() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "punctuation.bracket".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x657b83ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.delimiter".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x657b83ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.list_marker".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x657b83ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.special".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x657b83ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "string".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x2aa198ff).into()),

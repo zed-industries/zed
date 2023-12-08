@@ -190,7 +190,7 @@ pub fn ayu() -> UserThemeFamily {
                             (
                                 "punctuation".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x5c6166b3).into()),
+                                    color: Some(rgba(0x55b4d480).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -212,6 +212,13 @@ pub fn ayu() -> UserThemeFamily {
                                 "punctuation.list_marker".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xf2ae49ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.special".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x55b4d480).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -465,7 +472,7 @@ pub fn ayu() -> UserThemeFamily {
                             (
                                 "punctuation".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xcccac2b3).into()),
+                                    color: Some(rgba(0x5ccfe680).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -487,6 +494,13 @@ pub fn ayu() -> UserThemeFamily {
                                 "punctuation.list_marker".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xffd173ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.special".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x5ccfe680).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -740,7 +754,7 @@ pub fn ayu() -> UserThemeFamily {
                             (
                                 "punctuation".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xbfbdb6b3).into()),
+                                    color: Some(rgba(0x39bae680).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -762,6 +776,13 @@ pub fn ayu() -> UserThemeFamily {
                                 "punctuation.list_marker".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xffb454ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.special".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x39bae680).into()),
                                     ..Default::default()
                                 },
                             ),

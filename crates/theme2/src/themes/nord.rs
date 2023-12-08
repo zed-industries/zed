@@ -138,7 +138,14 @@ pub fn nord() -> UserThemeFamily {
                         (
                             "punctuation".into(),
                             UserHighlightStyle {
-                                color: Some(rgba(0x81a1c1ff).into()),
+                                color: Some(rgba(0xeceff4ff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "punctuation.bracket".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0xeceff4ff).into()),
                                 ..Default::default()
                             },
                         ),
@@ -146,6 +153,20 @@ pub fn nord() -> UserThemeFamily {
                             "punctuation.delimiter".into(),
                             UserHighlightStyle {
                                 color: Some(rgba(0x81a1c1ff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "punctuation.list_marker".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0xeceff4ff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "punctuation.special".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0xeceff4ff).into()),
                                 ..Default::default()
                             },
                         ),
