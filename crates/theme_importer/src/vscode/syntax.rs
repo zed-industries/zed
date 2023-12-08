@@ -9,17 +9,6 @@ pub enum VsCodeTokenScope {
     Many(Vec<String>),
 }
 
-impl VsCodeTokenScope {
-    pub fn multimatch(&self, matches: &[&'static str]) -> bool {
-        match self {
-            VsCodeTokenScope::One(scope) => matches.iter().any(|&s| s == scope),
-            VsCodeTokenScope::Many(scopes) => {
-                matches.iter().any(|s| scopes.contains(&s.to_string()))
-            }
-        }
-    }
-}
-
 #[derive(Debug, Deserialize)]
 pub struct VsCodeTokenColor {
     pub name: Option<String>,
@@ -292,34 +281,5 @@ impl ZedSyntaxToken {
             ],
             ZedSyntaxToken::Variant => vec!["variant"],
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_scope_multimatch_with_no_matches() {
-        assert_eq!(
-            VsCodeTokenScope::Many(vec![
-                "entity.name.function".to_string(),
-                "variable.function".to_string()
-            ])
-            .multimatch(&["entity.name"]),
-            false
-        );
-    }
-
-    #[test]
-    fn test_scope_multimatch_with_one_match() {
-        assert_eq!(
-            VsCodeTokenScope::Many(vec![
-                "entity.name.function".to_string(),
-                "variable.function".to_string()
-            ])
-            .multimatch(&["entity.name.function"]),
-            true
-        );
     }
 }
