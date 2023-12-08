@@ -1025,11 +1025,13 @@ impl Workspace {
                     if !panel.has_focus(cx) {
                         cx.focus(&panel);
                     }
+                    dbg!("D");
                     this.zoomed = Some(panel.downgrade().into_any());
                     this.zoomed_position = Some(panel.read(cx).position(cx));
                 } else if T::should_zoom_out_on_event(event) {
                     dock.update(cx, |dock, cx| dock.set_panel_zoomed(&panel, false, cx));
                     if this.zoomed_position == Some(prev_position) {
+                        dbg!("Losing focus A");
                         this.zoomed = None;
                         this.zoomed_position = None;
                     }
@@ -1038,9 +1040,11 @@ impl Workspace {
                     let position = panel.read(cx).position(cx);
                     this.dismiss_zoomed_items_to_reveal(Some(position), cx);
                     if panel.is_zoomed(cx) {
+                        dbg!("C");
                         this.zoomed = Some(panel.downgrade().into_any());
                         this.zoomed_position = Some(position);
                     } else {
+                        dbg!("Losing focus B");
                         this.zoomed = None;
                         this.zoomed_position = None;
                     }
@@ -1831,7 +1835,7 @@ impl Workspace {
             self.dismiss_zoomed_items_to_reveal(Some(dock_side), cx);
         }
 
-        if focus_center {
+        if dbg!(focus_center) {
             cx.focus_self();
         }
 
@@ -1875,6 +1879,7 @@ impl Workspace {
     ) -> Option<Rc<dyn PanelHandle>> {
         for dock in [&self.left_dock, &self.bottom_dock, &self.right_dock] {
             if let Some(panel_index) = dock.read(cx).panel_index_for_type::<T>() {
+                dbg!(panel_index);
                 let mut focus_center = false;
                 let mut reveal_dock = false;
                 let panel = dock.update(cx, |dock, cx| {
@@ -1926,6 +1931,7 @@ impl Workspace {
         self.left_dock.update(cx, |dock, cx| dock.zoom_out(cx));
         self.bottom_dock.update(cx, |dock, cx| dock.zoom_out(cx));
         self.right_dock.update(cx, |dock, cx| dock.zoom_out(cx));
+        dbg!("Losing focus C");
         self.zoomed = None;
         self.zoomed_position = None;
 
@@ -1969,6 +1975,7 @@ impl Workspace {
         }
 
         if self.zoomed_position != dock_to_reveal {
+            dbg!("losing D");
             self.zoomed = None;
             self.zoomed_position = None;
         }
@@ -2313,8 +2320,10 @@ impl Workspace {
 
         self.dismiss_zoomed_items_to_reveal(None, cx);
         if pane.read(cx).is_zoomed() {
+            dbg!("B");
             self.zoomed = Some(pane.downgrade().into_any());
         } else {
+            dbg!("losing focus E");
             self.zoomed = None;
         }
         self.zoomed_position = None;
@@ -2364,6 +2373,7 @@ impl Workspace {
                 if pane == self.active_pane {
                     pane.update(cx, |pane, cx| pane.set_zoomed(true, cx));
                     if pane.read(cx).has_focus() {
+                        dbg!("A");
                         self.zoomed = Some(pane.downgrade().into_any());
                         self.zoomed_position = None;
                     }
@@ -2373,6 +2383,7 @@ impl Workspace {
             pane::Event::ZoomOut => {
                 pane.update(cx, |pane, cx| pane.set_zoomed(false, cx));
                 if self.zoomed_position.is_none() {
+                    dbg!("losing focus F");
                     self.zoomed = None;
                 }
                 cx.notify();
