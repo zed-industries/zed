@@ -302,6 +302,29 @@ impl Render for FeedbackModal {
                 div().text_xl().child("Share Feedback"),
             ))
             .child(
+                Label::new(if self.character_count < *FEEDBACK_CHAR_LIMIT.start() {
+                    format!(
+                        "Feedback must be at least {} characters.",
+                        FEEDBACK_CHAR_LIMIT.start()
+                    )
+                } else if self.character_count > *FEEDBACK_CHAR_LIMIT.end() {
+                    format!(
+                        "Feedback must be less than {} characters.",
+                        FEEDBACK_CHAR_LIMIT.end()
+                    )
+                } else {
+                    format!(
+                        "Characters: {}",
+                        *FEEDBACK_CHAR_LIMIT.end() - self.character_count
+                    )
+                })
+                .color(if valid_character_count {
+                    Color::Success
+                } else {
+                    Color::Error
+                }),
+            )
+            .child(
                 div()
                     .flex_1()
                     .bg(cx.theme().colors().editor_background)
@@ -313,29 +336,6 @@ impl Render for FeedbackModal {
             )
             .child(
                 div()
-                    .child(
-                        Label::new(if self.character_count < *FEEDBACK_CHAR_LIMIT.start() {
-                            format!(
-                                "Feedback must be at least {} characters.",
-                                FEEDBACK_CHAR_LIMIT.start()
-                            )
-                        } else if self.character_count > *FEEDBACK_CHAR_LIMIT.end() {
-                            format!(
-                                "Feedback must be less than {} characters.",
-                                FEEDBACK_CHAR_LIMIT.end()
-                            )
-                        } else {
-                            format!(
-                                "Characters: {}",
-                                *FEEDBACK_CHAR_LIMIT.end() - self.character_count
-                            )
-                        })
-                        .color(if valid_character_count {
-                            Color::Success
-                        } else {
-                            Color::Error
-                        }),
-                    )
                     .child(
                         h_stack()
                             .bg(cx.theme().colors().editor_background)
