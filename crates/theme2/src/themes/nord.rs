@@ -35,6 +35,8 @@ pub fn nord() -> UserThemeFamily {
                     text: Some(rgba(0xd8dee9ff).into()),
                     status_bar_background: Some(rgba(0x3b4252ff).into()),
                     title_bar_background: Some(rgba(0x2e3440ff).into()),
+                    toolbar_background: Some(rgba(0x2e3440ff).into()),
+                    tab_bar_background: Some(rgba(0x2e3440ff).into()),
                     tab_inactive_background: Some(rgba(0x2e3440ff).into()),
                     tab_active_background: Some(rgba(0x3b4252ff).into()),
                     editor_background: Some(rgba(0x2e3440ff).into()),
