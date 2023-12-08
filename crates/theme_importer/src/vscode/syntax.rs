@@ -190,11 +190,7 @@ impl ZedSyntaxToken {
                 "markup.bold markup.italic",
             ],
             ZedSyntaxToken::Enum => vec!["support.type.enum"],
-            ZedSyntaxToken::Function => vec![
-                "entity.name.function",
-                "variable.function",
-                "support.function",
-            ],
+            ZedSyntaxToken::Function => vec!["entity.name.function", "variable.function"],
             ZedSyntaxToken::Hint => vec![],
             ZedSyntaxToken::Keyword => vec![
                 "keyword",

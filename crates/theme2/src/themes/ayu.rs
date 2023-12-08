@@ -134,7 +134,7 @@ pub fn ayu() -> UserThemeFamily {
                             (
                                 "function".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xf07171ff).into()),
+                                    color: Some(rgba(0xf2ae49ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -409,7 +409,7 @@ pub fn ayu() -> UserThemeFamily {
                             (
                                 "function".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xf28779ff).into()),
+                                    color: Some(rgba(0xffd173ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -684,7 +684,7 @@ pub fn ayu() -> UserThemeFamily {
                             (
                                 "function".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xf07178ff).into()),
+                                    color: Some(rgba(0xffb454ff).into()),
                                     ..Default::default()
                                 },
                             ),
