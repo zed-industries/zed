@@ -202,7 +202,7 @@ impl VsCodeThemeConverter {
                         .flatten()
                 }),
             tab_bar_background: vscode_colors
-                .panel_background
+                .editor_group_header_tabs_background
                 .as_ref()
                 .traverse(|color| try_parse_color(&color))?,
             tab_active_background: vscode_colors
