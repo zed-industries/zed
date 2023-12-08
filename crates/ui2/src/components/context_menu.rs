@@ -239,7 +239,6 @@ impl Render for ContextMenu {
                                 action,
                             } => {
                                 let handler = handler.clone();
-                                let dismiss = cx.listener(|_, _, cx| cx.emit(DismissEvent));
 
                                 let label_element = if let Some(icon) = icon {
                                     h_stack()
@@ -263,10 +262,7 @@ impl Render for ContextMenu {
                                             })),
                                     )
                                     .selected(Some(ix) == self.selected_index)
-                                    .on_click(move |event, cx| {
-                                        handler(cx);
-                                        dismiss(event, cx)
-                                    })
+                                    .on_click(move |_, cx| handler(cx))
                                     .into_any_element()
                             }
                         },

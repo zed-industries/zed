@@ -632,7 +632,6 @@ impl Render for TerminalView {
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         let terminal_handle = self.terminal.clone();
-        let this_view = cx.view().clone();
 
         let self_id = cx.entity_id();
         let focused = self.focus_handle.is_focused(cx);
@@ -640,22 +639,25 @@ impl Render for TerminalView {
         div()
             .size_full()
             .relative()
+            .track_focus(&self.focus_handle)
+            .key_context(self.dispatch_context(cx))
+            .on_action(cx.listener(TerminalView::send_text))
+            .on_action(cx.listener(TerminalView::send_keystroke))
+            .on_action(cx.listener(TerminalView::copy))
+            .on_action(cx.listener(TerminalView::paste))
+            .on_action(cx.listener(TerminalView::clear))
+            .on_action(cx.listener(TerminalView::show_character_palette))
+            .on_action(cx.listener(TerminalView::select_all))
+            .on_focus_in(cx.listener(Self::focus_in))
+            .on_focus_out(cx.listener(Self::focus_out))
+            .on_key_down(cx.listener(Self::key_down))
             .child(
                 div()
                     .z_index(0)
                     .absolute()
                     .size_full()
-                    .on_key_down(cx.listener(Self::key_down))
-                    .on_action(cx.listener(TerminalView::send_text))
-                    .on_action(cx.listener(TerminalView::send_keystroke))
-                    .on_action(cx.listener(TerminalView::copy))
-                    .on_action(cx.listener(TerminalView::paste))
-                    .on_action(cx.listener(TerminalView::clear))
-                    .on_action(cx.listener(TerminalView::show_character_palette))
-                    .on_action(cx.listener(TerminalView::select_all))
                     .child(TerminalElement::new(
                         terminal_handle,
-                        this_view,
                         self.focus_handle.clone(),
                         focused,
                         self.should_show_cursor(focused, cx),
@@ -675,9 +677,6 @@ impl Render for TerminalView {
                     .anchor(gpui::AnchorCorner::TopLeft)
                     .child(menu.clone())
             }))
-            .track_focus(&self.focus_handle)
-            .on_focus_in(cx.listener(Self::focus_in))
-            .on_focus_out(cx.listener(Self::focus_out))
     }
 }
 
