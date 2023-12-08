@@ -12,6 +12,7 @@ use std::str::FromStr;
 use anyhow::{anyhow, Context, Result};
 use convert_case::{Case, Casing};
 use gpui::serde_json;
+use indexmap::IndexMap;
 use json_comments::StripComments;
 use log::LevelFilter;
 use serde::Deserialize;
@@ -27,6 +28,14 @@ struct FamilyMetadata {
     pub name: String,
     pub author: String,
     pub themes: Vec<ThemeMetadata>,
+
+    /// Overrides for specific syntax tokens.
+    ///
+    /// Use this to ensure certain Zed syntax tokens are matched
+    /// to an exact set of scopes when it is not otherwise possible
+    /// to rely on the default mappings in the theme importer.
+    #[serde(default)]
+    pub syntax: IndexMap<String, Vec<String>>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize)]
@@ -127,7 +136,11 @@ fn main() -> Result<()> {
             let vscode_theme: VsCodeTheme = serde_json::from_reader(theme_without_comments)
                 .context(format!("failed to parse theme {theme_file_path:?}"))?;
 
-            let converter = VsCodeThemeConverter::new(vscode_theme, theme_metadata);
+            let converter = VsCodeThemeConverter::new(
+                vscode_theme,
+                theme_metadata,
+                family_metadata.syntax.clone(),
+            );
 
             let theme = converter.convert()?;
 

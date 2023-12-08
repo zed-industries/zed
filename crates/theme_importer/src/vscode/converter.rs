@@ -9,7 +9,7 @@ use theme::{
 
 use crate::color::try_parse_color;
 use crate::util::Traverse;
-use crate::vscode::VsCodeTheme;
+use crate::vscode::{VsCodeTheme, VsCodeTokenScope};
 use crate::ThemeMetadata;
 
 use super::ZedSyntaxToken;
@@ -32,13 +32,19 @@ pub(crate) fn try_parse_font_style(font_style: &str) -> Option<UserFontStyle> {
 pub struct VsCodeThemeConverter {
     theme: VsCodeTheme,
     theme_metadata: ThemeMetadata,
+    syntax_overrides: IndexMap<String, Vec<String>>,
 }
 
 impl VsCodeThemeConverter {
-    pub fn new(theme: VsCodeTheme, theme_metadata: ThemeMetadata) -> Self {
+    pub fn new(
+        theme: VsCodeTheme,
+        theme_metadata: ThemeMetadata,
+        syntax_overrides: IndexMap<String, Vec<String>>,
+    ) -> Self {
         Self {
             theme,
             theme_metadata,
+            syntax_overrides,
         }
     }
 
@@ -291,8 +297,17 @@ impl VsCodeThemeConverter {
         let mut highlight_styles = IndexMap::new();
 
         for syntax_token in ZedSyntaxToken::iter() {
-            let best_match = syntax_token
-                .find_best_token_color_match(&self.theme.token_colors)
+            let override_match = self
+                .syntax_overrides
+                .get(&syntax_token.to_string())
+                .and_then(|scope| {
+                    self.theme.token_colors.iter().find(|token_color| {
+                        token_color.scope == Some(VsCodeTokenScope::Many(scope.clone()))
+                    })
+                });
+
+            let best_match = override_match
+                .or_else(|| syntax_token.find_best_token_color_match(&self.theme.token_colors))
                 .or_else(|| {
                     syntax_token.fallbacks().iter().find_map(|fallback| {
                         fallback.find_best_token_color_match(&self.theme.token_colors)
