@@ -132,7 +132,7 @@ impl ListState {
     }
 
     pub fn set_scroll_handler(
-        &mut self,
+        &self,
         handler: impl FnMut(&ListScrollEvent, &mut WindowContext) + 'static,
     ) {
         self.0.borrow_mut().scroll_handler = Some(Box::new(handler))

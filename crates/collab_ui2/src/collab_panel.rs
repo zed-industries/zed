@@ -192,6 +192,7 @@ use workspace::{
 };
 
 use crate::channel_view::ChannelView;
+use crate::chat_panel::ChatPanel;
 use crate::{face_pile::FacePile, CollaborationPanelSettings};
 
 use self::channel_modal::ChannelModal;
@@ -2102,14 +2103,13 @@ impl CollabPanel {
         };
         cx.window_context().defer(move |cx| {
             workspace.update(cx, |workspace, cx| {
-                todo!();
-                // if let Some(panel) = workspace.focus_panel::<ChatPanel>(cx) {
-                //     panel.update(cx, |panel, cx| {
-                //         panel
-                //             .select_channel(channel_id, None, cx)
-                //             .detach_and_log_err(cx);
-                //     });
-                // }
+                if let Some(panel) = workspace.focus_panel::<ChatPanel>(cx) {
+                    panel.update(cx, |panel, cx| {
+                        panel
+                            .select_channel(channel_id, None, cx)
+                            .detach_and_log_err(cx);
+                    });
+                }
             });
         });
     }
@@ -2603,9 +2603,14 @@ impl CollabPanel {
                                                     Color::Default
                                                 } else {
                                                     Color::Muted
+                                                })
+                                                .on_click(cx.listener(move |this, _, cx| {
+                                                    this.join_channel_chat(channel_id, cx)
+                                                }))
+                                                .tooltip(|cx| {
+                                                    Tooltip::text("Open channel chat", cx)
                                                 }),
-                                            )
-                                            .tooltip(|cx| Tooltip::text("Open channel chat", cx)),
+                                            ),
                                     )
                                     .child(
                                         div()

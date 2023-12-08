@@ -3,7 +3,8 @@ use client::UserId;
 use collections::HashMap;
 use editor::{AnchorRangeExt, Editor};
 use gpui::{
-    AnyView, AsyncWindowContext, Model, Render, SharedString, Task, View, ViewContext, WeakView,
+    AnyView, AsyncWindowContext, FocusableView, Model, Render, SharedString, Task, View,
+    ViewContext, WeakView,
 };
 use language::{language_settings::SoftWrap, Buffer, BufferSnapshot, LanguageRegistry};
 use lazy_static::lazy_static;
@@ -52,8 +53,7 @@ impl MessageEditor {
             let markdown = markdown.await?;
             buffer.update(&mut cx, |buffer, cx| {
                 buffer.set_language(Some(markdown), cx)
-            });
-            anyhow::Ok(())
+            })
         })
         .detach_and_log_err(cx);
 
@@ -191,14 +191,14 @@ impl MessageEditor {
     }
 
     pub(crate) fn focus_handle(&self, cx: &gpui::AppContext) -> gpui::FocusHandle {
-        todo!()
+        self.editor.read(cx).focus_handle(cx)
     }
 }
 
 impl Render for MessageEditor {
     type Element = AnyView;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
         self.editor.to_any()
     }
 }
