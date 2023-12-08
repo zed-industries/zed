@@ -395,3 +395,4 @@ impl Render for FeedbackModal {
 }
 
 // TODO: Add compilation flags to enable debug mode, where we can simulate sending feedback that both succeeds and fails, so we can test the UI
+// TODO: Maybe store email address whenever the modal is closed, versus just on submit, so users can remove it if they want without submitting
