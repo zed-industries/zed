@@ -74,12 +74,9 @@ pub use util::arc_cow::ArcCow;
 pub use view::*;
 pub use window::*;
 
-use derive_more::{Deref, DerefMut};
-use serde::{Deserialize, Serialize};
 use std::{
     any::{Any, TypeId},
-    borrow::{Borrow, BorrowMut},
-    sync::Arc,
+    borrow::BorrowMut,
 };
 use taffy::TaffyLayoutEngine;
 

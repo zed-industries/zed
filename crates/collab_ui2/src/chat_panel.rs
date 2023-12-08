@@ -345,7 +345,7 @@ impl ChatPanel {
 
     fn render_active_channel_messages(&self, _cx: &mut ViewContext<Self>) -> AnyElement {
         if self.active_chat.is_some() {
-            list(self.message_list.clone()).into_any_element()
+            list(self.message_list.clone()).full().into_any_element()
         } else {
             div().into_any_element()
         }

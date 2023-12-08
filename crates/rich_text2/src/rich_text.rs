@@ -56,7 +56,7 @@ pub struct Mention {
 }
 
 impl RichText {
-    pub fn element(&self, cx: &mut WindowContext) -> AnyElement {
+    pub fn element(&self, _cx: &mut WindowContext) -> AnyElement {
         todo!();
 
         // let mut region_id = 0;

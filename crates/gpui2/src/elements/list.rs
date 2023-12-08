@@ -1,8 +1,9 @@
 use crate::{
     px, AnyElement, AvailableSpace, BorrowAppContext, DispatchPhase, Element, IntoElement, Pixels,
-    Point, ScrollWheelEvent, Size, Style, StyleRefinement, WindowContext,
+    Point, ScrollWheelEvent, Size, Style, StyleRefinement, Styled, WindowContext,
 };
 use collections::VecDeque;
+use refineable::Refineable as _;
 use std::{cell::RefCell, ops::Range, rc::Rc};
 use sum_tree::{Bias, SumTree};
 
@@ -247,7 +248,8 @@ impl Element for List {
         _state: Option<Self::State>,
         cx: &mut crate::WindowContext,
     ) -> (crate::LayoutId, Self::State) {
-        let style = Style::from(self.style.clone());
+        let mut style = Style::default();
+        style.refine(&self.style);
         let layout_id = cx.with_text_style(style.text_style().cloned(), |cx| {
             cx.request_layout(&style, None)
         });
@@ -416,6 +418,12 @@ impl IntoElement for List {
 
     fn into_element(self) -> Self::Element {
         self
+    }
+}
+
+impl Styled for List {
+    fn style(&mut self) -> &mut StyleRefinement {
+        &mut self.style
     }
 }
 
