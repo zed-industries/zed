@@ -5,8 +5,8 @@ use gpui::{
     div, AnyView, Div, IntoElement, ParentElement, Render, Styled, Subscription, View, ViewContext,
     WindowContext,
 };
+use ui::h_stack;
 use ui::prelude::*;
-use ui::{h_stack};
 use util::ResultExt;
 
 pub trait StatusItemView: Render {
