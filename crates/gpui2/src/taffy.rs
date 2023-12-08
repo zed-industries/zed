@@ -477,3 +477,12 @@ impl From<Pixels> for AvailableSpace {
         AvailableSpace::Definite(pixels)
     }
 }
+
+impl From<Size<Pixels>> for Size<AvailableSpace> {
+    fn from(size: Size<Pixels>) -> Self {
+        Size {
+            width: AvailableSpace::Definite(size.width),
+            height: AvailableSpace::Definite(size.height),
+        }
+    }
+}

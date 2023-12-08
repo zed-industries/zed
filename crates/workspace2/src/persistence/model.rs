@@ -1,13 +1,11 @@
-use crate::{
-    item::ItemHandle, Axis, ItemDeserializers, Member, Pane, PaneAxis, Workspace, WorkspaceId,
-};
+use crate::{item::ItemHandle, ItemDeserializers, Member, Pane, PaneAxis, Workspace, WorkspaceId};
 use anyhow::{Context, Result};
 use async_recursion::async_recursion;
 use db::sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
 };
-use gpui::{AsyncWindowContext, Model, Task, View, WeakView, WindowBounds};
+use gpui::{AsyncWindowContext, Axis, Model, Task, View, WeakView, WindowBounds};
 use project::Project;
 use std::{
     path::{Path, PathBuf},

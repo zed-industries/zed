@@ -1,13 +1,9 @@
-use crate::{AppState, FollowerState, Pane, Workspace};
-use anyhow::{anyhow, bail, Result};
+use crate::{pane_group::element::pane_axis, AppState, FollowerState, Pane, Workspace};
+use anyhow::{anyhow, Result};
 use call::{ActiveCall, ParticipantLocation};
 use collections::HashMap;
-use db::sqlez::{
-    bindable::{Bind, Column, StaticColumnCount},
-    statement::Statement,
-};
 use gpui::{
-    point, size, AnyWeakView, Bounds, Div, Entity as _, IntoElement, Model, Pixels, Point, View,
+    point, size, AnyWeakView, Axis, Bounds, Entity as _, IntoElement, Model, Pixels, Point, View,
     ViewContext,
 };
 use parking_lot::Mutex;
@@ -19,38 +15,6 @@ use ui::{prelude::*, Button};
 const HANDLE_HITBOX_SIZE: f32 = 4.0;
 const HORIZONTAL_MIN_SIZE: f32 = 80.;
 const VERTICAL_MIN_SIZE: f32 = 100.;
-
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum Axis {
-    Vertical,
-    Horizontal,
-}
-
-impl StaticColumnCount for Axis {}
-impl Bind for Axis {
-    fn bind(&self, statement: &Statement, start_index: i32) -> anyhow::Result<i32> {
-        match self {
-            Axis::Horizontal => "Horizontal",
-            Axis::Vertical => "Vertical",
-        }
-        .bind(statement, start_index)
-    }
-}
-
-impl Column for Axis {
-    fn column(statement: &mut Statement, start_index: i32) -> anyhow::Result<(Self, i32)> {
-        String::column(statement, start_index).and_then(|(axis_text, next_index)| {
-            Ok((
-                match axis_text.as_str() {
-                    "Horizontal" => Axis::Horizontal,
-                    "Vertical" => Axis::Vertical,
-                    _ => bail!("Stored serialized item kind is incorrect"),
-                },
-                next_index,
-            ))
-        })
-    }
-}
 
 #[derive(Clone, PartialEq)]
 pub struct PaneGroup {
@@ -632,16 +596,10 @@ impl PaneAxis {
         zoomed: Option<&AnyWeakView>,
         app_state: &Arc<AppState>,
         cx: &mut ViewContext<Workspace>,
-    ) -> Div {
+    ) -> gpui::AnyElement {
         debug_assert!(self.members.len() == self.flexes.lock().len());
 
-        div()
-            .flex()
-            .flex_auto()
-            .map(|s| match self.axis {
-                Axis::Vertical => s.flex_col(),
-                Axis::Horizontal => s.flex_row(),
-            })
+        pane_axis(self.axis, basis, self.flexes.clone())
             .children(self.members.iter().enumerate().map(|(ix, member)| {
                 match member {
                     Member::Axis(axis) => axis
@@ -658,6 +616,7 @@ impl PaneAxis {
                     Member::Pane(pane) => pane.clone().into_any_element(),
                 }
             }))
+            .into_any_element()
 
         // let mut pane_axis = PaneAxisElement::new(
         //     self.axis,
@@ -767,403 +726,480 @@ impl SplitDirection {
     }
 }
 
-// mod element {
-//     // use std::{cell::RefCell, iter::from_fn, ops::Range, rc::Rc};
+mod element {
+    use std::sync::Arc;
 
-//     // use gpui::{
-//     //     geometry::{
-//     //         rect::Bounds<Pixels>,
-//     //         vector::{vec2f, Vector2F},
-//     //     },
-//     //     json::{self, ToJson},
-//     //     platform::{CursorStyle, MouseButton},
-//     //     scene::MouseDrag,
-//     //     AnyElement, Axis, CursorRegion, Element, EventContext, MouseRegion, Bounds<Pixels>Ext,
-//     //     SizeConstraint, Vector2FExt, ViewContext,
-//     // };
+    use gpui::{relative, AnyElement, Axis, Element, IntoElement, ParentElement, Style};
+    use parking_lot::Mutex;
+    use smallvec::SmallVec;
 
-//     use crate::{
-//         pane_group::{HANDLE_HITBOX_SIZE, HORIZONTAL_MIN_SIZE, VERTICAL_MIN_SIZE},
-//         Workspace, WorkspaceSettings,
-//     };
+    pub fn pane_axis(axis: Axis, basis: usize, flexes: Arc<Mutex<Vec<f32>>>) -> PaneAxisElement {
+        PaneAxisElement {
+            axis,
+            basis,
+            flexes,
+            children: SmallVec::new(),
+        }
+    }
 
-//     pub struct PaneAxisElement {
-//         axis: Axis,
-//         basis: usize,
-//         active_pane_ix: Option<usize>,
-//         flexes: Rc<RefCell<Vec<f32>>>,
-//         children: Vec<AnyElement<Workspace>>,
-//         bounding_boxes: Rc<RefCell<Vec<Option<Bounds<Pixels>>>>>,
-//     }
+    pub struct PaneAxisElement {
+        axis: Axis,
+        basis: usize,
+        flexes: Arc<Mutex<Vec<f32>>>,
+        children: SmallVec<[AnyElement; 2]>,
+    }
 
-//     impl PaneAxisElement {
-//         pub fn new(
-//             axis: Axis,
-//             basis: usize,
-//             flexes: Rc<RefCell<Vec<f32>>>,
-//             bounding_boxes: Rc<RefCell<Vec<Option<Bounds<Pixels>>>>>,
-//         ) -> Self {
-//             Self {
-//                 axis,
-//                 basis,
-//                 flexes,
-//                 bounding_boxes,
-//                 active_pane_ix: None,
-//                 children: Default::default(),
-//             }
-//         }
+    impl IntoElement for PaneAxisElement {
+        type Element = Self;
 
-//         pub fn set_active_pane(&mut self, active_pane_ix: Option<usize>) {
-//             self.active_pane_ix = active_pane_ix;
-//         }
+        fn element_id(&self) -> Option<ui::prelude::ElementId> {
+            Some("pane axis".into())
+        }
 
-//         fn layout_children(
-//             &mut self,
-//             active_pane_magnification: f32,
-//             constraint: SizeConstraint,
-//             remaining_space: &mut f32,
-//             remaining_flex: &mut f32,
-//             cross_axis_max: &mut f32,
-//             view: &mut Workspace,
-//             cx: &mut ViewContext<Workspace>,
-//         ) {
-//             let flexes = self.flexes.borrow();
-//             let cross_axis = self.axis.invert();
-//             for (ix, child) in self.children.iter_mut().enumerate() {
-//                 let flex = if active_pane_magnification != 1. {
-//                     if let Some(active_pane_ix) = self.active_pane_ix {
-//                         if ix == active_pane_ix {
-//                             active_pane_magnification
-//                         } else {
-//                             1.
-//                         }
-//                     } else {
-//                         1.
-//                     }
-//                 } else {
-//                     flexes[ix]
-//                 };
+        fn into_element(self) -> Self::Element {
+            self
+        }
+    }
 
-//                 let child_size = if *remaining_flex == 0.0 {
-//                     *remaining_space
-//                 } else {
-//                     let space_per_flex = *remaining_space / *remaining_flex;
-//                     space_per_flex * flex
-//                 };
+    impl Element for PaneAxisElement {
+        type State = ();
 
-//                 let child_constraint = match self.axis {
-//                     Axis::Horizontal => SizeConstraint::new(
-//                         vec2f(child_size, constraint.min.y()),
-//                         vec2f(child_size, constraint.max.y()),
-//                     ),
-//                     Axis::Vertical => SizeConstraint::new(
-//                         vec2f(constraint.min.x(), child_size),
-//                         vec2f(constraint.max.x(), child_size),
-//                     ),
-//                 };
-//                 let child_size = child.layout(child_constraint, view, cx);
-//                 *remaining_space -= child_size.along(self.axis);
-//                 *remaining_flex -= flex;
-//                 *cross_axis_max = cross_axis_max.max(child_size.along(cross_axis));
-//             }
-//         }
+        fn layout(
+            &mut self,
+            state: Option<Self::State>,
+            cx: &mut ui::prelude::WindowContext,
+        ) -> (gpui::LayoutId, Self::State) {
+            let mut style = Style::default();
+            style.size.width = relative(1.).into();
+            style.size.height = relative(1.).into();
+            let layout_id = cx.request_layout(&style, None);
 
-//         fn handle_resize(
-//             flexes: Rc<RefCell<Vec<f32>>>,
-//             axis: Axis,
-//             preceding_ix: usize,
-//             child_start: Vector2F,
-//             drag_bounds: Bounds<Pixels>,
-//         ) -> impl Fn(MouseDrag, &mut Workspace, &mut EventContext<Workspace>) {
-//             let size = move |ix, flexes: &[f32]| {
-//                 drag_bounds.length_along(axis) * (flexes[ix] / flexes.len() as f32)
-//             };
+            (layout_id, ())
+        }
 
-//             move |drag, workspace: &mut Workspace, cx| {
-//                 if drag.end {
-//                     // TODO: Clear cascading resize state
-//                     return;
-//                 }
-//                 let min_size = match axis {
-//                     Axis::Horizontal => HORIZONTAL_MIN_SIZE,
-//                     Axis::Vertical => VERTICAL_MIN_SIZE,
-//                 };
-//                 let mut flexes = flexes.borrow_mut();
+        fn paint(
+            self,
+            bounds: gpui::Bounds<ui::prelude::Pixels>,
+            state: &mut Self::State,
+            cx: &mut ui::prelude::WindowContext,
+        ) {
+            let flexes = self.flexes.lock().clone();
+            debug_assert!(flexes.len() == self.children.len());
 
-//                 // Don't allow resizing to less than the minimum size, if elements are already too small
-//                 if min_size - 1. > size(preceding_ix, flexes.as_slice()) {
-//                     return;
-//                 }
+            let origin = bounds.origin;
+            let size = bounds.size;
+            let len = self.children.len();
+            let child_size = size.apply_along(self.axis, |val| val / len as f32);
+            for (ix, child) in self.children.into_iter().enumerate() {
+                let origin =
+                    origin.apply_along(self.axis, |val| val + child_size.along(self.axis) * ix);
+                child.draw(origin, child_size.into(), cx);
+            }
+        }
+    }
 
-//                 let mut proposed_current_pixel_change = (drag.position - child_start).along(axis)
-//                     - size(preceding_ix, flexes.as_slice());
+    impl ParentElement for PaneAxisElement {
+        fn children_mut(&mut self) -> &mut smallvec::SmallVec<[AnyElement; 2]> {
+            &mut self.children
+        }
+    }
 
-//                 let flex_changes = |pixel_dx, target_ix, next: isize, flexes: &[f32]| {
-//                     let flex_change = pixel_dx / drag_bounds.length_along(axis);
-//                     let current_target_flex = flexes[target_ix] + flex_change;
-//                     let next_target_flex =
-//                         flexes[(target_ix as isize + next) as usize] - flex_change;
-//                     (current_target_flex, next_target_flex)
-//                 };
+    //     // use std::{cell::RefCell, iter::from_fn, ops::Range, rc::Rc};
 
-//                 let mut successors = from_fn({
-//                     let forward = proposed_current_pixel_change > 0.;
-//                     let mut ix_offset = 0;
-//                     let len = flexes.len();
-//                     move || {
-//                         let result = if forward {
-//                             (preceding_ix + 1 + ix_offset < len).then(|| preceding_ix + ix_offset)
-//                         } else {
-//                             (preceding_ix as isize - ix_offset as isize >= 0)
-//                                 .then(|| preceding_ix - ix_offset)
-//                         };
+    //     // use gpui::{
+    //     //     geometry::{
+    //     //         rect::Bounds<Pixels>,
+    //     //         vector::{vec2f, Vector2F},
+    //     //     },
+    //     //     json::{self, ToJson},
+    //     //     platform::{CursorStyle, MouseButton},
+    //     //     scene::MouseDrag,
+    //     //     AnyElement, Axis, CursorRegion, Element, EventContext, MouseRegion, Bounds<Pixels>Ext,
+    //     //     SizeConstraint, Vector2FExt, ViewContext,
+    //     // };
 
-//                         ix_offset += 1;
+    //     use crate::{
+    //         pane_group::{HANDLE_HITBOX_SIZE, HORIZONTAL_MIN_SIZE, VERTICAL_MIN_SIZE},
+    //         Workspace, WorkspaceSettings,
+    //     };
 
-//                         result
-//                     }
-//                 });
+    //     pub struct PaneAxisElement {
+    //         axis: Axis,
+    //         basis: usize,
+    //         active_pane_ix: Option<usize>,
+    //         flexes: Rc<RefCell<Vec<f32>>>,
+    //         children: Vec<AnyElement<Workspace>>,
+    //         bounding_boxes: Rc<RefCell<Vec<Option<Bounds<Pixels>>>>>,
+    //     }
 
-//                 while proposed_current_pixel_change.abs() > 0. {
-//                     let Some(current_ix) = successors.next() else {
-//                         break;
-//                     };
+    //     impl PaneAxisElement {
+    //         pub fn new(
+    //             axis: Axis,
+    //             basis: usize,
+    //             flexes: Rc<RefCell<Vec<f32>>>,
+    //             bounding_boxes: Rc<RefCell<Vec<Option<Bounds<Pixels>>>>>,
+    //         ) -> Self {
+    //             Self {
+    //                 axis,
+    //                 basis,
+    //                 flexes,
+    //                 bounding_boxes,
+    //                 active_pane_ix: None,
+    //                 children: Default::default(),
+    //             }
+    //         }
 
-//                     let next_target_size = f32::max(
-//                         size(current_ix + 1, flexes.as_slice()) - proposed_current_pixel_change,
-//                         min_size,
-//                     );
+    //         pub fn set_active_pane(&mut self, active_pane_ix: Option<usize>) {
+    //             self.active_pane_ix = active_pane_ix;
+    //         }
 
-//                     let current_target_size = f32::max(
-//                         size(current_ix, flexes.as_slice())
-//                             + size(current_ix + 1, flexes.as_slice())
-//                             - next_target_size,
-//                         min_size,
-//                     );
+    //         fn layout_children(
+    //             &mut self,
+    //             active_pane_magnification: f32,
+    //             constraint: SizeConstraint,
+    //             remaining_space: &mut f32,
+    //             remaining_flex: &mut f32,
+    //             cross_axis_max: &mut f32,
+    //             view: &mut Workspace,
+    //             cx: &mut ViewContext<Workspace>,
+    //         ) {
+    //             let flexes = self.flexes.borrow();
+    //             let cross_axis = self.axis.invert();
+    //             for (ix, child) in self.children.iter_mut().enumerate() {
+    //                 let flex = if active_pane_magnification != 1. {
+    //                     if let Some(active_pane_ix) = self.active_pane_ix {
+    //                         if ix == active_pane_ix {
+    //                             active_pane_magnification
+    //                         } else {
+    //                             1.
+    //                         }
+    //                     } else {
+    //                         1.
+    //                     }
+    //                 } else {
+    //                     flexes[ix]
+    //                 };
 
-//                     let current_pixel_change =
-//                         current_target_size - size(current_ix, flexes.as_slice());
+    //                 let child_size = if *remaining_flex == 0.0 {
+    //                     *remaining_space
+    //                 } else {
+    //                     let space_per_flex = *remaining_space / *remaining_flex;
+    //                     space_per_flex * flex
+    //                 };
 
-//                     let (current_target_flex, next_target_flex) =
-//                         flex_changes(current_pixel_change, current_ix, 1, flexes.as_slice());
+    //                 let child_constraint = match self.axis {
+    //                     Axis::Horizontal => SizeConstraint::new(
+    //                         vec2f(child_size, constraint.min.y()),
+    //                         vec2f(child_size, constraint.max.y()),
+    //                     ),
+    //                     Axis::Vertical => SizeConstraint::new(
+    //                         vec2f(constraint.min.x(), child_size),
+    //                         vec2f(constraint.max.x(), child_size),
+    //                     ),
+    //                 };
+    //                 let child_size = child.layout(child_constraint, view, cx);
+    //                 *remaining_space -= child_size.along(self.axis);
+    //                 *remaining_flex -= flex;
+    //                 *cross_axis_max = cross_axis_max.max(child_size.along(cross_axis));
+    //             }
+    //         }
 
-//                     flexes[current_ix] = current_target_flex;
-//                     flexes[current_ix + 1] = next_target_flex;
+    //         fn handle_resize(
+    //             flexes: Rc<RefCell<Vec<f32>>>,
+    //             axis: Axis,
+    //             preceding_ix: usize,
+    //             child_start: Vector2F,
+    //             drag_bounds: Bounds<Pixels>,
+    //         ) -> impl Fn(MouseDrag, &mut Workspace, &mut EventContext<Workspace>) {
+    //             let size = move |ix, flexes: &[f32]| {
+    //                 drag_bounds.length_along(axis) * (flexes[ix] / flexes.len() as f32)
+    //             };
 
-//                     proposed_current_pixel_change -= current_pixel_change;
-//                 }
+    //             move |drag, workspace: &mut Workspace, cx| {
+    //                 if drag.end {
+    //                     // TODO: Clear cascading resize state
+    //                     return;
+    //                 }
+    //                 let min_size = match axis {
+    //                     Axis::Horizontal => HORIZONTAL_MIN_SIZE,
+    //                     Axis::Vertical => VERTICAL_MIN_SIZE,
+    //                 };
+    //                 let mut flexes = flexes.borrow_mut();
 
-//                 workspace.schedule_serialize(cx);
-//                 cx.notify();
-//             }
-//         }
-//     }
+    //                 // Don't allow resizing to less than the minimum size, if elements are already too small
+    //                 if min_size - 1. > size(preceding_ix, flexes.as_slice()) {
+    //                     return;
+    //                 }
 
-//     impl Extend<AnyElement<Workspace>> for PaneAxisElement {
-//         fn extend<T: IntoIterator<Item = AnyElement<Workspace>>>(&mut self, children: T) {
-//             self.children.extend(children);
-//         }
-//     }
+    //                 let mut proposed_current_pixel_change = (drag.position - child_start).along(axis)
+    //                     - size(preceding_ix, flexes.as_slice());
 
-//     impl Element<Workspace> for PaneAxisElement {
-//         type LayoutState = f32;
-//         type PaintState = ();
+    //                 let flex_changes = |pixel_dx, target_ix, next: isize, flexes: &[f32]| {
+    //                     let flex_change = pixel_dx / drag_bounds.length_along(axis);
+    //                     let current_target_flex = flexes[target_ix] + flex_change;
+    //                     let next_target_flex =
+    //                         flexes[(target_ix as isize + next) as usize] - flex_change;
+    //                     (current_target_flex, next_target_flex)
+    //                 };
 
-//         fn layout(
-//             &mut self,
-//             constraint: SizeConstraint,
-//             view: &mut Workspace,
-//             cx: &mut ViewContext<Workspace>,
-//         ) -> (Vector2F, Self::LayoutState) {
-//             debug_assert!(self.children.len() == self.flexes.borrow().len());
+    //                 let mut successors = from_fn({
+    //                     let forward = proposed_current_pixel_change > 0.;
+    //                     let mut ix_offset = 0;
+    //                     let len = flexes.len();
+    //                     move || {
+    //                         let result = if forward {
+    //                             (preceding_ix + 1 + ix_offset < len).then(|| preceding_ix + ix_offset)
+    //                         } else {
+    //                             (preceding_ix as isize - ix_offset as isize >= 0)
+    //                                 .then(|| preceding_ix - ix_offset)
+    //                         };
 
-//             let active_pane_magnification =
-//                 settings::get::<WorkspaceSettings>(cx).active_pane_magnification;
+    //                         ix_offset += 1;
 
-//             let mut remaining_flex = 0.;
+    //                         result
+    //                     }
+    //                 });
 
-//             if active_pane_magnification != 1. {
-//                 let active_pane_flex = self
-//                     .active_pane_ix
-//                     .map(|_| active_pane_magnification)
-//                     .unwrap_or(1.);
-//                 remaining_flex += self.children.len() as f32 - 1. + active_pane_flex;
-//             } else {
-//                 for flex in self.flexes.borrow().iter() {
-//                     remaining_flex += flex;
-//                 }
-//             }
+    //                 while proposed_current_pixel_change.abs() > 0. {
+    //                     let Some(current_ix) = successors.next() else {
+    //                         break;
+    //                     };
 
-//             let mut cross_axis_max: f32 = 0.0;
-//             let mut remaining_space = constraint.max_along(self.axis);
+    //                     let next_target_size = f32::max(
+    //                         size(current_ix + 1, flexes.as_slice()) - proposed_current_pixel_change,
+    //                         min_size,
+    //                     );
 
-//             if remaining_space.is_infinite() {
-//                 panic!("flex contains flexible children but has an infinite constraint along the flex axis");
-//             }
+    //                     let current_target_size = f32::max(
+    //                         size(current_ix, flexes.as_slice())
+    //                             + size(current_ix + 1, flexes.as_slice())
+    //                             - next_target_size,
+    //                         min_size,
+    //                     );
 
-//             self.layout_children(
-//                 active_pane_magnification,
-//                 constraint,
-//                 &mut remaining_space,
-//                 &mut remaining_flex,
-//                 &mut cross_axis_max,
-//                 view,
-//                 cx,
-//             );
+    //                     let current_pixel_change =
+    //                         current_target_size - size(current_ix, flexes.as_slice());
 
-//             let mut size = match self.axis {
-//                 Axis::Horizontal => vec2f(constraint.max.x() - remaining_space, cross_axis_max),
-//                 Axis::Vertical => vec2f(cross_axis_max, constraint.max.y() - remaining_space),
-//             };
+    //                     let (current_target_flex, next_target_flex) =
+    //                         flex_changes(current_pixel_change, current_ix, 1, flexes.as_slice());
 
-//             if constraint.min.x().is_finite() {
-//                 size.set_x(size.x().max(constraint.min.x()));
-//             }
-//             if constraint.min.y().is_finite() {
-//                 size.set_y(size.y().max(constraint.min.y()));
-//             }
+    //                     flexes[current_ix] = current_target_flex;
+    //                     flexes[current_ix + 1] = next_target_flex;
 
-//             if size.x() > constraint.max.x() {
-//                 size.set_x(constraint.max.x());
-//             }
-//             if size.y() > constraint.max.y() {
-//                 size.set_y(constraint.max.y());
-//             }
+    //                     proposed_current_pixel_change -= current_pixel_change;
+    //                 }
 
-//             (size, remaining_space)
-//         }
+    //                 workspace.schedule_serialize(cx);
+    //                 cx.notify();
+    //             }
+    //         }
+    //     }
 
-//         fn paint(
-//             &mut self,
-//             bounds: Bounds<Pixels>,
-//             visible_bounds: Bounds<Pixels>,
-//             remaining_space: &mut Self::LayoutState,
-//             view: &mut Workspace,
-//             cx: &mut ViewContext<Workspace>,
-//         ) -> Self::PaintState {
-//             let can_resize = settings::get::<WorkspaceSettings>(cx).active_pane_magnification == 1.;
-//             let visible_bounds = bounds.intersection(visible_bounds).unwrap_or_default();
+    //     impl Extend<AnyElement<Workspace>> for PaneAxisElement {
+    //         fn extend<T: IntoIterator<Item = AnyElement<Workspace>>>(&mut self, children: T) {
+    //             self.children.extend(children);
+    //         }
+    //     }
 
-//             let overflowing = *remaining_space < 0.;
-//             if overflowing {
-//                 cx.scene().push_layer(Some(visible_bounds));
-//             }
+    //     impl Element<Workspace> for PaneAxisElement {
+    //         type LayoutState = f32;
+    //         type PaintState = ();
 
-//             let mut child_origin = bounds.origin();
+    //         fn layout(
+    //             &mut self,
+    //             constraint: SizeConstraint,
+    //             view: &mut Workspace,
+    //             cx: &mut ViewContext<Workspace>,
+    //         ) -> (Vector2F, Self::LayoutState) {
+    //             debug_assert!(self.children.len() == self.flexes.borrow().len());
 
-//             let mut bounding_boxes = self.bounding_boxes.borrow_mut();
-//             bounding_boxes.clear();
+    //             let active_pane_magnification =
+    //                 settings::get::<WorkspaceSettings>(cx).active_pane_magnification;
 
-//             let mut children_iter = self.children.iter_mut().enumerate().peekable();
-//             while let Some((ix, child)) = children_iter.next() {
-//                 let child_start = child_origin.clone();
-//                 child.paint(child_origin, visible_bounds, view, cx);
+    //             let mut remaining_flex = 0.;
 
-//                 bounding_boxes.push(Some(Bounds<Pixels>::new(child_origin, child.size())));
+    //             if active_pane_magnification != 1. {
+    //                 let active_pane_flex = self
+    //                     .active_pane_ix
+    //                     .map(|_| active_pane_magnification)
+    //                     .unwrap_or(1.);
+    //                 remaining_flex += self.children.len() as f32 - 1. + active_pane_flex;
+    //             } else {
+    //                 for flex in self.flexes.borrow().iter() {
+    //                     remaining_flex += flex;
+    //                 }
+    //             }
 
-//                 match self.axis {
-//                     Axis::Horizontal => child_origin += vec2f(child.size().x(), 0.0),
-//                     Axis::Vertical => child_origin += vec2f(0.0, child.size().y()),
-//                 }
+    //             let mut cross_axis_max: f32 = 0.0;
+    //             let mut remaining_space = constraint.max_along(self.axis);
 
-//                 if can_resize && children_iter.peek().is_some() {
-//                     cx.scene().push_stacking_context(None, None);
+    //             if remaining_space.is_infinite() {
+    //                 panic!("flex contains flexible children but has an infinite constraint along the flex axis");
+    //             }
 
-//                     let handle_origin = match self.axis {
-//                         Axis::Horizontal => child_origin - vec2f(HANDLE_HITBOX_SIZE / 2., 0.0),
-//                         Axis::Vertical => child_origin - vec2f(0.0, HANDLE_HITBOX_SIZE / 2.),
-//                     };
+    //             self.layout_children(
+    //                 active_pane_magnification,
+    //                 constraint,
+    //                 &mut remaining_space,
+    //                 &mut remaining_flex,
+    //                 &mut cross_axis_max,
+    //                 view,
+    //                 cx,
+    //             );
 
-//                     let handle_bounds = match self.axis {
-//                         Axis::Horizontal => Bounds<Pixels>::new(
-//                             handle_origin,
-//                             vec2f(HANDLE_HITBOX_SIZE, visible_bounds.height()),
-//                         ),
-//                         Axis::Vertical => Bounds<Pixels>::new(
-//                             handle_origin,
-//                             vec2f(visible_bounds.width(), HANDLE_HITBOX_SIZE),
-//                         ),
-//                     };
+    //             let mut size = match self.axis {
+    //                 Axis::Horizontal => vec2f(constraint.max.x() - remaining_space, cross_axis_max),
+    //                 Axis::Vertical => vec2f(cross_axis_max, constraint.max.y() - remaining_space),
+    //             };
 
-//                     let style = match self.axis {
-//                         Axis::Horizontal => CursorStyle::ResizeLeftRight,
-//                         Axis::Vertical => CursorStyle::ResizeUpDown,
-//                     };
+    //             if constraint.min.x().is_finite() {
+    //                 size.set_x(size.x().max(constraint.min.x()));
+    //             }
+    //             if constraint.min.y().is_finite() {
+    //                 size.set_y(size.y().max(constraint.min.y()));
+    //             }
 
-//                     cx.scene().push_cursor_region(CursorRegion {
-//                         bounds: handle_bounds,
-//                         style,
-//                     });
+    //             if size.x() > constraint.max.x() {
+    //                 size.set_x(constraint.max.x());
+    //             }
+    //             if size.y() > constraint.max.y() {
+    //                 size.set_y(constraint.max.y());
+    //             }
 
-//                     enum ResizeHandle {}
-//                     let mut mouse_region = MouseRegion::new::<ResizeHandle>(
-//                         cx.view_id(),
-//                         self.basis + ix,
-//                         handle_bounds,
-//                     );
-//                     mouse_region = mouse_region
-//                         .on_drag(
-//                             MouseButton::Left,
-//                             Self::handle_resize(
-//                                 self.flexes.clone(),
-//                                 self.axis,
-//                                 ix,
-//                                 child_start,
-//                                 visible_bounds.clone(),
-//                             ),
-//                         )
-//                         .on_click(MouseButton::Left, {
-//                             let flexes = self.flexes.clone();
-//                             move |e, v: &mut Workspace, cx| {
-//                                 if e.click_count >= 2 {
-//                                     let mut borrow = flexes.borrow_mut();
-//                                     *borrow = vec![1.; borrow.len()];
-//                                     v.schedule_serialize(cx);
-//                                     cx.notify();
-//                                 }
-//                             }
-//                         });
-//                     cx.scene().push_mouse_region(mouse_region);
+    //             (size, remaining_space)
+    //         }
 
-//                     cx.scene().pop_stacking_context();
-//                 }
-//             }
+    //         fn paint(
+    //             &mut self,
+    //             bounds: Bounds<Pixels>,
+    //             visible_bounds: Bounds<Pixels>,
+    //             remaining_space: &mut Self::LayoutState,
+    //             view: &mut Workspace,
+    //             cx: &mut ViewContext<Workspace>,
+    //         ) -> Self::PaintState {
+    //             let can_resize = settings::get::<WorkspaceSettings>(cx).active_pane_magnification == 1.;
+    //             let visible_bounds = bounds.intersection(visible_bounds).unwrap_or_default();
 
-//             if overflowing {
-//                 cx.scene().pop_layer();
-//             }
-//         }
+    //             let overflowing = *remaining_space < 0.;
+    //             if overflowing {
+    //                 cx.scene().push_layer(Some(visible_bounds));
+    //             }
 
-//         fn rect_for_text_range(
-//             &self,
-//             range_utf16: Range<usize>,
-//             _: Bounds<Pixels>,
-//             _: Bounds<Pixels>,
-//             _: &Self::LayoutState,
-//             _: &Self::PaintState,
-//             view: &Workspace,
-//             cx: &ViewContext<Workspace>,
-//         ) -> Option<Bounds<Pixels>> {
-//             self.children
-//                 .iter()
-//                 .find_map(|child| child.rect_for_text_range(range_utf16.clone(), view, cx))
-//         }
+    //             let mut child_origin = bounds.origin();
 
-//         fn debug(
-//             &self,
-//             bounds: Bounds<Pixels>,
-//             _: &Self::LayoutState,
-//             _: &Self::PaintState,
-//             view: &Workspace,
-//             cx: &ViewContext<Workspace>,
-//         ) -> json::Value {
-//             serde_json::json!({
-//                 "type": "PaneAxis",
-//                 "bounds": bounds.to_json(),
-//                 "axis": self.axis.to_json(),
-//                 "flexes": *self.flexes.borrow(),
-//                 "children": self.children.iter().map(|child| child.debug(view, cx)).collect::<Vec<json::Value>>()
-//             })
-//         }
-//     }
-// }
+    //             let mut bounding_boxes = self.bounding_boxes.borrow_mut();
+    //             bounding_boxes.clear();
+
+    //             let mut children_iter = self.children.iter_mut().enumerate().peekable();
+    //             while let Some((ix, child)) = children_iter.next() {
+    //                 let child_start = child_origin.clone();
+    //                 child.paint(child_origin, visible_bounds, view, cx);
+
+    //                 bounding_boxes.push(Some(Bounds<Pixels>::new(child_origin, child.size())));
+
+    //                 match self.axis {
+    //                     Axis::Horizontal => child_origin += vec2f(child.size().x(), 0.0),
+    //                     Axis::Vertical => child_origin += vec2f(0.0, child.size().y()),
+    //                 }
+
+    //                 if can_resize && children_iter.peek().is_some() {
+    //                     cx.scene().push_stacking_context(None, None);
+
+    //                     let handle_origin = match self.axis {
+    //                         Axis::Horizontal => child_origin - vec2f(HANDLE_HITBOX_SIZE / 2., 0.0),
+    //                         Axis::Vertical => child_origin - vec2f(0.0, HANDLE_HITBOX_SIZE / 2.),
+    //                     };
+
+    //                     let handle_bounds = match self.axis {
+    //                         Axis::Horizontal => Bounds<Pixels>::new(
+    //                             handle_origin,
+    //                             vec2f(HANDLE_HITBOX_SIZE, visible_bounds.height()),
+    //                         ),
+    //                         Axis::Vertical => Bounds<Pixels>::new(
+    //                             handle_origin,
+    //                             vec2f(visible_bounds.width(), HANDLE_HITBOX_SIZE),
+    //                         ),
+    //                     };
+
+    //                     let style = match self.axis {
+    //                         Axis::Horizontal => CursorStyle::ResizeLeftRight,
+    //                         Axis::Vertical => CursorStyle::ResizeUpDown,
+    //                     };
+
+    //                     cx.scene().push_cursor_region(CursorRegion {
+    //                         bounds: handle_bounds,
+    //                         style,
+    //                     });
+
+    //                     enum ResizeHandle {}
+    //                     let mut mouse_region = MouseRegion::new::<ResizeHandle>(
+    //                         cx.view_id(),
+    //                         self.basis + ix,
+    //                         handle_bounds,
+    //                     );
+    //                     mouse_region = mouse_region
+    //                         .on_drag(
+    //                             MouseButton::Left,
+    //                             Self::handle_resize(
+    //                                 self.flexes.clone(),
+    //                                 self.axis,
+    //                                 ix,
+    //                                 child_start,
+    //                                 visible_bounds.clone(),
+    //                             ),
+    //                         )
+    //                         .on_click(MouseButton::Left, {
+    //                             let flexes = self.flexes.clone();
+    //                             move |e, v: &mut Workspace, cx| {
+    //                                 if e.click_count >= 2 {
+    //                                     let mut borrow = flexes.borrow_mut();
+    //                                     *borrow = vec![1.; borrow.len()];
+    //                                     v.schedule_serialize(cx);
+    //                                     cx.notify();
+    //                                 }
+    //                             }
+    //                         });
+    //                     cx.scene().push_mouse_region(mouse_region);
+
+    //                     cx.scene().pop_stacking_context();
+    //                 }
+    //             }
+
+    //             if overflowing {
+    //                 cx.scene().pop_layer();
+    //             }
+    //         }
+
+    //         fn rect_for_text_range(
+    //             &self,
+    //             range_utf16: Range<usize>,
+    //             _: Bounds<Pixels>,
+    //             _: Bounds<Pixels>,
+    //             _: &Self::LayoutState,
+    //             _: &Self::PaintState,
+    //             view: &Workspace,
+    //             cx: &ViewContext<Workspace>,
+    //         ) -> Option<Bounds<Pixels>> {
+    //             self.children
+    //                 .iter()
+    //                 .find_map(|child| child.rect_for_text_range(range_utf16.clone(), view, cx))
+    //         }
+
+    //         fn debug(
+    //             &self,
+    //             bounds: Bounds<Pixels>,
+    //             _: &Self::LayoutState,
+    //             _: &Self::PaintState,
+    //             view: &Workspace,
+    //             cx: &ViewContext<Workspace>,
+    //         ) -> json::Value {
+    //             serde_json::json!({
+    //                 "type": "PaneAxis",
+    //                 "bounds": bounds.to_json(),
+    //                 "axis": self.axis.to_json(),
+    //                 "flexes": *self.flexes.borrow(),
+    //                 "children": self.children.iter().map(|child| child.debug(view, cx)).collect::<Vec<json::Value>>()
+    //             })
+    //         }
+    //     }
+}

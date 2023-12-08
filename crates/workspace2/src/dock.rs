@@ -1,6 +1,6 @@
-use crate::{status_bar::StatusItemView, Axis, Workspace};
+use crate::{status_bar::StatusItemView, Workspace};
 use gpui::{
-    div, px, Action, AnchorCorner, AnyView, AppContext, Div, Entity, EntityId, EventEmitter,
+    div, px, Action, AnchorCorner, AnyView, AppContext, Axis, Div, Entity, EntityId, EventEmitter,
     FocusHandle, FocusableView, IntoElement, ParentElement, Render, SharedString, Styled,
     Subscription, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
