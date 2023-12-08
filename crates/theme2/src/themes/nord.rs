@@ -134,7 +134,7 @@ pub fn nord() -> UserThemeFamily {
                         (
                             "punctuation".into(),
                             UserHighlightStyle {
-                                color: Some(rgba(0xeceff4ff).into()),
+                                color: Some(rgba(0x81a1c1ff).into()),
                                 ..Default::default()
                             },
                         ),

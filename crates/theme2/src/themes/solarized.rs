@@ -117,7 +117,7 @@ pub fn solarized() -> UserThemeFamily {
                             (
                                 "function".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x268bd2ff).into()),
+                                    color: Some(rgba(0x839496ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -180,7 +180,7 @@ pub fn solarized() -> UserThemeFamily {
                             (
                                 "type".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xcb4b16ff).into()),
+                                    color: Some(rgba(0x859900ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -302,7 +302,7 @@ pub fn solarized() -> UserThemeFamily {
                             (
                                 "function".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x268bd2ff).into()),
+                                    color: Some(rgba(0x657b83ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -358,7 +358,7 @@ pub fn solarized() -> UserThemeFamily {
                             (
                                 "type".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x268bd2ff).into()),
+                                    color: Some(rgba(0x859900ff).into()),
                                     ..Default::default()
                                 },
                             ),

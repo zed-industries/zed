@@ -162,13 +162,6 @@ pub fn palenight() -> UserThemeFamily {
                                 },
                             ),
                             (
-                                "punctuation".into(),
-                                UserHighlightStyle {
-                                    color: Some(rgba(0xc792eaff).into()),
-                                    ..Default::default()
-                                },
-                            ),
-                            (
                                 "string".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xc3e88dff).into()),
@@ -206,7 +199,7 @@ pub fn palenight() -> UserThemeFamily {
                             (
                                 "variable".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xffcb6bff).into()),
+                                    color: Some(rgba(0xff5572ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -277,21 +270,20 @@ pub fn palenight() -> UserThemeFamily {
                             (
                                 "attribute".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xffcb6bff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "boolean".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x82aaffff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "comment".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x697098ff).into()),
                                     font_style: Some(UserFontStyle::Italic),
                                     ..Default::default()
                                 },
@@ -329,7 +321,7 @@ pub fn palenight() -> UserThemeFamily {
                             (
                                 "keyword".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xc792eaff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
                                     ..Default::default()
                                 },
                             ),
@@ -369,16 +361,9 @@ pub fn palenight() -> UserThemeFamily {
                                 },
                             ),
                             (
-                                "punctuation".into(),
-                                UserHighlightStyle {
-                                    color: Some(rgba(0xc792eaff).into()),
-                                    ..Default::default()
-                                },
-                            ),
-                            (
                                 "string".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xc3e88dff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
                                     ..Default::default()
                                 },
                             ),
@@ -399,7 +384,7 @@ pub fn palenight() -> UserThemeFamily {
                             (
                                 "text.literal".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xc3e88dff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
                                     ..Default::default()
                                 },
                             ),
@@ -413,14 +398,14 @@ pub fn palenight() -> UserThemeFamily {
                             (
                                 "variable".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xffcb6bff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "variable.special".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xff5572ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
                                     ..Default::default()
                                 },
                             ),
@@ -576,13 +561,6 @@ pub fn palenight() -> UserThemeFamily {
                                 },
                             ),
                             (
-                                "punctuation".into(),
-                                UserHighlightStyle {
-                                    color: Some(rgba(0xc792eaff).into()),
-                                    ..Default::default()
-                                },
-                            ),
-                            (
                                 "string".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xc3e88dff).into()),
@@ -620,7 +598,7 @@ pub fn palenight() -> UserThemeFamily {
                             (
                                 "variable".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xffcb6bff).into()),
+                                    color: Some(rgba(0xff5572ff).into()),
                                     ..Default::default()
                                 },
                             ),

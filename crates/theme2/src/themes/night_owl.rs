@@ -100,16 +100,7 @@ pub fn night_owl() -> UserThemeFamily {
                             (
                                 "function".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xc792eaff).into()),
-                                    font_style: Some(UserFontStyle::Italic),
-                                    ..Default::default()
-                                },
-                            ),
-                            (
-                                "keyword".into(),
-                                UserHighlightStyle {
-                                    color: Some(rgba(0xc792eaff).into()),
-                                    font_style: Some(UserFontStyle::Italic),
+                                    color: Some(rgba(0x82aaffff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -121,24 +112,9 @@ pub fn night_owl() -> UserThemeFamily {
                                 },
                             ),
                             (
-                                "operator".into(),
-                                UserHighlightStyle {
-                                    color: Some(rgba(0x7fdbcaff).into()),
-                                    ..Default::default()
-                                },
-                            ),
-                            (
                                 "property".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x80cbc4ff).into()),
-                                    ..Default::default()
-                                },
-                            ),
-                            (
-                                "punctuation".into(),
-                                UserHighlightStyle {
-                                    color: Some(rgba(0xc792eaff).into()),
-                                    font_style: Some(UserFontStyle::Italic),
                                     ..Default::default()
                                 },
                             ),
@@ -180,7 +156,7 @@ pub fn night_owl() -> UserThemeFamily {
                             (
                                 "variable".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xc5e478ff).into()),
+                                    color: Some(rgba(0x7fdbcaff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -282,16 +258,7 @@ pub fn night_owl() -> UserThemeFamily {
                             (
                                 "function".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x994cc3ff).into()),
-                                    font_style: Some(UserFontStyle::Italic),
-                                    ..Default::default()
-                                },
-                            ),
-                            (
-                                "keyword".into(),
-                                UserHighlightStyle {
-                                    color: Some(rgba(0x994cc3ff).into()),
-                                    font_style: Some(UserFontStyle::Italic),
+                                    color: Some(rgba(0x4876d6ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -303,24 +270,9 @@ pub fn night_owl() -> UserThemeFamily {
                                 },
                             ),
                             (
-                                "operator".into(),
-                                UserHighlightStyle {
-                                    color: Some(rgba(0x0c969bff).into()),
-                                    ..Default::default()
-                                },
-                            ),
-                            (
                                 "property".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x0c969bff).into()),
-                                    ..Default::default()
-                                },
-                            ),
-                            (
-                                "punctuation".into(),
-                                UserHighlightStyle {
-                                    color: Some(rgba(0x994cc3ff).into()),
-                                    font_style: Some(UserFontStyle::Italic),
                                     ..Default::default()
                                 },
                             ),
@@ -362,7 +314,7 @@ pub fn night_owl() -> UserThemeFamily {
                             (
                                 "variable".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x4876d6ff).into()),
+                                    color: Some(rgba(0x0c969bff).into()),
                                     ..Default::default()
                                 },
                             ),

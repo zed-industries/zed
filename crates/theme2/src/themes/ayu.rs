@@ -114,7 +114,7 @@ pub fn ayu() -> UserThemeFamily {
                             (
                                 "emphasis.strong".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xf07171ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
                                     font_weight: Some(UserFontWeight(700.0)),
                                     ..Default::default()
                                 },
@@ -122,7 +122,7 @@ pub fn ayu() -> UserThemeFamily {
                             (
                                 "function".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xf2ae49ff).into()),
+                                    color: Some(rgba(0xf07171ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -171,7 +171,7 @@ pub fn ayu() -> UserThemeFamily {
                             (
                                 "property".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xf07171ff).into()),
+                                    color: Some(rgba(0x55b4d4ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -269,7 +269,7 @@ pub fn ayu() -> UserThemeFamily {
                             (
                                 "variable.special".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xf07171ff).into()),
+                                    color: Some(rgba(0xf2ae49ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -377,7 +377,7 @@ pub fn ayu() -> UserThemeFamily {
                             (
                                 "emphasis.strong".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xf28779ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
                                     font_weight: Some(UserFontWeight(700.0)),
                                     ..Default::default()
                                 },
@@ -385,7 +385,7 @@ pub fn ayu() -> UserThemeFamily {
                             (
                                 "function".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xffd173ff).into()),
+                                    color: Some(rgba(0xf28779ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -434,7 +434,7 @@ pub fn ayu() -> UserThemeFamily {
                             (
                                 "property".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xf28779ff).into()),
+                                    color: Some(rgba(0x5ccfe6ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -532,7 +532,7 @@ pub fn ayu() -> UserThemeFamily {
                             (
                                 "variable.special".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xf28779ff).into()),
+                                    color: Some(rgba(0xffd173ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -640,7 +640,7 @@ pub fn ayu() -> UserThemeFamily {
                             (
                                 "emphasis.strong".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xf07178ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
                                     font_weight: Some(UserFontWeight(700.0)),
                                     ..Default::default()
                                 },
@@ -648,7 +648,7 @@ pub fn ayu() -> UserThemeFamily {
                             (
                                 "function".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xffb454ff).into()),
+                                    color: Some(rgba(0xf07178ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -697,7 +697,7 @@ pub fn ayu() -> UserThemeFamily {
                             (
                                 "property".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xf07178ff).into()),
+                                    color: Some(rgba(0x39bae6ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -795,7 +795,7 @@ pub fn ayu() -> UserThemeFamily {
                             (
                                 "variable.special".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xf07178ff).into()),
+                                    color: Some(rgba(0xffb454ff).into()),
                                     ..Default::default()
                                 },
                             ),
