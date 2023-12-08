@@ -263,9 +263,9 @@ impl Render for FeedbackModal {
         let has_feedback = self.feedback_editor.read(cx).text_option(cx).is_some();
 
         let submit_button_text = if self.pending_submission {
-            "Sending..."
+            "Submitting..."
         } else {
-            "Send Feedback"
+            "Submit"
         };
         let dismiss = cx.listener(|_, _, cx| {
             cx.emit(DismissEvent);
@@ -379,7 +379,7 @@ impl Render for FeedbackModal {
                                             .color(Color::Accent)
                                             .style(ButtonStyle::Filled)
                                             // TODO: Ensure that while submitting, "Sending..." is shown and disable the button
-                                            // TODO: If submit errors: show popup with error, don't close modal, set text back to "Send Feedback", and re-enable button
+                                            // TODO: If submit errors: show popup with error, don't close modal, set text back to "Submit", and re-enable button
                                             // TODO: If submit is successful, close the modal
                                             .on_click(cx.listener(|this, _, cx| {
                                                 let _ = this.submit(cx);
