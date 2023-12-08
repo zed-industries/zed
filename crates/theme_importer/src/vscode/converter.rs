@@ -278,12 +278,12 @@ impl VsCodeThemeConverter {
             let Some(token_color) =
                 syntax_token.find_best_token_color_match(&self.theme.token_colors)
             else {
-                eprintln!("No matching token color found for '{syntax_token}'");
+                log::warn!("No matching token color found for '{syntax_token}'");
 
                 continue;
             };
 
-            println!(
+            log::info!(
                 "Matched '{syntax_token}' to '{}'",
                 token_color
                     .name

@@ -15,7 +15,7 @@ use gpui::serde_json;
 use json_comments::StripComments;
 use log::LevelFilter;
 use serde::Deserialize;
-use simplelog::SimpleLogger;
+use simplelog::{TermLogger, TerminalMode};
 use theme::{Appearance, UserThemeFamily};
 
 use crate::theme_printer::UserThemeFamilyPrinter;
@@ -56,9 +56,15 @@ fn main() -> Result<()> {
     const SOURCE_PATH: &str = "assets/themes/src/vscode";
     const OUT_PATH: &str = "crates/theme2/src/themes";
 
-    SimpleLogger::init(LevelFilter::Info, Default::default()).expect("could not initialize logger");
+    let log_config = simplelog::ConfigBuilder::new()
+        .set_level_color(log::Level::Info, simplelog::Color::Blue)
+        .set_level_color(log::Level::Warn, simplelog::Color::Yellow)
+        .build();
 
-    println!("Loading themes source...");
+    TermLogger::init(LevelFilter::Info, log_config, TerminalMode::Mixed)
+        .expect("could not initialize logger");
+
+    log::info!("Loading themes source...");
     let vscode_themes_path = PathBuf::from_str(SOURCE_PATH)?;
     if !vscode_themes_path.exists() {
         return Err(anyhow!(format!(
@@ -91,7 +97,7 @@ fn main() -> Result<()> {
         let license_file_path = theme_family_dir.path().join("LICENSE");
 
         if !license_file_path.exists() {
-            println!("Skipping theme family '{}' because it does not have a LICENSE file. This theme will only be imported once a LICENSE file is provided.", theme_family_slug);
+            log::info!("Skipping theme family '{}' because it does not have a LICENSE file. This theme will only be imported once a LICENSE file is provided.", theme_family_slug);
             continue;
         }
 
@@ -103,12 +109,14 @@ fn main() -> Result<()> {
         let mut themes = Vec::new();
 
         for theme_metadata in family_metadata.themes {
+            log::info!("Converting '{}' theme", &theme_metadata.name);
+
             let theme_file_path = theme_family_dir.path().join(&theme_metadata.file_name);
 
             let theme_file = match File::open(&theme_file_path) {
                 Ok(file) => file,
                 Err(_) => {
-                    println!("Failed to open file at path: {:?}", theme_file_path);
+                    log::info!("Failed to open file at path: {:?}", theme_file_path);
                     continue;
                 }
             };
@@ -136,7 +144,7 @@ fn main() -> Result<()> {
     let themes_output_path = PathBuf::from_str(OUT_PATH)?;
 
     if !themes_output_path.exists() {
-        println!("Creating directory: {:?}", themes_output_path);
+        log::info!("Creating directory: {:?}", themes_output_path);
         fs::create_dir_all(&themes_output_path)?;
     }
 
@@ -149,7 +157,7 @@ fn main() -> Result<()> {
 
         let mut output_file =
             File::create(themes_output_path.join(format!("{theme_family_slug}.rs")))?;
-        println!(
+        log::info!(
             "Creating file: {:?}",
             themes_output_path.join(format!("{theme_family_slug}.rs"))
         );
@@ -220,17 +228,17 @@ fn main() -> Result<()> {
 
     mod_rs_file.write_all(mod_rs_contents.as_bytes())?;
 
-    println!("Formatting themes...");
+    log::info!("Formatting themes...");
 
     let format_result = format_themes_crate()
         // We need to format a second time to catch all of the formatting issues.
         .and_then(|_| format_themes_crate());
 
     if let Err(err) = format_result {
-        eprintln!("Failed to format themes: {}", err);
+        log::error!("Failed to format themes: {}", err);
     }
 
-    println!("Done!");
+    log::info!("Done!");
 
     Ok(())
 }
