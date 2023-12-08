@@ -82,8 +82,9 @@ pub fn gruvbox() -> UserThemeFamily {
                                 },
                             ),
                             (
-                                "emphasis".into(),
+                                "comment.doc".into(),
                                 UserHighlightStyle {
+                                    color: Some(rgba(0x928374ff).into()),
                                     font_style: Some(UserFontStyle::Italic),
                                     ..Default::default()
                                 },
@@ -148,7 +149,7 @@ pub fn gruvbox() -> UserThemeFamily {
                             (
                                 "punctuation".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xa89984ff).into()),
+                                    color: Some(rgba(0x83a598ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -196,6 +197,13 @@ pub fn gruvbox() -> UserThemeFamily {
                             ),
                             (
                                 "variable".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x83a598ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "variable.special".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x83a598ff).into()),
                                     ..Default::default()
@@ -273,8 +281,9 @@ pub fn gruvbox() -> UserThemeFamily {
                                 },
                             ),
                             (
-                                "emphasis".into(),
+                                "comment.doc".into(),
                                 UserHighlightStyle {
+                                    color: Some(rgba(0x928374ff).into()),
                                     font_style: Some(UserFontStyle::Italic),
                                     ..Default::default()
                                 },
@@ -339,7 +348,7 @@ pub fn gruvbox() -> UserThemeFamily {
                             (
                                 "punctuation".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xa89984ff).into()),
+                                    color: Some(rgba(0x83a598ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -387,6 +396,13 @@ pub fn gruvbox() -> UserThemeFamily {
                             ),
                             (
                                 "variable".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x83a598ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "variable.special".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x83a598ff).into()),
                                     ..Default::default()
@@ -464,8 +480,9 @@ pub fn gruvbox() -> UserThemeFamily {
                                 },
                             ),
                             (
-                                "emphasis".into(),
+                                "comment.doc".into(),
                                 UserHighlightStyle {
+                                    color: Some(rgba(0x928374ff).into()),
                                     font_style: Some(UserFontStyle::Italic),
                                     ..Default::default()
                                 },
@@ -530,7 +547,7 @@ pub fn gruvbox() -> UserThemeFamily {
                             (
                                 "punctuation".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xa89984ff).into()),
+                                    color: Some(rgba(0x83a598ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -578,6 +595,13 @@ pub fn gruvbox() -> UserThemeFamily {
                             ),
                             (
                                 "variable".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x83a598ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "variable.special".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x83a598ff).into()),
                                     ..Default::default()
@@ -655,8 +679,9 @@ pub fn gruvbox() -> UserThemeFamily {
                                 },
                             ),
                             (
-                                "emphasis".into(),
+                                "comment.doc".into(),
                                 UserHighlightStyle {
+                                    color: Some(rgba(0x928374ff).into()),
                                     font_style: Some(UserFontStyle::Italic),
                                     ..Default::default()
                                 },
@@ -721,7 +746,7 @@ pub fn gruvbox() -> UserThemeFamily {
                             (
                                 "punctuation".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x7c6f64ff).into()),
+                                    color: Some(rgba(0x076678ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -769,6 +794,13 @@ pub fn gruvbox() -> UserThemeFamily {
                             ),
                             (
                                 "variable".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x076678ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "variable.special".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x076678ff).into()),
                                     ..Default::default()
@@ -846,8 +878,9 @@ pub fn gruvbox() -> UserThemeFamily {
                                 },
                             ),
                             (
-                                "emphasis".into(),
+                                "comment.doc".into(),
                                 UserHighlightStyle {
+                                    color: Some(rgba(0x928374ff).into()),
                                     font_style: Some(UserFontStyle::Italic),
                                     ..Default::default()
                                 },
@@ -912,7 +945,7 @@ pub fn gruvbox() -> UserThemeFamily {
                             (
                                 "punctuation".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x7c6f64ff).into()),
+                                    color: Some(rgba(0x076678ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -960,6 +993,13 @@ pub fn gruvbox() -> UserThemeFamily {
                             ),
                             (
                                 "variable".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x076678ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "variable.special".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x076678ff).into()),
                                     ..Default::default()
@@ -1037,8 +1077,9 @@ pub fn gruvbox() -> UserThemeFamily {
                                 },
                             ),
                             (
-                                "emphasis".into(),
+                                "comment.doc".into(),
                                 UserHighlightStyle {
+                                    color: Some(rgba(0x928374ff).into()),
                                     font_style: Some(UserFontStyle::Italic),
                                     ..Default::default()
                                 },
@@ -1103,7 +1144,7 @@ pub fn gruvbox() -> UserThemeFamily {
                             (
                                 "punctuation".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x7c6f64ff).into()),
+                                    color: Some(rgba(0x076678ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -1151,6 +1192,13 @@ pub fn gruvbox() -> UserThemeFamily {
                             ),
                             (
                                 "variable".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x076678ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "variable.special".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x076678ff).into()),
                                     ..Default::default()

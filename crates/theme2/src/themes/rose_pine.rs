@@ -92,10 +92,17 @@ pub fn rose_pine() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "comment.doc".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x6e6a86ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "function".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xeb6f92ff).into()),
-                                    font_style: Some(UserFontStyle::Italic),
+                                    color: Some(rgba(0xe0def4ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -123,7 +130,7 @@ pub fn rose_pine() -> UserThemeFamily {
                             (
                                 "punctuation".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x908caaff).into()),
+                                    color: Some(rgba(0x6e6a86ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -165,8 +172,7 @@ pub fn rose_pine() -> UserThemeFamily {
                             (
                                 "variable".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xebbcbaff).into()),
-                                    font_style: Some(UserFontStyle::Italic),
+                                    color: Some(rgba(0xc4a7e7ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -259,10 +265,17 @@ pub fn rose_pine() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "comment.doc".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x6e6a86ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "function".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xeb6f92ff).into()),
-                                    font_style: Some(UserFontStyle::Italic),
+                                    color: Some(rgba(0xe0def4ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -290,7 +303,7 @@ pub fn rose_pine() -> UserThemeFamily {
                             (
                                 "punctuation".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x908caaff).into()),
+                                    color: Some(rgba(0x6e6a86ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -332,8 +345,7 @@ pub fn rose_pine() -> UserThemeFamily {
                             (
                                 "variable".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xea9a97ff).into()),
-                                    font_style: Some(UserFontStyle::Italic),
+                                    color: Some(rgba(0xc4a7e7ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -426,10 +438,17 @@ pub fn rose_pine() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "comment.doc".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x9893a5ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "function".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xb4637aff).into()),
-                                    font_style: Some(UserFontStyle::Italic),
+                                    color: Some(rgba(0x575279ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -457,7 +476,7 @@ pub fn rose_pine() -> UserThemeFamily {
                             (
                                 "punctuation".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x797593ff).into()),
+                                    color: Some(rgba(0x9893a5ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -499,8 +518,7 @@ pub fn rose_pine() -> UserThemeFamily {
                             (
                                 "variable".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xd7827eff).into()),
-                                    font_style: Some(UserFontStyle::Italic),
+                                    color: Some(rgba(0x907aa9ff).into()),
                                     ..Default::default()
                                 },
                             ),

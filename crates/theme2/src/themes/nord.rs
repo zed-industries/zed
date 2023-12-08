@@ -90,16 +90,16 @@ pub fn nord() -> UserThemeFamily {
                             },
                         ),
                         (
-                            "constant".into(),
+                            "comment.doc".into(),
                             UserHighlightStyle {
-                                color: Some(rgba(0xebcb8bff).into()),
+                                color: Some(rgba(0x616e88ff).into()),
                                 ..Default::default()
                             },
                         ),
                         (
-                            "emphasis.strong".into(),
+                            "constant".into(),
                             UserHighlightStyle {
-                                font_weight: Some(UserFontWeight(700.0)),
+                                color: Some(rgba(0xebcb8bff).into()),
                                 ..Default::default()
                             },
                         ),
@@ -134,7 +134,7 @@ pub fn nord() -> UserThemeFamily {
                         (
                             "punctuation".into(),
                             UserHighlightStyle {
-                                color: Some(rgba(0xeceff4ff).into()),
+                                color: Some(rgba(0x81a1c1ff).into()),
                                 ..Default::default()
                             },
                         ),
@@ -183,7 +183,7 @@ pub fn nord() -> UserThemeFamily {
                         (
                             "variable".into(),
                             UserHighlightStyle {
-                                color: Some(rgba(0x81a1c1ff).into()),
+                                color: Some(rgba(0xd8dee9ff).into()),
                                 ..Default::default()
                             },
                         ),

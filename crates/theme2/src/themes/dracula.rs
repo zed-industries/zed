@@ -84,6 +84,13 @@ pub fn dracula() -> UserThemeFamily {
                             },
                         ),
                         (
+                            "comment.doc".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0x6272a4ff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
                             "emphasis".into(),
                             UserHighlightStyle {
                                 color: Some(rgba(0xf1fa8cff).into()),
@@ -159,8 +166,7 @@ pub fn dracula() -> UserThemeFamily {
                         (
                             "variable".into(),
                             UserHighlightStyle {
-                                color: Some(rgba(0xbd93f9ff).into()),
-                                font_style: Some(UserFontStyle::Italic),
+                                color: Some(rgba(0xf8f8f2ff).into()),
                                 ..Default::default()
                             },
                         ),

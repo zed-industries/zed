@@ -275,19 +275,30 @@ impl VsCodeThemeConverter {
         let mut highlight_styles = IndexMap::new();
 
         for syntax_token in ZedSyntaxToken::iter() {
-            let multimatch_scopes = syntax_token.to_vscode();
+            let best_match = syntax_token
+                .find_best_token_color_match(&self.theme.token_colors)
+                .or_else(|| {
+                    syntax_token.fallbacks().iter().find_map(|fallback| {
+                        fallback.find_best_token_color_match(&self.theme.token_colors)
+                    })
+                });
 
-            let token_color = self.theme.token_colors.iter().find(|token_color| {
-                token_color
-                    .scope
-                    .as_ref()
-                    .map(|scope| scope.multimatch(&multimatch_scopes))
-                    .unwrap_or(false)
-            });
-
-            let Some(token_color) = token_color else {
+            let Some(token_color) = best_match else {
+                log::warn!("No matching token color found for '{syntax_token}'");
                 continue;
             };
+
+            log::info!(
+                "Matched '{syntax_token}' to '{}'",
+                token_color
+                    .name
+                    .clone()
+                    .or_else(|| token_color
+                        .scope
+                        .as_ref()
+                        .map(|scope| format!("{:?}", scope)))
+                    .unwrap_or_else(|| "no identifier".to_string())
+            );
 
             let highlight_style = UserHighlightStyle {
                 color: token_color

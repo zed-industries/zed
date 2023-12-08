@@ -66,12 +66,19 @@ pub fn andromeda() -> UserThemeFamily {
                             (
                                 "attribute".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xf39c12ff).into()),
+                                    color: Some(rgba(0xffe66dff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "comment".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xa0a1a7cc).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "comment.doc".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xa0a1a7cc).into()),
                                     ..Default::default()
@@ -143,12 +150,19 @@ pub fn andromeda() -> UserThemeFamily {
                             (
                                 "type".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xffe66dff).into()),
+                                    color: Some(rgba(0xee5d43ff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "variable".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x00e8c6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "variable.special".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x00e8c6ff).into()),
                                     ..Default::default()
@@ -210,12 +224,19 @@ pub fn andromeda() -> UserThemeFamily {
                             (
                                 "attribute".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xf39c12ff).into()),
+                                    color: Some(rgba(0xffe66dff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "comment".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xa0a1a7cc).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "comment.doc".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xa0a1a7cc).into()),
                                     ..Default::default()
@@ -287,12 +308,19 @@ pub fn andromeda() -> UserThemeFamily {
                             (
                                 "type".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xffe66dff).into()),
+                                    color: Some(rgba(0xee5d43ff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "variable".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x00e8c6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "variable.special".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x00e8c6ff).into()),
                                     ..Default::default()

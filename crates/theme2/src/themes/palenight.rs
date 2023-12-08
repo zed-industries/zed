@@ -90,6 +90,14 @@ pub fn palenight() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "comment.doc".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x697098ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "constant".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x82aaffff).into()),
@@ -164,7 +172,7 @@ pub fn palenight() -> UserThemeFamily {
                             (
                                 "punctuation".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xc792eaff).into()),
+                                    color: Some(rgba(0x89ddffff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -206,7 +214,7 @@ pub fn palenight() -> UserThemeFamily {
                             (
                                 "variable".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xffcb6bff).into()),
+                                    color: Some(rgba(0xff5572ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -297,6 +305,14 @@ pub fn palenight() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "comment.doc".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x697098ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "constant".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x82aaffff).into()),
@@ -371,7 +387,7 @@ pub fn palenight() -> UserThemeFamily {
                             (
                                 "punctuation".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xc792eaff).into()),
+                                    color: Some(rgba(0x89ddffff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -413,7 +429,7 @@ pub fn palenight() -> UserThemeFamily {
                             (
                                 "variable".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xffcb6bff).into()),
+                                    color: Some(rgba(0xff5572ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -504,6 +520,14 @@ pub fn palenight() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "comment.doc".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x697098ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "constant".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x82aaffff).into()),
@@ -578,7 +602,7 @@ pub fn palenight() -> UserThemeFamily {
                             (
                                 "punctuation".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xc792eaff).into()),
+                                    color: Some(rgba(0x89ddffff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -620,7 +644,7 @@ pub fn palenight() -> UserThemeFamily {
                             (
                                 "variable".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xffcb6bff).into()),
+                                    color: Some(rgba(0xff5572ff).into()),
                                     ..Default::default()
                                 },
                             ),
