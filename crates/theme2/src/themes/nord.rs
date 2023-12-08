@@ -32,6 +32,7 @@ pub fn nord() -> UserThemeFamily {
                     element_selected: Some(rgba(0x88c0d0ff).into()),
                     drop_target_background: Some(rgba(0x88c0d099).into()),
                     ghost_element_hover: Some(rgba(0x3b4252ff).into()),
+                    ghost_element_selected: Some(rgba(0x88c0d0ff).into()),
                     text: Some(rgba(0xd8dee9ff).into()),
                     status_bar_background: Some(rgba(0x3b4252ff).into()),
                     title_bar_background: Some(rgba(0x2e3440ff).into()),

@@ -185,6 +185,10 @@ impl VsCodeThemeConverter {
                 .list_hover_background
                 .as_ref()
                 .traverse(|color| try_parse_color(&color))?,
+            ghost_element_selected: vscode_colors
+                .list_active_selection_background
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
             drop_target_background: vscode_colors
                 .list_drop_background
                 .as_ref()
