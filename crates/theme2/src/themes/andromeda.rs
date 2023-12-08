@@ -241,7 +241,7 @@ pub fn andromeda() -> UserThemeFamily {
                         text: Some(rgba(0xd5ced9ff).into()),
                         status_bar_background: Some(rgba(0x23262eff).into()),
                         title_bar_background: Some(rgba(0x23262eff).into()),
-                        toolbar_background: Some(rgba(0x23262eff).into()),
+                        toolbar_background: Some(rgba(0x262a33ff).into()),
                         tab_bar_background: Some(rgba(0x23262eff).into()),
                         tab_inactive_background: Some(rgba(0x23262eff).into()),
                         tab_active_background: Some(rgba(0x262a33ff).into()),

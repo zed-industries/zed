@@ -594,7 +594,7 @@ pub fn palenight() -> UserThemeFamily {
                         text: Some(rgba(0xffffffff).into()),
                         status_bar_background: Some(rgba(0x25293aff).into()),
                         title_bar_background: Some(rgba(0x25293aff).into()),
-                        toolbar_background: Some(rgba(0x25293aff).into()),
+                        toolbar_background: Some(rgba(0x292d3eff).into()),
                         tab_bar_background: Some(rgba(0x31364aff).into()),
                         tab_inactive_background: Some(rgba(0x31364aff).into()),
                         tab_active_background: Some(rgba(0x25293aff).into()),

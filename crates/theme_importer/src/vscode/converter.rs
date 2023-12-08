@@ -122,6 +122,11 @@ impl VsCodeThemeConverter {
     fn convert_theme_colors(&self) -> Result<ThemeColorsRefinement> {
         let vscode_colors = &self.theme.colors;
 
+        let vscode_editor_background = vscode_colors
+            .editor_background
+            .as_ref()
+            .traverse(|color| try_parse_color(&color))?;
+
         Ok(ThemeColorsRefinement {
             border: vscode_colors
                 .panel_border
@@ -155,10 +160,7 @@ impl VsCodeThemeConverter {
                 .panel_background
                 .as_ref()
                 .traverse(|color| try_parse_color(&color))?,
-            background: vscode_colors
-                .editor_background
-                .as_ref()
-                .traverse(|color| try_parse_color(&color))?,
+            background: vscode_editor_background,
             title_bar_background: vscode_colors
                 .title_bar_active_background
                 .as_ref()
@@ -214,17 +216,12 @@ impl VsCodeThemeConverter {
                 .as_ref()
                 .traverse(|color| try_parse_color(&color))?,
             toolbar_background: vscode_colors
-                .panel_background
+                .breadcrumb_background
                 .as_ref()
-                .traverse(|color| try_parse_color(&color))?,
-            editor_background: vscode_colors
-                .editor_background
-                .as_ref()
-                .traverse(|color| try_parse_color(&color))?,
-            editor_gutter_background: vscode_colors
-                .editor_background
-                .as_ref()
-                .traverse(|color| try_parse_color(&color))?,
+                .traverse(|color| try_parse_color(&color))?
+                .or(vscode_editor_background),
+            editor_background: vscode_editor_background,
+            editor_gutter_background: vscode_editor_background,
             editor_line_number: vscode_colors
                 .editor_line_number_foreground
                 .as_ref()
