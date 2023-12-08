@@ -26,6 +26,8 @@ pub fn synthwave_84() -> UserThemeFamily {
                     drop_target_background: Some(rgba(0x34294f66).into()),
                     ghost_element_hover: Some(rgba(0x37294d99).into()),
                     text: Some(rgba(0xffffffff).into()),
+                    status_bar_background: Some(rgba(0x241b2fff).into()),
+                    title_bar_background: Some(rgba(0x241b2fff).into()),
                     tab_inactive_background: Some(rgba(0x262335ff).into()),
                     editor_background: Some(rgba(0x262335ff).into()),
                     editor_gutter_background: Some(rgba(0x262335ff).into()),
