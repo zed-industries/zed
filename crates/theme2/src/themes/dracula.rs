@@ -107,6 +107,13 @@ pub fn dracula() -> UserThemeFamily {
                             },
                         ),
                         (
+                            "function".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0x50fa7bff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
                             "keyword".into(),
                             UserHighlightStyle {
                                 color: Some(rgba(0xff79c6ff).into()),

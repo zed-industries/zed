@@ -90,13 +90,6 @@ pub fn gruvbox() -> UserThemeFamily {
                                 },
                             ),
                             (
-                                "emphasis".into(),
-                                UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
-                                    ..Default::default()
-                                },
-                            ),
-                            (
                                 "emphasis.strong".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xfe8019ff).into()),
@@ -291,13 +284,6 @@ pub fn gruvbox() -> UserThemeFamily {
                                 "comment.doc".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x928374ff).into()),
-                                    font_style: Some(UserFontStyle::Italic),
-                                    ..Default::default()
-                                },
-                            ),
-                            (
-                                "emphasis".into(),
-                                UserHighlightStyle {
                                     font_style: Some(UserFontStyle::Italic),
                                     ..Default::default()
                                 },
@@ -502,13 +488,6 @@ pub fn gruvbox() -> UserThemeFamily {
                                 },
                             ),
                             (
-                                "emphasis".into(),
-                                UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
-                                    ..Default::default()
-                                },
-                            ),
-                            (
                                 "emphasis.strong".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xfe8019ff).into()),
@@ -703,13 +682,6 @@ pub fn gruvbox() -> UserThemeFamily {
                                 "comment.doc".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x928374ff).into()),
-                                    font_style: Some(UserFontStyle::Italic),
-                                    ..Default::default()
-                                },
-                            ),
-                            (
-                                "emphasis".into(),
-                                UserHighlightStyle {
                                     font_style: Some(UserFontStyle::Italic),
                                     ..Default::default()
                                 },
@@ -914,13 +886,6 @@ pub fn gruvbox() -> UserThemeFamily {
                                 },
                             ),
                             (
-                                "emphasis".into(),
-                                UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
-                                    ..Default::default()
-                                },
-                            ),
-                            (
                                 "emphasis.strong".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xaf3a03ff).into()),
@@ -1115,13 +1080,6 @@ pub fn gruvbox() -> UserThemeFamily {
                                 "comment.doc".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x928374ff).into()),
-                                    font_style: Some(UserFontStyle::Italic),
-                                    ..Default::default()
-                                },
-                            ),
-                            (
-                                "emphasis".into(),
-                                UserHighlightStyle {
                                     font_style: Some(UserFontStyle::Italic),
                                     ..Default::default()
                                 },

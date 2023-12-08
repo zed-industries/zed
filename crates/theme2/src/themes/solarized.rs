@@ -132,7 +132,7 @@ pub fn solarized() -> UserThemeFamily {
                             (
                                 "keyword".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x859900ff).into()),
+                                    color: Some(rgba(0x268bd2ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -195,7 +195,7 @@ pub fn solarized() -> UserThemeFamily {
                             (
                                 "variable".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x268bd2ff).into()),
+                                    color: Some(rgba(0x839496ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -325,7 +325,7 @@ pub fn solarized() -> UserThemeFamily {
                             (
                                 "keyword".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x859900ff).into()),
+                                    color: Some(rgba(0x268bd2ff).into()),
                                     ..Default::default()
                                 },
                             ),

@@ -104,13 +104,6 @@ pub fn nord() -> UserThemeFamily {
                             },
                         ),
                         (
-                            "emphasis.strong".into(),
-                            UserHighlightStyle {
-                                font_weight: Some(UserFontWeight(700.0)),
-                                ..Default::default()
-                            },
-                        ),
-                        (
                             "function".into(),
                             UserHighlightStyle {
                                 color: Some(rgba(0x88c0d0ff).into()),
@@ -190,7 +183,7 @@ pub fn nord() -> UserThemeFamily {
                         (
                             "variable".into(),
                             UserHighlightStyle {
-                                color: Some(rgba(0x81a1c1ff).into()),
+                                color: Some(rgba(0xd8dee9ff).into()),
                                 ..Default::default()
                             },
                         ),

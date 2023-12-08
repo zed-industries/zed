@@ -136,6 +136,10 @@ impl ZedSyntaxToken {
         let mut ranked_matches = IndexMap::new();
 
         for (ix, token_color) in token_colors.iter().enumerate() {
+            if token_color.settings.foreground.is_none() {
+                continue;
+            }
+
             let Some(rank) = self.rank_match(token_color) else {
                 continue;
             };
@@ -152,17 +156,18 @@ impl ZedSyntaxToken {
     }
 
     fn rank_match(&self, token_color: &VsCodeTokenColor) -> Option<u32> {
-        let scopes_to_match = self.to_vscode();
-
         let candidate_scopes = match token_color.scope.as_ref()? {
             VsCodeTokenScope::One(scope) => vec![scope],
             VsCodeTokenScope::Many(scopes) => scopes.iter().collect(),
-        };
+        }
+        .iter()
+        .map(|scope| scope.as_str())
+        .collect::<Vec<_>>();
 
         let mut matches = 0;
 
-        for candidate_scope in candidate_scopes {
-            if scopes_to_match.contains(&candidate_scope.as_str()) {
+        for scope in self.to_vscode() {
+            if candidate_scopes.contains(&scope) {
                 matches += 1;
             }
         }
@@ -202,7 +207,14 @@ impl ZedSyntaxToken {
                 "support.function",
             ],
             ZedSyntaxToken::Hint => vec![],
-            ZedSyntaxToken::Keyword => vec!["keyword"],
+            ZedSyntaxToken::Keyword => vec![
+                "keyword",
+                "keyword.control",
+                "keyword.control.fun",
+                "keyword.other.fn.rust",
+                "punctuation.accessor",
+                "entity.name.tag",
+            ],
             ZedSyntaxToken::Label => vec![
                 "label",
                 "entity.name",
@@ -256,11 +268,20 @@ impl ZedSyntaxToken {
             ZedSyntaxToken::Tag => vec!["tag", "entity.name.tag", "meta.tag.sgml"],
             ZedSyntaxToken::TextLiteral => vec!["text.literal", "string"],
             ZedSyntaxToken::Title => vec!["title", "entity.name"],
-            ZedSyntaxToken::Type => vec!["entity.name.type", "support.type", "support.class"],
+            ZedSyntaxToken::Type => vec![
+                "entity.name.type",
+                "entity.name.type.primitive",
+                "entity.name.type.numeric",
+                "keyword.type",
+                "support.type",
+                "support.type.primitive",
+                "support.class",
+            ],
             ZedSyntaxToken::Variable => vec![
                 "variable",
                 "variable.language",
                 "variable.member",
+                "variable.parameter",
                 "variable.parameter.function-call",
             ],
             ZedSyntaxToken::VariableSpecial => vec![

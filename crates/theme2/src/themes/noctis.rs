@@ -79,14 +79,14 @@ pub fn noctis() -> UserThemeFamily {
                             (
                                 "comment".into(),
                                 UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
+                                    color: Some(rgba(0x5988a6ff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "comment.doc".into(),
                                 UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
+                                    color: Some(rgba(0x5988a6ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -94,20 +94,6 @@ pub fn noctis() -> UserThemeFamily {
                                 "constant".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xbecfdaff).into()),
-                                    ..Default::default()
-                                },
-                            ),
-                            (
-                                "constructor".into(),
-                                UserHighlightStyle {
-                                    font_weight: Some(UserFontWeight(700.0)),
-                                    ..Default::default()
-                                },
-                            ),
-                            (
-                                "emphasis".into(),
-                                UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
                                     ..Default::default()
                                 },
                             ),
@@ -121,7 +107,7 @@ pub fn noctis() -> UserThemeFamily {
                             (
                                 "keyword".into(),
                                 UserHighlightStyle {
-                                    font_weight: Some(UserFontWeight(700.0)),
+                                    color: Some(rgba(0xe66533ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -154,30 +140,23 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
-                                "operator".into(),
-                                UserHighlightStyle {
-                                    font_weight: Some(UserFontWeight(700.0)),
-                                    ..Default::default()
-                                },
-                            ),
-                            (
                                 "property".into(),
                                 UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
+                                    color: Some(rgba(0x16a3b6ff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "punctuation".into(),
                                 UserHighlightStyle {
-                                    font_weight: Some(UserFontWeight(700.0)),
+                                    color: Some(rgba(0xbecfdaff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "punctuation.delimiter".into(),
                                 UserHighlightStyle {
-                                    font_weight: Some(UserFontWeight(700.0)),
+                                    color: Some(rgba(0xbecfdaff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -219,21 +198,21 @@ pub fn noctis() -> UserThemeFamily {
                             (
                                 "type".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x49d6e9ff).into()),
+                                    color: Some(rgba(0xd67e5cff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "variable".into(),
                                 UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
+                                    color: Some(rgba(0xe4b781ff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "variable.special".into(),
                                 UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
+                                    color: Some(rgba(0xe66533ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -306,14 +285,14 @@ pub fn noctis() -> UserThemeFamily {
                             (
                                 "comment".into(),
                                 UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
+                                    color: Some(rgba(0x8b747cff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "comment.doc".into(),
                                 UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
+                                    color: Some(rgba(0x8b747cff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -321,20 +300,6 @@ pub fn noctis() -> UserThemeFamily {
                                 "constant".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xcbbec2ff).into()),
-                                    ..Default::default()
-                                },
-                            ),
-                            (
-                                "constructor".into(),
-                                UserHighlightStyle {
-                                    font_weight: Some(UserFontWeight(700.0)),
-                                    ..Default::default()
-                                },
-                            ),
-                            (
-                                "emphasis".into(),
-                                UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
                                     ..Default::default()
                                 },
                             ),
@@ -348,7 +313,7 @@ pub fn noctis() -> UserThemeFamily {
                             (
                                 "keyword".into(),
                                 UserHighlightStyle {
-                                    font_weight: Some(UserFontWeight(700.0)),
+                                    color: Some(rgba(0xe66533ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -381,30 +346,23 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
-                                "operator".into(),
-                                UserHighlightStyle {
-                                    font_weight: Some(UserFontWeight(700.0)),
-                                    ..Default::default()
-                                },
-                            ),
-                            (
                                 "property".into(),
                                 UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
+                                    color: Some(rgba(0x16a3b6ff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "punctuation".into(),
                                 UserHighlightStyle {
-                                    font_weight: Some(UserFontWeight(700.0)),
+                                    color: Some(rgba(0xcbbec2ff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "punctuation.delimiter".into(),
                                 UserHighlightStyle {
-                                    font_weight: Some(UserFontWeight(700.0)),
+                                    color: Some(rgba(0xcbbec2ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -446,21 +404,21 @@ pub fn noctis() -> UserThemeFamily {
                             (
                                 "type".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x49d6e9ff).into()),
+                                    color: Some(rgba(0xd67e5cff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "variable".into(),
                                 UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
+                                    color: Some(rgba(0xe4b781ff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "variable.special".into(),
                                 UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
+                                    color: Some(rgba(0xe66533ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -533,14 +491,14 @@ pub fn noctis() -> UserThemeFamily {
                             (
                                 "comment".into(),
                                 UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
+                                    color: Some(rgba(0x8ca6a6ff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "comment.doc".into(),
                                 UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
+                                    color: Some(rgba(0x8ca6a6ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -548,20 +506,6 @@ pub fn noctis() -> UserThemeFamily {
                                 "constant".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x004d57ff).into()),
-                                    ..Default::default()
-                                },
-                            ),
-                            (
-                                "constructor".into(),
-                                UserHighlightStyle {
-                                    font_weight: Some(UserFontWeight(700.0)),
-                                    ..Default::default()
-                                },
-                            ),
-                            (
-                                "emphasis".into(),
-                                UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
                                     ..Default::default()
                                 },
                             ),
@@ -575,7 +519,7 @@ pub fn noctis() -> UserThemeFamily {
                             (
                                 "keyword".into(),
                                 UserHighlightStyle {
-                                    font_weight: Some(UserFontWeight(700.0)),
+                                    color: Some(rgba(0xe64100ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -608,30 +552,23 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
-                                "operator".into(),
-                                UserHighlightStyle {
-                                    font_weight: Some(UserFontWeight(700.0)),
-                                    ..Default::default()
-                                },
-                            ),
-                            (
                                 "property".into(),
                                 UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
+                                    color: Some(rgba(0x0095a8ff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "punctuation".into(),
                                 UserHighlightStyle {
-                                    font_weight: Some(UserFontWeight(700.0)),
+                                    color: Some(rgba(0x004d57ff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "punctuation.delimiter".into(),
                                 UserHighlightStyle {
-                                    font_weight: Some(UserFontWeight(700.0)),
+                                    color: Some(rgba(0x004d57ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -673,21 +610,21 @@ pub fn noctis() -> UserThemeFamily {
                             (
                                 "type".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x00bdd6ff).into()),
+                                    color: Some(rgba(0xb3694dff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "variable".into(),
                                 UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
+                                    color: Some(rgba(0xfa8900ff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "variable.special".into(),
                                 UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
+                                    color: Some(rgba(0xe64100ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -760,14 +697,14 @@ pub fn noctis() -> UserThemeFamily {
                             (
                                 "comment".into(),
                                 UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
+                                    color: Some(rgba(0x9995b7ff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "comment.doc".into(),
                                 UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
+                                    color: Some(rgba(0x9995b7ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -775,20 +712,6 @@ pub fn noctis() -> UserThemeFamily {
                                 "constant".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x0c006bff).into()),
-                                    ..Default::default()
-                                },
-                            ),
-                            (
-                                "constructor".into(),
-                                UserHighlightStyle {
-                                    font_weight: Some(UserFontWeight(700.0)),
-                                    ..Default::default()
-                                },
-                            ),
-                            (
-                                "emphasis".into(),
-                                UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
                                     ..Default::default()
                                 },
                             ),
@@ -802,7 +725,7 @@ pub fn noctis() -> UserThemeFamily {
                             (
                                 "keyword".into(),
                                 UserHighlightStyle {
-                                    font_weight: Some(UserFontWeight(700.0)),
+                                    color: Some(rgba(0xe64100ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -835,30 +758,23 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
-                                "operator".into(),
-                                UserHighlightStyle {
-                                    font_weight: Some(UserFontWeight(700.0)),
-                                    ..Default::default()
-                                },
-                            ),
-                            (
                                 "property".into(),
                                 UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
+                                    color: Some(rgba(0x0095a8ff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "punctuation".into(),
                                 UserHighlightStyle {
-                                    font_weight: Some(UserFontWeight(700.0)),
+                                    color: Some(rgba(0x0c006bff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "punctuation.delimiter".into(),
                                 UserHighlightStyle {
-                                    font_weight: Some(UserFontWeight(700.0)),
+                                    color: Some(rgba(0x0c006bff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -900,21 +816,21 @@ pub fn noctis() -> UserThemeFamily {
                             (
                                 "type".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x00bdd6ff).into()),
+                                    color: Some(rgba(0xb3694dff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "variable".into(),
                                 UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
+                                    color: Some(rgba(0xfa8900ff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "variable.special".into(),
                                 UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
+                                    color: Some(rgba(0xe64100ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -987,14 +903,14 @@ pub fn noctis() -> UserThemeFamily {
                             (
                                 "comment".into(),
                                 UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
+                                    color: Some(rgba(0x8ca6a6ff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "comment.doc".into(),
                                 UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
+                                    color: Some(rgba(0x8ca6a6ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -1002,20 +918,6 @@ pub fn noctis() -> UserThemeFamily {
                                 "constant".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x004d57ff).into()),
-                                    ..Default::default()
-                                },
-                            ),
-                            (
-                                "constructor".into(),
-                                UserHighlightStyle {
-                                    font_weight: Some(UserFontWeight(700.0)),
-                                    ..Default::default()
-                                },
-                            ),
-                            (
-                                "emphasis".into(),
-                                UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
                                     ..Default::default()
                                 },
                             ),
@@ -1029,7 +931,7 @@ pub fn noctis() -> UserThemeFamily {
                             (
                                 "keyword".into(),
                                 UserHighlightStyle {
-                                    font_weight: Some(UserFontWeight(700.0)),
+                                    color: Some(rgba(0xe64100ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -1062,30 +964,23 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
-                                "operator".into(),
-                                UserHighlightStyle {
-                                    font_weight: Some(UserFontWeight(700.0)),
-                                    ..Default::default()
-                                },
-                            ),
-                            (
                                 "property".into(),
                                 UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
+                                    color: Some(rgba(0x0095a8ff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "punctuation".into(),
                                 UserHighlightStyle {
-                                    font_weight: Some(UserFontWeight(700.0)),
+                                    color: Some(rgba(0x004d57ff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "punctuation.delimiter".into(),
                                 UserHighlightStyle {
-                                    font_weight: Some(UserFontWeight(700.0)),
+                                    color: Some(rgba(0x004d57ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -1127,21 +1022,21 @@ pub fn noctis() -> UserThemeFamily {
                             (
                                 "type".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x00bdd6ff).into()),
+                                    color: Some(rgba(0xb3694dff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "variable".into(),
                                 UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
+                                    color: Some(rgba(0xfa8900ff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "variable.special".into(),
                                 UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
+                                    color: Some(rgba(0xe64100ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -1214,14 +1109,14 @@ pub fn noctis() -> UserThemeFamily {
                             (
                                 "comment".into(),
                                 UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
+                                    color: Some(rgba(0x5e7887ff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "comment.doc".into(),
                                 UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
+                                    color: Some(rgba(0x5e7887ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -1229,20 +1124,6 @@ pub fn noctis() -> UserThemeFamily {
                                 "constant".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xc5cdd3ff).into()),
-                                    ..Default::default()
-                                },
-                            ),
-                            (
-                                "constructor".into(),
-                                UserHighlightStyle {
-                                    font_weight: Some(UserFontWeight(700.0)),
-                                    ..Default::default()
-                                },
-                            ),
-                            (
-                                "emphasis".into(),
-                                UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
                                     ..Default::default()
                                 },
                             ),
@@ -1256,7 +1137,7 @@ pub fn noctis() -> UserThemeFamily {
                             (
                                 "keyword".into(),
                                 UserHighlightStyle {
-                                    font_weight: Some(UserFontWeight(700.0)),
+                                    color: Some(rgba(0xc37455ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -1289,30 +1170,23 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
-                                "operator".into(),
-                                UserHighlightStyle {
-                                    font_weight: Some(UserFontWeight(700.0)),
-                                    ..Default::default()
-                                },
-                            ),
-                            (
                                 "property".into(),
                                 UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
+                                    color: Some(rgba(0x3f848dff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "punctuation".into(),
                                 UserHighlightStyle {
-                                    font_weight: Some(UserFontWeight(700.0)),
+                                    color: Some(rgba(0xc5cdd3ff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "punctuation.delimiter".into(),
                                 UserHighlightStyle {
-                                    font_weight: Some(UserFontWeight(700.0)),
+                                    color: Some(rgba(0xc5cdd3ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -1354,21 +1228,21 @@ pub fn noctis() -> UserThemeFamily {
                             (
                                 "type".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x72b7c0ff).into()),
+                                    color: Some(rgba(0xbe856fff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "variable".into(),
                                 UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
+                                    color: Some(rgba(0xd3b692ff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "variable.special".into(),
                                 UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
+                                    color: Some(rgba(0xc37455ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -1441,14 +1315,14 @@ pub fn noctis() -> UserThemeFamily {
                             (
                                 "comment".into(),
                                 UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
+                                    color: Some(rgba(0x5b858bff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "comment.doc".into(),
                                 UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
+                                    color: Some(rgba(0x5b858bff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -1456,20 +1330,6 @@ pub fn noctis() -> UserThemeFamily {
                                 "constant".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xb2cacdff).into()),
-                                    ..Default::default()
-                                },
-                            ),
-                            (
-                                "constructor".into(),
-                                UserHighlightStyle {
-                                    font_weight: Some(UserFontWeight(700.0)),
-                                    ..Default::default()
-                                },
-                            ),
-                            (
-                                "emphasis".into(),
-                                UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
                                     ..Default::default()
                                 },
                             ),
@@ -1483,7 +1343,7 @@ pub fn noctis() -> UserThemeFamily {
                             (
                                 "keyword".into(),
                                 UserHighlightStyle {
-                                    font_weight: Some(UserFontWeight(700.0)),
+                                    color: Some(rgba(0xe66533ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -1516,30 +1376,23 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
-                                "operator".into(),
-                                UserHighlightStyle {
-                                    font_weight: Some(UserFontWeight(700.0)),
-                                    ..Default::default()
-                                },
-                            ),
-                            (
                                 "property".into(),
                                 UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
+                                    color: Some(rgba(0x16a3b6ff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "punctuation".into(),
                                 UserHighlightStyle {
-                                    font_weight: Some(UserFontWeight(700.0)),
+                                    color: Some(rgba(0xb2cacdff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "punctuation.delimiter".into(),
                                 UserHighlightStyle {
-                                    font_weight: Some(UserFontWeight(700.0)),
+                                    color: Some(rgba(0xb2cacdff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -1581,21 +1434,21 @@ pub fn noctis() -> UserThemeFamily {
                             (
                                 "type".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x49d6e9ff).into()),
+                                    color: Some(rgba(0xd67e5cff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "variable".into(),
                                 UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
+                                    color: Some(rgba(0xe4b781ff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "variable.special".into(),
                                 UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
+                                    color: Some(rgba(0xe66533ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -1668,14 +1521,14 @@ pub fn noctis() -> UserThemeFamily {
                             (
                                 "comment".into(),
                                 UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
+                                    color: Some(rgba(0x5b858bff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "comment.doc".into(),
                                 UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
+                                    color: Some(rgba(0x5b858bff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -1683,20 +1536,6 @@ pub fn noctis() -> UserThemeFamily {
                                 "constant".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xb2cacdff).into()),
-                                    ..Default::default()
-                                },
-                            ),
-                            (
-                                "constructor".into(),
-                                UserHighlightStyle {
-                                    font_weight: Some(UserFontWeight(700.0)),
-                                    ..Default::default()
-                                },
-                            ),
-                            (
-                                "emphasis".into(),
-                                UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
                                     ..Default::default()
                                 },
                             ),
@@ -1710,7 +1549,7 @@ pub fn noctis() -> UserThemeFamily {
                             (
                                 "keyword".into(),
                                 UserHighlightStyle {
-                                    font_weight: Some(UserFontWeight(700.0)),
+                                    color: Some(rgba(0xe66533ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -1743,30 +1582,23 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
-                                "operator".into(),
-                                UserHighlightStyle {
-                                    font_weight: Some(UserFontWeight(700.0)),
-                                    ..Default::default()
-                                },
-                            ),
-                            (
                                 "property".into(),
                                 UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
+                                    color: Some(rgba(0x16a3b6ff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "punctuation".into(),
                                 UserHighlightStyle {
-                                    font_weight: Some(UserFontWeight(700.0)),
+                                    color: Some(rgba(0xb2cacdff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "punctuation.delimiter".into(),
                                 UserHighlightStyle {
-                                    font_weight: Some(UserFontWeight(700.0)),
+                                    color: Some(rgba(0xb2cacdff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -1808,21 +1640,21 @@ pub fn noctis() -> UserThemeFamily {
                             (
                                 "type".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x49d6e9ff).into()),
+                                    color: Some(rgba(0xd67e5cff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "variable".into(),
                                 UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
+                                    color: Some(rgba(0xe4b781ff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "variable.special".into(),
                                 UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
+                                    color: Some(rgba(0xe66533ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -1895,14 +1727,14 @@ pub fn noctis() -> UserThemeFamily {
                             (
                                 "comment".into(),
                                 UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
+                                    color: Some(rgba(0x5b858bff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "comment.doc".into(),
                                 UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
+                                    color: Some(rgba(0x5b858bff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -1910,20 +1742,6 @@ pub fn noctis() -> UserThemeFamily {
                                 "constant".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xb2cacdff).into()),
-                                    ..Default::default()
-                                },
-                            ),
-                            (
-                                "constructor".into(),
-                                UserHighlightStyle {
-                                    font_weight: Some(UserFontWeight(700.0)),
-                                    ..Default::default()
-                                },
-                            ),
-                            (
-                                "emphasis".into(),
-                                UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
                                     ..Default::default()
                                 },
                             ),
@@ -1937,7 +1755,7 @@ pub fn noctis() -> UserThemeFamily {
                             (
                                 "keyword".into(),
                                 UserHighlightStyle {
-                                    font_weight: Some(UserFontWeight(700.0)),
+                                    color: Some(rgba(0xe66533ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -1970,30 +1788,23 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
-                                "operator".into(),
-                                UserHighlightStyle {
-                                    font_weight: Some(UserFontWeight(700.0)),
-                                    ..Default::default()
-                                },
-                            ),
-                            (
                                 "property".into(),
                                 UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
+                                    color: Some(rgba(0x16a3b6ff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "punctuation".into(),
                                 UserHighlightStyle {
-                                    font_weight: Some(UserFontWeight(700.0)),
+                                    color: Some(rgba(0xb2cacdff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "punctuation.delimiter".into(),
                                 UserHighlightStyle {
-                                    font_weight: Some(UserFontWeight(700.0)),
+                                    color: Some(rgba(0xb2cacdff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -2035,21 +1846,21 @@ pub fn noctis() -> UserThemeFamily {
                             (
                                 "type".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x49d6e9ff).into()),
+                                    color: Some(rgba(0xd67e5cff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "variable".into(),
                                 UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
+                                    color: Some(rgba(0xe4b781ff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "variable.special".into(),
                                 UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
+                                    color: Some(rgba(0xe66533ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -2122,14 +1933,14 @@ pub fn noctis() -> UserThemeFamily {
                             (
                                 "comment".into(),
                                 UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
+                                    color: Some(rgba(0x716c93ff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "comment.doc".into(),
                                 UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
+                                    color: Some(rgba(0x716c93ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -2137,20 +1948,6 @@ pub fn noctis() -> UserThemeFamily {
                                 "constant".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xc5c2d6ff).into()),
-                                    ..Default::default()
-                                },
-                            ),
-                            (
-                                "constructor".into(),
-                                UserHighlightStyle {
-                                    font_weight: Some(UserFontWeight(700.0)),
-                                    ..Default::default()
-                                },
-                            ),
-                            (
-                                "emphasis".into(),
-                                UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
                                     ..Default::default()
                                 },
                             ),
@@ -2164,7 +1961,7 @@ pub fn noctis() -> UserThemeFamily {
                             (
                                 "keyword".into(),
                                 UserHighlightStyle {
-                                    font_weight: Some(UserFontWeight(700.0)),
+                                    color: Some(rgba(0xe66533ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -2197,30 +1994,23 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
-                                "operator".into(),
-                                UserHighlightStyle {
-                                    font_weight: Some(UserFontWeight(700.0)),
-                                    ..Default::default()
-                                },
-                            ),
-                            (
                                 "property".into(),
                                 UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
+                                    color: Some(rgba(0x16a3b6ff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "punctuation".into(),
                                 UserHighlightStyle {
-                                    font_weight: Some(UserFontWeight(700.0)),
+                                    color: Some(rgba(0xc5c2d6ff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "punctuation.delimiter".into(),
                                 UserHighlightStyle {
-                                    font_weight: Some(UserFontWeight(700.0)),
+                                    color: Some(rgba(0xc5c2d6ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -2262,21 +2052,21 @@ pub fn noctis() -> UserThemeFamily {
                             (
                                 "type".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x49d6e9ff).into()),
+                                    color: Some(rgba(0xd67e5cff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "variable".into(),
                                 UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
+                                    color: Some(rgba(0xe4b781ff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "variable.special".into(),
                                 UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
+                                    color: Some(rgba(0xe66533ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -2349,14 +2139,14 @@ pub fn noctis() -> UserThemeFamily {
                             (
                                 "comment".into(),
                                 UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
+                                    color: Some(rgba(0x7f659aff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "comment.doc".into(),
                                 UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
+                                    color: Some(rgba(0x7f659aff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -2364,20 +2154,6 @@ pub fn noctis() -> UserThemeFamily {
                                 "constant".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xccbfd9ff).into()),
-                                    ..Default::default()
-                                },
-                            ),
-                            (
-                                "constructor".into(),
-                                UserHighlightStyle {
-                                    font_weight: Some(UserFontWeight(700.0)),
-                                    ..Default::default()
-                                },
-                            ),
-                            (
-                                "emphasis".into(),
-                                UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
                                     ..Default::default()
                                 },
                             ),
@@ -2391,7 +2167,7 @@ pub fn noctis() -> UserThemeFamily {
                             (
                                 "keyword".into(),
                                 UserHighlightStyle {
-                                    font_weight: Some(UserFontWeight(700.0)),
+                                    color: Some(rgba(0xe66533ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -2424,30 +2200,23 @@ pub fn noctis() -> UserThemeFamily {
                                 },
                             ),
                             (
-                                "operator".into(),
-                                UserHighlightStyle {
-                                    font_weight: Some(UserFontWeight(700.0)),
-                                    ..Default::default()
-                                },
-                            ),
-                            (
                                 "property".into(),
                                 UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
+                                    color: Some(rgba(0x16a3b6ff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "punctuation".into(),
                                 UserHighlightStyle {
-                                    font_weight: Some(UserFontWeight(700.0)),
+                                    color: Some(rgba(0xccbfd9ff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "punctuation.delimiter".into(),
                                 UserHighlightStyle {
-                                    font_weight: Some(UserFontWeight(700.0)),
+                                    color: Some(rgba(0xccbfd9ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -2489,21 +2258,21 @@ pub fn noctis() -> UserThemeFamily {
                             (
                                 "type".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x49d6e9ff).into()),
+                                    color: Some(rgba(0xd67e5cff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "variable".into(),
                                 UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
+                                    color: Some(rgba(0xe4b781ff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "variable.special".into(),
                                 UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
+                                    color: Some(rgba(0xe66533ff).into()),
                                     ..Default::default()
                                 },
                             ),

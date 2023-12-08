@@ -122,7 +122,7 @@ pub fn ayu() -> UserThemeFamily {
                             (
                                 "emphasis.strong".into(),
                                 UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
+                                    color: Some(rgba(0xf07171ff).into()),
                                     font_weight: Some(UserFontWeight(700.0)),
                                     ..Default::default()
                                 },
@@ -137,7 +137,7 @@ pub fn ayu() -> UserThemeFamily {
                             (
                                 "keyword".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xfa8d3eff).into()),
+                                    color: Some(rgba(0x55b4d4ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -393,7 +393,7 @@ pub fn ayu() -> UserThemeFamily {
                             (
                                 "emphasis.strong".into(),
                                 UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
+                                    color: Some(rgba(0xf28779ff).into()),
                                     font_weight: Some(UserFontWeight(700.0)),
                                     ..Default::default()
                                 },
@@ -408,7 +408,7 @@ pub fn ayu() -> UserThemeFamily {
                             (
                                 "keyword".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xffad66ff).into()),
+                                    color: Some(rgba(0x5ccfe6ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -664,7 +664,7 @@ pub fn ayu() -> UserThemeFamily {
                             (
                                 "emphasis.strong".into(),
                                 UserHighlightStyle {
-                                    font_style: Some(UserFontStyle::Italic),
+                                    color: Some(rgba(0xf07178ff).into()),
                                     font_weight: Some(UserFontWeight(700.0)),
                                     ..Default::default()
                                 },
@@ -679,7 +679,7 @@ pub fn ayu() -> UserThemeFamily {
                             (
                                 "keyword".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xff8f40ff).into()),
+                                    color: Some(rgba(0x39bae6ff).into()),
                                     ..Default::default()
                                 },
                             ),
