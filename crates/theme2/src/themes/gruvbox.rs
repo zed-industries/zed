@@ -153,6 +153,13 @@ pub fn gruvbox() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "number".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xd3869bff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "operator".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x8ec07cff).into()),
@@ -422,6 +429,13 @@ pub fn gruvbox() -> UserThemeFamily {
                             ),
                             (
                                 "link_uri".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xd3869bff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "number".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xd3869bff).into()),
                                     ..Default::default()
@@ -703,6 +717,13 @@ pub fn gruvbox() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "number".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xd3869bff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "operator".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x8ec07cff).into()),
@@ -972,6 +993,13 @@ pub fn gruvbox() -> UserThemeFamily {
                             ),
                             (
                                 "link_uri".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x8f3f71ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "number".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x8f3f71ff).into()),
                                     ..Default::default()
@@ -1253,6 +1281,13 @@ pub fn gruvbox() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "number".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x8f3f71ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "operator".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x427b58ff).into()),
@@ -1522,6 +1557,13 @@ pub fn gruvbox() -> UserThemeFamily {
                             ),
                             (
                                 "link_uri".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x8f3f71ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "number".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x8f3f71ff).into()),
                                     ..Default::default()

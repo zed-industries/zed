@@ -157,6 +157,13 @@ pub fn dracula() -> UserThemeFamily {
                             },
                         ),
                         (
+                            "number".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0xbd93f9ff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
                             "string".into(),
                             UserHighlightStyle {
                                 color: Some(rgba(0xf1fa8cff).into()),
