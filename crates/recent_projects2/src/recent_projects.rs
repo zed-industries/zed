@@ -13,8 +13,8 @@ use std::sync::Arc;
 use ui::{prelude::*, ListItem};
 use util::paths::PathExt;
 use workspace::{
-    notifications::simple_message_notification::MessageNotification, Workspace, WorkspaceLocation,
-    WORKSPACE_DB,
+    notifications::simple_message_notification::MessageNotification, ModalView, Workspace,
+    WorkspaceLocation, WORKSPACE_DB,
 };
 
 pub use projects::OpenRecent;
@@ -26,6 +26,8 @@ pub fn init(cx: &mut AppContext) {
 pub struct RecentProjects {
     picker: View<Picker<RecentProjectsDelegate>>,
 }
+
+impl ModalView for RecentProjects {}
 
 impl RecentProjects {
     fn new(delegate: RecentProjectsDelegate, cx: &mut ViewContext<Self>) -> Self {

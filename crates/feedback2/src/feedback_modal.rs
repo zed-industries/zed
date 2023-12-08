@@ -4,7 +4,7 @@ use anyhow::bail;
 use client::{Client, ZED_SECRET_CLIENT_TOKEN, ZED_SERVER_URL};
 use db::kvp::KEY_VALUE_STORE;
 use editor::{Editor, EditorEvent};
-use futures::AsyncReadExt;
+use futures::{AsyncReadExt, Future};
 use gpui::{
     div, rems, serde_json, AppContext, DismissEvent, Div, EventEmitter, FocusHandle, FocusableView,
     Model, PromptLevel, Render, Task, View, ViewContext,
@@ -16,7 +16,7 @@ use regex::Regex;
 use serde_derive::Serialize;
 use ui::{prelude::*, Button, ButtonStyle, IconPosition, Tooltip};
 use util::ResultExt;
-use workspace::Workspace;
+use workspace::{ModalView, Workspace};
 
 use crate::{system_specs::SystemSpecs, GiveFeedback, OpenZedCommunityRepo};
 
@@ -51,6 +51,13 @@ impl FocusableView for FeedbackModal {
     }
 }
 impl EventEmitter<DismissEvent> for FeedbackModal {}
+
+impl ModalView for FeedbackModal {
+    fn dismiss(&mut self, cx: &mut ViewContext<Self>) -> Task<bool> {
+        let prompt = Self::prompt_dismiss(cx);
+        cx.spawn(|_, _| prompt)
+    }
+}
 
 impl FeedbackModal {
     pub fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
@@ -105,7 +112,7 @@ impl FeedbackModal {
         let feedback_editor = cx.build_view(|cx| {
             let mut editor = Editor::for_buffer(buffer, Some(project.clone()), cx);
             editor.set_placeholder_text(
-                "You can use markdown to add links or organize feedback.",
+                "You can use markdown to organize your feedback wiht add code and links, or organize feedback.",
                 cx,
             );
             // editor.set_show_gutter(false, cx);
@@ -242,7 +249,27 @@ impl FeedbackModal {
     //     Close immediately if no text in field
     //     Ask to close if text in the field
     fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
-        cx.emit(DismissEvent);
+        Self::dismiss_event(cx)
+    }
+
+    fn dismiss_event(cx: &mut ViewContext<Self>) {
+        let dismiss = Self::prompt_dismiss(cx);
+
+        cx.spawn(|this, mut cx| async move {
+            if dismiss.await {
+                this.update(&mut cx, |_, cx| cx.emit(DismissEvent)).ok();
+            }
+        })
+        .detach()
+    }
+
+    fn prompt_dismiss(cx: &mut ViewContext<Self>) -> impl Future<Output = bool> {
+        let answer = cx.prompt(PromptLevel::Info, "Discard feedback?", &["Yes", "No"]);
+
+        async {
+            let answer = answer.await.ok();
+            answer == Some(0)
+        }
     }
 }
 
@@ -267,20 +294,7 @@ impl Render for FeedbackModal {
         } else {
             "Submit"
         };
-        let dismiss = cx.listener(|_, _, cx| {
-            cx.emit(DismissEvent);
-        });
-        // TODO: get the "are you sure you want to dismiss?" prompt here working
-        let dismiss_prompt = cx.listener(|_, _, _| {
-            // let answer = cx.prompt(PromptLevel::Info, "Exit feedback?", &["Yes", "No"]);
-            // cx.spawn(|_, _| async move {
-            //     let answer = answer.await.ok();
-            //     if answer == Some(0) {
-            //         cx.emit(DismissEvent);
-            //     }
-            // })
-            // .detach();
-        });
+
         let open_community_repo =
             cx.listener(|_, _, cx| cx.dispatch_action(Box::new(OpenZedCommunityRepo)));
 
@@ -368,9 +382,13 @@ impl Render for FeedbackModal {
                                             // TODO: Will require somehow overriding the modal dismal default behavior
                                             .map(|this| {
                                                 if has_feedback {
-                                                    this.on_click(dismiss_prompt)
+                                                    this.on_click(cx.listener(|_, _, cx| {
+                                                        Self::dismiss_event(cx)
+                                                    }))
                                                 } else {
-                                                    this.on_click(dismiss)
+                                                    this.on_click(cx.listener(|_, _, cx| {
+                                                        cx.emit(DismissEvent);
+                                                    }))
                                                 }
                                             }),
                                     )

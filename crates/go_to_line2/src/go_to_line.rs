@@ -8,6 +8,7 @@ use text::{Bias, Point};
 use theme::ActiveTheme;
 use ui::{h_stack, prelude::*, v_stack, Label};
 use util::paths::FILE_ROW_COLUMN_DELIMITER;
+use workspace::ModalView;
 
 actions!(Toggle);
 
@@ -22,6 +23,8 @@ pub struct GoToLine {
     prev_scroll_position: Option<gpui::Point<f32>>,
     _subscriptions: Vec<Subscription>,
 }
+
+impl ModalView for GoToLine {}
 
 impl FocusableView for GoToLine {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {

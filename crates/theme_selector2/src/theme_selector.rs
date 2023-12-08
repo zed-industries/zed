@@ -11,7 +11,7 @@ use std::sync::Arc;
 use theme::{Theme, ThemeRegistry, ThemeSettings};
 use ui::{prelude::*, v_stack, ListItem};
 use util::ResultExt;
-use workspace::{ui::HighlightedLabel, Workspace};
+use workspace::{ui::HighlightedLabel, ModalView, Workspace};
 
 actions!(Toggle, Reload);
 
@@ -51,6 +51,8 @@ pub fn reload(cx: &mut AppContext) {
         }
     }
 }
+
+impl ModalView for ThemeSelector {}
 
 pub struct ThemeSelector {
     picker: View<Picker<ThemeSelectorDelegate>>,

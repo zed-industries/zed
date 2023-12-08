@@ -9,6 +9,7 @@ use std::sync::Arc;
 use theme::ActiveTheme as _;
 use ui::prelude::*;
 use util::{ResultExt as _, TryFutureExt};
+use workspace::ModalView;
 
 pub fn init(cx: &mut AppContext) {
     //Picker::<ContactFinderDelegate>::init(cx);
@@ -95,6 +96,7 @@ pub struct ContactFinderDelegate {
 }
 
 impl EventEmitter<DismissEvent> for ContactFinder {}
+impl ModalView for ContactFinder {}
 
 impl FocusableView for ContactFinder {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
