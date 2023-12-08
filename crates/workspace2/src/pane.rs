@@ -1493,7 +1493,7 @@ impl Pane {
                 .child(label);
 
         right_click_menu(ix).trigger(tab).menu(|cx| {
-            ContextMenu::build(cx, |menu, cx| {
+            ContextMenu::build(cx, |menu, _| {
                 menu.action("Close", CloseActiveItem { save_intent: None }.boxed_clone())
                     .action("Close Others", CloseInactiveItems.boxed_clone())
                     .separator()
@@ -2057,13 +2057,13 @@ impl Render for Pane {
             .overflow_hidden()
             .on_focus_in({
                 let this = this.clone();
-                move |event, cx| {
+                move |_, cx| {
                     this.update(cx, |this, cx| this.focus_in(cx)).ok();
                 }
             })
             .on_focus_out({
                 let this = this.clone();
-                move |event, cx| {
+                move |_, cx| {
                     this.update(cx, |this, cx| this.focus_out(cx)).ok();
                 }
             })

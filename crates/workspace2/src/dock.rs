@@ -1,8 +1,8 @@
 use crate::{status_bar::StatusItemView, Axis, Workspace};
 use gpui::{
     div, px, Action, AnchorCorner, AnyView, AppContext, Div, Entity, EntityId, EventEmitter,
-    FocusHandle, FocusableView, IntoElement, ParentElement, Render, SharedString, Styled,
-    Subscription, View, ViewContext, VisualContext, WeakView, WindowContext,
+    FocusHandle, Focusable, FocusableView, IntoElement, ParentElement, Render, SharedString,
+    Styled, Subscription, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -10,6 +10,7 @@ use std::sync::Arc;
 use ui::{h_stack, ContextMenu, IconButton, Tooltip};
 use ui::{prelude::*, right_click_menu};
 
+#[derive(Debug)]
 pub enum PanelEvent {
     ChangePosition,
     ZoomIn,
