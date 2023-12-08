@@ -124,7 +124,7 @@ pub fn gruvbox() -> UserThemeFamily {
                             (
                                 "function".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xfabd2fff).into()),
+                                    color: Some(rgba(0x8ec07cff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -410,7 +410,7 @@ pub fn gruvbox() -> UserThemeFamily {
                             (
                                 "function".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xfabd2fff).into()),
+                                    color: Some(rgba(0x8ec07cff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -696,7 +696,7 @@ pub fn gruvbox() -> UserThemeFamily {
                             (
                                 "function".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xfabd2fff).into()),
+                                    color: Some(rgba(0x8ec07cff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -982,7 +982,7 @@ pub fn gruvbox() -> UserThemeFamily {
                             (
                                 "function".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xb57614ff).into()),
+                                    color: Some(rgba(0x427b58ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -1268,7 +1268,7 @@ pub fn gruvbox() -> UserThemeFamily {
                             (
                                 "function".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xb57614ff).into()),
+                                    color: Some(rgba(0x427b58ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -1554,7 +1554,7 @@ pub fn gruvbox() -> UserThemeFamily {
                             (
                                 "function".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xb57614ff).into()),
+                                    color: Some(rgba(0x427b58ff).into()),
                                     ..Default::default()
                                 },
                             ),
