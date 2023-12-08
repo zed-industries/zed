@@ -172,6 +172,10 @@ impl ZedSyntaxToken {
             | ZedSyntaxToken::PunctuationDelimiter
             | ZedSyntaxToken::PunctuationListMarker
             | ZedSyntaxToken::PunctuationSpecial => &[ZedSyntaxToken::Punctuation],
+            ZedSyntaxToken::StringEscape
+            | ZedSyntaxToken::StringRegex
+            | ZedSyntaxToken::StringSpecial
+            | ZedSyntaxToken::StringSpecialSymbol => &[ZedSyntaxToken::String],
             _ => &[],
         }
     }

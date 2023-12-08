@@ -146,6 +146,34 @@ pub fn dracula() -> UserThemeFamily {
                             },
                         ),
                         (
+                            "string.escape".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0xf1fa8cff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "string.regex".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0xf1fa8cff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "string.special".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0xf1fa8cff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "string.special.symbol".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0xf1fa8cff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
                             "tag".into(),
                             UserHighlightStyle {
                                 color: Some(rgba(0xff79c6ff).into()),

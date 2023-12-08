@@ -237,6 +237,13 @@ pub fn ayu() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "string.regex".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x86b300ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "string.special".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x86b300ff).into()),
@@ -519,6 +526,13 @@ pub fn ayu() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "string.regex".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xd5ff80ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "string.special".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xd5ff80ff).into()),
@@ -797,6 +811,13 @@ pub fn ayu() -> UserThemeFamily {
                                 "string.escape".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x95e6cbff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.regex".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xaad94cff).into()),
                                     ..Default::default()
                                 },
                             ),

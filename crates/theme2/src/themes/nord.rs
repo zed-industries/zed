@@ -185,6 +185,27 @@ pub fn nord() -> UserThemeFamily {
                             },
                         ),
                         (
+                            "string.regex".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0xa3be8cff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "string.special".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0xa3be8cff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "string.special.symbol".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0xa3be8cff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
                             "tag".into(),
                             UserHighlightStyle {
                                 color: Some(rgba(0x81a1c1ff).into()),
