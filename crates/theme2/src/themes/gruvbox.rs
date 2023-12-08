@@ -60,10 +60,14 @@ pub fn gruvbox() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
+                        conflict: Some(rgba(0xb16286ff).into()),
+                        created: Some(rgba(0x98971aff).into()),
                         deleted: Some(rgba(0xfb4934ff).into()),
                         error: Some(rgba(0xfb4934ff).into()),
                         hidden: Some(rgba(0xa89984ff).into()),
                         hint: Some(rgba(0x969696ff).into()),
+                        ignored: Some(rgba(0x7c6f64ff).into()),
+                        modified: Some(rgba(0xd79921ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -143,6 +147,13 @@ pub fn gruvbox() -> UserThemeFamily {
                             ),
                             (
                                 "link_uri".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xd3869bff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "number".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xd3869bff).into()),
                                     ..Default::default()
@@ -331,10 +342,14 @@ pub fn gruvbox() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
+                        conflict: Some(rgba(0xb16286ff).into()),
+                        created: Some(rgba(0x98971aff).into()),
                         deleted: Some(rgba(0xfb4934ff).into()),
                         error: Some(rgba(0xfb4934ff).into()),
                         hidden: Some(rgba(0xa89984ff).into()),
                         hint: Some(rgba(0x969696ff).into()),
+                        ignored: Some(rgba(0x7c6f64ff).into()),
+                        modified: Some(rgba(0xd79921ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -414,6 +429,13 @@ pub fn gruvbox() -> UserThemeFamily {
                             ),
                             (
                                 "link_uri".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xd3869bff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "number".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xd3869bff).into()),
                                     ..Default::default()
@@ -602,10 +624,14 @@ pub fn gruvbox() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
+                        conflict: Some(rgba(0xb16286ff).into()),
+                        created: Some(rgba(0x98971aff).into()),
                         deleted: Some(rgba(0xfb4934ff).into()),
                         error: Some(rgba(0xfb4934ff).into()),
                         hidden: Some(rgba(0xa89984ff).into()),
                         hint: Some(rgba(0x969696ff).into()),
+                        ignored: Some(rgba(0x7c6f64ff).into()),
+                        modified: Some(rgba(0xd79921ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -685,6 +711,13 @@ pub fn gruvbox() -> UserThemeFamily {
                             ),
                             (
                                 "link_uri".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xd3869bff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "number".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xd3869bff).into()),
                                     ..Default::default()
@@ -873,10 +906,14 @@ pub fn gruvbox() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
+                        conflict: Some(rgba(0xb16286ff).into()),
+                        created: Some(rgba(0x98971aff).into()),
                         deleted: Some(rgba(0x9d0006ff).into()),
                         error: Some(rgba(0x9d0006ff).into()),
                         hidden: Some(rgba(0x7c6f64ff).into()),
                         hint: Some(rgba(0x969696ff).into()),
+                        ignored: Some(rgba(0xa89984ff).into()),
+                        modified: Some(rgba(0xd79921ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -956,6 +993,13 @@ pub fn gruvbox() -> UserThemeFamily {
                             ),
                             (
                                 "link_uri".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x8f3f71ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "number".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x8f3f71ff).into()),
                                     ..Default::default()
@@ -1144,10 +1188,14 @@ pub fn gruvbox() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
+                        conflict: Some(rgba(0xb16286ff).into()),
+                        created: Some(rgba(0x98971aff).into()),
                         deleted: Some(rgba(0x9d0006ff).into()),
                         error: Some(rgba(0x9d0006ff).into()),
                         hidden: Some(rgba(0x7c6f64ff).into()),
                         hint: Some(rgba(0x969696ff).into()),
+                        ignored: Some(rgba(0xa89984ff).into()),
+                        modified: Some(rgba(0xd79921ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -1227,6 +1275,13 @@ pub fn gruvbox() -> UserThemeFamily {
                             ),
                             (
                                 "link_uri".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x8f3f71ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "number".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x8f3f71ff).into()),
                                     ..Default::default()
@@ -1415,10 +1470,14 @@ pub fn gruvbox() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
+                        conflict: Some(rgba(0xb16286ff).into()),
+                        created: Some(rgba(0x98971aff).into()),
                         deleted: Some(rgba(0x9d0006ff).into()),
                         error: Some(rgba(0x9d0006ff).into()),
                         hidden: Some(rgba(0x7c6f64ff).into()),
                         hint: Some(rgba(0x969696ff).into()),
+                        ignored: Some(rgba(0xa89984ff).into()),
+                        modified: Some(rgba(0xd79921ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -1498,6 +1557,13 @@ pub fn gruvbox() -> UserThemeFamily {
                             ),
                             (
                                 "link_uri".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x8f3f71ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "number".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x8f3f71ff).into()),
                                     ..Default::default()

@@ -63,10 +63,14 @@ pub fn dracula() -> UserThemeFamily {
                     ..Default::default()
                 },
                 status: StatusColorsRefinement {
+                    conflict: Some(rgba(0xffb86cff).into()),
+                    created: Some(rgba(0x50fa7bff).into()),
                     deleted: Some(rgba(0xff5555ff).into()),
                     error: Some(rgba(0xff5555ff).into()),
                     hidden: Some(rgba(0x6272a4ff).into()),
                     hint: Some(rgba(0x969696ff).into()),
+                    ignored: Some(rgba(0x6272a4ff).into()),
+                    modified: Some(rgba(0x8be9fdff).into()),
                     warning: Some(rgba(0xffb86cff).into()),
                     ..Default::default()
                 },
@@ -149,6 +153,13 @@ pub fn dracula() -> UserThemeFamily {
                             "link_uri".into(),
                             UserHighlightStyle {
                                 color: Some(rgba(0x8be9fdff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "number".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0xbd93f9ff).into()),
                                 ..Default::default()
                             },
                         ),

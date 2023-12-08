@@ -167,6 +167,7 @@ impl ZedSyntaxToken {
     pub fn fallbacks(&self) -> &[Self] {
         match self {
             ZedSyntaxToken::CommentDoc => &[ZedSyntaxToken::Comment],
+            ZedSyntaxToken::Number => &[ZedSyntaxToken::Constant],
             ZedSyntaxToken::VariableSpecial => &[ZedSyntaxToken::Variable],
             ZedSyntaxToken::PunctuationBracket
             | ZedSyntaxToken::PunctuationDelimiter

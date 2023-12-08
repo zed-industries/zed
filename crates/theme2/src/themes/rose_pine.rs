@@ -63,10 +63,14 @@ pub fn rose_pine() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
+                        conflict: Some(rgba(0xeb6f92ff).into()),
+                        created: Some(rgba(0xf6c177ff).into()),
                         deleted: Some(rgba(0xeb6f92ff).into()),
                         error: Some(rgba(0xeb6f92ff).into()),
                         hidden: Some(rgba(0x908caaff).into()),
                         hint: Some(rgba(0x908caaff).into()),
+                        ignored: Some(rgba(0x6e6a86ff).into()),
+                        modified: Some(rgba(0xebbcbaff).into()),
                         warning: Some(rgba(0xf6c177ff).into()),
                         ..Default::default()
                     },
@@ -310,10 +314,14 @@ pub fn rose_pine() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
+                        conflict: Some(rgba(0xeb6f92ff).into()),
+                        created: Some(rgba(0xf6c177ff).into()),
                         deleted: Some(rgba(0xeb6f92ff).into()),
                         error: Some(rgba(0xeb6f92ff).into()),
                         hidden: Some(rgba(0x908caaff).into()),
                         hint: Some(rgba(0x908caaff).into()),
+                        ignored: Some(rgba(0x6e6a86ff).into()),
+                        modified: Some(rgba(0xea9a97ff).into()),
                         warning: Some(rgba(0xf6c177ff).into()),
                         ..Default::default()
                     },
@@ -557,10 +565,14 @@ pub fn rose_pine() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
+                        conflict: Some(rgba(0xb4637aff).into()),
+                        created: Some(rgba(0xea9d34ff).into()),
                         deleted: Some(rgba(0xb4637aff).into()),
                         error: Some(rgba(0xb4637aff).into()),
                         hidden: Some(rgba(0x797593ff).into()),
                         hint: Some(rgba(0x797593ff).into()),
+                        ignored: Some(rgba(0x9893a5ff).into()),
+                        modified: Some(rgba(0xd7827eff).into()),
                         warning: Some(rgba(0xea9d34ff).into()),
                         ..Default::default()
                     },

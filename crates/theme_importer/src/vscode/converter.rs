@@ -75,8 +75,14 @@ impl VsCodeThemeConverter {
         };
 
         Ok(StatusColorsRefinement {
-            // conflict: None,
-            // created: None,
+            conflict: vscode_colors
+                .git_decoration_conflicting_resource_foreground
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
+            created: vscode_colors
+                .git_decoration_untracked_resource_foreground
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
             deleted: vscode_colors
                 .error_foreground
                 .as_ref()
@@ -94,9 +100,15 @@ impl VsCodeThemeConverter {
                 .as_ref()
                 .traverse(|color| try_parse_color(&color))?
                 .or(vscode_base_status_colors.hint),
-            // ignored: None,
+            ignored: vscode_colors
+                .git_decoration_ignored_resource_foreground
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
             // info: None,
-            // modified: None,
+            modified: vscode_colors
+                .git_decoration_modified_resource_foreground
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
             // renamed: None,
             // success: None,
             warning: vscode_colors

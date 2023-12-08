@@ -63,10 +63,14 @@ pub fn nord() -> UserThemeFamily {
                     ..Default::default()
                 },
                 status: StatusColorsRefinement {
+                    conflict: Some(rgba(0x5e81acff).into()),
+                    created: Some(rgba(0xa3be8cff).into()),
                     deleted: Some(rgba(0xbf616aff).into()),
                     error: Some(rgba(0xbf616aff).into()),
                     hidden: Some(rgba(0xd8dee966).into()),
                     hint: Some(rgba(0xd8dee9ff).into()),
+                    ignored: Some(rgba(0xd8dee966).into()),
+                    modified: Some(rgba(0xebcb8bff).into()),
                     warning: Some(rgba(0xebcb8bff).into()),
                     ..Default::default()
                 },
