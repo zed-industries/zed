@@ -12,6 +12,7 @@ use std::{rc::Rc, sync::Arc};
 use call::{report_call_event_for_room, ActiveCall, Room};
 pub use collab_panel::CollabPanel;
 pub use collab_titlebar_item::CollabTitlebarItem;
+use feature_flags::{ChannelsAlpha, FeatureFlagAppExt};
 use gpui::{
     actions, point, AppContext, GlobalPixels, Pixels, PlatformDisplay, Size, Task, WindowBounds,
     WindowKind, WindowOptions,
@@ -157,6 +158,6 @@ fn notification_window_options(
 //         .into_any()
 // }
 
-// fn is_channels_feature_enabled(cx: &gpui::WindowContext<'_>) -> bool {
-//     cx.is_staff() || cx.has_flag::<ChannelsAlpha>()
-// }
+fn is_channels_feature_enabled(cx: &gpui::WindowContext<'_>) -> bool {
+    cx.is_staff() || cx.has_flag::<ChannelsAlpha>()
+}

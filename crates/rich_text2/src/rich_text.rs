@@ -2,7 +2,7 @@ use std::{ops::Range, sync::Arc};
 
 use anyhow::bail;
 use futures::FutureExt;
-use gpui::{AnyElement, FontStyle, FontWeight, HighlightStyle, UnderlineStyle};
+use gpui::{AnyElement, FontStyle, FontWeight, HighlightStyle, UnderlineStyle, WindowContext};
 use language::{HighlightId, Language, LanguageRegistry};
 use util::RangeExt;
 
@@ -56,12 +56,7 @@ pub struct Mention {
 }
 
 impl RichText {
-    pub fn element(
-        &self,
-        // syntax: Arc<SyntaxTheme>,
-        //  style: RichTextStyle,
-        // cx: &mut ViewContext<V>,
-    ) -> AnyElement {
+    pub fn element(&self, _cx: &mut WindowContext) -> AnyElement {
         todo!();
 
         // let mut region_id = 0;

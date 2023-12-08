@@ -149,13 +149,19 @@ impl DispatchTree {
     }
 
     pub fn available_actions(&self, target: DispatchNodeId) -> Vec<Box<dyn Action>> {
-        let mut actions = Vec::new();
+        let mut actions = Vec::<Box<dyn Action>>::new();
         for node_id in self.dispatch_path(target) {
             let node = &self.nodes[node_id.0];
             for DispatchActionListener { action_type, .. } in &node.action_listeners {
-                // Intentionally silence these errors without logging.
-                // If an action cannot be built by default, it's not available.
-                actions.extend(self.action_registry.build_action_type(action_type).ok());
+                if let Err(ix) = actions.binary_search_by_key(action_type, |a| a.as_any().type_id())
+                {
+                    // Intentionally silence these errors without logging.
+                    // If an action cannot be built by default, it's not available.
+                    let action = self.action_registry.build_action_type(action_type).ok();
+                    if let Some(action) = action {
+                        actions.insert(ix, action);
+                    }
+                }
             }
         }
         actions

@@ -12,7 +12,7 @@ use chrono::{DateTime, Local};
 use collections::HashMap;
 use fs::Fs;
 use futures::StreamExt;
-use gpui::{actions, AppContext};
+use gpui::{actions, AppContext, SharedString};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::{cmp::Reverse, ffi::OsStr, path::PathBuf, sync::Arc};
@@ -47,7 +47,7 @@ struct MessageMetadata {
 enum MessageStatus {
     Pending,
     Done,
-    Error(Arc<str>),
+    Error(SharedString),
 }
 
 #[derive(Serialize, Deserialize)]

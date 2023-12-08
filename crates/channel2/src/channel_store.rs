@@ -8,7 +8,8 @@ use collections::{hash_map, HashMap, HashSet};
 use db::RELEASE_CHANNEL;
 use futures::{channel::mpsc, future::Shared, Future, FutureExt, StreamExt};
 use gpui::{
-    AppContext, AsyncAppContext, Context, EventEmitter, Model, ModelContext, Task, WeakModel,
+    AppContext, AsyncAppContext, Context, EventEmitter, Model, ModelContext, SharedString, Task,
+    WeakModel,
 };
 use rpc::{
     proto::{self, ChannelVisibility},
@@ -46,7 +47,7 @@ pub struct ChannelStore {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Channel {
     pub id: ChannelId,
-    pub name: String,
+    pub name: SharedString,
     pub visibility: proto::ChannelVisibility,
     pub role: proto::ChannelRole,
     pub unseen_note_version: Option<(u64, clock::Global)>,
@@ -895,14 +896,16 @@ impl ChannelStore {
                 .channel_invitations
                 .binary_search_by_key(&channel.id, |c| c.id)
             {
-                Ok(ix) => Arc::make_mut(&mut self.channel_invitations[ix]).name = channel.name,
+                Ok(ix) => {
+                    Arc::make_mut(&mut self.channel_invitations[ix]).name = channel.name.into()
+                }
                 Err(ix) => self.channel_invitations.insert(
                     ix,
                     Arc::new(Channel {
                         id: channel.id,
                         visibility: channel.visibility(),
                         role: channel.role(),
-                        name: channel.name,
+                        name: channel.name.into(),
                         unseen_note_version: None,
                         unseen_message_id: None,
                         parent_path: channel.parent_path,
