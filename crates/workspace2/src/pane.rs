@@ -1040,10 +1040,11 @@ impl Pane {
                     {
                         pane.remove_item(item_ix, false, cx);
                     }
-                })?;
+                })
+                .ok();
             }
 
-            pane.update(&mut cx, |_, cx| cx.notify())?;
+            pane.update(&mut cx, |_, cx| cx.notify()).ok();
             Ok(())
         })
     }

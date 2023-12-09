@@ -2015,7 +2015,7 @@ impl Workspace {
         };
         let cursor = self.active_pane.read(cx).pixel_position_of_cursor(cx);
         let center = match cursor {
-            Some(cursor) if bounding_box.contains_point(&cursor) => cursor,
+            Some(cursor) if bounding_box.contains(&cursor) => cursor,
             _ => bounding_box.center(),
         };
 

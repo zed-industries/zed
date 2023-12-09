@@ -23,6 +23,14 @@ impl Axis {
     }
 }
 
+pub trait Along {
+    type Unit;
+
+    fn along(&self, axis: Axis) -> Self::Unit;
+
+    fn apply_along(&self, axis: Axis, f: impl FnOnce(Self::Unit) -> Self::Unit) -> Self;
+}
+
 impl sqlez::bindable::StaticColumnCount for Axis {}
 impl sqlez::bindable::Bind for Axis {
     fn bind(
@@ -142,8 +150,19 @@ impl<T: Clone + Debug + Default> Point<T> {
             y: f(self.y.clone()),
         }
     }
+}
 
-    pub fn apply_along(&self, axis: Axis, f: impl FnOnce(T) -> T) -> Point<T> {
+impl<T: Clone + Debug + Default> Along for Point<T> {
+    type Unit = T;
+
+    fn along(&self, axis: Axis) -> T {
+        match axis {
+            Axis::Horizontal => self.x.clone(),
+            Axis::Vertical => self.y.clone(),
+        }
+    }
+
+    fn apply_along(&self, axis: Axis, f: impl FnOnce(T) -> T) -> Point<T> {
         match axis {
             Axis::Horizontal => Point {
                 x: f(self.x.clone()),
@@ -434,11 +453,13 @@ impl Size<Pixels> {
     }
 }
 
-impl<T> Size<T>
+impl<T> Along for Size<T>
 where
     T: Clone + Default + Debug,
 {
-    pub fn along(&self, axis: Axis) -> T {
+    type Unit = T;
+
+    fn along(&self, axis: Axis) -> T {
         match axis {
             Axis::Horizontal => self.width.clone(),
             Axis::Vertical => self.height.clone(),
@@ -446,7 +467,7 @@ where
     }
 
     /// Returns the value of this size along the given axis.
-    pub fn apply_along(&self, axis: Axis, f: impl FnOnce(T) -> T) -> Self {
+    fn apply_along(&self, axis: Axis, f: impl FnOnce(T) -> T) -> Self {
         match axis {
             Axis::Horizontal => Size {
                 width: f(self.width.clone()),
@@ -1079,7 +1100,7 @@ where
     /// assert!(bounds.contains_point(&inside_point));
     /// assert!(!bounds.contains_point(&outside_point));
     /// ```
-    pub fn contains_point(&self, point: &Point<T>) -> bool {
+    pub fn contains(&self, point: &Point<T>) -> bool {
         point.x >= self.origin.x
             && point.x <= self.origin.x.clone() + self.size.width.clone()
             && point.y >= self.origin.y

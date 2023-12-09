@@ -131,6 +131,12 @@ pub struct MouseMoveEvent {
     pub modifiers: Modifiers,
 }
 
+impl MouseMoveEvent {
+    pub fn dragging(&self) -> bool {
+        self.pressed_button == Some(MouseButton::Left)
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ScrollWheelEvent {
     pub position: Point<Pixels>,

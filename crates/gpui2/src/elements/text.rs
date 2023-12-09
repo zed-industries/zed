@@ -253,7 +253,7 @@ impl TextState {
     }
 
     fn index_for_position(&self, bounds: Bounds<Pixels>, position: Point<Pixels>) -> Option<usize> {
-        if !bounds.contains_point(&position) {
+        if !bounds.contains(&position) {
             return None;
         }
 

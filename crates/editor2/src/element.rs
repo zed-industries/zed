@@ -389,9 +389,9 @@ impl EditorElement {
         let mut click_count = event.click_count;
         let modifiers = event.modifiers;
 
-        if gutter_bounds.contains_point(&event.position) {
+        if gutter_bounds.contains(&event.position) {
             click_count = 3; // Simulate triple-click when clicking the gutter to select lines
-        } else if !text_bounds.contains_point(&event.position) {
+        } else if !text_bounds.contains(&event.position) {
             return false;
         }
         if !cx.was_top_layer(&event.position, stacking_order) {
@@ -437,7 +437,7 @@ impl EditorElement {
         text_bounds: Bounds<Pixels>,
         cx: &mut ViewContext<Editor>,
     ) -> bool {
-        if !text_bounds.contains_point(&event.position) {
+        if !text_bounds.contains(&event.position) {
             return false;
         }
         let point_for_position = position_map.point_for_position(text_bounds, event.position);
@@ -467,7 +467,7 @@ impl EditorElement {
 
         if !pending_nonempty_selections
             && event.modifiers.command
-            && text_bounds.contains_point(&event.position)
+            && text_bounds.contains(&event.position)
             && cx.was_top_layer(&event.position, stacking_order)
         {
             let point = position_map.point_for_position(text_bounds, event.position);
@@ -529,8 +529,8 @@ impl EditorElement {
             );
         }
 
-        let text_hovered = text_bounds.contains_point(&event.position);
-        let gutter_hovered = gutter_bounds.contains_point(&event.position);
+        let text_hovered = text_bounds.contains(&event.position);
+        let gutter_hovered = gutter_bounds.contains(&event.position);
         let was_top = cx.was_top_layer(&event.position, stacking_order);
 
         editor.set_gutter_hovered(gutter_hovered, cx);
@@ -894,7 +894,7 @@ impl EditorElement {
                 bounds: text_bounds,
             }),
             |cx| {
-                if text_bounds.contains_point(&cx.mouse_position()) {
+                if text_bounds.contains(&cx.mouse_position()) {
                     if self
                         .editor
                         .read(cx)
@@ -960,7 +960,7 @@ impl EditorElement {
                                     |fold_element_state, cx| {
                                         if fold_element_state.is_active() {
                                             gpui::blue()
-                                        } else if fold_bounds.contains_point(&cx.mouse_position()) {
+                                        } else if fold_bounds.contains(&cx.mouse_position()) {
                                             gpui::black()
                                         } else {
                                             gpui::red()
