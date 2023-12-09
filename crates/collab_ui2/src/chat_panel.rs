@@ -36,6 +36,15 @@ mod message_editor;
 const MESSAGE_LOADING_THRESHOLD: usize = 50;
 const CHAT_PANEL_KEY: &'static str = "ChatPanel";
 
+pub fn init(cx: &mut AppContext) {
+    cx.observe_new_views(|workspace: &mut Workspace, _| {
+        workspace.register_action(|workspace, _: &ToggleFocus, cx| {
+            workspace.toggle_panel_focus::<ChatPanel>(cx);
+        });
+    })
+    .detach();
+}
+
 pub struct ChatPanel {
     client: Arc<Client>,
     channel_store: Model<ChannelStore>,
@@ -259,12 +268,10 @@ impl ChatPanel {
                     .justify_between()
                     .z_index(1)
                     .bg(cx.theme().colors().background)
-                    .border()
-                    .border_color(gpui::red())
                     .child(Label::new(
                         self.active_chat
                             .as_ref()
-                            .and_then(|c| Some(c.0.read(cx).channel(cx)?.name.clone()))
+                            .and_then(|c| Some(format!("#{}", c.0.read(cx).channel(cx)?.name)))
                             .unwrap_or_default(),
                     ))
                     .child(
