@@ -203,98 +203,96 @@ impl Render for MessageEditor {
     }
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     use client::{Client, User, UserStore};
-//     use gpui::{TestAppContext, WindowHandle};
-//     use language::{Language, LanguageConfig};
-//     use rpc::proto;
-//     use settings::SettingsStore;
-//     use util::{http::FakeHttpClient, test::marked_text_ranges};
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use client::{Client, User, UserStore};
+    use gpui::{Context as _, TestAppContext, VisualContext as _};
+    use language::{Language, LanguageConfig};
+    use rpc::proto;
+    use settings::SettingsStore;
+    use util::{http::FakeHttpClient, test::marked_text_ranges};
 
-//     #[gpui::test]
-//     async fn test_message_editor(cx: &mut TestAppContext) {
-//         let editor = init_test(cx);
-//         let editor = editor.root(cx);
+    #[gpui::test]
+    async fn test_message_editor(cx: &mut TestAppContext) {
+        let language_registry = init_test(cx);
 
-//         editor.update(cx, |editor, cx| {
-//             editor.set_members(
-//                 vec![
-//                     ChannelMembership {
-//                         user: Arc::new(User {
-//                             github_login: "a-b".into(),
-//                             id: 101,
-//                             avatar: None,
-//                         }),
-//                         kind: proto::channel_member::Kind::Member,
-//                         role: proto::ChannelRole::Member,
-//                     },
-//                     ChannelMembership {
-//                         user: Arc::new(User {
-//                             github_login: "C_D".into(),
-//                             id: 102,
-//                             avatar: None,
-//                         }),
-//                         kind: proto::channel_member::Kind::Member,
-//                         role: proto::ChannelRole::Member,
-//                     },
-//                 ],
-//                 cx,
-//             );
+        let (editor, cx) = cx.add_window_view(|cx| {
+            MessageEditor::new(
+                language_registry,
+                ChannelStore::global(cx),
+                cx.build_view(|cx| Editor::auto_height(4, cx)),
+                cx,
+            )
+        });
+        cx.executor().run_until_parked();
 
-//             editor.editor.update(cx, |editor, cx| {
-//                 editor.set_text("Hello, @a-b! Have you met @C_D?", cx)
-//             });
-//         });
+        editor.update(cx, |editor, cx| {
+            editor.set_members(
+                vec![
+                    ChannelMembership {
+                        user: Arc::new(User {
+                            github_login: "a-b".into(),
+                            id: 101,
+                            avatar: None,
+                        }),
+                        kind: proto::channel_member::Kind::Member,
+                        role: proto::ChannelRole::Member,
+                    },
+                    ChannelMembership {
+                        user: Arc::new(User {
+                            github_login: "C_D".into(),
+                            id: 102,
+                            avatar: None,
+                        }),
+                        kind: proto::channel_member::Kind::Member,
+                        role: proto::ChannelRole::Member,
+                    },
+                ],
+                cx,
+            );
 
-//         cx.foreground().advance_clock(MENTIONS_DEBOUNCE_INTERVAL);
+            editor.editor.update(cx, |editor, cx| {
+                editor.set_text("Hello, @a-b! Have you met @C_D?", cx)
+            });
+        });
 
-//         editor.update(cx, |editor, cx| {
-//             let (text, ranges) = marked_text_ranges("Hello, «@a-b»! Have you met «@C_D»?", false);
-//             assert_eq!(
-//                 editor.take_message(cx),
-//                 MessageParams {
-//                     text,
-//                     mentions: vec![(ranges[0].clone(), 101), (ranges[1].clone(), 102)],
-//                 }
-//             );
-//         });
-//     }
+        cx.executor().advance_clock(MENTIONS_DEBOUNCE_INTERVAL);
 
-//     fn init_test(cx: &mut TestAppContext) -> WindowHandle<MessageEditor> {
-//         cx.foreground().forbid_parking();
+        editor.update(cx, |editor, cx| {
+            let (text, ranges) = marked_text_ranges("Hello, «@a-b»! Have you met «@C_D»?", false);
+            assert_eq!(
+                editor.take_message(cx),
+                MessageParams {
+                    text,
+                    mentions: vec![(ranges[0].clone(), 101), (ranges[1].clone(), 102)],
+                }
+            );
+        });
+    }
 
-//         cx.update(|cx| {
-//             let http = FakeHttpClient::with_404_response();
-//             let client = Client::new(http.clone(), cx);
-//             let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http, cx));
-//             cx.set_global(SettingsStore::test(cx));
-//             theme::init((), cx);
-//             language::init(cx);
-//             editor::init(cx);
-//             client::init(&client, cx);
-//             channel::init(&client, user_store, cx);
-//         });
+    fn init_test(cx: &mut TestAppContext) -> Arc<LanguageRegistry> {
+        cx.update(|cx| {
+            let http = FakeHttpClient::with_404_response();
+            let client = Client::new(http.clone(), cx);
+            let user_store = cx.build_model(|cx| UserStore::new(client.clone(), http, cx));
+            let settings = SettingsStore::test(cx);
+            cx.set_global(settings);
+            theme::init(theme::LoadThemes::JustBase, cx);
+            language::init(cx);
+            editor::init(cx);
+            client::init(&client, cx);
+            channel::init(&client, user_store, cx);
+        });
 
-//         let language_registry = Arc::new(LanguageRegistry::test());
-//         language_registry.add(Arc::new(Language::new(
-//             LanguageConfig {
-//                 name: "Markdown".into(),
-//                 ..Default::default()
-//             },
-//             Some(tree_sitter_markdown::language()),
-//         )));
-
-//         let editor = cx.add_window(|cx| {
-//             MessageEditor::new(
-//                 language_registry,
-//                 ChannelStore::global(cx),
-//                 cx.add_view(|cx| Editor::auto_height(4, cx)),
-//                 cx,
-//             )
-//         });
-//         cx.foreground().run_until_parked();
-//         editor
-//     }
-// }
+        let language_registry = Arc::new(LanguageRegistry::test());
+        language_registry.add(Arc::new(Language::new(
+            LanguageConfig {
+                name: "Markdown".into(),
+                ..Default::default()
+            },
+            Some(tree_sitter_markdown::language()),
+        )));
+        language_registry
+    }
+}

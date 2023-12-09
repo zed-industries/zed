@@ -8,8 +8,8 @@ use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
 use gpui::{
     actions, div, list, prelude::*, px, serde_json, AnyElement, AppContext, AsyncWindowContext,
-    ClickEvent, Div, EventEmitter, FocusableView, ListOffset, ListScrollEvent, ListState, Model,
-    Render, SharedString, Subscription, Task, View, ViewContext, VisualContext, WeakView,
+    ClickEvent, Div, ElementId, EventEmitter, FocusableView, ListOffset, ListScrollEvent,
+    ListState, Model, Render, Subscription, Task, View, ViewContext, VisualContext, WeakView,
 };
 use language::LanguageRegistry;
 use menu::Confirm;
@@ -35,6 +35,15 @@ mod message_editor;
 
 const MESSAGE_LOADING_THRESHOLD: usize = 50;
 const CHAT_PANEL_KEY: &'static str = "ChatPanel";
+
+pub fn init(cx: &mut AppContext) {
+    cx.observe_new_views(|workspace: &mut Workspace, _| {
+        workspace.register_action(|workspace, _: &ToggleFocus, cx| {
+            workspace.toggle_panel_focus::<ChatPanel>(cx);
+        });
+    })
+    .detach();
+}
 
 pub struct ChatPanel {
     client: Arc<Client>,
@@ -259,12 +268,10 @@ impl ChatPanel {
                     .justify_between()
                     .z_index(1)
                     .bg(cx.theme().colors().background)
-                    .border()
-                    .border_color(gpui::red())
                     .child(Label::new(
                         self.active_chat
                             .as_ref()
-                            .and_then(|c| Some(c.0.read(cx).channel(cx)?.name.clone()))
+                            .and_then(|c| Some(format!("#{}", c.0.read(cx).channel(cx)?.name)))
                             .unwrap_or_default(),
                     ))
                     .child(
@@ -342,40 +349,50 @@ impl ChatPanel {
             None
         };
 
-        // todo!("render the text with markdown formatting")
-        if is_continuation {
-            h_stack()
-                .child(SharedString::from(text.text.clone()))
-                .child(render_remove(message_id_to_remove, cx))
-                .mb_1()
-                .into_any()
-        } else {
-            v_stack()
-                .child(
-                    h_stack()
-                        .children(
-                            message
-                                .sender
-                                .avatar
-                                .clone()
-                                .map(|avatar| Avatar::data(avatar)),
-                        )
-                        .child(Label::new(message.sender.github_login.clone()))
-                        .child(Label::new(format_timestamp(
-                            message.timestamp,
-                            now,
-                            self.local_timezone,
-                        )))
-                        .child(render_remove(message_id_to_remove, cx)),
-                )
-                .child(
-                    h_stack()
-                        .child(SharedString::from(text.text.clone()))
-                        .child(render_remove(None, cx)),
-                )
-                .mb_1()
-                .into_any()
+        let element_id: ElementId = match message.id {
+            ChannelMessageId::Saved(id) => ("saved-message", id).into(),
+            ChannelMessageId::Pending(id) => ("pending-message", id).into(),
+        };
+
+        let mut result = v_stack()
+            .w_full()
+            .id(element_id)
+            .relative()
+            .group("")
+            .mb_1();
+
+        if !is_continuation {
+            result = result.child(
+                h_stack()
+                    .children(
+                        message
+                            .sender
+                            .avatar
+                            .clone()
+                            .map(|avatar| Avatar::data(avatar)),
+                    )
+                    .child(Label::new(message.sender.github_login.clone()))
+                    .child(Label::new(format_timestamp(
+                        message.timestamp,
+                        now,
+                        self.local_timezone,
+                    ))),
+            );
         }
+
+        result
+            .child(text.element("body".into(), cx))
+            .child(
+                div()
+                    .invisible()
+                    .absolute()
+                    .top_1()
+                    .right_2()
+                    .w_8()
+                    .group_hover("", |this| this.visible())
+                    .child(render_remove(message_id_to_remove, cx)),
+            )
+            .into_any()
     }
 
     fn render_markdown_with_mentions(
@@ -629,7 +646,7 @@ mod tests {
     use super::*;
     use gpui::HighlightStyle;
     use pretty_assertions::assert_eq;
-    use rich_text::{BackgroundKind, Highlight, RenderedRegion};
+    use rich_text::Highlight;
     use util::test::marked_text_ranges;
 
     #[gpui::test]
@@ -675,19 +692,6 @@ mod tests {
                     .into()
                 ),
                 (ranges[3].clone(), Highlight::SelfMention)
-            ]
-        );
-        assert_eq!(
-            message.regions,
-            vec![
-                RenderedRegion {
-                    background_kind: Some(BackgroundKind::Mention),
-                    link_url: None
-                },
-                RenderedRegion {
-                    background_kind: Some(BackgroundKind::SelfMention),
-                    link_url: None
-                },
             ]
         );
     }
