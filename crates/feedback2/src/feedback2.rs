@@ -5,15 +5,18 @@ use workspace::Workspace;
 pub mod deploy_feedback_button;
 pub mod feedback_modal;
 
-actions!(GiveFeedback, SubmitFeedback);
+actions!(feedback, [GiveFeedback, SubmitFeedback]);
 
 mod system_specs;
 
 actions!(
-    CopySystemSpecsIntoClipboard,
-    FileBugReport,
-    RequestFeature,
-    OpenZedCommunityRepo
+    zed,
+    [
+        CopySystemSpecsIntoClipboard,
+        FileBugReport,
+        RequestFeature,
+        OpenZedCommunityRepo
+    ]
 );
 
 pub fn init(cx: &mut AppContext) {

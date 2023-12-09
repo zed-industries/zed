@@ -123,14 +123,17 @@ pub struct OpenChannelNotes {
 // }
 
 actions!(
-    ToggleFocus,
-    Remove,
-    Secondary,
-    CollapseSelectedChannel,
-    ExpandSelectedChannel,
-    StartMoveChannel,
-    MoveSelected,
-    InsertSpace,
+    collab_panel,
+    [
+        ToggleFocus,
+        Remove,
+        Secondary,
+        CollapseSelectedChannel,
+        ExpandSelectedChannel,
+        StartMoveChannel,
+        MoveSelected,
+        InsertSpace,
+    ]
 );
 
 // impl_actions!(

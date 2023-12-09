@@ -19,16 +19,19 @@ use std::{cmp::Reverse, ffi::OsStr, path::PathBuf, sync::Arc};
 use util::paths::CONVERSATIONS_DIR;
 
 actions!(
-    NewConversation,
-    Assist,
-    Split,
-    CycleMessageRole,
-    QuoteSelection,
-    ToggleFocus,
-    ResetKey,
-    InlineAssist,
-    ToggleIncludeConversation,
-    ToggleRetrieveContext,
+    assistant,
+    [
+        NewConversation,
+        Assist,
+        Split,
+        CycleMessageRole,
+        QuoteSelection,
+        ToggleFocus,
+        ResetKey,
+        InlineAssist,
+        ToggleIncludeConversation,
+        ToggleRetrieveContext,
+    ]
 );
 
 #[derive(

@@ -78,7 +78,7 @@ pub(crate) fn register_action(type_name: &Ident) -> proc_macro2::TokenStream {
         #[doc(hidden)]
         fn #action_builder_fn_name() -> gpui::ActionData {
             gpui::ActionData {
-                name: ::std::any::type_name::<#type_name>(),
+                name: <#type_name as gpui::Action>::debug_name(),
                 type_id: ::std::any::TypeId::of::<#type_name>(),
                 build: <#type_name as gpui::Action>::build,
             }

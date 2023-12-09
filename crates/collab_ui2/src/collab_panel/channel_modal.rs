@@ -16,10 +16,13 @@ use util::TryFutureExt;
 use workspace::ModalView;
 
 actions!(
-    SelectNextControl,
-    ToggleMode,
-    ToggleMemberAdmin,
-    RemoveMember
+    channel_modal,
+    [
+        SelectNextControl,
+        ToggleMode,
+        ToggleMemberAdmin,
+        RemoveMember
+    ]
 );
 
 // pub fn init(cx: &mut AppContext) {

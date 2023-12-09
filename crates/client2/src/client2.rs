@@ -70,7 +70,7 @@ pub const ZED_SECRET_CLIENT_TOKEN: &str = "618033988749894";
 pub const INITIAL_RECONNECTION_DELAY: Duration = Duration::from_millis(100);
 pub const CONNECTION_TIMEOUT: Duration = Duration::from_secs(5);
 
-actions!(SignIn, SignOut, Reconnect);
+actions!(client, [SignIn, SignOut, Reconnect]);
 
 pub fn init_settings(cx: &mut AppContext) {
     TelemetrySettings::register(cx);

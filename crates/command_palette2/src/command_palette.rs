@@ -19,7 +19,7 @@ use util::{
 use workspace::{ModalView, Workspace};
 use zed_actions::OpenZedURL;
 
-actions!(Toggle);
+actions!(command_palette, [Toggle]);
 
 pub fn init(cx: &mut AppContext) {
     cx.set_global(HitCounts::default());

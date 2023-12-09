@@ -10,7 +10,7 @@ use ui::{h_stack, prelude::*, v_stack, Label};
 use util::paths::FILE_ROW_COLUMN_DELIMITER;
 use workspace::ModalView;
 
-actions!(Toggle);
+actions!(go_to_line, [Toggle]);
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(GoToLine::register).detach();

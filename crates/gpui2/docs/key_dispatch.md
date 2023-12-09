@@ -22,7 +22,7 @@ Actions are frequently unit structs, for which we have a macro. The above could 
 
 ```rust
 mod menu {
-    actions!(MoveUp, MoveDown);
+    actions!(gpui, [MoveUp, MoveDown]);
 }
 ```
 
