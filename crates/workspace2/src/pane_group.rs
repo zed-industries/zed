@@ -696,11 +696,11 @@ impl SplitDirection {
 
 mod element {
 
-    use std::{iter, sync::Arc};
+    use std::{cell::RefCell, iter, rc::Rc, sync::Arc};
 
     use gpui::{
         px, relative, Along, AnyElement, Axis, Bounds, CursorStyle, Element, IntoElement,
-        MouseMoveEvent, ParentElement, Pixels, Style, WindowContext,
+        MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Style, WindowContext,
     };
     use parking_lot::Mutex;
     use smallvec::SmallVec;
@@ -789,12 +789,10 @@ mod element {
                 }
             });
 
-            while dbg!(proposed_current_pixel_change).abs() > px(0.) {
+            while proposed_current_pixel_change.abs() > px(0.) {
                 let Some(current_ix) = successors.next() else {
                     break;
                 };
-
-                dbg!(current_ix);
 
                 let next_target_size = Pixels::max(
                     size(current_ix + 1, flexes.as_slice()) - proposed_current_pixel_change,
@@ -826,6 +824,7 @@ mod element {
 
         fn push_handle(
             flexes: Arc<Mutex<Vec<f32>>>,
+            dragged_handle: Rc<RefCell<Option<usize>>>,
             axis: Axis,
             ix: usize,
             pane_bounds: Bounds<Pixels>,
@@ -859,8 +858,17 @@ mod element {
                     gpui::red(),
                 );
 
+                cx.on_mouse_event({
+                    let dragged_handle = dragged_handle.clone();
+                    move |e: &MouseDownEvent, phase, cx| {
+                        if phase.bubble() && handle_bounds.contains(&e.position) {
+                            dragged_handle.replace(Some(ix));
+                        }
+                    }
+                });
                 cx.on_mouse_event(move |e: &MouseMoveEvent, phase, cx| {
-                    if phase.bubble() && e.dragging() && handle_bounds.contains(&e.position) {
+                    let dragged_handle = dragged_handle.borrow();
+                    if *dragged_handle == Some(ix) {
                         Self::compute_resize(&flexes, e, ix, axis, axis_bounds, cx)
                     }
                 });
@@ -872,7 +880,7 @@ mod element {
         type Element = Self;
 
         fn element_id(&self) -> Option<ui::prelude::ElementId> {
-            Some("pane axis".into())
+            Some(self.basis.into())
         }
 
         fn into_element(self) -> Self::Element {
@@ -881,7 +889,7 @@ mod element {
     }
 
     impl Element for PaneAxisElement {
-        type State = ();
+        type State = Rc<RefCell<Option<usize>>>;
 
         fn layout(
             &mut self,
@@ -892,8 +900,8 @@ mod element {
             style.size.width = relative(1.).into();
             style.size.height = relative(1.).into();
             let layout_id = cx.request_layout(&style, None);
-
-            (layout_id, ())
+            let dragged_pane = state.unwrap_or_else(|| Rc::new(RefCell::new(None)));
+            (layout_id, dragged_pane)
         }
 
         fn paint(
@@ -934,6 +942,7 @@ mod element {
                     if ix < len - 1 {
                         Self::push_handle(
                             self.flexes.clone(),
+                            state.clone(),
                             self.axis,
                             ix,
                             child_bounds,
@@ -945,6 +954,17 @@ mod element {
 
                 origin = origin.apply_along(self.axis, |val| val + child_size.along(self.axis));
             }
+
+            cx.with_z_index(1, |cx| {
+                cx.on_mouse_event({
+                    let state = state.clone();
+                    move |e: &MouseUpEvent, phase, cx| {
+                        if phase.bubble() {
+                            state.replace(None);
+                        }
+                    }
+                });
+            })
         }
     }
 
