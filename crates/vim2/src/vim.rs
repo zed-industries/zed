@@ -44,9 +44,7 @@ pub struct PushOperator(pub Operator);
 #[derive(Action, Clone, Deserialize, PartialEq)]
 struct Number(usize);
 
-actions!(Tab, Enter, Object, InnerObject, FindForward, FindBackward);
-// todo!
-// actions!(workspace, [ToggleVimMode]);
+actions!(Tab, Enter, Object, InnerObject, FindForward, FindBackward,);
 
 #[derive(Copy, Clone, Debug)]
 enum VimEvent {
@@ -58,42 +56,15 @@ pub fn init(cx: &mut AppContext) {
     VimModeSetting::register(cx);
 
     editor_events::init(cx);
-    normal::init(cx);
+
+    cx.observe_new_views(|workspace: &mut Workspace, cx| register(workspace, cx))
+        .detach();
+
     visual::init(cx);
     insert::init(cx);
     object::init(cx);
     motion::init(cx);
     command::init(cx);
-
-    // Vim Actions
-    // todo!()
-    // cx.add_action(|_: &mut Workspace, &SwitchMode(mode): &SwitchMode, cx| {
-    //     Vim::update(cx, |vim, cx| vim.switch_mode(mode, false, cx))
-    // });
-    // cx.add_action(
-    //     |_: &mut Workspace, &PushOperator(operator): &PushOperator, cx| {
-    //         Vim::update(cx, |vim, cx| vim.push_operator(operator, cx))
-    //     },
-    // );
-    // cx.add_action(|_: &mut Workspace, n: &Number, cx: _| {
-    //     Vim::update(cx, |vim, cx| vim.push_count_digit(n.0, cx));
-    // });
-
-    // cx.add_action(|_: &mut Workspace, _: &Tab, cx| {
-    //     Vim::active_editor_input_ignored(" ".into(), cx)
-    // });
-
-    // cx.add_action(|_: &mut Workspace, _: &Enter, cx| {
-    //     Vim::active_editor_input_ignored("\n".into(), cx)
-    // });
-
-    // cx.add_action(|workspace: &mut Workspace, _: &ToggleVimMode, cx| {
-    //     let fs = workspace.app_state().fs.clone();
-    //     let currently_enabled = settings::get::<VimModeSetting>(cx).0;
-    //     update_settings_file::<VimModeSetting>(fs, cx, move |setting| {
-    //         *setting = Some(!currently_enabled)
-    //     })
-    // });
 
     // Any time settings change, update vim mode to match. The Vim struct
     // will be initialized as disabled by default, so we filter its commands
@@ -110,6 +81,40 @@ pub fn init(cx: &mut AppContext) {
         });
     })
     .detach();
+}
+
+fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
+    workspace.register_action(|_: &mut Workspace, &SwitchMode(mode): &SwitchMode, cx| {
+        Vim::update(cx, |vim, cx| vim.switch_mode(mode, false, cx))
+    });
+    workspace.register_action(
+        |_: &mut Workspace, &PushOperator(operator): &PushOperator, cx| {
+            Vim::update(cx, |vim, cx| vim.push_operator(operator, cx))
+        },
+    );
+    workspace.register_action(|_: &mut Workspace, n: &Number, cx: _| {
+        Vim::update(cx, |vim, cx| vim.push_count_digit(n.0, cx));
+    });
+
+    workspace.register_action(|_: &mut Workspace, _: &Tab, cx| {
+        Vim::active_editor_input_ignored(" ".into(), cx)
+    });
+
+    workspace.register_action(|_: &mut Workspace, _: &Enter, cx| {
+        Vim::active_editor_input_ignored("\n".into(), cx)
+    });
+
+    workspace.register_action(
+        |workspace: &mut Workspace, _: &workspace::ToggleVimMode, cx| {
+            let fs = workspace.app_state().fs.clone();
+            let currently_enabled = VimModeSetting::get_global(cx).0;
+            update_settings_file::<VimModeSetting>(fs, cx, move |setting| {
+                *setting = Some(!currently_enabled)
+            })
+        },
+    );
+
+    normal::register(workspace, cx)
 }
 
 pub fn observe_keystrokes(cx: &mut WindowContext) {
@@ -165,7 +170,7 @@ pub struct Vim {
 
 impl Vim {
     fn read(cx: &mut AppContext) -> &Self {
-        cx.default_global()
+        cx.global::<Self>()
     }
 
     fn update<F, S>(cx: &mut WindowContext, update: F) -> S

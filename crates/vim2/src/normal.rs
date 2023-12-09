@@ -49,85 +49,86 @@ actions!(
     JoinLines,
 );
 
-pub fn init(cx: &mut AppContext) {
-    paste::init(cx);
-    repeat::init(cx);
-    scroll::init(cx);
-    search::init(cx);
-    substitute::init(cx);
-    increment::init(cx);
+pub(crate) fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
+    dbg!("registering");
+    workspace.register_action(insert_after);
+    workspace.register_action(insert_before);
+    workspace.register_action(insert_first_non_whitespace);
+    workspace.register_action(insert_end_of_line);
+    workspace.register_action(insert_line_above);
+    workspace.register_action(insert_line_below);
+    workspace.register_action(change_case);
+    workspace.register_action(yank_line);
 
-    // cx.add_action(insert_after);
-    // cx.add_action(insert_before);
-    // cx.add_action(insert_first_non_whitespace);
-    // cx.add_action(insert_end_of_line);
-    // cx.add_action(insert_line_above);
-    // cx.add_action(insert_line_below);
-    // cx.add_action(change_case);
-    // cx.add_action(yank_line);
+    workspace.register_action(|_: &mut Workspace, _: &DeleteLeft, cx| {
+        Vim::update(cx, |vim, cx| {
+            vim.record_current_action(cx);
+            let times = vim.take_count(cx);
+            delete_motion(vim, Motion::Left, times, cx);
+        })
+    });
+    workspace.register_action(|_: &mut Workspace, _: &DeleteRight, cx| {
+        Vim::update(cx, |vim, cx| {
+            vim.record_current_action(cx);
+            let times = vim.take_count(cx);
+            delete_motion(vim, Motion::Right, times, cx);
+        })
+    });
+    workspace.register_action(|_: &mut Workspace, _: &ChangeToEndOfLine, cx| {
+        Vim::update(cx, |vim, cx| {
+            vim.start_recording(cx);
+            let times = vim.take_count(cx);
+            change_motion(
+                vim,
+                Motion::EndOfLine {
+                    display_lines: false,
+                },
+                times,
+                cx,
+            );
+        })
+    });
+    workspace.register_action(|_: &mut Workspace, _: &DeleteToEndOfLine, cx| {
+        Vim::update(cx, |vim, cx| {
+            vim.record_current_action(cx);
+            let times = vim.take_count(cx);
+            delete_motion(
+                vim,
+                Motion::EndOfLine {
+                    display_lines: false,
+                },
+                times,
+                cx,
+            );
+        })
+    });
+    workspace.register_action(|_: &mut Workspace, _: &JoinLines, cx| {
+        Vim::update(cx, |vim, cx| {
+            vim.record_current_action(cx);
+            let mut times = vim.take_count(cx).unwrap_or(1);
+            if vim.state().mode.is_visual() {
+                times = 1;
+            } else if times > 1 {
+                // 2J joins two lines together (same as J or 1J)
+                times -= 1;
+            }
 
-    // cx.add_action(|_: &mut Workspace, _: &DeleteLeft, cx| {
-    //     Vim::update(cx, |vim, cx| {
-    //         vim.record_current_action(cx);
-    //         let times = vim.take_count(cx);
-    //         delete_motion(vim, Motion::Left, times, cx);
-    //     })
-    // });
-    // cx.add_action(|_: &mut Workspace, _: &DeleteRight, cx| {
-    //     Vim::update(cx, |vim, cx| {
-    //         vim.record_current_action(cx);
-    //         let times = vim.take_count(cx);
-    //         delete_motion(vim, Motion::Right, times, cx);
-    //     })
-    // });
-    // cx.add_action(|_: &mut Workspace, _: &ChangeToEndOfLine, cx| {
-    //     Vim::update(cx, |vim, cx| {
-    //         vim.start_recording(cx);
-    //         let times = vim.take_count(cx);
-    //         change_motion(
-    //             vim,
-    //             Motion::EndOfLine {
-    //                 display_lines: false,
-    //             },
-    //             times,
-    //             cx,
-    //         );
-    //     })
-    // });
-    // cx.add_action(|_: &mut Workspace, _: &DeleteToEndOfLine, cx| {
-    //     Vim::update(cx, |vim, cx| {
-    //         vim.record_current_action(cx);
-    //         let times = vim.take_count(cx);
-    //         delete_motion(
-    //             vim,
-    //             Motion::EndOfLine {
-    //                 display_lines: false,
-    //             },
-    //             times,
-    //             cx,
-    //         );
-    //     })
-    // });
-    // cx.add_action(|_: &mut Workspace, _: &JoinLines, cx| {
-    //     Vim::update(cx, |vim, cx| {
-    //         vim.record_current_action(cx);
-    //         let mut times = vim.take_count(cx).unwrap_or(1);
-    //         if vim.state().mode.is_visual() {
-    //             times = 1;
-    //         } else if times > 1 {
-    //             // 2J joins two lines together (same as J or 1J)
-    //             times -= 1;
-    //         }
+            vim.update_active_editor(cx, |editor, cx| {
+                editor.transact(cx, |editor, cx| {
+                    for _ in 0..times {
+                        editor.join_lines(&Default::default(), cx)
+                    }
+                })
+            })
+        });
+    });
 
-    //         vim.update_active_editor(cx, |editor, cx| {
-    //             editor.transact(cx, |editor, cx| {
-    //                 for _ in 0..times {
-    //                     editor.join_lines(&Default::default(), cx)
-    //                 }
-    //             })
-    //         })
-    //     })
-    // })
+    // paste::init(cx);
+    // repeat::init(cx);
+    // scroll::init(cx);
+    // search::init(cx);
+    // substitute::init(cx);
+    // increment::init(cx);
 }
 
 pub fn normal_motion(
@@ -200,6 +201,7 @@ fn insert_after(_: &mut Workspace, _: &InsertAfter, cx: &mut ViewContext<Workspa
 }
 
 fn insert_before(_: &mut Workspace, _: &InsertBefore, cx: &mut ViewContext<Workspace>) {
+    dbg!("insert before!");
     Vim::update(cx, |vim, cx| {
         vim.start_recording(cx);
         vim.switch_mode(Mode::Insert, false, cx);

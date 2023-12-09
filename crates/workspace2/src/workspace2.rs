@@ -114,6 +114,7 @@ actions!(
     ToggleLeftDock,
     ToggleRightDock,
     ToggleBottomDock,
+    ToggleVimMode,
     CloseAllDocks,
 );
 

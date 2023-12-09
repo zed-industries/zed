@@ -1,70 +1,79 @@
 use crate::{Vim, VimEvent};
-use editor::{EditorBlurred, EditorFocused, EditorReleased};
-use gpui::AppContext;
+use editor::{Editor, EditorBlurred, EditorEvent, EditorFocused, EditorReleased};
+use gpui::{AppContext, Entity, EntityId, View, ViewContext, WindowContext};
+use workspace::item::WeakItemHandle;
 
 pub fn init(cx: &mut AppContext) {
+    cx.observe_new_views(|_, cx: &mut ViewContext<Editor>| {
+        let editor = cx.view().clone();
+        cx.subscribe(&editor, |_, editor, event: &EditorEvent, cx| match event {
+            EditorEvent::Focused => cx.window_context().defer(|cx| focused(editor, cx)),
+            EditorEvent::Blurred => cx.window_context().defer(|cx| blurred(editor, cx)),
+            _ => {}
+        })
+        .detach();
+
+        let id = cx.view().entity_id();
+        cx.on_release(move |_, cx| released(id, cx)).detach();
+    })
+    .detach();
     // todo!()
     // cx.subscribe_global(focused).detach();
     // cx.subscribe_global(blurred).detach();
     // cx.subscribe_global(released).detach();
 }
 
-fn focused(EditorFocused(editor): &EditorFocused, cx: &mut AppContext) {
-    todo!();
-    // if let Some(previously_active_editor) = Vim::read(cx).active_editor.clone() {
-    //     previously_active_editor.window_handle().update(cx, |cx| {
-    //         Vim::update(cx, |vim, cx| {
-    //             vim.update_active_editor(cx, |previously_active_editor, cx| {
-    //                 vim.unhook_vim_settings(previously_active_editor, cx)
-    //             });
-    //         });
-    //     });
-    // }
+fn focused(editor: View<Editor>, cx: &mut WindowContext) {
+    if let Some(previously_active_editor) = Vim::read(cx).active_editor.clone() {
+        Vim::update(cx, |vim, cx| {
+            vim.update_active_editor(cx, |previously_active_editor, cx| {
+                vim.unhook_vim_settings(previously_active_editor, cx)
+            });
+        });
+    }
 
-    // editor.window().update(cx, |cx| {
-    //     Vim::update(cx, |vim, cx| {
-    //         vim.set_active_editor(editor.clone(), cx);
-    //         if vim.enabled {
-    //             cx.emit_global(VimEvent::ModeChanged {
-    //                 mode: vim.state().mode,
-    //             });
-    //         }
-    //     });
-    // });
+    Vim::update(cx, |vim, cx| {
+        vim.set_active_editor(editor.clone(), cx);
+        if vim.enabled {
+            // todo!()
+            // cx.emit_global(VimEvent::ModeChanged {
+            //     mode: vim.state().mode,
+            // });
+        }
+    });
 }
 
-fn blurred(EditorBlurred(editor): &EditorBlurred, cx: &mut AppContext) {
-    todo!();
-    // editor.window().update(cx, |cx| {
-    //     Vim::update(cx, |vim, cx| {
-    //         vim.workspace_state.recording = false;
-    //         vim.workspace_state.recorded_actions.clear();
-    //         if let Some(previous_editor) = vim.active_editor.clone() {
-    //             if previous_editor == editor.clone() {
-    //                 vim.clear_operator(cx);
-    //                 vim.active_editor = None;
-    //                 vim.editor_subscription = None;
-    //             }
-    //         }
+fn blurred(editor: View<Editor>, cx: &mut WindowContext) {
+    Vim::update(cx, |vim, cx| {
+        vim.workspace_state.recording = false;
+        vim.workspace_state.recorded_actions.clear();
+        if let Some(previous_editor) = vim.active_editor.clone() {
+            if previous_editor
+                .upgrade()
+                .is_some_and(|previous| previous == editor.clone())
+            {
+                vim.clear_operator(cx);
+                vim.active_editor = None;
+                vim.editor_subscription = None;
+            }
+        }
 
-    //         editor.update(cx, |editor, cx| vim.unhook_vim_settings(editor, cx))
-    //     });
-    // });
+        editor.update(cx, |editor, cx| vim.unhook_vim_settings(editor, cx))
+    });
 }
 
-fn released(EditorReleased(editor): &EditorReleased, cx: &mut AppContext) {
-    todo!();
-    // editor.window().update(cx, |cx| {
-    //     Vim::update(cx, |vim, _| {
-    //         if let Some(previous_editor) = vim.active_editor.clone() {
-    //             if previous_editor == editor.clone() {
-    //                 vim.active_editor = None;
-    //                 vim.editor_subscription = None;
-    //             }
-    //         }
-    //         vim.editor_states.remove(&editor.id())
-    //     });
-    // });
+fn released(entity_id: EntityId, cx: &mut WindowContext) {
+    Vim::update(cx, |vim, _| {
+        if vim
+            .active_editor
+            .as_ref()
+            .is_some_and(|previous| previous.entity_id() == entity_id)
+        {
+            vim.active_editor = None;
+            vim.editor_subscription = None;
+        }
+        vim.editor_states.remove(&entity_id)
+    });
 }
 
 // #[cfg(test)]

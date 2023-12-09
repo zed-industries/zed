@@ -11,21 +11,8 @@ pub struct ModeIndicator {
 
 impl ModeIndicator {
     pub fn new(cx: &mut ViewContext<Self>) -> Self {
-        let handle = cx.view().downgrade();
-
-        // let _subscription = cx.subscribe_global::<VimEvent, _>(move |&event, cx| {
-        //     if let Some(mode_indicator) = handle.upgrade(cx) {
-        //         match event {
-        //             VimEvent::ModeChanged { mode } => {
-        //                 mode_indicator.window().update(cx, |cx| {
-        //                     mode_indicator.update(cx, move |mode_indicator, cx| {
-        //                         mode_indicator.set_mode(mode, cx);
-        //                     })
-        //                 });
-        //             }
-        //         }
-        //     }
-        // });
+        cx.observe_global::<Vim>(|this, cx| this.set_mode(Vim::read(cx).state().mode, cx))
+            .detach();
 
         cx.observe_global::<SettingsStore>(move |mode_indicator, cx| {
             if VimModeSetting::get_global(cx).0 {
