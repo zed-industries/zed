@@ -749,44 +749,47 @@ impl EditorElement {
             }
         }
 
-        for (ix, fold_indicator) in layout.fold_indicators.drain(..).enumerate() {
-            if let Some(mut fold_indicator) = fold_indicator {
-                let mut fold_indicator = fold_indicator.into_any_element();
+        cx.with_z_index(1, |cx| {
+            for (ix, fold_indicator) in layout.fold_indicators.drain(..).enumerate() {
+                if let Some(mut fold_indicator) = fold_indicator {
+                    let mut fold_indicator = fold_indicator.into_any_element();
+                    let available_space = size(
+                        AvailableSpace::MinContent,
+                        AvailableSpace::Definite(line_height * 0.55),
+                    );
+                    let fold_indicator_size = fold_indicator.measure(available_space, cx);
+
+                    let position = point(
+                        bounds.size.width - layout.gutter_padding,
+                        ix as f32 * line_height - (scroll_top % line_height),
+                    );
+                    let centering_offset = point(
+                        (layout.gutter_padding + layout.gutter_margin - fold_indicator_size.width)
+                            / 2.,
+                        (line_height - fold_indicator_size.height) / 2.,
+                    );
+                    let origin = bounds.origin + position + centering_offset;
+                    fold_indicator.draw(origin, available_space, cx);
+                }
+            }
+
+            if let Some(indicator) = layout.code_actions_indicator.take() {
+                let mut button = indicator.button.into_any_element();
                 let available_space = size(
                     AvailableSpace::MinContent,
-                    AvailableSpace::Definite(line_height * 0.55),
+                    AvailableSpace::Definite(line_height),
                 );
-                let fold_indicator_size = fold_indicator.measure(available_space, cx);
+                let indicator_size = button.measure(available_space, cx);
 
-                let position = point(
-                    bounds.size.width - layout.gutter_padding,
-                    ix as f32 * line_height - (scroll_top % line_height),
-                );
-                let centering_offset = point(
-                    (layout.gutter_padding + layout.gutter_margin - fold_indicator_size.width) / 2.,
-                    (line_height - fold_indicator_size.height) / 2.,
-                );
-                let origin = bounds.origin + position + centering_offset;
-                fold_indicator.draw(origin, available_space, cx);
+                let mut x = Pixels::ZERO;
+                let mut y = indicator.row as f32 * line_height - scroll_top;
+                // Center indicator.
+                x += ((layout.gutter_padding + layout.gutter_margin) - indicator_size.width) / 2.;
+                y += (line_height - indicator_size.height) / 2.;
+
+                button.draw(bounds.origin + point(x, y), available_space, cx);
             }
-        }
-
-        if let Some(indicator) = layout.code_actions_indicator.take() {
-            let mut button = indicator.button.into_any_element();
-            let available_space = size(
-                AvailableSpace::MinContent,
-                AvailableSpace::Definite(line_height),
-            );
-            let indicator_size = button.measure(available_space, cx);
-
-            let mut x = Pixels::ZERO;
-            let mut y = indicator.row as f32 * line_height - scroll_top;
-            // Center indicator.
-            x += ((layout.gutter_padding + layout.gutter_margin) - indicator_size.width) / 2.;
-            y += (line_height - indicator_size.height) / 2.;
-
-            button.draw(bounds.origin + point(x, y), available_space, cx);
-        }
+        });
     }
 
     fn paint_diff_hunks(bounds: Bounds<Pixels>, layout: &LayoutState, cx: &mut WindowContext) {
