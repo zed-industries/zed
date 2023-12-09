@@ -32,7 +32,7 @@ const DEV_MODE: bool = false;
 
 const DATABASE_KEY_NAME: &str = "email_address";
 const EMAIL_REGEX: &str = r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b";
-const FEEDBACK_CHAR_LIMIT: RangeInclusive<usize> = 10..=5000;
+const FEEDBACK_CHAR_LIMIT: RangeInclusive<i32> = 10..=5000;
 const FEEDBACK_SUBMISSION_ERROR_TEXT: &str =
     "Feedback failed to submit, see error log for details.";
 
@@ -53,7 +53,7 @@ pub struct FeedbackModal {
     email_address_editor: View<Editor>,
     awaiting_submission: bool,
     user_submitted: bool,
-    character_count: usize,
+    character_count: i32,
 }
 
 impl FocusableView for FeedbackModal {
@@ -154,7 +154,7 @@ impl FeedbackModal {
                         .as_singleton()
                         .expect("Feedback editor is never a multi-buffer")
                         .read(cx)
-                        .len();
+                        .len() as i32;
                     cx.notify();
                 }
                 _ => {}
@@ -343,11 +343,6 @@ impl Render for FeedbackModal {
                     format!(
                         "Feedback must be at least {} characters.",
                         FEEDBACK_CHAR_LIMIT.start()
-                    )
-                } else if self.character_count > *FEEDBACK_CHAR_LIMIT.end() {
-                    format!(
-                        "Feedback must be less than {} characters.",
-                        FEEDBACK_CHAR_LIMIT.end()
                     )
                 } else {
                     format!(
