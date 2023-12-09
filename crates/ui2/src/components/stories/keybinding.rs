@@ -1,4 +1,5 @@
-use gpui::{actions, Div, Render};
+use gpui::NoAction;
+use gpui::{Div, Render};
 use itertools::Itertools;
 use story::Story;
 
@@ -6,8 +7,6 @@ use crate::prelude::*;
 use crate::KeyBinding;
 
 pub struct KeybindingStory;
-
-actions!(NoAction);
 
 pub fn binding(key: &str) -> gpui::KeyBinding {
     gpui::KeyBinding::new(key, NoAction {}, None)

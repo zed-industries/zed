@@ -158,17 +158,65 @@ impl ActionRegistry {
 /// To use more complex data types as actions, annotate your type with the #[action] macro.
 #[macro_export]
 macro_rules! actions {
-    () => {};
+    ($namespace:path, [ $($name:ident),* $(,)? ]) => {
+        $(
+            #[derive(::std::cmp::PartialEq, ::std::clone::Clone, ::std::default::Default, gpui::serde_derive::Deserialize)]
+            #[serde(crate = "gpui::serde")]
+            #[gpui::register_action]
+            pub struct $name;
 
-    ( $name:ident ) => {
-        #[derive(::std::cmp::PartialEq, ::std::clone::Clone, ::std::default::Default, gpui::serde_derive::Deserialize, gpui::Action)]
-        #[serde(crate = "gpui::serde")]
-        pub struct $name;
+            gpui::__impl_action!($namespace, $name,
+                fn build(_: gpui::serde_json::Value) -> gpui::Result<::std::boxed::Box<dyn gpui::Action>> {
+                    Ok(Box::new(Self))
+                }
+            );
+        )*
     };
+}
 
-    ( $name:ident, $($rest:tt)* ) => {
-        actions!($name);
-        actions!($($rest)*);
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __impl_action {
+    ($namespace:path, $name:ident, $build:item) => {
+        impl gpui::Action for $name {
+            fn name(&self) -> &'static str
+            {
+                concat!(
+                    stringify!($namespace),
+                    "::",
+                    stringify!($name),
+                )
+            }
+
+            // todo!() why is this needed in addition to name?
+            fn debug_name() -> &'static str
+            where
+                Self: ::std::marker::Sized
+            {
+                concat!(
+                    stringify!($namespace),
+                    "::",
+                    stringify!($name),
+                )
+            }
+
+            $build
+
+            fn partial_eq(&self, action: &dyn gpui::Action) -> bool {
+                action
+                    .as_any()
+                    .downcast_ref::<Self>()
+                    .map_or(false, |a| self == a)
+            }
+
+            fn boxed_clone(&self) ->  std::boxed::Box<dyn gpui::Action> {
+                ::std::boxed::Box::new(self.clone())
+            }
+
+            fn as_any(&self) -> &dyn ::std::any::Any {
+                self
+            }
+        }
     };
 }
 
@@ -186,5 +234,5 @@ pub fn remove_the_2(action_name: &str) -> String {
 mod no_action {
     use crate as gpui;
 
-    actions!(NoAction);
+    actions!(zed, [NoAction]);
 }

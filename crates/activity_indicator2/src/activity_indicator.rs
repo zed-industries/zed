@@ -14,7 +14,7 @@ use ui::h_stack;
 use util::ResultExt;
 use workspace::{item::ItemHandle, StatusItemView, Workspace};
 
-actions!(ShowErrorMessage);
+actions!(activity_indicator, [ShowErrorMessage]);
 
 const DOWNLOAD_ICON: &str = "icons/download.svg";
 const WARNING_ICON: &str = "icons/warning.svg";

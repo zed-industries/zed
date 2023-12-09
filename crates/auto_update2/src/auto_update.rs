@@ -26,10 +26,13 @@ const POLL_INTERVAL: Duration = Duration::from_secs(60 * 60);
 
 //todo!(remove CheckThatAutoUpdaterWorks)
 actions!(
-    Check,
-    DismissErrorMessage,
-    ViewReleaseNotes,
-    CheckThatAutoUpdaterWorks
+    auto_update,
+    [
+        Check,
+        DismissErrorMessage,
+        ViewReleaseNotes,
+        CheckThatAutoUpdaterWorks
+    ]
 );
 
 #[derive(Serialize)]

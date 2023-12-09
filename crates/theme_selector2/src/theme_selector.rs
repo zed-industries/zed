@@ -13,7 +13,7 @@ use ui::{prelude::*, v_stack, ListItem};
 use util::ResultExt;
 use workspace::{ui::HighlightedLabel, ModalView, Workspace};
 
-actions!(Toggle, Reload);
+actions!(theme_selector, [Toggle, Reload]);
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(

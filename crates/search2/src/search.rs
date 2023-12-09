@@ -22,20 +22,23 @@ pub fn init(cx: &mut AppContext) {
 }
 
 actions!(
-    CycleMode,
-    ToggleWholeWord,
-    ToggleCaseSensitive,
-    ToggleReplace,
-    SelectNextMatch,
-    SelectPrevMatch,
-    SelectAllMatches,
-    NextHistoryQuery,
-    PreviousHistoryQuery,
-    ActivateTextMode,
-    ActivateSemanticMode,
-    ActivateRegexMode,
-    ReplaceAll,
-    ReplaceNext,
+    search,
+    [
+        CycleMode,
+        ToggleWholeWord,
+        ToggleCaseSensitive,
+        ToggleReplace,
+        SelectNextMatch,
+        SelectPrevMatch,
+        SelectAllMatches,
+        NextHistoryQuery,
+        PreviousHistoryQuery,
+        ActivateTextMode,
+        ActivateSemanticMode,
+        ActivateRegexMode,
+        ReplaceAll,
+        ReplaceNext,
+    ]
 );
 
 bitflags! {

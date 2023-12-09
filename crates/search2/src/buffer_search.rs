@@ -31,7 +31,7 @@ pub struct Deploy {
     pub focus: bool,
 }
 
-actions!(Dismiss, FocusEditor);
+actions!(buffer_search, [Dismiss, FocusEditor]);
 
 pub enum Event {
     UpdateLocation,

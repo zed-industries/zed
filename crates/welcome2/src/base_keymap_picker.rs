@@ -12,7 +12,7 @@ use ui::{prelude::*, ListItem};
 use util::ResultExt;
 use workspace::{ui::HighlightedLabel, ModalView, Workspace};
 
-actions!(ToggleBaseKeymapSelector);
+actions!(welcome, [ToggleBaseKeymapSelector]);
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(|workspace: &mut Workspace, _cx| {

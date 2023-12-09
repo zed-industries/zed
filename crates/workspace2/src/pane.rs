@@ -87,22 +87,24 @@ pub struct CloseAllItems {
     pub save_intent: Option<SaveIntent>,
 }
 
-// todo!(These used to be under pane::{Action}. Are they now workspace::pane::{Action}?)
 actions!(
-    ActivatePrevItem,
-    ActivateNextItem,
-    ActivateLastItem,
-    CloseInactiveItems,
-    CloseCleanItems,
-    CloseItemsToTheLeft,
-    CloseItemsToTheRight,
-    GoBack,
-    GoForward,
-    ReopenClosedItem,
-    SplitLeft,
-    SplitUp,
-    SplitRight,
-    SplitDown,
+    pane,
+    [
+        ActivatePrevItem,
+        ActivateNextItem,
+        ActivateLastItem,
+        CloseInactiveItems,
+        CloseCleanItems,
+        CloseItemsToTheLeft,
+        CloseItemsToTheRight,
+        GoBack,
+        GoForward,
+        ReopenClosedItem,
+        SplitLeft,
+        SplitUp,
+        SplitRight,
+        SplitDown,
+    ]
 );
 
 const MAX_NAVIGATION_HISTORY_LEN: usize = 1024;

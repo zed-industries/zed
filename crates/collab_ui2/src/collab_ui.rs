@@ -24,7 +24,10 @@ use settings::Settings;
 use util::ResultExt;
 use workspace::AppState;
 
-actions!(ToggleScreenSharing, ToggleMute, ToggleDeafen, LeaveCall);
+actions!(
+    collab,
+    [ToggleScreenSharing, ToggleMute, ToggleDeafen, LeaveCall]
+);
 
 pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
     CollaborationPanelSettings::register(cx);

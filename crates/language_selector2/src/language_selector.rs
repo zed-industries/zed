@@ -16,7 +16,7 @@ use ui::{prelude::*, HighlightedLabel, ListItem};
 use util::ResultExt;
 use workspace::{ModalView, Workspace};
 
-actions!(Toggle);
+actions!(language_selector, [Toggle]);
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(LanguageSelector::register).detach();

@@ -75,7 +75,7 @@ pub enum Event {
     Dismissed,
 }
 
-actions!(ToggleFocus);
+actions!(chat_panel, [ToggleFocus]);
 
 impl ChatPanel {
     pub fn new(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) -> View<Self> {
