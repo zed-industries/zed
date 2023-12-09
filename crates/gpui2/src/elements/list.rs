@@ -1,6 +1,7 @@
 use crate::{
-    px, AnyElement, AvailableSpace, BorrowAppContext, DispatchPhase, Element, IntoElement, Pixels,
-    Point, ScrollWheelEvent, Size, Style, StyleRefinement, Styled, WindowContext,
+    px, AnyElement, AvailableSpace, BorrowAppContext, BorrowWindow as _, DispatchPhase, Element,
+    InteractiveBounds, IntoElement, Pixels, Point, ScrollWheelEvent, Size, Style, StyleRefinement,
+    Styled, WindowContext,
 };
 use collections::VecDeque;
 use refineable::Refineable as _;
@@ -394,10 +395,17 @@ impl Element for List {
         state.items = new_items;
         state.last_layout_width = Some(bounds.size.width);
 
+        let interactive_bounds = Rc::new(InteractiveBounds {
+            bounds: bounds.intersect(&cx.content_mask().bounds),
+            stacking_order: cx.stacking_order().clone(),
+        });
+
         let list_state = self.state.clone();
         let height = bounds.size.height;
         cx.on_mouse_event(move |event: &ScrollWheelEvent, phase, cx| {
-            if phase == DispatchPhase::Bubble {
+            if interactive_bounds.visibly_contains(&event.position, cx)
+                && phase == DispatchPhase::Bubble
+            {
                 list_state.0.borrow_mut().scroll(
                     &scroll_top,
                     height,
