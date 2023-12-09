@@ -14,9 +14,9 @@ use editor::{
 };
 use gpui::{
     actions, div, white, Action, AnyElement, AnyView, AppContext, Context as _, Div, Element,
-    Entity, EntityId, EventEmitter, FocusableView, InteractiveElement, IntoElement, Model,
-    ModelContext, ParentElement, PromptLevel, Render, SharedString, Styled, Subscription, Task,
-    View, ViewContext, VisualContext, WeakModel, WeakView, WindowContext,
+    Entity, EntityId, EventEmitter, FocusableView, InteractiveElement, IntoElement, KeyContext,
+    Model, ModelContext, ParentElement, PromptLevel, Render, SharedString, Styled, Subscription,
+    Task, View, ViewContext, VisualContext, WeakModel, WeakView, WindowContext,
 };
 use menu::Confirm;
 use project::{
@@ -39,7 +39,7 @@ use std::{
 use theme::ActiveTheme;
 use ui::{
     h_stack, v_stack, Button, Clickable, Color, Disableable, Icon, IconButton, IconElement, Label,
-    Selectable,
+    LabelCommon, LabelSize, Selectable,
 };
 use util::{paths::PathMatcher, ResultExt as _};
 use workspace::{
@@ -330,10 +330,30 @@ impl Render for ProjectSearchView {
                 .size_full()
                 .child(self.results_editor.clone())
         } else {
-            div()
+            let has_no_results = self.model.read(cx).no_results.unwrap_or(false);
+            let middle_text = if has_no_results {
+                div()
+                    .items_center()
+                    .max_w_96()
+                    .child(Label::new("No results for a given query"))
+            } else {
+                div()
+                    .items_center()
+                    .max_w_96()
+                    .child(Label::new(self.landing_text_minor()).size(LabelSize::Small))
+            };
+            v_stack().flex_1().size_full().justify_center().child(
+                h_stack()
+                    .size_full()
+                    .justify_center()
+                    .child(h_stack().flex_1())
+                    .child(middle_text)
+                    .child(h_stack().flex_1()),
+            )
         }
     }
 }
+
 // impl Entity for ProjectSearchView {
 //     type Event = ViewEvent;
 // }
@@ -440,49 +460,6 @@ impl Render for ProjectSearchView {
 //                     ],
 //                 }
 //             };
-
-//             let previous_query_keystrokes =
-//                 cx.binding_for_action(&PreviousHistoryQuery {})
-//                     .map(|binding| {
-//                         binding
-//                             .keystrokes()
-//                             .iter()
-//                             .map(|k| k.to_string())
-//                             .collect::<Vec<_>>()
-//                     });
-//             let next_query_keystrokes =
-//                 cx.binding_for_action(&NextHistoryQuery {}).map(|binding| {
-//                     binding
-//                         .keystrokes()
-//                         .iter()
-//                         .map(|k| k.to_string())
-//                         .collect::<Vec<_>>()
-//                 });
-//             let new_placeholder_text = match (previous_query_keystrokes, next_query_keystrokes) {
-//                 (Some(previous_query_keystrokes), Some(next_query_keystrokes)) => {
-//                     format!(
-//                         "Search ({}/{} for previous/next query)",
-//                         previous_query_keystrokes.join(" "),
-//                         next_query_keystrokes.join(" ")
-//                     )
-//                 }
-//                 (None, Some(next_query_keystrokes)) => {
-//                     format!(
-//                         "Search ({} for next query)",
-//                         next_query_keystrokes.join(" ")
-//                     )
-//                 }
-//                 (Some(previous_query_keystrokes), None) => {
-//                     format!(
-//                         "Search ({} for previous query)",
-//                         previous_query_keystrokes.join(" ")
-//                     )
-//                 }
-//                 (None, None) => String::new(),
-//             };
-//             self.query_editor.update(cx, |editor, cx| {
-//                 editor.set_placeholder_text(new_placeholder_text, cx);
-//             });
 
 //             MouseEventHandler::new::<Status, _>(0, cx, |_, _| {
 //                 Flex::column()
@@ -1355,6 +1332,12 @@ impl ProjectSearchView {
             });
         }
     }
+    fn landing_text_minor(&self) -> SharedString {
+        match self.current_mode {
+            SearchMode::Text | SearchMode::Regex => "Include/exclude specific paths with the filter option. Matching exact word and/or casing is available too.".into(),
+            SearchMode::Semantic => ".Simply explain the code you are looking to find. ex. 'prompt user for permissions to index their project'".into()
+        }
+    }
 }
 
 impl Default for ProjectSearchBar {
@@ -1680,6 +1663,47 @@ impl ProjectSearchBar {
             });
         }
     }
+    fn new_placeholder_text(&self, cx: &mut ViewContext<Self>) -> Option<String> {
+        let previous_query_keystrokes = cx
+            .bindings_for_action(&PreviousHistoryQuery {})
+            .into_iter()
+            .next()
+            .map(|binding| {
+                binding
+                    .keystrokes()
+                    .iter()
+                    .map(|k| k.to_string())
+                    .collect::<Vec<_>>()
+            });
+        let next_query_keystrokes = cx
+            .bindings_for_action(&NextHistoryQuery {})
+            .into_iter()
+            .next()
+            .map(|binding| {
+                binding
+                    .keystrokes()
+                    .iter()
+                    .map(|k| k.to_string())
+                    .collect::<Vec<_>>()
+            });
+        let new_placeholder_text = match (previous_query_keystrokes, next_query_keystrokes) {
+            (Some(previous_query_keystrokes), Some(next_query_keystrokes)) => Some(format!(
+                "Search ({}/{} for previous/next query)",
+                previous_query_keystrokes.join(" "),
+                next_query_keystrokes.join(" ")
+            )),
+            (None, Some(next_query_keystrokes)) => Some(format!(
+                "Search ({} for next query)",
+                next_query_keystrokes.join(" ")
+            )),
+            (Some(previous_query_keystrokes), None) => Some(format!(
+                "Search ({} for previous query)",
+                previous_query_keystrokes.join(" ")
+            )),
+            (None, None) => None,
+        };
+        new_placeholder_text
+    }
 }
 
 impl Render for ProjectSearchBar {
@@ -1689,7 +1713,17 @@ impl Render for ProjectSearchBar {
         let Some(search) = self.active_project_search.clone() else {
             return div();
         };
+        let mut key_context = KeyContext::default();
+        key_context.add("ProjectSearchBar");
+        if let Some(placeholder_text) = self.new_placeholder_text(cx) {
+            search.update(cx, |search, cx| {
+                search.query_editor.update(cx, |this, cx| {
+                    this.set_placeholder_text(placeholder_text, cx)
+                })
+            });
+        }
         let search = search.read(cx);
+
         let query_column = v_stack()
             .flex_1()
             .child(
@@ -1714,6 +1748,10 @@ impl Render for ProjectSearchBar {
                     .on_action(cx.listener(|this, action: &ActivateRegexMode, cx| {
                         this.activate_search_mode(SearchMode::Regex, cx)
                     }))
+                    .on_action(
+                        cx.listener(|this, action, cx| this.previous_history_query(action, cx)),
+                    )
+                    .on_action(cx.listener(|this, action, cx| this.next_history_query(action, cx)))
                     .child(IconElement::new(Icon::MagnifyingGlass))
                     .child(search.query_editor.clone())
                     .child(
@@ -1740,34 +1778,54 @@ impl Render for ProjectSearchBar {
             .when(search.filters_enabled, |this| {
                 this.child(
                     h_stack()
-                        .child(search.included_files_editor.clone())
-                        .child(search.excluded_files_editor.clone()),
+                        .mt_2()
+                        .flex_1()
+                        .justify_between()
+                        .child(
+                            h_stack()
+                                .flex_1()
+                                .border_1()
+                                .mr_2()
+                                .child(search.included_files_editor.clone()),
+                        )
+                        .child(
+                            h_stack()
+                                .flex_1()
+                                .border_1()
+                                .ml_2()
+                                .child(search.excluded_files_editor.clone()),
+                        ),
                 )
             });
-        let mode_column = h_stack()
-            .child(
-                h_stack()
-                    .child(
-                        Button::new("project-search-text-button", "Text")
-                            .selected(search.current_mode == SearchMode::Text)
-                            .on_click(|_, cx| cx.dispatch_action(ActivateTextMode.boxed_clone())),
-                    )
-                    .child(
-                        Button::new("project-search-regex-button", "Regex")
-                            .selected(search.current_mode == SearchMode::Regex)
-                            .on_click(|_, cx| cx.dispatch_action(ActivateRegexMode.boxed_clone())),
+        let mode_column = v_stack().items_start().justify_start().child(
+            h_stack()
+                .child(
+                    h_stack()
+                        .child(
+                            Button::new("project-search-text-button", "Text")
+                                .selected(search.current_mode == SearchMode::Text)
+                                .on_click(|_, cx| {
+                                    cx.dispatch_action(ActivateTextMode.boxed_clone())
+                                }),
+                        )
+                        .child(
+                            Button::new("project-search-regex-button", "Regex")
+                                .selected(search.current_mode == SearchMode::Regex)
+                                .on_click(|_, cx| {
+                                    cx.dispatch_action(ActivateRegexMode.boxed_clone())
+                                }),
+                        ),
+                )
+                .child(
+                    IconButton::new("project-search-toggle-replace", Icon::Replace).on_click(
+                        |_, cx| {
+                            cx.dispatch_action(ToggleReplace.boxed_clone());
+                        },
                     ),
-            )
-            .child(
-                IconButton::new("project-search-toggle-replace", Icon::Replace).on_click(
-                    |_, cx| {
-                        cx.dispatch_action(ToggleReplace.boxed_clone());
-                    },
                 ),
-            );
+        );
         let replace_column = if search.replace_enabled {
             h_stack()
-                .bg(white())
                 .p_1()
                 .flex_1()
                 .border_2()
@@ -1811,6 +1869,7 @@ impl Render for ProjectSearchBar {
                     .on_click(|_, cx| cx.dispatch_action(SelectNextMatch.boxed_clone())),
             ]);
         h_stack()
+            .key_context(key_context)
             .size_full()
             .p_1()
             .m_2()
