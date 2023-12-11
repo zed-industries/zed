@@ -1075,8 +1075,7 @@ impl ProjectSearchView {
         });
     }
 
-    // Re-activate the most recently activated search or the most recent if it has been closed.
-    // If no search exists in the workspace, create a new one.
+    // Add another search tab to the workspace.
     fn deploy(
         workspace: &mut Workspace,
         _: &workspace::NewSearch,
@@ -1086,19 +1085,6 @@ impl ProjectSearchView {
         cx.update_global(|state: &mut ActiveSearches, cx| {
             state.0.retain(|project, _| project.is_upgradable(cx))
         });
-
-        let active_search = cx
-            .global::<ActiveSearches>()
-            .0
-            .get(&workspace.project().downgrade());
-
-        let existing = active_search
-            .and_then(|active_search| {
-                workspace
-                    .items_of_type::<ProjectSearchView>(cx)
-                    .find(|search| search == active_search)
-            })
-            .or_else(|| workspace.item_of_type::<ProjectSearchView>(cx));
 
         let query = workspace.active_item(cx).and_then(|item| {
             let editor = item.act_as::<Editor>(cx)?;
@@ -1110,27 +1096,21 @@ impl ProjectSearchView {
             }
         });
 
-        let search = if let Some(existing) = existing {
-            workspace.activate_item(&existing, cx);
-            existing
+        let settings = cx
+            .global::<ActiveSettings>()
+            .0
+            .get(&workspace.project().downgrade());
+
+        let settings = if let Some(settings) = settings {
+            Some(settings.clone())
         } else {
-            let settings = cx
-                .global::<ActiveSettings>()
-                .0
-                .get(&workspace.project().downgrade());
-
-            let settings = if let Some(settings) = settings {
-                Some(settings.clone())
-            } else {
-                None
-            };
-
-            let model = cx.add_model(|cx| ProjectSearch::new(workspace.project().clone(), cx));
-            let view = cx.add_view(|cx| ProjectSearchView::new(model, cx, settings));
-
-            workspace.add_item(Box::new(view.clone()), cx);
-            view
+            None
         };
+
+        let model = cx.add_model(|cx| ProjectSearch::new(workspace.project().clone(), cx));
+        let search = cx.add_view(|cx| ProjectSearchView::new(model, cx, settings));
+
+        workspace.add_item(Box::new(search.clone()), cx);
 
         search.update(cx, |search, cx| {
             if let Some(query) = query {
@@ -2306,29 +2286,86 @@ pub mod tests {
         workspace.update(cx, |workspace, cx| {
             ProjectSearchView::deploy(workspace, &workspace::NewSearch, cx)
         });
+        deterministic.run_until_parked();
+        let Some(search_view_2) = cx.read(|cx| {
+            workspace
+                .read(cx)
+                .active_pane()
+                .read(cx)
+                .active_item()
+                .and_then(|item| item.downcast::<ProjectSearchView>())
+        }) else {
+            panic!("Search view expected to appear after new search event trigger")
+        };
+        let search_view_id_2 = search_view_2.id();
+        assert_ne!(
+            search_view_2, search_view,
+            "New search view should be open after `workspace::NewSearch` event"
+        );
+
         search_view.update(cx, |search_view, cx| {
-            assert_eq!(search_view.query_editor.read(cx).text(cx), "two", "Query should be updated to first search result after search view 2nd open in a row");
+            assert_eq!(search_view.query_editor.read(cx).text(cx), "TWO", "First search view should not have an updated query");
             assert_eq!(
                 search_view
                     .results_editor
                     .update(cx, |editor, cx| editor.display_text(cx)),
                 "\n\nconst THREE: usize = one::ONE + two::TWO;\n\n\nconst TWO: usize = one::ONE + one::ONE;",
-                "Results should be unchanged after search view 2nd open in a row"
+                "Results of the first search view should not update too"
             );
             assert!(
-                search_view.query_editor.is_focused(cx),
-                "Focus should be moved into query editor again after search view 2nd open in a row"
+                !search_view.query_editor.is_focused(cx),
+                "Focus should be moved away from the first search view"
+            );
+        });
+
+        search_view_2.update(cx, |search_view_2, cx| {
+            assert_eq!(
+                search_view_2.query_editor.read(cx).text(cx),
+                "two",
+                "New search view should get the query from the text cursor was at during the event spawn (first search view's first result)"
+            );
+            assert_eq!(
+                search_view_2
+                    .results_editor
+                    .update(cx, |editor, cx| editor.display_text(cx)),
+                "",
+                "No search results should be in the 2nd view yet, as we did not spawn a search for it"
+            );
+            assert!(
+                search_view_2.query_editor.is_focused(cx),
+                "Focus should be moved into query editor fo the new window"
+            );
+        });
+
+        search_view_2.update(cx, |search_view_2, cx| {
+            search_view_2
+                .query_editor
+                .update(cx, |query_editor, cx| query_editor.set_text("FOUR", cx));
+            search_view_2.search(cx);
+        });
+        deterministic.run_until_parked();
+        search_view_2.update(cx, |search_view_2, cx| {
+            assert_eq!(
+                search_view_2
+                    .results_editor
+                    .update(cx, |editor, cx| editor.display_text(cx)),
+                "\n\nconst FOUR: usize = one::ONE + three::THREE;",
+                "New search view with the updated query should have new search results"
+            );
+            assert!(
+                search_view_2.results_editor.is_focused(cx),
+                "Search view with mismatching query should be focused after search results are available",
             );
         });
 
         cx.spawn(|mut cx| async move {
-            window.dispatch_action(search_view_id, &ToggleFocus, &mut cx);
+            window.dispatch_action(search_view_id_2, &ToggleFocus, &mut cx);
         })
         .detach();
         deterministic.run_until_parked();
-        search_view.update(cx, |search_view, cx| {
+        search_view_2.update(cx, |search_view_2, cx| {
             assert!(
-                search_view.results_editor.is_focused(cx),
+                search_view_2.results_editor.is_focused(cx),
                 "Search view with matching query should switch focus to the results editor after the toggle focus event",
             );
         });
