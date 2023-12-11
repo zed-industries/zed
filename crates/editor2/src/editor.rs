@@ -8706,13 +8706,13 @@ impl Editor {
         );
     }
 
-    //     pub fn set_searchable(&mut self, searchable: bool) {
-    //         self.searchable = searchable;
-    //     }
+    pub fn set_searchable(&mut self, searchable: bool) {
+        self.searchable = searchable;
+    }
 
-    //     pub fn searchable(&self) -> bool {
-    //         self.searchable
-    //     }
+    pub fn searchable(&self) -> bool {
+        self.searchable
+    }
 
     fn open_excerpts(&mut self, _: &OpenExcerpts, cx: &mut ViewContext<Self>) {
         let buffer = self.buffer.read(cx);
