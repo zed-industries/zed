@@ -2950,7 +2950,7 @@ impl PositionMap {
     ) -> PointForPosition {
         let scroll_position = self.snapshot.scroll_position();
         let position = position - text_bounds.origin;
-        let y = position.y.max(px(0.)).min(self.size.width);
+        let y = position.y.max(px(0.)).min(self.size.height);
         let x = position.x + (scroll_position.x * self.em_width);
         let row = (f32::from(y / self.line_height) + scroll_position.y) as u32;
 
