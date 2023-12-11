@@ -1748,9 +1748,9 @@ impl Render for ProjectSearchBar {
                                     .tooltip(|cx| {
                                         Tooltip::for_action("Toggle filters", &ToggleFilters, cx)
                                     })
-                                    .on_click(|_, cx| {
-                                        cx.dispatch_action(ToggleFilters.boxed_clone())
-                                    })
+                                    .on_click(cx.listener(|this, _, cx| {
+                                        this.toggle_filters(cx);
+                                    }))
                                     .selected(
                                         self.active_project_search
                                             .as_ref()
@@ -1771,9 +1771,14 @@ impl Render for ProjectSearchBar {
                                     )
                                 })
                                 .selected(self.is_option_enabled(SearchOptions::CASE_SENSITIVE, cx))
-                                .on_click(|_, cx| {
-                                    cx.dispatch_action(ToggleCaseSensitive.boxed_clone())
-                                }),
+                                .on_click(cx.listener(
+                                    |this, _, cx| {
+                                        this.toggle_search_option(
+                                            SearchOptions::CASE_SENSITIVE,
+                                            cx,
+                                        );
+                                    },
+                                )),
                             )
                             .child(
                                 IconButton::new("project-search-whole-word", Icon::WholeWord)
@@ -1785,9 +1790,9 @@ impl Render for ProjectSearchBar {
                                         )
                                     })
                                     .selected(self.is_option_enabled(SearchOptions::WHOLE_WORD, cx))
-                                    .on_click(|_, cx| {
-                                        cx.dispatch_action(ToggleWholeWord.boxed_clone())
-                                    }),
+                                    .on_click(cx.listener(|this, _, cx| {
+                                        this.toggle_search_option(SearchOptions::WHOLE_WORD, cx);
+                                    })),
                             ),
                     )
                     .border_2()
@@ -1823,9 +1828,9 @@ impl Render for ProjectSearchBar {
                         .child(
                             Button::new("project-search-text-button", "Text")
                                 .selected(search.current_mode == SearchMode::Text)
-                                .on_click(|_, cx| {
-                                    cx.dispatch_action(ActivateTextMode.boxed_clone())
-                                })
+                                .on_click(cx.listener(|this, _, cx| {
+                                    this.activate_search_mode(SearchMode::Text, cx)
+                                }))
                                 .tooltip(|cx| {
                                     Tooltip::for_action("Toggle text search", &ActivateTextMode, cx)
                                 }),
@@ -1833,9 +1838,9 @@ impl Render for ProjectSearchBar {
                         .child(
                             Button::new("project-search-regex-button", "Regex")
                                 .selected(search.current_mode == SearchMode::Regex)
-                                .on_click(|_, cx| {
-                                    cx.dispatch_action(ActivateRegexMode.boxed_clone())
-                                })
+                                .on_click(cx.listener(|this, _, cx| {
+                                    this.activate_search_mode(SearchMode::Regex, cx)
+                                }))
                                 .tooltip(|cx| {
                                     Tooltip::for_action(
                                         "Toggle regular expression search",
@@ -1847,9 +1852,9 @@ impl Render for ProjectSearchBar {
                 )
                 .child(
                     IconButton::new("project-search-toggle-replace", Icon::Replace)
-                        .on_click(|_, cx| {
-                            cx.dispatch_action(ToggleReplace.boxed_clone());
-                        })
+                        .on_click(cx.listener(|this, _, cx| {
+                            this.toggle_replace(&ToggleReplace, cx);
+                        }))
                         .tooltip(|cx| Tooltip::for_action("Toggle replace", &ToggleReplace, cx)),
                 ),
         );
@@ -1869,37 +1874,52 @@ impl Render for ProjectSearchBar {
             .when(search.replace_enabled, |this| {
                 this.children([
                     IconButton::new("project-search-replace-next", Icon::ReplaceNext)
-                        .on_click(|_, cx| {
-                            cx.dispatch_action(ReplaceNext.boxed_clone());
-                        })
+                        .on_click(cx.listener(|this, _, cx| {
+                            if let Some(search) = this.active_project_search.as_ref() {
+                                search.update(cx, |this, cx| {
+                                    this.replace_next(&ReplaceNext, cx);
+                                })
+                            }
+                        }))
                         .tooltip(|cx| Tooltip::for_action("Replace next match", &ReplaceNext, cx)),
                     IconButton::new("project-search-replace-all", Icon::ReplaceAll)
-                        .on_click(|_, cx| {
-                            cx.dispatch_action(ReplaceAll.boxed_clone());
-                        })
+                        .on_click(cx.listener(|this, _, cx| {
+                            if let Some(search) = this.active_project_search.as_ref() {
+                                search.update(cx, |this, cx| {
+                                    this.replace_all(&ReplaceAll, cx);
+                                })
+                            }
+                        }))
                         .tooltip(|cx| Tooltip::for_action("Replace all matches", &ReplaceAll, cx)),
                 ])
             })
             .when_some(search.active_match_index, |this, index| {
                 let match_quantity = search.model.read(cx).match_ranges.len();
                 debug_assert!(match_quantity > index);
-                this.child(
-                    IconButton::new("project-search-select-all", Icon::SelectAll)
-                        .on_click(|_, cx| cx.dispatch_action(SelectAll.boxed_clone()))
-                        .tooltip(|cx| Tooltip::for_action("Select all matches", &SelectAll, cx)),
-                )
-                .child(Label::new(format!("{index}/{match_quantity}")))
+                this.child(Label::new(format!("{index}/{match_quantity}")))
             })
             .children([
                 IconButton::new("project-search-prev-match", Icon::ChevronLeft)
                     .disabled(search.active_match_index.is_none())
-                    .on_click(|_, cx| cx.dispatch_action(SelectPrevMatch.boxed_clone()))
+                    .on_click(cx.listener(|this, _, cx| {
+                        if let Some(search) = this.active_project_search.as_ref() {
+                            search.update(cx, |this, cx| {
+                                this.select_match(Direction::Prev, cx);
+                            })
+                        }
+                    }))
                     .tooltip(|cx| {
                         Tooltip::for_action("Go to previous match", &SelectPrevMatch, cx)
                     }),
                 IconButton::new("project-search-next-match", Icon::ChevronRight)
                     .disabled(search.active_match_index.is_none())
-                    .on_click(|_, cx| cx.dispatch_action(SelectNextMatch.boxed_clone()))
+                    .on_click(cx.listener(|this, _, cx| {
+                        if let Some(search) = this.active_project_search.as_ref() {
+                            search.update(cx, |this, cx| {
+                                this.select_match(Direction::Next, cx);
+                            })
+                        }
+                    }))
                     .tooltip(|cx| Tooltip::for_action("Go to next match", &SelectNextMatch, cx)),
             ]);
         h_stack()
