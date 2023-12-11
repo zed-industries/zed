@@ -115,24 +115,26 @@ pub struct ThemeColors {
     pub tab_inactive_background: Hsla,
     pub tab_active_background: Hsla,
     pub search_match_background: Hsla,
-    // pub panel_background: Hsla,
-    // pub pane_focused_border: Hsla,
-    // /// The color of the scrollbar thumb.
-    // pub scrollbar_thumb_background: Hsla,
-    // /// The color of the scrollbar thumb when hovered over.
-    // pub scrollbar_thumb_hover_background: Hsla,
-    // /// The border color of the scrollbar thumb.
-    // pub scrollbar_thumb_border: Hsla,
-    // /// The background color of the scrollbar track.
-    // pub scrollbar_track_background: Hsla,
-    // /// The border color of the scrollbar track.
-    // pub scrollbar_track_border: Hsla,
-    // /// The opacity of the scrollbar status marks, like diagnostic states and git status..
+    pub panel_background: Hsla,
+    pub panel_focused_border: Hsla,
+    pub pane_focused_border: Hsla,
+    /// The color of the scrollbar thumb.
+    pub scrollbar_thumb_background: Hsla,
+    /// The color of the scrollbar thumb when hovered over.
+    pub scrollbar_thumb_hover_background: Hsla,
+    /// The border color of the scrollbar thumb.
+    pub scrollbar_thumb_border: Hsla,
+    /// The background color of the scrollbar track.
+    pub scrollbar_track_background: Hsla,
+    /// The border color of the scrollbar track.
+    pub scrollbar_track_border: Hsla,
+    // /// The opacity of the scrollbar status marks, like diagnostic states and git status.
     // pub scrollbar_status_opacity: Hsla,
 
     // ===
     // Editor
     // ===
+    pub editor_foreground: Hsla,
     pub editor_background: Hsla,
     // pub editor_inactive_background: Hsla,
     pub editor_gutter_background: Hsla,
@@ -149,7 +151,17 @@ pub struct ThemeColors {
     pub editor_invisible: Hsla,
     pub editor_wrap_guide: Hsla,
     pub editor_active_wrap_guide: Hsla,
+    /// Read-access of a symbol, like reading a variable.
+    ///
+    /// A document highlight is a range inside a text document which deserves
+    /// special attention. Usually a document highlight is visualized by changing
+    /// the background color of its range.
     pub editor_document_highlight_read_background: Hsla,
+    /// Read-access of a symbol, like reading a variable.
+    ///
+    /// A document highlight is a range inside a text document which deserves
+    /// special attention. Usually a document highlight is visualized by changing
+    /// the background color of its range.
     pub editor_document_highlight_write_background: Hsla,
 
     // ===
@@ -189,38 +201,29 @@ pub struct ThemeColors {
     pub terminal_ansi_cyan: Hsla,
     /// White Color for ANSI Terminal
     pub terminal_ansi_white: Hsla,
-    // new colors
 
     // ===
-    // Elevation
+    // UI/Rich Text
     // ===
-    // elevation_0_shadow
-    // elevation_0_shadow_color
-    // elevation_1_shadow
-    // elevation_1_shadow_color
-    // elevation_2_shadow
-    // elevation_2_shadow_color
-    // elevation_3_shadow
-    // elevation_3_shadow_color
-    // elevation_4_shadow
-    // elevation_4_shadow_color
-    // elevation_5_shadow
-    // elevation_5_shadow_color
-
-    // ===
-    // UI Text
-    // ===
-    // pub headline: Hsla,
-    // pub paragraph: Hsla,
-    // pub link: Hsla,
-    // pub link_hover: Hsla,
-    // pub code_block_background: Hsla,
-    // pub code_block_border: Hsla,
+    pub headline: Hsla,
+    pub paragraph: Hsla,
+    pub link_text: Hsla,
+    pub link_text_hover: Hsla,
+    pub link_uri: Hsla,
+    pub inline_code_background: Hsla,
+    pub inline_code_border: Hsla,
+    pub code_block_background: Hsla,
+    pub code_block_border: Hsla,
+    pub emphasis: Hsla,
 }
 
 #[derive(Refineable, Clone)]
 pub struct ThemeStyles {
     pub system: SystemColors,
+    /// An array of colors used for theme elements that iterrate through a series of colors.
+    ///
+    /// Example: Player colors, rainbow brackets and indent guides, etc.
+    pub accents: Vec<Hsla>,
 
     #[refineable]
     pub colors: ThemeColors,

@@ -87,6 +87,7 @@ impl ThemeRegistry {
                         Appearance::Dark => PlayerColors::dark(),
                     },
                     syntax: Arc::new(syntax_colors),
+                    accents: Vec::new(),
                 },
             }
         }));
