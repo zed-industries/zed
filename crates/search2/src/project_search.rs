@@ -1893,10 +1893,14 @@ impl Render for ProjectSearchBar {
                         .tooltip(|cx| Tooltip::for_action("Replace all matches", &ReplaceAll, cx)),
                 ])
             })
-            .when_some(search.active_match_index, |this, index| {
+            .when_some(search.active_match_index, |mut this, index| {
+                let index = index + 1;
                 let match_quantity = search.model.read(cx).match_ranges.len();
-                debug_assert!(match_quantity > index);
-                this.child(Label::new(format!("{index}/{match_quantity}")))
+                if match_quantity > 0 {
+                    debug_assert!(match_quantity >= index);
+                    this = this.child(Label::new(format!("{index}/{match_quantity}")))
+                }
+                this
             })
             .children([
                 IconButton::new("project-search-prev-match", Icon::ChevronLeft)
