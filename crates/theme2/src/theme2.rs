@@ -1,6 +1,7 @@
 mod default_colors;
 mod default_theme;
 mod one_themes;
+pub mod prelude;
 mod registry;
 mod scale;
 mod settings;
