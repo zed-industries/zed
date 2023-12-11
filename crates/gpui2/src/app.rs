@@ -614,7 +614,7 @@ impl AppContext {
             })
             .collect::<Vec<_>>()
         {
-            self.update_window(window, |_, cx| cx.draw()).ok();
+            self.update_window(window, |_, cx| cx.draw()).unwrap();
         }
     }
 

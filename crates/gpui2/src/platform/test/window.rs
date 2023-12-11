@@ -1,5 +1,5 @@
 use crate::{
-    px, AtlasKey, AtlasTextureId, AtlasTile, DrawWindow, Pixels, PlatformAtlas, PlatformDisplay,
+    px, AtlasKey, AtlasTextureId, AtlasTile, Pixels, PlatformAtlas, PlatformDisplay,
     PlatformInputHandler, PlatformWindow, Point, Size, TestPlatform, TileId, WindowAppearance,
     WindowBounds, WindowOptions,
 };
@@ -20,7 +20,6 @@ pub(crate) struct TestWindowHandlers {
 
 pub struct TestWindow {
     pub(crate) bounds: WindowBounds,
-    draw: Mutex<DrawWindow>,
     display: Rc<dyn PlatformDisplay>,
     pub(crate) window_title: Option<String>,
     pub(crate) input_handler: Option<Arc<Mutex<Box<dyn PlatformInputHandler>>>>,
@@ -32,13 +31,11 @@ pub struct TestWindow {
 impl TestWindow {
     pub fn new(
         options: WindowOptions,
-        draw: DrawWindow,
         platform: Weak<TestPlatform>,
         display: Rc<dyn PlatformDisplay>,
     ) -> Self {
         Self {
             bounds: options.bounds,
-            draw: Mutex::new(draw),
             display,
             platform,
             input_handler: None,
