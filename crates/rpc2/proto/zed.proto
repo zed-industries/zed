@@ -1625,7 +1625,10 @@ message Notification {
 message LspExtExpandMacro {
     uint64 project_id = 1;
     uint64 buffer_id = 2;
+    Anchor position = 3;
 }
 
 message LspExtExpandMacroResponse {
+    string name = 1;
+    string expansion = 2;
 }

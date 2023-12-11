@@ -5,9 +5,7 @@ use std::{
 };
 
 use anyhow::Result;
-use client::Client;
 use serde_json::json;
-use util::http::FakeHttpClient;
 
 use crate::{Editor, ToPoint};
 use collections::HashSet;

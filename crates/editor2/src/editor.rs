@@ -74,7 +74,7 @@ pub use multi_buffer::{
 use ordered_float::OrderedFloat;
 use parking_lot::{Mutex, RwLock};
 use project::{FormatTrigger, Location, Project, ProjectPath, ProjectTransaction};
-use rand::{prelude::*, rngs::adapter};
+use rand::prelude::*;
 use rpc::proto::{self, *};
 use scroll::{
     autoscroll::Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager, ScrollbarAutoHide,
@@ -9343,7 +9343,6 @@ impl Render for Editor {
                 scrollbar_width: px(12.),
                 syntax: cx.theme().syntax().clone(),
                 diagnostic_style: cx.theme().diagnostic_style(),
-                // TODO kb find `HighlightStyle` usages
                 // todo!("what about the rest of the highlight style parts?")
                 inlays_style: HighlightStyle {
                     color: Some(cx.theme().status().hint),
