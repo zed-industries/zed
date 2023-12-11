@@ -346,6 +346,7 @@ impl Dock {
                         })
                         .ok();
                 }
+                // todo!() we do not use this event in the production code (even in zed1), remove it
                 PanelEvent::Activate => {
                     if let Some(ix) = this
                         .panel_entries

@@ -1633,6 +1633,7 @@ impl Workspace {
                             panel.focus_handle(cx).focus(cx);
                             reveal_dock = true;
                         } else {
+                            // todo!()
                             // if panel.is_zoomed(cx) {
                             //     dock.set_open(false, cx);
                             // }
