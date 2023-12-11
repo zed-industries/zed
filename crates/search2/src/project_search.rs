@@ -1287,18 +1287,15 @@ impl ProjectSearchBar {
             subscription: Default::default(),
         }
     }
-    fn cycle_mode(workspace: &mut Workspace, _: &CycleMode, cx: &mut ViewContext<Workspace>) {
-        if let Some(search_view) = workspace
-            .active_item(cx)
-            .and_then(|item| item.downcast::<ProjectSearchView>())
-        {
-            search_view.update(cx, |this, cx| {
-                let new_mode =
-                    crate::mode::next_mode(&this.current_mode, SemanticIndex::enabled(cx));
+    fn cycle_mode(&self, _: &CycleMode, cx: &mut ViewContext<Self>) {
+        if let Some(view) = self.active_project_search.as_ref() {
+            view.update(cx, |this, cx| {
+                // todo: po: 2nd argument of `next_mode` should be `SemanticIndex::enabled(cx))`, but we need to flesh out port of semantic_index first.
+                let new_mode = crate::mode::next_mode(&this.current_mode, false);
                 this.activate_search_mode(new_mode, cx);
                 let editor_handle = this.query_editor.focus_handle(cx);
                 cx.focus(&editor_handle);
-            })
+            });
         }
     }
     fn confirm(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
@@ -1799,6 +1796,15 @@ impl Render for ProjectSearchBar {
                         this.replace_all(action, cx);
                     })
                 }
+            }))
+            .on_action(cx.listener(|this, action, cx| {
+                this.tab(action, cx);
+            }))
+            .on_action(cx.listener(|this, action, cx| {
+                this.tab_previous(action, cx);
+            }))
+            .on_action(cx.listener(|this, action, cx| {
+                this.cycle_mode(action, cx);
             }))
             .child(query_column)
             .child(mode_column)
