@@ -3,8 +3,6 @@ mod neovim_backed_test_context;
 mod neovim_connection;
 mod vim_test_context;
 
-use std::sync::Arc;
-
 use command_palette::CommandPalette;
 use editor::DisplayPoint;
 pub use neovim_backed_binding_test_context::*;

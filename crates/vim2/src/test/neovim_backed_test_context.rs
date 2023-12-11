@@ -1,3 +1,6 @@
+#![allow(unused)]
+// todo!()
+
 use editor::{scroll::VERTICAL_SCROLL_MARGIN, test::editor_test_context::ContextHandle};
 use indoc::indoc;
 use settings::SettingsStore;
