@@ -1167,6 +1167,13 @@ pub struct VsCodeColors {
 
     #[serde(
         default,
+        rename = "statusBar.border",
+        deserialize_with = "empty_string_as_none"
+    )]
+    pub status_bar_border: Option<String>,
+
+    #[serde(
+        default,
         rename = "statusBar.foreground",
         deserialize_with = "empty_string_as_none"
     )]

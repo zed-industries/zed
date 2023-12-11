@@ -259,7 +259,7 @@ pub fn andromeda() -> UserThemeFamily {
                         scrollbar_thumb_background: Some(rgba(0x3a3f4c77).into()),
                         scrollbar_thumb_hover_background: Some(rgba(0x3a3f4caa).into()),
                         scrollbar_thumb_border: Some(rgba(0x3a3f4c77).into()),
-                        scrollbar_track_background: Some(rgba(0x23262eff).into()),
+                        scrollbar_track_background: Some(rgba(0x262a33ff).into()),
                         scrollbar_track_border: Some(rgba(0x23262eff).into()),
                         editor_background: Some(rgba(0x262a33ff).into()),
                         editor_gutter_background: Some(rgba(0x262a33ff).into()),
