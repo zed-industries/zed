@@ -1,9 +1,8 @@
 use crate::{
-    history::SearchHistory,
-    mode::SearchMode,
-    ActivateRegexMode, ActivateSemanticMode, ActivateTextMode, CycleMode, NextHistoryQuery,
-    PreviousHistoryQuery, ReplaceAll, ReplaceNext, SearchOptions, SelectNextMatch, SelectPrevMatch,
-    ToggleCaseSensitive, ToggleReplace, ToggleWholeWord,
+    history::SearchHistory, mode::SearchMode, ActivateRegexMode, ActivateSemanticMode,
+    ActivateTextMode, CycleMode, NextHistoryQuery, PreviousHistoryQuery, ReplaceAll, ReplaceNext,
+    SearchOptions, SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleReplace,
+    ToggleWholeWord,
 };
 use anyhow::{Context as _, Result};
 use collections::HashMap;
@@ -12,10 +11,10 @@ use editor::{
     MultiBuffer, SelectAll, MAX_TAB_TITLE_LEN,
 };
 use gpui::{
-    actions, div, white, Action, AnyElement, AnyView, AppContext, Context as _, Div, Element,
-    Entity, EntityId, EventEmitter, FocusableView, InteractiveElement, IntoElement, KeyContext,
-    Model, ModelContext, ParentElement, PromptLevel, Render, SharedString, Styled, Subscription,
-    Task, View, ViewContext, VisualContext, WeakModel, WeakView, WindowContext,
+    actions, div, white, AnyElement, AnyView, AppContext, Context as _, Div, Element, EntityId,
+    EventEmitter, FocusableView, InteractiveElement, IntoElement, KeyContext, Model, ModelContext,
+    ParentElement, PromptLevel, Render, SharedString, Styled, Subscription, Task, View,
+    ViewContext, VisualContext, WeakModel, WeakView, WindowContext,
 };
 use menu::Confirm;
 use project::{
@@ -31,12 +30,12 @@ use std::{
     mem,
     ops::{Not, Range},
     path::PathBuf,
-    time::{Duration},
+    time::Duration,
 };
 
 use ui::{
-    h_stack, v_stack, Button, ButtonCommon, Clickable, Disableable, Icon, IconButton,
-    IconElement, Label, LabelCommon, LabelSize, Selectable, Tooltip,
+    h_stack, v_stack, Button, ButtonCommon, Clickable, Disableable, Icon, IconButton, IconElement,
+    Label, LabelCommon, LabelSize, Selectable, Tooltip,
 };
 use util::{paths::PathMatcher, ResultExt as _};
 use workspace::{
@@ -62,62 +61,6 @@ pub fn init(cx: &mut AppContext) {
         workspace.register_action(ProjectSearchView::deploy);
     })
     .detach();
-
-    // cx.add_action(ProjectSearchView::deploy);
-    // cx.add_action(ProjectSearchView::move_focus_to_results);
-    // cx.add_action(ProjectSearchBar::confirm);
-    // cx.add_action(ProjectSearchBar::search_in_new);
-    // cx.add_action(ProjectSearchBar::select_next_match);
-    // cx.add_action(ProjectSearchBar::select_prev_match);
-    // cx.add_action(ProjectSearchBar::replace_next);
-    // cx.add_action(ProjectSearchBar::replace_all);
-    // cx.add_action(ProjectSearchBar::cycle_mode);
-    // cx.add_action(ProjectSearchBar::next_history_query);
-    // cx.add_action(ProjectSearchBar::previous_history_query);
-    // cx.add_action(ProjectSearchBar::activate_regex_mode);
-    // cx.add_action(ProjectSearchBar::toggle_replace);
-    // cx.add_action(ProjectSearchBar::toggle_replace_on_a_pane);
-    // cx.add_action(ProjectSearchBar::activate_text_mode);
-
-    // // This action should only be registered if the semantic index is enabled
-    // // We are registering it all the time, as I dont want to introduce a dependency
-    // // for Semantic Index Settings globally whenever search is tested.
-    // cx.add_action(ProjectSearchBar::activate_semantic_mode);
-
-    // cx.capture_action(ProjectSearchBar::tab);
-    // cx.capture_action(ProjectSearchBar::tab_previous);
-    // cx.capture_action(ProjectSearchView::replace_all);
-    // cx.capture_action(ProjectSearchView::replace_next);
-    // add_toggle_option_action::<ToggleCaseSensitive>(SearchOptions::CASE_SENSITIVE, cx);
-    // add_toggle_option_action::<ToggleWholeWord>(SearchOptions::WHOLE_WORD, cx);
-    // add_toggle_option_action::<ToggleIncludeIgnored>(SearchOptions::INCLUDE_IGNORED, cx);
-    // add_toggle_filters_action::<ToggleFilters>(cx);
-}
-
-fn add_toggle_filters_action<A: Action>(_cx: &mut AppContext) {
-    // todo!() po
-    // cx.register_action(move |pane: &mut Pane, _: &A, cx: &mut ViewContext<Pane>| {
-    //     if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<ProjectSearchBar>() {
-    //         if search_bar.update(cx, |search_bar, cx| search_bar.toggle_filters(cx)) {
-    //             cx.stop_propagation();
-    //             return;
-    //         }
-    //     }
-    // });
-}
-
-fn add_toggle_option_action<A: Action>(_option: SearchOptions, _cx: &mut AppContext) {
-    // todo!() po
-    // cx.add_action(move |pane: &mut Pane, _: &A, cx: &mut ViewContext<Pane>| {
-    //     if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<ProjectSearchBar>() {
-    //         if search_bar.update(cx, |search_bar, cx| {
-    //             search_bar.toggle_search_option(option, cx)
-    //         }) {
-    //             cx.stop_propagation();
-    //             return;
-    //         }
-    //     }
-    // });
 }
 
 struct ProjectSearch {
@@ -220,7 +163,8 @@ impl ProjectSearch {
                 this.match_ranges.clear();
                 this.excerpts.update(cx, |this, cx| this.clear(cx));
                 this.no_results = Some(true);
-            });
+            })
+            .ok()?;
 
             while let Some((buffer, anchors)) = matches.next().await {
                 let mut ranges = this
@@ -233,15 +177,17 @@ impl ProjectSearch {
                     .ok()?;
 
                 while let Some(range) = ranges.next().await {
-                    this.update(&mut cx, |this, _| this.match_ranges.push(range));
+                    this.update(&mut cx, |this, _| this.match_ranges.push(range))
+                        .ok()?;
                 }
-                this.update(&mut cx, |_, cx| cx.notify());
+                this.update(&mut cx, |_, cx| cx.notify()).ok()?;
             }
 
             this.update(&mut cx, |this, cx| {
                 this.pending_search.take();
                 cx.notify();
-            });
+            })
+            .ok()?;
 
             None
         }));
@@ -276,7 +222,8 @@ impl ProjectSearch {
                 this.excerpts.update(cx, |excerpts, cx| {
                     excerpts.clear(cx);
                 });
-            });
+            })
+            .ok()?;
             for (buffer, ranges) in matches {
                 let mut match_ranges = this
                     .update(&mut cx, |this, cx| {
@@ -293,14 +240,16 @@ impl ProjectSearch {
                             this.match_ranges.push(match_range);
                         }
                         cx.notify();
-                    });
+                    })
+                    .ok()?;
                 }
             }
 
             this.update(&mut cx, |this, cx| {
                 this.pending_search.take();
                 cx.notify();
-            });
+            })
+            .ok()?;
 
             None
         }));
@@ -1317,21 +1266,6 @@ impl ProjectSearchView {
         self.active_match_index.is_some()
     }
 
-    fn move_focus_to_results(pane: &mut Pane, _: &ToggleFocus, cx: &mut ViewContext<Pane>) {
-        if let Some(search_view) = pane
-            .active_item()
-            .and_then(|item| item.downcast::<ProjectSearchView>())
-        {
-            search_view.update(cx, |search_view, cx| {
-                if !search_view.results_editor.focus_handle(cx).is_focused(cx)
-                    && !search_view.model.read(cx).match_ranges.is_empty()
-                {
-                    cx.stop_propagation();
-                    return search_view.focus_results_editor(cx);
-                }
-            });
-        }
-    }
     fn landing_text_minor(&self) -> SharedString {
         match self.current_mode {
             SearchMode::Text | SearchMode::Regex => "Include/exclude specific paths with the filter option. Matching exact word and/or casing is available too.".into(),
@@ -1410,44 +1344,6 @@ impl ProjectSearchBar {
                     cx,
                 );
             }
-        }
-    }
-
-    fn select_next_match(pane: &mut Pane, _: &SelectNextMatch, cx: &mut ViewContext<Pane>) {
-        if let Some(search_view) = pane
-            .active_item()
-            .and_then(|item| item.downcast::<ProjectSearchView>())
-        {
-            search_view.update(cx, |view, cx| view.select_match(Direction::Next, cx));
-            cx.stop_propagation();
-        }
-    }
-
-    fn replace_next(pane: &mut Pane, _: &ReplaceNext, cx: &mut ViewContext<Pane>) {
-        if let Some(search_view) = pane
-            .active_item()
-            .and_then(|item| item.downcast::<ProjectSearchView>())
-        {
-            search_view.update(cx, |view, cx| view.replace_next(&ReplaceNext, cx));
-            cx.stop_propagation();
-        }
-    }
-    fn replace_all(pane: &mut Pane, _: &ReplaceAll, cx: &mut ViewContext<Pane>) {
-        if let Some(search_view) = pane
-            .active_item()
-            .and_then(|item| item.downcast::<ProjectSearchView>())
-        {
-            search_view.update(cx, |view, cx| view.replace_all(&ReplaceAll, cx));
-            cx.stop_propagation();
-        }
-    }
-    fn select_prev_match(pane: &mut Pane, _: &SelectPrevMatch, cx: &mut ViewContext<Pane>) {
-        if let Some(search_view) = pane
-            .active_item()
-            .and_then(|item| item.downcast::<ProjectSearchView>())
-        {
-            search_view.update(cx, |view, cx| view.select_match(Direction::Prev, cx));
-            cx.stop_propagation();
         }
     }
 
