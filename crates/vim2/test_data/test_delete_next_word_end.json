@@ -1,0 +1,12 @@
+{"Put":{"state":"Test teˇst\ntest"}}
+{"Key":"d"}
+{"Key":"e"}
+{"Get":{"state":"Test tˇe\ntest","mode":"Normal"}}
+{"Put":{"state":"Test tesˇt\ntest"}}
+{"Key":"d"}
+{"Key":"e"}
+{"Get":{"state":"Test teˇs","mode":"Normal"}}
+{"Put":{"state":"Test teˇst-test test"}}
+{"Key":"d"}
+{"Key":"shift-e"}
+{"Get":{"state":"Test teˇ test","mode":"Normal"}}

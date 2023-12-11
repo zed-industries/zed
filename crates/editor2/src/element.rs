@@ -1049,7 +1049,12 @@ impl EditorElement {
                                         .chars_at(cursor_position)
                                         .next()
                                         .and_then(|(character, _)| {
-                                            let text = SharedString::from(character.to_string());
+                                            // todo!() currently shape_line panics if text conatins newlines
+                                            let text = if character == '\n' {
+                                                SharedString::from(" ")
+                                            } else {
+                                                SharedString::from(character.to_string())
+                                            };
                                             let len = text.len();
                                             cx.text_system()
                                                 .shape_line(

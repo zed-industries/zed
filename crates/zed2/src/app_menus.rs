@@ -2,6 +2,8 @@ use gpui::{Menu, MenuItem, OsAction};
 
 #[cfg(target_os = "macos")]
 pub fn app_menus() -> Vec<Menu<'static>> {
+    use zed_actions::Quit;
+
     vec![
         Menu {
             name: "Zed",
@@ -25,7 +27,7 @@ pub fn app_menus() -> Vec<Menu<'static>> {
                 MenuItem::action("Hide Zed", super::Hide),
                 MenuItem::action("Hide Others", super::HideOthers),
                 MenuItem::action("Show All", super::ShowAll),
-                MenuItem::action("Quit", super::Quit),
+                MenuItem::action("Quit", Quit),
             ],
         },
         Menu {
