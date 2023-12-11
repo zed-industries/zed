@@ -18,7 +18,11 @@ pub struct VimTestContext<'a> {
 }
 
 impl<'a> VimTestContext<'a> {
-    pub async fn new(cx: &'a mut gpui::TestAppContext, enabled: bool) -> VimTestContext<'a> {
+    pub fn init(cx: &mut gpui::TestAppContext) {
+        if cx.has_global::<Vim>() {
+            dbg!("OOPS");
+            return;
+        }
         cx.update(|cx| {
             search::init(cx);
             let settings = SettingsStore::test(cx);
@@ -26,18 +30,16 @@ impl<'a> VimTestContext<'a> {
             command_palette::init(cx);
             crate::init(cx);
         });
+    }
+
+    pub async fn new(cx: &'a mut gpui::TestAppContext, enabled: bool) -> VimTestContext<'a> {
+        Self::init(cx);
         let lsp = EditorLspTestContext::new_rust(Default::default(), cx).await;
         Self::new_with_lsp(lsp, enabled)
     }
 
     pub async fn new_typescript(cx: &'a mut gpui::TestAppContext) -> VimTestContext<'a> {
-        cx.update(|cx| {
-            search::init(cx);
-            let settings = SettingsStore::test(cx);
-            cx.set_global(settings);
-            command_palette::init(cx);
-            crate::init(cx);
-        });
+        Self::init(cx);
         Self::new_with_lsp(
             EditorLspTestContext::new_typescript(Default::default(), cx).await,
             true,
