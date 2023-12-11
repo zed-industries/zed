@@ -140,6 +140,8 @@ pub fn observe_keystrokes(cx: &mut WindowContext) {
             if action.name().starts_with("vim::") {
                 return;
             }
+        } else if cx.has_pending_keystrokes() {
+            return;
         }
 
         Vim::update(cx, |vim, cx| match vim.active_operator() {

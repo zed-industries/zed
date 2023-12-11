@@ -1468,6 +1468,13 @@ impl<'a> WindowContext<'a> {
         self.dispatch_keystroke_observers(event, None);
     }
 
+    pub fn has_pending_keystrokes(&self) -> bool {
+        self.window
+            .rendered_frame
+            .dispatch_tree
+            .has_pending_keystrokes()
+    }
+
     fn dispatch_action_on_node(&mut self, node_id: DispatchNodeId, action: Box<dyn Action>) {
         let dispatch_path = self
             .window

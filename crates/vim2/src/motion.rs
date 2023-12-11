@@ -952,147 +952,156 @@ pub(crate) fn next_line_end(
     end_of_line(map, false, point)
 }
 
-// #[cfg(test)]
-// mod test {
+#[cfg(test)]
+mod test {
 
-//     use crate::test::NeovimBackedTestContext;
-//     use indoc::indoc;
+    use crate::test::NeovimBackedTestContext;
+    use indoc::indoc;
 
-//     #[gpui::test]
-//     async fn test_start_end_of_paragraph(cx: &mut gpui::TestAppContext) {
-//         let mut cx = NeovimBackedTestContext::new(cx).await;
+    #[gpui::test]
+    async fn test_start_end_of_paragraph(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
 
-//         let initial_state = indoc! {r"ˇabc
-//             def
+        let initial_state = indoc! {r"ˇabc
+            def
 
-//             paragraph
-//             the second
+            paragraph
+            the second
 
-//             third and
-//             final"};
 
-//         // goes down once
-//         cx.set_shared_state(initial_state).await;
-//         cx.simulate_shared_keystrokes(["}"]).await;
-//         cx.assert_shared_state(indoc! {r"abc
-//             def
-//             ˇ
-//             paragraph
-//             the second
 
-//             third and
-//             final"})
-//             .await;
+            third and
+            final"};
 
-//         // goes up once
-//         cx.simulate_shared_keystrokes(["{"]).await;
-//         cx.assert_shared_state(initial_state).await;
+        // goes down once
+        cx.set_shared_state(initial_state).await;
+        cx.simulate_shared_keystrokes(["}"]).await;
+        cx.assert_shared_state(indoc! {r"abc
+            def
+            ˇ
+            paragraph
+            the second
 
-//         // goes down twice
-//         cx.simulate_shared_keystrokes(["2", "}"]).await;
-//         cx.assert_shared_state(indoc! {r"abc
-//             def
 
-//             paragraph
-//             the second
-//             ˇ
 
-//             third and
-//             final"})
-//             .await;
+            third and
+            final"})
+            .await;
 
-//         // goes down over multiple blanks
-//         cx.simulate_shared_keystrokes(["}"]).await;
-//         cx.assert_shared_state(indoc! {r"abc
-//                 def
+        // goes up once
+        cx.simulate_shared_keystrokes(["{"]).await;
+        cx.assert_shared_state(initial_state).await;
 
-//                 paragraph
-//                 the second
+        // goes down twice
+        cx.simulate_shared_keystrokes(["2", "}"]).await;
+        cx.assert_shared_state(indoc! {r"abc
+            def
 
-//                 third and
-//                 finaˇl"})
-//             .await;
+            paragraph
+            the second
+            ˇ
 
-//         // goes up twice
-//         cx.simulate_shared_keystrokes(["2", "{"]).await;
-//         cx.assert_shared_state(indoc! {r"abc
-//                 def
-//                 ˇ
-//                 paragraph
-//                 the second
 
-//                 third and
-//                 final"})
-//             .await
-//     }
+            third and
+            final"})
+            .await;
 
-//     #[gpui::test]
-//     async fn test_matching(cx: &mut gpui::TestAppContext) {
-//         let mut cx = NeovimBackedTestContext::new(cx).await;
+        // goes down over multiple blanks
+        cx.simulate_shared_keystrokes(["}"]).await;
+        cx.assert_shared_state(indoc! {r"abc
+                def
 
-//         cx.set_shared_state(indoc! {r"func ˇ(a string) {
-//                 do(something(with<Types>.and_arrays[0, 2]))
-//             }"})
-//             .await;
-//         cx.simulate_shared_keystrokes(["%"]).await;
-//         cx.assert_shared_state(indoc! {r"func (a stringˇ) {
-//                 do(something(with<Types>.and_arrays[0, 2]))
-//             }"})
-//             .await;
+                paragraph
+                the second
 
-//         // test it works on the last character of the line
-//         cx.set_shared_state(indoc! {r"func (a string) ˇ{
-//             do(something(with<Types>.and_arrays[0, 2]))
-//             }"})
-//             .await;
-//         cx.simulate_shared_keystrokes(["%"]).await;
-//         cx.assert_shared_state(indoc! {r"func (a string) {
-//             do(something(with<Types>.and_arrays[0, 2]))
-//             ˇ}"})
-//             .await;
 
-//         // test it works on immediate nesting
-//         cx.set_shared_state("ˇ{()}").await;
-//         cx.simulate_shared_keystrokes(["%"]).await;
-//         cx.assert_shared_state("{()ˇ}").await;
-//         cx.simulate_shared_keystrokes(["%"]).await;
-//         cx.assert_shared_state("ˇ{()}").await;
 
-//         // test it works on immediate nesting inside braces
-//         cx.set_shared_state("{\n    ˇ{()}\n}").await;
-//         cx.simulate_shared_keystrokes(["%"]).await;
-//         cx.assert_shared_state("{\n    {()ˇ}\n}").await;
+                third and
+                finaˇl"})
+            .await;
 
-//         // test it jumps to the next paren on a line
-//         cx.set_shared_state("func ˇboop() {\n}").await;
-//         cx.simulate_shared_keystrokes(["%"]).await;
-//         cx.assert_shared_state("func boop(ˇ) {\n}").await;
-//     }
+        // goes up twice
+        cx.simulate_shared_keystrokes(["2", "{"]).await;
+        cx.assert_shared_state(indoc! {r"abc
+                def
+                ˇ
+                paragraph
+                the second
 
-//     #[gpui::test]
-//     async fn test_comma_semicolon(cx: &mut gpui::TestAppContext) {
-//         let mut cx = NeovimBackedTestContext::new(cx).await;
 
-//         cx.set_shared_state("ˇone two three four").await;
-//         cx.simulate_shared_keystrokes(["f", "o"]).await;
-//         cx.assert_shared_state("one twˇo three four").await;
-//         cx.simulate_shared_keystrokes([","]).await;
-//         cx.assert_shared_state("ˇone two three four").await;
-//         cx.simulate_shared_keystrokes(["2", ";"]).await;
-//         cx.assert_shared_state("one two three fˇour").await;
-//         cx.simulate_shared_keystrokes(["shift-t", "e"]).await;
-//         cx.assert_shared_state("one two threeˇ four").await;
-//         cx.simulate_shared_keystrokes(["3", ";"]).await;
-//         cx.assert_shared_state("oneˇ two three four").await;
-//         cx.simulate_shared_keystrokes([","]).await;
-//         cx.assert_shared_state("one two thˇree four").await;
-//     }
 
-//     #[gpui::test]
-//     async fn test_next_line_start(cx: &mut gpui::TestAppContext) {
-//         let mut cx = NeovimBackedTestContext::new(cx).await;
-//         cx.set_shared_state("ˇone\n  two\nthree").await;
-//         cx.simulate_shared_keystrokes(["enter"]).await;
-//         cx.assert_shared_state("one\n  ˇtwo\nthree").await;
-//     }
-// }
+                third and
+                final"})
+            .await
+    }
+
+    #[gpui::test]
+    async fn test_matching(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {r"func ˇ(a string) {
+                do(something(with<Types>.and_arrays[0, 2]))
+            }"})
+            .await;
+        cx.simulate_shared_keystrokes(["%"]).await;
+        cx.assert_shared_state(indoc! {r"func (a stringˇ) {
+                do(something(with<Types>.and_arrays[0, 2]))
+            }"})
+            .await;
+
+        // test it works on the last character of the line
+        cx.set_shared_state(indoc! {r"func (a string) ˇ{
+            do(something(with<Types>.and_arrays[0, 2]))
+            }"})
+            .await;
+        cx.simulate_shared_keystrokes(["%"]).await;
+        cx.assert_shared_state(indoc! {r"func (a string) {
+            do(something(with<Types>.and_arrays[0, 2]))
+            ˇ}"})
+            .await;
+
+        // test it works on immediate nesting
+        cx.set_shared_state("ˇ{()}").await;
+        cx.simulate_shared_keystrokes(["%"]).await;
+        cx.assert_shared_state("{()ˇ}").await;
+        cx.simulate_shared_keystrokes(["%"]).await;
+        cx.assert_shared_state("ˇ{()}").await;
+
+        // test it works on immediate nesting inside braces
+        cx.set_shared_state("{\n    ˇ{()}\n}").await;
+        cx.simulate_shared_keystrokes(["%"]).await;
+        cx.assert_shared_state("{\n    {()ˇ}\n}").await;
+
+        // test it jumps to the next paren on a line
+        cx.set_shared_state("func ˇboop() {\n}").await;
+        cx.simulate_shared_keystrokes(["%"]).await;
+        cx.assert_shared_state("func boop(ˇ) {\n}").await;
+    }
+
+    #[gpui::test]
+    async fn test_comma_semicolon(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state("ˇone two three four").await;
+        cx.simulate_shared_keystrokes(["f", "o"]).await;
+        cx.assert_shared_state("one twˇo three four").await;
+        cx.simulate_shared_keystrokes([","]).await;
+        cx.assert_shared_state("ˇone two three four").await;
+        cx.simulate_shared_keystrokes(["2", ";"]).await;
+        cx.assert_shared_state("one two three fˇour").await;
+        cx.simulate_shared_keystrokes(["shift-t", "e"]).await;
+        cx.assert_shared_state("one two threeˇ four").await;
+        cx.simulate_shared_keystrokes(["3", ";"]).await;
+        cx.assert_shared_state("oneˇ two three four").await;
+        cx.simulate_shared_keystrokes([","]).await;
+        cx.assert_shared_state("one two thˇree four").await;
+    }
+
+    #[gpui::test]
+    async fn test_next_line_start(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.set_shared_state("ˇone\n  two\nthree").await;
+        cx.simulate_shared_keystrokes(["enter"]).await;
+        cx.assert_shared_state("one\n  ˇtwo\nthree").await;
+    }
+}

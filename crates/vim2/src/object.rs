@@ -587,439 +587,439 @@ fn surrounding_markers(
     )
 }
 
-// #[cfg(test)]
-// mod test {
-//     use indoc::indoc;
+#[cfg(test)]
+mod test {
+    use indoc::indoc;
 
-//     use crate::{
-//         state::Mode,
-//         test::{ExemptionFeatures, NeovimBackedTestContext, VimTestContext},
-//     };
+    use crate::{
+        state::Mode,
+        test::{ExemptionFeatures, NeovimBackedTestContext, VimTestContext},
+    };
 
-//     const WORD_LOCATIONS: &'static str = indoc! {"
-//         The quick ˇbrowˇnˇ•••
-//         fox ˇjuˇmpsˇ over
-//         the lazy dogˇ••
-//         ˇ
-//         ˇ
-//         ˇ
-//         Thˇeˇ-ˇquˇickˇ ˇbrownˇ•
-//         ˇ••
-//         ˇ••
-//         ˇ  fox-jumpˇs over
-//         the lazy dogˇ•
-//         ˇ
-//         "
-//     };
+    const WORD_LOCATIONS: &'static str = indoc! {"
+        The quick ˇbrowˇnˇ•••
+        fox ˇjuˇmpsˇ over
+        the lazy dogˇ••
+        ˇ
+        ˇ
+        ˇ
+        Thˇeˇ-ˇquˇickˇ ˇbrownˇ•
+        ˇ••
+        ˇ••
+        ˇ  fox-jumpˇs over
+        the lazy dogˇ•
+        ˇ
+        "
+    };
 
-//     #[gpui::test]
-//     async fn test_change_word_object(cx: &mut gpui::TestAppContext) {
-//         let mut cx = NeovimBackedTestContext::new(cx).await;
+    #[gpui::test]
+    async fn test_change_word_object(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
 
-//         cx.assert_binding_matches_all(["c", "i", "w"], WORD_LOCATIONS)
-//             .await;
-//         cx.assert_binding_matches_all(["c", "i", "shift-w"], WORD_LOCATIONS)
-//             .await;
-//         cx.assert_binding_matches_all(["c", "a", "w"], WORD_LOCATIONS)
-//             .await;
-//         cx.assert_binding_matches_all(["c", "a", "shift-w"], WORD_LOCATIONS)
-//             .await;
-//     }
+        cx.assert_binding_matches_all(["c", "i", "w"], WORD_LOCATIONS)
+            .await;
+        cx.assert_binding_matches_all(["c", "i", "shift-w"], WORD_LOCATIONS)
+            .await;
+        cx.assert_binding_matches_all(["c", "a", "w"], WORD_LOCATIONS)
+            .await;
+        cx.assert_binding_matches_all(["c", "a", "shift-w"], WORD_LOCATIONS)
+            .await;
+    }
 
-//     #[gpui::test]
-//     async fn test_delete_word_object(cx: &mut gpui::TestAppContext) {
-//         let mut cx = NeovimBackedTestContext::new(cx).await;
+    #[gpui::test]
+    async fn test_delete_word_object(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
 
-//         cx.assert_binding_matches_all(["d", "i", "w"], WORD_LOCATIONS)
-//             .await;
-//         cx.assert_binding_matches_all(["d", "i", "shift-w"], WORD_LOCATIONS)
-//             .await;
-//         cx.assert_binding_matches_all(["d", "a", "w"], WORD_LOCATIONS)
-//             .await;
-//         cx.assert_binding_matches_all(["d", "a", "shift-w"], WORD_LOCATIONS)
-//             .await;
-//     }
+        cx.assert_binding_matches_all(["d", "i", "w"], WORD_LOCATIONS)
+            .await;
+        cx.assert_binding_matches_all(["d", "i", "shift-w"], WORD_LOCATIONS)
+            .await;
+        cx.assert_binding_matches_all(["d", "a", "w"], WORD_LOCATIONS)
+            .await;
+        cx.assert_binding_matches_all(["d", "a", "shift-w"], WORD_LOCATIONS)
+            .await;
+    }
 
-//     #[gpui::test]
-//     async fn test_visual_word_object(cx: &mut gpui::TestAppContext) {
-//         let mut cx = NeovimBackedTestContext::new(cx).await;
+    #[gpui::test]
+    async fn test_visual_word_object(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
 
-//         /*
-//                 cx.set_shared_state("The quick ˇbrown\nfox").await;
-//                 cx.simulate_shared_keystrokes(["v"]).await;
-//                 cx.assert_shared_state("The quick «bˇ»rown\nfox").await;
-//                 cx.simulate_shared_keystrokes(["i", "w"]).await;
-//                 cx.assert_shared_state("The quick «brownˇ»\nfox").await;
-//         */
-//         cx.set_shared_state("The quick brown\nˇ\nfox").await;
-//         cx.simulate_shared_keystrokes(["v"]).await;
-//         cx.assert_shared_state("The quick brown\n«\nˇ»fox").await;
-//         cx.simulate_shared_keystrokes(["i", "w"]).await;
-//         cx.assert_shared_state("The quick brown\n«\nˇ»fox").await;
+        /*
+                cx.set_shared_state("The quick ˇbrown\nfox").await;
+                cx.simulate_shared_keystrokes(["v"]).await;
+                cx.assert_shared_state("The quick «bˇ»rown\nfox").await;
+                cx.simulate_shared_keystrokes(["i", "w"]).await;
+                cx.assert_shared_state("The quick «brownˇ»\nfox").await;
+        */
+        cx.set_shared_state("The quick brown\nˇ\nfox").await;
+        cx.simulate_shared_keystrokes(["v"]).await;
+        cx.assert_shared_state("The quick brown\n«\nˇ»fox").await;
+        cx.simulate_shared_keystrokes(["i", "w"]).await;
+        cx.assert_shared_state("The quick brown\n«\nˇ»fox").await;
 
-//         cx.assert_binding_matches_all(["v", "i", "w"], WORD_LOCATIONS)
-//             .await;
-//         cx.assert_binding_matches_all_exempted(
-//             ["v", "h", "i", "w"],
-//             WORD_LOCATIONS,
-//             ExemptionFeatures::NonEmptyVisualTextObjects,
-//         )
-//         .await;
-//         cx.assert_binding_matches_all_exempted(
-//             ["v", "l", "i", "w"],
-//             WORD_LOCATIONS,
-//             ExemptionFeatures::NonEmptyVisualTextObjects,
-//         )
-//         .await;
-//         cx.assert_binding_matches_all(["v", "i", "shift-w"], WORD_LOCATIONS)
-//             .await;
+        cx.assert_binding_matches_all(["v", "i", "w"], WORD_LOCATIONS)
+            .await;
+        cx.assert_binding_matches_all_exempted(
+            ["v", "h", "i", "w"],
+            WORD_LOCATIONS,
+            ExemptionFeatures::NonEmptyVisualTextObjects,
+        )
+        .await;
+        cx.assert_binding_matches_all_exempted(
+            ["v", "l", "i", "w"],
+            WORD_LOCATIONS,
+            ExemptionFeatures::NonEmptyVisualTextObjects,
+        )
+        .await;
+        cx.assert_binding_matches_all(["v", "i", "shift-w"], WORD_LOCATIONS)
+            .await;
 
-//         cx.assert_binding_matches_all_exempted(
-//             ["v", "i", "h", "shift-w"],
-//             WORD_LOCATIONS,
-//             ExemptionFeatures::NonEmptyVisualTextObjects,
-//         )
-//         .await;
-//         cx.assert_binding_matches_all_exempted(
-//             ["v", "i", "l", "shift-w"],
-//             WORD_LOCATIONS,
-//             ExemptionFeatures::NonEmptyVisualTextObjects,
-//         )
-//         .await;
+        cx.assert_binding_matches_all_exempted(
+            ["v", "i", "h", "shift-w"],
+            WORD_LOCATIONS,
+            ExemptionFeatures::NonEmptyVisualTextObjects,
+        )
+        .await;
+        cx.assert_binding_matches_all_exempted(
+            ["v", "i", "l", "shift-w"],
+            WORD_LOCATIONS,
+            ExemptionFeatures::NonEmptyVisualTextObjects,
+        )
+        .await;
 
-//         cx.assert_binding_matches_all_exempted(
-//             ["v", "a", "w"],
-//             WORD_LOCATIONS,
-//             ExemptionFeatures::AroundObjectLeavesWhitespaceAtEndOfLine,
-//         )
-//         .await;
-//         cx.assert_binding_matches_all_exempted(
-//             ["v", "a", "shift-w"],
-//             WORD_LOCATIONS,
-//             ExemptionFeatures::AroundObjectLeavesWhitespaceAtEndOfLine,
-//         )
-//         .await;
-//     }
+        cx.assert_binding_matches_all_exempted(
+            ["v", "a", "w"],
+            WORD_LOCATIONS,
+            ExemptionFeatures::AroundObjectLeavesWhitespaceAtEndOfLine,
+        )
+        .await;
+        cx.assert_binding_matches_all_exempted(
+            ["v", "a", "shift-w"],
+            WORD_LOCATIONS,
+            ExemptionFeatures::AroundObjectLeavesWhitespaceAtEndOfLine,
+        )
+        .await;
+    }
 
-//     const SENTENCE_EXAMPLES: &[&'static str] = &[
-//         "ˇThe quick ˇbrownˇ?ˇ ˇFox Jˇumpsˇ!ˇ Ovˇer theˇ lazyˇ.",
-//         indoc! {"
-//             ˇThe quick ˇbrownˇ
-//             fox jumps over
-//             the lazy doˇgˇ.ˇ ˇThe quick ˇ
-//             brown fox jumps over
-//         "},
-//         indoc! {"
-//             The quick brown fox jumps.
-//             Over the lazy dog
-//             ˇ
-//             ˇ
-//             ˇ  fox-jumpˇs over
-//             the lazy dog.ˇ
-//             ˇ
-//         "},
-//         r#"ˇThe ˇquick brownˇ.)ˇ]ˇ'ˇ" Brown ˇfox jumpsˇ.ˇ "#,
-//     ];
+    const SENTENCE_EXAMPLES: &[&'static str] = &[
+        "ˇThe quick ˇbrownˇ?ˇ ˇFox Jˇumpsˇ!ˇ Ovˇer theˇ lazyˇ.",
+        indoc! {"
+            ˇThe quick ˇbrownˇ
+            fox jumps over
+            the lazy doˇgˇ.ˇ ˇThe quick ˇ
+            brown fox jumps over
+        "},
+        indoc! {"
+            The quick brown fox jumps.
+            Over the lazy dog
+            ˇ
+            ˇ
+            ˇ  fox-jumpˇs over
+            the lazy dog.ˇ
+            ˇ
+        "},
+        r#"ˇThe ˇquick brownˇ.)ˇ]ˇ'ˇ" Brown ˇfox jumpsˇ.ˇ "#,
+    ];
 
-//     #[gpui::test]
-//     async fn test_change_sentence_object(cx: &mut gpui::TestAppContext) {
-//         let mut cx = NeovimBackedTestContext::new(cx)
-//             .await
-//             .binding(["c", "i", "s"]);
-//         cx.add_initial_state_exemptions(
-//             "The quick brown fox jumps.\nOver the lazy dog\nˇ\nˇ\n  fox-jumps over\nthe lazy dog.\n\n",
-//             ExemptionFeatures::SentenceOnEmptyLines);
-//         cx.add_initial_state_exemptions(
-//             "The quick brown fox jumps.\nOver the lazy dog\n\n\nˇ  foxˇ-ˇjumpˇs over\nthe lazy dog.\n\n",
-//             ExemptionFeatures::SentenceAtStartOfLineWithWhitespace);
-//         cx.add_initial_state_exemptions(
-//             "The quick brown fox jumps.\nOver the lazy dog\n\n\n  fox-jumps over\nthe lazy dog.ˇ\nˇ\n",
-//             ExemptionFeatures::SentenceAfterPunctuationAtEndOfFile);
-//         for sentence_example in SENTENCE_EXAMPLES {
-//             cx.assert_all(sentence_example).await;
-//         }
+    #[gpui::test]
+    async fn test_change_sentence_object(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx)
+            .await
+            .binding(["c", "i", "s"]);
+        cx.add_initial_state_exemptions(
+            "The quick brown fox jumps.\nOver the lazy dog\nˇ\nˇ\n  fox-jumps over\nthe lazy dog.\n\n",
+            ExemptionFeatures::SentenceOnEmptyLines);
+        cx.add_initial_state_exemptions(
+            "The quick brown fox jumps.\nOver the lazy dog\n\n\nˇ  foxˇ-ˇjumpˇs over\nthe lazy dog.\n\n",
+            ExemptionFeatures::SentenceAtStartOfLineWithWhitespace);
+        cx.add_initial_state_exemptions(
+            "The quick brown fox jumps.\nOver the lazy dog\n\n\n  fox-jumps over\nthe lazy dog.ˇ\nˇ\n",
+            ExemptionFeatures::SentenceAfterPunctuationAtEndOfFile);
+        for sentence_example in SENTENCE_EXAMPLES {
+            cx.assert_all(sentence_example).await;
+        }
 
-//         let mut cx = cx.binding(["c", "a", "s"]);
-//         cx.add_initial_state_exemptions(
-//             "The quick brown?ˇ Fox Jumps! Over the lazy.",
-//             ExemptionFeatures::IncorrectLandingPosition,
-//         );
-//         cx.add_initial_state_exemptions(
-//             "The quick brown.)]\'\" Brown fox jumps.ˇ ",
-//             ExemptionFeatures::AroundObjectLeavesWhitespaceAtEndOfLine,
-//         );
+        let mut cx = cx.binding(["c", "a", "s"]);
+        cx.add_initial_state_exemptions(
+            "The quick brown?ˇ Fox Jumps! Over the lazy.",
+            ExemptionFeatures::IncorrectLandingPosition,
+        );
+        cx.add_initial_state_exemptions(
+            "The quick brown.)]\'\" Brown fox jumps.ˇ ",
+            ExemptionFeatures::AroundObjectLeavesWhitespaceAtEndOfLine,
+        );
 
-//         for sentence_example in SENTENCE_EXAMPLES {
-//             cx.assert_all(sentence_example).await;
-//         }
-//     }
+        for sentence_example in SENTENCE_EXAMPLES {
+            cx.assert_all(sentence_example).await;
+        }
+    }
 
-//     #[gpui::test]
-//     async fn test_delete_sentence_object(cx: &mut gpui::TestAppContext) {
-//         let mut cx = NeovimBackedTestContext::new(cx)
-//             .await
-//             .binding(["d", "i", "s"]);
-//         cx.add_initial_state_exemptions(
-//             "The quick brown fox jumps.\nOver the lazy dog\nˇ\nˇ\n  fox-jumps over\nthe lazy dog.\n\n",
-//             ExemptionFeatures::SentenceOnEmptyLines);
-//         cx.add_initial_state_exemptions(
-//             "The quick brown fox jumps.\nOver the lazy dog\n\n\nˇ  foxˇ-ˇjumpˇs over\nthe lazy dog.\n\n",
-//             ExemptionFeatures::SentenceAtStartOfLineWithWhitespace);
-//         cx.add_initial_state_exemptions(
-//             "The quick brown fox jumps.\nOver the lazy dog\n\n\n  fox-jumps over\nthe lazy dog.ˇ\nˇ\n",
-//             ExemptionFeatures::SentenceAfterPunctuationAtEndOfFile);
+    #[gpui::test]
+    async fn test_delete_sentence_object(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx)
+            .await
+            .binding(["d", "i", "s"]);
+        cx.add_initial_state_exemptions(
+            "The quick brown fox jumps.\nOver the lazy dog\nˇ\nˇ\n  fox-jumps over\nthe lazy dog.\n\n",
+            ExemptionFeatures::SentenceOnEmptyLines);
+        cx.add_initial_state_exemptions(
+            "The quick brown fox jumps.\nOver the lazy dog\n\n\nˇ  foxˇ-ˇjumpˇs over\nthe lazy dog.\n\n",
+            ExemptionFeatures::SentenceAtStartOfLineWithWhitespace);
+        cx.add_initial_state_exemptions(
+            "The quick brown fox jumps.\nOver the lazy dog\n\n\n  fox-jumps over\nthe lazy dog.ˇ\nˇ\n",
+            ExemptionFeatures::SentenceAfterPunctuationAtEndOfFile);
 
-//         for sentence_example in SENTENCE_EXAMPLES {
-//             cx.assert_all(sentence_example).await;
-//         }
+        for sentence_example in SENTENCE_EXAMPLES {
+            cx.assert_all(sentence_example).await;
+        }
 
-//         let mut cx = cx.binding(["d", "a", "s"]);
-//         cx.add_initial_state_exemptions(
-//             "The quick brown?ˇ Fox Jumps! Over the lazy.",
-//             ExemptionFeatures::IncorrectLandingPosition,
-//         );
-//         cx.add_initial_state_exemptions(
-//             "The quick brown.)]\'\" Brown fox jumps.ˇ ",
-//             ExemptionFeatures::AroundObjectLeavesWhitespaceAtEndOfLine,
-//         );
+        let mut cx = cx.binding(["d", "a", "s"]);
+        cx.add_initial_state_exemptions(
+            "The quick brown?ˇ Fox Jumps! Over the lazy.",
+            ExemptionFeatures::IncorrectLandingPosition,
+        );
+        cx.add_initial_state_exemptions(
+            "The quick brown.)]\'\" Brown fox jumps.ˇ ",
+            ExemptionFeatures::AroundObjectLeavesWhitespaceAtEndOfLine,
+        );
 
-//         for sentence_example in SENTENCE_EXAMPLES {
-//             cx.assert_all(sentence_example).await;
-//         }
-//     }
+        for sentence_example in SENTENCE_EXAMPLES {
+            cx.assert_all(sentence_example).await;
+        }
+    }
 
-//     #[gpui::test]
-//     async fn test_visual_sentence_object(cx: &mut gpui::TestAppContext) {
-//         let mut cx = NeovimBackedTestContext::new(cx)
-//             .await
-//             .binding(["v", "i", "s"]);
-//         for sentence_example in SENTENCE_EXAMPLES {
-//             cx.assert_all_exempted(sentence_example, ExemptionFeatures::SentenceOnEmptyLines)
-//                 .await;
-//         }
+    #[gpui::test]
+    async fn test_visual_sentence_object(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx)
+            .await
+            .binding(["v", "i", "s"]);
+        for sentence_example in SENTENCE_EXAMPLES {
+            cx.assert_all_exempted(sentence_example, ExemptionFeatures::SentenceOnEmptyLines)
+                .await;
+        }
 
-//         let mut cx = cx.binding(["v", "a", "s"]);
-//         for sentence_example in SENTENCE_EXAMPLES {
-//             cx.assert_all_exempted(
-//                 sentence_example,
-//                 ExemptionFeatures::AroundSentenceStartingBetweenIncludesWrongWhitespace,
-//             )
-//             .await;
-//         }
-//     }
+        let mut cx = cx.binding(["v", "a", "s"]);
+        for sentence_example in SENTENCE_EXAMPLES {
+            cx.assert_all_exempted(
+                sentence_example,
+                ExemptionFeatures::AroundSentenceStartingBetweenIncludesWrongWhitespace,
+            )
+            .await;
+        }
+    }
 
-//     // Test string with "`" for opening surrounders and "'" for closing surrounders
-//     const SURROUNDING_MARKER_STRING: &str = indoc! {"
-//         ˇTh'ˇe ˇ`ˇ'ˇquˇi`ˇck broˇ'wn`
-//         'ˇfox juˇmps ovˇ`ˇer
-//         the ˇlazy dˇ'ˇoˇ`ˇg"};
+    // Test string with "`" for opening surrounders and "'" for closing surrounders
+    const SURROUNDING_MARKER_STRING: &str = indoc! {"
+        ˇTh'ˇe ˇ`ˇ'ˇquˇi`ˇck broˇ'wn`
+        'ˇfox juˇmps ovˇ`ˇer
+        the ˇlazy dˇ'ˇoˇ`ˇg"};
 
-//     const SURROUNDING_OBJECTS: &[(char, char)] = &[
-//         ('\'', '\''), // Quote
-//         ('`', '`'),   // Back Quote
-//         ('"', '"'),   // Double Quote
-//         ('(', ')'),   // Parentheses
-//         ('[', ']'),   // SquareBrackets
-//         ('{', '}'),   // CurlyBrackets
-//         ('<', '>'),   // AngleBrackets
-//     ];
+    const SURROUNDING_OBJECTS: &[(char, char)] = &[
+        ('\'', '\''), // Quote
+        ('`', '`'),   // Back Quote
+        ('"', '"'),   // Double Quote
+        ('(', ')'),   // Parentheses
+        ('[', ']'),   // SquareBrackets
+        ('{', '}'),   // CurlyBrackets
+        ('<', '>'),   // AngleBrackets
+    ];
 
-//     #[gpui::test]
-//     async fn test_change_surrounding_character_objects(cx: &mut gpui::TestAppContext) {
-//         let mut cx = NeovimBackedTestContext::new(cx).await;
+    #[gpui::test]
+    async fn test_change_surrounding_character_objects(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
 
-//         for (start, end) in SURROUNDING_OBJECTS {
-//             let marked_string = SURROUNDING_MARKER_STRING
-//                 .replace('`', &start.to_string())
-//                 .replace('\'', &end.to_string());
+        for (start, end) in SURROUNDING_OBJECTS {
+            let marked_string = SURROUNDING_MARKER_STRING
+                .replace('`', &start.to_string())
+                .replace('\'', &end.to_string());
 
-//             cx.assert_binding_matches_all(["c", "i", &start.to_string()], &marked_string)
-//                 .await;
-//             cx.assert_binding_matches_all(["c", "i", &end.to_string()], &marked_string)
-//                 .await;
-//             cx.assert_binding_matches_all(["c", "a", &start.to_string()], &marked_string)
-//                 .await;
-//             cx.assert_binding_matches_all(["c", "a", &end.to_string()], &marked_string)
-//                 .await;
-//         }
-//     }
-//     #[gpui::test]
-//     async fn test_singleline_surrounding_character_objects(cx: &mut gpui::TestAppContext) {
-//         let mut cx = NeovimBackedTestContext::new(cx).await;
-//         cx.set_shared_wrap(12).await;
+            cx.assert_binding_matches_all(["c", "i", &start.to_string()], &marked_string)
+                .await;
+            cx.assert_binding_matches_all(["c", "i", &end.to_string()], &marked_string)
+                .await;
+            cx.assert_binding_matches_all(["c", "a", &start.to_string()], &marked_string)
+                .await;
+            cx.assert_binding_matches_all(["c", "a", &end.to_string()], &marked_string)
+                .await;
+        }
+    }
+    #[gpui::test]
+    async fn test_singleline_surrounding_character_objects(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.set_shared_wrap(12).await;
 
-//         cx.set_shared_state(indoc! {
-//             "helˇlo \"world\"!"
-//         })
-//         .await;
-//         cx.simulate_shared_keystrokes(["v", "i", "\""]).await;
-//         cx.assert_shared_state(indoc! {
-//             "hello \"«worldˇ»\"!"
-//         })
-//         .await;
+        cx.set_shared_state(indoc! {
+            "helˇlo \"world\"!"
+        })
+        .await;
+        cx.simulate_shared_keystrokes(["v", "i", "\""]).await;
+        cx.assert_shared_state(indoc! {
+            "hello \"«worldˇ»\"!"
+        })
+        .await;
 
-//         cx.set_shared_state(indoc! {
-//             "hello \"wˇorld\"!"
-//         })
-//         .await;
-//         cx.simulate_shared_keystrokes(["v", "i", "\""]).await;
-//         cx.assert_shared_state(indoc! {
-//             "hello \"«worldˇ»\"!"
-//         })
-//         .await;
+        cx.set_shared_state(indoc! {
+            "hello \"wˇorld\"!"
+        })
+        .await;
+        cx.simulate_shared_keystrokes(["v", "i", "\""]).await;
+        cx.assert_shared_state(indoc! {
+            "hello \"«worldˇ»\"!"
+        })
+        .await;
 
-//         cx.set_shared_state(indoc! {
-//             "hello \"wˇorld\"!"
-//         })
-//         .await;
-//         cx.simulate_shared_keystrokes(["v", "a", "\""]).await;
-//         cx.assert_shared_state(indoc! {
-//             "hello« \"world\"ˇ»!"
-//         })
-//         .await;
+        cx.set_shared_state(indoc! {
+            "hello \"wˇorld\"!"
+        })
+        .await;
+        cx.simulate_shared_keystrokes(["v", "a", "\""]).await;
+        cx.assert_shared_state(indoc! {
+            "hello« \"world\"ˇ»!"
+        })
+        .await;
 
-//         cx.set_shared_state(indoc! {
-//             "hello \"wˇorld\" !"
-//         })
-//         .await;
-//         cx.simulate_shared_keystrokes(["v", "a", "\""]).await;
-//         cx.assert_shared_state(indoc! {
-//             "hello «\"world\" ˇ»!"
-//         })
-//         .await;
+        cx.set_shared_state(indoc! {
+            "hello \"wˇorld\" !"
+        })
+        .await;
+        cx.simulate_shared_keystrokes(["v", "a", "\""]).await;
+        cx.assert_shared_state(indoc! {
+            "hello «\"world\" ˇ»!"
+        })
+        .await;
 
-//         cx.set_shared_state(indoc! {
-//             "hello \"wˇorld\"•
-//             goodbye"
-//         })
-//         .await;
-//         cx.simulate_shared_keystrokes(["v", "a", "\""]).await;
-//         cx.assert_shared_state(indoc! {
-//             "hello «\"world\" ˇ»
-//             goodbye"
-//         })
-//         .await;
-//     }
+        cx.set_shared_state(indoc! {
+            "hello \"wˇorld\"•
+            goodbye"
+        })
+        .await;
+        cx.simulate_shared_keystrokes(["v", "a", "\""]).await;
+        cx.assert_shared_state(indoc! {
+            "hello «\"world\" ˇ»
+            goodbye"
+        })
+        .await;
+    }
 
-//     #[gpui::test]
-//     async fn test_multiline_surrounding_character_objects(cx: &mut gpui::TestAppContext) {
-//         let mut cx = NeovimBackedTestContext::new(cx).await;
+    #[gpui::test]
+    async fn test_multiline_surrounding_character_objects(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
 
-//         cx.set_shared_state(indoc! {
-//             "func empty(a string) bool {
-//                if a == \"\" {
-//                   return true
-//                }
-//                ˇreturn false
-//             }"
-//         })
-//         .await;
-//         cx.simulate_shared_keystrokes(["v", "i", "{"]).await;
-//         cx.assert_shared_state(indoc! {"
-//             func empty(a string) bool {
-//             «   if a == \"\" {
-//                   return true
-//                }
-//                return false
-//             ˇ»}"})
-//             .await;
-//         cx.set_shared_state(indoc! {
-//             "func empty(a string) bool {
-//                  if a == \"\" {
-//                      ˇreturn true
-//                  }
-//                  return false
-//             }"
-//         })
-//         .await;
-//         cx.simulate_shared_keystrokes(["v", "i", "{"]).await;
-//         cx.assert_shared_state(indoc! {"
-//             func empty(a string) bool {
-//                  if a == \"\" {
-//             «         return true
-//             ˇ»     }
-//                  return false
-//             }"})
-//             .await;
+        cx.set_shared_state(indoc! {
+            "func empty(a string) bool {
+               if a == \"\" {
+                  return true
+               }
+               ˇreturn false
+            }"
+        })
+        .await;
+        cx.simulate_shared_keystrokes(["v", "i", "{"]).await;
+        cx.assert_shared_state(indoc! {"
+            func empty(a string) bool {
+            «   if a == \"\" {
+                  return true
+               }
+               return false
+            ˇ»}"})
+            .await;
+        cx.set_shared_state(indoc! {
+            "func empty(a string) bool {
+                 if a == \"\" {
+                     ˇreturn true
+                 }
+                 return false
+            }"
+        })
+        .await;
+        cx.simulate_shared_keystrokes(["v", "i", "{"]).await;
+        cx.assert_shared_state(indoc! {"
+            func empty(a string) bool {
+                 if a == \"\" {
+            «         return true
+            ˇ»     }
+                 return false
+            }"})
+            .await;
 
-//         cx.set_shared_state(indoc! {
-//             "func empty(a string) bool {
-//                  if a == \"\" ˇ{
-//                      return true
-//                  }
-//                  return false
-//             }"
-//         })
-//         .await;
-//         cx.simulate_shared_keystrokes(["v", "i", "{"]).await;
-//         cx.assert_shared_state(indoc! {"
-//             func empty(a string) bool {
-//                  if a == \"\" {
-//             «         return true
-//             ˇ»     }
-//                  return false
-//             }"})
-//             .await;
-//     }
+        cx.set_shared_state(indoc! {
+            "func empty(a string) bool {
+                 if a == \"\" ˇ{
+                     return true
+                 }
+                 return false
+            }"
+        })
+        .await;
+        cx.simulate_shared_keystrokes(["v", "i", "{"]).await;
+        cx.assert_shared_state(indoc! {"
+            func empty(a string) bool {
+                 if a == \"\" {
+            «         return true
+            ˇ»     }
+                 return false
+            }"})
+            .await;
+    }
 
-//     #[gpui::test]
-//     async fn test_vertical_bars(cx: &mut gpui::TestAppContext) {
-//         let mut cx = VimTestContext::new(cx, true).await;
-//         cx.set_state(
-//             indoc! {"
-//             fn boop() {
-//                 baz(ˇ|a, b| { bar(|j, k| { })})
-//             }"
-//             },
-//             Mode::Normal,
-//         );
-//         cx.simulate_keystrokes(["c", "i", "|"]);
-//         cx.assert_state(
-//             indoc! {"
-//             fn boop() {
-//                 baz(|ˇ| { bar(|j, k| { })})
-//             }"
-//             },
-//             Mode::Insert,
-//         );
-//         cx.simulate_keystrokes(["escape", "1", "8", "|"]);
-//         cx.assert_state(
-//             indoc! {"
-//             fn boop() {
-//                 baz(|| { bar(ˇ|j, k| { })})
-//             }"
-//             },
-//             Mode::Normal,
-//         );
+    #[gpui::test]
+    async fn test_vertical_bars(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.set_state(
+            indoc! {"
+            fn boop() {
+                baz(ˇ|a, b| { bar(|j, k| { })})
+            }"
+            },
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes(["c", "i", "|"]);
+        cx.assert_state(
+            indoc! {"
+            fn boop() {
+                baz(|ˇ| { bar(|j, k| { })})
+            }"
+            },
+            Mode::Insert,
+        );
+        cx.simulate_keystrokes(["escape", "1", "8", "|"]);
+        cx.assert_state(
+            indoc! {"
+            fn boop() {
+                baz(|| { bar(ˇ|j, k| { })})
+            }"
+            },
+            Mode::Normal,
+        );
 
-//         cx.simulate_keystrokes(["v", "a", "|"]);
-//         cx.assert_state(
-//             indoc! {"
-//             fn boop() {
-//                 baz(|| { bar(«|j, k| ˇ»{ })})
-//             }"
-//             },
-//             Mode::Visual,
-//         );
-//     }
+        cx.simulate_keystrokes(["v", "a", "|"]);
+        cx.assert_state(
+            indoc! {"
+            fn boop() {
+                baz(|| { bar(«|j, k| ˇ»{ })})
+            }"
+            },
+            Mode::Visual,
+        );
+    }
 
-//     #[gpui::test]
-//     async fn test_delete_surrounding_character_objects(cx: &mut gpui::TestAppContext) {
-//         let mut cx = NeovimBackedTestContext::new(cx).await;
+    #[gpui::test]
+    async fn test_delete_surrounding_character_objects(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
 
-//         for (start, end) in SURROUNDING_OBJECTS {
-//             let marked_string = SURROUNDING_MARKER_STRING
-//                 .replace('`', &start.to_string())
-//                 .replace('\'', &end.to_string());
+        for (start, end) in SURROUNDING_OBJECTS {
+            let marked_string = SURROUNDING_MARKER_STRING
+                .replace('`', &start.to_string())
+                .replace('\'', &end.to_string());
 
-//             cx.assert_binding_matches_all(["d", "i", &start.to_string()], &marked_string)
-//                 .await;
-//             cx.assert_binding_matches_all(["d", "i", &end.to_string()], &marked_string)
-//                 .await;
-//             cx.assert_binding_matches_all(["d", "a", &start.to_string()], &marked_string)
-//                 .await;
-//             cx.assert_binding_matches_all(["d", "a", &end.to_string()], &marked_string)
-//                 .await;
-//         }
-//     }
-// }
+            cx.assert_binding_matches_all(["d", "i", &start.to_string()], &marked_string)
+                .await;
+            cx.assert_binding_matches_all(["d", "i", &end.to_string()], &marked_string)
+                .await;
+            cx.assert_binding_matches_all(["d", "a", &start.to_string()], &marked_string)
+                .await;
+            cx.assert_binding_matches_all(["d", "a", &end.to_string()], &marked_string)
+                .await;
+        }
+    }
+}

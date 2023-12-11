@@ -230,6 +230,12 @@ impl DispatchTree {
         }
     }
 
+    pub fn has_pending_keystrokes(&self) -> bool {
+        self.keystroke_matchers
+            .iter()
+            .any(|(_, matcher)| matcher.has_pending_keystrokes())
+    }
+
     pub fn dispatch_path(&self, target: DispatchNodeId) -> SmallVec<[DispatchNodeId; 32]> {
         let mut dispatch_path: SmallVec<[DispatchNodeId; 32]> = SmallVec::new();
         let mut current_node_id = Some(target);
