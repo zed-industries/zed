@@ -1730,7 +1730,7 @@ impl Render for ProjectSearchBar {
         let search = search.read(cx);
 
         let query_column = v_stack()
-            .flex_1()
+            //.flex_1()
             .child(
                 h_stack()
                     .min_w_80()
@@ -1868,7 +1868,7 @@ impl Render for ProjectSearchBar {
                 .child(search.replacement_editor.clone())
         } else {
             // Fill out the space if we don't have a replacement editor.
-            h_stack().size_full()
+            h_stack().flex_1()
         };
         let actions_column = h_stack()
             .when(search.replace_enabled, |this| {
