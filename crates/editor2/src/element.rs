@@ -1248,7 +1248,7 @@ impl EditorElement {
         let bottom = bounds.lower_left().y;
         let right = bounds.lower_right().x;
         let left = self.scrollbar_left(&bounds);
-        let row_range = &layout.scrollbar_row_range;
+        let row_range = layout.scrollbar_row_range.clone();
         let max_row = layout.max_row as f32 + (row_range.end - row_range.start);
 
         let mut height = bounds.size.height;
@@ -1369,53 +1369,80 @@ impl EditorElement {
             );
         }
 
-        // cx.scene().push_cursor_region(CursorRegion {
-        //     bounds: track_bounds,
-        //     style: CursorStyle::Arrow,
-        // });
-        // let region_id = cx.view_id();
-        // cx.scene().push_mouse_region(
-        //     MouseRegion::new::<ScrollbarMouseHandlers>(region_id, region_id, track_bounds)
-        //         .on_move(move |event, editor: &mut Editor, cx| {
-        //             if event.pressed_button.is_none() {
-        //                 editor.scroll_manager.show_scrollbar(cx);
-        //             }
-        //         })
-        //         .on_down(MouseButton::Left, {
-        //             let row_range = row_range.clone();
-        //             move |event, editor: &mut Editor, cx| {
-        //                 let y = event.position.y;
-        //                 if y < thumb_top || thumb_bottom < y {
-        //                     let center_row = ((y - top) * max_row as f32 / height).round() as u32;
-        //                     let top_row = center_row
-        //                         .saturating_sub((row_range.end - row_range.start) as u32 / 2);
-        //                     let mut position = editor.scroll_position(cx);
-        //                     position.set_y(top_row as f32);
-        //                     editor.set_scroll_position(position, cx);
-        //                 } else {
-        //                     editor.scroll_manager.show_scrollbar(cx);
-        //                 }
-        //             }
-        //         })
-        //         .on_drag(MouseButton::Left, {
-        //             move |event, editor: &mut Editor, cx| {
-        //                 if event.end {
-        //                     return;
-        //                 }
+        let mouse_position = cx.mouse_position();
+        if track_bounds.contains_point(&mouse_position) {
+            cx.set_cursor_style(CursorStyle::Arrow);
+        }
 
-        //                 let y = event.prev_mouse_position.y;
-        //                 let new_y = event.position.y;
-        //                 if thumb_top < y && y < thumb_bottom {
-        //                     let mut position = editor.scroll_position(cx);
-        //                     position.set_y(position.y + (new_y - y) * (max_row as f32) / height);
-        //                     if position.y < 0.0 {
-        //                         position.set_y(0.);
-        //                     }
-        //                     editor.set_scroll_position(position, cx);
-        //                 }
-        //             }
-        //         }),
-        // );
+        cx.on_mouse_event({
+            let editor = self.editor.clone();
+            move |event: &MouseMoveEvent, phase, cx| {
+                if phase == DispatchPhase::Capture {
+                    return;
+                }
+
+                editor.update(cx, |editor, cx| {
+                    if event.pressed_button == Some(MouseButton::Left)
+                        && editor.scroll_manager.is_dragging_scrollbar()
+                    {
+                        let y = mouse_position.y;
+                        let new_y = event.position.y;
+                        if thumb_top < y && y < thumb_bottom {
+                            let mut position = editor.scroll_position(cx);
+                            position.y += (new_y - y) * (max_row as f32) / height;
+                            if position.y < 0.0 {
+                                position.y = 0.0;
+                            }
+                            editor.set_scroll_position(position, cx);
+                        }
+                        cx.stop_propagation();
+                    } else {
+                        editor.scroll_manager.set_is_dragging_scrollbar(false, cx);
+                        if track_bounds.contains_point(&event.position) {
+                            editor.scroll_manager.show_scrollbar(cx);
+                        }
+                    }
+                })
+            }
+        });
+
+        if self.editor.read(cx).scroll_manager.is_dragging_scrollbar() {
+            cx.on_mouse_event({
+                let editor = self.editor.clone();
+                move |event: &MouseUpEvent, phase, cx| {
+                    editor.update(cx, |editor, cx| {
+                        editor.scroll_manager.set_is_dragging_scrollbar(false, cx);
+                        cx.stop_propagation();
+                    });
+                }
+            });
+        } else {
+            cx.on_mouse_event({
+                let editor = self.editor.clone();
+                move |event: &MouseDownEvent, phase, cx| {
+                    editor.update(cx, |editor, cx| {
+                        if track_bounds.contains_point(&event.position) {
+                            editor.scroll_manager.set_is_dragging_scrollbar(true, cx);
+
+                            let y = event.position.y;
+                            if y < thumb_top || thumb_bottom < y {
+                                let center_row =
+                                    ((y - top) * max_row as f32 / height).round() as u32;
+                                let top_row = center_row
+                                    .saturating_sub((row_range.end - row_range.start) as u32 / 2);
+                                let mut position = editor.scroll_position(cx);
+                                position.y = top_row as f32;
+                                editor.set_scroll_position(position, cx);
+                            } else {
+                                editor.scroll_manager.show_scrollbar(cx);
+                            }
+
+                            cx.stop_propagation();
+                        }
+                    });
+                }
+            });
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2819,7 +2846,7 @@ impl Element for EditorElement {
                         })
                     }
 
-                    self.paint_scrollbar(bounds, &mut layout, cx);
+                    cx.with_z_index(2, |cx| self.paint_scrollbar(bounds, &mut layout, cx));
                 });
             });
         })
