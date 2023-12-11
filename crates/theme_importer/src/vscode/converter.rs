@@ -235,7 +235,7 @@ impl VsCodeThemeConverter {
                 .traverse(|color| try_parse_color(&color))?,
             scrollbar_track_background: vscode_editor_background,
             scrollbar_track_border: vscode_colors
-                .scrollbar_shadow
+                .editor_overview_ruler_border
                 .as_ref()
                 .traverse(|color| try_parse_color(&color))?,
             scrollbar_thumb_background: vscode_scrollbar_slider_background,
