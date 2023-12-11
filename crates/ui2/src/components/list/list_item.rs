@@ -54,6 +54,14 @@ impl ListItem {
         self
     }
 
+    pub fn on_drag(
+        mut self,
+        handler: impl Fn(&MouseDownEvent, &mut WindowContext) + 'static,
+    ) -> Self {
+        self.on_secondary_mouse_down = Some(Box::new(handler));
+        self
+    }
+
     pub fn tooltip(mut self, tooltip: impl Fn(&mut WindowContext) -> AnyView + 'static) -> Self {
         self.tooltip = Some(Box::new(tooltip));
         self
