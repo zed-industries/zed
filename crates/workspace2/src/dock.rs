@@ -1,8 +1,9 @@
 use crate::{status_bar::StatusItemView, Workspace};
+use crate::{DockClickReset, DockDragState};
 use gpui::{
-    div, px, Action, AnchorCorner, AnyView, AppContext, Axis, Div, Entity, EntityId, EventEmitter,
-    FocusHandle, FocusableView, IntoElement, ParentElement, Render, SharedString, Styled,
-    Subscription, View, ViewContext, VisualContext, WeakView, WindowContext,
+    div, px, Action, AnchorCorner, AnyView, AppContext, Axis, ClickEvent, Div, Entity, EntityId,
+    EventEmitter, FocusHandle, FocusableView, IntoElement, MouseButton, ParentElement, Render,
+    SharedString, Styled, Subscription, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -364,7 +365,7 @@ impl Dock {
                         this.set_open(false, cx);
                     }
                 }
-                PanelEvent::Focus => todo!(),
+                PanelEvent::Focus => {}
             }),
         ];
 
@@ -485,6 +486,48 @@ impl Render for Dock {
         if let Some(entry) = self.visible_entry() {
             let size = entry.panel.size(cx);
 
+            let mut pre_resize_handle = None;
+            let mut post_resize_handle = None;
+            let position = self.position;
+            let handler = div()
+                .id("resize-handle")
+                .bg(gpui::red())
+                .on_mouse_down(gpui::MouseButton::Left, move |_, cx| {
+                    cx.update_global(|drag: &mut DockDragState, cx| drag.0 = Some(position))
+                })
+                .on_click(cx.listener(|v, e: &ClickEvent, cx| {
+                    if e.down.button == MouseButton::Left {
+                        cx.update_global(|state: &mut DockClickReset, cx| {
+                            if state.0.is_some() {
+                                state.0 = None;
+                                v.resize_active_panel(None, cx)
+                            } else {
+                                let double_click = cx.double_click_interval();
+                                let timer = cx.background_executor().timer(double_click);
+                                state.0 = Some(cx.spawn(|_, mut cx| async move {
+                                    timer.await;
+                                    cx.update_global(|state: &mut DockClickReset, cx| {
+                                        state.0 = None;
+                                    })
+                                    .ok();
+                                }));
+                            }
+                        })
+                    }
+                }));
+
+            match self.position() {
+                DockPosition::Left => {
+                    post_resize_handle = Some(handler.w_2().h_full().cursor_col_resize())
+                }
+                DockPosition::Bottom => {
+                    pre_resize_handle = Some(handler.w_full().h_2().cursor_row_resize())
+                }
+                DockPosition::Right => {
+                    pre_resize_handle = Some(handler.w_full().h_1().cursor_col_resize())
+                }
+            }
+
             div()
                 .border_color(cx.theme().colors().border)
                 .map(|this| match self.position().axis() {
@@ -496,7 +539,9 @@ impl Render for Dock {
                     DockPosition::Right => this.border_l(),
                     DockPosition::Bottom => this.border_t(),
                 })
+                .children(pre_resize_handle)
                 .child(entry.panel.to_any())
+                .children(post_resize_handle)
         } else {
             div()
         }

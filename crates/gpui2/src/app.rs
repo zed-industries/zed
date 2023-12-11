@@ -514,6 +514,10 @@ impl AppContext {
         self.platform.path_for_auxiliary_executable(name)
     }
 
+    pub fn double_click_interval(&self) -> Duration {
+        self.platform.double_click_interval()
+    }
+
     pub fn prompt_for_paths(
         &self,
         options: PathPromptOptions,

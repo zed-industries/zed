@@ -11,6 +11,7 @@ use std::{
     path::PathBuf,
     rc::{Rc, Weak},
     sync::Arc,
+    time::Duration,
 };
 
 pub struct TestPlatform {
@@ -271,5 +272,9 @@ impl Platform for TestPlatform {
 
     fn delete_credentials(&self, _url: &str) -> Result<()> {
         Ok(())
+    }
+
+    fn double_click_interval(&self) -> std::time::Duration {
+        Duration::from_millis(500)
     }
 }

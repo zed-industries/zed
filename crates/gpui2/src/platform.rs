@@ -102,6 +102,7 @@ pub(crate) trait Platform: 'static {
     fn app_version(&self) -> Result<SemanticVersion>;
     fn app_path(&self) -> Result<PathBuf>;
     fn local_timezone(&self) -> UtcOffset;
+    fn double_click_interval(&self) -> Duration;
     fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf>;
 
     fn set_cursor_style(&self, style: CursorStyle);
