@@ -10,6 +10,7 @@ mod label;
 mod list;
 mod list_header;
 mod list_item;
+mod tab;
 
 pub use avatar::*;
 pub use button::*;
@@ -23,3 +24,4 @@ pub use label::*;
 pub use list::*;
 pub use list_header::*;
 pub use list_item::*;
+pub use tab::*;

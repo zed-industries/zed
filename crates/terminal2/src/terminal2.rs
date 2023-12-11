@@ -50,13 +50,26 @@ use std::{
 use thiserror::Error;
 
 use gpui::{
-    px, AnyWindowHandle, AppContext, Bounds, ClipboardItem, EventEmitter, Hsla, Keystroke,
+    actions, px, AnyWindowHandle, AppContext, Bounds, ClipboardItem, EventEmitter, Hsla, Keystroke,
     ModelContext, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
     Point, ScrollWheelEvent, Size, Task, TouchPhase,
 };
 
 use crate::mappings::{colors::to_alac_rgb, keys::to_esc_str};
 use lazy_static::lazy_static;
+
+actions!(
+    terminal,
+    [
+        Clear,
+        Copy,
+        Paste,
+        ShowCharacterPalette,
+        SearchTest,
+        SendText,
+        SendKeystroke,
+    ]
+);
 
 ///Scrolling is unbearably sluggish by default. Alacritty supports a configurable
 ///Scroll multiplier that is set to 3 by default. This will be removed when I

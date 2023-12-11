@@ -44,27 +44,30 @@ use workspace::{
 use zed_actions::{OpenBrowser, OpenZedURL};
 
 actions!(
-    About,
-    DebugElements,
-    DecreaseBufferFontSize,
-    Hide,
-    HideOthers,
-    IncreaseBufferFontSize,
-    Minimize,
-    OpenDefaultKeymap,
-    OpenDefaultSettings,
-    OpenKeymap,
-    OpenLicenses,
-    OpenLocalSettings,
-    OpenLog,
-    OpenSettings,
-    OpenTelemetryLog,
-    Quit,
-    ResetBufferFontSize,
-    ResetDatabase,
-    ShowAll,
-    ToggleFullScreen,
-    Zoom,
+    zed,
+    [
+        About,
+        DebugElements,
+        DecreaseBufferFontSize,
+        Hide,
+        HideOthers,
+        IncreaseBufferFontSize,
+        Minimize,
+        OpenDefaultKeymap,
+        OpenDefaultSettings,
+        OpenKeymap,
+        OpenLicenses,
+        OpenLocalSettings,
+        OpenLog,
+        OpenSettings,
+        OpenTelemetryLog,
+        Quit,
+        ResetBufferFontSize,
+        ResetDatabase,
+        ShowAll,
+        ToggleFullScreen,
+        Zoom,
+    ]
 );
 
 pub fn build_window_options(
@@ -161,8 +164,8 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             let assistant_panel = AssistantPanel::load(workspace_handle.clone(), cx.clone());
             let channels_panel =
                 collab_ui::collab_panel::CollabPanel::load(workspace_handle.clone(), cx.clone());
-            // let chat_panel =
-            //     collab_ui::chat_panel::ChatPanel::load(workspace_handle.clone(), cx.clone());
+            let chat_panel =
+                collab_ui::chat_panel::ChatPanel::load(workspace_handle.clone(), cx.clone());
             // let notification_panel = collab_ui::notification_panel::NotificationPanel::load(
             //     workspace_handle.clone(),
             //     cx.clone(),
@@ -172,14 +175,14 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 terminal_panel,
                 assistant_panel,
                 channels_panel,
-                //     chat_panel,
+                chat_panel,
                 //     notification_panel,
             ) = futures::try_join!(
                 project_panel,
                 terminal_panel,
                 assistant_panel,
                 channels_panel,
-                //     chat_panel,
+                chat_panel,
                 //     notification_panel,
             )?;
 
@@ -189,7 +192,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 workspace.add_panel(terminal_panel, cx);
                 workspace.add_panel(assistant_panel, cx);
                 workspace.add_panel(channels_panel, cx);
-                //     workspace.add_panel(chat_panel, cx);
+                workspace.add_panel(chat_panel, cx);
                 //     workspace.add_panel(notification_panel, cx);
 
                 // if !was_deserialized
@@ -417,7 +420,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
 fn initialize_pane(workspace: &mut Workspace, pane: &View<Pane>, cx: &mut ViewContext<Workspace>) {
     pane.update(cx, |pane, cx| {
         pane.toolbar().update(cx, |toolbar, cx| {
-            let breadcrumbs = cx.build_view(|_| Breadcrumbs::new(workspace));
+            let breadcrumbs = cx.build_view(|_| Breadcrumbs::new());
             toolbar.add_item(breadcrumbs, cx);
             let buffer_search_bar = cx.build_view(search::BufferSearchBar::new);
             toolbar.add_item(buffer_search_bar.clone(), cx);

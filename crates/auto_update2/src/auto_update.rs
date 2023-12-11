@@ -26,10 +26,13 @@ const POLL_INTERVAL: Duration = Duration::from_secs(60 * 60);
 
 //todo!(remove CheckThatAutoUpdaterWorks)
 actions!(
-    Check,
-    DismissErrorMessage,
-    ViewReleaseNotes,
-    CheckThatAutoUpdaterWorks
+    auto_update,
+    [
+        Check,
+        DismissErrorMessage,
+        ViewReleaseNotes,
+        CheckThatAutoUpdaterWorks
+    ]
 );
 
 #[derive(Serialize)]
@@ -85,15 +88,7 @@ pub fn init(http_client: Arc<dyn HttpClient>, server_url: String, cx: &mut AppCo
     AutoUpdateSetting::register(cx);
 
     cx.observe_new_views(|workspace: &mut Workspace, _cx| {
-        workspace
-            .register_action(|_, action: &Check, cx| check(action, cx))
-            .register_action(|_, _action: &CheckThatAutoUpdaterWorks, cx| {
-                let prompt = cx.prompt(gpui::PromptLevel::Info, "It does!", &["Ok"]);
-                cx.spawn(|_, _cx| async move {
-                    prompt.await.ok();
-                })
-                .detach();
-            });
+        workspace.register_action(|_, action: &Check, cx| check(action, cx));
 
         // @nate - code to trigger update notification on launch
         // workspace.show_notification(0, _cx, |cx| {
@@ -130,9 +125,15 @@ pub fn init(http_client: Arc<dyn HttpClient>, server_url: String, cx: &mut AppCo
     }
 }
 
-pub fn check(_: &Check, cx: &mut AppContext) {
+pub fn check(_: &Check, cx: &mut ViewContext<Workspace>) {
     if let Some(updater) = AutoUpdater::get(cx) {
         updater.update(cx, |updater, cx| updater.poll(cx));
+    } else {
+        drop(cx.prompt(
+            gpui::PromptLevel::Info,
+            "Auto-updates disabled for non-bundled app.",
+            &["Ok"],
+        ));
     }
 }
 

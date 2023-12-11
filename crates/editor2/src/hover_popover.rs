@@ -26,7 +26,7 @@ pub const MIN_POPOVER_CHARACTER_WIDTH: f32 = 20.;
 pub const MIN_POPOVER_LINE_HEIGHT: Pixels = px(4.);
 pub const HOVER_POPOVER_GAP: Pixels = px(10.);
 
-actions!(Hover);
+actions!(editor, [Hover]);
 
 /// Bindable action which uses the most recent selection head to trigger a hover
 pub fn hover(editor: &mut Editor, _: &Hover, cx: &mut ViewContext<Editor>) {

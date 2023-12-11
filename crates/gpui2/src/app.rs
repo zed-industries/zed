@@ -13,6 +13,7 @@ use smallvec::SmallVec;
 use smol::future::FutureExt;
 #[cfg(any(test, feature = "test-support"))]
 pub use test_context::*;
+use time::UtcOffset;
 
 use crate::{
     current_platform, image_cache::ImageCache, init_app_menus, Action, ActionRegistry, Any,
@@ -534,6 +535,10 @@ impl AppContext {
 
     pub fn restart(&self) {
         self.platform.restart()
+    }
+
+    pub fn local_timezone(&self) -> UtcOffset {
+        self.platform.local_timezone()
     }
 
     pub(crate) fn push_effect(&mut self, effect: Effect) {
@@ -1109,6 +1114,10 @@ impl AppContext {
                 }
             }
         }
+    }
+
+    pub fn has_active_drag(&self) -> bool {
+        self.active_drag.is_some()
     }
 }
 

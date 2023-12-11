@@ -34,12 +34,15 @@ use util::{
 };
 
 actions!(
-    Suggest,
-    NextSuggestion,
-    PreviousSuggestion,
-    Reinstall,
-    SignIn,
-    SignOut
+    copilot,
+    [
+        Suggest,
+        NextSuggestion,
+        PreviousSuggestion,
+        Reinstall,
+        SignIn,
+        SignOut
+    ]
 );
 
 pub fn init(

@@ -4,7 +4,7 @@ use gpui::{
 };
 use ui::prelude::*;
 
-actions!(ActionA, ActionB, ActionC);
+actions!(focus, [ActionA, ActionB, ActionC]);
 
 pub struct FocusStory {
     child_1_focus: FocusHandle,

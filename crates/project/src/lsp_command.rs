@@ -33,7 +33,7 @@ pub fn lsp_formatting_options(tab_size: u32) -> lsp::FormattingOptions {
 }
 
 #[async_trait(?Send)]
-pub(crate) trait LspCommand: 'static + Sized {
+pub trait LspCommand: 'static + Sized {
     type Response: 'static + Default + Send;
     type LspRequest: 'static + Send + lsp::request::Request;
     type ProtoRequest: 'static + Send + proto::RequestMessage;

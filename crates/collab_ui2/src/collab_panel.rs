@@ -92,7 +92,7 @@ use theme::{ActiveTheme, ThemeSettings};
 //     channel_id: ChannelId,
 // }
 
-#[derive(Action, PartialEq, Debug, Clone, Serialize, Deserialize)]
+#[derive(PartialEq, Debug, Clone, Serialize, Deserialize)]
 pub struct OpenChannelNotes {
     pub channel_id: ChannelId,
 }
@@ -122,15 +122,20 @@ pub struct OpenChannelNotes {
 //     to: ChannelId,
 // }
 
+impl_actions!(collab_panel, [OpenChannelNotes]);
+
 actions!(
-    ToggleFocus,
-    Remove,
-    Secondary,
-    CollapseSelectedChannel,
-    ExpandSelectedChannel,
-    StartMoveChannel,
-    MoveSelected,
-    InsertSpace,
+    collab_panel,
+    [
+        ToggleFocus,
+        Remove,
+        Secondary,
+        CollapseSelectedChannel,
+        ExpandSelectedChannel,
+        StartMoveChannel,
+        MoveSelected,
+        InsertSpace,
+    ]
 );
 
 // impl_actions!(
@@ -169,12 +174,12 @@ use editor::Editor;
 use feature_flags::{ChannelsAlpha, FeatureFlagAppExt, FeatureFlagViewExt};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
-    actions, canvas, div, img, overlay, point, prelude::*, px, rems, serde_json, size, Action,
-    AppContext, AsyncWindowContext, Bounds, ClipboardItem, DismissEvent, Div, EventEmitter,
-    FocusHandle, Focusable, FocusableView, Hsla, InteractiveElement, IntoElement, Length, Model,
-    MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Quad, Render, RenderOnce,
-    ScrollHandle, SharedString, Size, Stateful, Styled, Subscription, Task, View, ViewContext,
-    VisualContext, WeakView,
+    actions, canvas, div, img, impl_actions, overlay, point, prelude::*, px, rems, serde_json,
+    size, Action, AppContext, AsyncWindowContext, Bounds, ClipboardItem, DismissEvent, Div,
+    EventEmitter, FocusHandle, Focusable, FocusableView, Hsla, InteractiveElement, IntoElement,
+    Length, Model, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Quad, Render,
+    RenderOnce, ScrollHandle, SharedString, Size, Stateful, Styled, Subscription, Task, View,
+    ViewContext, VisualContext, WeakView,
 };
 use project::{Fs, Project};
 use serde_derive::{Deserialize, Serialize};
@@ -192,6 +197,7 @@ use workspace::{
 };
 
 use crate::channel_view::ChannelView;
+use crate::chat_panel::ChatPanel;
 use crate::{face_pile::FacePile, CollaborationPanelSettings};
 
 use self::channel_modal::ChannelModal;
@@ -852,7 +858,7 @@ impl CollabPanel {
                     .extend(channel_store.ordered_channels().enumerate().map(
                         |(ix, (_, channel))| StringMatchCandidate {
                             id: ix,
-                            string: channel.name.clone(),
+                            string: channel.name.clone().into(),
                             char_bag: channel.name.chars().collect(),
                         },
                     ));
@@ -2102,14 +2108,13 @@ impl CollabPanel {
         };
         cx.window_context().defer(move |cx| {
             workspace.update(cx, |workspace, cx| {
-                todo!();
-                // if let Some(panel) = workspace.focus_panel::<ChatPanel>(cx) {
-                //     panel.update(cx, |panel, cx| {
-                //         panel
-                //             .select_channel(channel_id, None, cx)
-                //             .detach_and_log_err(cx);
-                //     });
-                // }
+                if let Some(panel) = workspace.focus_panel::<ChatPanel>(cx) {
+                    panel.update(cx, |panel, cx| {
+                        panel
+                            .select_channel(channel_id, None, cx)
+                            .detach_and_log_err(cx);
+                    });
+                }
             });
         });
     }
@@ -2262,7 +2267,7 @@ impl CollabPanel {
                         }
                     };
 
-                    Some(channel.name.as_str())
+                    Some(channel.name.as_ref())
                 });
 
                 if let Some(name) = channel_name {
@@ -2603,9 +2608,14 @@ impl CollabPanel {
                                                     Color::Default
                                                 } else {
                                                     Color::Muted
+                                                })
+                                                .on_click(cx.listener(move |this, _, cx| {
+                                                    this.join_channel_chat(channel_id, cx)
+                                                }))
+                                                .tooltip(|cx| {
+                                                    Tooltip::text("Open channel chat", cx)
                                                 }),
-                                            )
-                                            .tooltip(|cx| Tooltip::text("Open channel chat", cx)),
+                                            ),
                                     )
                                     .child(
                                         div()

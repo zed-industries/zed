@@ -104,7 +104,7 @@ impl<'a> ChannelPathsInsertGuard<'a> {
 
             existing_channel.visibility = channel_proto.visibility();
             existing_channel.role = channel_proto.role();
-            existing_channel.name = channel_proto.name;
+            existing_channel.name = channel_proto.name.into();
         } else {
             self.channels_by_id.insert(
                 channel_proto.id,
@@ -112,7 +112,7 @@ impl<'a> ChannelPathsInsertGuard<'a> {
                     id: channel_proto.id,
                     visibility: channel_proto.visibility(),
                     role: channel_proto.role(),
-                    name: channel_proto.name,
+                    name: channel_proto.name.into(),
                     unseen_note_version: None,
                     unseen_message_id: None,
                     parent_path: channel_proto.parent_path,
@@ -146,11 +146,11 @@ fn channel_path_sorting_key<'a>(
     let (parent_path, name) = channels_by_id
         .get(&id)
         .map_or((&[] as &[_], None), |channel| {
-            (channel.parent_path.as_slice(), Some(channel.name.as_str()))
+            (channel.parent_path.as_slice(), Some(channel.name.as_ref()))
         });
     parent_path
         .iter()
-        .filter_map(|id| Some(channels_by_id.get(id)?.name.as_str()))
+        .filter_map(|id| Some(channels_by_id.get(id)?.name.as_ref()))
         .chain(name)
 }
 

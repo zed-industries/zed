@@ -1,17 +1,15 @@
 use std::{sync::Arc, time::Duration};
 
 use futures::StreamExt;
-use gpui::{Action, KeyBinding};
+use gpui::{actions, KeyBinding};
 use live_kit_client2::{
     LocalAudioTrack, LocalVideoTrack, RemoteAudioTrackUpdate, RemoteVideoTrackUpdate, Room,
 };
 use live_kit_server::token::{self, VideoGrant};
 use log::LevelFilter;
-use serde_derive::Deserialize;
 use simplelog::SimpleLogger;
 
-#[derive(Deserialize, Debug, Clone, Copy, PartialEq, Action)]
-struct Quit;
+actions!(live_kit_client, [Quit]);
 
 fn main() {
     SimpleLogger::init(LevelFilter::Info, Default::default()).expect("could not initialize logger");

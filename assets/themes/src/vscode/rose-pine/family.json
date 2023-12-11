@@ -17,5 +17,8 @@
       "file_name": "rose-pine-dawn.json",
       "appearance": "light"
     }
-  ]
+  ],
+  "syntax": {
+    "function": ["entity.name"]
+  }
 }

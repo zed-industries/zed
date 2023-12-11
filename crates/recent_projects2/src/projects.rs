@@ -1,0 +1,1 @@
+gpui::actions!(projects, [OpenRecent]);

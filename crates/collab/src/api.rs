@@ -116,12 +116,13 @@ struct CreateUserResponse {
 #[derive(Debug, Deserialize)]
 struct Panic {
     version: String,
+    release_channel: String,
     text: String,
 }
 
 #[instrument(skip(panic))]
 async fn trace_panic(panic: Json<Panic>) -> Result<()> {
-    tracing::error!(version = %panic.version, text = %panic.text, "panic report");
+    tracing::error!(version = %panic.version, release_channel = %panic.release_channel, text = %panic.text, "panic report");
     Ok(())
 }
 
