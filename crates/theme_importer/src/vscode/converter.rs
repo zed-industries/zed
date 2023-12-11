@@ -234,6 +234,18 @@ impl VsCodeThemeConverter {
                 .editor_foreground
                 .as_ref()
                 .traverse(|color| try_parse_color(&color))?,
+            scrollbar_track_background: vscode_colors
+                .scrollbar_shadow
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
+            scrollbar_thumb_background: vscode_colors
+                .scrollbar_slider_background
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
+            scrollbar_thumb_hover_background: vscode_colors
+                .scrollbar_slider_hover_background
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
             terminal_background: vscode_colors
                 .terminal_background
                 .as_ref()

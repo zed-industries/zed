@@ -1132,6 +1132,34 @@ pub struct VsCodeColors {
 
     #[serde(
         default,
+        rename = "scrollbar.shadow",
+        deserialize_with = "empty_string_as_none"
+    )]
+    pub scrollbar_shadow: Option<String>,
+
+    #[serde(
+        default,
+        rename = "scrollbarSlider.background",
+        deserialize_with = "empty_string_as_none"
+    )]
+    pub scrollbar_slider_background: Option<String>,
+
+    #[serde(
+        default,
+        rename = "scrollbarSlider.activeBackground",
+        deserialize_with = "empty_string_as_none"
+    )]
+    pub scrollbar_slider_active_background: Option<String>,
+
+    #[serde(
+        default,
+        rename = "scrollbarSlider.hoverBackground",
+        deserialize_with = "empty_string_as_none"
+    )]
+    pub scrollbar_slider_hover_background: Option<String>,
+
+    #[serde(
+        default,
         rename = "statusBar.background",
         deserialize_with = "empty_string_as_none"
     )]
