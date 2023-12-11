@@ -1,13 +1,9 @@
-use std::rc::Rc;
-
+use crate::{prelude::*, Avatar, Disclosure, Icon, IconElement, IconSize};
 use gpui::{
     px, AnyElement, AnyView, ClickEvent, Div, ImageSource, MouseButton, MouseDownEvent, Pixels,
     Stateful,
 };
 use smallvec::SmallVec;
-
-use crate::prelude::*;
-use crate::{Avatar, Disclosure, Icon, IconElement, IconSize};
 
 #[derive(IntoElement)]
 pub struct ListItem {
@@ -20,10 +16,10 @@ pub struct ListItem {
     left_slot: Option<AnyElement>,
     toggle: Option<bool>,
     inset: bool,
-    on_click: Option<Rc<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
-    on_toggle: Option<Rc<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
+    on_click: Option<Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
+    on_toggle: Option<Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
     tooltip: Option<Box<dyn Fn(&mut WindowContext) -> AnyView + 'static>>,
-    on_secondary_mouse_down: Option<Rc<dyn Fn(&MouseDownEvent, &mut WindowContext) + 'static>>,
+    on_secondary_mouse_down: Option<Box<dyn Fn(&MouseDownEvent, &mut WindowContext) + 'static>>,
     children: SmallVec<[AnyElement; 2]>,
 }
 
@@ -46,7 +42,7 @@ impl ListItem {
     }
 
     pub fn on_click(mut self, handler: impl Fn(&ClickEvent, &mut WindowContext) + 'static) -> Self {
-        self.on_click = Some(Rc::new(handler));
+        self.on_click = Some(Box::new(handler));
         self
     }
 
@@ -54,7 +50,7 @@ impl ListItem {
         mut self,
         handler: impl Fn(&MouseDownEvent, &mut WindowContext) + 'static,
     ) -> Self {
-        self.on_secondary_mouse_down = Some(Rc::new(handler));
+        self.on_secondary_mouse_down = Some(Box::new(handler));
         self
     }
 
@@ -87,7 +83,7 @@ impl ListItem {
         mut self,
         on_toggle: impl Fn(&ClickEvent, &mut WindowContext) + 'static,
     ) -> Self {
-        self.on_toggle = Some(Rc::new(on_toggle));
+        self.on_toggle = Some(Box::new(on_toggle));
         self
     }
 
