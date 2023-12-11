@@ -330,24 +330,27 @@ impl Render for ProjectSearchView {
                 .size_full()
                 .child(self.results_editor.clone())
         } else {
-            let has_no_results = self.model.read(cx).no_results.unwrap_or(false);
-            let middle_text = if has_no_results {
-                div()
-                    .items_center()
-                    .max_w_96()
-                    .child(Label::new("No results for a given query"))
+            let model = self.model.read(cx);
+            let has_no_results = model.no_results.unwrap_or(false);
+            let is_search_underway = model.active_query.is_some();
+            let major_text = if is_search_underway {
+                Label::new("Searching...")
+            } else if has_no_results {
+                Label::new("No results for a given query")
             } else {
-                div()
-                    .items_center()
-                    .max_w_96()
-                    .child(Label::new(self.landing_text_minor()).size(LabelSize::Small))
+                Label::new(format!("{} search all files", self.current_mode.label()))
             };
+            let major_text = div().justify_center().max_w_96().child(major_text);
+            let middle_text = div()
+                .items_center()
+                .max_w_96()
+                .child(Label::new(self.landing_text_minor()).size(LabelSize::Small));
             v_stack().flex_1().size_full().justify_center().child(
                 h_stack()
                     .size_full()
                     .justify_center()
                     .child(h_stack().flex_1())
-                    .child(middle_text)
+                    .child(v_stack().child(major_text).child(middle_text))
                     .child(h_stack().flex_1()),
             )
         }
