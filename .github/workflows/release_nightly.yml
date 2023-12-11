@@ -2,8 +2,8 @@ name: Release Nightly
 
 on:
     schedule:
-        # Fire every night at 1:00am
-        - cron: "0 1 * * *"
+        # Fire every day at 1:00pm and 1:00am
+        - cron: "0 1,13 * * *"
     push:
         tags:
             - "nightly"
