@@ -1,7 +1,6 @@
 use crate::{
     history::SearchHistory,
     mode::SearchMode,
-    search_bar::{render_nav_button, render_search_mode_button},
     ActivateRegexMode, ActivateSemanticMode, ActivateTextMode, CycleMode, NextHistoryQuery,
     PreviousHistoryQuery, ReplaceAll, ReplaceNext, SearchOptions, SelectNextMatch, SelectPrevMatch,
     ToggleCaseSensitive, ToggleReplace, ToggleWholeWord,
@@ -24,21 +23,19 @@ use project::{
     Entry, Project,
 };
 use semantic_index::{SemanticIndex, SemanticIndexStatus};
-use smallvec::SmallVec;
+
 use smol::stream::StreamExt;
 use std::{
     any::{Any, TypeId},
-    borrow::Cow,
     collections::HashSet,
     mem,
     ops::{Not, Range},
     path::PathBuf,
-    sync::Arc,
-    time::{Duration, Instant},
+    time::{Duration},
 };
-use theme::ActiveTheme;
+
 use ui::{
-    h_stack, v_stack, Button, ButtonCommon, Clickable, Color, Disableable, Icon, IconButton,
+    h_stack, v_stack, Button, ButtonCommon, Clickable, Disableable, Icon, IconButton,
     IconElement, Label, LabelCommon, LabelSize, Selectable, Tooltip,
 };
 use util::{paths::PathMatcher, ResultExt as _};
@@ -61,7 +58,7 @@ pub fn init(cx: &mut AppContext) {
     // todo!() po
     cx.set_global(ActiveSearches::default());
     cx.set_global(ActiveSettings::default());
-    cx.observe_new_views(|workspace: &mut Workspace, cx| {
+    cx.observe_new_views(|workspace: &mut Workspace, _cx| {
         workspace.register_action(ProjectSearchView::deploy);
     })
     .detach();
@@ -97,7 +94,7 @@ pub fn init(cx: &mut AppContext) {
     // add_toggle_filters_action::<ToggleFilters>(cx);
 }
 
-fn add_toggle_filters_action<A: Action>(cx: &mut AppContext) {
+fn add_toggle_filters_action<A: Action>(_cx: &mut AppContext) {
     // todo!() po
     // cx.register_action(move |pane: &mut Pane, _: &A, cx: &mut ViewContext<Pane>| {
     //     if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<ProjectSearchBar>() {
@@ -109,7 +106,7 @@ fn add_toggle_filters_action<A: Action>(cx: &mut AppContext) {
     // });
 }
 
-fn add_toggle_option_action<A: Action>(option: SearchOptions, cx: &mut AppContext) {
+fn add_toggle_option_action<A: Action>(_option: SearchOptions, _cx: &mut AppContext) {
     // todo!() po
     // cx.add_action(move |pane: &mut Pane, _: &A, cx: &mut ViewContext<Pane>| {
     //     if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<ProjectSearchBar>() {
@@ -811,7 +808,7 @@ impl ProjectSearchView {
                     let has_permission = has_permission.await?;
 
                     if !has_permission {
-                        let mut answer = this.update(&mut cx, |this, cx| {
+                        let answer = this.update(&mut cx, |this, cx| {
                             let project = this.model.read(cx).project.clone();
                             let project_name = project
                                 .read(cx)
@@ -1069,7 +1066,7 @@ impl ProjectSearchView {
         cx: &mut ViewContext<Workspace>,
     ) {
         // Clean up entries for dropped projects
-        cx.update_global(|state: &mut ActiveSearches, cx| {
+        cx.update_global(|state: &mut ActiveSearches, _cx| {
             state.0.retain(|project, _| project.is_upgradable())
         });
 
