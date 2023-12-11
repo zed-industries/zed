@@ -997,6 +997,7 @@ pub mod tests {
         movement,
         test::{editor_test_context::EditorTestContext, marked_display_snapshot},
     };
+    use client::Client;
     use gpui::{div, font, observe, px, AppContext, Context, Element, Hsla};
     use language::{
         language_settings::{AllLanguageSettings, AllLanguageSettingsContent},
@@ -1008,7 +1009,10 @@ pub mod tests {
     use smol::stream::StreamExt;
     use std::{env, sync::Arc};
     use theme::{LoadThemes, SyntaxTheme};
-    use util::test::{marked_text_ranges, sample_text};
+    use util::{
+        http::FakeHttpClient,
+        test::{marked_text_ranges, sample_text},
+    };
     use Bias::*;
 
     #[gpui::test(iterations = 100)]

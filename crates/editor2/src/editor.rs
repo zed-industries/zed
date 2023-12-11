@@ -13,6 +13,7 @@ mod link_go_to_definition;
 mod mouse_context_menu;
 pub mod movement;
 mod persistence;
+mod rust_analyzer_ext;
 pub mod scroll;
 pub mod selections_collection;
 
@@ -73,7 +74,7 @@ pub use multi_buffer::{
 use ordered_float::OrderedFloat;
 use parking_lot::{Mutex, RwLock};
 use project::{FormatTrigger, Location, Project, ProjectPath, ProjectTransaction};
-use rand::prelude::*;
+use rand::{prelude::*, rngs::adapter};
 use rpc::proto::{self, *};
 use scroll::{
     autoscroll::Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager, ScrollbarAutoHide,
@@ -107,7 +108,7 @@ use ui::{
 use ui::{prelude::*, IconSize};
 use util::{post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::{
-    item::{ItemEvent, ItemHandle},
+    item::{Item, ItemEvent, ItemHandle},
     searchable::SearchEvent,
     ItemNavHistory, Pane, SplitDirection, ViewId, Workspace,
 };
@@ -329,6 +330,7 @@ actions!(
         DeleteToPreviousSubwordStart,
         DeleteToPreviousWordStart,
         DuplicateLine,
+        ExpandMacroRecursively,
         FindAllReferences,
         Fold,
         FoldSelectedRanges,

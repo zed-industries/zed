@@ -1202,6 +1202,7 @@ pub mod tests {
         scroll::{autoscroll::Autoscroll, scroll_amount::ScrollAmount},
         ExcerptRange,
     };
+    use client::Client;
     use futures::StreamExt;
     use gpui::{Context, TestAppContext, View, WindowHandle};
     use itertools::Itertools;
@@ -1214,6 +1215,7 @@ pub mod tests {
     use serde_json::json;
     use settings::SettingsStore;
     use text::{Point, ToPoint};
+    use util::http::FakeHttpClient;
     use workspace::Workspace;
 
     use crate::editor_tests::update_test_language_settings;

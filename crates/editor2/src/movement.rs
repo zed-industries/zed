@@ -460,10 +460,11 @@ mod tests {
         test::{editor_test_context::EditorTestContext, marked_display_snapshot},
         Buffer, DisplayMap, ExcerptRange, InlayId, MultiBuffer,
     };
+    use client::Client;
     use gpui::{font, Context as _};
     use project::Project;
     use settings::SettingsStore;
-    use util::post_inc;
+    use util::{http::FakeHttpClient, post_inc};
 
     #[gpui::test]
     fn test_previous_word_start(cx: &mut gpui::AppContext) {
