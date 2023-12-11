@@ -2,7 +2,7 @@ use gpui::{div, AnyElement, Div, Element, Entity, IntoElement, Render, Subscript
 use settings::{Settings, SettingsStore};
 use workspace::{item::ItemHandle, ui::Label, StatusItemView};
 
-use crate::{state::Mode, Vim, VimEvent, VimModeSetting};
+use crate::{state::Mode, Vim, VimModeSetting};
 
 pub struct ModeIndicator {
     pub mode: Option<Mode>,

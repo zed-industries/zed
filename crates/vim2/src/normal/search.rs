@@ -1,37 +1,37 @@
-use gpui::{actions, Action, AppContext, ViewContext};
+use gpui::{actions, impl_actions, Action, AppContext, ViewContext};
 use search::{buffer_search, BufferSearchBar, SearchMode, SearchOptions};
 use serde_derive::Deserialize;
 use workspace::{searchable::Direction, Pane, Workspace};
 
 use crate::{motion::Motion, normal::move_cursor, state::SearchState, Vim};
 
-#[derive(Action, Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct MoveToNext {
     #[serde(default)]
     partial_word: bool,
 }
 
-#[derive(Action, Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct MoveToPrev {
     #[serde(default)]
     partial_word: bool,
 }
 
-#[derive(Action, Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, PartialEq)]
 pub(crate) struct Search {
     #[serde(default)]
     backwards: bool,
 }
 
-#[derive(Action, Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct FindCommand {
     pub query: String,
     pub backwards: bool,
 }
 
-#[derive(Action, Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct ReplaceCommand {
     pub query: String,
 }
@@ -44,18 +44,21 @@ struct Replacement {
     is_case_sensitive: bool,
 }
 
-actions!(SearchSubmit);
+actions!(vim, [SearchSubmit]);
+impl_actions!(
+    vim,
+    [FindCommand, ReplaceCommand, Search, MoveToPrev, MoveToNext]
+);
 
-pub(crate) fn init(cx: &mut AppContext) {
-    // todo!()
-    // cx.add_action(move_to_next);
-    // cx.add_action(move_to_prev);
-    // cx.add_action(search);
-    // cx.add_action(search_submit);
-    // cx.add_action(search_deploy);
+pub(crate) fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
+    workspace.register_action(move_to_next);
+    workspace.register_action(move_to_prev);
+    workspace.register_action(search);
+    workspace.register_action(search_submit);
+    workspace.register_action(search_deploy);
 
-    // cx.add_action(find_command);
-    // cx.add_action(replace_command);
+    workspace.register_action(find_command);
+    workspace.register_action(replace_command);
 }
 
 fn move_to_next(workspace: &mut Workspace, action: &MoveToNext, cx: &mut ViewContext<Workspace>) {
@@ -103,7 +106,7 @@ fn search(workspace: &mut Workspace, action: &Search, cx: &mut ViewContext<Works
 }
 
 // hook into the existing to clear out any vim search state on cmd+f or edit -> find.
-fn search_deploy(_: &mut Pane, _: &buffer_search::Deploy, cx: &mut ViewContext<Pane>) {
+fn search_deploy(_: &mut Workspace, _: &buffer_search::Deploy, cx: &mut ViewContext<Workspace>) {
     Vim::update(cx, |vim, _| vim.workspace_state.search = Default::default());
     cx.propagate();
 }

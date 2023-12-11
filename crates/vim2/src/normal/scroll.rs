@@ -8,40 +8,42 @@ use gpui::{actions, AppContext, ViewContext};
 use language::Bias;
 use workspace::Workspace;
 
-actions!(LineUp, LineDown, ScrollUp, ScrollDown, PageUp, PageDown,);
+actions!(
+    vim,
+    [LineUp, LineDown, ScrollUp, ScrollDown, PageUp, PageDown]
+);
 
-pub fn init(cx: &mut AppContext) {
-    // todo!()
-    // cx.add_action(|_: &mut Workspace, _: &LineDown, cx| {
-    //     scroll(cx, false, |c| ScrollAmount::Line(c.unwrap_or(1.)))
-    // });
-    // cx.add_action(|_: &mut Workspace, _: &LineUp, cx| {
-    //     scroll(cx, false, |c| ScrollAmount::Line(-c.unwrap_or(1.)))
-    // });
-    // cx.add_action(|_: &mut Workspace, _: &PageDown, cx| {
-    //     scroll(cx, false, |c| ScrollAmount::Page(c.unwrap_or(1.)))
-    // });
-    // cx.add_action(|_: &mut Workspace, _: &PageUp, cx| {
-    //     scroll(cx, false, |c| ScrollAmount::Page(-c.unwrap_or(1.)))
-    // });
-    // cx.add_action(|_: &mut Workspace, _: &ScrollDown, cx| {
-    //     scroll(cx, true, |c| {
-    //         if let Some(c) = c {
-    //             ScrollAmount::Line(c)
-    //         } else {
-    //             ScrollAmount::Page(0.5)
-    //         }
-    //     })
-    // });
-    // cx.add_action(|_: &mut Workspace, _: &ScrollUp, cx| {
-    //     scroll(cx, true, |c| {
-    //         if let Some(c) = c {
-    //             ScrollAmount::Line(-c)
-    //         } else {
-    //             ScrollAmount::Page(-0.5)
-    //         }
-    //     })
-    // });
+pub fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
+    workspace.register_action(|_: &mut Workspace, _: &LineDown, cx| {
+        scroll(cx, false, |c| ScrollAmount::Line(c.unwrap_or(1.)))
+    });
+    workspace.register_action(|_: &mut Workspace, _: &LineUp, cx| {
+        scroll(cx, false, |c| ScrollAmount::Line(-c.unwrap_or(1.)))
+    });
+    workspace.register_action(|_: &mut Workspace, _: &PageDown, cx| {
+        scroll(cx, false, |c| ScrollAmount::Page(c.unwrap_or(1.)))
+    });
+    workspace.register_action(|_: &mut Workspace, _: &PageUp, cx| {
+        scroll(cx, false, |c| ScrollAmount::Page(-c.unwrap_or(1.)))
+    });
+    workspace.register_action(|_: &mut Workspace, _: &ScrollDown, cx| {
+        scroll(cx, true, |c| {
+            if let Some(c) = c {
+                ScrollAmount::Line(c)
+            } else {
+                ScrollAmount::Page(0.5)
+            }
+        })
+    });
+    workspace.register_action(|_: &mut Workspace, _: &ScrollUp, cx| {
+        scroll(cx, true, |c| {
+            if let Some(c) = c {
+                ScrollAmount::Line(-c)
+            } else {
+                ScrollAmount::Page(-0.5)
+            }
+        })
+    });
 }
 
 fn scroll(

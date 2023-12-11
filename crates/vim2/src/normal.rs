@@ -20,7 +20,7 @@ use crate::{
 use collections::HashSet;
 use editor::scroll::autoscroll::Autoscroll;
 use editor::{Bias, DisplayPoint};
-use gpui::{actions, AppContext, ViewContext, WindowContext};
+use gpui::{actions, ViewContext, WindowContext};
 use language::SelectionGoal;
 use log::error;
 use workspace::Workspace;
@@ -33,20 +33,23 @@ use self::{
 };
 
 actions!(
-    InsertAfter,
-    InsertBefore,
-    InsertFirstNonWhitespace,
-    InsertEndOfLine,
-    InsertLineAbove,
-    InsertLineBelow,
-    DeleteLeft,
-    DeleteRight,
-    ChangeToEndOfLine,
-    DeleteToEndOfLine,
-    Yank,
-    YankLine,
-    ChangeCase,
-    JoinLines,
+    vim,
+    [
+        InsertAfter,
+        InsertBefore,
+        InsertFirstNonWhitespace,
+        InsertEndOfLine,
+        InsertLineAbove,
+        InsertLineBelow,
+        DeleteLeft,
+        DeleteRight,
+        ChangeToEndOfLine,
+        DeleteToEndOfLine,
+        Yank,
+        YankLine,
+        ChangeCase,
+        JoinLines,
+    ]
 );
 
 pub(crate) fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
@@ -123,12 +126,12 @@ pub(crate) fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace
         });
     });
 
-    // paste::init(cx);
-    // repeat::init(cx);
-    // scroll::init(cx);
-    // search::init(cx);
-    // substitute::init(cx);
-    // increment::init(cx);
+    paste::register(workspace, cx);
+    repeat::register(workspace, cx);
+    scroll::register(workspace, cx);
+    search::register(workspace, cx);
+    substitute::register(workspace, cx);
+    increment::register(workspace, cx);
 }
 
 pub fn normal_motion(

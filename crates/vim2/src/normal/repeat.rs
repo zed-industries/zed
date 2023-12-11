@@ -5,10 +5,10 @@ use crate::{
     visual::visual_motion,
     Vim,
 };
-use gpui::{actions, Action, AppContext, WindowContext};
+use gpui::{actions, Action, AppContext, ViewContext, WindowContext};
 use workspace::Workspace;
 
-actions!(Repeat, EndRepeat);
+actions!(vim, [Repeat, EndRepeat]);
 
 fn should_replay(action: &Box<dyn Action>) -> bool {
     // skip so that we don't leave the character palette open
@@ -39,16 +39,15 @@ fn repeatable_insert(action: &ReplayableAction) -> Option<Box<dyn Action>> {
     }
 }
 
-pub(crate) fn init(cx: &mut AppContext) {
-    // todo!()
-    // cx.add_action(|_: &mut Workspace, _: &EndRepeat, cx| {
-    //     Vim::update(cx, |vim, cx| {
-    //         vim.workspace_state.replaying = false;
-    //         vim.switch_mode(Mode::Normal, false, cx)
-    //     });
-    // });
+pub(crate) fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
+    workspace.register_action(|_: &mut Workspace, _: &EndRepeat, cx| {
+        Vim::update(cx, |vim, cx| {
+            vim.workspace_state.replaying = false;
+            vim.switch_mode(Mode::Normal, false, cx)
+        });
+    });
 
-    // cx.add_action(|_: &mut Workspace, _: &Repeat, cx| repeat(cx, false));
+    workspace.register_action(|_: &mut Workspace, _: &Repeat, cx| repeat(cx, false));
 }
 
 pub(crate) fn repeat(cx: &mut WindowContext, from_insert_mode: bool) {

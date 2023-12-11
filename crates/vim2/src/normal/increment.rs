@@ -1,45 +1,46 @@
 use std::ops::Range;
 
 use editor::{scroll::autoscroll::Autoscroll, MultiBufferSnapshot, ToOffset, ToPoint};
-use gpui::{Action, AppContext, WindowContext};
+use gpui::{impl_actions, AppContext, ViewContext, WindowContext};
 use language::{Bias, Point};
 use serde::Deserialize;
 use workspace::Workspace;
 
 use crate::{state::Mode, Vim};
 
-#[derive(Action, Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 struct Increment {
     #[serde(default)]
     step: bool,
 }
 
-#[derive(Action, Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 struct Decrement {
     #[serde(default)]
     step: bool,
 }
 
-pub fn init(cx: &mut AppContext) {
-    // todo!();
-    // cx.add_action(|_: &mut Workspace, action: &Increment, cx| {
-    //     Vim::update(cx, |vim, cx| {
-    //         vim.record_current_action(cx);
-    //         let count = vim.take_count(cx).unwrap_or(1);
-    //         let step = if action.step { 1 } else { 0 };
-    //         increment(vim, count as i32, step, cx)
-    //     })
-    // });
-    // cx.add_action(|_: &mut Workspace, action: &Decrement, cx| {
-    //     Vim::update(cx, |vim, cx| {
-    //         vim.record_current_action(cx);
-    //         let count = vim.take_count(cx).unwrap_or(1);
-    //         let step = if action.step { -1 } else { 0 };
-    //         increment(vim, count as i32 * -1, step, cx)
-    //     })
-    // });
+impl_actions!(vim, [Increment, Decrement]);
+
+pub fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
+    workspace.register_action(|_: &mut Workspace, action: &Increment, cx| {
+        Vim::update(cx, |vim, cx| {
+            vim.record_current_action(cx);
+            let count = vim.take_count(cx).unwrap_or(1);
+            let step = if action.step { 1 } else { 0 };
+            increment(vim, count as i32, step, cx)
+        })
+    });
+    workspace.register_action(|_: &mut Workspace, action: &Decrement, cx| {
+        Vim::update(cx, |vim, cx| {
+            vim.record_current_action(cx);
+            let count = vim.take_count(cx).unwrap_or(1);
+            let step = if action.step { -1 } else { 0 };
+            increment(vim, count as i32 * -1, step, cx)
+        })
+    });
 }
 
 fn increment(vim: &mut Vim, mut delta: i32, step: i32, cx: &mut WindowContext) {

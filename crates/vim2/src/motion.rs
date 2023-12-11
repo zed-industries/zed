@@ -4,7 +4,7 @@ use editor::{
     movement::{self, find_boundary, find_preceding_boundary, FindRange, TextLayoutDetails},
     Bias, CharKind, DisplayPoint, ToOffset,
 };
-use gpui::{actions, px, Action, AppContext, WindowContext};
+use gpui::{actions, impl_actions, px, AppContext, ViewContext, WindowContext};
 use language::{Point, Selection, SelectionGoal};
 use serde::Deserialize;
 use workspace::Workspace;
@@ -43,168 +43,194 @@ pub enum Motion {
     GoToColumn,
 }
 
-#[derive(Action, Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 struct NextWordStart {
     #[serde(default)]
     ignore_punctuation: bool,
 }
 
-#[derive(Action, Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 struct NextWordEnd {
     #[serde(default)]
     ignore_punctuation: bool,
 }
 
-#[derive(Action, Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 struct PreviousWordStart {
     #[serde(default)]
     ignore_punctuation: bool,
 }
 
-#[derive(Action, Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct Up {
     #[serde(default)]
     pub(crate) display_lines: bool,
 }
 
-#[derive(Action, Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 struct Down {
     #[serde(default)]
     display_lines: bool,
 }
 
-#[derive(Action, Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 struct FirstNonWhitespace {
     #[serde(default)]
     display_lines: bool,
 }
 
-#[derive(Action, Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 struct EndOfLine {
     #[serde(default)]
     display_lines: bool,
 }
 
-#[derive(Action, Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct StartOfLine {
     #[serde(default)]
     pub(crate) display_lines: bool,
 }
 
-#[derive(Action, Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, PartialEq)]
 struct RepeatFind {
     #[serde(default)]
     backwards: bool,
 }
 
-actions!(
-    Left,
-    Backspace,
-    Right,
-    CurrentLine,
-    StartOfParagraph,
-    EndOfParagraph,
-    StartOfDocument,
-    EndOfDocument,
-    Matching,
-    NextLineStart,
-    StartOfLineDownward,
-    EndOfLineDownward,
-    GoToColumn,
+impl_actions!(
+    vim,
+    [
+        RepeatFind,
+        StartOfLine,
+        EndOfLine,
+        FirstNonWhitespace,
+        Down,
+        Up,
+        PreviousWordStart,
+        NextWordEnd,
+        NextWordStart
+    ]
 );
 
-pub fn init(cx: &mut AppContext) {
-    // todo!()
-    // cx.add_action(|_: &mut Workspace, _: &Left, cx: _| motion(Motion::Left, cx));
-    // cx.add_action(|_: &mut Workspace, _: &Backspace, cx: _| motion(Motion::Backspace, cx));
-    // cx.add_action(|_: &mut Workspace, action: &Down, cx: _| {
-    //     motion(
-    //         Motion::Down {
-    //             display_lines: action.display_lines,
-    //         },
-    //         cx,
-    //     )
-    // });
-    // cx.add_action(|_: &mut Workspace, action: &Up, cx: _| {
-    //     motion(
-    //         Motion::Up {
-    //             display_lines: action.display_lines,
-    //         },
-    //         cx,
-    //     )
-    // });
-    // cx.add_action(|_: &mut Workspace, _: &Right, cx: _| motion(Motion::Right, cx));
-    // cx.add_action(|_: &mut Workspace, action: &FirstNonWhitespace, cx: _| {
-    //     motion(
-    //         Motion::FirstNonWhitespace {
-    //             display_lines: action.display_lines,
-    //         },
-    //         cx,
-    //     )
-    // });
-    // cx.add_action(|_: &mut Workspace, action: &StartOfLine, cx: _| {
-    //     motion(
-    //         Motion::StartOfLine {
-    //             display_lines: action.display_lines,
-    //         },
-    //         cx,
-    //     )
-    // });
-    // cx.add_action(|_: &mut Workspace, action: &EndOfLine, cx: _| {
-    //     motion(
-    //         Motion::EndOfLine {
-    //             display_lines: action.display_lines,
-    //         },
-    //         cx,
-    //     )
-    // });
-    // cx.add_action(|_: &mut Workspace, _: &CurrentLine, cx: _| motion(Motion::CurrentLine, cx));
-    // cx.add_action(|_: &mut Workspace, _: &StartOfParagraph, cx: _| {
-    //     motion(Motion::StartOfParagraph, cx)
-    // });
-    // cx.add_action(|_: &mut Workspace, _: &EndOfParagraph, cx: _| {
-    //     motion(Motion::EndOfParagraph, cx)
-    // });
-    // cx.add_action(|_: &mut Workspace, _: &StartOfDocument, cx: _| {
-    //     motion(Motion::StartOfDocument, cx)
-    // });
-    // cx.add_action(|_: &mut Workspace, _: &EndOfDocument, cx: _| motion(Motion::EndOfDocument, cx));
-    // cx.add_action(|_: &mut Workspace, _: &Matching, cx: _| motion(Motion::Matching, cx));
+actions!(
+    vim,
+    [
+        Left,
+        Backspace,
+        Right,
+        CurrentLine,
+        StartOfParagraph,
+        EndOfParagraph,
+        StartOfDocument,
+        EndOfDocument,
+        Matching,
+        NextLineStart,
+        StartOfLineDownward,
+        EndOfLineDownward,
+        GoToColumn,
+    ]
+);
 
-    // cx.add_action(
-    //     |_: &mut Workspace, &NextWordStart { ignore_punctuation }: &NextWordStart, cx: _| {
-    //         motion(Motion::NextWordStart { ignore_punctuation }, cx)
-    //     },
-    // );
-    // cx.add_action(
-    //     |_: &mut Workspace, &NextWordEnd { ignore_punctuation }: &NextWordEnd, cx: _| {
-    //         motion(Motion::NextWordEnd { ignore_punctuation }, cx)
-    //     },
-    // );
-    // cx.add_action(
-    //     |_: &mut Workspace,
-    //      &PreviousWordStart { ignore_punctuation }: &PreviousWordStart,
-    //      cx: _| { motion(Motion::PreviousWordStart { ignore_punctuation }, cx) },
-    // );
-    // cx.add_action(|_: &mut Workspace, &NextLineStart, cx: _| motion(Motion::NextLineStart, cx));
-    // cx.add_action(|_: &mut Workspace, &StartOfLineDownward, cx: _| {
-    //     motion(Motion::StartOfLineDownward, cx)
-    // });
-    // cx.add_action(|_: &mut Workspace, &EndOfLineDownward, cx: _| {
-    //     motion(Motion::EndOfLineDownward, cx)
-    // });
-    // cx.add_action(|_: &mut Workspace, &GoToColumn, cx: _| motion(Motion::GoToColumn, cx));
-    // cx.add_action(|_: &mut Workspace, action: &RepeatFind, cx: _| {
-    //     repeat_motion(action.backwards, cx)
-    // })
+pub fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
+    workspace.register_action(|_: &mut Workspace, _: &Left, cx: _| motion(Motion::Left, cx));
+    workspace
+        .register_action(|_: &mut Workspace, _: &Backspace, cx: _| motion(Motion::Backspace, cx));
+    workspace.register_action(|_: &mut Workspace, action: &Down, cx: _| {
+        motion(
+            Motion::Down {
+                display_lines: action.display_lines,
+            },
+            cx,
+        )
+    });
+    workspace.register_action(|_: &mut Workspace, action: &Up, cx: _| {
+        motion(
+            Motion::Up {
+                display_lines: action.display_lines,
+            },
+            cx,
+        )
+    });
+    workspace.register_action(|_: &mut Workspace, _: &Right, cx: _| motion(Motion::Right, cx));
+    workspace.register_action(|_: &mut Workspace, action: &FirstNonWhitespace, cx: _| {
+        motion(
+            Motion::FirstNonWhitespace {
+                display_lines: action.display_lines,
+            },
+            cx,
+        )
+    });
+    workspace.register_action(|_: &mut Workspace, action: &StartOfLine, cx: _| {
+        motion(
+            Motion::StartOfLine {
+                display_lines: action.display_lines,
+            },
+            cx,
+        )
+    });
+    workspace.register_action(|_: &mut Workspace, action: &EndOfLine, cx: _| {
+        motion(
+            Motion::EndOfLine {
+                display_lines: action.display_lines,
+            },
+            cx,
+        )
+    });
+    workspace.register_action(|_: &mut Workspace, _: &CurrentLine, cx: _| {
+        motion(Motion::CurrentLine, cx)
+    });
+    workspace.register_action(|_: &mut Workspace, _: &StartOfParagraph, cx: _| {
+        motion(Motion::StartOfParagraph, cx)
+    });
+    workspace.register_action(|_: &mut Workspace, _: &EndOfParagraph, cx: _| {
+        motion(Motion::EndOfParagraph, cx)
+    });
+    workspace.register_action(|_: &mut Workspace, _: &StartOfDocument, cx: _| {
+        motion(Motion::StartOfDocument, cx)
+    });
+    workspace.register_action(|_: &mut Workspace, _: &EndOfDocument, cx: _| {
+        motion(Motion::EndOfDocument, cx)
+    });
+    workspace
+        .register_action(|_: &mut Workspace, _: &Matching, cx: _| motion(Motion::Matching, cx));
+
+    workspace.register_action(
+        |_: &mut Workspace, &NextWordStart { ignore_punctuation }: &NextWordStart, cx: _| {
+            motion(Motion::NextWordStart { ignore_punctuation }, cx)
+        },
+    );
+    workspace.register_action(
+        |_: &mut Workspace, &NextWordEnd { ignore_punctuation }: &NextWordEnd, cx: _| {
+            motion(Motion::NextWordEnd { ignore_punctuation }, cx)
+        },
+    );
+    workspace.register_action(
+        |_: &mut Workspace,
+         &PreviousWordStart { ignore_punctuation }: &PreviousWordStart,
+         cx: _| { motion(Motion::PreviousWordStart { ignore_punctuation }, cx) },
+    );
+    workspace.register_action(|_: &mut Workspace, &NextLineStart, cx: _| {
+        motion(Motion::NextLineStart, cx)
+    });
+    workspace.register_action(|_: &mut Workspace, &StartOfLineDownward, cx: _| {
+        motion(Motion::StartOfLineDownward, cx)
+    });
+    workspace.register_action(|_: &mut Workspace, &EndOfLineDownward, cx: _| {
+        motion(Motion::EndOfLineDownward, cx)
+    });
+    workspace
+        .register_action(|_: &mut Workspace, &GoToColumn, cx: _| motion(Motion::GoToColumn, cx));
+    workspace.register_action(|_: &mut Workspace, action: &RepeatFind, cx: _| {
+        repeat_motion(action.backwards, cx)
+    });
 }
 
 pub(crate) fn motion(motion: Motion, cx: &mut WindowContext) {

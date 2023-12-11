@@ -1,6 +1,6 @@
 use command_palette::CommandInterceptResult;
 use editor::{SortLinesCaseInsensitive, SortLinesCaseSensitive};
-use gpui::{Action, AppContext};
+use gpui::{impl_actions, Action, AppContext, ViewContext};
 use serde_derive::Deserialize;
 use workspace::{SaveIntent, Workspace};
 
@@ -15,19 +15,20 @@ use crate::{
     Vim,
 };
 
-#[derive(Action, Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct GoToLine {
     pub line: u32,
 }
 
-pub fn init(cx: &mut AppContext) {
-    // todo!()
-    // cx.add_action(|_: &mut Workspace, action: &GoToLine, cx| {
-    //     Vim::update(cx, |vim, cx| {
-    //         vim.switch_mode(Mode::Normal, false, cx);
-    //         move_cursor(vim, Motion::StartOfDocument, Some(action.line as usize), cx);
-    //     });
-    // });
+impl_actions!(vim, [GoToLine]);
+
+pub fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
+    workspace.register_action(|_: &mut Workspace, action: &GoToLine, cx| {
+        Vim::update(cx, |vim, cx| {
+            vim.switch_mode(Mode::Normal, false, cx);
+            move_cursor(vim, Motion::StartOfDocument, Some(action.line as usize), cx);
+        });
+    });
 }
 
 pub fn command_interceptor(mut query: &str, _: &AppContext) -> Option<CommandInterceptResult> {

@@ -17,8 +17,8 @@ use collections::{CommandPaletteFilter, HashMap};
 use command_palette::CommandPaletteInterceptor;
 use editor::{movement, Editor, EditorEvent, EditorMode};
 use gpui::{
-    actions, Action, AppContext, EntityId, KeyContext, Subscription, View, ViewContext, WeakModel,
-    WeakView, WindowContext,
+    actions, impl_actions, Action, AppContext, EntityId, KeyContext, Subscription, View,
+    ViewContext, WeakModel, WeakView, WindowContext,
 };
 use language::{CursorShape, Point, Selection, SelectionGoal};
 pub use mode_indicator::ModeIndicator;
@@ -35,21 +35,23 @@ use crate::state::ReplayableAction;
 
 pub struct VimModeSetting(pub bool);
 
-#[derive(Action, Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, PartialEq)]
 pub struct SwitchMode(pub Mode);
 
-#[derive(Action, Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, PartialEq)]
 pub struct PushOperator(pub Operator);
 
-#[derive(Action, Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, PartialEq)]
 struct Number(usize);
 
-actions!(Tab, Enter, Object, InnerObject, FindForward, FindBackward,);
+actions!(
+    vim,
+    [Tab, Enter, Object, InnerObject, FindForward, FindBackward]
+);
+// in the workspace namespace so it's not filtered out when vim is disabled.
+actions!(workspace, [ToggleVimMode]);
 
-#[derive(Copy, Clone, Debug)]
-enum VimEvent {
-    ModeChanged { mode: Mode },
-}
+impl_actions!(vim, [SwitchMode, PushOperator, Number]);
 
 pub fn init(cx: &mut AppContext) {
     cx.set_global(Vim::default());
@@ -59,12 +61,6 @@ pub fn init(cx: &mut AppContext) {
 
     cx.observe_new_views(|workspace: &mut Workspace, cx| register(workspace, cx))
         .detach();
-
-    visual::init(cx);
-    insert::init(cx);
-    object::init(cx);
-    motion::init(cx);
-    command::init(cx);
 
     // Any time settings change, update vim mode to match. The Vim struct
     // will be initialized as disabled by default, so we filter its commands
@@ -104,17 +100,20 @@ fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
         Vim::active_editor_input_ignored("\n".into(), cx)
     });
 
-    workspace.register_action(
-        |workspace: &mut Workspace, _: &workspace::ToggleVimMode, cx| {
-            let fs = workspace.app_state().fs.clone();
-            let currently_enabled = VimModeSetting::get_global(cx).0;
-            update_settings_file::<VimModeSetting>(fs, cx, move |setting| {
-                *setting = Some(!currently_enabled)
-            })
-        },
-    );
+    workspace.register_action(|workspace: &mut Workspace, _: &ToggleVimMode, cx| {
+        let fs = workspace.app_state().fs.clone();
+        let currently_enabled = VimModeSetting::get_global(cx).0;
+        update_settings_file::<VimModeSetting>(fs, cx, move |setting| {
+            *setting = Some(!currently_enabled)
+        })
+    });
 
-    normal::register(workspace, cx)
+    normal::register(workspace, cx);
+    insert::register(workspace, cx);
+    motion::register(workspace, cx);
+    command::register(workspace, cx);
+    object::register(workspace, cx);
+    visual::register(workspace, cx);
 }
 
 pub fn observe_keystrokes(cx: &mut WindowContext) {

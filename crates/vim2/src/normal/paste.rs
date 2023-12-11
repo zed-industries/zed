@@ -4,14 +4,14 @@ use editor::{
     display_map::ToDisplayPoint, movement, scroll::autoscroll::Autoscroll, ClipboardSelection,
     DisplayPoint,
 };
-use gpui::{Action, AppContext, ViewContext};
+use gpui::{impl_actions, ViewContext};
 use language::{Bias, SelectionGoal};
 use serde::Deserialize;
 use workspace::Workspace;
 
 use crate::{state::Mode, utils::copy_selections_content, Vim};
 
-#[derive(Action, Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 struct Paste {
     #[serde(default)]
@@ -20,9 +20,10 @@ struct Paste {
     preserve_clipboard: bool,
 }
 
-pub(crate) fn init(cx: &mut AppContext) {
-    // todo!()
-    // cx.add_action(paste);
+impl_actions!(vim, [Paste]);
+
+pub(crate) fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
+    workspace.register_action(paste);
 }
 
 fn paste(_: &mut Workspace, action: &Paste, cx: &mut ViewContext<Workspace>) {

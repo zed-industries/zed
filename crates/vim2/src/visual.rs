@@ -21,35 +21,41 @@ use crate::{
 };
 
 actions!(
-    ToggleVisual,
-    ToggleVisualLine,
-    ToggleVisualBlock,
-    VisualDelete,
-    VisualYank,
-    OtherEnd,
-    SelectNext,
-    SelectPrevious,
+    vim,
+    [
+        ToggleVisual,
+        ToggleVisualLine,
+        ToggleVisualBlock,
+        VisualDelete,
+        VisualYank,
+        OtherEnd,
+        SelectNext,
+        SelectPrevious,
+    ]
 );
 
-pub fn init(cx: &mut AppContext) {
-    // todo!()
-    // cx.add_action(|_, _: &ToggleVisual, cx: &mut ViewContext<Workspace>| {
-    //     toggle_mode(Mode::Visual, cx)
-    // });
-    // cx.add_action(|_, _: &ToggleVisualLine, cx: &mut ViewContext<Workspace>| {
-    //     toggle_mode(Mode::VisualLine, cx)
-    // });
-    // cx.add_action(
-    //     |_, _: &ToggleVisualBlock, cx: &mut ViewContext<Workspace>| {
-    //         toggle_mode(Mode::VisualBlock, cx)
-    //     },
-    // );
-    // cx.add_action(other_end);
-    // cx.add_action(delete);
-    // cx.add_action(yank);
+pub fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
+    workspace.register_action(|_, _: &ToggleVisual, cx: &mut ViewContext<Workspace>| {
+        toggle_mode(Mode::Visual, cx)
+    });
+    workspace.register_action(|_, _: &ToggleVisualLine, cx: &mut ViewContext<Workspace>| {
+        toggle_mode(Mode::VisualLine, cx)
+    });
+    workspace.register_action(
+        |_, _: &ToggleVisualBlock, cx: &mut ViewContext<Workspace>| {
+            toggle_mode(Mode::VisualBlock, cx)
+        },
+    );
+    workspace.register_action(other_end);
+    workspace.register_action(delete);
+    workspace.register_action(yank);
 
-    // cx.add_action(select_next);
-    // cx.add_action(select_previous);
+    workspace.register_action(|workspace, action, cx| {
+        select_next(workspace, action, cx).ok();
+    });
+    workspace.register_action(|workspace, action, cx| {
+        select_previous(workspace, action, cx).ok();
+    });
 }
 
 pub fn visual_motion(motion: Motion, times: Option<usize>, cx: &mut WindowContext) {

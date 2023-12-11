@@ -1,32 +1,31 @@
 use editor::movement;
-use gpui::{actions, AppContext, WindowContext};
+use gpui::{actions, ViewContext, WindowContext};
 use language::Point;
 use workspace::Workspace;
 
 use crate::{motion::Motion, utils::copy_selections_content, Mode, Vim};
 
-actions!(Substitute, SubstituteLine);
+actions!(vim, [Substitute, SubstituteLine]);
 
-pub(crate) fn init(cx: &mut AppContext) {
-    // todo!()
-    // cx.add_action(|_: &mut Workspace, _: &Substitute, cx| {
-    //     Vim::update(cx, |vim, cx| {
-    //         vim.start_recording(cx);
-    //         let count = vim.take_count(cx);
-    //         substitute(vim, count, vim.state().mode == Mode::VisualLine, cx);
-    //     })
-    // });
+pub(crate) fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
+    workspace.register_action(|_: &mut Workspace, _: &Substitute, cx| {
+        Vim::update(cx, |vim, cx| {
+            vim.start_recording(cx);
+            let count = vim.take_count(cx);
+            substitute(vim, count, vim.state().mode == Mode::VisualLine, cx);
+        })
+    });
 
-    // cx.add_action(|_: &mut Workspace, _: &SubstituteLine, cx| {
-    //     Vim::update(cx, |vim, cx| {
-    //         vim.start_recording(cx);
-    //         if matches!(vim.state().mode, Mode::VisualBlock | Mode::Visual) {
-    //             vim.switch_mode(Mode::VisualLine, false, cx)
-    //         }
-    //         let count = vim.take_count(cx);
-    //         substitute(vim, count, true, cx)
-    //     })
-    // });
+    workspace.register_action(|_: &mut Workspace, _: &SubstituteLine, cx| {
+        Vim::update(cx, |vim, cx| {
+            vim.start_recording(cx);
+            if matches!(vim.state().mode, Mode::VisualBlock | Mode::Visual) {
+                vim.switch_mode(Mode::VisualLine, false, cx)
+            }
+            let count = vim.take_count(cx);
+            substitute(vim, count, true, cx)
+        })
+    });
 }
 
 pub fn substitute(vim: &mut Vim, count: Option<usize>, line_mode: bool, cx: &mut WindowContext) {

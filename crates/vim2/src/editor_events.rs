@@ -1,4 +1,4 @@
-use crate::{Vim, VimEvent};
+use crate::Vim;
 use editor::{Editor, EditorBlurred, EditorEvent, EditorFocused, EditorReleased};
 use gpui::{AppContext, Entity, EntityId, View, ViewContext, WindowContext};
 use workspace::item::WeakItemHandle;

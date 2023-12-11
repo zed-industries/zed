@@ -1,14 +1,13 @@
 use crate::{normal::repeat, state::Mode, Vim};
 use editor::{scroll::autoscroll::Autoscroll, Bias};
-use gpui::{actions, Action, AppContext, ViewContext};
+use gpui::{actions, Action, ViewContext};
 use language::SelectionGoal;
 use workspace::Workspace;
 
-actions!(NormalBefore);
+actions!(vim, [NormalBefore]);
 
-pub fn init(cx: &mut AppContext) {
-    // todo!()
-    // cx.add_action(normal_before);
+pub fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
+    workspace.register_action(normal_before);
 }
 
 fn normal_before(_: &mut Workspace, action: &NormalBefore, cx: &mut ViewContext<Workspace>) {
