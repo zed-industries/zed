@@ -2287,7 +2287,7 @@ impl CollabPanel {
         let button = match section {
             Section::ActiveCall => channel_link.map(|channel_link| {
                 let channel_link_copy = channel_link.clone();
-                IconButton::new("channel-link", Icon::Check)
+                IconButton::new("channel-link", Icon::Copy)
                     .on_click(move |_, cx| {
                         let item = ClipboardItem::new(channel_link_copy.clone());
                         cx.write_to_clipboard(item)
