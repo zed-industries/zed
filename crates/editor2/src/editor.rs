@@ -13,6 +13,7 @@ mod link_go_to_definition;
 mod mouse_context_menu;
 pub mod movement;
 mod persistence;
+mod rust_analyzer_ext;
 pub mod scroll;
 pub mod selections_collection;
 
@@ -107,7 +108,7 @@ use ui::{
 use ui::{prelude::*, IconSize};
 use util::{post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::{
-    item::{ItemEvent, ItemHandle},
+    item::{Item, ItemEvent, ItemHandle},
     searchable::SearchEvent,
     ItemNavHistory, Pane, SplitDirection, ViewId, Workspace,
 };
@@ -329,6 +330,7 @@ actions!(
         DeleteToPreviousSubwordStart,
         DeleteToPreviousWordStart,
         DuplicateLine,
+        ExpandMacroRecursively,
         FindAllReferences,
         Fold,
         FoldSelectedRanges,
@@ -9341,7 +9343,6 @@ impl Render for Editor {
                 scrollbar_width: px(12.),
                 syntax: cx.theme().syntax().clone(),
                 diagnostic_style: cx.theme().diagnostic_style(),
-                // TODO kb find `HighlightStyle` usages
                 // todo!("what about the rest of the highlight style parts?")
                 inlays_style: HighlightStyle {
                     color: Some(cx.theme().status().hint),

@@ -178,7 +178,9 @@ message Envelope {
         GetNotifications get_notifications = 150;
         GetNotificationsResponse get_notifications_response = 151;
         DeleteNotification delete_notification = 152;
-        MarkNotificationRead mark_notification_read = 153; // Current max
+        MarkNotificationRead mark_notification_read = 153;
+        LspExtExpandMacro lsp_ext_expand_macro = 154;
+        LspExtExpandMacroResponse lsp_ext_expand_macro_response = 155; // Current max
     }
 }
 
@@ -1618,4 +1620,15 @@ message Notification {
     string content = 5;
     bool is_read = 6;
     optional bool response = 7;
+}
+
+message LspExtExpandMacro {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    Anchor position = 3;
+}
+
+message LspExtExpandMacroResponse {
+    string name = 1;
+    string expansion = 2;
 }

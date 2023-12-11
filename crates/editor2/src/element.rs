@@ -32,7 +32,7 @@ use gpui::{
     Style, Styled, TextRun, TextStyle, View, ViewContext, WeakView, WindowContext, WrappedLine,
 };
 use itertools::Itertools;
-use language::language_settings::ShowWhitespaceSetting;
+use language::{language_settings::ShowWhitespaceSetting, Language};
 use multi_buffer::Anchor;
 use project::{
     project_settings::{GitGutterSetting, ProjectSettings},
@@ -135,11 +135,13 @@ impl EditorElement {
 
     fn register_actions(&self, cx: &mut WindowContext) {
         let view = &self.editor;
-        self.editor.update(cx, |editor, cx| {
+        view.update(cx, |editor, cx| {
             for action in editor.editor_actions.iter() {
                 (action)(cx)
             }
         });
+
+        crate::rust_analyzer_ext::apply_related_actions(view, cx);
         register_action(view, cx, Editor::move_left);
         register_action(view, cx, Editor::move_right);
         register_action(view, cx, Editor::move_down);
