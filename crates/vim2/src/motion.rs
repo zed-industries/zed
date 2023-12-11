@@ -4,7 +4,7 @@ use editor::{
     movement::{self, find_boundary, find_preceding_boundary, FindRange, TextLayoutDetails},
     Bias, CharKind, DisplayPoint, ToOffset,
 };
-use gpui::{actions, impl_actions, px, AppContext, ViewContext, WindowContext};
+use gpui::{actions, impl_actions, px, ViewContext, WindowContext};
 use language::{Point, Selection, SelectionGoal};
 use serde::Deserialize;
 use workspace::Workspace;
@@ -139,7 +139,7 @@ actions!(
     ]
 );
 
-pub fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
+pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
     workspace.register_action(|_: &mut Workspace, _: &Left, cx: _| motion(Motion::Left, cx));
     workspace
         .register_action(|_: &mut Workspace, _: &Backspace, cx: _| motion(Motion::Backspace, cx));

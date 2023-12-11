@@ -18,7 +18,7 @@ use command_palette::CommandPaletteInterceptor;
 use editor::{movement, Editor, EditorEvent, EditorMode};
 use gpui::{
     actions, impl_actions, Action, AppContext, EntityId, KeyContext, Subscription, View,
-    ViewContext, WeakModel, WeakView, WindowContext,
+    ViewContext, WeakView, WindowContext,
 };
 use language::{CursorShape, Point, Selection, SelectionGoal};
 pub use mode_indicator::ModeIndicator;
@@ -116,7 +116,7 @@ fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
     visual::register(workspace, cx);
 }
 
-pub fn observe_keystrokes(cx: &mut WindowContext) {
+pub fn observe_keystrokes(_: &mut WindowContext) {
     // todo!()
 
     // cx.observe_keystrokes(|_keystroke, result, handled_by, cx| {

@@ -6,7 +6,7 @@ use workspace::Workspace;
 
 actions!(vim, [NormalBefore]);
 
-pub fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
+pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
     workspace.register_action(normal_before);
 }
 

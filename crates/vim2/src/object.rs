@@ -6,7 +6,7 @@ use editor::{
     movement::{self, FindRange},
     Bias, CharKind, DisplayPoint,
 };
-use gpui::{actions, impl_actions, Action, AppContext, ViewContext, WindowContext};
+use gpui::{actions, impl_actions, ViewContext, WindowContext};
 use language::Selection;
 use serde::Deserialize;
 use workspace::Workspace;
@@ -51,7 +51,7 @@ actions!(
     ]
 );
 
-pub fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
+pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
     workspace.register_action(
         |_: &mut Workspace, &Word { ignore_punctuation }: &Word, cx: _| {
             object(Object::Word { ignore_punctuation }, cx)

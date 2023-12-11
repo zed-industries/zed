@@ -1,7 +1,6 @@
 use crate::Vim;
-use editor::{Editor, EditorBlurred, EditorEvent, EditorFocused, EditorReleased};
+use editor::{Editor, EditorEvent};
 use gpui::{AppContext, Entity, EntityId, View, ViewContext, WindowContext};
-use workspace::item::WeakItemHandle;
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(|_, cx: &mut ViewContext<Editor>| {
@@ -17,14 +16,10 @@ pub fn init(cx: &mut AppContext) {
         cx.on_release(move |_, cx| released(id, cx)).detach();
     })
     .detach();
-    // todo!()
-    // cx.subscribe_global(focused).detach();
-    // cx.subscribe_global(blurred).detach();
-    // cx.subscribe_global(released).detach();
 }
 
 fn focused(editor: View<Editor>, cx: &mut WindowContext) {
-    if let Some(previously_active_editor) = Vim::read(cx).active_editor.clone() {
+    if Vim::read(cx).active_editor.clone().is_some() {
         Vim::update(cx, |vim, cx| {
             vim.update_active_editor(cx, |previously_active_editor, cx| {
                 vim.unhook_vim_settings(previously_active_editor, cx)

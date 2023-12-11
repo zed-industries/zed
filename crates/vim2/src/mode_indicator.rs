@@ -1,4 +1,4 @@
-use gpui::{div, AnyElement, Div, Element, Entity, IntoElement, Render, Subscription, ViewContext};
+use gpui::{div, AnyElement, Element, IntoElement, Render, ViewContext};
 use settings::{Settings, SettingsStore};
 use workspace::{item::ItemHandle, ui::Label, StatusItemView};
 
@@ -51,7 +51,7 @@ impl ModeIndicator {
 impl Render for ModeIndicator {
     type Element = AnyElement;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement {
+    fn render(&mut self, _: &mut ViewContext<Self>) -> AnyElement {
         let Some(mode) = self.mode.as_ref() else {
             return div().into_any();
         };

@@ -1,7 +1,7 @@
-use gpui::{actions, impl_actions, Action, AppContext, ViewContext};
+use gpui::{actions, impl_actions, ViewContext};
 use search::{buffer_search, BufferSearchBar, SearchMode, SearchOptions};
 use serde_derive::Deserialize;
-use workspace::{searchable::Direction, Pane, Workspace};
+use workspace::{searchable::Direction, Workspace};
 
 use crate::{motion::Motion, normal::move_cursor, state::SearchState, Vim};
 
@@ -50,7 +50,7 @@ impl_actions!(
     [FindCommand, ReplaceCommand, Search, MoveToPrev, MoveToNext]
 );
 
-pub(crate) fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
+pub(crate) fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
     workspace.register_action(move_to_next);
     workspace.register_action(move_to_prev);
     workspace.register_action(search);

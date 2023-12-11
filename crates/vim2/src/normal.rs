@@ -53,7 +53,6 @@ actions!(
 );
 
 pub(crate) fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
-    dbg!("registering");
     workspace.register_action(insert_after);
     workspace.register_action(insert_before);
     workspace.register_action(insert_first_non_whitespace);

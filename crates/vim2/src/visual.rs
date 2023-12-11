@@ -8,7 +8,7 @@ use editor::{
     scroll::autoscroll::Autoscroll,
     Bias, DisplayPoint, Editor,
 };
-use gpui::{actions, AppContext, ViewContext, WindowContext};
+use gpui::{actions, ViewContext, WindowContext};
 use language::{Selection, SelectionGoal};
 use workspace::Workspace;
 
@@ -34,7 +34,7 @@ actions!(
     ]
 );
 
-pub fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
+pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
     workspace.register_action(|_, _: &ToggleVisual, cx: &mut ViewContext<Workspace>| {
         toggle_mode(Mode::Visual, cx)
     });

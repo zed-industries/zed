@@ -4,7 +4,7 @@ use editor::{
     scroll::{scroll_amount::ScrollAmount, VERTICAL_SCROLL_MARGIN},
     DisplayPoint, Editor,
 };
-use gpui::{actions, AppContext, ViewContext};
+use gpui::{actions, ViewContext};
 use language::Bias;
 use workspace::Workspace;
 
@@ -13,7 +13,7 @@ actions!(
     [LineUp, LineDown, ScrollUp, ScrollDown, PageUp, PageDown]
 );
 
-pub fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
+pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
     workspace.register_action(|_: &mut Workspace, _: &LineDown, cx| {
         scroll(cx, false, |c| ScrollAmount::Line(c.unwrap_or(1.)))
     });

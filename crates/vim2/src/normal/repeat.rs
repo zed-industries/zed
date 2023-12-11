@@ -5,7 +5,7 @@ use crate::{
     visual::visual_motion,
     Vim,
 };
-use gpui::{actions, Action, AppContext, ViewContext, WindowContext};
+use gpui::{actions, Action, ViewContext, WindowContext};
 use workspace::Workspace;
 
 actions!(vim, [Repeat, EndRepeat]);
