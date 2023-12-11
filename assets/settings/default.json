@@ -143,7 +143,11 @@
     // Whether to show the git status in the project panel.
     "git_status": true,
     // Amount of indentation for nested items.
-    "indent_size": 20
+    "indent_size": 20,
+    // Whether to reveal it in the project panel automatically,
+    // when a corresponding project entry becomes active.
+    // Gitignored entries are never auto revealed.
+    "auto_reveal_entries": true
   },
   "collaboration_panel": {
     // Whether to show the collaboration panel button in the status bar.

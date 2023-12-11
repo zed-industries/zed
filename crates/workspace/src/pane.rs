@@ -96,6 +96,12 @@ pub struct CloseAllItems {
     pub save_intent: Option<SaveIntent>,
 }
 
+#[derive(Clone, PartialEq, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RevealInProjectPanel {
+    pub entry_id: u64,
+}
+
 actions!(
     pane,
     [
@@ -116,7 +122,15 @@ actions!(
     ]
 );
 
-impl_actions!(pane, [ActivateItem, CloseActiveItem, CloseAllItems]);
+impl_actions!(
+    pane,
+    [
+        ActivateItem,
+        CloseActiveItem,
+        CloseAllItems,
+        RevealInProjectPanel,
+    ]
+);
 
 const MAX_NAVIGATION_HISTORY_LEN: usize = 1024;
 
@@ -146,6 +160,13 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(|pane: &mut Pane, _: &SplitUp, cx| pane.split(SplitDirection::Up, cx));
     cx.add_action(|pane: &mut Pane, _: &SplitRight, cx| pane.split(SplitDirection::Right, cx));
     cx.add_action(|pane: &mut Pane, _: &SplitDown, cx| pane.split(SplitDirection::Down, cx));
+    cx.add_action(|pane: &mut Pane, action: &RevealInProjectPanel, cx| {
+        pane.project.update(cx, |_, cx| {
+            cx.emit(project::Event::RevealInProjectPanel(
+                ProjectEntryId::from_proto(action.entry_id),
+            ))
+        })
+    });
 }
 
 #[derive(Debug)]
@@ -1232,80 +1253,87 @@ impl Pane {
         cx: &mut ViewContext<Self>,
     ) {
         let active_item_id = self.items[self.active_item_index].id();
+        let single_entry_to_resolve =
+            self.items()
+                .find(|i| i.id() == target_item_id)
+                .and_then(|i| {
+                    let item_entries = i.project_entry_ids(cx);
+                    if item_entries.len() == 1 {
+                        Some(item_entries[0])
+                    } else {
+                        None
+                    }
+                });
         let is_active_item = target_item_id == active_item_id;
         let target_pane = cx.weak_handle();
 
         // The `CloseInactiveItems` action should really be called "CloseOthers" and the behaviour should be dynamically based on the tab the action is ran on.  Currently, this is a weird action because you can run it on a non-active tab and it will close everything by the actual active tab
-
         self.tab_context_menu.update(cx, |menu, cx| {
-            menu.show(
-                position,
-                AnchorCorner::TopLeft,
-                if is_active_item {
-                    vec![
-                        ContextMenuItem::action(
-                            "Close Active Item",
-                            CloseActiveItem { save_intent: None },
-                        ),
-                        ContextMenuItem::action("Close Inactive Items", CloseInactiveItems),
-                        ContextMenuItem::action("Close Clean Items", CloseCleanItems),
-                        ContextMenuItem::action("Close Items To The Left", CloseItemsToTheLeft),
-                        ContextMenuItem::action("Close Items To The Right", CloseItemsToTheRight),
-                        ContextMenuItem::action(
-                            "Close All Items",
-                            CloseAllItems { save_intent: None },
-                        ),
-                    ]
-                } else {
-                    // In the case of the user right clicking on a non-active tab, for some item-closing commands, we need to provide the id of the tab, for the others, we can reuse the existing command.
-                    vec![
-                        ContextMenuItem::handler("Close Inactive Item", {
-                            let pane = target_pane.clone();
-                            move |cx| {
-                                if let Some(pane) = pane.upgrade(cx) {
-                                    pane.update(cx, |pane, cx| {
-                                        pane.close_item_by_id(
-                                            target_item_id,
-                                            SaveIntent::Close,
-                                            cx,
-                                        )
+            let mut menu_items = if is_active_item {
+                vec![
+                    ContextMenuItem::action(
+                        "Close Active Item",
+                        CloseActiveItem { save_intent: None },
+                    ),
+                    ContextMenuItem::action("Close Inactive Items", CloseInactiveItems),
+                    ContextMenuItem::action("Close Clean Items", CloseCleanItems),
+                    ContextMenuItem::action("Close Items To The Left", CloseItemsToTheLeft),
+                    ContextMenuItem::action("Close Items To The Right", CloseItemsToTheRight),
+                    ContextMenuItem::action("Close All Items", CloseAllItems { save_intent: None }),
+                ]
+            } else {
+                // In the case of the user right clicking on a non-active tab, for some item-closing commands, we need to provide the id of the tab, for the others, we can reuse the existing command.
+                vec![
+                    ContextMenuItem::handler("Close Inactive Item", {
+                        let pane = target_pane.clone();
+                        move |cx| {
+                            if let Some(pane) = pane.upgrade(cx) {
+                                pane.update(cx, |pane, cx| {
+                                    pane.close_item_by_id(target_item_id, SaveIntent::Close, cx)
                                         .detach_and_log_err(cx);
-                                    })
-                                }
+                                })
                             }
-                        }),
-                        ContextMenuItem::action("Close Inactive Items", CloseInactiveItems),
-                        ContextMenuItem::action("Close Clean Items", CloseCleanItems),
-                        ContextMenuItem::handler("Close Items To The Left", {
-                            let pane = target_pane.clone();
-                            move |cx| {
-                                if let Some(pane) = pane.upgrade(cx) {
-                                    pane.update(cx, |pane, cx| {
-                                        pane.close_items_to_the_left_by_id(target_item_id, cx)
-                                            .detach_and_log_err(cx);
-                                    })
-                                }
+                        }
+                    }),
+                    ContextMenuItem::action("Close Inactive Items", CloseInactiveItems),
+                    ContextMenuItem::action("Close Clean Items", CloseCleanItems),
+                    ContextMenuItem::handler("Close Items To The Left", {
+                        let pane = target_pane.clone();
+                        move |cx| {
+                            if let Some(pane) = pane.upgrade(cx) {
+                                pane.update(cx, |pane, cx| {
+                                    pane.close_items_to_the_left_by_id(target_item_id, cx)
+                                        .detach_and_log_err(cx);
+                                })
                             }
-                        }),
-                        ContextMenuItem::handler("Close Items To The Right", {
-                            let pane = target_pane.clone();
-                            move |cx| {
-                                if let Some(pane) = pane.upgrade(cx) {
-                                    pane.update(cx, |pane, cx| {
-                                        pane.close_items_to_the_right_by_id(target_item_id, cx)
-                                            .detach_and_log_err(cx);
-                                    })
-                                }
+                        }
+                    }),
+                    ContextMenuItem::handler("Close Items To The Right", {
+                        let pane = target_pane.clone();
+                        move |cx| {
+                            if let Some(pane) = pane.upgrade(cx) {
+                                pane.update(cx, |pane, cx| {
+                                    pane.close_items_to_the_right_by_id(target_item_id, cx)
+                                        .detach_and_log_err(cx);
+                                })
                             }
-                        }),
-                        ContextMenuItem::action(
-                            "Close All Items",
-                            CloseAllItems { save_intent: None },
-                        ),
-                    ]
-                },
-                cx,
-            );
+                        }
+                    }),
+                    ContextMenuItem::action("Close All Items", CloseAllItems { save_intent: None }),
+                ]
+            };
+
+            if let Some(entry) = single_entry_to_resolve {
+                menu_items.push(ContextMenuItem::Separator);
+                menu_items.push(ContextMenuItem::action(
+                    "Reveal In Project Panel",
+                    RevealInProjectPanel {
+                        entry_id: entry.to_proto(),
+                    },
+                ));
+            }
+
+            menu.show(position, AnchorCorner::TopLeft, menu_items, cx);
         });
     }
 

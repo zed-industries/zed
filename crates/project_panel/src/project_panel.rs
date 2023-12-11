@@ -199,13 +199,13 @@ impl ProjectPanel {
             .detach();
             cx.subscribe(&project, |this, project, event, cx| match event {
                 project::Event::ActiveEntryChanged(Some(entry_id)) => {
-                    if let Some(worktree_id) = project.read(cx).worktree_id_for_entry(*entry_id, cx)
-                    {
-                        this.expand_entry(worktree_id, *entry_id, cx);
-                        this.update_visible_entries(Some((worktree_id, *entry_id)), cx);
-                        this.autoscroll(cx);
-                        cx.notify();
+                    if settings::get::<ProjectPanelSettings>(cx).auto_reveal_entries {
+                        this.reveal_entry(project, *entry_id, true, cx);
                     }
+                }
+                project::Event::RevealInProjectPanel(entry_id) => {
+                    this.reveal_entry(project, *entry_id, false, cx);
+                    cx.emit(Event::ActivatePanel);
                 }
                 project::Event::ActivateProjectPanel => {
                     cx.emit(Event::ActivatePanel);
@@ -1530,6 +1530,32 @@ impl ProjectPanel {
         })
         .with_cursor_style(CursorStyle::PointingHand)
         .into_any_named("project panel entry")
+    }
+
+    // TODO kb tests
+    fn reveal_entry(
+        &mut self,
+        project: ModelHandle<Project>,
+        entry_id: ProjectEntryId,
+        skip_ignored: bool,
+        cx: &mut ViewContext<'_, '_, ProjectPanel>,
+    ) {
+        if let Some(worktree) = project.read(cx).worktree_for_entry(entry_id, cx) {
+            let worktree = worktree.read(cx);
+            if skip_ignored
+                && worktree
+                    .entry_for_id(entry_id)
+                    .map_or(true, |entry| entry.is_ignored)
+            {
+                return;
+            }
+
+            let worktree_id = worktree.id();
+            self.expand_entry(worktree_id, entry_id, cx);
+            self.update_visible_entries(Some((worktree_id, entry_id)), cx);
+            self.autoscroll(cx);
+            cx.notify();
+        }
     }
 }
 
