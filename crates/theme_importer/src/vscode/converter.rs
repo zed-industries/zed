@@ -217,6 +217,10 @@ impl VsCodeThemeConverter {
                         .ok()
                         .flatten()
                 }),
+            text_muted: vscode_colors
+                .tab_inactive_foreground
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
             tab_bar_background: vscode_colors
                 .editor_group_header_tabs_background
                 .as_ref()
