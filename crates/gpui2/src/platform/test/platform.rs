@@ -136,11 +136,12 @@ impl Platform for TestPlatform {
         &self,
         handle: AnyWindowHandle,
         options: WindowOptions,
-        _draw: Box<dyn FnMut() -> Result<Scene>>,
+        draw: Box<dyn FnMut() -> Result<Scene>>,
     ) -> Box<dyn crate::PlatformWindow> {
         *self.active_window.lock() = Some(handle);
         Box::new(TestWindow::new(
             options,
+            draw,
             self.weak.clone(),
             self.active_display.clone(),
         ))

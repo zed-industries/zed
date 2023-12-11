@@ -595,6 +595,14 @@ impl AppContext {
                 break;
             }
         }
+
+        for (_, window) in &self.windows {
+            if let Some(window) = window.as_ref() {
+                if window.dirty {
+                    window.platform_window.invalidate();
+                }
+            }
+        }
     }
 
     /// Repeatedly called during `flush_effects` to release any entities whose
@@ -713,7 +721,7 @@ impl AppContext {
     fn apply_refresh_effect(&mut self) {
         for window in self.windows.values_mut() {
             if let Some(window) = window.as_mut() {
-                window.platform_window.invalidate();
+                window.dirty = true;
             }
         }
     }

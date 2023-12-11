@@ -1,7 +1,7 @@
 use crate::{
-    px, AtlasKey, AtlasTextureId, AtlasTile, Pixels, PlatformAtlas, PlatformDisplay,
-    PlatformInputHandler, PlatformWindow, Point, Scene, Size, TestPlatform, TileId,
-    WindowAppearance, WindowBounds, WindowOptions,
+    px, AtlasKey, AtlasTextureId, AtlasTile, DrawWindow, Pixels, PlatformAtlas, PlatformDisplay,
+    PlatformInputHandler, PlatformWindow, Point, Size, TestPlatform, TileId, WindowAppearance,
+    WindowBounds, WindowOptions,
 };
 use collections::HashMap;
 use parking_lot::Mutex;
@@ -20,7 +20,7 @@ pub(crate) struct TestWindowHandlers {
 
 pub struct TestWindow {
     pub(crate) bounds: WindowBounds,
-    current_scene: Mutex<Option<Scene>>,
+    draw: Mutex<DrawWindow>,
     display: Rc<dyn PlatformDisplay>,
     pub(crate) window_title: Option<String>,
     pub(crate) input_handler: Option<Arc<Mutex<Box<dyn PlatformInputHandler>>>>,
@@ -32,12 +32,13 @@ pub struct TestWindow {
 impl TestWindow {
     pub fn new(
         options: WindowOptions,
+        draw: DrawWindow,
         platform: Weak<TestPlatform>,
         display: Rc<dyn PlatformDisplay>,
     ) -> Self {
         Self {
             bounds: options.bounds,
-            current_scene: Default::default(),
+            draw: Mutex::new(draw),
             display,
             platform,
             input_handler: None,
@@ -166,7 +167,9 @@ impl PlatformWindow for TestWindow {
         unimplemented!()
     }
 
-    fn invalidate(&self) {}
+    fn invalidate(&self) {
+        (self.draw.lock())().unwrap();
+    }
 
     fn sprite_atlas(&self) -> sync::Arc<dyn crate::PlatformAtlas> {
         self.sprite_atlas.clone()

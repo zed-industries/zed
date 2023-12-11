@@ -223,6 +223,7 @@ pub struct Window {
     bounds: WindowBounds,
     bounds_observers: SubscriberSet<(), AnyObserver>,
     active: bool,
+    pub(crate) dirty: bool,
     activation_observers: SubscriberSet<(), AnyObserver>,
     pub(crate) last_blur: Option<Option<FocusId>>,
     pub(crate) focus: Option<FocusId>,
@@ -355,6 +356,7 @@ impl Window {
             bounds,
             bounds_observers: SubscriberSet::new(),
             active: false,
+            dirty: false,
             activation_observers: SubscriberSet::new(),
             last_blur: None,
             focus: None,
@@ -406,7 +408,7 @@ impl<'a> WindowContext<'a> {
 
     /// Mark the window as dirty, scheduling it to be redrawn on the next frame.
     pub fn notify(&mut self) {
-        self.window.platform_window.invalidate();
+        self.window.dirty = true;
     }
 
     /// Close this window.
@@ -1237,6 +1239,7 @@ impl<'a> WindowContext<'a> {
             .take()
             .unwrap_or(CursorStyle::Arrow);
         self.platform.set_cursor_style(cursor_style);
+        self.window.dirty = false;
 
         scene
     }
