@@ -114,7 +114,6 @@ impl<D: PickerDelegate> Picker<D> {
     }
 
     fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
-        dbg!("picker cancel");
         self.delegate.dismissed(cx);
     }
 

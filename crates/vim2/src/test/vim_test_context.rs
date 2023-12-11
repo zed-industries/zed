@@ -120,7 +120,8 @@ impl<'a> VimTestContext<'a> {
             Vim::update(cx, |vim, cx| {
                 vim.switch_mode(mode, true, cx);
             })
-        });
+        })
+        .unwrap();
         self.cx.cx.cx.run_until_parked();
     }
 
