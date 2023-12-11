@@ -1338,9 +1338,9 @@ impl EditorElement {
                     let bounds = Bounds::from_corners(point(left, start_y), point(right, end_y));
 
                     let color = match hunk.status() {
-                        DiffHunkStatus::Added => gpui::green(), // todo!("use the right color")
-                        DiffHunkStatus::Modified => gpui::yellow(), // todo!("use the right color")
-                        DiffHunkStatus::Removed => gpui::red(), // todo!("use the right color")
+                        DiffHunkStatus::Added => cx.theme().status().created,
+                        DiffHunkStatus::Modified => cx.theme().status().modified,
+                        DiffHunkStatus::Removed => cx.theme().status().deleted,
                     };
                     cx.paint_quad(
                         bounds,
@@ -1352,7 +1352,7 @@ impl EditorElement {
                             bottom: Pixels::ZERO,
                             left: px(1.),
                         },
-                        gpui::green(), // todo!("style.thumb.border.color")
+                        cx.theme().colors().scrollbar_thumb_border,
                     );
                 }
             }
@@ -1360,14 +1360,14 @@ impl EditorElement {
             cx.paint_quad(
                 thumb_bounds,
                 Corners::default(),
-                gpui::black(), // todo!("style.thumb.background_color")
+                cx.theme().colors().scrollbar_thumb_background,
                 Edges {
                     top: Pixels::ZERO,
                     right: px(1.),
                     bottom: Pixels::ZERO,
                     left: px(1.),
                 },
-                gpui::green(), // todo!("style.thumb.border.color")
+                cx.theme().colors().scrollbar_thumb_border,
             );
         }
 
