@@ -159,6 +159,7 @@ pub struct Pane {
     items: Vec<Box<dyn ItemHandle>>,
     activation_history: Vec<EntityId>,
     zoomed: bool,
+    was_focused: bool,
     active_item_index: usize,
     last_focused_view_by_item: HashMap<EntityId, FocusHandle>,
     autoscroll: bool,
@@ -317,6 +318,7 @@ impl Pane {
             focus_handle: cx.focus_handle(),
             items: Vec::new(),
             activation_history: Vec::new(),
+            was_focused: false,
             zoomed: false,
             active_item_index: 0,
             last_focused_view_by_item: Default::default(),
@@ -413,7 +415,8 @@ impl Pane {
     }
 
     fn focus_in(&mut self, cx: &mut ViewContext<Self>) {
-        if !self.has_focus(cx) {
+        if !self.was_focused {
+            self.was_focused = true;
             cx.emit(Event::Focus);
             cx.notify();
         }
@@ -444,6 +447,7 @@ impl Pane {
     }
 
     fn focus_out(&mut self, cx: &mut ViewContext<Self>) {
+        self.was_focused = false;
         self.toolbar.update(cx, |toolbar, cx| {
             toolbar.focus_changed(false, cx);
         });

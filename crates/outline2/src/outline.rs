@@ -1,6 +1,6 @@
 use editor::{
     display_map::ToDisplayPoint, scroll::autoscroll::Autoscroll, Anchor, AnchorRangeExt,
-    DisplayPoint, Editor, ToPoint,
+    DisplayPoint, Editor, EditorMode, ToPoint,
 };
 use fuzzy::StringMatch;
 use gpui::{
@@ -20,7 +20,7 @@ use std::{
 use theme::{color_alpha, ActiveTheme, ThemeSettings};
 use ui::{prelude::*, ListItem};
 use util::ResultExt;
-use workspace::{ModalView, Workspace};
+use workspace::ModalView;
 
 actions!(outline, [Toggle]);
 
@@ -28,21 +28,18 @@ pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(OutlineView::register).detach();
 }
 
-pub fn toggle(workspace: &mut Workspace, _: &Toggle, cx: &mut ViewContext<Workspace>) {
-    if let Some(editor) = workspace
-        .active_item(cx)
-        .and_then(|item| item.downcast::<Editor>())
-    {
-        let outline = editor
-            .read(cx)
-            .buffer()
-            .read(cx)
-            .snapshot(cx)
-            .outline(Some(&cx.theme().syntax()));
+pub fn toggle(editor: View<Editor>, _: &Toggle, cx: &mut WindowContext) {
+    let outline = editor
+        .read(cx)
+        .buffer()
+        .read(cx)
+        .snapshot(cx)
+        .outline(Some(&cx.theme().syntax()));
 
-        if let Some(outline) = outline {
+    if let Some((workspace, outline)) = editor.read(cx).workspace().zip(outline) {
+        workspace.update(cx, |workspace, cx| {
             workspace.toggle_modal(cx, |cx| OutlineView::new(outline, editor, cx));
-        }
+        })
     }
 }
 
@@ -68,8 +65,15 @@ impl Render for OutlineView {
 }
 
 impl OutlineView {
-    fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
-        workspace.register_action(toggle);
+    fn register(editor: &mut Editor, cx: &mut ViewContext<Editor>) {
+        if editor.mode() == EditorMode::Full {
+            let handle = cx.view().downgrade();
+            editor.register_action(move |action, cx| {
+                if let Some(editor) = handle.upgrade() {
+                    toggle(editor, action, cx);
+                }
+            });
+        }
     }
 
     fn new(
@@ -239,6 +243,7 @@ impl PickerDelegate for OutlineViewDelegate {
                     s.select_ranges([position..position])
                 });
                 active_editor.highlight_rows(None);
+                active_editor.focus(cx);
             }
         });
 
