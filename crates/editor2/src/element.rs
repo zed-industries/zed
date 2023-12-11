@@ -1302,7 +1302,7 @@ impl EditorElement {
                     cx.paint_quad(
                         bounds,
                         Corners::default(),
-                        cx.theme().colors().scrollbar_thumb_background,
+                        cx.theme().status().info,
                         Edges {
                             top: Pixels::ZERO,
                             right: px(1.),
