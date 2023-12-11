@@ -127,6 +127,11 @@ impl VsCodeThemeConverter {
             .as_ref()
             .traverse(|color| try_parse_color(&color))?;
 
+        let vscode_tab_inactive_background = vscode_colors
+            .tab_inactive_background
+            .as_ref()
+            .traverse(|color| try_parse_color(&color))?;
+
         let vscode_editor_background = vscode_colors
             .editor_background
             .as_ref()
@@ -213,11 +218,9 @@ impl VsCodeThemeConverter {
             tab_active_background: vscode_colors
                 .tab_active_background
                 .as_ref()
-                .traverse(|color| try_parse_color(&color))?,
-            tab_inactive_background: vscode_colors
-                .tab_inactive_background
-                .as_ref()
-                .traverse(|color| try_parse_color(&color))?,
+                .traverse(|color| try_parse_color(&color))?
+                .or(vscode_tab_inactive_background),
+            tab_inactive_background: vscode_tab_inactive_background,
             toolbar_background: vscode_colors
                 .breadcrumb_background
                 .as_ref()

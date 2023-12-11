@@ -33,6 +33,7 @@ pub fn synthwave_84() -> UserThemeFamily {
                     toolbar_background: Some(rgba(0x262335ff).into()),
                     tab_bar_background: Some(rgba(0x241b2fff).into()),
                     tab_inactive_background: Some(rgba(0x262335ff).into()),
+                    tab_active_background: Some(rgba(0x262335ff).into()),
                     scrollbar_thumb_background: Some(rgba(0x9d8bca30).into()),
                     scrollbar_thumb_hover_background: Some(rgba(0x9d8bca50).into()),
                     scrollbar_thumb_border: Some(rgba(0x9d8bca30).into()),
