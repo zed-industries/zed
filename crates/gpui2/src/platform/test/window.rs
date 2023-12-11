@@ -168,7 +168,7 @@ impl PlatformWindow for TestWindow {
     }
 
     fn invalidate(&self) {
-        (self.draw.lock())().unwrap();
+        // (self.draw.lock())().unwrap();
     }
 
     fn sprite_atlas(&self) -> sync::Arc<dyn crate::PlatformAtlas> {

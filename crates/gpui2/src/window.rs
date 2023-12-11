@@ -1181,7 +1181,7 @@ impl<'a> WindowContext<'a> {
     }
 
     /// Draw pixels to the display for this window based on the contents of its scene.
-    fn draw(&mut self) -> Scene {
+    pub(crate) fn draw(&mut self) -> Scene {
         self.text_system().start_frame();
         self.window.platform_window.clear_input_handler();
         self.window.layout_engine.as_mut().unwrap().clear();
