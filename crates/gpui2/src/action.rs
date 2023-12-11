@@ -14,11 +14,11 @@ use std::any::{Any, TypeId};
 /// ```rust
 /// actions!(editor, [MoveUp, MoveDown, MoveLeft, MoveRight, Newline]);
 /// ```
-/// More complex data types can also be actions, providing they implement Clone, PartialEq, Debug,
+/// More complex data types can also be actions, providing they implement Clone, PartialEq,
 /// and serde_derive::Deserialize.
 /// Use `impl_actions!` to automatically implement the action in the given namespace.
 /// ```
-/// #[derive(Clone, PartialEq, serde_derive::Deserialize, Debug)]
+/// #[derive(Clone, PartialEq, serde_derive::Deserialize)]
 /// pub struct SelectNext {
 ///     pub replace_newest: bool,
 /// }
@@ -29,7 +29,7 @@ use std::any::{Any, TypeId};
 /// macro, which only generates the code needed to register your action before `main`.
 ///
 /// ```
-/// #[derive(gpui::serde::Deserialize, std::cmp::PartialEq, std::clone::Clone, std::fmt::Debug)]
+/// #[derive(gpui::serde::Deserialize, std::cmp::PartialEq, std::clone::Clone)]
 /// pub struct Paste {
 ///     pub content: SharedString,
 /// }
