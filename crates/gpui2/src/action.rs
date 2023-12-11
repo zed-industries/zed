@@ -183,6 +183,8 @@ macro_rules! impl_actions {
                     Ok(std::boxed::Box::new(gpui::serde_json::from_value::<Self>(value)?))
                 }
             );
+
+            gpui::register_action!($name);
         )*
     };
 }
