@@ -332,7 +332,7 @@ impl Render for ProjectSearchView {
         } else {
             let model = self.model.read(cx);
             let has_no_results = model.no_results.unwrap_or(false);
-            let is_search_underway = model.active_query.is_some();
+            let is_search_underway = model.pending_search.is_some();
             let major_text = if is_search_underway {
                 Label::new("Searching...")
             } else if has_no_results {
