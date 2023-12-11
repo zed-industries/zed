@@ -25,16 +25,26 @@ pub fn ayu() -> UserThemeFamily {
                         border_selected: Some(rgba(0x6b7d8f1f).into()),
                         border_transparent: Some(rgba(0x6b7d8f1f).into()),
                         border_disabled: Some(rgba(0x6b7d8f1f).into()),
-                        elevated_surface_background: Some(rgba(0xf8f9faff).into()),
+                        elevated_surface_background: Some(rgba(0xfcfcfcff).into()),
                         surface_background: Some(rgba(0xf8f9faff).into()),
                         background: Some(rgba(0xf8f9faff).into()),
                         element_background: Some(rgba(0xffaa33ff).into()),
                         element_hover: Some(rgba(0x56728f1f).into()),
                         element_selected: Some(rgba(0x56728f1f).into()),
                         ghost_element_hover: Some(rgba(0x56728f1f).into()),
+                        ghost_element_selected: Some(rgba(0x56728f1f).into()),
                         text: Some(rgba(0x8a9199ff).into()),
+                        status_bar_background: Some(rgba(0xf8f9faff).into()),
+                        title_bar_background: Some(rgba(0xf8f9faff).into()),
+                        toolbar_background: Some(rgba(0xf8f9faff).into()),
+                        tab_bar_background: Some(rgba(0xf8f9faff).into()),
                         tab_inactive_background: Some(rgba(0xf8f9faff).into()),
                         tab_active_background: Some(rgba(0xf8f9faff).into()),
+                        scrollbar_thumb_background: Some(rgba(0x8a919966).into()),
+                        scrollbar_thumb_hover_background: Some(rgba(0x8a919999).into()),
+                        scrollbar_thumb_border: Some(rgba(0x8a919966).into()),
+                        scrollbar_track_background: Some(rgba(0x6b7d8f00).into()),
+                        scrollbar_track_border: Some(rgba(0x6b7d8f00).into()),
                         editor_background: Some(rgba(0xf8f9faff).into()),
                         editor_gutter_background: Some(rgba(0xf8f9faff).into()),
                         editor_line_number: Some(rgba(0x8a919966).into()),
@@ -59,10 +69,13 @@ pub fn ayu() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
-                        deleted: Some(rgba(0xe65050ff).into()),
+                        created: Some(rgba(0x6cbf43cc).into()),
+                        deleted: Some(rgba(0xff7383cc).into()),
                         error: Some(rgba(0xe65050ff).into()),
                         hidden: Some(rgba(0x8a9199ff).into()),
                         hint: Some(rgba(0x969696ff).into()),
+                        ignored: Some(rgba(0x8a919980).into()),
+                        modified: Some(rgba(0x478acccc).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -90,9 +103,24 @@ pub fn ayu() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "comment.doc".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x787b8099).into()),
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "constant".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x4cbf99ff).into()),
+                                    color: Some(rgba(0xa37accff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "constructor".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x55b4d4ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -178,7 +206,7 @@ pub fn ayu() -> UserThemeFamily {
                             (
                                 "punctuation".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x5c6166b3).into()),
+                                    color: Some(rgba(0x5c6166ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -204,6 +232,13 @@ pub fn ayu() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "punctuation.special".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x5c6166ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "string".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x86b300ff).into()),
@@ -214,6 +249,13 @@ pub fn ayu() -> UserThemeFamily {
                                 "string.escape".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x4cbf99ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.regex".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x86b300ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -288,16 +330,26 @@ pub fn ayu() -> UserThemeFamily {
                         border_selected: Some(rgba(0x171b24ff).into()),
                         border_transparent: Some(rgba(0x171b24ff).into()),
                         border_disabled: Some(rgba(0x171b24ff).into()),
-                        elevated_surface_background: Some(rgba(0x1f2430ff).into()),
+                        elevated_surface_background: Some(rgba(0x242936ff).into()),
                         surface_background: Some(rgba(0x1f2430ff).into()),
                         background: Some(rgba(0x1f2430ff).into()),
                         element_background: Some(rgba(0xffcc66ff).into()),
                         element_hover: Some(rgba(0x63759926).into()),
                         element_selected: Some(rgba(0x63759926).into()),
                         ghost_element_hover: Some(rgba(0x63759926).into()),
+                        ghost_element_selected: Some(rgba(0x63759926).into()),
                         text: Some(rgba(0x707a8cff).into()),
+                        status_bar_background: Some(rgba(0x1f2430ff).into()),
+                        title_bar_background: Some(rgba(0x1f2430ff).into()),
+                        toolbar_background: Some(rgba(0x1f2430ff).into()),
+                        tab_bar_background: Some(rgba(0x1f2430ff).into()),
                         tab_inactive_background: Some(rgba(0x1f2430ff).into()),
                         tab_active_background: Some(rgba(0x1f2430ff).into()),
+                        scrollbar_thumb_background: Some(rgba(0x707a8c66).into()),
+                        scrollbar_thumb_hover_background: Some(rgba(0x707a8c99).into()),
+                        scrollbar_thumb_border: Some(rgba(0x707a8c66).into()),
+                        scrollbar_track_background: Some(rgba(0x171b2400).into()),
+                        scrollbar_track_border: Some(rgba(0x171b2400).into()),
                         editor_background: Some(rgba(0x1f2430ff).into()),
                         editor_gutter_background: Some(rgba(0x1f2430ff).into()),
                         editor_line_number: Some(rgba(0x8a919966).into()),
@@ -322,10 +374,13 @@ pub fn ayu() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
-                        deleted: Some(rgba(0xff6666ff).into()),
+                        created: Some(rgba(0x87d96ccc).into()),
+                        deleted: Some(rgba(0xf27983cc).into()),
                         error: Some(rgba(0xff6666ff).into()),
                         hidden: Some(rgba(0x707a8cff).into()),
                         hint: Some(rgba(0x969696ff).into()),
+                        ignored: Some(rgba(0x707a8c80).into()),
+                        modified: Some(rgba(0x80bfffcc).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -353,9 +408,24 @@ pub fn ayu() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "comment.doc".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xb8cfe680).into()),
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "constant".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x95e6cbff).into()),
+                                    color: Some(rgba(0xdfbfffff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "constructor".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x5ccfe6ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -441,7 +511,7 @@ pub fn ayu() -> UserThemeFamily {
                             (
                                 "punctuation".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xcccac2b3).into()),
+                                    color: Some(rgba(0xcccac2ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -467,6 +537,13 @@ pub fn ayu() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "punctuation.special".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xcccac2ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "string".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xd5ff80ff).into()),
@@ -477,6 +554,13 @@ pub fn ayu() -> UserThemeFamily {
                                 "string.escape".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x95e6cbff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.regex".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xd5ff80ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -551,16 +635,26 @@ pub fn ayu() -> UserThemeFamily {
                         border_selected: Some(rgba(0x1e232bff).into()),
                         border_transparent: Some(rgba(0x1e232bff).into()),
                         border_disabled: Some(rgba(0x1e232bff).into()),
-                        elevated_surface_background: Some(rgba(0x0b0e14ff).into()),
+                        elevated_surface_background: Some(rgba(0x0d1017ff).into()),
                         surface_background: Some(rgba(0x0b0e14ff).into()),
                         background: Some(rgba(0x0b0e14ff).into()),
                         element_background: Some(rgba(0xe6b450ff).into()),
                         element_hover: Some(rgba(0x47526640).into()),
                         element_selected: Some(rgba(0x47526640).into()),
                         ghost_element_hover: Some(rgba(0x47526640).into()),
+                        ghost_element_selected: Some(rgba(0x47526640).into()),
                         text: Some(rgba(0x565b66ff).into()),
+                        status_bar_background: Some(rgba(0x0b0e14ff).into()),
+                        title_bar_background: Some(rgba(0x0b0e14ff).into()),
+                        toolbar_background: Some(rgba(0x0b0e14ff).into()),
+                        tab_bar_background: Some(rgba(0x0b0e14ff).into()),
                         tab_inactive_background: Some(rgba(0x0b0e14ff).into()),
                         tab_active_background: Some(rgba(0x0b0e14ff).into()),
+                        scrollbar_thumb_background: Some(rgba(0x565b6666).into()),
+                        scrollbar_thumb_hover_background: Some(rgba(0x565b6699).into()),
+                        scrollbar_thumb_border: Some(rgba(0x565b6666).into()),
+                        scrollbar_track_background: Some(rgba(0x1e232b00).into()),
+                        scrollbar_track_border: Some(rgba(0x1e232b00).into()),
                         editor_background: Some(rgba(0x0b0e14ff).into()),
                         editor_gutter_background: Some(rgba(0x0b0e14ff).into()),
                         editor_line_number: Some(rgba(0x6c738099).into()),
@@ -585,10 +679,13 @@ pub fn ayu() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
-                        deleted: Some(rgba(0xd95757ff).into()),
+                        created: Some(rgba(0x7fd962cc).into()),
+                        deleted: Some(rgba(0xf26d78cc).into()),
                         error: Some(rgba(0xd95757ff).into()),
                         hidden: Some(rgba(0x565b66ff).into()),
                         hint: Some(rgba(0x969696ff).into()),
+                        ignored: Some(rgba(0x565b6680).into()),
+                        modified: Some(rgba(0x73b8ffcc).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -616,9 +713,24 @@ pub fn ayu() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "comment.doc".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xacb6bf8c).into()),
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "constant".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x95e6cbff).into()),
+                                    color: Some(rgba(0xd2a6ffff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "constructor".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x39bae6ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -704,7 +816,7 @@ pub fn ayu() -> UserThemeFamily {
                             (
                                 "punctuation".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xbfbdb6b3).into()),
+                                    color: Some(rgba(0xbfbdb6ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -730,6 +842,13 @@ pub fn ayu() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "punctuation.special".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xbfbdb6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "string".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xaad94cff).into()),
@@ -740,6 +859,13 @@ pub fn ayu() -> UserThemeFamily {
                                 "string.escape".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x95e6cbff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.regex".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xaad94cff).into()),
                                     ..Default::default()
                                 },
                             ),

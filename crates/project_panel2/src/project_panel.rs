@@ -103,23 +103,26 @@ pub struct EntryDetails {
 }
 
 actions!(
-    ExpandSelectedEntry,
-    CollapseSelectedEntry,
-    CollapseAllEntries,
-    NewDirectory,
-    NewFile,
-    Copy,
-    CopyPath,
-    CopyRelativePath,
-    RevealInFinder,
-    OpenInTerminal,
-    Cut,
-    Paste,
-    Delete,
-    Rename,
-    Open,
-    ToggleFocus,
-    NewSearchInDirectory,
+    project_panel,
+    [
+        ExpandSelectedEntry,
+        CollapseSelectedEntry,
+        CollapseAllEntries,
+        NewDirectory,
+        NewFile,
+        Copy,
+        CopyPath,
+        CopyRelativePath,
+        RevealInFinder,
+        OpenInTerminal,
+        Cut,
+        Paste,
+        Delete,
+        Rename,
+        Open,
+        ToggleFocus,
+        NewSearchInDirectory,
+    ]
 );
 
 pub fn init_settings(cx: &mut AppContext) {

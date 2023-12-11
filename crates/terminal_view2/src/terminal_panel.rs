@@ -24,7 +24,7 @@ use anyhow::Result;
 
 const TERMINAL_PANEL_KEY: &'static str = "TerminalPanel";
 
-actions!(ToggleFocus);
+actions!(terminal_panel, [ToggleFocus]);
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(

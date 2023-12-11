@@ -1,6 +1,7 @@
 mod default_colors;
 mod default_theme;
 mod one_themes;
+pub mod prelude;
 mod registry;
 mod scale;
 mod settings;
@@ -29,6 +30,15 @@ use serde::Deserialize;
 pub enum Appearance {
     Light,
     Dark,
+}
+
+impl Appearance {
+    pub fn is_light(&self) -> bool {
+        match self {
+            Self::Light => true,
+            Self::Dark => false,
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]

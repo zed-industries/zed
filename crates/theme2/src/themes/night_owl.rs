@@ -33,9 +33,19 @@ pub fn night_owl() -> UserThemeFamily {
                         element_selected: Some(rgba(0x234d708c).into()),
                         drop_target_background: Some(rgba(0x011627ff).into()),
                         ghost_element_hover: Some(rgba(0x011627ff).into()),
+                        ghost_element_selected: Some(rgba(0x234d708c).into()),
                         text: Some(rgba(0xd6deebff).into()),
+                        status_bar_background: Some(rgba(0x011627ff).into()),
+                        title_bar_background: Some(rgba(0x011627ff).into()),
+                        toolbar_background: Some(rgba(0x011627ff).into()),
+                        tab_bar_background: Some(rgba(0x011627ff).into()),
                         tab_inactive_background: Some(rgba(0x01111dff).into()),
                         tab_active_background: Some(rgba(0x0b2942ff).into()),
+                        scrollbar_thumb_background: Some(rgba(0x084d8180).into()),
+                        scrollbar_thumb_hover_background: Some(rgba(0x084d8180).into()),
+                        scrollbar_thumb_border: Some(rgba(0x084d8180).into()),
+                        scrollbar_track_background: Some(rgba(0x010b14ff).into()),
+                        scrollbar_track_border: Some(rgba(0x010b14ff).into()),
                         editor_background: Some(rgba(0x011627ff).into()),
                         editor_gutter_background: Some(rgba(0x011627ff).into()),
                         editor_line_number: Some(rgba(0x4b6479ff).into()),
@@ -59,10 +69,14 @@ pub fn night_owl() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
+                        conflict: Some(rgba(0xffeb95cc).into()),
+                        created: Some(rgba(0x9ccc65ff).into()),
                         deleted: Some(rgba(0xef5350ff).into()),
                         error: Some(rgba(0xef5350ff).into()),
                         hidden: Some(rgba(0x5f7e97ff).into()),
                         hint: Some(rgba(0x969696ff).into()),
+                        ignored: Some(rgba(0x395a75ff).into()),
+                        modified: Some(rgba(0xe2b93dff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -91,6 +105,14 @@ pub fn night_owl() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "comment.doc".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x637777ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "constant".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x82aaffff).into()),
@@ -98,9 +120,16 @@ pub fn night_owl() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "constructor".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xcaece6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "function".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xc792eaff).into()),
+                                    color: Some(rgba(0x82aaffff).into()),
                                     font_style: Some(UserFontStyle::Italic),
                                     ..Default::default()
                                 },
@@ -143,6 +172,38 @@ pub fn night_owl() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "punctuation.bracket".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xc792eaff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.delimiter".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xc792eaff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.list_marker".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xc792eaff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.special".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xc792eaff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "string".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xecc48dff).into()),
@@ -153,6 +214,27 @@ pub fn night_owl() -> UserThemeFamily {
                                 "string.escape".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x82aaffff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.regex".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xecc48dff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.special".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xecc48dff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.special.symbol".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xecc48dff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -213,9 +295,16 @@ pub fn night_owl() -> UserThemeFamily {
                         element_hover: Some(rgba(0xd3e8f8ff).into()),
                         element_selected: Some(rgba(0xd3e8f8ff).into()),
                         ghost_element_hover: Some(rgba(0xd3e8f8ff).into()),
+                        ghost_element_selected: Some(rgba(0xd3e8f8ff).into()),
                         text: Some(rgba(0x403f53ff).into()),
+                        status_bar_background: Some(rgba(0xf0f0f0ff).into()),
+                        title_bar_background: Some(rgba(0xf0f0f0ff).into()),
+                        toolbar_background: Some(rgba(0xfbfbfbff).into()),
+                        tab_bar_background: Some(rgba(0xf0f0f0ff).into()),
                         tab_inactive_background: Some(rgba(0xf0f0f0ff).into()),
                         tab_active_background: Some(rgba(0xf6f6f6ff).into()),
+                        scrollbar_track_background: Some(rgba(0xccccccff).into()),
+                        scrollbar_track_border: Some(rgba(0xccccccff).into()),
                         editor_background: Some(rgba(0xfbfbfbff).into()),
                         editor_gutter_background: Some(rgba(0xfbfbfbff).into()),
                         editor_line_number: Some(rgba(0x90a7b2ff).into()),
@@ -240,10 +329,12 @@ pub fn night_owl() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
-                        deleted: Some(rgba(0x403f53ff).into()),
+                        created: Some(rgba(0x49d0c5ff).into()),
+                        deleted: Some(rgba(0xf76e6eff).into()),
                         error: Some(rgba(0x403f53ff).into()),
                         hidden: Some(rgba(0x403f53ff).into()),
                         hint: Some(rgba(0x969696ff).into()),
+                        modified: Some(rgba(0x6fbef6ff).into()),
                         warning: Some(rgba(0xdaaa01ff).into()),
                         ..Default::default()
                     },
@@ -273,6 +364,14 @@ pub fn night_owl() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "comment.doc".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x989fb1ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "constant".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x4876d6ff).into()),
@@ -280,9 +379,16 @@ pub fn night_owl() -> UserThemeFamily {
                                 },
                             ),
                             (
-                                "function".into(),
+                                "constructor".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x994cc3ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "function".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x4876d6ff).into()),
                                     font_style: Some(UserFontStyle::Italic),
                                     ..Default::default()
                                 },
@@ -325,6 +431,38 @@ pub fn night_owl() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "punctuation.bracket".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x994cc3ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.delimiter".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x994cc3ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.list_marker".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x994cc3ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.special".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x994cc3ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "string".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x4876d6ff).into()),
@@ -333,6 +471,27 @@ pub fn night_owl() -> UserThemeFamily {
                             ),
                             (
                                 "string.escape".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x4876d6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.regex".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x4876d6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.special".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x4876d6ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.special.symbol".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x4876d6ff).into()),
                                     ..Default::default()

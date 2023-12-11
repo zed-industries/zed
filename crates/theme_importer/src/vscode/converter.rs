@@ -9,7 +9,7 @@ use theme::{
 
 use crate::color::try_parse_color;
 use crate::util::Traverse;
-use crate::vscode::VsCodeTheme;
+use crate::vscode::{VsCodeTheme, VsCodeTokenScope};
 use crate::ThemeMetadata;
 
 use super::ZedSyntaxToken;
@@ -32,13 +32,19 @@ pub(crate) fn try_parse_font_style(font_style: &str) -> Option<UserFontStyle> {
 pub struct VsCodeThemeConverter {
     theme: VsCodeTheme,
     theme_metadata: ThemeMetadata,
+    syntax_overrides: IndexMap<String, Vec<String>>,
 }
 
 impl VsCodeThemeConverter {
-    pub fn new(theme: VsCodeTheme, theme_metadata: ThemeMetadata) -> Self {
+    pub fn new(
+        theme: VsCodeTheme,
+        theme_metadata: ThemeMetadata,
+        syntax_overrides: IndexMap<String, Vec<String>>,
+    ) -> Self {
         Self {
             theme,
             theme_metadata,
+            syntax_overrides,
         }
     }
 
@@ -69,10 +75,20 @@ impl VsCodeThemeConverter {
         };
 
         Ok(StatusColorsRefinement {
-            // conflict: None,
-            // created: None,
+            created: vscode_colors
+                .editor_gutter_added_background
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
+            modified: vscode_colors
+                .editor_gutter_modified_background
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
             deleted: vscode_colors
-                .error_foreground
+                .editor_gutter_deleted_background
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
+            conflict: vscode_colors
+                .git_decoration_conflicting_resource_foreground
                 .as_ref()
                 .traverse(|color| try_parse_color(&color))?,
             error: vscode_colors
@@ -88,9 +104,11 @@ impl VsCodeThemeConverter {
                 .as_ref()
                 .traverse(|color| try_parse_color(&color))?
                 .or(vscode_base_status_colors.hint),
-            // ignored: None,
+            ignored: vscode_colors
+                .git_decoration_ignored_resource_foreground
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
             // info: None,
-            // modified: None,
             // renamed: None,
             // success: None,
             warning: vscode_colors
@@ -103,6 +121,21 @@ impl VsCodeThemeConverter {
 
     fn convert_theme_colors(&self) -> Result<ThemeColorsRefinement> {
         let vscode_colors = &self.theme.colors;
+
+        let vscode_editor_background = vscode_colors
+            .editor_background
+            .as_ref()
+            .traverse(|color| try_parse_color(&color))?;
+
+        let vscode_scrollbar_shadow = vscode_colors
+            .scrollbar_shadow
+            .as_ref()
+            .traverse(|color| try_parse_color(&color))?;
+
+        let vscode_scrollbar_slider_background = vscode_colors
+            .scrollbar_slider_background
+            .as_ref()
+            .traverse(|color| try_parse_color(&color))?;
 
         Ok(ThemeColorsRefinement {
             border: vscode_colors
@@ -130,15 +163,20 @@ impl VsCodeThemeConverter {
                 .as_ref()
                 .traverse(|color| try_parse_color(&color))?,
             elevated_surface_background: vscode_colors
-                .panel_background
+                .dropdown_background
                 .as_ref()
                 .traverse(|color| try_parse_color(&color))?,
             surface_background: vscode_colors
                 .panel_background
                 .as_ref()
                 .traverse(|color| try_parse_color(&color))?,
-            background: vscode_colors
-                .editor_background
+            background: vscode_editor_background,
+            title_bar_background: vscode_colors
+                .title_bar_active_background
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
+            status_bar_background: vscode_colors
+                .status_bar_background
                 .as_ref()
                 .traverse(|color| try_parse_color(&color))?,
             element_background: vscode_colors
@@ -155,6 +193,10 @@ impl VsCodeThemeConverter {
                 .traverse(|color| try_parse_color(&color))?,
             ghost_element_hover: vscode_colors
                 .list_hover_background
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
+            ghost_element_selected: vscode_colors
+                .list_active_selection_background
                 .as_ref()
                 .traverse(|color| try_parse_color(&color))?,
             drop_target_background: vscode_colors
@@ -175,6 +217,10 @@ impl VsCodeThemeConverter {
                         .ok()
                         .flatten()
                 }),
+            tab_bar_background: vscode_colors
+                .editor_group_header_tabs_background
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
             tab_active_background: vscode_colors
                 .tab_active_background
                 .as_ref()
@@ -183,20 +229,27 @@ impl VsCodeThemeConverter {
                 .tab_inactive_background
                 .as_ref()
                 .traverse(|color| try_parse_color(&color))?,
-            editor_background: vscode_colors
-                .editor_background
+            toolbar_background: vscode_colors
+                .breadcrumb_background
                 .as_ref()
-                .traverse(|color| try_parse_color(&color))?,
-            editor_gutter_background: vscode_colors
-                .editor_background
-                .as_ref()
-                .traverse(|color| try_parse_color(&color))?,
+                .traverse(|color| try_parse_color(&color))?
+                .or(vscode_editor_background),
+            editor_background: vscode_editor_background,
+            editor_gutter_background: vscode_editor_background,
             editor_line_number: vscode_colors
                 .editor_line_number_foreground
                 .as_ref()
                 .traverse(|color| try_parse_color(&color))?,
             editor_active_line_number: vscode_colors
                 .editor_foreground
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
+            scrollbar_track_background: vscode_scrollbar_shadow,
+            scrollbar_track_border: vscode_scrollbar_shadow,
+            scrollbar_thumb_background: vscode_scrollbar_slider_background,
+            scrollbar_thumb_border: vscode_scrollbar_slider_background,
+            scrollbar_thumb_hover_background: vscode_colors
+                .scrollbar_slider_hover_background
                 .as_ref()
                 .traverse(|color| try_parse_color(&color))?,
             terminal_background: vscode_colors
@@ -275,19 +328,39 @@ impl VsCodeThemeConverter {
         let mut highlight_styles = IndexMap::new();
 
         for syntax_token in ZedSyntaxToken::iter() {
-            let multimatch_scopes = syntax_token.to_vscode();
+            let override_match = self
+                .syntax_overrides
+                .get(&syntax_token.to_string())
+                .and_then(|scope| {
+                    self.theme.token_colors.iter().find(|token_color| {
+                        token_color.scope == Some(VsCodeTokenScope::Many(scope.clone()))
+                    })
+                });
 
-            let token_color = self.theme.token_colors.iter().find(|token_color| {
-                token_color
-                    .scope
-                    .as_ref()
-                    .map(|scope| scope.multimatch(&multimatch_scopes))
-                    .unwrap_or(false)
-            });
+            let best_match = override_match
+                .or_else(|| syntax_token.find_best_token_color_match(&self.theme.token_colors))
+                .or_else(|| {
+                    syntax_token.fallbacks().iter().find_map(|fallback| {
+                        fallback.find_best_token_color_match(&self.theme.token_colors)
+                    })
+                });
 
-            let Some(token_color) = token_color else {
+            let Some(token_color) = best_match else {
+                log::warn!("No matching token color found for '{syntax_token}'");
                 continue;
             };
+
+            log::info!(
+                "Matched '{syntax_token}' to '{}'",
+                token_color
+                    .name
+                    .clone()
+                    .or_else(|| token_color
+                        .scope
+                        .as_ref()
+                        .map(|scope| format!("{:?}", scope)))
+                    .unwrap_or_else(|| "no identifier".to_string())
+            );
 
             let highlight_style = UserHighlightStyle {
                 color: token_color

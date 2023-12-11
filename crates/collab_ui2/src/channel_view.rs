@@ -26,7 +26,7 @@ use workspace::{
     ItemNavHistory, Pane, SaveIntent, ViewId, Workspace, WorkspaceId,
 };
 
-actions!(Deploy);
+actions!(collab, [Deploy]);
 
 pub fn init(cx: &mut AppContext) {
     register_followable_item::<ChannelView>(cx)

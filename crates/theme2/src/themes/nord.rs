@@ -24,7 +24,7 @@ pub fn nord() -> UserThemeFamily {
                     border_selected: Some(rgba(0x3b4252ff).into()),
                     border_transparent: Some(rgba(0x3b4252ff).into()),
                     border_disabled: Some(rgba(0x3b4252ff).into()),
-                    elevated_surface_background: Some(rgba(0x2e3440ff).into()),
+                    elevated_surface_background: Some(rgba(0x3b4252ff).into()),
                     surface_background: Some(rgba(0x2e3440ff).into()),
                     background: Some(rgba(0x2e3440ff).into()),
                     element_background: Some(rgba(0x88c0d0ee).into()),
@@ -32,9 +32,19 @@ pub fn nord() -> UserThemeFamily {
                     element_selected: Some(rgba(0x88c0d0ff).into()),
                     drop_target_background: Some(rgba(0x88c0d099).into()),
                     ghost_element_hover: Some(rgba(0x3b4252ff).into()),
+                    ghost_element_selected: Some(rgba(0x88c0d0ff).into()),
                     text: Some(rgba(0xd8dee9ff).into()),
+                    status_bar_background: Some(rgba(0x3b4252ff).into()),
+                    title_bar_background: Some(rgba(0x2e3440ff).into()),
+                    toolbar_background: Some(rgba(0x2e3440ff).into()),
+                    tab_bar_background: Some(rgba(0x2e3440ff).into()),
                     tab_inactive_background: Some(rgba(0x2e3440ff).into()),
                     tab_active_background: Some(rgba(0x3b4252ff).into()),
+                    scrollbar_thumb_background: Some(rgba(0x434c5e99).into()),
+                    scrollbar_thumb_hover_background: Some(rgba(0x434c5eaa).into()),
+                    scrollbar_thumb_border: Some(rgba(0x434c5e99).into()),
+                    scrollbar_track_background: Some(rgba(0x00000066).into()),
+                    scrollbar_track_border: Some(rgba(0x00000066).into()),
                     editor_background: Some(rgba(0x2e3440ff).into()),
                     editor_gutter_background: Some(rgba(0x2e3440ff).into()),
                     editor_line_number: Some(rgba(0x4c566aff).into()),
@@ -59,10 +69,14 @@ pub fn nord() -> UserThemeFamily {
                     ..Default::default()
                 },
                 status: StatusColorsRefinement {
+                    conflict: Some(rgba(0x5e81acff).into()),
+                    created: Some(rgba(0xa3be8cff).into()),
                     deleted: Some(rgba(0xbf616aff).into()),
                     error: Some(rgba(0xbf616aff).into()),
                     hidden: Some(rgba(0xd8dee966).into()),
                     hint: Some(rgba(0xd8dee9ff).into()),
+                    ignored: Some(rgba(0xd8dee966).into()),
+                    modified: Some(rgba(0xebcb8bff).into()),
                     warning: Some(rgba(0xebcb8bff).into()),
                     ..Default::default()
                 },
@@ -90,16 +104,23 @@ pub fn nord() -> UserThemeFamily {
                             },
                         ),
                         (
-                            "constant".into(),
+                            "comment.doc".into(),
                             UserHighlightStyle {
-                                color: Some(rgba(0xebcb8bff).into()),
+                                color: Some(rgba(0x616e88ff).into()),
                                 ..Default::default()
                             },
                         ),
                         (
-                            "emphasis.strong".into(),
+                            "constant".into(),
                             UserHighlightStyle {
-                                font_weight: Some(UserFontWeight(700.0)),
+                                color: Some(rgba(0x81a1c1ff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "constructor".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0x81a1c1ff).into()),
                                 ..Default::default()
                             },
                         ),
@@ -132,7 +153,21 @@ pub fn nord() -> UserThemeFamily {
                             },
                         ),
                         (
+                            "preproc".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0x5e81acff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
                             "punctuation".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0xeceff4ff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "punctuation.bracket".into(),
                             UserHighlightStyle {
                                 color: Some(rgba(0xeceff4ff).into()),
                                 ..Default::default()
@@ -142,6 +177,20 @@ pub fn nord() -> UserThemeFamily {
                             "punctuation.delimiter".into(),
                             UserHighlightStyle {
                                 color: Some(rgba(0x81a1c1ff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "punctuation.list_marker".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0xeceff4ff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "punctuation.special".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0xeceff4ff).into()),
                                 ..Default::default()
                             },
                         ),
@@ -156,6 +205,27 @@ pub fn nord() -> UserThemeFamily {
                             "string.escape".into(),
                             UserHighlightStyle {
                                 color: Some(rgba(0xebcb8bff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "string.regex".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0xa3be8cff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "string.special".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0xa3be8cff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "string.special.symbol".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0xa3be8cff).into()),
                                 ..Default::default()
                             },
                         ),

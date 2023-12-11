@@ -2,18 +2,18 @@ use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, AppContext, DismissEvent, Div, EventEmitter, FocusableView, Render, SharedString,
-    View, ViewContext, VisualContext, WeakView,
+    actions, AppContext, DismissEvent, Div, EventEmitter, FocusableView, Render, View, ViewContext,
+    VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};
 use settings::{update_settings_file, SettingsStore};
 use std::sync::Arc;
-use theme::{Theme, ThemeRegistry, ThemeSettings};
+use theme::{Theme, ThemeMeta, ThemeRegistry, ThemeSettings};
 use ui::{prelude::*, v_stack, ListItem};
 use util::ResultExt;
-use workspace::{ui::HighlightedLabel, Workspace};
+use workspace::{ui::HighlightedLabel, ModalView, Workspace};
 
-actions!(Toggle, Reload);
+actions!(theme_selector, [Toggle, Reload]);
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(
@@ -52,6 +52,8 @@ pub fn reload(cx: &mut AppContext) {
     }
 }
 
+impl ModalView for ThemeSelector {}
+
 pub struct ThemeSelector {
     picker: View<Picker<ThemeSelectorDelegate>>,
 }
@@ -81,7 +83,7 @@ impl ThemeSelector {
 
 pub struct ThemeSelectorDelegate {
     fs: Arc<dyn Fs>,
-    theme_names: Vec<SharedString>,
+    themes: Vec<ThemeMeta>,
     matches: Vec<StringMatch>,
     original_theme: Arc<Theme>,
     selection_completed: bool,
@@ -99,21 +101,25 @@ impl ThemeSelectorDelegate {
 
         let staff_mode = cx.is_staff();
         let registry = cx.global::<ThemeRegistry>();
-        let theme_names = registry.list(staff_mode).collect::<Vec<_>>();
-        //todo!(theme sorting)
-        // theme_names.sort_unstable_by(|a, b| a.is_light.cmp(&b.is_light).then(a.name.cmp(&b.name)));
-        let matches = theme_names
+        let mut themes = registry.list(staff_mode).collect::<Vec<_>>();
+        themes.sort_unstable_by(|a, b| {
+            a.appearance
+                .is_light()
+                .cmp(&b.appearance.is_light())
+                .then(a.name.cmp(&b.name))
+        });
+        let matches = themes
             .iter()
             .map(|meta| StringMatch {
                 candidate_id: 0,
                 score: 0.0,
                 positions: Default::default(),
-                string: meta.to_string(),
+                string: meta.name.to_string(),
             })
             .collect();
         let mut this = Self {
             fs,
-            theme_names,
+            themes,
             matches,
             original_theme: original_theme.clone(),
             selected_index: 0,
@@ -213,13 +219,13 @@ impl PickerDelegate for ThemeSelectorDelegate {
     ) -> gpui::Task<()> {
         let background = cx.background_executor().clone();
         let candidates = self
-            .theme_names
+            .themes
             .iter()
             .enumerate()
             .map(|(id, meta)| StringMatchCandidate {
                 id,
-                char_bag: meta.as_ref().into(),
-                string: meta.to_string(),
+                char_bag: meta.name.as_ref().into(),
+                string: meta.name.to_string(),
             })
             .collect::<Vec<_>>();
 

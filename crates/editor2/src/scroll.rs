@@ -136,6 +136,7 @@ pub struct ScrollManager {
     last_autoscroll: Option<(gpui::Point<f32>, f32, f32, AutoscrollStrategy)>,
     show_scrollbars: bool,
     hide_scrollbar_task: Option<Task<()>>,
+    dragging_scrollbar: bool,
     visible_line_count: Option<f32>,
 }
 
@@ -148,6 +149,7 @@ impl ScrollManager {
             autoscroll_request: None,
             show_scrollbars: true,
             hide_scrollbar_task: None,
+            dragging_scrollbar: false,
             last_autoscroll: None,
             visible_line_count: None,
         }
@@ -276,6 +278,17 @@ impl ScrollManager {
 
     pub fn has_autoscroll_request(&self) -> bool {
         self.autoscroll_request.is_some()
+    }
+
+    pub fn is_dragging_scrollbar(&self) -> bool {
+        self.dragging_scrollbar
+    }
+
+    pub fn set_is_dragging_scrollbar(&mut self, dragging: bool, cx: &mut ViewContext<Editor>) {
+        if dragging != self.dragging_scrollbar {
+            self.dragging_scrollbar = dragging;
+            cx.notify();
+        }
     }
 
     pub fn clamp_scroll_left(&mut self, max: f32) -> bool {

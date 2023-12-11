@@ -23,6 +23,7 @@ pub(crate) fn one_dark() -> Theme {
     let elevated_surface = hsla(225. / 360., 12. / 100., 17. / 100., 1.);
 
     let blue = hsla(207.8 / 360., 81. / 100., 66. / 100., 1.0);
+    let light_gray = hsla(218.8 / 360., 14. / 100., 71. / 100., 1.0);
     let gray = hsla(218.8 / 360., 10. / 100., 40. / 100., 1.0);
     let green = hsla(95. / 360., 38. / 100., 62. / 100., 1.0);
     let orange = hsla(29. / 360., 54. / 100., 61. / 100., 1.0);
@@ -113,6 +114,25 @@ pub(crate) fn one_dark() -> Theme {
                 terminal_ansi_bright_magenta: crate::violet().dark().step_10(),
                 terminal_ansi_bright_cyan: crate::cyan().dark().step_10(),
                 terminal_ansi_bright_white: crate::neutral().dark().step_11(),
+                panel_background: bg,
+                panel_focused_border: blue,
+                pane_focused_border: blue,
+                scrollbar_thumb_background: gpui::transparent_black(),
+                scrollbar_thumb_hover_background: hsla(225.0 / 360., 11.8 / 100., 26.7 / 100., 1.0),
+                scrollbar_thumb_border: hsla(228. / 360., 8. / 100., 25. / 100., 1.),
+                scrollbar_track_background: gpui::transparent_black(),
+                scrollbar_track_border: hsla(228. / 360., 8. / 100., 25. / 100., 1.),
+                editor_foreground: hsla(218. / 360., 14. / 100., 71. / 100., 1.),
+                headline: hsla(355. / 360., 65. / 100., 65. / 100., 1.),
+                paragraph: light_gray,
+                link_text: blue,
+                link_text_hover: blue,
+                link_uri: teal,
+                inline_code_background: gpui::transparent_black(),
+                inline_code_border: gpui::transparent_black(),
+                code_block_background: gpui::transparent_black(),
+                code_block_border: gpui::transparent_black(),
+                emphasis: orange,
             },
             status: StatusColors {
                 conflict: yellow,
@@ -195,6 +215,7 @@ pub(crate) fn one_dark() -> Theme {
                     ("variant".into(), HighlightStyle::default()),
                 ],
             }),
+            accents: vec![blue, orange, purple, teal],
         },
     }
 }

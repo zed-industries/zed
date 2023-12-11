@@ -1,26 +1,17 @@
+use indexmap::IndexMap;
 use serde::Deserialize;
 use strum::EnumIter;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Deserialize)]
 #[serde(untagged)]
 pub enum VsCodeTokenScope {
     One(String),
     Many(Vec<String>),
 }
 
-impl VsCodeTokenScope {
-    pub fn multimatch(&self, matches: &[&'static str]) -> bool {
-        match self {
-            VsCodeTokenScope::One(scope) => matches.iter().any(|&s| s == scope),
-            VsCodeTokenScope::Many(scopes) => {
-                matches.iter().any(|s| scopes.contains(&s.to_string()))
-            }
-        }
-    }
-}
-
 #[derive(Debug, Deserialize)]
 pub struct VsCodeTokenColor {
+    pub name: Option<String>,
     pub scope: Option<VsCodeTokenScope>,
     pub settings: VsCodeTokenColorSettings,
 }
@@ -127,15 +118,90 @@ impl std::fmt::Display for ZedSyntaxToken {
 }
 
 impl ZedSyntaxToken {
+    pub fn find_best_token_color_match<'a>(
+        &self,
+        token_colors: &'a [VsCodeTokenColor],
+    ) -> Option<&'a VsCodeTokenColor> {
+        let mut ranked_matches = IndexMap::new();
+
+        for (ix, token_color) in token_colors.iter().enumerate() {
+            if token_color.settings.foreground.is_none() {
+                continue;
+            }
+
+            let Some(rank) = self.rank_match(token_color) else {
+                continue;
+            };
+
+            if rank > 0 {
+                ranked_matches.insert(ix, rank);
+            }
+        }
+
+        ranked_matches
+            .into_iter()
+            .max_by_key(|(_, rank)| *rank)
+            .map(|(ix, _)| &token_colors[ix])
+    }
+
+    fn rank_match(&self, token_color: &VsCodeTokenColor) -> Option<u32> {
+        let candidate_scopes = match token_color.scope.as_ref()? {
+            VsCodeTokenScope::One(scope) => vec![scope],
+            VsCodeTokenScope::Many(scopes) => scopes.iter().collect(),
+        }
+        .iter()
+        .map(|scope| scope.as_str())
+        .collect::<Vec<_>>();
+
+        let scopes_to_match = self.to_vscode();
+        let number_of_scopes_to_match = scopes_to_match.len();
+
+        let mut matches = 0;
+
+        for (ix, scope) in scopes_to_match.into_iter().enumerate() {
+            // Assign each entry a weight that is inversely proportional to its
+            // position in the list.
+            //
+            // Entries towards the front are weighted higher than those towards the end.
+            let weight = (number_of_scopes_to_match - ix) as u32;
+
+            if candidate_scopes.contains(&scope) {
+                matches += 1 + weight;
+            }
+        }
+
+        Some(matches)
+    }
+
+    pub fn fallbacks(&self) -> &[Self] {
+        match self {
+            ZedSyntaxToken::CommentDoc => &[ZedSyntaxToken::Comment],
+            ZedSyntaxToken::Number => &[ZedSyntaxToken::Constant],
+            ZedSyntaxToken::VariableSpecial => &[ZedSyntaxToken::Variable],
+            ZedSyntaxToken::PunctuationBracket
+            | ZedSyntaxToken::PunctuationDelimiter
+            | ZedSyntaxToken::PunctuationListMarker
+            | ZedSyntaxToken::PunctuationSpecial => &[ZedSyntaxToken::Punctuation],
+            ZedSyntaxToken::StringEscape
+            | ZedSyntaxToken::StringRegex
+            | ZedSyntaxToken::StringSpecial
+            | ZedSyntaxToken::StringSpecialSymbol => &[ZedSyntaxToken::String],
+            _ => &[],
+        }
+    }
+
     pub fn to_vscode(&self) -> Vec<&'static str> {
         match self {
             ZedSyntaxToken::Attribute => vec!["entity.other.attribute-name"],
             ZedSyntaxToken::Boolean => vec!["constant.language"],
             ZedSyntaxToken::Comment => vec!["comment"],
             ZedSyntaxToken::CommentDoc => vec!["comment.block.documentation"],
-            ZedSyntaxToken::Constant => vec!["constant.character"],
+            ZedSyntaxToken::Constant => vec!["constant", "constant.language", "constant.character"],
             ZedSyntaxToken::Constructor => {
-                vec!["entity.name.function.definition.special.constructor"]
+                vec![
+                    "entity.name.tag",
+                    "entity.name.function.definition.special.constructor",
+                ]
             }
             ZedSyntaxToken::Embedded => vec!["meta.embedded"],
             ZedSyntaxToken::Emphasis => vec!["markup.italic"],
@@ -146,11 +212,20 @@ impl ZedSyntaxToken {
             ],
             ZedSyntaxToken::Enum => vec!["support.type.enum"],
             ZedSyntaxToken::Function => vec![
+                "entity.function",
                 "entity.name.function",
                 "variable.function",
-                "support.function",
             ],
-            ZedSyntaxToken::Keyword => vec!["keyword"],
+            ZedSyntaxToken::Hint => vec![],
+            ZedSyntaxToken::Keyword => vec![
+                "keyword",
+                "keyword.other.fn.rust",
+                "keyword.control",
+                "keyword.control.fun",
+                "keyword.control.class",
+                "punctuation.accessor",
+                "entity.name.tag",
+            ],
             ZedSyntaxToken::Label => vec![
                 "label",
                 "entity.name",
@@ -161,7 +236,13 @@ impl ZedSyntaxToken {
             ZedSyntaxToken::LinkUri => vec!["markup.underline.link", "string.other.link"],
             ZedSyntaxToken::Number => vec!["constant.numeric", "number"],
             ZedSyntaxToken::Operator => vec!["operator", "keyword.operator"],
-            ZedSyntaxToken::Preproc => vec!["preproc"],
+            ZedSyntaxToken::Predictive => vec![],
+            ZedSyntaxToken::Preproc => vec![
+                "preproc",
+                "meta.preprocessor",
+                "punctuation.definition.preprocessor",
+            ],
+            ZedSyntaxToken::Primary => vec![],
             ZedSyntaxToken::Property => vec![
                 "variable.member",
                 "support.type.property-name",
@@ -173,7 +254,6 @@ impl ZedSyntaxToken {
                 "punctuation.section",
                 "punctuation.accessor",
                 "punctuation.separator",
-                "punctuation.terminator",
                 "punctuation.definition.tag",
             ],
             ZedSyntaxToken::PunctuationBracket => vec![
@@ -202,11 +282,20 @@ impl ZedSyntaxToken {
             ZedSyntaxToken::Tag => vec!["tag", "entity.name.tag", "meta.tag.sgml"],
             ZedSyntaxToken::TextLiteral => vec!["text.literal", "string"],
             ZedSyntaxToken::Title => vec!["title", "entity.name"],
-            ZedSyntaxToken::Type => vec!["entity.name.type", "support.type", "support.class"],
+            ZedSyntaxToken::Type => vec![
+                "entity.name.type",
+                "entity.name.type.primitive",
+                "entity.name.type.numeric",
+                "keyword.type",
+                "support.type",
+                "support.type.primitive",
+                "support.class",
+            ],
             ZedSyntaxToken::Variable => vec![
                 "variable",
                 "variable.language",
                 "variable.member",
+                "variable.parameter",
                 "variable.parameter.function-call",
             ],
             ZedSyntaxToken::VariableSpecial => vec![
@@ -216,7 +305,6 @@ impl ZedSyntaxToken {
                 "variable.language",
             ],
             ZedSyntaxToken::Variant => vec!["variant"],
-            _ => vec![],
         }
     }
 }

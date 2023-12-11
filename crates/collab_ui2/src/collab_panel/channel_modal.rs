@@ -13,12 +13,16 @@ use picker::{Picker, PickerDelegate};
 use std::sync::Arc;
 use ui::prelude::*;
 use util::TryFutureExt;
+use workspace::ModalView;
 
 actions!(
-    SelectNextControl,
-    ToggleMode,
-    ToggleMemberAdmin,
-    RemoveMember
+    channel_modal,
+    [
+        SelectNextControl,
+        ToggleMode,
+        ToggleMemberAdmin,
+        RemoveMember
+    ]
 );
 
 // pub fn init(cx: &mut AppContext) {
@@ -140,6 +144,7 @@ impl ChannelModal {
 }
 
 impl EventEmitter<DismissEvent> for ChannelModal {}
+impl ModalView for ChannelModal {}
 
 impl FocusableView for ChannelModal {
     fn focus_handle(&self, cx: &AppContext) -> gpui::FocusHandle {

@@ -10,12 +10,15 @@ use gpui::actions;
 pub fn init() {}
 
 actions!(
-    Cancel,
-    Confirm,
-    SecondaryConfirm,
-    SelectPrev,
-    SelectNext,
-    SelectFirst,
-    SelectLast,
-    ShowContextMenu
+    menu,
+    [
+        Cancel,
+        Confirm,
+        SecondaryConfirm,
+        SelectPrev,
+        SelectNext,
+        SelectFirst,
+        SelectLast,
+        ShowContextMenu
+    ]
 );

@@ -280,6 +280,8 @@ messages!(
     (UpdateWorktree, Foreground),
     (UpdateWorktreeSettings, Foreground),
     (UsersResponse, Foreground),
+    (LspExtExpandMacro, Background),
+    (LspExtExpandMacroResponse, Background),
 );
 
 request_messages!(
@@ -363,6 +365,7 @@ request_messages!(
     (UpdateParticipantLocation, Ack),
     (UpdateProject, Ack),
     (UpdateWorktree, Ack),
+    (LspExtExpandMacro, LspExtExpandMacroResponse),
 );
 
 entity_messages!(
@@ -415,6 +418,7 @@ entity_messages!(
     UpdateProjectCollaborator,
     UpdateWorktree,
     UpdateWorktreeSettings,
+    LspExtExpandMacro,
 );
 
 entity_messages!(

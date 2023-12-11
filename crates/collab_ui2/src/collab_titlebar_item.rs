@@ -20,11 +20,14 @@ const MAX_PROJECT_NAME_LENGTH: usize = 40;
 const MAX_BRANCH_NAME_LENGTH: usize = 40;
 
 actions!(
-    ShareProject,
-    UnshareProject,
-    ToggleUserMenu,
-    ToggleProjectMenu,
-    SwitchBranch
+    collab,
+    [
+        ShareProject,
+        UnshareProject,
+        ToggleUserMenu,
+        ToggleProjectMenu,
+        SwitchBranch
+    ]
 );
 
 pub fn init(cx: &mut AppContext) {

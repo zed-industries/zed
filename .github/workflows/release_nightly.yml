@@ -2,8 +2,8 @@ name: Release Nightly
 
 on:
     schedule:
-        # Fire every night at 1:00am
-        - cron: "0 1 * * *"
+        # Fire every day at 1:00pm and 1:00am
+        - cron: "0 1,13 * * *"
     push:
         tags:
             - "nightly"
@@ -81,12 +81,11 @@ jobs:
             - name: Limit target directory size
               run: script/clear-target-dir-if-larger-than 100
 
-            - name: Set release channel to nightly, add nightly prefix to the final version
+            - name: Set release channel to nightly
               run: |
                   set -eu
                   version=$(git rev-parse --short HEAD)
                   echo "Publishing version: ${version} on release channel nightly"
-                  sed -i '' "s/version = \"\(.*\)\"/version = \"\1-nightly\"/" crates/zed2/Cargo.toml
                   echo "nightly" > crates/zed/RELEASE_CHANNEL
 
             - name: Generate license file

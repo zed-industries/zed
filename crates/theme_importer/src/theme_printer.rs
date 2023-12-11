@@ -187,6 +187,20 @@ impl<'a> Debug for ThemeColorsRefinementPrinter<'a> {
             ("tab_bar_background", self.0.tab_bar_background),
             ("tab_inactive_background", self.0.tab_inactive_background),
             ("tab_active_background", self.0.tab_active_background),
+            (
+                "scrollbar_thumb_background",
+                self.0.scrollbar_thumb_background,
+            ),
+            (
+                "scrollbar_thumb_hover_background",
+                self.0.scrollbar_thumb_hover_background,
+            ),
+            ("scrollbar_thumb_border", self.0.scrollbar_thumb_border),
+            (
+                "scrollbar_track_background",
+                self.0.scrollbar_track_background,
+            ),
+            ("scrollbar_track_border", self.0.scrollbar_track_border),
             ("editor_background", self.0.editor_background),
             ("editor_gutter_background", self.0.editor_gutter_background),
             (

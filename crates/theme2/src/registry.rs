@@ -10,6 +10,12 @@ use crate::{
     SystemColors, Theme, ThemeColors, ThemeFamily, ThemeStyles, UserTheme, UserThemeFamily,
 };
 
+#[derive(Debug, Clone)]
+pub struct ThemeMeta {
+    pub name: SharedString,
+    pub appearance: Appearance,
+}
+
 pub struct ThemeRegistry {
     themes: HashMap<SharedString, Arc<Theme>>,
 }
@@ -81,6 +87,7 @@ impl ThemeRegistry {
                         Appearance::Dark => PlayerColors::dark(),
                     },
                     syntax: Arc::new(syntax_colors),
+                    accents: Vec::new(),
                 },
             }
         }));
@@ -94,8 +101,11 @@ impl ThemeRegistry {
         self.themes.keys().cloned()
     }
 
-    pub fn list(&self, _staff: bool) -> impl Iterator<Item = SharedString> + '_ {
-        self.themes.values().map(|theme| theme.name.clone())
+    pub fn list(&self, _staff: bool) -> impl Iterator<Item = ThemeMeta> + '_ {
+        self.themes.values().map(|theme| ThemeMeta {
+            name: theme.name.clone(),
+            appearance: theme.appearance(),
+        })
     }
 
     pub fn get(&self, name: &str) -> Result<Arc<Theme>> {

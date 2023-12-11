@@ -964,6 +964,7 @@ impl Interactivity {
                 let interactive_bounds = interactive_bounds.clone();
                 cx.on_mouse_event(move |event: &MouseDownEvent, phase, cx| {
                     if phase == DispatchPhase::Bubble
+                        && event.button == MouseButton::Left
                         && interactive_bounds.visibly_contains(&event.position, cx)
                     {
                         *pending_mouse_down.borrow_mut() = Some(event.clone());

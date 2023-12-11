@@ -3,34 +3,33 @@ use anyhow::{anyhow, Context, Result};
 use collections::HashMap;
 pub use no_action::NoAction;
 use serde_json::json;
-use std::{
-    any::{Any, TypeId},
-    ops::Deref,
-};
+use std::any::{Any, TypeId};
 
 /// Actions are used to implement keyboard-driven UI.
 /// When you declare an action, you can bind keys to the action in the keymap and
 /// listeners for that action in the element tree.
 ///
 /// To declare a list of simple actions, you can use the actions! macro, which defines a simple unit struct
-/// action for each listed action name.
+/// action for each listed action name in the given namespace.
 /// ```rust
-/// actions!(MoveUp, MoveDown, MoveLeft, MoveRight, Newline);
+/// actions!(editor, [MoveUp, MoveDown, MoveLeft, MoveRight, Newline]);
 /// ```
-/// More complex data types can also be actions. If you annotate your type with the action derive macro
-/// it will be implemented and registered automatically.
+/// More complex data types can also be actions, providing they implement Clone, PartialEq,
+/// and serde_derive::Deserialize.
+/// Use `impl_actions!` to automatically implement the action in the given namespace.
 /// ```
-/// #[derive(Clone, PartialEq, serde_derive::Deserialize, Action)]
+/// #[derive(Clone, PartialEq, serde_derive::Deserialize)]
 /// pub struct SelectNext {
 ///     pub replace_newest: bool,
 /// }
+/// impl_actions!(editor, [SelectNext]);
+/// ```
 ///
 /// If you want to control the behavior of the action trait manually, you can use the lower-level `#[register_action]`
 /// macro, which only generates the code needed to register your action before `main`.
 ///
 /// ```
-/// #[gpui::register_action]
-/// #[derive(gpui::serde::Deserialize, std::cmp::PartialEq, std::clone::Clone, std::fmt::Debug)]
+/// #[derive(gpui::serde::Deserialize, std::cmp::PartialEq, std::clone::Clone)]
 /// pub struct Paste {
 ///     pub content: SharedString,
 /// }
@@ -38,6 +37,7 @@ use std::{
 /// impl gpui::Action for Paste {
 ///      ///...
 /// }
+/// register_action!(Paste);
 /// ```
 pub trait Action: 'static {
     fn boxed_clone(&self) -> Box<dyn Action>;
@@ -56,7 +56,7 @@ pub trait Action: 'static {
 impl std::fmt::Debug for dyn Action {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("dyn Action")
-            .field("type_name", &self.name())
+            .field("name", &self.name())
             .finish()
     }
 }
@@ -115,7 +115,7 @@ impl ActionRegistry {
         for builder in __GPUI_ACTIONS {
             let action = builder();
             //todo(remove)
-            let name: SharedString = remove_the_2(action.name).into();
+            let name: SharedString = action.name.into();
             self.builders_by_name.insert(name.clone(), action.build);
             self.names_by_type_id.insert(action.type_id, name.clone());
             self.all_names.push(name);
@@ -139,11 +139,9 @@ impl ActionRegistry {
         name: &str,
         params: Option<serde_json::Value>,
     ) -> Result<Box<dyn Action>> {
-        //todo(remove)
-        let name = remove_the_2(name);
         let build_action = self
             .builders_by_name
-            .get(name.deref())
+            .get(name)
             .ok_or_else(|| anyhow!("no action type registered for {}", name))?;
         (build_action)(params.unwrap_or_else(|| json!({})))
             .with_context(|| format!("Attempting to build action {}", name))
@@ -155,36 +153,90 @@ impl ActionRegistry {
 }
 
 /// Defines unit structs that can be used as actions.
-/// To use more complex data types as actions, annotate your type with the #[action] macro.
+/// To use more complex data types as actions, use `impl_actions!`
 #[macro_export]
 macro_rules! actions {
-    () => {};
+    ($namespace:path, [ $($name:ident),* $(,)? ]) => {
+        $(
+            #[derive(::std::cmp::PartialEq, ::std::clone::Clone, ::std::default::Default, gpui::serde_derive::Deserialize)]
+            #[serde(crate = "gpui::serde")]
+            pub struct $name;
 
-    ( $name:ident ) => {
-        #[derive(::std::cmp::PartialEq, ::std::clone::Clone, ::std::default::Default, gpui::serde_derive::Deserialize, gpui::Action)]
-        #[serde(crate = "gpui::serde")]
-        pub struct $name;
-    };
+            gpui::__impl_action!($namespace, $name,
+                fn build(_: gpui::serde_json::Value) -> gpui::Result<::std::boxed::Box<dyn gpui::Action>> {
+                    Ok(Box::new(Self))
+                }
+            );
 
-    ( $name:ident, $($rest:tt)* ) => {
-        actions!($name);
-        actions!($($rest)*);
+            gpui::register_action!($name);
+        )*
     };
 }
 
-//todo!(remove)
-pub fn remove_the_2(action_name: &str) -> String {
-    let mut separator_matches = action_name.rmatch_indices("::");
-    separator_matches.next().unwrap();
-    let name_start_ix = separator_matches.next().map_or(0, |(ix, _)| ix + 2);
-    // todo!() remove the 2 replacement when migration is done
-    action_name[name_start_ix..]
-        .replace("2::", "::")
-        .to_string()
+/// Implements the Action trait for any struct that implements Clone, Default, PartialEq, and serde_deserialize::Deserialize
+#[macro_export]
+macro_rules! impl_actions {
+    ($namespace:path, [ $($name:ident),* $(,)? ]) => {
+        $(
+            gpui::__impl_action!($namespace, $name,
+                fn build(value: gpui::serde_json::Value) -> gpui::Result<::std::boxed::Box<dyn gpui::Action>> {
+                    Ok(std::boxed::Box::new(gpui::serde_json::from_value::<Self>(value)?))
+                }
+            );
+
+            gpui::register_action!($name);
+        )*
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __impl_action {
+    ($namespace:path, $name:ident, $build:item) => {
+        impl gpui::Action for $name {
+            fn name(&self) -> &'static str
+            {
+                concat!(
+                    stringify!($namespace),
+                    "::",
+                    stringify!($name),
+                )
+            }
+
+            // todo!() why is this needed in addition to name?
+            fn debug_name() -> &'static str
+            where
+                Self: ::std::marker::Sized
+            {
+                concat!(
+                    stringify!($namespace),
+                    "::",
+                    stringify!($name),
+                )
+            }
+
+            $build
+
+            fn partial_eq(&self, action: &dyn gpui::Action) -> bool {
+                action
+                    .as_any()
+                    .downcast_ref::<Self>()
+                    .map_or(false, |a| self == a)
+            }
+
+            fn boxed_clone(&self) ->  std::boxed::Box<dyn gpui::Action> {
+                ::std::boxed::Box::new(self.clone())
+            }
+
+            fn as_any(&self) -> &dyn ::std::any::Any {
+                self
+            }
+        }
+    };
 }
 
 mod no_action {
     use crate as gpui;
 
-    actions!(NoAction);
+    actions!(zed, [NoAction]);
 }
