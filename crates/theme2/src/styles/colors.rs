@@ -118,17 +118,17 @@ pub struct ThemeColors {
     pub panel_background: Hsla,
     pub panel_focused_border: Hsla,
     pub pane_focused_border: Hsla,
-    // /// The color of the scrollbar thumb.
-    // pub scrollbar_thumb_background: Hsla,
-    // /// The color of the scrollbar thumb when hovered over.
-    // pub scrollbar_thumb_hover_background: Hsla,
-    // /// The border color of the scrollbar thumb.
-    // pub scrollbar_thumb_border: Hsla,
-    // /// The background color of the scrollbar track.
-    // pub scrollbar_track_background: Hsla,
-    // /// The border color of the scrollbar track.
-    // pub scrollbar_track_border: Hsla,
-    // /// The opacity of the scrollbar status marks, like diagnostic states and git status..
+    /// The color of the scrollbar thumb.
+    pub scrollbar_thumb_background: Hsla,
+    /// The color of the scrollbar thumb when hovered over.
+    pub scrollbar_thumb_hover_background: Hsla,
+    /// The border color of the scrollbar thumb.
+    pub scrollbar_thumb_border: Hsla,
+    /// The background color of the scrollbar track.
+    pub scrollbar_track_background: Hsla,
+    /// The border color of the scrollbar track.
+    pub scrollbar_track_border: Hsla,
+    // /// The opacity of the scrollbar status marks, like diagnostic states and git status.
     // pub scrollbar_status_opacity: Hsla,
 
     // ===
@@ -207,12 +207,14 @@ pub struct ThemeColors {
     // ===
     pub headline: Hsla,
     pub paragraph: Hsla,
-    pub link: Hsla,
-    pub link_hover: Hsla,
+    pub link_text: Hsla,
+    pub link_text_hover: Hsla,
+    pub link_uri: Hsla,
     pub inline_code_background: Hsla,
     pub inline_code_border: Hsla,
     pub code_block_background: Hsla,
     pub code_block_border: Hsla,
+    pub emphasis: Hsla,
 }
 
 #[derive(Refineable, Clone)]
