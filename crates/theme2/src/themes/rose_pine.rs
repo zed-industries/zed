@@ -19,12 +19,12 @@ pub fn rose_pine() -> UserThemeFamily {
                 appearance: Appearance::Dark,
                 styles: UserThemeStylesRefinement {
                     colors: ThemeColorsRefinement {
-                        border: Some(rgba(0x000000ff).into()),
-                        border_variant: Some(rgba(0x000000ff).into()),
+                        border: Some(rgba(0x00000000).into()),
+                        border_variant: Some(rgba(0x00000000).into()),
                         border_focused: Some(rgba(0x6e6a8633).into()),
-                        border_selected: Some(rgba(0x000000ff).into()),
-                        border_transparent: Some(rgba(0x000000ff).into()),
-                        border_disabled: Some(rgba(0x000000ff).into()),
+                        border_selected: Some(rgba(0x00000000).into()),
+                        border_transparent: Some(rgba(0x00000000).into()),
+                        border_disabled: Some(rgba(0x00000000).into()),
                         elevated_surface_background: Some(rgba(0x1f1d2eff).into()),
                         surface_background: Some(rgba(0x1f1d2eff).into()),
                         background: Some(rgba(0x191724ff).into()),
@@ -33,12 +33,13 @@ pub fn rose_pine() -> UserThemeFamily {
                         element_selected: Some(rgba(0x6e6a8633).into()),
                         drop_target_background: Some(rgba(0x1f1d2eff).into()),
                         ghost_element_hover: Some(rgba(0x6e6a861a).into()),
+                        ghost_element_selected: Some(rgba(0x6e6a8633).into()),
                         text: Some(rgba(0xe0def4ff).into()),
                         status_bar_background: Some(rgba(0x191724ff).into()),
                         title_bar_background: Some(rgba(0x191724ff).into()),
-                        toolbar_background: Some(rgba(0x1f1d2eff).into()),
-                        tab_bar_background: Some(rgba(0x1f1d2eff).into()),
-                        tab_inactive_background: Some(rgba(0x000000ff).into()),
+                        toolbar_background: Some(rgba(0x191724ff).into()),
+                        tab_bar_background: Some(rgba(0x00000000).into()),
+                        tab_inactive_background: Some(rgba(0x00000000).into()),
                         tab_active_background: Some(rgba(0x6e6a861a).into()),
                         editor_background: Some(rgba(0x191724ff).into()),
                         editor_gutter_background: Some(rgba(0x191724ff).into()),
@@ -63,10 +64,14 @@ pub fn rose_pine() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
+                        conflict: Some(rgba(0xeb6f92ff).into()),
+                        created: Some(rgba(0x9ccfd8ff).into()),
                         deleted: Some(rgba(0xeb6f92ff).into()),
                         error: Some(rgba(0xeb6f92ff).into()),
                         hidden: Some(rgba(0x908caaff).into()),
                         hint: Some(rgba(0x908caaff).into()),
+                        ignored: Some(rgba(0x6e6a86ff).into()),
+                        modified: Some(rgba(0xebbcbaff).into()),
                         warning: Some(rgba(0xf6c177ff).into()),
                         ..Default::default()
                     },
@@ -100,6 +105,20 @@ pub fn rose_pine() -> UserThemeFamily {
                                 UserHighlightStyle {
                                     color: Some(rgba(0x6e6a86ff).into()),
                                     font_style: Some(UserFontStyle::Italic),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "constant".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x31748fff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "constructor".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x9ccfd8ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -134,12 +153,68 @@ pub fn rose_pine() -> UserThemeFamily {
                             (
                                 "punctuation".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x6e6a86ff).into()),
+                                    color: Some(rgba(0x908caaff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.bracket".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x908caaff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.delimiter".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x908caaff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.list_marker".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x908caaff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.special".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x908caaff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "string".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xf6c177ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.escape".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xf6c177ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.regex".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xf6c177ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.special".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xf6c177ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.special.symbol".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xf6c177ff).into()),
                                     ..Default::default()
@@ -176,7 +251,8 @@ pub fn rose_pine() -> UserThemeFamily {
                             (
                                 "variable".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xc4a7e7ff).into()),
+                                    color: Some(rgba(0xebbcbaff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
                                     ..Default::default()
                                 },
                             ),
@@ -196,12 +272,12 @@ pub fn rose_pine() -> UserThemeFamily {
                 appearance: Appearance::Dark,
                 styles: UserThemeStylesRefinement {
                     colors: ThemeColorsRefinement {
-                        border: Some(rgba(0x000000ff).into()),
-                        border_variant: Some(rgba(0x000000ff).into()),
+                        border: Some(rgba(0x00000000).into()),
+                        border_variant: Some(rgba(0x00000000).into()),
                         border_focused: Some(rgba(0x817c9c26).into()),
-                        border_selected: Some(rgba(0x000000ff).into()),
-                        border_transparent: Some(rgba(0x000000ff).into()),
-                        border_disabled: Some(rgba(0x000000ff).into()),
+                        border_selected: Some(rgba(0x00000000).into()),
+                        border_transparent: Some(rgba(0x00000000).into()),
+                        border_disabled: Some(rgba(0x00000000).into()),
                         elevated_surface_background: Some(rgba(0x2a273fff).into()),
                         surface_background: Some(rgba(0x2a273fff).into()),
                         background: Some(rgba(0x232136ff).into()),
@@ -210,12 +286,13 @@ pub fn rose_pine() -> UserThemeFamily {
                         element_selected: Some(rgba(0x817c9c26).into()),
                         drop_target_background: Some(rgba(0x2a273fff).into()),
                         ghost_element_hover: Some(rgba(0x817c9c14).into()),
+                        ghost_element_selected: Some(rgba(0x817c9c26).into()),
                         text: Some(rgba(0xe0def4ff).into()),
                         status_bar_background: Some(rgba(0x232136ff).into()),
                         title_bar_background: Some(rgba(0x232136ff).into()),
-                        toolbar_background: Some(rgba(0x2a273fff).into()),
-                        tab_bar_background: Some(rgba(0x2a273fff).into()),
-                        tab_inactive_background: Some(rgba(0x000000ff).into()),
+                        toolbar_background: Some(rgba(0x232136ff).into()),
+                        tab_bar_background: Some(rgba(0x00000000).into()),
+                        tab_inactive_background: Some(rgba(0x00000000).into()),
                         tab_active_background: Some(rgba(0x817c9c14).into()),
                         editor_background: Some(rgba(0x232136ff).into()),
                         editor_gutter_background: Some(rgba(0x232136ff).into()),
@@ -240,10 +317,14 @@ pub fn rose_pine() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
+                        conflict: Some(rgba(0xeb6f92ff).into()),
+                        created: Some(rgba(0x9ccfd8ff).into()),
                         deleted: Some(rgba(0xeb6f92ff).into()),
                         error: Some(rgba(0xeb6f92ff).into()),
                         hidden: Some(rgba(0x908caaff).into()),
                         hint: Some(rgba(0x908caaff).into()),
+                        ignored: Some(rgba(0x6e6a86ff).into()),
+                        modified: Some(rgba(0xea9a97ff).into()),
                         warning: Some(rgba(0xf6c177ff).into()),
                         ..Default::default()
                     },
@@ -281,6 +362,20 @@ pub fn rose_pine() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "constant".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x3e8fb0ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "constructor".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x9ccfd8ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "function".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xea9a97ff).into()),
@@ -311,12 +406,68 @@ pub fn rose_pine() -> UserThemeFamily {
                             (
                                 "punctuation".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x6e6a86ff).into()),
+                                    color: Some(rgba(0x908caaff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.bracket".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x908caaff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.delimiter".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x908caaff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.list_marker".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x908caaff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.special".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x908caaff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "string".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xf6c177ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.escape".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xf6c177ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.regex".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xf6c177ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.special".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xf6c177ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.special.symbol".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xf6c177ff).into()),
                                     ..Default::default()
@@ -353,7 +504,8 @@ pub fn rose_pine() -> UserThemeFamily {
                             (
                                 "variable".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xc4a7e7ff).into()),
+                                    color: Some(rgba(0xea9a97ff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
                                     ..Default::default()
                                 },
                             ),
@@ -373,12 +525,12 @@ pub fn rose_pine() -> UserThemeFamily {
                 appearance: Appearance::Light,
                 styles: UserThemeStylesRefinement {
                     colors: ThemeColorsRefinement {
-                        border: Some(rgba(0x000000ff).into()),
-                        border_variant: Some(rgba(0x000000ff).into()),
+                        border: Some(rgba(0x00000000).into()),
+                        border_variant: Some(rgba(0x00000000).into()),
                         border_focused: Some(rgba(0x6e6a8614).into()),
-                        border_selected: Some(rgba(0x000000ff).into()),
-                        border_transparent: Some(rgba(0x000000ff).into()),
-                        border_disabled: Some(rgba(0x000000ff).into()),
+                        border_selected: Some(rgba(0x00000000).into()),
+                        border_transparent: Some(rgba(0x00000000).into()),
+                        border_disabled: Some(rgba(0x00000000).into()),
                         elevated_surface_background: Some(rgba(0xfffaf3ff).into()),
                         surface_background: Some(rgba(0xfffaf3ff).into()),
                         background: Some(rgba(0xfaf4edff).into()),
@@ -387,12 +539,13 @@ pub fn rose_pine() -> UserThemeFamily {
                         element_selected: Some(rgba(0x6e6a8614).into()),
                         drop_target_background: Some(rgba(0xfffaf3ff).into()),
                         ghost_element_hover: Some(rgba(0x6e6a860d).into()),
+                        ghost_element_selected: Some(rgba(0x6e6a8614).into()),
                         text: Some(rgba(0x575279ff).into()),
                         status_bar_background: Some(rgba(0xfaf4edff).into()),
                         title_bar_background: Some(rgba(0xfaf4edff).into()),
-                        toolbar_background: Some(rgba(0xfffaf3ff).into()),
-                        tab_bar_background: Some(rgba(0xfffaf3ff).into()),
-                        tab_inactive_background: Some(rgba(0x000000ff).into()),
+                        toolbar_background: Some(rgba(0xfaf4edff).into()),
+                        tab_bar_background: Some(rgba(0x00000000).into()),
+                        tab_inactive_background: Some(rgba(0x00000000).into()),
                         tab_active_background: Some(rgba(0x6e6a860d).into()),
                         editor_background: Some(rgba(0xfaf4edff).into()),
                         editor_gutter_background: Some(rgba(0xfaf4edff).into()),
@@ -417,10 +570,14 @@ pub fn rose_pine() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
+                        conflict: Some(rgba(0xb4637aff).into()),
+                        created: Some(rgba(0x56949fff).into()),
                         deleted: Some(rgba(0xb4637aff).into()),
                         error: Some(rgba(0xb4637aff).into()),
                         hidden: Some(rgba(0x797593ff).into()),
                         hint: Some(rgba(0x797593ff).into()),
+                        ignored: Some(rgba(0x9893a5ff).into()),
+                        modified: Some(rgba(0xd7827eff).into()),
                         warning: Some(rgba(0xea9d34ff).into()),
                         ..Default::default()
                     },
@@ -458,6 +615,20 @@ pub fn rose_pine() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "constant".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x286983ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "constructor".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x56949fff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "function".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xd7827eff).into()),
@@ -488,12 +659,68 @@ pub fn rose_pine() -> UserThemeFamily {
                             (
                                 "punctuation".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x9893a5ff).into()),
+                                    color: Some(rgba(0x797593ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.bracket".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x797593ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.delimiter".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x797593ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.list_marker".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x797593ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.special".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x797593ff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "string".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xea9d34ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.escape".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xea9d34ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.regex".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xea9d34ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.special".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xea9d34ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.special.symbol".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xea9d34ff).into()),
                                     ..Default::default()
@@ -530,7 +757,8 @@ pub fn rose_pine() -> UserThemeFamily {
                             (
                                 "variable".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x907aa9ff).into()),
+                                    color: Some(rgba(0xd7827eff).into()),
+                                    font_style: Some(UserFontStyle::Italic),
                                     ..Default::default()
                                 },
                             ),

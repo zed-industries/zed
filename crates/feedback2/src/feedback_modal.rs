@@ -1,28 +1,38 @@
 use std::{ops::RangeInclusive, sync::Arc};
 
-use anyhow::bail;
+use anyhow::{anyhow, bail};
 use client::{Client, ZED_SECRET_CLIENT_TOKEN, ZED_SERVER_URL};
 use db::kvp::KEY_VALUE_STORE;
 use editor::{Editor, EditorEvent};
 use futures::AsyncReadExt;
 use gpui::{
-    div, red, rems, serde_json, AppContext, DismissEvent, Div, EventEmitter, FocusHandle,
-    FocusableView, Model, PromptLevel, Render, Task, View, ViewContext,
+    div, rems, serde_json, AppContext, DismissEvent, Div, EventEmitter, FocusHandle, FocusableView,
+    Model, PromptLevel, Render, Task, View, ViewContext,
 };
 use isahc::Request;
 use language::Buffer;
 use project::Project;
 use regex::Regex;
 use serde_derive::Serialize;
-use ui::{prelude::*, Button, ButtonStyle, Label, Tooltip};
+use ui::{prelude::*, Button, ButtonStyle, IconPosition, Tooltip};
 use util::ResultExt;
-use workspace::Workspace;
+use workspace::{ModalView, Workspace};
 
 use crate::{system_specs::SystemSpecs, GiveFeedback, OpenZedCommunityRepo};
 
+// For UI testing purposes
+const SEND_SUCCESS_IN_DEV_MODE: bool = true;
+
+// Temporary, until tests are in place
+#[cfg(debug_assertions)]
+const DEV_MODE: bool = true;
+
+#[cfg(not(debug_assertions))]
+const DEV_MODE: bool = false;
+
 const DATABASE_KEY_NAME: &str = "email_address";
 const EMAIL_REGEX: &str = r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b";
-const FEEDBACK_CHAR_LIMIT: RangeInclusive<usize> = 10..=5000;
+const FEEDBACK_CHAR_LIMIT: RangeInclusive<i32> = 10..=5000;
 const FEEDBACK_SUBMISSION_ERROR_TEXT: &str =
     "Feedback failed to submit, see error log for details.";
 
@@ -41,8 +51,9 @@ pub struct FeedbackModal {
     system_specs: SystemSpecs,
     feedback_editor: View<Editor>,
     email_address_editor: View<Editor>,
-    character_count: usize,
-    pending_submission: bool,
+    awaiting_submission: bool,
+    user_submitted: bool,
+    character_count: i32,
 }
 
 impl FocusableView for FeedbackModal {
@@ -51,6 +62,25 @@ impl FocusableView for FeedbackModal {
     }
 }
 impl EventEmitter<DismissEvent> for FeedbackModal {}
+
+impl ModalView for FeedbackModal {
+    fn dismiss(&mut self, cx: &mut ViewContext<Self>) -> Task<bool> {
+        if self.user_submitted {
+            self.set_user_submitted(false, cx);
+            return cx.spawn(|_, _| async { true });
+        }
+
+        let has_feedback = self.feedback_editor.read(cx).text_option(cx).is_some();
+
+        if !has_feedback {
+            return cx.spawn(|_, _| async { true });
+        }
+
+        let answer = cx.prompt(PromptLevel::Info, "Discard feedback?", &["Yes", "No"]);
+
+        cx.spawn(|_, _| async { answer.await.ok() == Some(0) })
+    }
+}
 
 impl FeedbackModal {
     pub fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
@@ -104,6 +134,11 @@ impl FeedbackModal {
 
         let feedback_editor = cx.build_view(|cx| {
             let mut editor = Editor::for_buffer(buffer, Some(project.clone()), cx);
+            editor.set_placeholder_text(
+                "You can use markdown to organize your feedback wiht add code and links, or organize feedback.",
+                cx,
+            );
+            // editor.set_show_gutter(false, cx);
             editor.set_vertical_scroll_margin(5, cx);
             editor
         });
@@ -119,7 +154,7 @@ impl FeedbackModal {
                         .as_singleton()
                         .expect("Feedback editor is never a multi-buffer")
                         .read(cx)
-                        .len();
+                        .len() as i32;
                     cx.notify();
                 }
                 _ => {}
@@ -131,7 +166,8 @@ impl FeedbackModal {
             system_specs: system_specs.clone(),
             feedback_editor,
             email_address_editor,
-            pending_submission: false,
+            awaiting_submission: false,
+            user_submitted: false,
             character_count: 0,
         }
     }
@@ -163,37 +199,53 @@ impl FeedbackModal {
                     }
                 };
 
-                this.update(&mut cx, |feedback_editor, cx| {
-                    feedback_editor.set_pending_submission(true, cx);
+                this.update(&mut cx, |this, cx| {
+                    this.set_awaiting_submission(true, cx);
                 })
                 .log_err();
 
-                if let Err(error) =
-                    FeedbackModal::submit_feedback(&feedback_text, email, client, specs).await
-                {
-                    log::error!("{}", error);
-                    this.update(&mut cx, |feedback_editor, cx| {
-                        let prompt = cx.prompt(
-                            PromptLevel::Critical,
-                            FEEDBACK_SUBMISSION_ERROR_TEXT,
-                            &["OK"],
-                        );
-                        cx.spawn(|_, _cx| async move {
-                            prompt.await.ok();
+                let res =
+                    FeedbackModal::submit_feedback(&feedback_text, email, client, specs).await;
+
+                match res {
+                    Ok(_) => {
+                        this.update(&mut cx, |this, cx| {
+                            this.set_user_submitted(true, cx);
+                            cx.emit(DismissEvent)
                         })
-                        .detach();
-                        feedback_editor.set_pending_submission(false, cx);
-                    })
-                    .log_err();
+                        .ok();
+                    }
+                    Err(error) => {
+                        log::error!("{}", error);
+                        this.update(&mut cx, |this, cx| {
+                            let prompt = cx.prompt(
+                                PromptLevel::Critical,
+                                FEEDBACK_SUBMISSION_ERROR_TEXT,
+                                &["OK"],
+                            );
+                            cx.spawn(|_, _cx| async move {
+                                prompt.await.ok();
+                            })
+                            .detach();
+                            this.set_awaiting_submission(false, cx);
+                        })
+                        .log_err();
+                    }
                 }
             }
         })
         .detach();
+
         Task::ready(Ok(()))
     }
 
-    fn set_pending_submission(&mut self, pending_submission: bool, cx: &mut ViewContext<Self>) {
-        self.pending_submission = pending_submission;
+    fn set_awaiting_submission(&mut self, awaiting_submission: bool, cx: &mut ViewContext<Self>) {
+        self.awaiting_submission = awaiting_submission;
+        cx.notify();
+    }
+
+    fn set_user_submitted(&mut self, user_submitted: bool, cx: &mut ViewContext<Self>) {
+        self.user_submitted = user_submitted;
         cx.notify();
     }
 
@@ -203,6 +255,14 @@ impl FeedbackModal {
         zed_client: Arc<Client>,
         system_specs: SystemSpecs,
     ) -> anyhow::Result<()> {
+        if DEV_MODE {
+            if SEND_SUCCESS_IN_DEV_MODE {
+                return Ok(());
+            } else {
+                return Err(anyhow!("Error submitting feedback"));
+            }
+        }
+
         let feedback_endpoint = format!("{}/api/feedback", *ZED_SERVER_URL);
         let telemetry = zed_client.telemetry();
         let metrics_id = telemetry.metrics_id();
@@ -233,11 +293,8 @@ impl FeedbackModal {
     }
 
     // TODO: Escape button calls dismiss
-    // TODO: Should do same as hitting cancel / clicking outside of modal
-    //     Close immediately if no text in field
-    //     Ask to close if text in the field
     fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
-        cx.emit(DismissEvent);
+        cx.emit(DismissEvent)
     }
 }
 
@@ -251,136 +308,128 @@ impl Render for FeedbackModal {
         };
 
         let valid_character_count = FEEDBACK_CHAR_LIMIT.contains(&self.character_count);
-        let characters_remaining =
-            if valid_character_count || self.character_count > *FEEDBACK_CHAR_LIMIT.end() {
-                *FEEDBACK_CHAR_LIMIT.end() as i32 - self.character_count as i32
-            } else {
-                self.character_count as i32 - *FEEDBACK_CHAR_LIMIT.start() as i32
-            };
 
         let allow_submission =
-            valid_character_count && valid_email_address && !self.pending_submission;
+            valid_character_count && valid_email_address && !self.awaiting_submission;
 
-        let has_feedback = self.feedback_editor.read(cx).text_option(cx).is_some();
-
-        let submit_button_text = if self.pending_submission {
-            "Sending..."
+        let submit_button_text = if self.awaiting_submission {
+            "Submitting..."
         } else {
-            "Send Feedback"
+            "Submit"
         };
-        let dismiss = cx.listener(|_, _, cx| {
-            cx.emit(DismissEvent);
-        });
-        // TODO: get the "are you sure you want to dismiss?" prompt here working
-        let dismiss_prompt = cx.listener(|_, _, _| {
-            // let answer = cx.prompt(PromptLevel::Info, "Exit feedback?", &["Yes", "No"]);
-            // cx.spawn(|_, _| async move {
-            //     let answer = answer.await.ok();
-            //     if answer == Some(0) {
-            //         cx.emit(DismissEvent);
-            //     }
-            // })
-            // .detach();
-        });
+
         let open_community_repo =
             cx.listener(|_, _, cx| cx.dispatch_action(Box::new(OpenZedCommunityRepo)));
 
-        // TODO: Nate UI pass
+        // Moved this here because providing it inline breaks rustfmt
+        let provide_an_email_address =
+            "Provide an email address if you want us to be able to reply.";
+
         v_stack()
             .elevation_3(cx)
             .key_context("GiveFeedback")
             .on_action(cx.listener(Self::cancel))
             .min_w(rems(40.))
             .max_w(rems(96.))
-            .border()
-            .border_color(red())
-            .h(rems(40.))
-            .p_2()
-            .gap_2()
+            .h(rems(32.))
+            .p_4()
+            .gap_4()
+            .child(v_stack().child(
+                // TODO: Add Headline component to `ui2`
+                div().text_xl().child("Share Feedback"),
+            ))
             .child(
-                v_stack().child(
-                    div()
-                        .size_full()
-                        .child(Label::new("Give Feedback").color(Color::Default))
-                        .child(Label::new("This editor supports markdown").color(Color::Muted)),
-                ),
+                Label::new(if self.character_count < *FEEDBACK_CHAR_LIMIT.start() {
+                    format!(
+                        "Feedback must be at least {} characters.",
+                        FEEDBACK_CHAR_LIMIT.start()
+                    )
+                } else {
+                    format!(
+                        "Characters: {}",
+                        *FEEDBACK_CHAR_LIMIT.end() - self.character_count
+                    )
+                })
+                .color(if valid_character_count {
+                    Color::Success
+                } else {
+                    Color::Error
+                }),
             )
             .child(
                 div()
                     .flex_1()
                     .bg(cx.theme().colors().editor_background)
+                    .p_2()
                     .border()
+                    .rounded_md()
                     .border_color(cx.theme().colors().border)
                     .child(self.feedback_editor.clone()),
             )
             .child(
-                div().child(
-                    Label::new(format!(
-                        "Characters: {}",
-                        characters_remaining
-                    ))
-                    .color(
-                        if valid_character_count {
-                            Color::Success
-                        } else {
-                            Color::Error
-                        }
-                    )
-                ),
-            )
-            .child(
                 div()
-                .bg(cx.theme().colors().editor_background)
-                .border()
-                .border_color(cx.theme().colors().border)
-                .child(self.email_address_editor.clone())
-            )
-            .child(
-                h_stack()
-                    .justify_between()
-                    .gap_1()
-                    .child(Button::new("community_repo", "Community Repo")
-                        .style(ButtonStyle::Filled)
-                        .color(Color::Muted)
-                        .on_click(open_community_repo)
+                    .child(
+                        h_stack()
+                            .bg(cx.theme().colors().editor_background)
+                            .p_2()
+                            .border()
+                            .rounded_md()
+                            .border_color(cx.theme().colors().border)
+                            .child(self.email_address_editor.clone()),
                     )
-                    .child(h_stack().justify_between().gap_1()
-                        .child(
-                            Button::new("cancel_feedback", "Cancel")
-                                .style(ButtonStyle::Subtle)
-                                .color(Color::Muted)
-                                // TODO: replicate this logic when clicking outside the modal
-                                // TODO: Will require somehow overriding the modal dismal default behavior
-                                .map(|this| {
-                                    if has_feedback {
-                                        this.on_click(dismiss_prompt)
-                                    } else {
-                                        this.on_click(dismiss)
-                                    }
-                                })
-                        )
-                        .child(
-                            Button::new("send_feedback", submit_button_text)
-                                .color(Color::Accent)
-                                .style(ButtonStyle::Filled)
-                                // TODO: Ensure that while submitting, "Sending..." is shown and disable the button
-                                // TODO: If submit errors: show popup with error, don't close modal, set text back to "Send Feedback", and re-enable button
-                                // TODO: If submit is successful, close the modal
-                                .on_click(cx.listener(|this, _, cx| {
-                                    let _ = this.submit(cx);
-                                }))
-                                .tooltip(|cx| {
-                                    Tooltip::with_meta(
-                                        "Submit feedback to the Zed team.",
-                                        None,
-                                        "Provide an email address if you want us to be able to reply.",
-                                        cx,
+                    .child(
+                        h_stack()
+                            .justify_between()
+                            .gap_1()
+                            .child(
+                                Button::new("community_repo", "Community Repo")
+                                    .style(ButtonStyle::Transparent)
+                                    .icon(Icon::ExternalLink)
+                                    .icon_position(IconPosition::End)
+                                    .icon_size(IconSize::Small)
+                                    .on_click(open_community_repo),
+                            )
+                            .child(
+                                h_stack()
+                                    .gap_1()
+                                    .child(
+                                        Button::new("cancel_feedback", "Cancel")
+                                            .style(ButtonStyle::Subtle)
+                                            .color(Color::Muted)
+                                            .on_click(cx.listener(move |_, _, cx| {
+                                                cx.spawn(|this, mut cx| async move {
+                                                    this.update(&mut cx, |_, cx| {
+                                                        cx.emit(DismissEvent)
+                                                    })
+                                                    .ok();
+                                                })
+                                                .detach();
+                                            })),
                                     )
-                                })
-                                .when(!allow_submission, |this| this.disabled(true))
-                        ),
-                    )
-
+                                    .child(
+                                        Button::new("send_feedback", submit_button_text)
+                                            .color(Color::Accent)
+                                            .style(ButtonStyle::Filled)
+                                            // TODO: Ensure that while submitting, "Sending..." is shown and disable the button
+                                            // TODO: If submit errors: show popup with error, don't close modal, set text back to "Submit", and re-enable button
+                                            .on_click(cx.listener(|this, _, cx| {
+                                                this.submit(cx).detach();
+                                            }))
+                                            .tooltip(move |cx| {
+                                                Tooltip::with_meta(
+                                                    "Submit feedback to the Zed team.",
+                                                    None,
+                                                    provide_an_email_address,
+                                                    cx,
+                                                )
+                                            })
+                                            .when(!allow_submission, |this| this.disabled(true)),
+                                    ),
+                            ),
+                    ),
             )
     }
 }
+
+// TODO: Maybe store email address whenever the modal is closed, versus just on submit, so users can remove it if they want without submitting
+// TODO: Testing of various button states, dismissal prompts, etc.

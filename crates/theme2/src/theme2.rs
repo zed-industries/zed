@@ -31,6 +31,15 @@ pub enum Appearance {
     Dark,
 }
 
+impl Appearance {
+    pub fn is_light(&self) -> bool {
+        match self {
+            Self::Light => true,
+            Self::Dark => false,
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum LoadThemes {
     /// Only load the base theme.

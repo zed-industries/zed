@@ -245,10 +245,24 @@ pub trait Styled: Sized {
         self
     }
 
+    /// Sets the flex direction of the element to `column-reverse`.
+    /// [Docs](https://tailwindcss.com/docs/flex-direction#column-reverse)
+    fn flex_col_reverse(mut self) -> Self {
+        self.style().flex_direction = Some(FlexDirection::ColumnReverse);
+        self
+    }
+
     /// Sets the flex direction of the element to `row`.
     /// [Docs](https://tailwindcss.com/docs/flex-direction#row)
     fn flex_row(mut self) -> Self {
         self.style().flex_direction = Some(FlexDirection::Row);
+        self
+    }
+
+    /// Sets the flex direction of the element to `row-reverse`.
+    /// [Docs](https://tailwindcss.com/docs/flex-direction#row-reverse)
+    fn flex_row_reverse(mut self) -> Self {
+        self.style().flex_direction = Some(FlexDirection::RowReverse);
         self
     }
 

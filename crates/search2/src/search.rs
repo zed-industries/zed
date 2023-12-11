@@ -3,7 +3,7 @@ pub use buffer_search::BufferSearchBar;
 use gpui::{actions, Action, AppContext, IntoElement};
 pub use mode::SearchMode;
 use project::search::SearchQuery;
-use ui::prelude::*;
+use ui::{prelude::*, Tooltip};
 use ui::{ButtonStyle, Icon, IconButton};
 //pub use project_search::{ProjectSearchBar, ProjectSearchView};
 // use theme::components::{
@@ -13,29 +13,32 @@ use ui::{ButtonStyle, Icon, IconButton};
 pub mod buffer_search;
 mod history;
 mod mode;
-//pub mod project_search;
+pub mod project_search;
 pub(crate) mod search_bar;
 
 pub fn init(cx: &mut AppContext) {
     buffer_search::init(cx);
-    //project_search::init(cx);
+    project_search::init(cx);
 }
 
 actions!(
-    CycleMode,
-    ToggleWholeWord,
-    ToggleCaseSensitive,
-    ToggleReplace,
-    SelectNextMatch,
-    SelectPrevMatch,
-    SelectAllMatches,
-    NextHistoryQuery,
-    PreviousHistoryQuery,
-    ActivateTextMode,
-    ActivateSemanticMode,
-    ActivateRegexMode,
-    ReplaceAll,
-    ReplaceNext,
+    search,
+    [
+        CycleMode,
+        ToggleWholeWord,
+        ToggleCaseSensitive,
+        ToggleReplace,
+        SelectNextMatch,
+        SelectPrevMatch,
+        SelectAllMatches,
+        NextHistoryQuery,
+        PreviousHistoryQuery,
+        ActivateTextMode,
+        ActivateSemanticMode,
+        ActivateRegexMode,
+        ReplaceAll,
+        ReplaceNext,
+    ]
 );
 
 bitflags! {
@@ -44,6 +47,7 @@ bitflags! {
         const NONE = 0b000;
         const WHOLE_WORD = 0b001;
         const CASE_SENSITIVE = 0b010;
+        const INCLUDE_IGNORED = 0b100;
     }
 }
 
@@ -84,7 +88,7 @@ impl SearchOptions {
     }
 
     pub fn as_button(&self, active: bool) -> impl IntoElement {
-        IconButton::new(0, self.icon())
+        IconButton::new(self.label(), self.icon())
             .on_click({
                 let action = self.to_toggle_action();
                 move |_, cx| {
@@ -93,26 +97,38 @@ impl SearchOptions {
             })
             .style(ButtonStyle::Subtle)
             .when(active, |button| button.style(ButtonStyle::Filled))
+            .tooltip({
+                let action = self.to_toggle_action();
+                let label: SharedString = format!("Toggle {}", self.label()).into();
+                move |cx| Tooltip::for_action(label.clone(), &*action, cx)
+            })
     }
 }
 
 fn toggle_replace_button(active: bool) -> impl IntoElement {
     // todo: add toggle_replace button
-    IconButton::new(0, Icon::Replace)
+    IconButton::new("buffer-search-bar-toggle-replace-button", Icon::Replace)
         .on_click(|_, cx| {
             cx.dispatch_action(Box::new(ToggleReplace));
             cx.notify();
         })
         .style(ButtonStyle::Subtle)
         .when(active, |button| button.style(ButtonStyle::Filled))
+        .tooltip(|cx| Tooltip::for_action("Toggle replace", &ToggleReplace, cx))
 }
 
 fn render_replace_button(
     action: impl Action + 'static + Send + Sync,
     icon: Icon,
+    tooltip: &'static str,
 ) -> impl IntoElement {
-    // todo: add tooltip
-    IconButton::new(0, icon).on_click(move |_, cx| {
-        cx.dispatch_action(action.boxed_clone());
-    })
+    let id: SharedString = format!("search-replace-{}", action.name()).into();
+    IconButton::new(id, icon)
+        .tooltip({
+            let action = action.boxed_clone();
+            move |cx| Tooltip::for_action(tooltip, &*action, cx)
+        })
+        .on_click(move |_, cx| {
+            cx.dispatch_action(action.boxed_clone());
+        })
 }

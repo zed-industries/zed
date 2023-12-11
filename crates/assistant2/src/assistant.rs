@@ -12,23 +12,26 @@ use chrono::{DateTime, Local};
 use collections::HashMap;
 use fs::Fs;
 use futures::StreamExt;
-use gpui::{actions, AppContext};
+use gpui::{actions, AppContext, SharedString};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::{cmp::Reverse, ffi::OsStr, path::PathBuf, sync::Arc};
 use util::paths::CONVERSATIONS_DIR;
 
 actions!(
-    NewConversation,
-    Assist,
-    Split,
-    CycleMessageRole,
-    QuoteSelection,
-    ToggleFocus,
-    ResetKey,
-    InlineAssist,
-    ToggleIncludeConversation,
-    ToggleRetrieveContext,
+    assistant,
+    [
+        NewConversation,
+        Assist,
+        Split,
+        CycleMessageRole,
+        QuoteSelection,
+        ToggleFocus,
+        ResetKey,
+        InlineAssist,
+        ToggleIncludeConversation,
+        ToggleRetrieveContext,
+    ]
 );
 
 #[derive(
@@ -47,7 +50,7 @@ struct MessageMetadata {
 enum MessageStatus {
     Pending,
     Done,
-    Error(Arc<str>),
+    Error(SharedString),
 }
 
 #[derive(Serialize, Deserialize)]

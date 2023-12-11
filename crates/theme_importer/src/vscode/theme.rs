@@ -1,6 +1,14 @@
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 
 use crate::vscode::VsCodeTokenColor;
+
+fn empty_string_as_none<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Option::<String>::deserialize(deserializer)?;
+    Ok(value.filter(|value| !value.is_empty()))
+}
 
 #[derive(Deserialize, Debug)]
 pub struct VsCodeTheme {
@@ -20,405 +28,1406 @@ pub struct VsCodeTheme {
 
 #[derive(Debug, Deserialize)]
 pub struct VsCodeColors {
-    #[serde(rename = "terminal.background")]
+    #[serde(
+        default,
+        rename = "terminal.background",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub terminal_background: Option<String>,
-    #[serde(rename = "terminal.foreground")]
+
+    #[serde(
+        default,
+        rename = "terminal.foreground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub terminal_foreground: Option<String>,
-    #[serde(rename = "terminal.ansiBrightBlack")]
+
+    #[serde(
+        default,
+        rename = "terminal.ansiBrightBlack",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub terminal_ansi_bright_black: Option<String>,
-    #[serde(rename = "terminal.ansiBrightRed")]
+
+    #[serde(
+        default,
+        rename = "terminal.ansiBrightRed",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub terminal_ansi_bright_red: Option<String>,
-    #[serde(rename = "terminal.ansiBrightGreen")]
+
+    #[serde(
+        default,
+        rename = "terminal.ansiBrightGreen",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub terminal_ansi_bright_green: Option<String>,
-    #[serde(rename = "terminal.ansiBrightYellow")]
+
+    #[serde(
+        default,
+        rename = "terminal.ansiBrightYellow",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub terminal_ansi_bright_yellow: Option<String>,
-    #[serde(rename = "terminal.ansiBrightBlue")]
+
+    #[serde(
+        default,
+        rename = "terminal.ansiBrightBlue",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub terminal_ansi_bright_blue: Option<String>,
-    #[serde(rename = "terminal.ansiBrightMagenta")]
+
+    #[serde(
+        default,
+        rename = "terminal.ansiBrightMagenta",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub terminal_ansi_bright_magenta: Option<String>,
-    #[serde(rename = "terminal.ansiBrightCyan")]
+
+    #[serde(
+        default,
+        rename = "terminal.ansiBrightCyan",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub terminal_ansi_bright_cyan: Option<String>,
-    #[serde(rename = "terminal.ansiBrightWhite")]
+
+    #[serde(
+        default,
+        rename = "terminal.ansiBrightWhite",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub terminal_ansi_bright_white: Option<String>,
-    #[serde(rename = "terminal.ansiBlack")]
+
+    #[serde(
+        default,
+        rename = "terminal.ansiBlack",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub terminal_ansi_black: Option<String>,
-    #[serde(rename = "terminal.ansiRed")]
+
+    #[serde(
+        default,
+        rename = "terminal.ansiRed",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub terminal_ansi_red: Option<String>,
-    #[serde(rename = "terminal.ansiGreen")]
+
+    #[serde(
+        default,
+        rename = "terminal.ansiGreen",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub terminal_ansi_green: Option<String>,
-    #[serde(rename = "terminal.ansiYellow")]
+
+    #[serde(
+        default,
+        rename = "terminal.ansiYellow",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub terminal_ansi_yellow: Option<String>,
-    #[serde(rename = "terminal.ansiBlue")]
+
+    #[serde(
+        default,
+        rename = "terminal.ansiBlue",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub terminal_ansi_blue: Option<String>,
-    #[serde(rename = "terminal.ansiMagenta")]
+
+    #[serde(
+        default,
+        rename = "terminal.ansiMagenta",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub terminal_ansi_magenta: Option<String>,
-    #[serde(rename = "terminal.ansiCyan")]
+
+    #[serde(
+        default,
+        rename = "terminal.ansiCyan",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub terminal_ansi_cyan: Option<String>,
-    #[serde(rename = "terminal.ansiWhite")]
+
+    #[serde(
+        default,
+        rename = "terminal.ansiWhite",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub terminal_ansi_white: Option<String>,
-    #[serde(rename = "focusBorder")]
+
+    #[serde(
+        default,
+        rename = "focusBorder",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub focus_border: Option<String>,
+
+    #[serde(default, deserialize_with = "empty_string_as_none")]
     pub foreground: Option<String>,
-    #[serde(rename = "selection.background")]
+
+    #[serde(
+        default,
+        rename = "selection.background",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub selection_background: Option<String>,
-    #[serde(rename = "errorForeground")]
+
+    #[serde(
+        default,
+        rename = "errorForeground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub error_foreground: Option<String>,
-    #[serde(rename = "button.background")]
+
+    #[serde(
+        default,
+        rename = "button.background",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub button_background: Option<String>,
-    #[serde(rename = "button.foreground")]
+
+    #[serde(
+        default,
+        rename = "button.foreground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub button_foreground: Option<String>,
-    #[serde(rename = "button.secondaryBackground")]
+
+    #[serde(
+        default,
+        rename = "button.secondaryBackground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub button_secondary_background: Option<String>,
-    #[serde(rename = "button.secondaryForeground")]
+
+    #[serde(
+        default,
+        rename = "button.secondaryForeground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub button_secondary_foreground: Option<String>,
-    #[serde(rename = "button.secondaryHoverBackground")]
+
+    #[serde(
+        default,
+        rename = "button.secondaryHoverBackground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub button_secondary_hover_background: Option<String>,
-    #[serde(rename = "dropdown.background")]
+
+    #[serde(
+        default,
+        rename = "dropdown.background",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub dropdown_background: Option<String>,
-    #[serde(rename = "dropdown.border")]
+
+    #[serde(
+        default,
+        rename = "dropdown.border",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub dropdown_border: Option<String>,
-    #[serde(rename = "dropdown.foreground")]
+
+    #[serde(
+        default,
+        rename = "dropdown.foreground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub dropdown_foreground: Option<String>,
-    #[serde(rename = "input.background")]
+
+    #[serde(
+        default,
+        rename = "input.background",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub input_background: Option<String>,
-    #[serde(rename = "input.foreground")]
+
+    #[serde(
+        default,
+        rename = "input.foreground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub input_foreground: Option<String>,
-    #[serde(rename = "input.border")]
+
+    #[serde(
+        default,
+        rename = "input.border",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub input_border: Option<String>,
-    #[serde(rename = "input.placeholderForeground")]
+
+    #[serde(
+        default,
+        rename = "input.placeholderForeground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub input_placeholder_foreground: Option<String>,
-    #[serde(rename = "inputOption.activeBorder")]
+
+    #[serde(
+        default,
+        rename = "inputOption.activeBorder",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub input_option_active_border: Option<String>,
-    #[serde(rename = "inputValidation.infoBorder")]
+
+    #[serde(
+        default,
+        rename = "inputValidation.infoBorder",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub input_validation_info_border: Option<String>,
-    #[serde(rename = "inputValidation.warningBorder")]
+
+    #[serde(
+        default,
+        rename = "inputValidation.warningBorder",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub input_validation_warning_border: Option<String>,
-    #[serde(rename = "inputValidation.errorBorder")]
+
+    #[serde(
+        default,
+        rename = "inputValidation.errorBorder",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub input_validation_error_border: Option<String>,
-    #[serde(rename = "badge.foreground")]
+
+    #[serde(
+        default,
+        rename = "badge.foreground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub badge_foreground: Option<String>,
-    #[serde(rename = "badge.background")]
+
+    #[serde(
+        default,
+        rename = "badge.background",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub badge_background: Option<String>,
-    #[serde(rename = "progressBar.background")]
+
+    #[serde(
+        default,
+        rename = "progressBar.background",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub progress_bar_background: Option<String>,
-    #[serde(rename = "list.activeSelectionBackground")]
+
+    #[serde(
+        default,
+        rename = "list.activeSelectionBackground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub list_active_selection_background: Option<String>,
-    #[serde(rename = "list.activeSelectionForeground")]
+
+    #[serde(
+        default,
+        rename = "list.activeSelectionForeground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub list_active_selection_foreground: Option<String>,
-    #[serde(rename = "list.dropBackground")]
+
+    #[serde(
+        default,
+        rename = "list.dropBackground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub list_drop_background: Option<String>,
-    #[serde(rename = "list.focusBackground")]
+
+    #[serde(
+        default,
+        rename = "list.focusBackground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub list_focus_background: Option<String>,
-    #[serde(rename = "list.highlightForeground")]
+
+    #[serde(
+        default,
+        rename = "list.highlightForeground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub list_highlight_foreground: Option<String>,
-    #[serde(rename = "list.hoverBackground")]
+
+    #[serde(
+        default,
+        rename = "list.hoverBackground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub list_hover_background: Option<String>,
-    #[serde(rename = "list.inactiveSelectionBackground")]
+
+    #[serde(
+        default,
+        rename = "list.inactiveSelectionBackground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub list_inactive_selection_background: Option<String>,
-    #[serde(rename = "list.warningForeground")]
+
+    #[serde(
+        default,
+        rename = "list.warningForeground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub list_warning_foreground: Option<String>,
-    #[serde(rename = "list.errorForeground")]
+
+    #[serde(
+        default,
+        rename = "list.errorForeground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub list_error_foreground: Option<String>,
-    #[serde(rename = "activityBar.background")]
+
+    #[serde(
+        default,
+        rename = "activityBar.background",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub activity_bar_background: Option<String>,
-    #[serde(rename = "activityBar.inactiveForeground")]
+
+    #[serde(
+        default,
+        rename = "activityBar.inactiveForeground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub activity_bar_inactive_foreground: Option<String>,
-    #[serde(rename = "activityBar.foreground")]
+
+    #[serde(
+        default,
+        rename = "activityBar.foreground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub activity_bar_foreground: Option<String>,
-    #[serde(rename = "activityBar.activeBorder")]
+
+    #[serde(
+        default,
+        rename = "activityBar.activeBorder",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub activity_bar_active_border: Option<String>,
-    #[serde(rename = "activityBar.activeBackground")]
+
+    #[serde(
+        default,
+        rename = "activityBar.activeBackground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub activity_bar_active_background: Option<String>,
-    #[serde(rename = "activityBarBadge.background")]
+
+    #[serde(
+        default,
+        rename = "activityBarBadge.background",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub activity_bar_badge_background: Option<String>,
-    #[serde(rename = "activityBarBadge.foreground")]
+
+    #[serde(
+        default,
+        rename = "activityBarBadge.foreground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub activity_bar_badge_foreground: Option<String>,
-    #[serde(rename = "sideBar.background")]
+
+    #[serde(
+        default,
+        rename = "sideBar.background",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub side_bar_background: Option<String>,
-    #[serde(rename = "sideBarTitle.foreground")]
+
+    #[serde(
+        default,
+        rename = "sideBarTitle.foreground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub side_bar_title_foreground: Option<String>,
-    #[serde(rename = "sideBarSectionHeader.background")]
+
+    #[serde(
+        default,
+        rename = "sideBarSectionHeader.background",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub side_bar_section_header_background: Option<String>,
-    #[serde(rename = "sideBarSectionHeader.border")]
+
+    #[serde(
+        default,
+        rename = "sideBarSectionHeader.border",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub side_bar_section_header_border: Option<String>,
-    #[serde(rename = "editorGroup.border")]
+
+    #[serde(
+        default,
+        rename = "editorGroup.border",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub editor_group_border: Option<String>,
-    #[serde(rename = "editorGroup.dropBackground")]
+
+    #[serde(
+        default,
+        rename = "editorGroup.dropBackground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub editor_group_drop_background: Option<String>,
-    #[serde(rename = "editorGroupHeader.tabsBackground")]
+
+    #[serde(
+        default,
+        rename = "editorGroupHeader.tabsBackground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub editor_group_header_tabs_background: Option<String>,
-    #[serde(rename = "tab.activeBackground")]
+
+    #[serde(
+        default,
+        rename = "tab.activeBackground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub tab_active_background: Option<String>,
-    #[serde(rename = "tab.activeForeground")]
+
+    #[serde(
+        default,
+        rename = "tab.activeForeground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub tab_active_foreground: Option<String>,
-    #[serde(rename = "tab.border")]
+
+    #[serde(
+        default,
+        rename = "tab.border",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub tab_border: Option<String>,
-    #[serde(rename = "tab.activeBorderTop")]
+
+    #[serde(
+        default,
+        rename = "tab.activeBorderTop",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub tab_active_border_top: Option<String>,
-    #[serde(rename = "tab.inactiveBackground")]
+
+    #[serde(
+        default,
+        rename = "tab.inactiveBackground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub tab_inactive_background: Option<String>,
-    #[serde(rename = "tab.inactiveForeground")]
+
+    #[serde(
+        default,
+        rename = "tab.inactiveForeground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub tab_inactive_foreground: Option<String>,
-    #[serde(rename = "editor.foreground")]
+
+    #[serde(
+        default,
+        rename = "editor.foreground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub editor_foreground: Option<String>,
-    #[serde(rename = "editor.background")]
+
+    #[serde(
+        default,
+        rename = "editor.background",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub editor_background: Option<String>,
-    #[serde(rename = "editorInlayHint.foreground")]
+
+    #[serde(
+        default,
+        rename = "editorInlayHint.foreground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub editor_inlay_hint_foreground: Option<String>,
-    #[serde(rename = "editorInlayHint.background")]
+
+    #[serde(
+        default,
+        rename = "editorInlayHint.background",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub editor_inlay_hint_background: Option<String>,
-    #[serde(rename = "editorInlayHint.parameterForeground")]
+
+    #[serde(
+        default,
+        rename = "editorInlayHint.parameterForeground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub editor_inlay_hint_parameter_foreground: Option<String>,
-    #[serde(rename = "editorInlayHint.parameterBackground")]
+
+    #[serde(
+        default,
+        rename = "editorInlayHint.parameterBackground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub editor_inlay_hint_parameter_background: Option<String>,
-    #[serde(rename = "editorInlayHint.typForeground")]
+
+    #[serde(
+        default,
+        rename = "editorInlayHint.typForeground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub editor_inlay_hint_typ_foreground: Option<String>,
-    #[serde(rename = "editorInlayHint.typBackground")]
+
+    #[serde(
+        default,
+        rename = "editorInlayHint.typBackground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub editor_inlay_hint_typ_background: Option<String>,
-    #[serde(rename = "editorLineNumber.foreground")]
+
+    #[serde(
+        default,
+        rename = "editorLineNumber.foreground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub editor_line_number_foreground: Option<String>,
-    #[serde(rename = "editor.selectionBackground")]
+
+    #[serde(
+        default,
+        rename = "editor.selectionBackground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub editor_selection_background: Option<String>,
-    #[serde(rename = "editor.selectionHighlightBackground")]
+
+    #[serde(
+        default,
+        rename = "editor.selectionHighlightBackground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub editor_selection_highlight_background: Option<String>,
-    #[serde(rename = "editor.foldBackground")]
+
+    #[serde(
+        default,
+        rename = "editor.foldBackground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub editor_fold_background: Option<String>,
-    #[serde(rename = "editor.wordHighlightBackground")]
+
+    #[serde(
+        default,
+        rename = "editor.wordHighlightBackground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub editor_word_highlight_background: Option<String>,
-    #[serde(rename = "editor.wordHighlightStrongBackground")]
+
+    #[serde(
+        default,
+        rename = "editor.wordHighlightStrongBackground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub editor_word_highlight_strong_background: Option<String>,
-    #[serde(rename = "editor.findMatchBackground")]
+
+    #[serde(
+        default,
+        rename = "editor.findMatchBackground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub editor_find_match_background: Option<String>,
-    #[serde(rename = "editor.findMatchHighlightBackground")]
+
+    #[serde(
+        default,
+        rename = "editor.findMatchHighlightBackground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub editor_find_match_highlight_background: Option<String>,
-    #[serde(rename = "editor.findRangeHighlightBackground")]
+
+    #[serde(
+        default,
+        rename = "editor.findRangeHighlightBackground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub editor_find_range_highlight_background: Option<String>,
-    #[serde(rename = "editor.hoverHighlightBackground")]
+
+    #[serde(
+        default,
+        rename = "editor.hoverHighlightBackground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub editor_hover_highlight_background: Option<String>,
-    #[serde(rename = "editor.lineHighlightBorder")]
+
+    #[serde(
+        default,
+        rename = "editor.lineHighlightBorder",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub editor_line_highlight_border: Option<String>,
-    #[serde(rename = "editorLink.activeForeground")]
+
+    #[serde(
+        default,
+        rename = "editorLink.activeForeground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub editor_link_active_foreground: Option<String>,
-    #[serde(rename = "editor.rangeHighlightBackground")]
+
+    #[serde(
+        default,
+        rename = "editor.rangeHighlightBackground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub editor_range_highlight_background: Option<String>,
-    #[serde(rename = "editor.snippetTabstopHighlightBackground")]
+
+    #[serde(
+        default,
+        rename = "editor.snippetTabstopHighlightBackground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub editor_snippet_tabstop_highlight_background: Option<String>,
-    #[serde(rename = "editor.snippetTabstopHighlightBorder")]
+
+    #[serde(
+        default,
+        rename = "editor.snippetTabstopHighlightBorder",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub editor_snippet_tabstop_highlight_border: Option<String>,
-    #[serde(rename = "editor.snippetFinalTabstopHighlightBackground")]
+
+    #[serde(
+        default,
+        rename = "editor.snippetFinalTabstopHighlightBackground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub editor_snippet_final_tabstop_highlight_background: Option<String>,
-    #[serde(rename = "editor.snippetFinalTabstopHighlightBorder")]
+
+    #[serde(
+        default,
+        rename = "editor.snippetFinalTabstopHighlightBorder",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub editor_snippet_final_tabstop_highlight_border: Option<String>,
-    #[serde(rename = "editorWhitespace.foreground")]
+
+    #[serde(
+        default,
+        rename = "editorWhitespace.foreground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub editor_whitespace_foreground: Option<String>,
-    #[serde(rename = "editorIndentGuide.background")]
+
+    #[serde(
+        default,
+        rename = "editorIndentGuide.background",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub editor_indent_guide_background: Option<String>,
-    #[serde(rename = "editorIndentGuide.activeBackground")]
+
+    #[serde(
+        default,
+        rename = "editorIndentGuide.activeBackground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub editor_indent_guide_active_background: Option<String>,
-    #[serde(rename = "editorRuler.foreground")]
+
+    #[serde(
+        default,
+        rename = "editorRuler.foreground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub editor_ruler_foreground: Option<String>,
-    #[serde(rename = "editorCodeLens.foreground")]
+
+    #[serde(
+        default,
+        rename = "editorCodeLens.foreground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub editor_code_lens_foreground: Option<String>,
-    #[serde(rename = "editorBracketHighlight.foreground1")]
+
+    #[serde(
+        default,
+        rename = "editorBracketHighlight.foreground1",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub editor_bracket_highlight_foreground1: Option<String>,
-    #[serde(rename = "editorBracketHighlight.foreground2")]
+
+    #[serde(
+        default,
+        rename = "editorBracketHighlight.foreground2",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub editor_bracket_highlight_foreground2: Option<String>,
-    #[serde(rename = "editorBracketHighlight.foreground3")]
+
+    #[serde(
+        default,
+        rename = "editorBracketHighlight.foreground3",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub editor_bracket_highlight_foreground3: Option<String>,
-    #[serde(rename = "editorBracketHighlight.foreground4")]
+
+    #[serde(
+        default,
+        rename = "editorBracketHighlight.foreground4",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub editor_bracket_highlight_foreground4: Option<String>,
-    #[serde(rename = "editorBracketHighlight.foreground5")]
+
+    #[serde(
+        default,
+        rename = "editorBracketHighlight.foreground5",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub editor_bracket_highlight_foreground5: Option<String>,
-    #[serde(rename = "editorBracketHighlight.foreground6")]
+
+    #[serde(
+        default,
+        rename = "editorBracketHighlight.foreground6",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub editor_bracket_highlight_foreground6: Option<String>,
-    #[serde(rename = "editorBracketHighlight.unexpectedBracket.foreground")]
+
+    #[serde(
+        default,
+        rename = "editorBracketHighlight.unexpectedBracket.foreground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub editor_bracket_highlight_unexpected_bracket_foreground: Option<String>,
-    #[serde(rename = "editorOverviewRuler.border")]
+
+    #[serde(
+        default,
+        rename = "editorOverviewRuler.border",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub editor_overview_ruler_border: Option<String>,
-    #[serde(rename = "editorOverviewRuler.selectionHighlightForeground")]
+
+    #[serde(
+        default,
+        rename = "editorOverviewRuler.selectionHighlightForeground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub editor_overview_ruler_selection_highlight_foreground: Option<String>,
-    #[serde(rename = "editorOverviewRuler.wordHighlightForeground")]
+
+    #[serde(
+        default,
+        rename = "editorOverviewRuler.wordHighlightForeground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub editor_overview_ruler_word_highlight_foreground: Option<String>,
-    #[serde(rename = "editorOverviewRuler.wordHighlightStrongForeground")]
+
+    #[serde(
+        default,
+        rename = "editorOverviewRuler.wordHighlightStrongForeground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub editor_overview_ruler_word_highlight_strong_foreground: Option<String>,
-    #[serde(rename = "editorOverviewRuler.modifiedForeground")]
+
+    #[serde(
+        default,
+        rename = "editorOverviewRuler.modifiedForeground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub editor_overview_ruler_modified_foreground: Option<String>,
-    #[serde(rename = "editorOverviewRuler.addedForeground")]
+
+    #[serde(
+        default,
+        rename = "editorOverviewRuler.addedForeground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub editor_overview_ruler_added_foreground: Option<String>,
-    #[serde(rename = "editorOverviewRuler.deletedForeground")]
+
+    #[serde(
+        default,
+        rename = "editorOverviewRuler.deletedForeground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub editor_overview_ruler_deleted_foreground: Option<String>,
-    #[serde(rename = "editorOverviewRuler.errorForeground")]
+
+    #[serde(
+        default,
+        rename = "editorOverviewRuler.errorForeground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub editor_overview_ruler_error_foreground: Option<String>,
-    #[serde(rename = "editorOverviewRuler.warningForeground")]
+
+    #[serde(
+        default,
+        rename = "editorOverviewRuler.warningForeground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub editor_overview_ruler_warning_foreground: Option<String>,
-    #[serde(rename = "editorOverviewRuler.infoForeground")]
+
+    #[serde(
+        default,
+        rename = "editorOverviewRuler.infoForeground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub editor_overview_ruler_info_foreground: Option<String>,
-    #[serde(rename = "editorError.foreground")]
+
+    #[serde(
+        default,
+        rename = "editorError.foreground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub editor_error_foreground: Option<String>,
-    #[serde(rename = "editorWarning.foreground")]
+
+    #[serde(
+        default,
+        rename = "editorWarning.foreground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub editor_warning_foreground: Option<String>,
-    #[serde(rename = "editorGutter.modifiedBackground")]
+
+    #[serde(
+        default,
+        rename = "editorGutter.modifiedBackground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub editor_gutter_modified_background: Option<String>,
-    #[serde(rename = "editorGutter.addedBackground")]
+
+    #[serde(
+        default,
+        rename = "editorGutter.addedBackground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub editor_gutter_added_background: Option<String>,
-    #[serde(rename = "editorGutter.deletedBackground")]
+
+    #[serde(
+        default,
+        rename = "editorGutter.deletedBackground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub editor_gutter_deleted_background: Option<String>,
-    #[serde(rename = "gitDecoration.modifiedResourceForeground")]
+
+    #[serde(
+        default,
+        rename = "gitDecoration.modifiedResourceForeground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub git_decoration_modified_resource_foreground: Option<String>,
-    #[serde(rename = "gitDecoration.deletedResourceForeground")]
+
+    #[serde(
+        default,
+        rename = "gitDecoration.deletedResourceForeground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub git_decoration_deleted_resource_foreground: Option<String>,
-    #[serde(rename = "gitDecoration.untrackedResourceForeground")]
+
+    #[serde(
+        default,
+        rename = "gitDecoration.untrackedResourceForeground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub git_decoration_untracked_resource_foreground: Option<String>,
-    #[serde(rename = "gitDecoration.ignoredResourceForeground")]
+
+    #[serde(
+        default,
+        rename = "gitDecoration.ignoredResourceForeground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub git_decoration_ignored_resource_foreground: Option<String>,
-    #[serde(rename = "gitDecoration.conflictingResourceForeground")]
+
+    #[serde(
+        default,
+        rename = "gitDecoration.conflictingResourceForeground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub git_decoration_conflicting_resource_foreground: Option<String>,
-    #[serde(rename = "diffEditor.insertedTextBackground")]
+
+    #[serde(
+        default,
+        rename = "diffEditor.insertedTextBackground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub diff_editor_inserted_text_background: Option<String>,
-    #[serde(rename = "diffEditor.removedTextBackground")]
+
+    #[serde(
+        default,
+        rename = "diffEditor.removedTextBackground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub diff_editor_removed_text_background: Option<String>,
-    #[serde(rename = "inlineChat.regionHighlight")]
+
+    #[serde(
+        default,
+        rename = "inlineChat.regionHighlight",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub inline_chat_region_highlight: Option<String>,
-    #[serde(rename = "editorWidget.background")]
+
+    #[serde(
+        default,
+        rename = "editorWidget.background",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub editor_widget_background: Option<String>,
-    #[serde(rename = "editorSuggestWidget.background")]
+
+    #[serde(
+        default,
+        rename = "editorSuggestWidget.background",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub editor_suggest_widget_background: Option<String>,
-    #[serde(rename = "editorSuggestWidget.foreground")]
+
+    #[serde(
+        default,
+        rename = "editorSuggestWidget.foreground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub editor_suggest_widget_foreground: Option<String>,
-    #[serde(rename = "editorSuggestWidget.selectedBackground")]
+
+    #[serde(
+        default,
+        rename = "editorSuggestWidget.selectedBackground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub editor_suggest_widget_selected_background: Option<String>,
-    #[serde(rename = "editorHoverWidget.background")]
+
+    #[serde(
+        default,
+        rename = "editorHoverWidget.background",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub editor_hover_widget_background: Option<String>,
-    #[serde(rename = "editorHoverWidget.border")]
+
+    #[serde(
+        default,
+        rename = "editorHoverWidget.border",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub editor_hover_widget_border: Option<String>,
-    #[serde(rename = "editorMarkerNavigation.background")]
+
+    #[serde(
+        default,
+        rename = "editorMarkerNavigation.background",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub editor_marker_navigation_background: Option<String>,
-    #[serde(rename = "peekView.border")]
+
+    #[serde(
+        default,
+        rename = "peekView.border",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub peek_view_border: Option<String>,
-    #[serde(rename = "peekViewEditor.background")]
+
+    #[serde(
+        default,
+        rename = "peekViewEditor.background",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub peek_view_editor_background: Option<String>,
-    #[serde(rename = "peekViewEditor.matchHighlightBackground")]
+
+    #[serde(
+        default,
+        rename = "peekViewEditor.matchHighlightBackground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub peek_view_editor_match_highlight_background: Option<String>,
-    #[serde(rename = "peekViewResult.background")]
+
+    #[serde(
+        default,
+        rename = "peekViewResult.background",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub peek_view_result_background: Option<String>,
-    #[serde(rename = "peekViewResult.fileForeground")]
+
+    #[serde(
+        default,
+        rename = "peekViewResult.fileForeground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub peek_view_result_file_foreground: Option<String>,
-    #[serde(rename = "peekViewResult.lineForeground")]
+
+    #[serde(
+        default,
+        rename = "peekViewResult.lineForeground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub peek_view_result_line_foreground: Option<String>,
-    #[serde(rename = "peekViewResult.matchHighlightBackground")]
+
+    #[serde(
+        default,
+        rename = "peekViewResult.matchHighlightBackground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub peek_view_result_match_highlight_background: Option<String>,
-    #[serde(rename = "peekViewResult.selectionBackground")]
+
+    #[serde(
+        default,
+        rename = "peekViewResult.selectionBackground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub peek_view_result_selection_background: Option<String>,
-    #[serde(rename = "peekViewResult.selectionForeground")]
+
+    #[serde(
+        default,
+        rename = "peekViewResult.selectionForeground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub peek_view_result_selection_foreground: Option<String>,
-    #[serde(rename = "peekViewTitle.background")]
+
+    #[serde(
+        default,
+        rename = "peekViewTitle.background",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub peek_view_title_background: Option<String>,
-    #[serde(rename = "peekViewTitleDescription.foreground")]
+
+    #[serde(
+        default,
+        rename = "peekViewTitleDescription.foreground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub peek_view_title_description_foreground: Option<String>,
-    #[serde(rename = "peekViewTitleLabel.foreground")]
+
+    #[serde(
+        default,
+        rename = "peekViewTitleLabel.foreground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub peek_view_title_label_foreground: Option<String>,
-    #[serde(rename = "merge.currentHeaderBackground")]
+
+    #[serde(
+        default,
+        rename = "merge.currentHeaderBackground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub merge_current_header_background: Option<String>,
-    #[serde(rename = "merge.incomingHeaderBackground")]
+
+    #[serde(
+        default,
+        rename = "merge.incomingHeaderBackground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub merge_incoming_header_background: Option<String>,
-    #[serde(rename = "editorOverviewRuler.currentContentForeground")]
+
+    #[serde(
+        default,
+        rename = "editorOverviewRuler.currentContentForeground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub editor_overview_ruler_current_content_foreground: Option<String>,
-    #[serde(rename = "editorOverviewRuler.incomingContentForeground")]
+
+    #[serde(
+        default,
+        rename = "editorOverviewRuler.incomingContentForeground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub editor_overview_ruler_incoming_content_foreground: Option<String>,
-    #[serde(rename = "panel.background")]
+
+    #[serde(
+        default,
+        rename = "panel.background",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub panel_background: Option<String>,
-    #[serde(rename = "panel.border")]
+
+    #[serde(
+        default,
+        rename = "panel.border",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub panel_border: Option<String>,
-    #[serde(rename = "panelTitle.activeBorder")]
+
+    #[serde(
+        default,
+        rename = "panelTitle.activeBorder",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub panel_title_active_border: Option<String>,
-    #[serde(rename = "panelTitle.activeForeground")]
+
+    #[serde(
+        default,
+        rename = "panelTitle.activeForeground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub panel_title_active_foreground: Option<String>,
-    #[serde(rename = "panelTitle.inactiveForeground")]
+
+    #[serde(
+        default,
+        rename = "panelTitle.inactiveForeground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub panel_title_inactive_foreground: Option<String>,
-    #[serde(rename = "statusBar.background")]
+
+    #[serde(
+        default,
+        rename = "statusBar.background",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub status_bar_background: Option<String>,
-    #[serde(rename = "statusBar.foreground")]
+
+    #[serde(
+        default,
+        rename = "statusBar.foreground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub status_bar_foreground: Option<String>,
-    #[serde(rename = "statusBar.debuggingBackground")]
+
+    #[serde(
+        default,
+        rename = "statusBar.debuggingBackground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub status_bar_debugging_background: Option<String>,
-    #[serde(rename = "statusBar.debuggingForeground")]
+
+    #[serde(
+        default,
+        rename = "statusBar.debuggingForeground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub status_bar_debugging_foreground: Option<String>,
-    #[serde(rename = "statusBar.noFolderBackground")]
+
+    #[serde(
+        default,
+        rename = "statusBar.noFolderBackground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub status_bar_no_folder_background: Option<String>,
-    #[serde(rename = "statusBar.noFolderForeground")]
+
+    #[serde(
+        default,
+        rename = "statusBar.noFolderForeground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub status_bar_no_folder_foreground: Option<String>,
-    #[serde(rename = "statusBarItem.prominentBackground")]
+
+    #[serde(
+        default,
+        rename = "statusBarItem.prominentBackground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub status_bar_item_prominent_background: Option<String>,
-    #[serde(rename = "statusBarItem.prominentHoverBackground")]
+
+    #[serde(
+        default,
+        rename = "statusBarItem.prominentHoverBackground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub status_bar_item_prominent_hover_background: Option<String>,
-    #[serde(rename = "statusBarItem.remoteForeground")]
+
+    #[serde(
+        default,
+        rename = "statusBarItem.remoteForeground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub status_bar_item_remote_foreground: Option<String>,
-    #[serde(rename = "statusBarItem.remoteBackground")]
+
+    #[serde(
+        default,
+        rename = "statusBarItem.remoteBackground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub status_bar_item_remote_background: Option<String>,
-    #[serde(rename = "titleBar.activeBackground")]
+
+    #[serde(
+        default,
+        rename = "titleBar.activeBackground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub title_bar_active_background: Option<String>,
-    #[serde(rename = "titleBar.activeForeground")]
+
+    #[serde(
+        default,
+        rename = "titleBar.activeForeground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub title_bar_active_foreground: Option<String>,
-    #[serde(rename = "titleBar.inactiveBackground")]
+
+    #[serde(
+        default,
+        rename = "titleBar.inactiveBackground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub title_bar_inactive_background: Option<String>,
-    #[serde(rename = "titleBar.inactiveForeground")]
+
+    #[serde(
+        default,
+        rename = "titleBar.inactiveForeground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub title_bar_inactive_foreground: Option<String>,
-    #[serde(rename = "extensionButton.prominentForeground")]
+
+    #[serde(
+        default,
+        rename = "extensionButton.prominentForeground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub extension_button_prominent_foreground: Option<String>,
-    #[serde(rename = "extensionButton.prominentBackground")]
+
+    #[serde(
+        default,
+        rename = "extensionButton.prominentBackground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub extension_button_prominent_background: Option<String>,
-    #[serde(rename = "extensionButton.prominentHoverBackground")]
+
+    #[serde(
+        default,
+        rename = "extensionButton.prominentHoverBackground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub extension_button_prominent_hover_background: Option<String>,
-    #[serde(rename = "pickerGroup.border")]
+
+    #[serde(
+        default,
+        rename = "pickerGroup.border",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub picker_group_border: Option<String>,
-    #[serde(rename = "pickerGroup.foreground")]
+
+    #[serde(
+        default,
+        rename = "pickerGroup.foreground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub picker_group_foreground: Option<String>,
-    #[serde(rename = "debugToolBar.background")]
+
+    #[serde(
+        default,
+        rename = "debugToolBar.background",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub debug_tool_bar_background: Option<String>,
-    #[serde(rename = "walkThrough.embeddedEditorBackground")]
+
+    #[serde(
+        default,
+        rename = "walkThrough.embeddedEditorBackground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub walk_through_embedded_editor_background: Option<String>,
-    #[serde(rename = "settings.headerForeground")]
+
+    #[serde(
+        default,
+        rename = "settings.headerForeground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub settings_header_foreground: Option<String>,
-    #[serde(rename = "settings.modifiedItemIndicator")]
+
+    #[serde(
+        default,
+        rename = "settings.modifiedItemIndicator",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub settings_modified_item_indicator: Option<String>,
-    #[serde(rename = "settings.dropdownBackground")]
+
+    #[serde(
+        default,
+        rename = "settings.dropdownBackground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub settings_dropdown_background: Option<String>,
-    #[serde(rename = "settings.dropdownForeground")]
+
+    #[serde(
+        default,
+        rename = "settings.dropdownForeground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub settings_dropdown_foreground: Option<String>,
-    #[serde(rename = "settings.dropdownBorder")]
+
+    #[serde(
+        default,
+        rename = "settings.dropdownBorder",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub settings_dropdown_border: Option<String>,
-    #[serde(rename = "settings.checkboxBackground")]
+
+    #[serde(
+        default,
+        rename = "settings.checkboxBackground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub settings_checkbox_background: Option<String>,
-    #[serde(rename = "settings.checkboxForeground")]
+
+    #[serde(
+        default,
+        rename = "settings.checkboxForeground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub settings_checkbox_foreground: Option<String>,
-    #[serde(rename = "settings.checkboxBorder")]
+
+    #[serde(
+        default,
+        rename = "settings.checkboxBorder",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub settings_checkbox_border: Option<String>,
-    #[serde(rename = "settings.textInputBackground")]
+
+    #[serde(
+        default,
+        rename = "settings.textInputBackground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub settings_text_input_background: Option<String>,
-    #[serde(rename = "settings.textInputForeground")]
+
+    #[serde(
+        default,
+        rename = "settings.textInputForeground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub settings_text_input_foreground: Option<String>,
-    #[serde(rename = "settings.textInputBorder")]
+
+    #[serde(
+        default,
+        rename = "settings.textInputBorder",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub settings_text_input_border: Option<String>,
-    #[serde(rename = "settings.numberInputBackground")]
+
+    #[serde(
+        default,
+        rename = "settings.numberInputBackground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub settings_number_input_background: Option<String>,
-    #[serde(rename = "settings.numberInputForeground")]
+
+    #[serde(
+        default,
+        rename = "settings.numberInputForeground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub settings_number_input_foreground: Option<String>,
-    #[serde(rename = "settings.numberInputBorder")]
+
+    #[serde(
+        default,
+        rename = "settings.numberInputBorder",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub settings_number_input_border: Option<String>,
-    #[serde(rename = "breadcrumb.foreground")]
+
+    #[serde(
+        default,
+        rename = "breadcrumb.foreground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub breadcrumb_foreground: Option<String>,
-    #[serde(rename = "breadcrumb.background")]
+
+    #[serde(
+        default,
+        rename = "breadcrumb.background",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub breadcrumb_background: Option<String>,
-    #[serde(rename = "breadcrumb.focusForeground")]
+
+    #[serde(
+        default,
+        rename = "breadcrumb.focusForeground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub breadcrumb_focus_foreground: Option<String>,
-    #[serde(rename = "breadcrumb.activeSelectionForeground")]
+
+    #[serde(
+        default,
+        rename = "breadcrumb.activeSelectionForeground",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub breadcrumb_active_selection_foreground: Option<String>,
-    #[serde(rename = "breadcrumbPicker.background")]
+
+    #[serde(
+        default,
+        rename = "breadcrumbPicker.background",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub breadcrumb_picker_background: Option<String>,
-    #[serde(rename = "listFilterWidget.background")]
+
+    #[serde(
+        default,
+        rename = "listFilterWidget.background",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub list_filter_widget_background: Option<String>,
-    #[serde(rename = "listFilterWidget.outline")]
+
+    #[serde(
+        default,
+        rename = "listFilterWidget.outline",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub list_filter_widget_outline: Option<String>,
-    #[serde(rename = "listFilterWidget.noMatchesOutline")]
+
+    #[serde(
+        default,
+        rename = "listFilterWidget.noMatchesOutline",
+        deserialize_with = "empty_string_as_none"
+    )]
     pub list_filter_widget_no_matches_outline: Option<String>,
 }

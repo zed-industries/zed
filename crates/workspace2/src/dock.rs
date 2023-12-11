@@ -770,7 +770,7 @@ pub mod test {
         pub focus_handle: FocusHandle,
         pub size: f32,
     }
-    actions!(ToggleTestPanel);
+    actions!(test, [ToggleTestPanel]);
 
     impl EventEmitter<PanelEvent> for TestPanel {}
 

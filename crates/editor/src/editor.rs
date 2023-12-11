@@ -12,6 +12,7 @@ mod link_go_to_definition;
 mod mouse_context_menu;
 pub mod movement;
 mod persistence;
+mod rust_analyzer_ext;
 pub mod scroll;
 pub mod selections_collection;
 
@@ -300,6 +301,7 @@ actions!(
         DeleteToEndOfLine,
         CutToEndOfLine,
         DuplicateLine,
+        ExpandMacroRecursively,
         MoveLineUp,
         MoveLineDown,
         JoinLines,
@@ -425,6 +427,8 @@ pub fn init_settings(cx: &mut AppContext) {
 
 pub fn init(cx: &mut AppContext) {
     init_settings(cx);
+
+    rust_analyzer_ext::apply_related_actions(cx);
     cx.add_action(Editor::new_file);
     cx.add_action(Editor::new_file_in_direction);
     cx.add_action(Editor::cancel);

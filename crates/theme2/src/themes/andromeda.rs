@@ -25,7 +25,7 @@ pub fn andromeda() -> UserThemeFamily {
                         border_selected: Some(rgba(0x1b1d23ff).into()),
                         border_transparent: Some(rgba(0x1b1d23ff).into()),
                         border_disabled: Some(rgba(0x1b1d23ff).into()),
-                        elevated_surface_background: Some(rgba(0x23262eff).into()),
+                        elevated_surface_background: Some(rgba(0x2b303bff).into()),
                         surface_background: Some(rgba(0x23262eff).into()),
                         background: Some(rgba(0x23262eff).into()),
                         element_background: Some(rgba(0x00e8c5cc).into()),
@@ -33,6 +33,7 @@ pub fn andromeda() -> UserThemeFamily {
                         element_selected: Some(rgba(0x23262eff).into()),
                         drop_target_background: Some(rgba(0x3a404eff).into()),
                         ghost_element_hover: Some(rgba(0x23262eff).into()),
+                        ghost_element_selected: Some(rgba(0x23262eff).into()),
                         text: Some(rgba(0xd5ced9ff).into()),
                         status_bar_background: Some(rgba(0x23262eff).into()),
                         title_bar_background: Some(rgba(0x23262eff).into()),
@@ -59,10 +60,13 @@ pub fn andromeda() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
-                        deleted: Some(rgba(0xfc644dff).into()),
+                        created: Some(rgba(0x9bc53dbb).into()),
+                        deleted: Some(rgba(0xfc644dbb).into()),
                         error: Some(rgba(0xfc644dff).into()),
                         hidden: Some(rgba(0x746f77ff).into()),
                         hint: Some(rgba(0x969696ff).into()),
+                        ignored: Some(rgba(0x555555ff).into()),
+                        modified: Some(rgba(0x5bc0ebbb).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -85,6 +89,20 @@ pub fn andromeda() -> UserThemeFamily {
                                 "comment.doc".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xa0a1a7cc).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "constant".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xee5d43ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "constructor".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xf92672ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -138,6 +156,34 @@ pub fn andromeda() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "string.escape".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x96e072ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.regex".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x96e072ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.special".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x96e072ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.special.symbol".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x96e072ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "tag".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xf92672ff).into()),
@@ -154,7 +200,7 @@ pub fn andromeda() -> UserThemeFamily {
                             (
                                 "type".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xee5d43ff).into()),
+                                    color: Some(rgba(0xffe66dff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -187,7 +233,7 @@ pub fn andromeda() -> UserThemeFamily {
                         border_selected: Some(rgba(0x1b1d23ff).into()),
                         border_transparent: Some(rgba(0x1b1d23ff).into()),
                         border_disabled: Some(rgba(0x1b1d23ff).into()),
-                        elevated_surface_background: Some(rgba(0x23262eff).into()),
+                        elevated_surface_background: Some(rgba(0x2b303bff).into()),
                         surface_background: Some(rgba(0x23262eff).into()),
                         background: Some(rgba(0x262a33ff).into()),
                         element_background: Some(rgba(0x00e8c5cc).into()),
@@ -195,10 +241,11 @@ pub fn andromeda() -> UserThemeFamily {
                         element_selected: Some(rgba(0x23262eff).into()),
                         drop_target_background: Some(rgba(0x3a404eff).into()),
                         ghost_element_hover: Some(rgba(0x23262eff).into()),
+                        ghost_element_selected: Some(rgba(0x23262eff).into()),
                         text: Some(rgba(0xd5ced9ff).into()),
                         status_bar_background: Some(rgba(0x23262eff).into()),
                         title_bar_background: Some(rgba(0x23262eff).into()),
-                        toolbar_background: Some(rgba(0x23262eff).into()),
+                        toolbar_background: Some(rgba(0x262a33ff).into()),
                         tab_bar_background: Some(rgba(0x23262eff).into()),
                         tab_inactive_background: Some(rgba(0x23262eff).into()),
                         tab_active_background: Some(rgba(0x262a33ff).into()),
@@ -221,10 +268,13 @@ pub fn andromeda() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
-                        deleted: Some(rgba(0xfc644dff).into()),
+                        created: Some(rgba(0x9bc53dbb).into()),
+                        deleted: Some(rgba(0xfc644dbb).into()),
                         error: Some(rgba(0xfc644dff).into()),
                         hidden: Some(rgba(0x746f77ff).into()),
                         hint: Some(rgba(0x969696ff).into()),
+                        ignored: Some(rgba(0x555555ff).into()),
+                        modified: Some(rgba(0x5bc0ebbb).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -247,6 +297,20 @@ pub fn andromeda() -> UserThemeFamily {
                                 "comment.doc".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xa0a1a7cc).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "constant".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xee5d43ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "constructor".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xf92672ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -300,6 +364,34 @@ pub fn andromeda() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "string.escape".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x96e072ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.regex".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x96e072ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.special".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x96e072ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.special.symbol".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x96e072ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "tag".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xf92672ff).into()),
@@ -316,7 +408,7 @@ pub fn andromeda() -> UserThemeFamily {
                             (
                                 "type".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xee5d43ff).into()),
+                                    color: Some(rgba(0xffe66dff).into()),
                                     ..Default::default()
                                 },
                             ),

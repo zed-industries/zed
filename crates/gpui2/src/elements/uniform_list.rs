@@ -131,7 +131,7 @@ impl Element for UniformList {
                                         }
                                     });
                             let height = match available_space.height {
-                                AvailableSpace::Definite(x) => desired_height.min(x),
+                                AvailableSpace::Definite(height) => desired_height.min(height),
                                 AvailableSpace::MinContent | AvailableSpace::MaxContent => {
                                     desired_height
                                 }

@@ -293,11 +293,13 @@ mod tests {
     #[test]
     fn test_actions_definition() {
         {
-            actions!(A, B, C, D, E, F, G);
+            actions!(test, [A, B, C, D, E, F, G]);
         }
 
         {
             actions!(
+                test,
+                [
                 A,
                 B,
                 C,
@@ -305,6 +307,7 @@ mod tests {
                 E,
                 F,
                 G, // Don't wrap, test the trailing comma
+            ]
             );
         }
     }
