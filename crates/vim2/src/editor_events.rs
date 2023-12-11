@@ -29,12 +29,6 @@ fn focused(editor: View<Editor>, cx: &mut WindowContext) {
 
     Vim::update(cx, |vim, cx| {
         vim.set_active_editor(editor.clone(), cx);
-        if vim.enabled {
-            // todo!()
-            // cx.emit_global(VimEvent::ModeChanged {
-            //     mode: vim.state().mode,
-            // });
-        }
     });
 }
 

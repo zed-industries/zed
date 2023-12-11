@@ -326,9 +326,6 @@ impl Vim {
             self.take_count(cx);
         }
 
-        // todo!()
-        // cx.emit_global(VimEvent::ModeChanged { mode });
-
         // Sync editor settings like clip mode
         self.sync_vim_settings(cx);
 
@@ -495,21 +492,24 @@ impl Vim {
                 let _ = cx.remove_global::<CommandPaletteInterceptor>();
             }
 
-            // todo!();
-            // cx.update_active_window(|cx| {
-            //     if self.enabled {
-            //         let active_editor = cx
-            //             .root_view()
-            //             .downcast_ref::<Workspace>()
-            //             .and_then(|workspace| workspace.read(cx).active_item(cx))
-            //             .and_then(|item| item.downcast::<Editor>());
-            //         if let Some(active_editor) = active_editor {
-            //             self.set_active_editor(active_editor, cx);
-            //         }
-            //         self.switch_mode(Mode::Normal, false, cx);
-            //     }
-            //     self.sync_vim_settings(cx);
-            // });
+            if let Some(active_window) = cx.active_window() {
+                active_window
+                    .update(cx, |root_view, cx| {
+                        if self.enabled {
+                            let active_editor = root_view
+                                .downcast::<Workspace>()
+                                .ok()
+                                .and_then(|workspace| workspace.read(cx).active_item(cx))
+                                .and_then(|item| item.downcast::<Editor>());
+                            if let Some(active_editor) = active_editor {
+                                self.set_active_editor(active_editor, cx);
+                            }
+                            self.switch_mode(Mode::Normal, false, cx);
+                        }
+                        self.sync_vim_settings(cx);
+                    })
+                    .ok();
+            }
         }
     }
 

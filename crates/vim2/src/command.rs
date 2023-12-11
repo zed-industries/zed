@@ -167,8 +167,7 @@ pub fn command_interceptor(mut query: &str, _: &AppContext) -> Option<CommandInt
             .boxed_clone(),
         ),
         "cq" | "cqu" | "cqui" | "cquit" | "cq!" | "cqu!" | "cqui!" | "cquit!" => {
-            // ("cquit!", zed_actions::Quit.boxed_clone())
-            todo!(); // Quit is no longer in zed actions :/
+            ("cquit!", zed_actions::Quit.boxed_clone())
         }
 
         // pane management

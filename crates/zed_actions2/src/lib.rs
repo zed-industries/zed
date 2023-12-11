@@ -1,4 +1,4 @@
-use gpui::impl_actions;
+use gpui::{actions, impl_actions};
 use serde::Deserialize;
 
 // If the zed binary doesn't use anything in this crate, it will be optimized away
@@ -21,3 +21,5 @@ pub struct OpenZedURL {
 }
 
 impl_actions!(zed, [OpenBrowser, OpenZedURL]);
+
+actions!(zed, [Quit]);
