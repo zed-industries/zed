@@ -1,15 +1,22 @@
+use gpui2::{actions, impl_actions};
+use gpui2_macros::register_action;
 use serde_derive::Deserialize;
 
 #[test]
-fn test_derive() {
+fn test_action_macros() {
     use gpui2 as gpui;
 
-    #[derive(PartialEq, Clone, Deserialize, gpui2_macros::Action)]
+    actions!(test, [TestAction]);
+
+    #[derive(PartialEq, Clone, Deserialize)]
     struct AnotherTestAction;
 
-    #[gpui2_macros::register_action]
+    impl_actions!(test, [AnotherTestAction]);
+
     #[derive(PartialEq, Clone, gpui::serde_derive::Deserialize)]
     struct RegisterableAction {}
+
+    register_action!(RegisterableAction);
 
     impl gpui::Action for RegisterableAction {
         fn boxed_clone(&self) -> Box<dyn gpui::Action> {

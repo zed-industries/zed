@@ -9,10 +9,10 @@ pub mod terminal_panel;
 // use crate::terminal_element::TerminalElement;
 use editor::{scroll::autoscroll::Autoscroll, Editor};
 use gpui::{
-    div, overlay, Action, AnyElement, AppContext, DismissEvent, Div, EventEmitter, FocusEvent,
-    FocusHandle, Focusable, FocusableElement, FocusableView, KeyContext, KeyDownEvent, Keystroke,
-    Model, MouseButton, MouseDownEvent, Pixels, Render, Styled, Subscription, Task, View,
-    VisualContext, WeakView,
+    div, impl_actions, overlay, AnyElement, AppContext, DismissEvent, Div, EventEmitter,
+    FocusEvent, FocusHandle, Focusable, FocusableElement, FocusableView, KeyContext, KeyDownEvent,
+    Keystroke, Model, MouseButton, MouseDownEvent, Pixels, Render, Styled, Subscription, Task,
+    View, VisualContext, WeakView,
 };
 use language::Bias;
 use persistence::TERMINAL_DB;
@@ -55,11 +55,13 @@ const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 #[derive(Clone, Debug, PartialEq)]
 pub struct ScrollTerminal(pub i32);
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Action)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 pub struct SendText(String);
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Action)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 pub struct SendKeystroke(String);
+
+impl_actions!(terminal_view, [SendText, SendKeystroke]);
 
 pub fn init(cx: &mut AppContext) {
     terminal_panel::init(cx);

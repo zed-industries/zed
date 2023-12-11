@@ -7,10 +7,10 @@ use crate::{
 use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
 use gpui::{
-    actions, overlay, prelude::*, rems, Action, AnchorCorner, AnyWeakView, AppContext,
-    AsyncWindowContext, DismissEvent, Div, EntityId, EventEmitter, FocusHandle, Focusable,
-    FocusableView, Model, MouseButton, NavigationDirection, Pixels, Point, PromptLevel, Render,
-    Task, View, ViewContext, VisualContext, WeakView, WindowContext,
+    actions, impl_actions, overlay, prelude::*, rems, Action, AnchorCorner, AnyWeakView,
+    AppContext, AsyncWindowContext, DismissEvent, Div, EntityId, EventEmitter, FocusHandle,
+    Focusable, FocusableView, Model, MouseButton, NavigationDirection, Pixels, Point, PromptLevel,
+    Render, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use parking_lot::Mutex;
 use project::{Project, ProjectEntryId, ProjectPath};
@@ -52,9 +52,7 @@ pub enum SaveIntent {
     Skip,
 }
 
-//todo!("Do we need the default bound on actions? Decide soon")
-// #[register_action]
-#[derive(Action, Clone, Deserialize, PartialEq, Debug)]
+#[derive(Clone, Deserialize, PartialEq, Debug)]
 pub struct ActivateItem(pub usize);
 
 // #[derive(Clone, PartialEq)]
@@ -75,17 +73,19 @@ pub struct ActivateItem(pub usize);
 //     pub pane: WeakView<Pane>,
 // }
 
-#[derive(Clone, PartialEq, Debug, Deserialize, Default, Action)]
+#[derive(Clone, PartialEq, Debug, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct CloseActiveItem {
     pub save_intent: Option<SaveIntent>,
 }
 
-#[derive(Clone, PartialEq, Debug, Deserialize, Default, Action)]
+#[derive(Clone, PartialEq, Debug, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct CloseAllItems {
     pub save_intent: Option<SaveIntent>,
 }
+
+impl_actions!(pane, [CloseAllItems, CloseActiveItem, ActivateItem]);
 
 actions!(
     pane,
