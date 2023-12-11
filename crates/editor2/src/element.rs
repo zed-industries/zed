@@ -1276,9 +1276,9 @@ impl EditorElement {
             cx.paint_quad(
                 track_bounds,
                 Corners::default(),
-                gpui::blue(),        // todo!("style.track.background_color")
-                Edges::default(),    // todo!("style.track.border")
-                transparent_black(), // todo!("style.track.border")
+                cx.theme().colors().scrollbar_track_background,
+                Edges::default(), // todo!("style.track.border")
+                cx.theme().colors().scrollbar_track_border,
             );
             let scrollbar_settings = EditorSettings::get_global(cx).scrollbar;
             if layout.is_singleton && scrollbar_settings.selections {
@@ -1302,14 +1302,14 @@ impl EditorElement {
                     cx.paint_quad(
                         bounds,
                         Corners::default(),
-                        gpui::yellow(), // todo!("theme.editor.scrollbar")
+                        cx.theme().colors().scrollbar_thumb_background,
                         Edges {
                             top: Pixels::ZERO,
                             right: px(1.),
                             bottom: Pixels::ZERO,
                             left: px(1.),
                         },
-                        gpui::green(), // todo!("style.thumb.border.color")
+                        cx.theme().colors().scrollbar_thumb_border,
                     );
                 }
             }
