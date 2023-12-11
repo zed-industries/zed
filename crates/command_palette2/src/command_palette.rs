@@ -7,7 +7,7 @@ use collections::{CommandPaletteFilter, HashMap};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     actions, Action, AppContext, DismissEvent, Div, EventEmitter, FocusHandle, FocusableView,
-    Keystroke, ParentElement, Render, Styled, View, ViewContext, VisualContext, WeakView,
+    ParentElement, Render, Styled, View, ViewContext, VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};
 
@@ -16,15 +16,17 @@ use util::{
     channel::{parse_zed_link, ReleaseChannel, RELEASE_CHANNEL},
     ResultExt,
 };
-use workspace::Workspace;
+use workspace::{ModalView, Workspace};
 use zed_actions::OpenZedURL;
 
-actions!(Toggle);
+actions!(command_palette, [Toggle]);
 
 pub fn init(cx: &mut AppContext) {
     cx.set_global(HitCounts::default());
     cx.observe_new_views(CommandPalette::register).detach();
 }
+
+impl ModalView for CommandPalette {}
 
 pub struct CommandPalette {
     picker: View<Picker<CommandPaletteDelegate>>,
@@ -47,7 +49,7 @@ impl CommandPalette {
             .available_actions()
             .into_iter()
             .filter_map(|action| {
-                let name = gpui::remove_the_2(action.name());
+                let name = action.name();
                 let namespace = name.split("::").next().unwrap_or("malformed action name");
                 if filter.is_some_and(|f| {
                     f.hidden_namespaces.contains(namespace)
@@ -59,7 +61,6 @@ impl CommandPalette {
                 Some(Command {
                     name: humanize_action_name(&name),
                     action,
-                    keystrokes: vec![], // todo!()
                 })
             })
             .collect();
@@ -108,7 +109,6 @@ pub struct CommandPaletteDelegate {
 struct Command {
     name: String,
     action: Box<dyn Action>,
-    keystrokes: Vec<Keystroke>,
 }
 
 impl Clone for Command {
@@ -116,7 +116,6 @@ impl Clone for Command {
         Self {
             name: self.name.clone(),
             action: self.action.boxed_clone(),
-            keystrokes: self.keystrokes.clone(),
         }
     }
 }
@@ -227,6 +226,7 @@ impl PickerDelegate for CommandPaletteDelegate {
                     })
                 }
             }
+
             if let Some(CommandInterceptResult {
                 action,
                 string,
@@ -242,7 +242,6 @@ impl PickerDelegate for CommandPaletteDelegate {
                 commands.push(Command {
                     name: string.clone(),
                     action,
-                    keystrokes: vec![],
                 });
                 matches.insert(
                     0,
@@ -254,6 +253,7 @@ impl PickerDelegate for CommandPaletteDelegate {
                     },
                 )
             }
+
             picker
                 .update(&mut cx, |picker, _| {
                     let delegate = &mut picker.delegate;
@@ -283,6 +283,8 @@ impl PickerDelegate for CommandPaletteDelegate {
         }
         let action_ix = self.matches[self.selected_ix].candidate_id;
         let command = self.commands.swap_remove(action_ix);
+        self.matches.clear();
+        self.commands.clear();
         cx.update_global(|hit_counts: &mut HitCounts, _| {
             *hit_counts.0.entry(command.name).or_default() += 1;
         });
@@ -298,13 +300,8 @@ impl PickerDelegate for CommandPaletteDelegate {
         selected: bool,
         cx: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let Some(r#match) = self.matches.get(ix) else {
-            return None;
-        };
-        let Some(command) = self.commands.get(r#match.candidate_id) else {
-            return None;
-        };
-
+        let r#match = self.matches.get(ix)?;
+        let command = self.commands.get(r#match.candidate_id)?;
         Some(
             ListItem::new(ix).inset(true).selected(selected).child(
                 h_stack()
@@ -352,8 +349,7 @@ impl std::fmt::Debug for Command {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Command")
             .field("name", &self.name)
-            .field("keystrokes", &self.keystrokes)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 

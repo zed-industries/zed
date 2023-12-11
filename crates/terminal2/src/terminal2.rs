@@ -59,13 +59,16 @@ use crate::mappings::{colors::to_alac_rgb, keys::to_esc_str};
 use lazy_static::lazy_static;
 
 actions!(
-    Clear,
-    Copy,
-    Paste,
-    ShowCharacterPalette,
-    SearchTest,
-    SendText,
-    SendKeystroke,
+    terminal,
+    [
+        Clear,
+        Copy,
+        Paste,
+        ShowCharacterPalette,
+        SearchTest,
+        SendText,
+        SendKeystroke,
+    ]
 );
 
 ///Scrolling is unbearably sluggish by default. Alacritty supports a configurable

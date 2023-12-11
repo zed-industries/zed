@@ -1154,6 +1154,7 @@ dependencies = [
  "gpui2",
  "itertools 0.10.5",
  "language2",
+ "outline2",
  "project2",
  "search2",
  "settings2",
@@ -1753,7 +1754,7 @@ dependencies = [
 
 [[package]]
 name = "collab"
-version = "0.30.0"
+version = "0.30.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -10511,7 +10512,7 @@ dependencies = [
 [[package]]
 name = "tree-sitter-vue"
 version = "0.0.1"
-source = "git+https://github.com/zed-industries/tree-sitter-vue?rev=9b6cb221ccb8d0b956fcb17e9a1efac2feefeb58#9b6cb221ccb8d0b956fcb17e9a1efac2feefeb58"
+source = "git+https://github.com/zed-industries/tree-sitter-vue?rev=6608d9d60c386f19d80af7d8132322fa11199c42#6608d9d60c386f19d80af7d8132322fa11199c42"
 dependencies = [
  "cc",
  "tree-sitter",

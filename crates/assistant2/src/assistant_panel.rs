@@ -1628,8 +1628,9 @@ impl Conversation {
                                     metadata.status = MessageStatus::Done;
                                 }
                                 Err(error) => {
-                                    metadata.status =
-                                        MessageStatus::Error(error.to_string().trim().into());
+                                    metadata.status = MessageStatus::Error(SharedString::from(
+                                        error.to_string().trim().to_string(),
+                                    ));
                                 }
                             }
                             cx.notify();
@@ -2273,7 +2274,7 @@ impl ConversationEditor {
                                         Some(
                                             div()
                                                 .id("error")
-                                                .tooltip(move |cx| Tooltip::text(&error, cx))
+                                                .tooltip(move |cx| Tooltip::text(error.clone(), cx))
                                                 .child(IconElement::new(Icon::XCircle)),
                                         )
                                     } else {

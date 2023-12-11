@@ -302,7 +302,7 @@ mod test {
         focus_handle: FocusHandle,
     }
 
-    actions!(TestAction);
+    actions!(test, [TestAction]);
 
     impl Render for TestView {
         type Element = Stateful<Div>;

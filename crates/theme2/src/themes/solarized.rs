@@ -25,15 +25,19 @@ pub fn solarized() -> UserThemeFamily {
                         border_selected: Some(rgba(0x003847ff).into()),
                         border_transparent: Some(rgba(0x003847ff).into()),
                         border_disabled: Some(rgba(0x003847ff).into()),
+                        elevated_surface_background: Some(rgba(0x00212bff).into()),
                         background: Some(rgba(0x002b36ff).into()),
                         element_background: Some(rgba(0x2aa19899).into()),
                         element_hover: Some(rgba(0x004454aa).into()),
                         element_selected: Some(rgba(0x005a6fff).into()),
                         drop_target_background: Some(rgba(0x00445488).into()),
                         ghost_element_hover: Some(rgba(0x004454aa).into()),
+                        ghost_element_selected: Some(rgba(0x005a6fff).into()),
                         text: Some(rgba(0xbbbbbbff).into()),
                         status_bar_background: Some(rgba(0x00212bff).into()),
                         title_bar_background: Some(rgba(0x002c39ff).into()),
+                        toolbar_background: Some(rgba(0x002b36ff).into()),
+                        tab_bar_background: Some(rgba(0x004052ff).into()),
                         tab_inactive_background: Some(rgba(0x004052ff).into()),
                         tab_active_background: Some(rgba(0x002b37ff).into()),
                         editor_background: Some(rgba(0x002b36ff).into()),
@@ -58,7 +62,6 @@ pub fn solarized() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
-                        deleted: Some(rgba(0xffeaeaff).into()),
                         error: Some(rgba(0xffeaeaff).into()),
                         hidden: Some(rgba(0x93a1a1ff).into()),
                         hint: Some(rgba(0x969696ff).into()),
@@ -99,7 +102,14 @@ pub fn solarized() -> UserThemeFamily {
                             (
                                 "constant".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xcb4b16ff).into()),
+                                    color: Some(rgba(0xb58900ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "constructor".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x268bd2ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -134,7 +144,7 @@ pub fn solarized() -> UserThemeFamily {
                             (
                                 "keyword".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x268bd2ff).into()),
+                                    color: Some(rgba(0x859900ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -142,6 +152,13 @@ pub fn solarized() -> UserThemeFamily {
                                 "number".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xd33682ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "preproc".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xb58900ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -154,6 +171,34 @@ pub fn solarized() -> UserThemeFamily {
                             ),
                             (
                                 "punctuation".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x657b83ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.bracket".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x657b83ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.delimiter".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x657b83ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.list_marker".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x657b83ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "punctuation.special".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x657b83ff).into()),
                                     ..Default::default()
@@ -174,6 +219,27 @@ pub fn solarized() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "string.regex".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x2aa198ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.special".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x2aa198ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.special.symbol".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x2aa198ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "tag".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x268bd2ff).into()),
@@ -190,14 +256,14 @@ pub fn solarized() -> UserThemeFamily {
                             (
                                 "type".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x859900ff).into()),
+                                    color: Some(rgba(0xb58900ff).into()),
                                     ..Default::default()
                                 },
                             ),
                             (
                                 "variable".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x839496ff).into()),
+                                    color: Some(rgba(0x268bd2ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -223,14 +289,18 @@ pub fn solarized() -> UserThemeFamily {
                         border_selected: Some(rgba(0xddd6c1ff).into()),
                         border_transparent: Some(rgba(0xddd6c1ff).into()),
                         border_disabled: Some(rgba(0xddd6c1ff).into()),
+                        elevated_surface_background: Some(rgba(0xeee8d5ff).into()),
                         background: Some(rgba(0xfdf6e3ff).into()),
                         element_background: Some(rgba(0xac9d57ff).into()),
                         element_hover: Some(rgba(0xdfca8844).into()),
                         element_selected: Some(rgba(0xdfca88ff).into()),
                         ghost_element_hover: Some(rgba(0xdfca8844).into()),
+                        ghost_element_selected: Some(rgba(0xdfca88ff).into()),
                         text: Some(rgba(0x333333ff).into()),
                         status_bar_background: Some(rgba(0xeee8d5ff).into()),
                         title_bar_background: Some(rgba(0xeee8d5ff).into()),
+                        toolbar_background: Some(rgba(0xfdf6e3ff).into()),
+                        tab_bar_background: Some(rgba(0xd9d2c2ff).into()),
                         tab_inactive_background: Some(rgba(0xd3cbb7ff).into()),
                         tab_active_background: Some(rgba(0xfdf6e3ff).into()),
                         editor_background: Some(rgba(0xfdf6e3ff).into()),
@@ -294,7 +364,14 @@ pub fn solarized() -> UserThemeFamily {
                             (
                                 "constant".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0xcb4b16ff).into()),
+                                    color: Some(rgba(0xb58900ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "constructor".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x268bd2ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -329,7 +406,7 @@ pub fn solarized() -> UserThemeFamily {
                             (
                                 "keyword".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x268bd2ff).into()),
+                                    color: Some(rgba(0x859900ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -337,6 +414,13 @@ pub fn solarized() -> UserThemeFamily {
                                 "number".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0xd33682ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "preproc".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0xb58900ff).into()),
                                     ..Default::default()
                                 },
                             ),
@@ -362,6 +446,27 @@ pub fn solarized() -> UserThemeFamily {
                                 },
                             ),
                             (
+                                "string.regex".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x2aa198ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.special".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x2aa198ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                "string.special.symbol".into(),
+                                UserHighlightStyle {
+                                    color: Some(rgba(0x2aa198ff).into()),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
                                 "tag".into(),
                                 UserHighlightStyle {
                                     color: Some(rgba(0x268bd2ff).into()),
@@ -378,7 +483,7 @@ pub fn solarized() -> UserThemeFamily {
                             (
                                 "type".into(),
                                 UserHighlightStyle {
-                                    color: Some(rgba(0x859900ff).into()),
+                                    color: Some(rgba(0xb58900ff).into()),
                                     ..Default::default()
                                 },
                             ),

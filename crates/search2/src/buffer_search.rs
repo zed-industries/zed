@@ -10,7 +10,7 @@ use collections::HashMap;
 use editor::{Editor, EditorMode};
 use futures::channel::oneshot;
 use gpui::{
-    actions, div, red, Action, AppContext, Div, EventEmitter, FocusableView,
+    actions, div, impl_actions, red, Action, AppContext, Div, EventEmitter, FocusableView,
     InteractiveElement as _, IntoElement, KeyContext, ParentElement as _, Render, Styled,
     Subscription, Task, View, ViewContext, VisualContext as _, WeakView, WindowContext,
 };
@@ -26,12 +26,14 @@ use workspace::{
     ToolbarItemLocation, ToolbarItemView,
 };
 
-#[derive(PartialEq, Clone, Deserialize, Default, Action)]
+#[derive(PartialEq, Clone, Deserialize)]
 pub struct Deploy {
     pub focus: bool,
 }
 
-actions!(Dismiss, FocusEditor);
+impl_actions!(buffer_search, [Deploy]);
+
+actions!(buffer_search, [Dismiss, FocusEditor]);
 
 pub enum Event {
     UpdateLocation,

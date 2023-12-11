@@ -24,7 +24,7 @@ pub fn dracula() -> UserThemeFamily {
                     border_selected: Some(rgba(0xbd93f9ff).into()),
                     border_transparent: Some(rgba(0xbd93f9ff).into()),
                     border_disabled: Some(rgba(0xbd93f9ff).into()),
-                    elevated_surface_background: Some(rgba(0x282a36ff).into()),
+                    elevated_surface_background: Some(rgba(0x343746ff).into()),
                     surface_background: Some(rgba(0x282a36ff).into()),
                     background: Some(rgba(0x282a36ff).into()),
                     element_background: Some(rgba(0x44475aff).into()),
@@ -32,11 +32,12 @@ pub fn dracula() -> UserThemeFamily {
                     element_selected: Some(rgba(0x44475aff).into()),
                     drop_target_background: Some(rgba(0x44475aff).into()),
                     ghost_element_hover: Some(rgba(0x44475a75).into()),
+                    ghost_element_selected: Some(rgba(0x44475aff).into()),
                     text: Some(rgba(0xf8f8f2ff).into()),
                     status_bar_background: Some(rgba(0x191a21ff).into()),
                     title_bar_background: Some(rgba(0x21222cff).into()),
                     toolbar_background: Some(rgba(0x282a36ff).into()),
-                    tab_bar_background: Some(rgba(0x282a36ff).into()),
+                    tab_bar_background: Some(rgba(0x191a21ff).into()),
                     tab_inactive_background: Some(rgba(0x21222cff).into()),
                     tab_active_background: Some(rgba(0x282a36ff).into()),
                     editor_background: Some(rgba(0x282a36ff).into()),
@@ -63,10 +64,14 @@ pub fn dracula() -> UserThemeFamily {
                     ..Default::default()
                 },
                 status: StatusColorsRefinement {
-                    deleted: Some(rgba(0xff5555ff).into()),
+                    conflict: Some(rgba(0xffb86cff).into()),
+                    created: Some(rgba(0x50fa7b80).into()),
+                    deleted: Some(rgba(0xff555580).into()),
                     error: Some(rgba(0xff5555ff).into()),
                     hidden: Some(rgba(0x6272a4ff).into()),
                     hint: Some(rgba(0x969696ff).into()),
+                    ignored: Some(rgba(0x6272a4ff).into()),
+                    modified: Some(rgba(0x8be9fd80).into()),
                     warning: Some(rgba(0xffb86cff).into()),
                     ..Default::default()
                 },
@@ -91,6 +96,20 @@ pub fn dracula() -> UserThemeFamily {
                             "comment.doc".into(),
                             UserHighlightStyle {
                                 color: Some(rgba(0x6272a4ff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "constant".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0xbd93f9ff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "constructor".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0xff79c6ff).into()),
                                 ..Default::default()
                             },
                         ),
@@ -139,7 +158,42 @@ pub fn dracula() -> UserThemeFamily {
                             },
                         ),
                         (
+                            "number".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0xbd93f9ff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
                             "string".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0xf1fa8cff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "string.escape".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0xf1fa8cff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "string.regex".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0xf1fa8cff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "string.special".into(),
+                            UserHighlightStyle {
+                                color: Some(rgba(0xf1fa8cff).into()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "string.special.symbol".into(),
                             UserHighlightStyle {
                                 color: Some(rgba(0xf1fa8cff).into()),
                                 ..Default::default()

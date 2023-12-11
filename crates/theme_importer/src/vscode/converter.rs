@@ -75,10 +75,20 @@ impl VsCodeThemeConverter {
         };
 
         Ok(StatusColorsRefinement {
-            // conflict: None,
-            // created: None,
+            created: vscode_colors
+                .editor_gutter_added_background
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
+            modified: vscode_colors
+                .editor_gutter_modified_background
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
             deleted: vscode_colors
-                .error_foreground
+                .editor_gutter_deleted_background
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
+            conflict: vscode_colors
+                .git_decoration_conflicting_resource_foreground
                 .as_ref()
                 .traverse(|color| try_parse_color(&color))?,
             error: vscode_colors
@@ -94,9 +104,11 @@ impl VsCodeThemeConverter {
                 .as_ref()
                 .traverse(|color| try_parse_color(&color))?
                 .or(vscode_base_status_colors.hint),
-            // ignored: None,
+            ignored: vscode_colors
+                .git_decoration_ignored_resource_foreground
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
             // info: None,
-            // modified: None,
             // renamed: None,
             // success: None,
             warning: vscode_colors
@@ -109,6 +121,11 @@ impl VsCodeThemeConverter {
 
     fn convert_theme_colors(&self) -> Result<ThemeColorsRefinement> {
         let vscode_colors = &self.theme.colors;
+
+        let vscode_editor_background = vscode_colors
+            .editor_background
+            .as_ref()
+            .traverse(|color| try_parse_color(&color))?;
 
         Ok(ThemeColorsRefinement {
             border: vscode_colors
@@ -136,17 +153,14 @@ impl VsCodeThemeConverter {
                 .as_ref()
                 .traverse(|color| try_parse_color(&color))?,
             elevated_surface_background: vscode_colors
-                .panel_background
+                .dropdown_background
                 .as_ref()
                 .traverse(|color| try_parse_color(&color))?,
             surface_background: vscode_colors
                 .panel_background
                 .as_ref()
                 .traverse(|color| try_parse_color(&color))?,
-            background: vscode_colors
-                .editor_background
-                .as_ref()
-                .traverse(|color| try_parse_color(&color))?,
+            background: vscode_editor_background,
             title_bar_background: vscode_colors
                 .title_bar_active_background
                 .as_ref()
@@ -171,6 +185,10 @@ impl VsCodeThemeConverter {
                 .list_hover_background
                 .as_ref()
                 .traverse(|color| try_parse_color(&color))?,
+            ghost_element_selected: vscode_colors
+                .list_active_selection_background
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
             drop_target_background: vscode_colors
                 .list_drop_background
                 .as_ref()
@@ -190,7 +208,7 @@ impl VsCodeThemeConverter {
                         .flatten()
                 }),
             tab_bar_background: vscode_colors
-                .panel_background
+                .editor_group_header_tabs_background
                 .as_ref()
                 .traverse(|color| try_parse_color(&color))?,
             tab_active_background: vscode_colors
@@ -202,17 +220,12 @@ impl VsCodeThemeConverter {
                 .as_ref()
                 .traverse(|color| try_parse_color(&color))?,
             toolbar_background: vscode_colors
-                .panel_background
+                .breadcrumb_background
                 .as_ref()
-                .traverse(|color| try_parse_color(&color))?,
-            editor_background: vscode_colors
-                .editor_background
-                .as_ref()
-                .traverse(|color| try_parse_color(&color))?,
-            editor_gutter_background: vscode_colors
-                .editor_background
-                .as_ref()
-                .traverse(|color| try_parse_color(&color))?,
+                .traverse(|color| try_parse_color(&color))?
+                .or(vscode_editor_background),
+            editor_background: vscode_editor_background,
+            editor_gutter_background: vscode_editor_background,
             editor_line_number: vscode_colors
                 .editor_line_number_foreground
                 .as_ref()

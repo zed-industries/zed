@@ -4,7 +4,7 @@ use gpui::{
 };
 use itertools::Itertools;
 use theme::ActiveTheme;
-use ui::{prelude::*, ButtonLike, ButtonStyle, Label};
+use ui::{prelude::*, ButtonLike, ButtonStyle, Label, Tooltip};
 use workspace::{
     item::{ItemEvent, ItemHandle},
     ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
@@ -18,7 +18,7 @@ pub struct Breadcrumbs {
     pane_focused: bool,
     active_item: Option<Box<dyn ItemHandle>>,
     subscription: Option<Subscription>,
-    _workspace: WeakView<Workspace>,
+    workspace: WeakView<Workspace>,
 }
 
 impl Breadcrumbs {
@@ -27,7 +27,7 @@ impl Breadcrumbs {
             pane_focused: false,
             active_item: Default::default(),
             subscription: Default::default(),
-            _workspace: workspace.weak_handle(),
+            workspace: workspace.weak_handle(),
         }
     }
 }
@@ -66,92 +66,31 @@ impl Render for Breadcrumbs {
             ButtonLike::new("toggle outline view")
                 .style(ButtonStyle::Subtle)
                 .child(h_stack().gap_1().children(breadcrumbs))
-                // We disable the button when it is not focused
-                // due to ... @julia what was the reason again?
+                // We disable the button when the containing pane is not focused:
+                //    Because right now all the breadcrumb does is open the outline view, which is an
+                //    action which operates on the active editor, clicking the breadcrumbs of another
+                //    editor could cause weirdness. I remember that at one point it actually caused a
+                //    panic weirdly.
+                //
+                //    It might be possible that with changes around how focus is managed that we
+                //    might be able to update the active editor to the one with the breadcrumbs
+                //    clicked on? That or we could just add a code path for being able to open the
+                //    outline for a specific editor. Long term we'd like for it to be an actual
+                //    breadcrumb bar so that problem goes away
+                //
+                //   — Julia (https://github.com/zed-industries/zed/pull/3505#pullrequestreview-1766198050)
                 .disabled(!self.pane_focused)
-                .on_click(move |_, _cx| {
-                    todo!("outline::toggle");
-                    // this.update(cx, |this, cx| {
-                    //     if let Some(workspace) = this.workspace.upgrade() {
-                    //         workspace.update(cx, |_workspace, _cx| {
-                    //             outline::toggle(workspace, &Default::default(), cx)
-                    //         })
-                    //     }
-                    // })
-                    // .ok();
-                }),
+                .on_click(cx.listener(|breadcrumbs, _, cx| {
+                    if let Some(workspace) = breadcrumbs.workspace.upgrade() {
+                        workspace.update(cx, |workspace, cx| {
+                            outline::toggle(workspace, &outline::Toggle, cx)
+                        })
+                    }
+                }))
+                .tooltip(|cx| Tooltip::for_action("Show symbol outline", &outline::Toggle, cx)),
         )
     }
 }
-
-// impl View for Breadcrumbs {
-//     fn ui_name() -> &'static str {
-//         "Breadcrumbs"
-//     }
-
-//     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-//         let active_item = match &self.active_item {
-//             Some(active_item) => active_item,
-//             None => return Empty::new().into_any(),
-//         };
-//         let not_editor = active_item.downcast::<editor::Editor>().is_none();
-
-//         let theme = theme::current(cx).clone();
-//         let style = &theme.workspace.toolbar.breadcrumbs;
-
-//         let breadcrumbs = match active_item.breadcrumbs(&theme, cx) {
-//             Some(breadcrumbs) => breadcrumbs,
-//             None => return Empty::new().into_any(),
-//         }
-//         .into_iter()
-//         .map(|breadcrumb| {
-//             Text::new(
-//                 breadcrumb.text,
-//                 theme.workspace.toolbar.breadcrumbs.default.text.clone(),
-//             )
-//             .with_highlights(breadcrumb.highlights.unwrap_or_default())
-//             .into_any()
-//         });
-
-//         let crumbs = Flex::row()
-//             .with_children(Itertools::intersperse_with(breadcrumbs, || {
-//                 Label::new(" › ", style.default.text.clone()).into_any()
-//             }))
-//             .constrained()
-//             .with_height(theme.workspace.toolbar.breadcrumb_height)
-//             .contained();
-
-//         if not_editor || !self.pane_focused {
-//             return crumbs
-//                 .with_style(style.default.container)
-//                 .aligned()
-//                 .left()
-//                 .into_any();
-//         }
-
-//         MouseEventHandler::new::<Breadcrumbs, _>(0, cx, |state, _| {
-//             let style = style.style_for(state);
-//             crumbs.with_style(style.container)
-//         })
-//         .on_click(MouseButton::Left, |_, this, cx| {
-//             if let Some(workspace) = this.workspace.upgrade(cx) {
-//                 workspace.update(cx, |workspace, cx| {
-//                     outline::toggle(workspace, &Default::default(), cx)
-//                 })
-//             }
-//         })
-//         .with_tooltip::<Breadcrumbs>(
-//             0,
-//             "Show symbol outline".to_owned(),
-//             Some(Box::new(outline::Toggle)),
-//             theme.tooltip.clone(),
-//             cx,
-//         )
-//         .aligned()
-//         .left()
-//         .into_any()
-//     }
-// }
 
 impl ToolbarItemView for Breadcrumbs {
     fn set_active_pane_item(

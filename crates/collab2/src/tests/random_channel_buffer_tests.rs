@@ -3,7 +3,7 @@ use crate::db::ChannelRole;
 use super::{run_randomized_test, RandomizedTest, TestClient, TestError, TestServer, UserTestPlan};
 use anyhow::Result;
 use async_trait::async_trait;
-use gpui::{BackgroundExecutor, TestAppContext};
+use gpui::{BackgroundExecutor, SharedString, TestAppContext};
 use rand::prelude::*;
 use serde_derive::{Deserialize, Serialize};
 use std::{
@@ -30,13 +30,13 @@ struct RandomChannelBufferTest;
 #[derive(Clone, Serialize, Deserialize)]
 enum ChannelBufferOperation {
     JoinChannelNotes {
-        channel_name: String,
+        channel_name: SharedString,
     },
     LeaveChannelNotes {
-        channel_name: String,
+        channel_name: SharedString,
     },
     EditChannelNotes {
-        channel_name: String,
+        channel_name: SharedString,
         edits: Vec<(Range<usize>, Arc<str>)>,
     },
     Noop,

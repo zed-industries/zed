@@ -43,7 +43,7 @@ use workspace::{
     ItemNavHistory, Pane, ToolbarItemLocation, Workspace,
 };
 
-actions!(Deploy, ToggleWarnings);
+actions!(diagnostics, [Deploy, ToggleWarnings]);
 
 const CONTEXT_LINE_COUNT: u32 = 1;
 

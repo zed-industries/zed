@@ -7,10 +7,10 @@ use crate::{
 use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
 use gpui::{
-    actions, overlay, prelude::*, rems, Action, AnchorCorner, AnyWeakView, AppContext,
-    AsyncWindowContext, DismissEvent, Div, EntityId, EventEmitter, FocusHandle, Focusable,
-    FocusableView, Model, Pixels, Point, PromptLevel, Render, Task, View, ViewContext,
-    VisualContext, WeakView, WindowContext,
+    actions, impl_actions, overlay, prelude::*, rems, Action, AnchorCorner, AnyWeakView,
+    AppContext, AsyncWindowContext, DismissEvent, Div, EntityId, EventEmitter, FocusHandle,
+    Focusable, FocusableView, Model, MouseButton, NavigationDirection, Pixels, Point, PromptLevel,
+    Render, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use parking_lot::Mutex;
 use project::{Project, ProjectEntryId, ProjectPath};
@@ -52,9 +52,7 @@ pub enum SaveIntent {
     Skip,
 }
 
-//todo!("Do we need the default bound on actions? Decide soon")
-// #[register_action]
-#[derive(Action, Clone, Deserialize, PartialEq, Debug)]
+#[derive(Clone, Deserialize, PartialEq, Debug)]
 pub struct ActivateItem(pub usize);
 
 // #[derive(Clone, PartialEq)]
@@ -75,34 +73,38 @@ pub struct ActivateItem(pub usize);
 //     pub pane: WeakView<Pane>,
 // }
 
-#[derive(Clone, PartialEq, Debug, Deserialize, Default, Action)]
+#[derive(Clone, PartialEq, Debug, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct CloseActiveItem {
     pub save_intent: Option<SaveIntent>,
 }
 
-#[derive(Clone, PartialEq, Debug, Deserialize, Default, Action)]
+#[derive(Clone, PartialEq, Debug, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct CloseAllItems {
     pub save_intent: Option<SaveIntent>,
 }
 
-// todo!(These used to be under pane::{Action}. Are they now workspace::pane::{Action}?)
+impl_actions!(pane, [CloseAllItems, CloseActiveItem, ActivateItem]);
+
 actions!(
-    ActivatePrevItem,
-    ActivateNextItem,
-    ActivateLastItem,
-    CloseInactiveItems,
-    CloseCleanItems,
-    CloseItemsToTheLeft,
-    CloseItemsToTheRight,
-    GoBack,
-    GoForward,
-    ReopenClosedItem,
-    SplitLeft,
-    SplitUp,
-    SplitRight,
-    SplitDown,
+    pane,
+    [
+        ActivatePrevItem,
+        ActivateNextItem,
+        ActivateLastItem,
+        CloseInactiveItems,
+        CloseCleanItems,
+        CloseItemsToTheLeft,
+        CloseItemsToTheRight,
+        GoBack,
+        GoForward,
+        ReopenClosedItem,
+        SplitLeft,
+        SplitUp,
+        SplitRight,
+        SplitDown,
+    ]
 );
 
 const MAX_NAVIGATION_HISTORY_LEN: usize = 1024;
@@ -2139,183 +2141,174 @@ impl Render for Pane {
                     .justify_center()
                     .child(Label::new("Open a file or project to get started.").color(Color::Muted))
             })
-
-        // enum MouseNavigationHandler {}
-
-        // MouseEventHandler::new::<MouseNavigationHandler, _>(0, cx, |_, cx| {
-        //     let active_item_index = self.active_item_index;
-
-        //     if let Some(active_item) = self.active_item() {
-        //         Flex::column()
-        //             .with_child({
-        //                 let theme = theme::current(cx).clone();
-
-        //                 let mut stack = Stack::new();
-
-        //                 enum TabBarEventHandler {}
-        //                 stack.add_child(
-        //                     MouseEventHandler::new::<TabBarEventHandler, _>(0, cx, |_, _| {
-        //                         Empty::new()
-        //                             .contained()
-        //                             .with_style(theme.workspace.tab_bar.container)
-        //                     })
-        //                     .on_down(
-        //                         MouseButton::Left,
-        //                         move |_, this, cx| {
-        //                             this.activate_item(active_item_index, true, true, cx);
-        //                         },
-        //                     ),
-        //                 );
-        //                 let tooltip_style = theme.tooltip.clone();
-        //                 let tab_bar_theme = theme.workspace.tab_bar.clone();
-
-        //                 let nav_button_height = tab_bar_theme.height;
-        //                 let button_style = tab_bar_theme.nav_button;
-        //                 let border_for_nav_buttons = tab_bar_theme
-        //                     .tab_style(false, false)
-        //                     .container
-        //                     .border
-        //                     .clone();
-
-        //                 let mut tab_row = Flex::row()
-        //                     .with_child(nav_button(
-        //                         "icons/arrow_left.svg",
-        //                         button_style.clone(),
-        //                         nav_button_height,
-        //                         tooltip_style.clone(),
-        //                         self.can_navigate_backward(),
-        //                         {
-        //                             move |pane, cx| {
-        //                                 if let Some(workspace) = pane.workspace.upgrade(cx) {
-        //                                     let pane = cx.weak_handle();
-        //                                     cx.window_context().defer(move |cx| {
-        //                                         workspace.update(cx, |workspace, cx| {
-        //                                             workspace
-        //                                                 .go_back(pane, cx)
-        //                                                 .detach_and_log_err(cx)
-        //                                         })
-        //                                     })
-        //                                 }
-        //                             }
-        //                         },
-        //                         super::GoBack,
-        //                         "Go Back",
-        //                         cx,
-        //                     ))
-        //                     .with_child(
-        //                         nav_button(
-        //                             "icons/arrow_right.svg",
-        //                             button_style.clone(),
-        //                             nav_button_height,
-        //                             tooltip_style,
-        //                             self.can_navigate_forward(),
-        //                             {
-        //                                 move |pane, cx| {
-        //                                     if let Some(workspace) = pane.workspace.upgrade(cx) {
-        //                                         let pane = cx.weak_handle();
-        //                                         cx.window_context().defer(move |cx| {
-        //                                             workspace.update(cx, |workspace, cx| {
-        //                                                 workspace
-        //                                                     .go_forward(pane, cx)
-        //                                                     .detach_and_log_err(cx)
-        //                                             })
-        //                                         })
-        //                                     }
-        //                                 }
-        //                             },
-        //                             super::GoForward,
-        //                             "Go Forward",
-        //                             cx,
-        //                         )
-        //                         .contained()
-        //                         .with_border(border_for_nav_buttons),
-        //                     )
-        //                     .with_child(self.render_tabs(cx).flex(1., true).into_any_named("tabs"));
-
-        //                 if self.has_focus {
-        //                     let render_tab_bar_buttons = self.render_tab_bar_buttons.clone();
-        //                     tab_row.add_child(
-        //                         (render_tab_bar_buttons)(self, cx)
-        //                             .contained()
-        //                             .with_style(theme.workspace.tab_bar.pane_button_container)
-        //                             .flex(1., false)
-        //                             .into_any(),
-        //                     )
-        //                 }
-
-        //                 stack.add_child(tab_row);
-        //                 stack
-        //                     .constrained()
-        //                     .with_height(theme.workspace.tab_bar.height)
-        //                     .flex(1., false)
-        //                     .into_any_named("tab bar")
-        //             })
-        //             .with_child({
-        //                 enum PaneContentTabDropTarget {}
-        //                 dragged_item_receiver::<PaneContentTabDropTarget, _, _>(
-        //                     self,
-        //                     0,
-        //                     self.active_item_index + 1,
-        //                     !self.can_split,
-        //                     if self.can_split { Some(100.) } else { None },
-        //                     cx,
-        //                     {
-        //                         let toolbar = self.toolbar.clone();
-        //                         let toolbar_hidden = toolbar.read(cx).hidden();
-        //                         move |_, cx| {
-        //                             Flex::column()
-        //                                 .with_children(
-        //                                     (!toolbar_hidden)
-        //                                         .then(|| ChildView::new(&toolbar, cx).expanded()),
-        //                                 )
-        //                                 .with_child(
-        //                                     ChildView::new(active_item.as_any(), cx).flex(1., true),
-        //                                 )
-        //                         }
-        //                     },
-        //                 )
-        //                 .flex(1., true)
-        //             })
-        //             .with_child(ChildView::new(&self.tab_context_menu, cx))
-        //             .into_any()
-        //     } else {
-        //         enum EmptyPane {}
-        //         let theme = theme::current(cx).clone();
-
-        //         dragged_item_receiver::<EmptyPane, _, _>(self, 0, 0, false, None, cx, |_, cx| {
-        //             self.render_blank_pane(&theme, cx)
-        //         })
-        //         .on_down(MouseButton::Left, |_, _, cx| {
-        //             cx.focus_parent();
-        //         })
-        //         .into_any()
-        //     }
-        // })
-        // .on_down(
-        //     MouseButton::Navigate(NavigationDirection::Back),
-        //     move |_, pane, cx| {
-        //         if let Some(workspace) = pane.workspace.upgrade(cx) {
-        //             let pane = cx.weak_handle();
-        //             cx.window_context().defer(move |cx| {
-        //                 workspace.update(cx, |workspace, cx| {
-        //                     workspace.go_back(pane, cx).detach_and_log_err(cx)
-        //                 })
-        //             })
-        //         }
-        //     },
-        // )
-        // .on_down(MouseButton::Navigate(NavigationDirection::Forward), {
-        //     move |_, pane, cx| {
-        //         if let Some(workspace) = pane.workspace.upgrade(cx) {
-        //             let pane = cx.weak_handle();
-        //             cx.window_context().defer(move |cx| {
-        //                 workspace.update(cx, |workspace, cx| {
-        //                     workspace.go_forward(pane, cx).detach_and_log_err(cx)
-        //                 })
-        //             })
-        //         }
-        //     }
-        // })
+            // enum MouseNavigationHandler {}
+            // MouseEventHandler::new::<MouseNavigationHandler, _>(0, cx, |_, cx| {
+            //     let active_item_index = self.active_item_index;
+            //     if let Some(active_item) = self.active_item() {
+            //         Flex::column()
+            //             .with_child({
+            //                 let theme = theme::current(cx).clone();
+            //                 let mut stack = Stack::new();
+            //                 enum TabBarEventHandler {}
+            //                 stack.add_child(
+            //                     MouseEventHandler::new::<TabBarEventHandler, _>(0, cx, |_, _| {
+            //                         Empty::new()
+            //                             .contained()
+            //                             .with_style(theme.workspace.tab_bar.container)
+            //                     })
+            //                     .on_down(
+            //                         MouseButton::Left,
+            //                         move |_, this, cx| {
+            //                             this.activate_item(active_item_index, true, true, cx);
+            //                         },
+            //                     ),
+            //                 );
+            //                 let tooltip_style = theme.tooltip.clone();
+            //                 let tab_bar_theme = theme.workspace.tab_bar.clone();
+            //                 let nav_button_height = tab_bar_theme.height;
+            //                 let button_style = tab_bar_theme.nav_button;
+            //                 let border_for_nav_buttons = tab_bar_theme
+            //                     .tab_style(false, false)
+            //                     .container
+            //                     .border
+            //                     .clone();
+            //                 let mut tab_row = Flex::row()
+            //                     .with_child(nav_button(
+            //                         "icons/arrow_left.svg",
+            //                         button_style.clone(),
+            //                         nav_button_height,
+            //                         tooltip_style.clone(),
+            //                         self.can_navigate_backward(),
+            //                         {
+            //                             move |pane, cx| {
+            //                                 if let Some(workspace) = pane.workspace.upgrade(cx) {
+            //                                     let pane = cx.weak_handle();
+            //                                     cx.window_context().defer(move |cx| {
+            //                                         workspace.update(cx, |workspace, cx| {
+            //                                             workspace
+            //                                                 .go_back(pane, cx)
+            //                                                 .detach_and_log_err(cx)
+            //                                         })
+            //                                     })
+            //                                 }
+            //                             }
+            //                         },
+            //                         super::GoBack,
+            //                         "Go Back",
+            //                         cx,
+            //                     ))
+            //                     .with_child(
+            //                         nav_button(
+            //                             "icons/arrow_right.svg",
+            //                             button_style.clone(),
+            //                             nav_button_height,
+            //                             tooltip_style,
+            //                             self.can_navigate_forward(),
+            //                             {
+            //                                 move |pane, cx| {
+            //                                     if let Some(workspace) = pane.workspace.upgrade(cx) {
+            //                                         let pane = cx.weak_handle();
+            //                                         cx.window_context().defer(move |cx| {
+            //                                             workspace.update(cx, |workspace, cx| {
+            //                                                 workspace
+            //                                                     .go_forward(pane, cx)
+            //                                                     .detach_and_log_err(cx)
+            //                                             })
+            //                                         })
+            //                                     }
+            //                                 }
+            //                             },
+            //                             super::GoForward,
+            //                             "Go Forward",
+            //                             cx,
+            //                         )
+            //                         .contained()
+            //                         .with_border(border_for_nav_buttons),
+            //                     )
+            //                     .with_child(self.render_tabs(cx).flex(1., true).into_any_named("tabs"));
+            //                 if self.has_focus {
+            //                     let render_tab_bar_buttons = self.render_tab_bar_buttons.clone();
+            //                     tab_row.add_child(
+            //                         (render_tab_bar_buttons)(self, cx)
+            //                             .contained()
+            //                             .with_style(theme.workspace.tab_bar.pane_button_container)
+            //                             .flex(1., false)
+            //                             .into_any(),
+            //                     )
+            //                 }
+            //                 stack.add_child(tab_row);
+            //                 stack
+            //                     .constrained()
+            //                     .with_height(theme.workspace.tab_bar.height)
+            //                     .flex(1., false)
+            //                     .into_any_named("tab bar")
+            //             })
+            //             .with_child({
+            //                 enum PaneContentTabDropTarget {}
+            //                 dragged_item_receiver::<PaneContentTabDropTarget, _, _>(
+            //                     self,
+            //                     0,
+            //                     self.active_item_index + 1,
+            //                     !self.can_split,
+            //                     if self.can_split { Some(100.) } else { None },
+            //                     cx,
+            //                     {
+            //                         let toolbar = self.toolbar.clone();
+            //                         let toolbar_hidden = toolbar.read(cx).hidden();
+            //                         move |_, cx| {
+            //                             Flex::column()
+            //                                 .with_children(
+            //                                     (!toolbar_hidden)
+            //                                         .then(|| ChildView::new(&toolbar, cx).expanded()),
+            //                                 )
+            //                                 .with_child(
+            //                                     ChildView::new(active_item.as_any(), cx).flex(1., true),
+            //                                 )
+            //                         }
+            //                     },
+            //                 )
+            //                 .flex(1., true)
+            //             })
+            //             .with_child(ChildView::new(&self.tab_context_menu, cx))
+            //             .into_any()
+            //     } else {
+            //         enum EmptyPane {}
+            //         let theme = theme::current(cx).clone();
+            //         dragged_item_receiver::<EmptyPane, _, _>(self, 0, 0, false, None, cx, |_, cx| {
+            //             self.render_blank_pane(&theme, cx)
+            //         })
+            //         .on_down(MouseButton::Left, |_, _, cx| {
+            //             cx.focus_parent();
+            //         })
+            //         .into_any()
+            //     }
+            // })
+            .on_mouse_down(
+                MouseButton::Navigate(NavigationDirection::Back),
+                cx.listener(|pane, _, cx| {
+                    if let Some(workspace) = pane.workspace.upgrade() {
+                        let pane = cx.view().downgrade();
+                        cx.window_context().defer(move |cx| {
+                            workspace.update(cx, |workspace, cx| {
+                                workspace.go_back(pane, cx).detach_and_log_err(cx)
+                            })
+                        })
+                    }
+                }),
+            )
+            .on_mouse_down(
+                MouseButton::Navigate(NavigationDirection::Forward),
+                cx.listener(|pane, _, cx| {
+                    if let Some(workspace) = pane.workspace.upgrade() {
+                        let pane = cx.view().downgrade();
+                        cx.window_context().defer(move |cx| {
+                            workspace.update(cx, |workspace, cx| {
+                                workspace.go_forward(pane, cx).detach_and_log_err(cx)
+                            })
+                        })
+                    }
+                }),
+            )
         // .into_any_named("pane")
     }
 

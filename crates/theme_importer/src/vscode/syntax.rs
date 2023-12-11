@@ -153,11 +153,20 @@ impl ZedSyntaxToken {
         .map(|scope| scope.as_str())
         .collect::<Vec<_>>();
 
+        let scopes_to_match = self.to_vscode();
+        let number_of_scopes_to_match = scopes_to_match.len();
+
         let mut matches = 0;
 
-        for scope in self.to_vscode() {
+        for (ix, scope) in scopes_to_match.into_iter().enumerate() {
+            // Assign each entry a weight that is inversely proportional to its
+            // position in the list.
+            //
+            // Entries towards the front are weighted higher than those towards the end.
+            let weight = (number_of_scopes_to_match - ix) as u32;
+
             if candidate_scopes.contains(&scope) {
-                matches += 1;
+                matches += 1 + weight;
             }
         }
 
@@ -167,7 +176,16 @@ impl ZedSyntaxToken {
     pub fn fallbacks(&self) -> &[Self] {
         match self {
             ZedSyntaxToken::CommentDoc => &[ZedSyntaxToken::Comment],
+            ZedSyntaxToken::Number => &[ZedSyntaxToken::Constant],
             ZedSyntaxToken::VariableSpecial => &[ZedSyntaxToken::Variable],
+            ZedSyntaxToken::PunctuationBracket
+            | ZedSyntaxToken::PunctuationDelimiter
+            | ZedSyntaxToken::PunctuationListMarker
+            | ZedSyntaxToken::PunctuationSpecial => &[ZedSyntaxToken::Punctuation],
+            ZedSyntaxToken::StringEscape
+            | ZedSyntaxToken::StringRegex
+            | ZedSyntaxToken::StringSpecial
+            | ZedSyntaxToken::StringSpecialSymbol => &[ZedSyntaxToken::String],
             _ => &[],
         }
     }
@@ -178,9 +196,12 @@ impl ZedSyntaxToken {
             ZedSyntaxToken::Boolean => vec!["constant.language"],
             ZedSyntaxToken::Comment => vec!["comment"],
             ZedSyntaxToken::CommentDoc => vec!["comment.block.documentation"],
-            ZedSyntaxToken::Constant => vec!["constant.character"],
+            ZedSyntaxToken::Constant => vec!["constant", "constant.language", "constant.character"],
             ZedSyntaxToken::Constructor => {
-                vec!["entity.name.function.definition.special.constructor"]
+                vec![
+                    "entity.name.tag",
+                    "entity.name.function.definition.special.constructor",
+                ]
             }
             ZedSyntaxToken::Embedded => vec!["meta.embedded"],
             ZedSyntaxToken::Emphasis => vec!["markup.italic"],
@@ -191,16 +212,17 @@ impl ZedSyntaxToken {
             ],
             ZedSyntaxToken::Enum => vec!["support.type.enum"],
             ZedSyntaxToken::Function => vec![
+                "entity.function",
                 "entity.name.function",
                 "variable.function",
-                "support.function",
             ],
             ZedSyntaxToken::Hint => vec![],
             ZedSyntaxToken::Keyword => vec![
                 "keyword",
+                "keyword.other.fn.rust",
                 "keyword.control",
                 "keyword.control.fun",
-                "keyword.other.fn.rust",
+                "keyword.control.class",
                 "punctuation.accessor",
                 "entity.name.tag",
             ],
@@ -215,7 +237,11 @@ impl ZedSyntaxToken {
             ZedSyntaxToken::Number => vec!["constant.numeric", "number"],
             ZedSyntaxToken::Operator => vec!["operator", "keyword.operator"],
             ZedSyntaxToken::Predictive => vec![],
-            ZedSyntaxToken::Preproc => vec!["preproc"],
+            ZedSyntaxToken::Preproc => vec![
+                "preproc",
+                "meta.preprocessor",
+                "punctuation.definition.preprocessor",
+            ],
             ZedSyntaxToken::Primary => vec![],
             ZedSyntaxToken::Property => vec![
                 "variable.member",
@@ -228,7 +254,6 @@ impl ZedSyntaxToken {
                 "punctuation.section",
                 "punctuation.accessor",
                 "punctuation.separator",
-                "punctuation.terminator",
                 "punctuation.definition.tag",
             ],
             ZedSyntaxToken::PunctuationBracket => vec![

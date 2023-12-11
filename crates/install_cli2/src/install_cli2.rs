@@ -3,7 +3,7 @@ use gpui::{actions, AsyncAppContext};
 use std::path::Path;
 use util::ResultExt;
 
-actions!(Install);
+actions!(cli, [Install]);
 
 pub async fn install_cli(cx: &AsyncAppContext) -> Result<()> {
     let cli_path = cx.update(|cx| cx.path_for_auxiliary_executable("cli"))??;

@@ -1,4 +1,3 @@
-mod action;
 mod derive_into_element;
 mod register_action;
 mod style_helpers;
@@ -6,14 +5,9 @@ mod test;
 
 use proc_macro::TokenStream;
 
-#[proc_macro_derive(Action)]
-pub fn action(input: TokenStream) -> TokenStream {
-    action::action(input)
-}
-
-#[proc_macro_attribute]
-pub fn register_action(attr: TokenStream, item: TokenStream) -> TokenStream {
-    register_action::register_action_macro(attr, item)
+#[proc_macro]
+pub fn register_action(ident: TokenStream) -> TokenStream {
+    register_action::register_action_macro(ident)
 }
 
 #[proc_macro_derive(IntoElement)]
