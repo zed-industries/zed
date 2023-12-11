@@ -1,6 +1,6 @@
 use std::{ops::RangeInclusive, sync::Arc};
 
-use anyhow::bail;
+use anyhow::{anyhow, bail};
 use client::{Client, ZED_SECRET_CLIENT_TOKEN, ZED_SERVER_URL};
 use db::kvp::KEY_VALUE_STORE;
 use editor::{Editor, EditorEvent};
@@ -20,9 +20,19 @@ use workspace::{ModalView, Workspace};
 
 use crate::{system_specs::SystemSpecs, GiveFeedback, OpenZedCommunityRepo};
 
+// For UI testing purposes
+const SEND_SUCCESS_IN_DEV_MODE: bool = true;
+
+// Temporary, until tests are in place
+#[cfg(debug_assertions)]
+const DEV_MODE: bool = true;
+
+#[cfg(not(debug_assertions))]
+const DEV_MODE: bool = false;
+
 const DATABASE_KEY_NAME: &str = "email_address";
 const EMAIL_REGEX: &str = r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b";
-const FEEDBACK_CHAR_LIMIT: RangeInclusive<usize> = 10..=5000;
+const FEEDBACK_CHAR_LIMIT: RangeInclusive<i32> = 10..=5000;
 const FEEDBACK_SUBMISSION_ERROR_TEXT: &str =
     "Feedback failed to submit, see error log for details.";
 
@@ -41,8 +51,9 @@ pub struct FeedbackModal {
     system_specs: SystemSpecs,
     feedback_editor: View<Editor>,
     email_address_editor: View<Editor>,
-    character_count: usize,
-    pending_submission: bool,
+    awaiting_submission: bool,
+    user_submitted: bool,
+    character_count: i32,
 }
 
 impl FocusableView for FeedbackModal {
@@ -54,6 +65,11 @@ impl EventEmitter<DismissEvent> for FeedbackModal {}
 
 impl ModalView for FeedbackModal {
     fn dismiss(&mut self, cx: &mut ViewContext<Self>) -> Task<bool> {
+        if self.user_submitted {
+            self.set_user_submitted(false, cx);
+            return cx.spawn(|_, _| async { true });
+        }
+
         let has_feedback = self.feedback_editor.read(cx).text_option(cx).is_some();
 
         if !has_feedback {
@@ -138,7 +154,7 @@ impl FeedbackModal {
                         .as_singleton()
                         .expect("Feedback editor is never a multi-buffer")
                         .read(cx)
-                        .len();
+                        .len() as i32;
                     cx.notify();
                 }
                 _ => {}
@@ -150,7 +166,8 @@ impl FeedbackModal {
             system_specs: system_specs.clone(),
             feedback_editor,
             email_address_editor,
-            pending_submission: false,
+            awaiting_submission: false,
+            user_submitted: false,
             character_count: 0,
         }
     }
@@ -182,37 +199,53 @@ impl FeedbackModal {
                     }
                 };
 
-                this.update(&mut cx, |feedback_editor, cx| {
-                    feedback_editor.set_pending_submission(true, cx);
+                this.update(&mut cx, |this, cx| {
+                    this.set_awaiting_submission(true, cx);
                 })
                 .log_err();
 
-                if let Err(error) =
-                    FeedbackModal::submit_feedback(&feedback_text, email, client, specs).await
-                {
-                    log::error!("{}", error);
-                    this.update(&mut cx, |feedback_editor, cx| {
-                        let prompt = cx.prompt(
-                            PromptLevel::Critical,
-                            FEEDBACK_SUBMISSION_ERROR_TEXT,
-                            &["OK"],
-                        );
-                        cx.spawn(|_, _cx| async move {
-                            prompt.await.ok();
+                let res =
+                    FeedbackModal::submit_feedback(&feedback_text, email, client, specs).await;
+
+                match res {
+                    Ok(_) => {
+                        this.update(&mut cx, |this, cx| {
+                            this.set_user_submitted(true, cx);
+                            cx.emit(DismissEvent)
                         })
-                        .detach();
-                        feedback_editor.set_pending_submission(false, cx);
-                    })
-                    .log_err();
+                        .ok();
+                    }
+                    Err(error) => {
+                        log::error!("{}", error);
+                        this.update(&mut cx, |this, cx| {
+                            let prompt = cx.prompt(
+                                PromptLevel::Critical,
+                                FEEDBACK_SUBMISSION_ERROR_TEXT,
+                                &["OK"],
+                            );
+                            cx.spawn(|_, _cx| async move {
+                                prompt.await.ok();
+                            })
+                            .detach();
+                            this.set_awaiting_submission(false, cx);
+                        })
+                        .log_err();
+                    }
                 }
             }
         })
         .detach();
+
         Task::ready(Ok(()))
     }
 
-    fn set_pending_submission(&mut self, pending_submission: bool, cx: &mut ViewContext<Self>) {
-        self.pending_submission = pending_submission;
+    fn set_awaiting_submission(&mut self, awaiting_submission: bool, cx: &mut ViewContext<Self>) {
+        self.awaiting_submission = awaiting_submission;
+        cx.notify();
+    }
+
+    fn set_user_submitted(&mut self, user_submitted: bool, cx: &mut ViewContext<Self>) {
+        self.user_submitted = user_submitted;
         cx.notify();
     }
 
@@ -222,6 +255,14 @@ impl FeedbackModal {
         zed_client: Arc<Client>,
         system_specs: SystemSpecs,
     ) -> anyhow::Result<()> {
+        if DEV_MODE {
+            if SEND_SUCCESS_IN_DEV_MODE {
+                return Ok(());
+            } else {
+                return Err(anyhow!("Error submitting feedback"));
+            }
+        }
+
         let feedback_endpoint = format!("{}/api/feedback", *ZED_SERVER_URL);
         let telemetry = zed_client.telemetry();
         let metrics_id = telemetry.metrics_id();
@@ -269,9 +310,9 @@ impl Render for FeedbackModal {
         let valid_character_count = FEEDBACK_CHAR_LIMIT.contains(&self.character_count);
 
         let allow_submission =
-            valid_character_count && valid_email_address && !self.pending_submission;
+            valid_character_count && valid_email_address && !self.awaiting_submission;
 
-        let submit_button_text = if self.pending_submission {
+        let submit_button_text = if self.awaiting_submission {
             "Submitting..."
         } else {
             "Submit"
@@ -302,11 +343,6 @@ impl Render for FeedbackModal {
                     format!(
                         "Feedback must be at least {} characters.",
                         FEEDBACK_CHAR_LIMIT.start()
-                    )
-                } else if self.character_count > *FEEDBACK_CHAR_LIMIT.end() {
-                    format!(
-                        "Feedback must be less than {} characters.",
-                        FEEDBACK_CHAR_LIMIT.end()
                     )
                 } else {
                     format!(
@@ -376,9 +412,8 @@ impl Render for FeedbackModal {
                                             .style(ButtonStyle::Filled)
                                             // TODO: Ensure that while submitting, "Sending..." is shown and disable the button
                                             // TODO: If submit errors: show popup with error, don't close modal, set text back to "Submit", and re-enable button
-                                            // TODO: If submit is successful, close the modal
                                             .on_click(cx.listener(|this, _, cx| {
-                                                let _ = this.submit(cx);
+                                                this.submit(cx).detach();
                                             }))
                                             .tooltip(move |cx| {
                                                 Tooltip::with_meta(
@@ -396,6 +431,5 @@ impl Render for FeedbackModal {
     }
 }
 
-// TODO: Add compilation flags to enable debug mode, where we can simulate sending feedback that both succeeds and fails, so we can test the UI
 // TODO: Maybe store email address whenever the modal is closed, versus just on submit, so users can remove it if they want without submitting
-// TODO: Fix bug of being asked twice to discard feedback when clicking cancel
+// TODO: Testing of various button states, dismissal prompts, etc.
