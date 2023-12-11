@@ -1,42 +1,40 @@
-use gpui::{div, AnyElement, Element, IntoElement, Render, ViewContext};
-use settings::{Settings, SettingsStore};
+use gpui::{div, AnyElement, Element, IntoElement, Render, Subscription, ViewContext};
+use settings::SettingsStore;
 use workspace::{item::ItemHandle, ui::Label, StatusItemView};
 
-use crate::{state::Mode, Vim, VimModeSetting};
+use crate::{state::Mode, Vim};
 
 pub struct ModeIndicator {
     pub mode: Option<Mode>,
-    // _subscription: Subscription,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl ModeIndicator {
     pub fn new(cx: &mut ViewContext<Self>) -> Self {
-        cx.observe_global::<Vim>(|this, cx| this.set_mode(Vim::read(cx).state().mode, cx))
-            .detach();
+        let _subscriptions = vec![
+            cx.observe_global::<Vim>(|this, cx| this.update_mode(cx)),
+            cx.observe_global::<SettingsStore>(|this, cx| this.update_mode(cx)),
+        ];
 
-        cx.observe_global::<SettingsStore>(move |mode_indicator, cx| {
-            if VimModeSetting::get_global(cx).0 {
-                mode_indicator.mode = cx
-                    .has_global::<Vim>()
-                    .then(|| cx.global::<Vim>().state().mode);
-            } else {
-                mode_indicator.mode.take();
-            }
-        })
-        .detach();
+        let mut this = Self {
+            mode: None,
+            _subscriptions,
+        };
+        this.update_mode(cx);
+        this
+    }
 
+    fn update_mode(&mut self, cx: &mut ViewContext<Self>) {
         // Vim doesn't exist in some tests
-        let mode = cx
-            .has_global::<Vim>()
-            .then(|| {
-                let vim = cx.global::<Vim>();
-                vim.enabled.then(|| vim.state().mode)
-            })
-            .flatten();
+        if !cx.has_global::<Vim>() {
+            return;
+        }
 
-        Self {
-            mode,
-            //    _subscription,
+        let vim = Vim::read(cx);
+        if vim.enabled {
+            self.mode = Some(vim.state().mode);
+        } else {
+            self.mode = None;
         }
     }
 

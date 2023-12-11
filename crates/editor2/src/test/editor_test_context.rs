@@ -170,6 +170,10 @@ impl<'a> EditorTestContext<'a> {
         keystrokes_under_test_handle
     }
 
+    pub fn run_until_parked(&mut self) {
+        self.cx.background_executor.run_until_parked();
+    }
+
     pub fn ranges(&mut self, marked_text: &str) -> Vec<Range<usize>> {
         let (unmarked_text, ranges) = marked_text_ranges(marked_text, false);
         assert_eq!(self.buffer_text(), unmarked_text);

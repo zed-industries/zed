@@ -1,4 +1,7 @@
-use editor::scroll::VERTICAL_SCROLL_MARGIN;
+#![allow(unused)]
+// todo!()
+
+use editor::{scroll::VERTICAL_SCROLL_MARGIN, test::editor_test_context::ContextHandle};
 use indoc::indoc;
 use settings::SettingsStore;
 use std::{
@@ -7,7 +10,6 @@ use std::{
 };
 
 use collections::{HashMap, HashSet};
-use gpui::{geometry::vector::vec2f, ContextHandle};
 use language::language_settings::{AllLanguageSettings, SoftWrap};
 use util::test::marked_text_offsets;
 
@@ -151,19 +153,20 @@ impl<'a> NeovimBackedTestContext<'a> {
         })
     }
 
-    pub async fn set_scroll_height(&mut self, rows: u32) {
-        // match Zed's scrolling behavior
-        self.neovim
-            .set_option(&format!("scrolloff={}", VERTICAL_SCROLL_MARGIN))
-            .await;
-        // +2 to account for the vim command UI at the bottom.
-        self.neovim.set_option(&format!("lines={}", rows + 2)).await;
-        let window = self.window;
-        let line_height =
-            self.editor(|editor, cx| editor.style().text.line_height(cx.font_cache()));
+    // todo!()
+    // pub async fn set_scroll_height(&mut self, rows: u32) {
+    //     // match Zed's scrolling behavior
+    //     self.neovim
+    //         .set_option(&format!("scrolloff={}", VERTICAL_SCROLL_MARGIN))
+    //         .await;
+    //     // +2 to account for the vim command UI at the bottom.
+    //     self.neovim.set_option(&format!("lines={}", rows + 2)).await;
+    //     let window = self.window;
+    //     let line_height =
+    //         self.editor(|editor, cx| editor.style().text.line_height(cx.font_cache()));
 
-        window.simulate_resize(vec2f(1000., (rows as f32) * line_height), &mut self.cx);
-    }
+    //     window.simulate_resize(vec2f(1000., (rows as f32) * line_height), &mut self.cx);
+    // }
 
     pub async fn set_neovim_option(&mut self, option: &str) {
         self.neovim.set_option(option).await;
@@ -211,12 +214,7 @@ impl<'a> NeovimBackedTestContext<'a> {
 
     pub async fn assert_shared_clipboard(&mut self, text: &str) {
         let neovim = self.neovim.read_register('"').await;
-        let editor = self
-            .platform()
-            .read_from_clipboard()
-            .unwrap()
-            .text()
-            .clone();
+        let editor = self.read_from_clipboard().unwrap().text().clone();
 
         if text == neovim && text == editor {
             return;

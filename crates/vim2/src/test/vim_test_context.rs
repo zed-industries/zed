@@ -1,3 +1,6 @@
+#![allow(unused)]
+// todo!()
+
 use std::ops::{Deref, DerefMut};
 
 use editor::test::{
@@ -16,11 +19,25 @@ pub struct VimTestContext<'a> {
 
 impl<'a> VimTestContext<'a> {
     pub async fn new(cx: &'a mut gpui::TestAppContext, enabled: bool) -> VimTestContext<'a> {
+        cx.update(|cx| {
+            search::init(cx);
+            let settings = SettingsStore::test(cx);
+            cx.set_global(settings);
+            command_palette::init(cx);
+            crate::init(cx);
+        });
         let lsp = EditorLspTestContext::new_rust(Default::default(), cx).await;
         Self::new_with_lsp(lsp, enabled)
     }
 
     pub async fn new_typescript(cx: &'a mut gpui::TestAppContext) -> VimTestContext<'a> {
+        cx.update(|cx| {
+            search::init(cx);
+            let settings = SettingsStore::test(cx);
+            cx.set_global(settings);
+            command_palette::init(cx);
+            crate::init(cx);
+        });
         Self::new_with_lsp(
             EditorLspTestContext::new_typescript(Default::default(), cx).await,
             true,
@@ -28,12 +45,6 @@ impl<'a> VimTestContext<'a> {
     }
 
     pub fn new_with_lsp(mut cx: EditorLspTestContext<'a>, enabled: bool) -> VimTestContext<'a> {
-        cx.update(|cx| {
-            search::init(cx);
-            crate::init(cx);
-            command_palette::init(cx);
-        });
-
         cx.update(|cx| {
             cx.update_global(|store: &mut SettingsStore, cx| {
                 store.update_user_settings::<VimModeSetting>(cx, |s| *s = Some(enabled));
@@ -65,9 +76,11 @@ impl<'a> VimTestContext<'a> {
 
     pub fn update_view<F, T, R>(&mut self, view: View<T>, update: F) -> R
     where
-        F: FnOnce(&mut T, &mut ViewContext<T>) -> R,
+        T: 'static,
+        F: FnOnce(&mut T, &mut ViewContext<T>) -> R + 'static,
     {
-        self.update_window(self.window, |_, cx| view.update(cx, update))
+        let window = self.window.clone();
+        self.update_window(window, move |_, cx| view.update(cx, update))
             .unwrap()
     }
 
@@ -75,8 +88,7 @@ impl<'a> VimTestContext<'a> {
     where
         F: FnOnce(&mut Workspace, &mut ViewContext<Workspace>) -> T,
     {
-        self.update_window(self.window, |_, cx| self.cx.workspace.update(cx, update))
-            .unwrap()
+        self.cx.update_workspace(update)
     }
 
     pub fn enable_vim(&mut self) {
@@ -111,7 +123,8 @@ impl<'a> VimTestContext<'a> {
             Vim::update(cx, |vim, cx| {
                 vim.switch_mode(mode, true, cx);
             })
-        });
+        })
+        .unwrap();
         self.cx.cx.cx.run_until_parked();
     }
 

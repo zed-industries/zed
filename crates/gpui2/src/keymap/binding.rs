@@ -59,7 +59,7 @@ impl KeyBinding {
         {
             // If the binding is completed, push it onto the matches list
             if self.keystrokes.as_ref().len() == pending_keystrokes.len() {
-                KeyMatch::Some(self.action.boxed_clone())
+                KeyMatch::Some(vec![self.action.boxed_clone()])
             } else {
                 KeyMatch::Pending
             }

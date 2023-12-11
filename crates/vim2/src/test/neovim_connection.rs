@@ -10,7 +10,7 @@ use async_compat::Compat;
 #[cfg(feature = "neovim")]
 use async_trait::async_trait;
 #[cfg(feature = "neovim")]
-use gpui::keymap_matcher::Keystroke;
+use gpui::Keystroke;
 
 #[cfg(feature = "neovim")]
 use language::Point;
@@ -116,16 +116,24 @@ impl NeovimConnection {
             keystroke.key = "lt".to_string()
         }
 
-        let special = keystroke.shift
-            || keystroke.ctrl
-            || keystroke.alt
-            || keystroke.cmd
+        let special = keystroke.modifiers.shift
+            || keystroke.modifiers.control
+            || keystroke.modifiers.alt
+            || keystroke.modifiers.command
             || keystroke.key.len() > 1;
         let start = if special { "<" } else { "" };
-        let shift = if keystroke.shift { "S-" } else { "" };
-        let ctrl = if keystroke.ctrl { "C-" } else { "" };
-        let alt = if keystroke.alt { "M-" } else { "" };
-        let cmd = if keystroke.cmd { "D-" } else { "" };
+        let shift = if keystroke.modifiers.shift { "S-" } else { "" };
+        let ctrl = if keystroke.modifiers.control {
+            "C-"
+        } else {
+            ""
+        };
+        let alt = if keystroke.modifiers.alt { "M-" } else { "" };
+        let cmd = if keystroke.modifiers.command {
+            "D-"
+        } else {
+            ""
+        };
         let end = if special { ">" } else { "" };
 
         let key = format!("{start}{shift}{ctrl}{alt}{cmd}{}{end}", keystroke.key);

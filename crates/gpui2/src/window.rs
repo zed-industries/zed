@@ -3,9 +3,9 @@ use crate::{
     AsyncWindowContext, AvailableSpace, Bounds, BoxShadow, Context, Corners, CursorStyle,
     DevicePixels, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity, EntityId,
     EventEmitter, FileDropEvent, Flatten, FocusEvent, FontId, GlobalElementId, GlyphId, Hsla,
-    ImageData, InputEvent, IsZero, KeyBinding, KeyContext, KeyDownEvent, LayoutId, Model,
-    ModelContext, Modifiers, MonochromeSprite, MouseButton, MouseMoveEvent, MouseUpEvent, Path,
-    Pixels, PlatformAtlas, PlatformDisplay, PlatformInputHandler, PlatformWindow, Point,
+    ImageData, InputEvent, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeystrokeEvent, LayoutId,
+    Model, ModelContext, Modifiers, MonochromeSprite, MouseButton, MouseMoveEvent, MouseUpEvent,
+    Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInputHandler, PlatformWindow, Point,
     PolychromeSprite, PromptLevel, Quad, Render, RenderGlyphParams, RenderImageParams,
     RenderSvgParams, ScaledPixels, Scene, SceneBuilder, Shadow, SharedString, Size, Style,
     SubscriberSet, Subscription, Surface, TaffyLayoutEngine, Task, Underline, UnderlineStyle, View,
@@ -493,6 +493,29 @@ impl<'a> WindowContext<'a> {
             cx.propagate_event = true;
             cx.dispatch_action_on_node(node_id, action);
         })
+    }
+
+    pub(crate) fn dispatch_keystroke_observers(
+        &mut self,
+        event: &dyn Any,
+        action: Option<Box<dyn Action>>,
+    ) {
+        let Some(key_down_event) = event.downcast_ref::<KeyDownEvent>() else {
+            return;
+        };
+
+        self.keystroke_observers
+            .clone()
+            .retain(&(), move |callback| {
+                (callback)(
+                    &KeystrokeEvent {
+                        keystroke: key_down_event.keystroke.clone(),
+                        action: action.as_ref().map(|action| action.boxed_clone()),
+                    },
+                    self,
+                );
+                true
+            });
     }
 
     /// Schedules the given function to be run at the end of the current effect cycle, allowing entities
@@ -1423,14 +1446,12 @@ impl<'a> WindowContext<'a> {
             let node = self.window.rendered_frame.dispatch_tree.node(*node_id);
             if node.context.is_some() {
                 if let Some(key_down_event) = event.downcast_ref::<KeyDownEvent>() {
-                    if let Some(found) = self
+                    let mut new_actions = self
                         .window
                         .rendered_frame
                         .dispatch_tree
-                        .dispatch_key(&key_down_event.keystroke, &context_stack)
-                    {
-                        actions.push(found.boxed_clone())
-                    }
+                        .dispatch_key(&key_down_event.keystroke, &context_stack);
+                    actions.append(&mut new_actions);
                 }
 
                 context_stack.pop();
@@ -1438,11 +1459,13 @@ impl<'a> WindowContext<'a> {
         }
 
         for action in actions {
-            self.dispatch_action_on_node(node_id, action);
+            self.dispatch_action_on_node(node_id, action.boxed_clone());
             if !self.propagate_event {
+                self.dispatch_keystroke_observers(event, Some(action));
                 return;
             }
         }
+        self.dispatch_keystroke_observers(event, None);
     }
 
     fn dispatch_action_on_node(&mut self, node_id: DispatchNodeId, action: Box<dyn Action>) {

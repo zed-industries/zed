@@ -54,14 +54,14 @@ impl KeystrokeMatcher {
         }
 
         let mut pending_key = None;
+        let mut found_actions = Vec::new();
 
         for binding in keymap.bindings().iter().rev() {
             for candidate in keystroke.match_candidates() {
                 self.pending_keystrokes.push(candidate.clone());
                 match binding.match_keystrokes(&self.pending_keystrokes, context_stack) {
-                    KeyMatch::Some(action) => {
-                        self.pending_keystrokes.clear();
-                        return KeyMatch::Some(action);
+                    KeyMatch::Some(mut actions) => {
+                        found_actions.append(&mut actions);
                     }
                     KeyMatch::Pending => {
                         pending_key.get_or_insert(candidate);
@@ -70,6 +70,11 @@ impl KeystrokeMatcher {
                 }
                 self.pending_keystrokes.pop();
             }
+        }
+
+        if !found_actions.is_empty() {
+            self.pending_keystrokes.clear();
+            return KeyMatch::Some(found_actions);
         }
 
         if let Some(pending_key) = pending_key {
@@ -101,7 +106,7 @@ impl KeystrokeMatcher {
 pub enum KeyMatch {
     None,
     Pending,
-    Some(Box<dyn Action>),
+    Some(Vec<Box<dyn Action>>),
 }
 
 impl KeyMatch {

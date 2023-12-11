@@ -116,45 +116,43 @@ fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
     visual::register(workspace, cx);
 }
 
-pub fn observe_keystrokes(_: &mut WindowContext) {
-    // todo!()
+pub fn observe_keystrokes(cx: &mut WindowContext) {
+    cx.observe_keystrokes(|keystroke_event, cx| {
+        if let Some(action) = keystroke_event
+            .action
+            .as_ref()
+            .map(|action| action.boxed_clone())
+        {
+            Vim::update(cx, |vim, _| {
+                if vim.workspace_state.recording {
+                    vim.workspace_state
+                        .recorded_actions
+                        .push(ReplayableAction::Action(action.boxed_clone()));
 
-    // cx.observe_keystrokes(|_keystroke, result, handled_by, cx| {
-    //     if result == &MatchResult::Pending {
-    //         return true;
-    //     }
-    //     if let Some(handled_by) = handled_by {
-    //         Vim::update(cx, |vim, _| {
-    //             if vim.workspace_state.recording {
-    //                 vim.workspace_state
-    //                     .recorded_actions
-    //                     .push(ReplayableAction::Action(handled_by.boxed_clone()));
+                    if vim.workspace_state.stop_recording_after_next_action {
+                        vim.workspace_state.recording = false;
+                        vim.workspace_state.stop_recording_after_next_action = false;
+                    }
+                }
+            });
 
-    //                 if vim.workspace_state.stop_recording_after_next_action {
-    //                     vim.workspace_state.recording = false;
-    //                     vim.workspace_state.stop_recording_after_next_action = false;
-    //                 }
-    //             }
-    //         });
+            // Keystroke is handled by the vim system, so continue forward
+            if action.name().starts_with("vim::") {
+                return;
+            }
+        }
 
-    //         // Keystroke is handled by the vim system, so continue forward
-    //         if handled_by.namespace() == "vim" {
-    //             return true;
-    //         }
-    //     }
-
-    //     Vim::update(cx, |vim, cx| match vim.active_operator() {
-    //         Some(
-    //             Operator::FindForward { .. } | Operator::FindBackward { .. } | Operator::Replace,
-    //         ) => {}
-    //         Some(_) => {
-    //             vim.clear_operator(cx);
-    //         }
-    //         _ => {}
-    //     });
-    //     true
-    // })
-    // .detach()
+        Vim::update(cx, |vim, cx| match vim.active_operator() {
+            Some(
+                Operator::FindForward { .. } | Operator::FindBackward { .. } | Operator::Replace,
+            ) => {}
+            Some(_) => {
+                vim.clear_operator(cx);
+            }
+            _ => {}
+        });
+    })
+    .detach()
 }
 
 #[derive(Default)]
