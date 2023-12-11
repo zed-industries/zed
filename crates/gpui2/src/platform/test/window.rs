@@ -1,7 +1,7 @@
 use crate::{
     px, AtlasKey, AtlasTextureId, AtlasTile, Pixels, PlatformAtlas, PlatformDisplay,
-    PlatformInputHandler, PlatformWindow, Point, Scene, Size, TestPlatform, TileId,
-    WindowAppearance, WindowBounds, WindowOptions,
+    PlatformInputHandler, PlatformWindow, Point, Size, TestPlatform, TileId, WindowAppearance,
+    WindowBounds, WindowOptions,
 };
 use collections::HashMap;
 use parking_lot::Mutex;
@@ -20,7 +20,6 @@ pub(crate) struct TestWindowHandlers {
 
 pub struct TestWindow {
     pub(crate) bounds: WindowBounds,
-    current_scene: Mutex<Option<Scene>>,
     display: Rc<dyn PlatformDisplay>,
     pub(crate) window_title: Option<String>,
     pub(crate) input_handler: Option<Arc<Mutex<Box<dyn PlatformInputHandler>>>>,
@@ -37,7 +36,6 @@ impl TestWindow {
     ) -> Self {
         Self {
             bounds: options.bounds,
-            current_scene: Default::default(),
             display,
             platform,
             input_handler: None,
@@ -166,8 +164,8 @@ impl PlatformWindow for TestWindow {
         unimplemented!()
     }
 
-    fn draw(&self, scene: crate::Scene) {
-        self.current_scene.lock().replace(scene);
+    fn invalidate(&self) {
+        // (self.draw.lock())().unwrap();
     }
 
     fn sprite_atlas(&self) -> sync::Arc<dyn crate::PlatformAtlas> {
