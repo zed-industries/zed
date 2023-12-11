@@ -128,7 +128,7 @@ impl Platform for TestPlatform {
     }
 
     fn active_window(&self) -> Option<crate::AnyWindowHandle> {
-        unimplemented!()
+        self.active_window.lock().clone()
     }
 
     fn open_window(

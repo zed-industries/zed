@@ -203,7 +203,6 @@ fn insert_after(_: &mut Workspace, _: &InsertAfter, cx: &mut ViewContext<Workspa
 }
 
 fn insert_before(_: &mut Workspace, _: &InsertBefore, cx: &mut ViewContext<Workspace>) {
-    dbg!("insert before!");
     Vim::update(cx, |vim, cx| {
         vim.start_recording(cx);
         vim.switch_mode(Mode::Insert, false, cx);
