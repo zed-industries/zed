@@ -1425,63 +1425,6 @@ impl ProjectSearchBar {
             });
         }
     }
-    fn toggle_replace_on_a_pane(pane: &mut Pane, _: &ToggleReplace, cx: &mut ViewContext<Pane>) {
-        if let Some(search_view) = pane
-            .active_item()
-            .and_then(|item| item.downcast::<ProjectSearchView>())
-        {
-            search_view.update(cx, |this, cx| {
-                cx.stop_propagation();
-                this.replace_enabled = !this.replace_enabled;
-                if !this.replace_enabled {
-                    let editor_handle = this.query_editor.focus_handle(cx);
-                    cx.focus(&editor_handle);
-                }
-                cx.notify();
-            });
-        }
-    }
-    fn activate_text_mode(pane: &mut Pane, _: &ActivateTextMode, cx: &mut ViewContext<Pane>) {
-        if let Some(search_view) = pane
-            .active_item()
-            .and_then(|item| item.downcast::<ProjectSearchView>())
-        {
-            search_view.update(cx, |view, cx| {
-                view.activate_search_mode(SearchMode::Text, cx)
-            });
-            cx.stop_propagation();
-        }
-    }
-
-    fn activate_regex_mode(pane: &mut Pane, _: &ActivateRegexMode, cx: &mut ViewContext<Pane>) {
-        if let Some(search_view) = pane
-            .active_item()
-            .and_then(|item| item.downcast::<ProjectSearchView>())
-        {
-            search_view.update(cx, |view, cx| {
-                view.activate_search_mode(SearchMode::Regex, cx)
-            });
-            cx.stop_propagation();
-        }
-    }
-
-    fn activate_semantic_mode(
-        pane: &mut Pane,
-        _: &ActivateSemanticMode,
-        cx: &mut ViewContext<Pane>,
-    ) {
-        if SemanticIndex::enabled(cx) {
-            if let Some(search_view) = pane
-                .active_item()
-                .and_then(|item| item.downcast::<ProjectSearchView>())
-            {
-                search_view.update(cx, |view, cx| {
-                    view.activate_search_mode(SearchMode::Semantic, cx)
-                });
-                cx.stop_propagation();
-            }
-        }
-    }
 
     fn toggle_filters(&mut self, cx: &mut ViewContext<Self>) -> bool {
         if let Some(search_view) = self.active_project_search.as_ref() {
