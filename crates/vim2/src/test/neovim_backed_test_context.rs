@@ -2,6 +2,7 @@
 // todo!()
 
 use editor::{scroll::VERTICAL_SCROLL_MARGIN, test::editor_test_context::ContextHandle};
+use gpui::{point, px, rems, size, Context};
 use indoc::indoc;
 use settings::SettingsStore;
 use std::{
@@ -153,20 +154,36 @@ impl<'a> NeovimBackedTestContext<'a> {
         })
     }
 
-    // todo!()
-    // pub async fn set_scroll_height(&mut self, rows: u32) {
-    //     // match Zed's scrolling behavior
-    //     self.neovim
-    //         .set_option(&format!("scrolloff={}", VERTICAL_SCROLL_MARGIN))
-    //         .await;
-    //     // +2 to account for the vim command UI at the bottom.
-    //     self.neovim.set_option(&format!("lines={}", rows + 2)).await;
-    //     let window = self.window;
-    //     let line_height =
-    //         self.editor(|editor, cx| editor.style().text.line_height(cx.font_cache()));
+    pub async fn set_scroll_height(&mut self, rows: u32) {
+        // match Zed's scrolling behavior
+        self.neovim
+            .set_option(&format!("scrolloff={}", VERTICAL_SCROLL_MARGIN))
+            .await;
+        // +2 to account for the vim command UI at the bottom.
+        self.neovim.set_option(&format!("lines={}", rows + 2)).await;
+        let (line_height, visible_line_count) = self.editor(|editor, cx| {
+            (
+                editor
+                    .style()
+                    .unwrap()
+                    .text
+                    .line_height_in_pixels(cx.rem_size()),
+                editor.visible_line_count().unwrap(),
+            )
+        });
 
-    //     window.simulate_resize(vec2f(1000., (rows as f32) * line_height), &mut self.cx);
-    // }
+        let window = self.window;
+        let margin = self
+            .update_window(window, |_, cx| {
+                cx.viewport_size().height - line_height * visible_line_count
+            })
+            .unwrap();
+
+        self.simulate_window_resize(
+            self.window,
+            size(px(1000.), margin + (rows as f32) * line_height),
+        );
+    }
 
     pub async fn set_neovim_option(&mut self, option: &str) {
         self.neovim.set_option(option).await;

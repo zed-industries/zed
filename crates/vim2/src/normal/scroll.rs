@@ -108,122 +108,140 @@ fn scroll_editor(
     }
 }
 
-// #[cfg(test)]
-// mod test {
-//     use crate::{
-//         state::Mode,
-//         test::{NeovimBackedTestContext, VimTestContext},
-//     };
-//     use gpui::geometry::vector::vec2f;
-//     use indoc::indoc;
-//     use language::Point;
+#[cfg(test)]
+mod test {
+    use crate::{
+        state::Mode,
+        test::{NeovimBackedTestContext, VimTestContext},
+    };
+    use gpui::{point, px, size, Context};
+    use indoc::indoc;
+    use language::Point;
 
-//     #[gpui::test]
-//     async fn test_scroll(cx: &mut gpui::TestAppContext) {
-//         let mut cx = VimTestContext::new(cx, true).await;
+    #[gpui::test]
+    async fn test_scroll(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
 
-//         let window = cx.window;
-//         let line_height = cx.editor(|editor, cx| editor.style().text.line_height(cx.font_cache()));
-//         window.simulate_resize(vec2f(1000., 8.0 * line_height - 1.0), &mut cx);
+        let (line_height, visible_line_count) = cx.editor(|editor, cx| {
+            (
+                editor
+                    .style()
+                    .unwrap()
+                    .text
+                    .line_height_in_pixels(cx.rem_size()),
+                editor.visible_line_count().unwrap(),
+            )
+        });
 
-//         cx.set_state(
-//             indoc!(
-//                 "ˇone
-//                 two
-//                 three
-//                 four
-//                 five
-//                 six
-//                 seven
-//                 eight
-//                 nine
-//                 ten
-//                 eleven
-//                 twelve
-//             "
-//             ),
-//             Mode::Normal,
-//         );
+        let window = cx.window;
+        let margin = cx
+            .update_window(window, |_, cx| {
+                cx.viewport_size().height - line_height * visible_line_count
+            })
+            .unwrap();
+        cx.simulate_window_resize(
+            cx.window,
+            size(px(1000.), margin + 8. * line_height - px(1.0)),
+        );
 
-//         cx.update_editor(|editor, cx| {
-//             assert_eq!(editor.snapshot(cx).scroll_position(), vec2f(0., 0.))
-//         });
-//         cx.simulate_keystrokes(["ctrl-e"]);
-//         cx.update_editor(|editor, cx| {
-//             assert_eq!(editor.snapshot(cx).scroll_position(), vec2f(0., 1.))
-//         });
-//         cx.simulate_keystrokes(["2", "ctrl-e"]);
-//         cx.update_editor(|editor, cx| {
-//             assert_eq!(editor.snapshot(cx).scroll_position(), vec2f(0., 3.))
-//         });
-//         cx.simulate_keystrokes(["ctrl-y"]);
-//         cx.update_editor(|editor, cx| {
-//             assert_eq!(editor.snapshot(cx).scroll_position(), vec2f(0., 2.))
-//         });
+        cx.set_state(
+            indoc!(
+                "ˇone
+                two
+                three
+                four
+                five
+                six
+                seven
+                eight
+                nine
+                ten
+                eleven
+                twelve
+            "
+            ),
+            Mode::Normal,
+        );
 
-//         // does not select in normal mode
-//         cx.simulate_keystrokes(["g", "g"]);
-//         cx.update_editor(|editor, cx| {
-//             assert_eq!(editor.snapshot(cx).scroll_position(), vec2f(0., 0.))
-//         });
-//         cx.simulate_keystrokes(["ctrl-d"]);
-//         cx.update_editor(|editor, cx| {
-//             assert_eq!(editor.snapshot(cx).scroll_position(), vec2f(0., 3.0));
-//             assert_eq!(
-//                 editor.selections.newest(cx).range(),
-//                 Point::new(6, 0)..Point::new(6, 0)
-//             )
-//         });
+        cx.update_editor(|editor, cx| {
+            assert_eq!(editor.snapshot(cx).scroll_position(), point(0., 0.))
+        });
+        cx.simulate_keystrokes(["ctrl-e"]);
+        cx.update_editor(|editor, cx| {
+            assert_eq!(editor.snapshot(cx).scroll_position(), point(0., 1.))
+        });
+        cx.simulate_keystrokes(["2", "ctrl-e"]);
+        cx.update_editor(|editor, cx| {
+            assert_eq!(editor.snapshot(cx).scroll_position(), point(0., 3.))
+        });
+        cx.simulate_keystrokes(["ctrl-y"]);
+        cx.update_editor(|editor, cx| {
+            assert_eq!(editor.snapshot(cx).scroll_position(), point(0., 2.))
+        });
 
-//         // does select in visual mode
-//         cx.simulate_keystrokes(["g", "g"]);
-//         cx.update_editor(|editor, cx| {
-//             assert_eq!(editor.snapshot(cx).scroll_position(), vec2f(0., 0.))
-//         });
-//         cx.simulate_keystrokes(["v", "ctrl-d"]);
-//         cx.update_editor(|editor, cx| {
-//             assert_eq!(editor.snapshot(cx).scroll_position(), vec2f(0., 3.0));
-//             assert_eq!(
-//                 editor.selections.newest(cx).range(),
-//                 Point::new(0, 0)..Point::new(6, 1)
-//             )
-//         });
-//     }
-//     #[gpui::test]
-//     async fn test_ctrl_d_u(cx: &mut gpui::TestAppContext) {
-//         let mut cx = NeovimBackedTestContext::new(cx).await;
+        // does not select in normal mode
+        cx.simulate_keystrokes(["g", "g"]);
+        cx.update_editor(|editor, cx| {
+            assert_eq!(editor.snapshot(cx).scroll_position(), point(0., 0.))
+        });
+        cx.simulate_keystrokes(["ctrl-d"]);
+        cx.update_editor(|editor, cx| {
+            assert_eq!(editor.snapshot(cx).scroll_position(), point(0., 3.0));
+            assert_eq!(
+                editor.selections.newest(cx).range(),
+                Point::new(6, 0)..Point::new(6, 0)
+            )
+        });
 
-//         cx.set_scroll_height(10).await;
+        // does select in visual mode
+        cx.simulate_keystrokes(["g", "g"]);
+        cx.update_editor(|editor, cx| {
+            assert_eq!(editor.snapshot(cx).scroll_position(), point(0., 0.))
+        });
+        cx.simulate_keystrokes(["v", "ctrl-d"]);
+        cx.update_editor(|editor, cx| {
+            assert_eq!(editor.snapshot(cx).scroll_position(), point(0., 3.0));
+            assert_eq!(
+                editor.selections.newest(cx).range(),
+                Point::new(0, 0)..Point::new(6, 1)
+            )
+        });
+    }
+    #[gpui::test]
+    async fn test_ctrl_d_u(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
 
-//         pub fn sample_text(rows: usize, cols: usize, start_char: char) -> String {
-//             let mut text = String::new();
-//             for row in 0..rows {
-//                 let c: char = (start_char as u32 + row as u32) as u8 as char;
-//                 let mut line = c.to_string().repeat(cols);
-//                 if row < rows - 1 {
-//                     line.push('\n');
-//                 }
-//                 text += &line;
-//             }
-//             text
-//         }
-//         let content = "ˇ".to_owned() + &sample_text(26, 2, 'a');
-//         cx.set_shared_state(&content).await;
+        cx.set_scroll_height(10).await;
 
-//         // skip over the scrolloff at the top
-//         // test ctrl-d
-//         cx.simulate_shared_keystrokes(["4", "j", "ctrl-d"]).await;
-//         cx.assert_state_matches().await;
-//         cx.simulate_shared_keystrokes(["ctrl-d"]).await;
-//         cx.assert_state_matches().await;
-//         cx.simulate_shared_keystrokes(["g", "g", "ctrl-d"]).await;
-//         cx.assert_state_matches().await;
+        pub fn sample_text(rows: usize, cols: usize, start_char: char) -> String {
+            let mut text = String::new();
+            for row in 0..rows {
+                let c: char = (start_char as u32 + row as u32) as u8 as char;
+                let mut line = c.to_string().repeat(cols);
+                if row < rows - 1 {
+                    line.push('\n');
+                }
+                text += &line;
+            }
+            text
+        }
+        let content = "ˇ".to_owned() + &sample_text(26, 2, 'a');
+        cx.set_shared_state(&content).await;
 
-//         // test ctrl-u
-//         cx.simulate_shared_keystrokes(["ctrl-u"]).await;
-//         cx.assert_state_matches().await;
-//         cx.simulate_shared_keystrokes(["ctrl-d", "ctrl-d", "4", "j", "ctrl-u", "ctrl-u"])
-//             .await;
-//         cx.assert_state_matches().await;
-//     }
-// }
+        // skip over the scrolloff at the top
+        // test ctrl-d
+        cx.simulate_shared_keystrokes(["4", "j", "ctrl-d"]).await;
+        cx.assert_state_matches().await;
+        cx.simulate_shared_keystrokes(["ctrl-d"]).await;
+        cx.assert_state_matches().await;
+        cx.simulate_shared_keystrokes(["g", "g", "ctrl-d"]).await;
+        cx.assert_state_matches().await;
+
+        // test ctrl-u
+        cx.simulate_shared_keystrokes(["ctrl-u"]).await;
+        cx.assert_state_matches().await;
+        cx.simulate_shared_keystrokes(["ctrl-d", "ctrl-d", "4", "j", "ctrl-u", "ctrl-u"])
+            .await;
+        cx.assert_state_matches().await;
+    }
+}
