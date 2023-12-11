@@ -491,7 +491,7 @@ impl Render for Dock {
             let position = self.position;
             let handler = div()
                 .id("resize-handle")
-                .bg(gpui::red())
+                .bg(cx.theme().colors().border)
                 .on_mouse_down(gpui::MouseButton::Left, move |_, cx| {
                     cx.update_global(|drag: &mut DockDragState, cx| drag.0 = Some(position))
                 })
@@ -518,10 +518,10 @@ impl Render for Dock {
 
             match self.position() {
                 DockPosition::Left => {
-                    post_resize_handle = Some(handler.w_2().h_full().cursor_col_resize())
+                    post_resize_handle = Some(handler.w_1().h_full().cursor_col_resize())
                 }
                 DockPosition::Bottom => {
-                    pre_resize_handle = Some(handler.w_full().h_2().cursor_row_resize())
+                    pre_resize_handle = Some(handler.w_full().h_1().cursor_row_resize())
                 }
                 DockPosition::Right => {
                     pre_resize_handle = Some(handler.w_full().h_1().cursor_col_resize())

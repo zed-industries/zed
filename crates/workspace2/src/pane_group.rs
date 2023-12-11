@@ -626,7 +626,6 @@ impl PaneAxis {
                 Member::Pane(pane) => div()
                     .size_full()
                     .border()
-                    .border_color(gpui::green())
                     .child(pane.clone())
                     .into_any_element(),
             }
@@ -849,14 +848,6 @@ mod element {
                 }
 
                 cx.add_opaque_layer(handle_bounds);
-
-                cx.paint_quad(
-                    handle_bounds,
-                    Default::default(),
-                    gpui::red(),
-                    Default::default(),
-                    gpui::red(),
-                );
 
                 cx.on_mouse_event({
                     let dragged_handle = dragged_handle.clone();
