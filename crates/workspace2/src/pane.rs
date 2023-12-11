@@ -1424,7 +1424,9 @@ impl Pane {
         detail: usize,
         cx: &mut ViewContext<'_, Pane>,
     ) -> impl IntoElement {
-        let label = item.tab_content(Some(detail), cx);
+        let is_active = ix == self.active_item_index;
+
+        let label = item.tab_content(Some(detail), is_active, cx);
         let close_side = &ItemSettings::get_global(cx).close_position;
 
         let (text_color, tab_bg, tab_hover_bg, tab_active_bg) = match ix == self.active_item_index {
@@ -1441,8 +1443,6 @@ impl Pane {
                 cx.theme().colors().element_active,
             ),
         };
-
-        let is_active = ix == self.active_item_index;
 
         let indicator = maybe!({
             let indicator_color = match (item.has_conflict(cx), item.is_dirty(cx)) {
@@ -1473,7 +1473,7 @@ impl Pane {
                     ClosePosition::Left => ui::TabCloseSide::Start,
                     ClosePosition::Right => ui::TabCloseSide::End,
                 })
-                .selected(ix == self.active_item_index())
+                .selected(is_active)
                 .on_click(cx.listener(move |pane: &mut Self, event, cx| {
                     pane.activate_item(ix, true, true, cx)
                 }))

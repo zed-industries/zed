@@ -580,7 +580,7 @@ impl Item for Editor {
         Some(path.to_string_lossy().to_string().into())
     }
 
-    fn tab_content(&self, detail: Option<usize>, cx: &WindowContext) -> AnyElement {
+    fn tab_content(&self, detail: Option<usize>, selected: bool, cx: &WindowContext) -> AnyElement {
         let theme = cx.theme();
 
         let description = detail.and_then(|detail| {
@@ -597,7 +597,11 @@ impl Item for Editor {
 
         h_stack()
             .gap_2()
-            .child(Label::new(self.title(cx).to_string()))
+            .child(Label::new(self.title(cx).to_string()).color(if selected {
+                Color::Default
+            } else {
+                Color::Muted
+            }))
             .when_some(description, |this, description| {
                 this.child(Label::new(description).color(Color::Muted))
             })

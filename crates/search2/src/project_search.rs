@@ -33,8 +33,8 @@ use std::{
 };
 
 use ui::{
-    h_stack, v_stack, Button, ButtonCommon, Clickable, Disableable, Icon, IconButton, IconElement,
-    Label, LabelCommon, LabelSize, Selectable, Tooltip,
+    h_stack, prelude::*, v_stack, Button, Icon, IconButton, IconElement, Label, LabelCommon,
+    LabelSize, Selectable, Tooltip,
 };
 use util::{paths::PathMatcher, ResultExt as _};
 use workspace::{
@@ -511,7 +511,7 @@ impl Item for ProjectSearchView {
             .update(cx, |editor, cx| editor.deactivated(cx));
     }
 
-    fn tab_content(&self, _: Option<usize>, cx: &WindowContext<'_>) -> AnyElement {
+    fn tab_content(&self, _: Option<usize>, selected: bool, cx: &WindowContext<'_>) -> AnyElement {
         let last_query: Option<SharedString> = self
             .model
             .read(cx)
@@ -527,7 +527,11 @@ impl Item for ProjectSearchView {
             .unwrap_or_else(|| "Project search".into());
         h_stack()
             .child(IconElement::new(Icon::MagnifyingGlass))
-            .child(Label::new(tab_name))
+            .child(Label::new(tab_name).color(if selected {
+                Color::Default
+            } else {
+                Color::Muted
+            }))
             .into_any()
     }
 

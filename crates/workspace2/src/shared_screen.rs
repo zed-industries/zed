@@ -12,7 +12,7 @@ use gpui::{
     VisualContext, WindowContext,
 };
 use std::sync::{Arc, Weak};
-use ui::{h_stack, Icon, IconElement};
+use ui::{h_stack, prelude::*, Icon, IconElement, Label};
 
 pub enum Event {
     Close,
@@ -90,14 +90,22 @@ impl Item for SharedScreen {
         }
     }
 
-    fn tab_content(&self, _: Option<usize>, _: &WindowContext<'_>) -> gpui::AnyElement {
+    fn tab_content(
+        &self,
+        _: Option<usize>,
+        selected: bool,
+        _: &WindowContext<'_>,
+    ) -> gpui::AnyElement {
         h_stack()
             .gap_1()
             .child(IconElement::new(Icon::Screen))
-            .child(SharedString::from(format!(
-                "{}'s screen",
-                self.user.github_login
-            )))
+            .child(
+                Label::new(format!("{}'s screen", self.user.github_login)).color(if selected {
+                    Color::Default
+                } else {
+                    Color::Muted
+                }),
+            )
             .into_any()
     }
 
