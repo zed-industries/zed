@@ -3,12 +3,13 @@ mod base_keymap_setting;
 
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
-    div, red, AnyElement, AppContext, Div, Element, EventEmitter, FocusHandle, Focusable,
-    FocusableView, InteractiveElement, ParentElement, Render, Styled, Subscription, View,
-    ViewContext, VisualContext, WeakView, WindowContext,
+    div, red, AnyElement, AppContext, Div, EventEmitter, FocusHandle, Focusable, FocusableView,
+    InteractiveElement, ParentElement, Render, Styled, Subscription, View, ViewContext,
+    VisualContext, WeakView, WindowContext,
 };
 use settings::{Settings, SettingsStore};
 use std::sync::Arc;
+use ui::prelude::*;
 use workspace::{
     dock::DockPosition,
     item::{Item, ItemEvent},
@@ -261,8 +262,14 @@ impl FocusableView for WelcomePage {
 impl Item for WelcomePage {
     type Event = ItemEvent;
 
-    fn tab_content(&self, _: Option<usize>, _: &WindowContext) -> AnyElement {
-        "Welcome to Zed!".into_any()
+    fn tab_content(&self, _: Option<usize>, selected: bool, _: &WindowContext) -> AnyElement {
+        Label::new("Welcome to Zed!")
+            .color(if selected {
+                Color::Default
+            } else {
+                Color::Muted
+            })
+            .into_any_element()
     }
 
     fn show_toolbar(&self) -> bool {

@@ -686,13 +686,22 @@ impl Item for TerminalView {
         Some(self.terminal().read(cx).title().into())
     }
 
-    fn tab_content(&self, _detail: Option<usize>, cx: &WindowContext) -> AnyElement {
+    fn tab_content(
+        &self,
+        _detail: Option<usize>,
+        selected: bool,
+        cx: &WindowContext,
+    ) -> AnyElement {
         let title = self.terminal().read(cx).title();
 
         h_stack()
             .gap_2()
             .child(IconElement::new(Icon::Terminal))
-            .child(Label::new(title))
+            .child(Label::new(title).color(if selected {
+                Color::Default
+            } else {
+                Color::Muted
+            }))
             .into_any()
     }
 
