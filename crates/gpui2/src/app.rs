@@ -9,7 +9,6 @@ use derive_more::{Deref, DerefMut};
 pub use entity_map::*;
 pub use model_context::*;
 use refineable::Refineable;
-use smallvec::SmallVec;
 use smol::future::FutureExt;
 #[cfg(any(test, feature = "test-support"))]
 pub use test_context::*;
@@ -596,23 +595,6 @@ impl AppContext {
                 break;
             }
         }
-
-        let dirty_window_ids = self
-            .windows
-            .iter()
-            .filter_map(|(_, window)| {
-                let window = window.as_ref()?;
-                if window.dirty {
-                    Some(window.handle.clone())
-                } else {
-                    None
-                }
-            })
-            .collect::<SmallVec<[_; 8]>>();
-
-        for dirty_window_handle in dirty_window_ids {
-            dirty_window_handle.update(self, |_, cx| cx.draw()).unwrap();
-        }
     }
 
     /// Repeatedly called during `flush_effects` to release any entities whose
@@ -731,7 +713,7 @@ impl AppContext {
     fn apply_refresh_effect(&mut self) {
         for window in self.windows.values_mut() {
             if let Some(window) = window.as_mut() {
-                window.dirty = true;
+                window.platform_window.invalidate();
             }
         }
     }

@@ -7,9 +7,9 @@ use crate::{
     ModelContext, Modifiers, MonochromeSprite, MouseButton, MouseMoveEvent, MouseUpEvent, Path,
     Pixels, PlatformAtlas, PlatformDisplay, PlatformInputHandler, PlatformWindow, Point,
     PolychromeSprite, PromptLevel, Quad, Render, RenderGlyphParams, RenderImageParams,
-    RenderSvgParams, ScaledPixels, SceneBuilder, Shadow, SharedString, Size, Style, SubscriberSet,
-    Subscription, Surface, TaffyLayoutEngine, Task, Underline, UnderlineStyle, View, VisualContext,
-    WeakView, WindowBounds, WindowOptions, SUBPIXEL_VARIANTS,
+    RenderSvgParams, ScaledPixels, Scene, SceneBuilder, Shadow, SharedString, Size, Style,
+    SubscriberSet, Subscription, Surface, TaffyLayoutEngine, Task, Underline, UnderlineStyle, View,
+    VisualContext, WeakView, WindowBounds, WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::HashMap;
@@ -224,7 +224,6 @@ pub struct Window {
     bounds_observers: SubscriberSet<(), AnyObserver>,
     active: bool,
     activation_observers: SubscriberSet<(), AnyObserver>,
-    pub(crate) dirty: bool,
     pub(crate) last_blur: Option<Option<FocusId>>,
     pub(crate) focus: Option<FocusId>,
 }
@@ -278,7 +277,14 @@ impl Window {
         options: WindowOptions,
         cx: &mut AppContext,
     ) -> Self {
-        let platform_window = cx.platform.open_window(handle, options);
+        let platform_window = cx.platform.open_window(
+            handle,
+            options,
+            Box::new({
+                let mut cx = cx.to_async();
+                move || handle.update(&mut cx, |_, cx| cx.draw())
+            }),
+        );
         let display_id = platform_window.display().id();
         let sprite_atlas = platform_window.sprite_atlas();
         let mouse_position = platform_window.mouse_position();
@@ -350,7 +356,6 @@ impl Window {
             bounds_observers: SubscriberSet::new(),
             active: false,
             activation_observers: SubscriberSet::new(),
-            dirty: true,
             last_blur: None,
             focus: None,
         }
@@ -401,7 +406,7 @@ impl<'a> WindowContext<'a> {
 
     /// Mark the window as dirty, scheduling it to be redrawn on the next frame.
     pub fn notify(&mut self) {
-        self.window.dirty = true;
+        self.window.platform_window.invalidate();
     }
 
     /// Close this window.
@@ -673,7 +678,7 @@ impl<'a> WindowContext<'a> {
         self.window.viewport_size = self.window.platform_window.content_size();
         self.window.bounds = self.window.platform_window.bounds();
         self.window.display_id = self.window.platform_window.display().id();
-        self.window.dirty = true;
+        self.notify();
 
         self.window
             .bounds_observers
@@ -1174,7 +1179,7 @@ impl<'a> WindowContext<'a> {
     }
 
     /// Draw pixels to the display for this window based on the contents of its scene.
-    pub(crate) fn draw(&mut self) {
+    fn draw(&mut self) -> Scene {
         self.text_system().start_frame();
         self.window.platform_window.clear_input_handler();
         self.window.layout_engine.as_mut().unwrap().clear();
@@ -1226,7 +1231,6 @@ impl<'a> WindowContext<'a> {
         mem::swap(&mut window.rendered_frame, &mut window.next_frame);
 
         let scene = self.window.rendered_frame.scene_builder.build();
-        self.window.platform_window.draw(scene);
         let cursor_style = self
             .window
             .requested_cursor_style
@@ -1234,7 +1238,7 @@ impl<'a> WindowContext<'a> {
             .unwrap_or(CursorStyle::Arrow);
         self.platform.set_cursor_style(cursor_style);
 
-        self.window.dirty = false;
+        scene
     }
 
     /// Dispatch a mouse or keyboard event on the window.

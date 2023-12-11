@@ -166,9 +166,7 @@ impl PlatformWindow for TestWindow {
         unimplemented!()
     }
 
-    fn draw(&self, scene: crate::Scene) {
-        self.current_scene.lock().replace(scene);
-    }
+    fn invalidate(&self) {}
 
     fn sprite_atlas(&self) -> sync::Arc<dyn crate::PlatformAtlas> {
         self.sprite_atlas.clone()

@@ -3,7 +3,8 @@ use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
     ForegroundExecutor, InputEvent, Keymap, MacDispatcher, MacDisplay, MacDisplayLinker,
     MacTextSystem, MacWindow, Menu, MenuItem, PathPromptOptions, Platform, PlatformDisplay,
-    PlatformTextSystem, PlatformWindow, Result, SemanticVersion, VideoTimestamp, WindowOptions,
+    PlatformTextSystem, PlatformWindow, Result, Scene, SemanticVersion, VideoTimestamp,
+    WindowOptions,
 };
 use anyhow::anyhow;
 use block::ConcreteBlock;
@@ -490,8 +491,14 @@ impl Platform for MacPlatform {
         &self,
         handle: AnyWindowHandle,
         options: WindowOptions,
+        draw: Box<dyn FnMut() -> Result<Scene>>,
     ) -> Box<dyn PlatformWindow> {
-        Box::new(MacWindow::open(handle, options, self.foreground_executor()))
+        Box::new(MacWindow::open(
+            handle,
+            options,
+            draw,
+            self.foreground_executor(),
+        ))
     }
 
     fn set_display_link_output_callback(
