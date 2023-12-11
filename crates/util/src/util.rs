@@ -184,6 +184,11 @@ pub trait TryFutureExt {
     fn log_err(self) -> LogErrorFuture<Self>
     where
         Self: Sized;
+
+    fn log_tracked_err(self, location: core::panic::Location<'static>) -> LogErrorFuture<Self>
+    where
+        Self: Sized;
+
     fn warn_on_err(self) -> LogErrorFuture<Self>
     where
         Self: Sized;
@@ -197,18 +202,29 @@ where
     F: Future<Output = Result<T, E>>,
     E: std::fmt::Debug,
 {
+    #[track_caller]
     fn log_err(self) -> LogErrorFuture<Self>
     where
         Self: Sized,
     {
-        LogErrorFuture(self, log::Level::Error)
+        let location = Location::caller();
+        LogErrorFuture(self, log::Level::Error, *location)
     }
 
+    fn log_tracked_err(self, location: core::panic::Location<'static>) -> LogErrorFuture<Self>
+    where
+        Self: Sized,
+    {
+        LogErrorFuture(self, log::Level::Error, location)
+    }
+
+    #[track_caller]
     fn warn_on_err(self) -> LogErrorFuture<Self>
     where
         Self: Sized,
     {
-        LogErrorFuture(self, log::Level::Warn)
+        let location = Location::caller();
+        LogErrorFuture(self, log::Level::Warn, *location)
     }
 
     fn unwrap(self) -> UnwrapFuture<Self>
@@ -219,7 +235,7 @@ where
     }
 }
 
-pub struct LogErrorFuture<F>(F, log::Level);
+pub struct LogErrorFuture<F>(F, log::Level, core::panic::Location<'static>);
 
 impl<F, T, E> Future for LogErrorFuture<F>
 where
@@ -230,12 +246,19 @@ where
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let level = self.1;
+        let location = self.2;
         let inner = unsafe { Pin::new_unchecked(&mut self.get_unchecked_mut().0) };
         match inner.poll(cx) {
             Poll::Ready(output) => Poll::Ready(match output {
                 Ok(output) => Some(output),
                 Err(error) => {
-                    log::log!(level, "{:?}", error);
+                    log::log!(
+                        level,
+                        "{}:{}: {:?}",
+                        location.file(),
+                        location.line(),
+                        error
+                    );
                     None
                 }
             }),

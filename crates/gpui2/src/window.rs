@@ -60,6 +60,16 @@ pub enum DispatchPhase {
     Capture,
 }
 
+impl DispatchPhase {
+    pub fn bubble(self) -> bool {
+        self == DispatchPhase::Bubble
+    }
+
+    pub fn capture(self) -> bool {
+        self == DispatchPhase::Capture
+    }
+}
+
 type AnyObserver = Box<dyn FnMut(&mut WindowContext) -> bool + 'static>;
 type AnyMouseListener = Box<dyn FnMut(&dyn Any, DispatchPhase, &mut WindowContext) + 'static>;
 type AnyFocusListener = Box<dyn Fn(&FocusEvent, &mut WindowContext) + 'static>;
@@ -866,7 +876,7 @@ impl<'a> WindowContext<'a> {
     /// same layer as the given stacking order.
     pub fn was_top_layer(&self, point: &Point<Pixels>, level: &StackingOrder) -> bool {
         for (stack, bounds) in self.window.rendered_frame.depth_map.iter() {
-            if bounds.contains_point(point) {
+            if bounds.contains(point) {
                 return level.starts_with(stack) || stack.starts_with(level);
             }
         }

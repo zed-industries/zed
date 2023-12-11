@@ -8,6 +8,62 @@ use std::{
     ops::{Add, Div, Mul, MulAssign, Sub},
 };
 
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum Axis {
+    Vertical,
+    Horizontal,
+}
+
+impl Axis {
+    pub fn invert(&self) -> Self {
+        match self {
+            Axis::Vertical => Axis::Horizontal,
+            Axis::Horizontal => Axis::Vertical,
+        }
+    }
+}
+
+pub trait Along {
+    type Unit;
+
+    fn along(&self, axis: Axis) -> Self::Unit;
+
+    fn apply_along(&self, axis: Axis, f: impl FnOnce(Self::Unit) -> Self::Unit) -> Self;
+}
+
+impl sqlez::bindable::StaticColumnCount for Axis {}
+impl sqlez::bindable::Bind for Axis {
+    fn bind(
+        &self,
+        statement: &sqlez::statement::Statement,
+        start_index: i32,
+    ) -> anyhow::Result<i32> {
+        match self {
+            Axis::Horizontal => "Horizontal",
+            Axis::Vertical => "Vertical",
+        }
+        .bind(statement, start_index)
+    }
+}
+
+impl sqlez::bindable::Column for Axis {
+    fn column(
+        statement: &mut sqlez::statement::Statement,
+        start_index: i32,
+    ) -> anyhow::Result<(Self, i32)> {
+        String::column(statement, start_index).and_then(|(axis_text, next_index)| {
+            Ok((
+                match axis_text.as_str() {
+                    "Horizontal" => Axis::Horizontal,
+                    "Vertical" => Axis::Vertical,
+                    _ => anyhow::bail!("Stored serialized item kind is incorrect"),
+                },
+                next_index,
+            ))
+        })
+    }
+}
+
 /// Describes a location in a 2D cartesian coordinate space.
 ///
 /// It holds two public fields, `x` and `y`, which represent the coordinates in the space.
@@ -92,6 +148,30 @@ impl<T: Clone + Debug + Default> Point<T> {
         Point {
             x: f(self.x.clone()),
             y: f(self.y.clone()),
+        }
+    }
+}
+
+impl<T: Clone + Debug + Default> Along for Point<T> {
+    type Unit = T;
+
+    fn along(&self, axis: Axis) -> T {
+        match axis {
+            Axis::Horizontal => self.x.clone(),
+            Axis::Vertical => self.y.clone(),
+        }
+    }
+
+    fn apply_along(&self, axis: Axis, f: impl FnOnce(T) -> T) -> Point<T> {
+        match axis {
+            Axis::Horizontal => Point {
+                x: f(self.x.clone()),
+                y: self.y.clone(),
+            },
+            Axis::Vertical => Point {
+                x: self.x.clone(),
+                y: f(self.y.clone()),
+            },
         }
     }
 }
@@ -369,6 +449,34 @@ impl Size<Pixels> {
         Size {
             width: self.width.scale(factor),
             height: self.height.scale(factor),
+        }
+    }
+}
+
+impl<T> Along for Size<T>
+where
+    T: Clone + Default + Debug,
+{
+    type Unit = T;
+
+    fn along(&self, axis: Axis) -> T {
+        match axis {
+            Axis::Horizontal => self.width.clone(),
+            Axis::Vertical => self.height.clone(),
+        }
+    }
+
+    /// Returns the value of this size along the given axis.
+    fn apply_along(&self, axis: Axis, f: impl FnOnce(T) -> T) -> Self {
+        match axis {
+            Axis::Horizontal => Size {
+                width: f(self.width.clone()),
+                height: self.height.clone(),
+            },
+            Axis::Vertical => Size {
+                width: self.width.clone(),
+                height: f(self.height.clone()),
+            },
         }
     }
 }
@@ -992,7 +1100,7 @@ where
     /// assert!(bounds.contains_point(&inside_point));
     /// assert!(!bounds.contains_point(&outside_point));
     /// ```
-    pub fn contains_point(&self, point: &Point<T>) -> bool {
+    pub fn contains(&self, point: &Point<T>) -> bool {
         point.x >= self.origin.x
             && point.x <= self.origin.x.clone() + self.size.width.clone()
             && point.y >= self.origin.y

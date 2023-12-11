@@ -29,12 +29,12 @@ use futures::{
     Future, FutureExt, StreamExt,
 };
 use gpui::{
-    actions, div, impl_actions, point, size, Action, AnyModel, AnyView, AnyWeakView,
+    actions, canvas, div, impl_actions, point, size, Action, AnyModel, AnyView, AnyWeakView,
     AnyWindowHandle, AppContext, AsyncAppContext, AsyncWindowContext, Bounds, Context, Div, Entity,
     EntityId, EventEmitter, FocusHandle, FocusableView, GlobalPixels, InteractiveElement,
-    KeyContext, ManagedView, Model, ModelContext, ParentElement, PathPromptOptions, Point,
-    PromptLevel, Render, Size, Styled, Subscription, Task, View, ViewContext, VisualContext,
-    WeakView, WindowBounds, WindowContext, WindowHandle, WindowOptions,
+    KeyContext, ManagedView, Model, ModelContext, MouseMoveEvent, ParentElement, PathPromptOptions,
+    Pixels, Point, PromptLevel, Render, Size, Styled, Subscription, Task, View, ViewContext,
+    VisualContext, WeakView, WindowBounds, WindowContext, WindowHandle, WindowOptions,
 };
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, ProjectItem};
 use itertools::Itertools;
@@ -227,6 +227,9 @@ pub fn init_settings(cx: &mut AppContext) {
 }
 
 pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
+    cx.default_global::<DockDragState>();
+    cx.default_global::<DockClickReset>();
+
     init_settings(cx);
     notifications::init(cx);
 
@@ -479,8 +482,6 @@ struct FollowerState {
     active_view_id: Option<ViewId>,
     items_by_leader_view_id: HashMap<ViewId, Box<dyn FollowableItemHandle>>,
 }
-
-enum WorkspaceBounds {}
 
 impl Workspace {
     pub fn new(
@@ -2032,7 +2033,7 @@ impl Workspace {
         };
         let cursor = self.active_pane.read(cx).pixel_position_of_cursor(cx);
         let center = match cursor {
-            Some(cursor) if bounding_box.contains_point(&cursor) => cursor,
+            Some(cursor) if bounding_box.contains(&cursor) => cursor,
             _ => bounding_box.center(),
         };
 
@@ -3571,6 +3572,16 @@ impl FocusableView for Workspace {
     }
 }
 
+struct WorkspaceBounds(Bounds<Pixels>);
+
+//todo!("remove this when better drag APIs are in GPUI2")
+#[derive(Default)]
+struct DockDragState(Option<DockPosition>);
+
+//todo!("remove this when better double APIs are in GPUI2")
+#[derive(Default)]
+struct DockClickReset(Option<Task<()>>);
+
 impl Render for Workspace {
     type Element = Div;
 
@@ -3614,6 +3625,37 @@ impl Render for Workspace {
                     .border_t()
                     .border_b()
                     .border_color(cx.theme().colors().border)
+                    .on_mouse_up(gpui::MouseButton::Left, |_, cx| {
+                        cx.update_global(|drag: &mut DockDragState, cx| {
+                            drag.0 = None;
+                        })
+                    })
+                    .on_mouse_move(cx.listener(|workspace, e: &MouseMoveEvent, cx| {
+                        if let Some(types) = &cx.global::<DockDragState>().0 {
+                            let workspace_bounds = cx.global::<WorkspaceBounds>().0;
+                            match types {
+                                DockPosition::Left => {
+                                    let size = e.position.x;
+                                    workspace.left_dock.update(cx, |left_dock, cx| {
+                                        left_dock.resize_active_panel(Some(size.0), cx);
+                                    });
+                                }
+                                DockPosition::Right => {
+                                    let size = workspace_bounds.size.width - e.position.x;
+                                    workspace.right_dock.update(cx, |right_dock, cx| {
+                                        right_dock.resize_active_panel(Some(size.0), cx);
+                                    });
+                                }
+                                DockPosition::Bottom => {
+                                    let size = workspace_bounds.size.height - e.position.y;
+                                    workspace.bottom_dock.update(cx, |bottom_dock, cx| {
+                                        bottom_dock.resize_active_panel(Some(size.0), cx);
+                                    });
+                                }
+                            }
+                        }
+                    }))
+                    .child(canvas(|bounds, cx| cx.set_global(WorkspaceBounds(bounds))))
                     .child(self.modal_layer.clone())
                     .child(
                         div()

@@ -761,7 +761,7 @@ pub struct InteractiveBounds {
 
 impl InteractiveBounds {
     pub fn visibly_contains(&self, point: &Point<Pixels>, cx: &WindowContext) -> bool {
-        self.bounds.contains_point(point) && cx.was_top_layer(&point, &self.stacking_order)
+        self.bounds.contains(point) && cx.was_top_layer(&point, &self.stacking_order)
     }
 }
 
@@ -860,10 +860,10 @@ impl Interactivity {
             .and_then(|group_hover| GroupBounds::get(&group_hover.group, cx));
 
         if let Some(group_bounds) = hover_group_bounds {
-            let hovered = group_bounds.contains_point(&cx.mouse_position());
+            let hovered = group_bounds.contains(&cx.mouse_position());
             cx.on_mouse_event(move |event: &MouseMoveEvent, phase, cx| {
                 if phase == DispatchPhase::Capture {
-                    if group_bounds.contains_point(&event.position) != hovered {
+                    if group_bounds.contains(&event.position) != hovered {
                         cx.notify();
                     }
                 }
@@ -875,10 +875,10 @@ impl Interactivity {
             || cx.active_drag.is_some() && !self.drag_over_styles.is_empty()
         {
             let bounds = bounds.intersect(&cx.content_mask().bounds);
-            let hovered = bounds.contains_point(&cx.mouse_position());
+            let hovered = bounds.contains(&cx.mouse_position());
             cx.on_mouse_event(move |event: &MouseMoveEvent, phase, cx| {
                 if phase == DispatchPhase::Capture {
-                    if bounds.contains_point(&event.position) != hovered {
+                    if bounds.contains(&event.position) != hovered {
                         cx.notify();
                     }
                 }
@@ -1068,8 +1068,8 @@ impl Interactivity {
             let interactive_bounds = interactive_bounds.clone();
             cx.on_mouse_event(move |down: &MouseDownEvent, phase, cx| {
                 if phase == DispatchPhase::Bubble {
-                    let group = active_group_bounds
-                        .map_or(false, |bounds| bounds.contains_point(&down.position));
+                    let group =
+                        active_group_bounds.map_or(false, |bounds| bounds.contains(&down.position));
                     let element = interactive_bounds.visibly_contains(&down.position, cx);
                     if group || element {
                         *active_state.borrow_mut() = ElementClickedState { group, element };
@@ -1183,7 +1183,7 @@ impl Interactivity {
             let mouse_position = cx.mouse_position();
             if let Some(group_hover) = self.group_hover_style.as_ref() {
                 if let Some(group_bounds) = GroupBounds::get(&group_hover.group, cx) {
-                    if group_bounds.contains_point(&mouse_position)
+                    if group_bounds.contains(&mouse_position)
                         && cx.was_top_layer(&mouse_position, cx.stacking_order())
                     {
                         style.refine(&group_hover.style);
@@ -1193,7 +1193,7 @@ impl Interactivity {
             if self.hover_style.is_some() {
                 if bounds
                     .intersect(&cx.content_mask().bounds)
-                    .contains_point(&mouse_position)
+                    .contains(&mouse_position)
                     && cx.was_top_layer(&mouse_position, cx.stacking_order())
                 {
                     style.refine(&self.hover_style);
@@ -1204,7 +1204,7 @@ impl Interactivity {
                 for (state_type, group_drag_style) in &self.group_drag_over_styles {
                     if let Some(group_bounds) = GroupBounds::get(&group_drag_style.group, cx) {
                         if *state_type == drag.view.entity_type()
-                            && group_bounds.contains_point(&mouse_position)
+                            && group_bounds.contains(&mouse_position)
                         {
                             style.refine(&group_drag_style.style);
                         }
@@ -1215,7 +1215,7 @@ impl Interactivity {
                     if *state_type == drag.view.entity_type()
                         && bounds
                             .intersect(&cx.content_mask().bounds)
-                            .contains_point(&mouse_position)
+                            .contains(&mouse_position)
                     {
                         style.refine(drag_over_style);
                     }
