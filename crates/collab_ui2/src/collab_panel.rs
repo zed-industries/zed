@@ -401,7 +401,7 @@ impl CollabPanel {
 
             let filter_editor = cx.build_view(|cx| {
                 let mut editor = Editor::single_line(cx);
-                editor.set_placeholder_text("Filter channels, contacts", cx);
+                editor.set_placeholder_text("Filter...", cx);
                 editor
             });
 
@@ -2149,11 +2149,6 @@ impl CollabPanel {
         v_stack()
             .size_full()
             .child(
-                div()
-                    .p_2()
-                    .child(div().rounded(px(2.0)).child(self.filter_editor.clone())),
-            )
-            .child(
                 v_stack()
                     .size_full()
                     .id("scroll")
@@ -2235,6 +2230,11 @@ impl CollabPanel {
                                 }
                             }),
                     ),
+            )
+            .child(
+                div()
+                    .p_2()
+                    .child(div().rounded(px(2.0)).child(self.filter_editor.clone())),
             )
     }
 
