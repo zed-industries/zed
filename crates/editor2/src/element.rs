@@ -1282,7 +1282,12 @@ impl EditorElement {
                 track_bounds,
                 Corners::default(),
                 cx.theme().colors().scrollbar_track_background,
-                Edges::default(), // todo!("style.track.border")
+                Edges {
+                    top: Pixels::ZERO,
+                    right: Pixels::ZERO,
+                    bottom: Pixels::ZERO,
+                    left: px(1.),
+                },
                 cx.theme().colors().scrollbar_track_border,
             );
             let scrollbar_settings = EditorSettings::get_global(cx).scrollbar;

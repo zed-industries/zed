@@ -122,13 +122,13 @@ impl VsCodeThemeConverter {
     fn convert_theme_colors(&self) -> Result<ThemeColorsRefinement> {
         let vscode_colors = &self.theme.colors;
 
-        let vscode_editor_background = vscode_colors
-            .editor_background
+        let vscode_panel_border = vscode_colors
+            .panel_border
             .as_ref()
             .traverse(|color| try_parse_color(&color))?;
 
-        let vscode_scrollbar_shadow = vscode_colors
-            .scrollbar_shadow
+        let vscode_editor_background = vscode_colors
+            .editor_background
             .as_ref()
             .traverse(|color| try_parse_color(&color))?;
 
@@ -138,30 +138,15 @@ impl VsCodeThemeConverter {
             .traverse(|color| try_parse_color(&color))?;
 
         Ok(ThemeColorsRefinement {
-            border: vscode_colors
-                .panel_border
-                .as_ref()
-                .traverse(|color| try_parse_color(&color))?,
-            border_variant: vscode_colors
-                .panel_border
-                .as_ref()
-                .traverse(|color| try_parse_color(&color))?,
+            border: vscode_panel_border,
+            border_variant: vscode_panel_border,
             border_focused: vscode_colors
                 .focus_border
                 .as_ref()
                 .traverse(|color| try_parse_color(&color))?,
-            border_disabled: vscode_colors
-                .panel_border
-                .as_ref()
-                .traverse(|color| try_parse_color(&color))?,
-            border_selected: vscode_colors
-                .panel_border
-                .as_ref()
-                .traverse(|color| try_parse_color(&color))?,
-            border_transparent: vscode_colors
-                .panel_border
-                .as_ref()
-                .traverse(|color| try_parse_color(&color))?,
+            border_disabled: vscode_panel_border,
+            border_selected: vscode_panel_border,
+            border_transparent: vscode_panel_border,
             elevated_surface_background: vscode_colors
                 .dropdown_background
                 .as_ref()
@@ -248,8 +233,11 @@ impl VsCodeThemeConverter {
                 .editor_foreground
                 .as_ref()
                 .traverse(|color| try_parse_color(&color))?,
-            scrollbar_track_background: vscode_scrollbar_shadow,
-            scrollbar_track_border: vscode_scrollbar_shadow,
+            scrollbar_track_background: vscode_editor_background,
+            scrollbar_track_border: vscode_colors
+                .editor_overview_ruler_border
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
             scrollbar_thumb_background: vscode_scrollbar_slider_background,
             scrollbar_thumb_border: vscode_scrollbar_slider_background,
             scrollbar_thumb_hover_background: vscode_colors
