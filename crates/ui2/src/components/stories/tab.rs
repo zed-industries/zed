@@ -15,7 +15,6 @@ impl Render for TabStory {
         Story::container()
             .child(Story::title_for::<Tab>())
             .child(Story::label("Default"))
-            .child(div().bg(gpui::red()).h_vh(1., _cx).w_vw(0.5, _cx))
             .child(h_stack().child(Tab::new("tab_1").child("Tab 1")))
             .child(Story::label("With indicator"))
             .child(
