@@ -1,5 +1,6 @@
 mod ignore;
-mod lsp_command;
+pub mod lsp_command;
+pub mod lsp_ext_command;
 mod prettier_support;
 pub mod project_settings;
 pub mod search;
@@ -174,7 +175,7 @@ struct DelayedDebounced {
     cancel_channel: Option<oneshot::Sender<()>>,
 }
 
-enum LanguageServerToQuery {
+pub enum LanguageServerToQuery {
     Primary,
     Other(LanguageServerId),
 }
@@ -626,6 +627,7 @@ impl Project {
         client.add_model_request_handler(Self::handle_open_buffer_by_path);
         client.add_model_request_handler(Self::handle_save_buffer);
         client.add_model_message_handler(Self::handle_update_diff_base);
+        client.add_model_request_handler(Self::handle_lsp_command::<lsp_ext_command::ExpandMacro>);
     }
 
     pub fn local(
@@ -5863,7 +5865,7 @@ impl Project {
             .await;
     }
 
-    fn request_lsp<R: LspCommand>(
+    pub fn request_lsp<R: LspCommand>(
         &self,
         buffer_handle: ModelHandle<Buffer>,
         server: LanguageServerToQuery,
