@@ -92,7 +92,7 @@ use theme::{ActiveTheme, ThemeSettings};
 //     channel_id: ChannelId,
 // }
 
-#[derive(Action, PartialEq, Debug, Clone, Serialize, Deserialize)]
+#[derive(PartialEq, Debug, Clone, Serialize, Deserialize)]
 pub struct OpenChannelNotes {
     pub channel_id: ChannelId,
 }
@@ -121,6 +121,8 @@ pub struct OpenChannelNotes {
 // struct MoveChannel {
 //     to: ChannelId,
 // }
+
+impl_actions!(collab_panel, [OpenChannelNotes]);
 
 actions!(
     collab_panel,
@@ -172,12 +174,12 @@ use editor::Editor;
 use feature_flags::{ChannelsAlpha, FeatureFlagAppExt, FeatureFlagViewExt};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
-    actions, canvas, div, img, overlay, point, prelude::*, px, rems, serde_json, size, Action,
-    AppContext, AsyncWindowContext, Bounds, ClipboardItem, DismissEvent, Div, EventEmitter,
-    FocusHandle, Focusable, FocusableView, Hsla, InteractiveElement, IntoElement, Length, Model,
-    MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Quad, Render, RenderOnce,
-    ScrollHandle, SharedString, Size, Stateful, Styled, Subscription, Task, View, ViewContext,
-    VisualContext, WeakView,
+    actions, canvas, div, img, impl_actions, overlay, point, prelude::*, px, rems, serde_json,
+    size, Action, AppContext, AsyncWindowContext, Bounds, ClipboardItem, DismissEvent, Div,
+    EventEmitter, FocusHandle, Focusable, FocusableView, Hsla, InteractiveElement, IntoElement,
+    Length, Model, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Quad, Render,
+    RenderOnce, ScrollHandle, SharedString, Size, Stateful, Styled, Subscription, Task, View,
+    ViewContext, VisualContext, WeakView,
 };
 use project::{Fs, Project};
 use serde_derive::{Deserialize, Serialize};

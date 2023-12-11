@@ -29,12 +29,12 @@ use futures::{
     Future, FutureExt, StreamExt,
 };
 use gpui::{
-    actions, div, point, size, Action, AnyModel, AnyView, AnyWeakView, AnyWindowHandle, AppContext,
-    AsyncAppContext, AsyncWindowContext, Bounds, Context, Div, Entity, EntityId, EventEmitter,
-    FocusHandle, FocusableView, GlobalPixels, InteractiveElement, KeyContext, ManagedView, Model,
-    ModelContext, ParentElement, PathPromptOptions, Point, PromptLevel, Render, Size, Styled,
-    Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowBounds, WindowContext,
-    WindowHandle, WindowOptions,
+    actions, div, impl_actions, point, size, Action, AnyModel, AnyView, AnyWeakView,
+    AnyWindowHandle, AppContext, AsyncAppContext, AsyncWindowContext, Bounds, Context, Div, Entity,
+    EntityId, EventEmitter, FocusHandle, FocusableView, GlobalPixels, InteractiveElement,
+    KeyContext, ManagedView, Model, ModelContext, ParentElement, PathPromptOptions, Point,
+    PromptLevel, Render, Size, Styled, Subscription, Task, View, ViewContext, VisualContext,
+    WeakView, WindowBounds, WindowContext, WindowHandle, WindowOptions,
 };
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, ProjectItem};
 use itertools::Itertools;
@@ -125,35 +125,49 @@ pub struct OpenPaths {
     pub paths: Vec<PathBuf>,
 }
 
-#[derive(Clone, Deserialize, PartialEq, Action)]
+#[derive(Clone, Deserialize, PartialEq)]
 pub struct ActivatePane(pub usize);
 
-#[derive(Clone, Deserialize, PartialEq, Action)]
+#[derive(Clone, Deserialize, PartialEq)]
 pub struct ActivatePaneInDirection(pub SplitDirection);
 
-#[derive(Clone, Deserialize, PartialEq, Action)]
+#[derive(Clone, Deserialize, PartialEq)]
 pub struct SwapPaneInDirection(pub SplitDirection);
 
-#[derive(Clone, Deserialize, PartialEq, Action)]
+#[derive(Clone, Deserialize, PartialEq)]
 pub struct NewFileInDirection(pub SplitDirection);
 
-#[derive(Clone, PartialEq, Debug, Deserialize, Action)]
+#[derive(Clone, PartialEq, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SaveAll {
     pub save_intent: Option<SaveIntent>,
 }
 
-#[derive(Clone, PartialEq, Debug, Deserialize, Action)]
+#[derive(Clone, PartialEq, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Save {
     pub save_intent: Option<SaveIntent>,
 }
 
-#[derive(Clone, PartialEq, Debug, Deserialize, Default, Action)]
+#[derive(Clone, PartialEq, Debug, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct CloseAllItemsAndPanes {
     pub save_intent: Option<SaveIntent>,
 }
+
+impl_actions!(
+    workspace,
+    [
+        ActivatePane,
+        ActivatePaneInDirection,
+        CloseAllItemsAndPanes,
+        NewFileInDirection,
+        OpenTerminal,
+        Save,
+        SaveAll,
+        SwapPaneInDirection,
+    ]
+);
 
 #[derive(Deserialize)]
 pub struct Toast {
@@ -200,7 +214,7 @@ impl Clone for Toast {
     }
 }
 
-#[derive(Debug, Default, Clone, Deserialize, PartialEq, Action)]
+#[derive(Debug, Default, Clone, Deserialize, PartialEq)]
 pub struct OpenTerminal {
     pub working_directory: PathBuf,
 }
