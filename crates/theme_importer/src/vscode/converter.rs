@@ -127,6 +127,16 @@ impl VsCodeThemeConverter {
             .as_ref()
             .traverse(|color| try_parse_color(&color))?;
 
+        let vscode_scrollbar_shadow = vscode_colors
+            .scrollbar_shadow
+            .as_ref()
+            .traverse(|color| try_parse_color(&color))?;
+
+        let vscode_scrollbar_slider_background = vscode_colors
+            .scrollbar_slider_background
+            .as_ref()
+            .traverse(|color| try_parse_color(&color))?;
+
         Ok(ThemeColorsRefinement {
             border: vscode_colors
                 .panel_border
@@ -232,6 +242,14 @@ impl VsCodeThemeConverter {
                 .traverse(|color| try_parse_color(&color))?,
             editor_active_line_number: vscode_colors
                 .editor_foreground
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
+            scrollbar_track_background: vscode_scrollbar_shadow,
+            scrollbar_track_border: vscode_scrollbar_shadow,
+            scrollbar_thumb_background: vscode_scrollbar_slider_background,
+            scrollbar_thumb_border: vscode_scrollbar_slider_background,
+            scrollbar_thumb_hover_background: vscode_colors
+                .scrollbar_slider_hover_background
                 .as_ref()
                 .traverse(|color| try_parse_color(&color))?,
             terminal_background: vscode_colors
