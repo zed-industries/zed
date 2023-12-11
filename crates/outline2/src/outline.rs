@@ -243,6 +243,7 @@ impl PickerDelegate for OutlineViewDelegate {
                     s.select_ranges([position..position])
                 });
                 active_editor.highlight_rows(None);
+                active_editor.focus(cx);
             }
         });
 
