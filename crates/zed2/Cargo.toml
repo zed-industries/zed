@@ -49,6 +49,7 @@ lsp = { package = "lsp2", path = "../lsp2" }
 menu = { package = "menu2", path = "../menu2" }
 # language_tools = { path = "../language_tools" }
 node_runtime = { path = "../node_runtime" }
+notifications = { package = "notifications2", path = "../notifications2" }
 assistant = { package = "assistant2", path = "../assistant2" }
 outline = { package = "outline2", path = "../outline2" }
 # plugin_runtime = { path = "../plugin_runtime",optional = true }

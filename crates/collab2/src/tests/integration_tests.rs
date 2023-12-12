@@ -1823,7 +1823,7 @@ async fn test_active_call_events(
             owner: Arc::new(User {
                 id: client_a.user_id().unwrap(),
                 github_login: "user_a".to_string(),
-                avatar: None,
+                avatar_uri: "avatar_a".into(),
             }),
             project_id: project_a_id,
             worktree_root_names: vec!["a".to_string()],
@@ -1841,7 +1841,7 @@ async fn test_active_call_events(
             owner: Arc::new(User {
                 id: client_b.user_id().unwrap(),
                 github_login: "user_b".to_string(),
-                avatar: None,
+                avatar_uri: "avatar_b".into(),
             }),
             project_id: project_b_id,
             worktree_root_names: vec!["b".to_string()]

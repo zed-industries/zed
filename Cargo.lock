@@ -12071,6 +12071,7 @@ dependencies = [
  "lsp2",
  "menu2",
  "node_runtime",
+ "notifications2",
  "num_cpus",
  "outline2",
  "parking_lot 0.11.2",

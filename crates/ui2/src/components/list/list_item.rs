@@ -111,7 +111,7 @@ impl ListItem {
     }
 
     pub fn left_avatar(mut self, left_avatar: impl Into<ImageSource>) -> Self {
-        self.left_slot = Some(Avatar::source(left_avatar.into()).into_any_element());
+        self.left_slot = Some(Avatar::new(left_avatar).into_any_element());
         self
     }
 }

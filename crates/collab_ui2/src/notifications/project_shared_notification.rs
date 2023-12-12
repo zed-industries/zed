@@ -119,12 +119,7 @@ impl ProjectSharedNotification {
 
     fn render_owner(&self) -> impl Element {
         h_stack()
-            .children(
-                self.owner
-                    .avatar
-                    .clone()
-                    .map(|avatar| Avatar::data(avatar.clone())),
-            )
+            .child(Avatar::new(self.owner.avatar_uri.clone()))
             .child(
                 v_stack()
                     .child(Label::new(self.owner.github_login.clone()))
