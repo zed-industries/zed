@@ -114,14 +114,7 @@ impl IncomingCallNotification {
     }
     fn render_caller(&self, cx: &mut ViewContext<Self>) -> impl Element {
         h_stack()
-            .children(
-                self.state
-                    .call
-                    .calling_user
-                    .avatar
-                    .as_ref()
-                    .map(|avatar| Avatar::data(avatar.clone())),
-            )
+            .child(Avatar::new(self.state.call.calling_user.avatar_uri.clone()))
             .child(
                 v_stack()
                     .child(Label::new(format!(

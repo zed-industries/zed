@@ -1,6 +1,5 @@
 use crate::prelude::*;
-use gpui::{img, Div, Hsla, ImageData, ImageSource, Img, IntoElement, Styled};
-use std::sync::Arc;
+use gpui::{img, Div, Hsla, ImageSource, Img, IntoElement, Styled};
 
 #[derive(Debug, Default, PartialEq, Clone)]
 pub enum Shape {

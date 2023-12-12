@@ -19,6 +19,7 @@ mod contact_finder;
 use contact_finder::ContactFinder;
 use menu::{Cancel, Confirm, SelectNext, SelectPrev};
 use rpc::proto::{self, PeerId};
+use smallvec::SmallVec;
 use theme::{ActiveTheme, ThemeSettings};
 // use context_menu::{ContextMenu, ContextMenuItem};
 // use db::kvp::KEY_VALUE_STORE;
@@ -2543,7 +2544,7 @@ impl CollabPanel {
                     } else {
                         None
                     })
-                    .collect::<Vec<_>>(),
+                    .collect::<SmallVec<_>>(),
             };
 
             Some(result)

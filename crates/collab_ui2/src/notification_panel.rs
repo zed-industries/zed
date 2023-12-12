@@ -221,7 +221,7 @@ impl NotificationPanel {
 
         Some(
             h_stack()
-                .children(actor.map(|actor| Avatar::from(actor.avatar.clone())))
+                .children(actor.map(|actor| Avatar::new(actor.avatar_uri.clone())))
                 .child(
                     v_stack().child(Label::new(text)).child(
                         h_stack()
@@ -675,7 +675,7 @@ impl Render for NotificationToast {
 
         h_stack()
             .id("notification_panel_toast")
-            .children(user.and_then(|user| Some(img(user.avatar.clone()?))))
+            .children(user.map(|user| Avatar::new(user.avatar_uri.clone())))
             .child(Label::new(self.text.clone()))
             .child(
                 IconButton::new("close", Icon::Close)

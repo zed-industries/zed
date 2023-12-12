@@ -2,13 +2,12 @@ use super::{proto, Client, Status, TypedEnvelope};
 use anyhow::{anyhow, Context, Result};
 use collections::{hash_map::Entry, HashMap, HashSet};
 use feature_flags::FeatureFlagAppExt;
-use futures::{channel::mpsc, AsyncReadExt, Future, StreamExt};
-use gpui::{AsyncAppContext, EventEmitter, ImageData, Model, ModelContext, SharedString, Task};
+use futures::{channel::mpsc, Future, StreamExt};
+use gpui::{AsyncAppContext, EventEmitter, Model, ModelContext, SharedString, Task};
 use postage::{sink::Sink, watch};
 use rpc::proto::{RequestMessage, UsersResponse};
 use std::sync::{Arc, Weak};
 use text::ReplicaId;
-use util::http::HttpClient;
 use util::TryFutureExt as _;
 
 pub type UserId = u64;
@@ -111,10 +110,7 @@ enum UpdateContacts {
 }
 
 impl UserStore {
-    pub fn new(
-        client: Arc<Client>,
-        cx: &mut ModelContext<Self>,
-    ) -> Self {
+    pub fn new(client: Arc<Client>, cx: &mut ModelContext<Self>) -> Self {
         let (mut current_user_tx, current_user_rx) = watch::channel();
         let (update_contacts_tx, mut update_contacts_rx) = mpsc::unbounded();
         let rpc_subscriptions = vec![
@@ -695,26 +691,4 @@ impl Collaborator {
             user_id: message.user_id as UserId,
         })
     }
-}
-
-// todo!("we probably don't need this now that we fetch")
-async fn fetch_avatar(http: &dyn HttpClient, url: &str) -> Result<Arc<ImageData>> {
-    let mut response = http
-        .get(url, Default::default(), true)
-        .await
-        .map_err(|e| anyhow!("failed to send user avatar request: {}", e))?;
-
-    if !response.status().is_success() {
-        return Err(anyhow!("avatar request failed {:?}", response.status()));
-    }
-
-    let mut body = Vec::new();
-    response
-        .body_mut()
-        .read_to_end(&mut body)
-        .await
-        .map_err(|e| anyhow!("failed to read user avatar response body: {}", e))?;
-    let format = image::guess_format(&body)?;
-    let image = image::load_from_memory_with_format(&body, format)?.into_bgra8();
-    Ok(Arc::new(ImageData::new(image)))
 }
