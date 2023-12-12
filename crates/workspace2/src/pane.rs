@@ -7,10 +7,10 @@ use crate::{
 use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
 use gpui::{
-    actions, impl_actions, overlay, prelude::*, rems, Action, AnchorCorner, AnyWeakView,
-    AppContext, AsyncWindowContext, DismissEvent, Div, EntityId, EventEmitter, FocusHandle,
-    Focusable, FocusableView, Model, MouseButton, NavigationDirection, Pixels, Point, PromptLevel,
-    Render, Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
+    actions, impl_actions, overlay, prelude::*, Action, AnchorCorner, AnyWeakView, AppContext,
+    AsyncWindowContext, DismissEvent, Div, EntityId, EventEmitter, FocusHandle, Focusable,
+    FocusableView, Model, MouseButton, NavigationDirection, Pixels, Point, PromptLevel, Render,
+    Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use parking_lot::Mutex;
 use project::{Project, ProjectEntryId, ProjectPath};
@@ -28,7 +28,7 @@ use std::{
 
 use ui::{
     h_stack, prelude::*, right_click_menu, ButtonSize, Color, Icon, IconButton, IconSize,
-    Indicator, Label, Tab, TabPosition, Tooltip,
+    Indicator, Label, Tab, TabBar, TabPosition, Tooltip,
 };
 use ui::{v_stack, ContextMenu};
 use util::{maybe, truncate_and_remove_front};
@@ -1562,133 +1562,78 @@ impl Pane {
     }
 
     fn render_tab_bar(&mut self, cx: &mut ViewContext<'_, Pane>) -> impl IntoElement {
-        div()
-            .id("tab_bar")
-            .group("tab_bar")
-            .track_focus(&self.tab_bar_focus_handle)
-            .w_full()
-            // 30px @ 16px/rem
-            .h(rems(1.875))
-            .overflow_hidden()
-            .flex()
-            .flex_none()
-            .bg(cx.theme().colors().tab_bar_background)
-            // Left Side
-            .child(
-                h_stack()
-                    .flex()
-                    .flex_none()
-                    .gap_1()
-                    .px_1()
-                    .border_b()
-                    .border_r()
-                    .border_color(cx.theme().colors().border)
-                    // Nav Buttons
-                    .child(
-                        IconButton::new("navigate_backward", Icon::ArrowLeft)
-                            .icon_size(IconSize::Small)
-                            .on_click({
-                                let view = cx.view().clone();
-                                move |_, cx| view.update(cx, Self::navigate_backward)
-                            })
-                            .disabled(!self.can_navigate_backward()),
-                    )
-                    .child(
-                        IconButton::new("navigate_forward", Icon::ArrowRight)
-                            .icon_size(IconSize::Small)
-                            .on_click({
-                                let view = cx.view().clone();
-                                move |_, cx| view.update(cx, Self::navigate_backward)
-                            })
-                            .disabled(!self.can_navigate_forward()),
-                    ),
+        TabBar::new("tab_bar", self.tab_bar_focus_handle.clone())
+            .start_child(
+                IconButton::new("navigate_backward", Icon::ArrowLeft)
+                    .icon_size(IconSize::Small)
+                    .on_click({
+                        let view = cx.view().clone();
+                        move |_, cx| view.update(cx, Self::navigate_backward)
+                    })
+                    .disabled(!self.can_navigate_backward()),
             )
-            .child(
+            .start_child(
+                IconButton::new("navigate_forward", Icon::ArrowRight)
+                    .icon_size(IconSize::Small)
+                    .on_click({
+                        let view = cx.view().clone();
+                        move |_, cx| view.update(cx, Self::navigate_backward)
+                    })
+                    .disabled(!self.can_navigate_forward()),
+            )
+            .end_child(
                 div()
-                    .relative()
-                    .flex_1()
-                    .h_full()
-                    .overflow_hidden_x()
                     .child(
-                        div()
-                            .absolute()
-                            .top_0()
-                            .left_0()
-                            .z_index(1)
-                            .size_full()
-                            .border_b()
-                            .border_color(cx.theme().colors().border),
+                        IconButton::new("plus", Icon::Plus)
+                            .icon_size(IconSize::Small)
+                            .on_click(cx.listener(|this, _, cx| {
+                                let menu = ContextMenu::build(cx, |menu, cx| {
+                                    menu.action("New File", NewFile.boxed_clone())
+                                        .action("New Terminal", NewCenterTerminal.boxed_clone())
+                                        .action("New Search", NewSearch.boxed_clone())
+                                });
+                                cx.subscribe(&menu, |this, _, event: &DismissEvent, cx| {
+                                    this.focus(cx);
+                                    this.new_item_menu = None;
+                                })
+                                .detach();
+                                this.new_item_menu = Some(menu);
+                            })),
                     )
-                    .child(
-                        h_stack().id("tabs").z_index(2).children(
-                            self.items
-                                .iter()
-                                .enumerate()
-                                .zip(self.tab_details(cx))
-                                .map(|((ix, item), detail)| self.render_tab(ix, item, detail, cx)),
-                        ),
-                    ),
+                    .when_some(self.new_item_menu.as_ref(), |el, new_item_menu| {
+                        el.child(Self::render_menu_overlay(new_item_menu))
+                    }),
             )
-            // Right Side
-            .child(
-                h_stack()
-                    .flex()
-                    .flex_none()
-                    .gap_1()
-                    .px_1()
-                    .border_b()
-                    .border_l()
-                    .border_color(cx.theme().colors().border)
+            .end_child(
+                div()
                     .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_px()
-                            .child(
-                                IconButton::new("plus", Icon::Plus)
-                                    .icon_size(IconSize::Small)
-                                    .on_click(cx.listener(|this, _, cx| {
-                                        let menu = ContextMenu::build(cx, |menu, cx| {
-                                            menu.action("New File", NewFile.boxed_clone())
-                                                .action(
-                                                    "New Terminal",
-                                                    NewCenterTerminal.boxed_clone(),
-                                                )
-                                                .action("New Search", NewSearch.boxed_clone())
-                                        });
-                                        cx.subscribe(&menu, |this, _, event: &DismissEvent, cx| {
-                                            this.focus(cx);
-                                            this.new_item_menu = None;
-                                        })
-                                        .detach();
-                                        this.new_item_menu = Some(menu);
-                                    })),
-                            )
-                            .when_some(self.new_item_menu.as_ref(), |el, new_item_menu| {
-                                el.child(Self::render_menu_overlay(new_item_menu))
-                            })
-                            .child(
-                                IconButton::new("split", Icon::Split)
-                                    .icon_size(IconSize::Small)
-                                    .on_click(cx.listener(|this, _, cx| {
-                                        let menu = ContextMenu::build(cx, |menu, cx| {
-                                            menu.action("Split Right", SplitRight.boxed_clone())
-                                                .action("Split Left", SplitLeft.boxed_clone())
-                                                .action("Split Up", SplitUp.boxed_clone())
-                                                .action("Split Down", SplitDown.boxed_clone())
-                                        });
-                                        cx.subscribe(&menu, |this, _, event: &DismissEvent, cx| {
-                                            this.focus(cx);
-                                            this.split_item_menu = None;
-                                        })
-                                        .detach();
-                                        this.split_item_menu = Some(menu);
-                                    })),
-                            )
-                            .when_some(self.split_item_menu.as_ref(), |el, split_item_menu| {
-                                el.child(Self::render_menu_overlay(split_item_menu))
-                            }),
-                    ),
+                        IconButton::new("split", Icon::Split)
+                            .icon_size(IconSize::Small)
+                            .on_click(cx.listener(|this, _, cx| {
+                                let menu = ContextMenu::build(cx, |menu, cx| {
+                                    menu.action("Split Right", SplitRight.boxed_clone())
+                                        .action("Split Left", SplitLeft.boxed_clone())
+                                        .action("Split Up", SplitUp.boxed_clone())
+                                        .action("Split Down", SplitDown.boxed_clone())
+                                });
+                                cx.subscribe(&menu, |this, _, event: &DismissEvent, cx| {
+                                    this.focus(cx);
+                                    this.split_item_menu = None;
+                                })
+                                .detach();
+                                this.split_item_menu = Some(menu);
+                            })),
+                    )
+                    .when_some(self.split_item_menu.as_ref(), |el, split_item_menu| {
+                        el.child(Self::render_menu_overlay(split_item_menu))
+                    }),
+            )
+            .children(
+                self.items
+                    .iter()
+                    .enumerate()
+                    .zip(self.tab_details(cx))
+                    .map(|((ix, item), detail)| self.render_tab(ix, item, detail, cx)),
             )
     }
 
