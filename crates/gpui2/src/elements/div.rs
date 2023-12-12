@@ -29,7 +29,7 @@ pub struct GroupStyle {
     pub style: Box<StyleRefinement>,
 }
 
-pub trait InteractiveElement: Sized + Element {
+pub trait InteractiveElement: Sized {
     fn interactivity(&mut self) -> &mut Interactivity;
 
     fn group(mut self, group: impl Into<SharedString>) -> Self {
@@ -436,7 +436,6 @@ pub trait StatefulInteractiveElement: InteractiveElement {
             "calling tooltip more than once on the same element is not supported"
         );
         self.interactivity().tooltip_builder = Some(Rc::new(build_tooltip));
-
         self
     }
 }

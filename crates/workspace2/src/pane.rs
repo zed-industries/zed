@@ -7,10 +7,10 @@ use crate::{
 use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
 use gpui::{
-    actions, impl_actions, overlay, prelude::*, Action, AnchorCorner, AnyWeakView, AppContext,
-    AsyncWindowContext, DismissEvent, Div, EntityId, EventEmitter, FocusHandle, Focusable,
-    FocusableView, Model, MouseButton, NavigationDirection, Pixels, Point, PromptLevel, Render,
-    Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
+    actions, impl_actions, overlay, prelude::*, Action, AnchorCorner, AnyDrag, AnyWeakView,
+    AppContext, AsyncWindowContext, DismissEvent, Div, EntityId, EventEmitter, FocusHandle,
+    Focusable, FocusableView, Model, MouseButton, NavigationDirection, Pixels, Point, PromptLevel,
+    Render, Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use parking_lot::Mutex;
 use project::{Project, ProjectEntryId, ProjectPath};
@@ -25,6 +25,7 @@ use std::{
         Arc,
     },
 };
+use theme::ThemeSettings;
 
 use ui::{
     h_stack, prelude::*, right_click_menu, ButtonSize, Color, Icon, IconButton, IconSize,
@@ -229,6 +230,13 @@ pub struct NavigationEntry {
     pub item: Arc<dyn WeakItemHandle>,
     pub data: Option<Box<dyn Any + Send>>,
     pub timestamp: usize,
+}
+
+struct DraggedTab {
+    pub pane: View<Pane>,
+    pub ix: usize,
+    pub detail: usize,
+    pub is_active: bool,
 }
 
 // pub struct DraggedItem {
@@ -1501,7 +1509,17 @@ impl Pane {
                 .on_click(cx.listener(move |pane: &mut Self, event, cx| {
                     pane.activate_item(ix, true, true, cx)
                 }))
-                // .on_drag(move |pane, cx| pane.render_tab(ix, item.boxed_clone(), detail, cx))
+                .on_drag({
+                    let pane = cx.view().clone();
+                    move |cx| {
+                        cx.build_view(|cx| DraggedTab {
+                            pane: pane.clone(),
+                            detail,
+                            is_active,
+                            ix,
+                        })
+                    }
+                })
                 // .drag_over::<DraggedTab>(|d| d.bg(cx.theme().colors().element_drop_target))
                 // .on_drop(|_view, state: View<DraggedTab>, cx| {
                 //     eprintln!("{:?}", state.read(cx));
@@ -3131,15 +3149,17 @@ fn dirty_message_for(buffer_path: Option<ProjectPath>) -> String {
 //     }
 // }
 
-#[derive(Clone, Debug)]
-struct DraggedTab {
-    title: String,
-}
-
 impl Render for DraggedTab {
-    type Element = Div;
+    type Element = <Tab as RenderOnce>::Rendered;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-        div().w_8().h_4().bg(gpui::red())
+        let ui_font = ThemeSettings::get_global(cx).ui_font.family.clone();
+        let item = &self.pane.read(cx).items[self.ix];
+        let label = item.tab_content(Some(self.detail), false, cx);
+        Tab::new("")
+            .selected(self.is_active)
+            .child(label)
+            .render(cx)
+            .font(ui_font)
     }
 }
