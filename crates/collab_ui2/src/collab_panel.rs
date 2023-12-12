@@ -2557,7 +2557,7 @@ impl CollabPanel {
                 let channel = channel.clone();
                 move |cx| {
                     let channel = channel.clone();
-                    cx.build_view({ |cx| DraggedChannelView { channel, width } })
+                    cx.build_view(|cx| DraggedChannelView { channel, width })
                 }
             })
             .drag_over::<DraggedChannelView>(|style| {
