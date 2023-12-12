@@ -23,7 +23,7 @@ impl SystemSpecs {
     pub fn new(cx: &AppContext) -> Self {
         let platform = cx.platform();
         let app_version = ZED_APP_VERSION.or_else(|| platform.app_version().ok());
-        let release_channel = cx.global::<ReleaseChannel>().dev_name();
+        let release_channel = cx.global::<ReleaseChannel>().display_name();
         let os_name = platform.os_name();
         let system = System::new_all();
         let memory = system.total_memory();
