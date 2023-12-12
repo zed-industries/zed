@@ -17,7 +17,7 @@ use std::{
     any::{Any, TypeId},
     sync::Arc,
 };
-use ui::Label;
+use ui::{prelude::*, Label};
 use util::ResultExt;
 use workspace::{
     item::{FollowableItem, Item, ItemEvent, ItemHandle},
@@ -253,7 +253,7 @@ impl Item for ChannelView {
         }
     }
 
-    fn tab_content(&self, _: Option<usize>, cx: &WindowContext) -> AnyElement {
+    fn tab_content(&self, _: Option<usize>, selected: bool, cx: &WindowContext) -> AnyElement {
         let label = if let Some(channel) = self.channel(cx) {
             match (
                 channel.can_edit_notes(),
@@ -266,7 +266,13 @@ impl Item for ChannelView {
         } else {
             format!("channel notes (disconnected)")
         };
-        Label::new(label).into_any_element()
+        Label::new(label)
+            .color(if selected {
+                Color::Default
+            } else {
+                Color::Muted
+            })
+            .into_any_element()
     }
 
     fn clone_on_split(&self, _: WorkspaceId, cx: &mut ViewContext<Self>) -> Option<View<Self>> {

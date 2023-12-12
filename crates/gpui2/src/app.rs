@@ -9,7 +9,6 @@ use derive_more::{Deref, DerefMut};
 pub use entity_map::*;
 pub use model_context::*;
 use refineable::Refineable;
-use smallvec::SmallVec;
 use smol::future::FutureExt;
 #[cfg(any(test, feature = "test-support"))]
 pub use test_context::*;
@@ -19,13 +18,13 @@ use crate::{
     current_platform, image_cache::ImageCache, init_app_menus, Action, ActionRegistry, Any,
     AnyView, AnyWindowHandle, AppMetadata, AssetSource, BackgroundExecutor, ClipboardItem, Context,
     DispatchPhase, DisplayId, Entity, EventEmitter, FocusEvent, FocusHandle, FocusId,
-    ForegroundExecutor, KeyBinding, Keymap, LayoutId, Menu, PathPromptOptions, Pixels, Platform,
-    PlatformDisplay, Point, Render, SharedString, SubscriberSet, Subscription, SvgRenderer, Task,
-    TextStyle, TextStyleRefinement, TextSystem, View, ViewContext, Window, WindowContext,
-    WindowHandle, WindowId,
+    ForegroundExecutor, KeyBinding, Keymap, Keystroke, LayoutId, Menu, PathPromptOptions, Pixels,
+    Platform, PlatformDisplay, Point, Render, SharedString, SubscriberSet, Subscription,
+    SvgRenderer, Task, TextStyle, TextStyleRefinement, TextSystem, View, ViewContext, Window,
+    WindowContext, WindowHandle, WindowId,
 };
 use anyhow::{anyhow, Result};
-use collections::{HashMap, HashSet, VecDeque};
+use collections::{FxHashMap, FxHashSet, VecDeque};
 use futures::{channel::oneshot, future::LocalBoxFuture, Future};
 use parking_lot::Mutex;
 use slotmap::SlotMap;
@@ -171,6 +170,7 @@ impl App {
 pub(crate) type FrameCallback = Box<dyn FnOnce(&mut AppContext)>;
 type Handler = Box<dyn FnMut(&mut AppContext) -> bool + 'static>;
 type Listener = Box<dyn FnMut(&dyn Any, &mut AppContext) -> bool + 'static>;
+type KeystrokeObserver = Box<dyn FnMut(&KeystrokeEvent, &mut WindowContext) + 'static>;
 type QuitHandler = Box<dyn FnOnce(&mut AppContext) -> LocalBoxFuture<'static, ()> + 'static>;
 type ReleaseListener = Box<dyn FnOnce(&mut dyn Any, &mut AppContext) + 'static>;
 type NewViewListener = Box<dyn FnMut(AnyView, &mut WindowContext) + 'static>;
@@ -191,27 +191,28 @@ pub struct AppContext {
     pub(crate) actions: Rc<ActionRegistry>,
     pub(crate) active_drag: Option<AnyDrag>,
     pub(crate) active_tooltip: Option<AnyTooltip>,
-    pub(crate) next_frame_callbacks: HashMap<DisplayId, Vec<FrameCallback>>,
-    pub(crate) frame_consumers: HashMap<DisplayId, Task<()>>,
+    pub(crate) next_frame_callbacks: FxHashMap<DisplayId, Vec<FrameCallback>>,
+    pub(crate) frame_consumers: FxHashMap<DisplayId, Task<()>>,
     pub(crate) background_executor: BackgroundExecutor,
     pub(crate) foreground_executor: ForegroundExecutor,
     pub(crate) svg_renderer: SvgRenderer,
     asset_source: Arc<dyn AssetSource>,
     pub(crate) image_cache: ImageCache,
     pub(crate) text_style_stack: Vec<TextStyleRefinement>,
-    pub(crate) globals_by_type: HashMap<TypeId, Box<dyn Any>>,
+    pub(crate) globals_by_type: FxHashMap<TypeId, Box<dyn Any>>,
     pub(crate) entities: EntityMap,
     pub(crate) new_view_observers: SubscriberSet<TypeId, NewViewListener>,
     pub(crate) windows: SlotMap<WindowId, Option<Window>>,
     pub(crate) keymap: Arc<Mutex<Keymap>>,
     pub(crate) global_action_listeners:
-        HashMap<TypeId, Vec<Rc<dyn Fn(&dyn Any, DispatchPhase, &mut Self)>>>,
+        FxHashMap<TypeId, Vec<Rc<dyn Fn(&dyn Any, DispatchPhase, &mut Self)>>>,
     pending_effects: VecDeque<Effect>,
-    pub(crate) pending_notifications: HashSet<EntityId>,
-    pub(crate) pending_global_notifications: HashSet<TypeId>,
+    pub(crate) pending_notifications: FxHashSet<EntityId>,
+    pub(crate) pending_global_notifications: FxHashSet<TypeId>,
     pub(crate) observers: SubscriberSet<EntityId, Handler>,
     // TypeId is the type of the event that the listener callback expects
     pub(crate) event_listeners: SubscriberSet<EntityId, (TypeId, Listener)>,
+    pub(crate) keystroke_observers: SubscriberSet<(), KeystrokeObserver>,
     pub(crate) release_listeners: SubscriberSet<EntityId, ReleaseListener>,
     pub(crate) global_observers: SubscriberSet<TypeId, Handler>,
     pub(crate) quit_observers: SubscriberSet<(), QuitHandler>,
@@ -252,26 +253,27 @@ impl AppContext {
                 pending_updates: 0,
                 active_drag: None,
                 active_tooltip: None,
-                next_frame_callbacks: HashMap::default(),
-                frame_consumers: HashMap::default(),
+                next_frame_callbacks: FxHashMap::default(),
+                frame_consumers: FxHashMap::default(),
                 background_executor: executor,
                 foreground_executor,
                 svg_renderer: SvgRenderer::new(asset_source.clone()),
                 asset_source,
                 image_cache: ImageCache::new(http_client),
                 text_style_stack: Vec::new(),
-                globals_by_type: HashMap::default(),
+                globals_by_type: FxHashMap::default(),
                 entities,
                 new_view_observers: SubscriberSet::new(),
                 windows: SlotMap::with_key(),
                 keymap: Arc::new(Mutex::new(Keymap::default())),
-                global_action_listeners: HashMap::default(),
+                global_action_listeners: FxHashMap::default(),
                 pending_effects: VecDeque::new(),
-                pending_notifications: HashSet::default(),
-                pending_global_notifications: HashSet::default(),
+                pending_notifications: FxHashSet::default(),
+                pending_global_notifications: FxHashSet::default(),
                 observers: SubscriberSet::new(),
                 event_listeners: SubscriberSet::new(),
                 release_listeners: SubscriberSet::new(),
+                keystroke_observers: SubscriberSet::new(),
                 global_observers: SubscriberSet::new(),
                 quit_observers: SubscriberSet::new(),
                 layout_id_buffer: Default::default(),
@@ -514,6 +516,10 @@ impl AppContext {
         self.platform.path_for_auxiliary_executable(name)
     }
 
+    pub fn double_click_interval(&self) -> Duration {
+        self.platform.double_click_interval()
+    }
+
     pub fn prompt_for_paths(
         &self,
         options: PathPromptOptions,
@@ -597,21 +603,25 @@ impl AppContext {
             }
         }
 
-        let dirty_window_ids = self
-            .windows
-            .iter()
-            .filter_map(|(_, window)| {
-                let window = window.as_ref()?;
+        for window in self.windows.values() {
+            if let Some(window) = window.as_ref() {
                 if window.dirty {
-                    Some(window.handle.clone())
-                } else {
-                    None
+                    window.platform_window.invalidate();
                 }
-            })
-            .collect::<SmallVec<[_; 8]>>();
+            }
+        }
 
-        for dirty_window_handle in dirty_window_ids {
-            dirty_window_handle.update(self, |_, cx| cx.draw()).unwrap();
+        #[cfg(any(test, feature = "test-support"))]
+        for window in self
+            .windows
+            .values()
+            .filter_map(|window| {
+                let window = window.as_ref()?;
+                window.dirty.then_some(window.handle)
+            })
+            .collect::<Vec<_>>()
+        {
+            self.update_window(window, |_, cx| cx.draw()).unwrap();
         }
     }
 
@@ -955,6 +965,15 @@ impl AppContext {
         subscription
     }
 
+    pub fn observe_keystrokes(
+        &mut self,
+        f: impl FnMut(&KeystrokeEvent, &mut WindowContext) + 'static,
+    ) -> Subscription {
+        let (subscription, activate) = self.keystroke_observers.insert((), Box::new(f));
+        activate();
+        subscription
+    }
+
     pub(crate) fn push_text_style(&mut self, text_style: TextStyleRefinement) {
         self.text_style_stack.push(text_style);
     }
@@ -1280,4 +1299,10 @@ pub struct AnyDrag {
 pub(crate) struct AnyTooltip {
     pub view: AnyView,
     pub cursor_offset: Point<Pixels>,
+}
+
+#[derive(Debug)]
+pub struct KeystrokeEvent {
+    pub keystroke: Keystroke,
+    pub action: Option<Box<dyn Action>>,
 }

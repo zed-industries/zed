@@ -29,6 +29,7 @@ use std::{
     path::Path,
     sync::Arc,
 };
+use theme::ThemeSettings;
 use ui::{prelude::*, v_stack, ContextMenu, IconElement, Label, ListItem};
 use unicase::UniCase;
 use util::{maybe, ResultExt, TryFutureExt};
@@ -55,7 +56,7 @@ pub struct ProjectPanel {
     clipboard_entry: Option<ClipboardEntry>,
     _dragged_entry_destination: Option<Arc<Path>>,
     _workspace: WeakView<Workspace>,
-    width: Option<f32>,
+    width: Option<Pixels>,
     pending_serialization: Task<Option<()>>,
 }
 
@@ -86,7 +87,7 @@ pub enum ClipboardEntry {
     },
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct EntryDetails {
     filename: String,
     icon: Option<Arc<str>>,
@@ -162,6 +163,12 @@ struct SerializedProjectPanel {
     width: Option<f32>,
 }
 
+struct DraggedProjectEntryView {
+    entry_id: ProjectEntryId,
+    details: EntryDetails,
+    width: Pixels,
+}
+
 impl ProjectPanel {
     fn new(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) -> View<Self> {
         let project = workspace.project().clone();
@@ -177,13 +184,13 @@ impl ProjectPanel {
 
             cx.subscribe(&project, |this, project, event, cx| match event {
                 project::Event::ActiveEntryChanged(Some(entry_id)) => {
-                    if let Some(worktree_id) = project.read(cx).worktree_id_for_entry(*entry_id, cx)
-                    {
-                        this.expand_entry(worktree_id, *entry_id, cx);
-                        this.update_visible_entries(Some((worktree_id, *entry_id)), cx);
-                        this.autoscroll(cx);
-                        cx.notify();
+                    if ProjectPanelSettings::get_global(cx).auto_reveal_entries {
+                        this.reveal_entry(project, *entry_id, true, cx);
                     }
+                }
+                project::Event::RevealInProjectPanel(entry_id) => {
+                    this.reveal_entry(project, *entry_id, false, cx);
+                    cx.emit(Event::ActivatePanel);
                 }
                 project::Event::ActivateProjectPanel => {
                     cx.emit(Event::ActivatePanel);
@@ -236,7 +243,6 @@ impl ProjectPanel {
                 context_menu: None,
                 filename_editor,
                 clipboard_entry: None,
-                // context_menu: cx.add_view(|cx| ContextMenu::new(view_id, cx)),
                 _dragged_entry_destination: None,
                 _workspace: workspace.weak_handle(),
                 width: None,
@@ -331,7 +337,7 @@ impl ProjectPanel {
             let panel = ProjectPanel::new(workspace, cx);
             if let Some(serialized_panel) = serialized_panel {
                 panel.update(cx, |panel, cx| {
-                    panel.width = serialized_panel.width;
+                    panel.width = serialized_panel.width.map(px);
                     cx.notify();
                 });
             }
@@ -346,7 +352,9 @@ impl ProjectPanel {
                 KEY_VALUE_STORE
                     .write_kvp(
                         PROJECT_PANEL_KEY.into(),
-                        serde_json::to_string(&SerializedProjectPanel { width })?,
+                        serde_json::to_string(&SerializedProjectPanel {
+                            width: width.map(|p| p.0),
+                        })?,
                     )
                     .await?;
                 anyhow::Ok(())
@@ -1003,37 +1011,36 @@ impl ProjectPanel {
         }
     }
 
-    // todo!()
-    // fn move_entry(
-    //     &mut self,
-    //     entry_to_move: ProjectEntryId,
-    //     destination: ProjectEntryId,
-    //     destination_is_file: bool,
-    //     cx: &mut ViewContext<Self>,
-    // ) {
-    //     let destination_worktree = self.project.update(cx, |project, cx| {
-    //         let entry_path = project.path_for_entry(entry_to_move, cx)?;
-    //         let destination_entry_path = project.path_for_entry(destination, cx)?.path.clone();
+    fn move_entry(
+        &mut self,
+        entry_to_move: ProjectEntryId,
+        destination: ProjectEntryId,
+        destination_is_file: bool,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let destination_worktree = self.project.update(cx, |project, cx| {
+            let entry_path = project.path_for_entry(entry_to_move, cx)?;
+            let destination_entry_path = project.path_for_entry(destination, cx)?.path.clone();
 
-    //         let mut destination_path = destination_entry_path.as_ref();
-    //         if destination_is_file {
-    //             destination_path = destination_path.parent()?;
-    //         }
+            let mut destination_path = destination_entry_path.as_ref();
+            if destination_is_file {
+                destination_path = destination_path.parent()?;
+            }
 
-    //         let mut new_path = destination_path.to_path_buf();
-    //         new_path.push(entry_path.path.file_name()?);
-    //         if new_path != entry_path.path.as_ref() {
-    //             let task = project.rename_entry(entry_to_move, new_path, cx);
-    //             cx.foreground_executor().spawn(task).detach_and_log_err(cx);
-    //         }
+            let mut new_path = destination_path.to_path_buf();
+            new_path.push(entry_path.path.file_name()?);
+            if new_path != entry_path.path.as_ref() {
+                let task = project.rename_entry(entry_to_move, new_path, cx);
+                cx.foreground_executor().spawn(task).detach_and_log_err(cx);
+            }
 
-    //         Some(project.worktree_id_for_entry(destination, cx)?)
-    //     });
+            Some(project.worktree_id_for_entry(destination, cx)?)
+        });
 
-    //     if let Some(destination_worktree) = destination_worktree {
-    //         self.expand_entry(destination_worktree, destination, cx);
-    //     }
-    // }
+        if let Some(destination_worktree) = destination_worktree {
+            self.expand_entry(destination_worktree, destination, cx);
+        }
+    }
 
     fn index_for_selection(&self, selection: Selection) -> Option<(usize, usize, usize)> {
         let mut entry_index = 0;
@@ -1349,15 +1356,15 @@ impl ProjectPanel {
         &self,
         entry_id: ProjectEntryId,
         details: EntryDetails,
-        // dragged_entry_destination: &mut Option<Arc<Path>>,
         cx: &mut ViewContext<Self>,
-    ) -> ListItem {
+    ) -> Stateful<Div> {
         let kind = details.kind;
         let settings = ProjectPanelSettings::get_global(cx);
         let show_editor = details.is_editing && !details.is_processing;
         let is_selected = self
             .selection
             .map_or(false, |selection| selection.entry_id == entry_id);
+        let width = self.width.unwrap_or(px(0.));
 
         let theme = cx.theme();
         let filename_text_color = details
@@ -1370,52 +1377,69 @@ impl ProjectPanel {
             })
             .unwrap_or(theme.status().info);
 
-        ListItem::new(entry_id.to_proto() as usize)
-            .indent_level(details.depth)
-            .indent_step_size(px(settings.indent_size))
-            .selected(is_selected)
-            .child(if let Some(icon) = &details.icon {
-                div().child(IconElement::from_path(icon.to_string()))
-            } else {
-                div()
+        div()
+            .id(entry_id.to_proto() as usize)
+            .on_drag({
+                let details = details.clone();
+                move |cx| {
+                    let details = details.clone();
+                    cx.build_view(|_| DraggedProjectEntryView {
+                        details,
+                        width,
+                        entry_id,
+                    })
+                }
             })
+            .drag_over::<DraggedProjectEntryView>(|style| {
+                style.bg(cx.theme().colors().ghost_element_hover)
+            })
+            .on_drop(cx.listener(
+                move |this, dragged_view: &View<DraggedProjectEntryView>, cx| {
+                    this.move_entry(dragged_view.read(cx).entry_id, entry_id, kind.is_file(), cx);
+                },
+            ))
             .child(
-                if let (Some(editor), true) = (Some(&self.filename_editor), show_editor) {
-                    div().h_full().w_full().child(editor.clone())
-                } else {
-                    div()
-                        .text_color(filename_text_color)
-                        .child(Label::new(details.filename.clone()))
-                }
-                .ml_1(),
-            )
-            .on_click(cx.listener(move |this, event: &gpui::ClickEvent, cx| {
-                if event.down.button == MouseButton::Right {
-                    return;
-                }
-                if !show_editor {
-                    if kind.is_dir() {
-                        this.toggle_expanded(entry_id, cx);
+                ListItem::new(entry_id.to_proto() as usize)
+                    .indent_level(details.depth)
+                    .indent_step_size(px(settings.indent_size))
+                    .selected(is_selected)
+                    .child(if let Some(icon) = &details.icon {
+                        div().child(IconElement::from_path(icon.to_string()))
                     } else {
-                        if event.down.modifiers.command {
-                            this.split_entry(entry_id, cx);
+                        div()
+                    })
+                    .child(
+                        if let (Some(editor), true) = (Some(&self.filename_editor), show_editor) {
+                            div().h_full().w_full().child(editor.clone())
                         } else {
-                            this.open_entry(entry_id, event.up.click_count > 1, cx);
+                            div()
+                                .text_color(filename_text_color)
+                                .child(Label::new(details.filename.clone()))
                         }
-                    }
-                }
-            }))
-            .on_secondary_mouse_down(cx.listener(move |this, event: &MouseDownEvent, cx| {
-                this.deploy_context_menu(event.position, entry_id, cx);
-            }))
-        // .on_drop::<ProjectEntryId>(|this, event, cx| {
-        //     this.move_entry(
-        //         *dragged_entry,
-        //         entry_id,
-        //         matches!(details.kind, EntryKind::File(_)),
-        //         cx,
-        //     );
-        // })
+                        .ml_1(),
+                    )
+                    .on_click(cx.listener(move |this, event: &gpui::ClickEvent, cx| {
+                        if event.down.button == MouseButton::Right {
+                            return;
+                        }
+                        if !show_editor {
+                            if kind.is_dir() {
+                                this.toggle_expanded(entry_id, cx);
+                            } else {
+                                if event.down.modifiers.command {
+                                    this.split_entry(entry_id, cx);
+                                } else {
+                                    this.open_entry(entry_id, event.up.click_count > 1, cx);
+                                }
+                            }
+                        }
+                    }))
+                    .on_secondary_mouse_down(cx.listener(
+                        move |this, event: &MouseDownEvent, cx| {
+                            this.deploy_context_menu(event.position, entry_id, cx);
+                        },
+                    )),
+            )
     }
 
     fn dispatch_context(&self, cx: &ViewContext<Self>) -> KeyContext {
@@ -1430,8 +1454,32 @@ impl ProjectPanel {
         };
 
         dispatch_context.add(identifier);
-
         dispatch_context
+    }
+
+    fn reveal_entry(
+        &mut self,
+        project: Model<Project>,
+        entry_id: ProjectEntryId,
+        skip_ignored: bool,
+        cx: &mut ViewContext<'_, ProjectPanel>,
+    ) {
+        if let Some(worktree) = project.read(cx).worktree_for_entry(entry_id, cx) {
+            let worktree = worktree.read(cx);
+            if skip_ignored
+                && worktree
+                    .entry_for_id(entry_id)
+                    .map_or(true, |entry| entry.is_ignored)
+            {
+                return;
+            }
+
+            let worktree_id = worktree.id();
+            self.expand_entry(worktree_id, entry_id, cx);
+            self.update_visible_entries(Some((worktree_id, entry_id)), cx);
+            self.autoscroll(cx);
+            cx.notify();
+        }
     }
 }
 
@@ -1503,6 +1551,30 @@ impl Render for ProjectPanel {
     }
 }
 
+impl Render for DraggedProjectEntryView {
+    type Element = Div;
+
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+        let settings = ProjectPanelSettings::get_global(cx);
+        let ui_font = ThemeSettings::get_global(cx).ui_font.family.clone();
+        h_stack()
+            .font(ui_font)
+            .bg(cx.theme().colors().background)
+            .w(self.width)
+            .child(
+                ListItem::new(self.entry_id.to_proto() as usize)
+                    .indent_level(self.details.depth)
+                    .indent_step_size(px(settings.indent_size))
+                    .child(if let Some(icon) = &self.details.icon {
+                        div().child(IconElement::from_path(icon.to_string()))
+                    } else {
+                        div()
+                    })
+                    .child(Label::new(self.details.filename.clone())),
+            )
+    }
+}
+
 impl EventEmitter<Event> for ProjectPanel {}
 
 impl EventEmitter<PanelEvent> for ProjectPanel {}
@@ -1534,12 +1606,14 @@ impl Panel for ProjectPanel {
     }
 
     fn size(&self, cx: &WindowContext) -> f32 {
-        self.width
-            .unwrap_or_else(|| ProjectPanelSettings::get_global(cx).default_width)
+        self.width.map_or_else(
+            || ProjectPanelSettings::get_global(cx).default_width,
+            |width| width.0,
+        )
     }
 
     fn set_size(&mut self, size: Option<f32>, cx: &mut ViewContext<Self>) {
-        self.width = size;
+        self.width = size.map(px);
         self.serialize(cx);
         cx.notify();
     }
@@ -2827,6 +2901,447 @@ mod tests {
         );
     }
 
+    #[gpui::test]
+    async fn test_autoreveal_and_gitignored_files(cx: &mut gpui::TestAppContext) {
+        init_test_with_editor(cx);
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings::<ProjectSettings>(cx, |project_settings| {
+                    project_settings.file_scan_exclusions = Some(Vec::new());
+                });
+                store.update_user_settings::<ProjectPanelSettings>(cx, |project_panel_settings| {
+                    project_panel_settings.auto_reveal_entries = Some(false)
+                });
+            })
+        });
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/project_root",
+            json!({
+                ".git": {},
+                ".gitignore": "**/gitignored_dir",
+                "dir_1": {
+                    "file_1.py": "# File 1_1 contents",
+                    "file_2.py": "# File 1_2 contents",
+                    "file_3.py": "# File 1_3 contents",
+                    "gitignored_dir": {
+                        "file_a.py": "# File contents",
+                        "file_b.py": "# File contents",
+                        "file_c.py": "# File contents",
+                    },
+                },
+                "dir_2": {
+                    "file_1.py": "# File 2_1 contents",
+                    "file_2.py": "# File 2_2 contents",
+                    "file_3.py": "# File 2_3 contents",
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/project_root".as_ref()], cx).await;
+        let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let panel = workspace
+            .update(cx, |workspace, cx| ProjectPanel::new(workspace, cx))
+            .unwrap();
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..20, cx),
+            &[
+                "v project_root",
+                "    > .git",
+                "    > dir_1",
+                "    > dir_2",
+                "      .gitignore",
+            ]
+        );
+
+        let dir_1_file = find_project_entry(&panel, "project_root/dir_1/file_1.py", cx)
+            .expect("dir 1 file is not ignored and should have an entry");
+        let dir_2_file = find_project_entry(&panel, "project_root/dir_2/file_1.py", cx)
+            .expect("dir 2 file is not ignored and should have an entry");
+        let gitignored_dir_file =
+            find_project_entry(&panel, "project_root/dir_1/gitignored_dir/file_a.py", cx);
+        assert_eq!(
+            gitignored_dir_file, None,
+            "File in the gitignored dir should not have an entry before its dir is toggled"
+        );
+
+        toggle_expand_dir(&panel, "project_root/dir_1", cx);
+        toggle_expand_dir(&panel, "project_root/dir_1/gitignored_dir", cx);
+        cx.executor().run_until_parked();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..20, cx),
+            &[
+                "v project_root",
+                "    > .git",
+                "    v dir_1",
+                "        v gitignored_dir  <== selected",
+                "              file_a.py",
+                "              file_b.py",
+                "              file_c.py",
+                "          file_1.py",
+                "          file_2.py",
+                "          file_3.py",
+                "    > dir_2",
+                "      .gitignore",
+            ],
+            "Should show gitignored dir file list in the project panel"
+        );
+        let gitignored_dir_file =
+            find_project_entry(&panel, "project_root/dir_1/gitignored_dir/file_a.py", cx)
+                .expect("after gitignored dir got opened, a file entry should be present");
+
+        toggle_expand_dir(&panel, "project_root/dir_1/gitignored_dir", cx);
+        toggle_expand_dir(&panel, "project_root/dir_1", cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..20, cx),
+            &[
+                "v project_root",
+                "    > .git",
+                "    > dir_1  <== selected",
+                "    > dir_2",
+                "      .gitignore",
+            ],
+            "Should hide all dir contents again and prepare for the auto reveal test"
+        );
+
+        for file_entry in [dir_1_file, dir_2_file, gitignored_dir_file] {
+            panel.update(cx, |panel, cx| {
+                panel.project.update(cx, |_, cx| {
+                    cx.emit(project::Event::ActiveEntryChanged(Some(file_entry)))
+                })
+            });
+            cx.run_until_parked();
+            assert_eq!(
+                visible_entries_as_strings(&panel, 0..20, cx),
+                &[
+                    "v project_root",
+                    "    > .git",
+                    "    > dir_1  <== selected",
+                    "    > dir_2",
+                    "      .gitignore",
+                ],
+                "When no auto reveal is enabled, the selected entry should not be revealed in the project panel"
+            );
+        }
+
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings::<ProjectPanelSettings>(cx, |project_panel_settings| {
+                    project_panel_settings.auto_reveal_entries = Some(true)
+                });
+            })
+        });
+
+        panel.update(cx, |panel, cx| {
+            panel.project.update(cx, |_, cx| {
+                cx.emit(project::Event::ActiveEntryChanged(Some(dir_1_file)))
+            })
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..20, cx),
+            &[
+                "v project_root",
+                "    > .git",
+                "    v dir_1",
+                "        > gitignored_dir",
+                "          file_1.py  <== selected",
+                "          file_2.py",
+                "          file_3.py",
+                "    > dir_2",
+                "      .gitignore",
+            ],
+            "When auto reveal is enabled, not ignored dir_1 entry should be revealed"
+        );
+
+        panel.update(cx, |panel, cx| {
+            panel.project.update(cx, |_, cx| {
+                cx.emit(project::Event::ActiveEntryChanged(Some(dir_2_file)))
+            })
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..20, cx),
+            &[
+                "v project_root",
+                "    > .git",
+                "    v dir_1",
+                "        > gitignored_dir",
+                "          file_1.py",
+                "          file_2.py",
+                "          file_3.py",
+                "    v dir_2",
+                "          file_1.py  <== selected",
+                "          file_2.py",
+                "          file_3.py",
+                "      .gitignore",
+            ],
+            "When auto reveal is enabled, not ignored dir_2 entry should be revealed"
+        );
+
+        panel.update(cx, |panel, cx| {
+            panel.project.update(cx, |_, cx| {
+                cx.emit(project::Event::ActiveEntryChanged(Some(
+                    gitignored_dir_file,
+                )))
+            })
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..20, cx),
+            &[
+                "v project_root",
+                "    > .git",
+                "    v dir_1",
+                "        > gitignored_dir",
+                "          file_1.py",
+                "          file_2.py",
+                "          file_3.py",
+                "    v dir_2",
+                "          file_1.py  <== selected",
+                "          file_2.py",
+                "          file_3.py",
+                "      .gitignore",
+            ],
+            "When auto reveal is enabled, a gitignored selected entry should not be revealed in the project panel"
+        );
+
+        panel.update(cx, |panel, cx| {
+            panel.project.update(cx, |_, cx| {
+                cx.emit(project::Event::RevealInProjectPanel(gitignored_dir_file))
+            })
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..20, cx),
+            &[
+                "v project_root",
+                "    > .git",
+                "    v dir_1",
+                "        v gitignored_dir",
+                "              file_a.py  <== selected",
+                "              file_b.py",
+                "              file_c.py",
+                "          file_1.py",
+                "          file_2.py",
+                "          file_3.py",
+                "    v dir_2",
+                "          file_1.py",
+                "          file_2.py",
+                "          file_3.py",
+                "      .gitignore",
+            ],
+            "When a gitignored entry is explicitly revealed, it should be shown in the project tree"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_explicit_reveal(cx: &mut gpui::TestAppContext) {
+        init_test_with_editor(cx);
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings::<ProjectSettings>(cx, |project_settings| {
+                    project_settings.file_scan_exclusions = Some(Vec::new());
+                });
+                store.update_user_settings::<ProjectPanelSettings>(cx, |project_panel_settings| {
+                    project_panel_settings.auto_reveal_entries = Some(false)
+                });
+            })
+        });
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/project_root",
+            json!({
+                ".git": {},
+                ".gitignore": "**/gitignored_dir",
+                "dir_1": {
+                    "file_1.py": "# File 1_1 contents",
+                    "file_2.py": "# File 1_2 contents",
+                    "file_3.py": "# File 1_3 contents",
+                    "gitignored_dir": {
+                        "file_a.py": "# File contents",
+                        "file_b.py": "# File contents",
+                        "file_c.py": "# File contents",
+                    },
+                },
+                "dir_2": {
+                    "file_1.py": "# File 2_1 contents",
+                    "file_2.py": "# File 2_2 contents",
+                    "file_3.py": "# File 2_3 contents",
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/project_root".as_ref()], cx).await;
+        let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let panel = workspace
+            .update(cx, |workspace, cx| ProjectPanel::new(workspace, cx))
+            .unwrap();
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..20, cx),
+            &[
+                "v project_root",
+                "    > .git",
+                "    > dir_1",
+                "    > dir_2",
+                "      .gitignore",
+            ]
+        );
+
+        let dir_1_file = find_project_entry(&panel, "project_root/dir_1/file_1.py", cx)
+            .expect("dir 1 file is not ignored and should have an entry");
+        let dir_2_file = find_project_entry(&panel, "project_root/dir_2/file_1.py", cx)
+            .expect("dir 2 file is not ignored and should have an entry");
+        let gitignored_dir_file =
+            find_project_entry(&panel, "project_root/dir_1/gitignored_dir/file_a.py", cx);
+        assert_eq!(
+            gitignored_dir_file, None,
+            "File in the gitignored dir should not have an entry before its dir is toggled"
+        );
+
+        toggle_expand_dir(&panel, "project_root/dir_1", cx);
+        toggle_expand_dir(&panel, "project_root/dir_1/gitignored_dir", cx);
+        cx.run_until_parked();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..20, cx),
+            &[
+                "v project_root",
+                "    > .git",
+                "    v dir_1",
+                "        v gitignored_dir  <== selected",
+                "              file_a.py",
+                "              file_b.py",
+                "              file_c.py",
+                "          file_1.py",
+                "          file_2.py",
+                "          file_3.py",
+                "    > dir_2",
+                "      .gitignore",
+            ],
+            "Should show gitignored dir file list in the project panel"
+        );
+        let gitignored_dir_file =
+            find_project_entry(&panel, "project_root/dir_1/gitignored_dir/file_a.py", cx)
+                .expect("after gitignored dir got opened, a file entry should be present");
+
+        toggle_expand_dir(&panel, "project_root/dir_1/gitignored_dir", cx);
+        toggle_expand_dir(&panel, "project_root/dir_1", cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..20, cx),
+            &[
+                "v project_root",
+                "    > .git",
+                "    > dir_1  <== selected",
+                "    > dir_2",
+                "      .gitignore",
+            ],
+            "Should hide all dir contents again and prepare for the explicit reveal test"
+        );
+
+        for file_entry in [dir_1_file, dir_2_file, gitignored_dir_file] {
+            panel.update(cx, |panel, cx| {
+                panel.project.update(cx, |_, cx| {
+                    cx.emit(project::Event::ActiveEntryChanged(Some(file_entry)))
+                })
+            });
+            cx.run_until_parked();
+            assert_eq!(
+                visible_entries_as_strings(&panel, 0..20, cx),
+                &[
+                    "v project_root",
+                    "    > .git",
+                    "    > dir_1  <== selected",
+                    "    > dir_2",
+                    "      .gitignore",
+                ],
+                "When no auto reveal is enabled, the selected entry should not be revealed in the project panel"
+            );
+        }
+
+        panel.update(cx, |panel, cx| {
+            panel.project.update(cx, |_, cx| {
+                cx.emit(project::Event::RevealInProjectPanel(dir_1_file))
+            })
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..20, cx),
+            &[
+                "v project_root",
+                "    > .git",
+                "    v dir_1",
+                "        > gitignored_dir",
+                "          file_1.py  <== selected",
+                "          file_2.py",
+                "          file_3.py",
+                "    > dir_2",
+                "      .gitignore",
+            ],
+            "With no auto reveal, explicit reveal should show the dir_1 entry in the project panel"
+        );
+
+        panel.update(cx, |panel, cx| {
+            panel.project.update(cx, |_, cx| {
+                cx.emit(project::Event::RevealInProjectPanel(dir_2_file))
+            })
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..20, cx),
+            &[
+                "v project_root",
+                "    > .git",
+                "    v dir_1",
+                "        > gitignored_dir",
+                "          file_1.py",
+                "          file_2.py",
+                "          file_3.py",
+                "    v dir_2",
+                "          file_1.py  <== selected",
+                "          file_2.py",
+                "          file_3.py",
+                "      .gitignore",
+            ],
+            "With no auto reveal, explicit reveal should show the dir_2 entry in the project panel"
+        );
+
+        panel.update(cx, |panel, cx| {
+            panel.project.update(cx, |_, cx| {
+                cx.emit(project::Event::RevealInProjectPanel(gitignored_dir_file))
+            })
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..20, cx),
+            &[
+                "v project_root",
+                "    > .git",
+                "    v dir_1",
+                "        v gitignored_dir",
+                "              file_a.py  <== selected",
+                "              file_b.py",
+                "              file_c.py",
+                "          file_1.py",
+                "          file_2.py",
+                "          file_3.py",
+                "    v dir_2",
+                "          file_1.py",
+                "          file_2.py",
+                "          file_3.py",
+                "      .gitignore",
+            ],
+            "With no auto reveal, explicit reveal should show the gitignored entry in the project panel"
+        );
+    }
+
     fn toggle_expand_dir(
         panel: &View<ProjectPanel>,
         path: impl AsRef<Path>,
@@ -2862,6 +3377,23 @@ mod tests {
             }
             panic!("no worktree for path {:?}", path);
         });
+    }
+
+    fn find_project_entry(
+        panel: &View<ProjectPanel>,
+        path: impl AsRef<Path>,
+        cx: &mut VisualTestContext,
+    ) -> Option<ProjectEntryId> {
+        let path = path.as_ref();
+        panel.update(cx, |panel, cx| {
+            for worktree in panel.project.read(cx).worktrees().collect::<Vec<_>>() {
+                let worktree = worktree.read(cx);
+                if let Ok(relative_path) = path.strip_prefix(worktree.root_name()) {
+                    return worktree.entry_for_path(relative_path).map(|entry| entry.id);
+                }
+            }
+            panic!("no worktree for path {path:?}");
+        })
     }
 
     fn visible_entries_as_strings(

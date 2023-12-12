@@ -47,7 +47,7 @@ use util::{
     paths, ResultExt,
 };
 use uuid::Uuid;
-use welcome::{show_welcome_experience, FIRST_OPEN};
+use welcome::{show_welcome_view, FIRST_OPEN};
 use workspace::{AppState, WorkspaceStore};
 use zed2::{
     app_menus, build_window_options, ensure_only_instance, handle_cli_connection,
@@ -211,7 +211,7 @@ fn main() {
         // diagnostics::init(cx);
         search::init(cx);
         semantic_index::init(fs.clone(), http.clone(), languages.clone(), cx);
-        // vim::init(cx);
+        vim::init(cx);
         terminal_view::init(cx);
 
         // journal2::init(app_state.clone(), cx);
@@ -366,8 +366,7 @@ async fn restore_or_create_workspace(app_state: &Arc<AppState>, mut cx: AsyncApp
                 .await
                 .log_err();
         } else if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
-            cx.update(|cx| show_welcome_experience(app_state, cx))
-                .log_err();
+            cx.update(|cx| show_welcome_view(app_state, cx)).log_err();
         } else {
             cx.update(|cx| {
                 workspace::open_new(app_state, cx, |workspace, cx| {

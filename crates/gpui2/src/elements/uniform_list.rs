@@ -41,7 +41,7 @@ where
         render_items: Box::new(render_range),
         interactivity: Interactivity {
             element_id: Some(id.into()),
-            base_style,
+            base_style: Box::new(base_style),
             ..Default::default()
         },
         scroll_handle: None,

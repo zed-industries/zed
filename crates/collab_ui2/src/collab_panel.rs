@@ -1145,7 +1145,7 @@ impl CollabPanel {
 
     fn render_call_participant(
         &self,
-        user: Arc<User>,
+        user: &Arc<User>,
         peer_id: Option<PeerId>,
         is_pending: bool,
         cx: &mut ViewContext<Self>,
@@ -2154,82 +2154,68 @@ impl CollabPanel {
                     .id("scroll")
                     .overflow_y_scroll()
                     .track_scroll(&self.scroll_handle)
-                    .children(
-                        self.entries
-                            .clone()
-                            .into_iter()
-                            .enumerate()
-                            .map(|(ix, entry)| {
-                                let is_selected = self.selection == Some(ix);
-                                match entry {
-                                    ListEntry::Header(section) => {
-                                        let is_collapsed =
-                                            self.collapsed_sections.contains(&section);
-                                        self.render_header(section, is_selected, is_collapsed, cx)
-                                            .into_any_element()
-                                    }
-                                    ListEntry::Contact { contact, calling } => self
-                                        .render_contact(&*contact, calling, is_selected, cx)
-                                        .into_any_element(),
-                                    ListEntry::ContactPlaceholder => self
-                                        .render_contact_placeholder(is_selected, cx)
-                                        .into_any_element(),
-                                    ListEntry::IncomingRequest(user) => self
-                                        .render_contact_request(user, true, is_selected, cx)
-                                        .into_any_element(),
-                                    ListEntry::OutgoingRequest(user) => self
-                                        .render_contact_request(user, false, is_selected, cx)
-                                        .into_any_element(),
-                                    ListEntry::Channel {
-                                        channel,
-                                        depth,
-                                        has_children,
-                                    } => self
-                                        .render_channel(
-                                            &*channel,
-                                            depth,
-                                            has_children,
-                                            is_selected,
-                                            ix,
-                                            cx,
-                                        )
-                                        .into_any_element(),
-                                    ListEntry::ChannelEditor { depth } => {
-                                        self.render_channel_editor(depth, cx).into_any_element()
-                                    }
-                                    ListEntry::CallParticipant {
-                                        user,
-                                        peer_id,
-                                        is_pending,
-                                    } => self
-                                        .render_call_participant(user, peer_id, is_pending, cx)
-                                        .into_any_element(),
-                                    ListEntry::ParticipantProject {
-                                        project_id,
-                                        worktree_root_names,
-                                        host_user_id,
-                                        is_last,
-                                    } => self
-                                        .render_participant_project(
-                                            project_id,
-                                            &worktree_root_names,
-                                            host_user_id,
-                                            is_last,
-                                            cx,
-                                        )
-                                        .into_any_element(),
-                                    ListEntry::ParticipantScreen { peer_id, is_last } => self
-                                        .render_participant_screen(peer_id, is_last, cx)
-                                        .into_any_element(),
-                                    ListEntry::ChannelNotes { channel_id } => {
-                                        self.render_channel_notes(channel_id, cx).into_any_element()
-                                    }
-                                    ListEntry::ChannelChat { channel_id } => {
-                                        self.render_channel_chat(channel_id, cx).into_any_element()
-                                    }
-                                }
-                            }),
-                    ),
+                    .children(self.entries.iter().enumerate().map(|(ix, entry)| {
+                        let is_selected = self.selection == Some(ix);
+                        match entry {
+                            ListEntry::Header(section) => {
+                                let is_collapsed = self.collapsed_sections.contains(section);
+                                self.render_header(*section, is_selected, is_collapsed, cx)
+                                    .into_any_element()
+                            }
+                            ListEntry::Contact { contact, calling } => self
+                                .render_contact(contact, *calling, is_selected, cx)
+                                .into_any_element(),
+                            ListEntry::ContactPlaceholder => self
+                                .render_contact_placeholder(is_selected, cx)
+                                .into_any_element(),
+                            ListEntry::IncomingRequest(user) => self
+                                .render_contact_request(user, true, is_selected, cx)
+                                .into_any_element(),
+                            ListEntry::OutgoingRequest(user) => self
+                                .render_contact_request(user, false, is_selected, cx)
+                                .into_any_element(),
+                            ListEntry::Channel {
+                                channel,
+                                depth,
+                                has_children,
+                            } => self
+                                .render_channel(channel, *depth, *has_children, is_selected, ix, cx)
+                                .into_any_element(),
+                            ListEntry::ChannelEditor { depth } => {
+                                self.render_channel_editor(*depth, cx).into_any_element()
+                            }
+                            ListEntry::CallParticipant {
+                                user,
+                                peer_id,
+                                is_pending,
+                            } => self
+                                .render_call_participant(user, *peer_id, *is_pending, cx)
+                                .into_any_element(),
+                            ListEntry::ParticipantProject {
+                                project_id,
+                                worktree_root_names,
+                                host_user_id,
+                                is_last,
+                            } => self
+                                .render_participant_project(
+                                    *project_id,
+                                    &worktree_root_names,
+                                    *host_user_id,
+                                    *is_last,
+                                    cx,
+                                )
+                                .into_any_element(),
+                            ListEntry::ParticipantScreen { peer_id, is_last } => self
+                                .render_participant_screen(*peer_id, *is_last, cx)
+                                .into_any_element(),
+                            ListEntry::ChannelNotes { channel_id } => self
+                                .render_channel_notes(*channel_id, cx)
+                                .into_any_element(),
+                            ListEntry::ChannelChat { channel_id } => {
+                                self.render_channel_chat(*channel_id, cx).into_any_element()
+                            }
+                        }
+                    })),
             )
             .child(
                 div()
@@ -2239,7 +2225,7 @@ impl CollabPanel {
     }
 
     fn render_header(
-        &mut self,
+        &self,
         section: Section,
         is_selected: bool,
         is_collapsed: bool,
@@ -2287,7 +2273,7 @@ impl CollabPanel {
         let button = match section {
             Section::ActiveCall => channel_link.map(|channel_link| {
                 let channel_link_copy = channel_link.clone();
-                IconButton::new("channel-link", Icon::Check)
+                IconButton::new("channel-link", Icon::Copy)
                     .on_click(move |_, cx| {
                         let item = ClipboardItem::new(channel_link_copy.clone());
                         cx.write_to_clipboard(item)
@@ -2353,14 +2339,12 @@ impl CollabPanel {
     }
 
     fn render_contact(
-        &mut self,
+        &self,
         contact: &Contact,
         calling: bool,
         is_selected: bool,
         cx: &mut ViewContext<Self>,
     ) -> impl IntoElement {
-        enum ContactTooltip {}
-
         let online = contact.online;
         let busy = contact.busy || calling;
         let user_id = contact.user.id;
@@ -2426,8 +2410,8 @@ impl CollabPanel {
     }
 
     fn render_contact_request(
-        &mut self,
-        user: Arc<User>,
+        &self,
+        user: &Arc<User>,
         is_incoming: bool,
         is_selected: bool,
         cx: &mut ViewContext<Self>,
@@ -2557,7 +2541,7 @@ impl CollabPanel {
                 let channel = channel.clone();
                 move |cx| {
                     let channel = channel.clone();
-                    cx.build_view({ |cx| DraggedChannelView { channel, width } })
+                    cx.build_view(|cx| DraggedChannelView { channel, width })
                 }
             })
             .drag_over::<DraggedChannelView>(|style| {
@@ -2970,11 +2954,7 @@ impl CollabPanel {
         // .into_any()
     }
 
-    fn render_channel_editor(
-        &mut self,
-        depth: usize,
-        cx: &mut ViewContext<Self>,
-    ) -> impl IntoElement {
+    fn render_channel_editor(&self, depth: usize, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let item = ListItem::new("channel-editor")
             .inset(false)
             .indent_level(depth)

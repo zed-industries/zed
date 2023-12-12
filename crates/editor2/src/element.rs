@@ -391,9 +391,9 @@ impl EditorElement {
         let mut click_count = event.click_count;
         let modifiers = event.modifiers;
 
-        if gutter_bounds.contains_point(&event.position) {
+        if gutter_bounds.contains(&event.position) {
             click_count = 3; // Simulate triple-click when clicking the gutter to select lines
-        } else if !text_bounds.contains_point(&event.position) {
+        } else if !text_bounds.contains(&event.position) {
             return;
         }
         if !cx.was_top_layer(&event.position, stacking_order) {
@@ -439,7 +439,7 @@ impl EditorElement {
         text_bounds: Bounds<Pixels>,
         cx: &mut ViewContext<Editor>,
     ) {
-        if !text_bounds.contains_point(&event.position) {
+        if !text_bounds.contains(&event.position) {
             return;
         }
         let point_for_position = position_map.point_for_position(text_bounds, event.position);
@@ -469,7 +469,7 @@ impl EditorElement {
 
         if !pending_nonempty_selections
             && event.modifiers.command
-            && text_bounds.contains_point(&event.position)
+            && text_bounds.contains(&event.position)
             && cx.was_top_layer(&event.position, stacking_order)
         {
             let point = position_map.point_for_position(text_bounds, event.position);
@@ -531,8 +531,8 @@ impl EditorElement {
             );
         }
 
-        let text_hovered = text_bounds.contains_point(&event.position);
-        let gutter_hovered = gutter_bounds.contains_point(&event.position);
+        let text_hovered = text_bounds.contains(&event.position);
+        let gutter_hovered = gutter_bounds.contains(&event.position);
         let was_top = cx.was_top_layer(&event.position, stacking_order);
 
         editor.set_gutter_hovered(gutter_hovered, cx);
@@ -900,7 +900,7 @@ impl EditorElement {
                 bounds: text_bounds,
             }),
             |cx| {
-                if text_bounds.contains_point(&cx.mouse_position()) {
+                if text_bounds.contains(&cx.mouse_position()) {
                     if self
                         .editor
                         .read(cx)
@@ -966,7 +966,7 @@ impl EditorElement {
                                     |fold_element_state, cx| {
                                         if fold_element_state.is_active() {
                                             gpui::blue()
-                                        } else if fold_bounds.contains_point(&cx.mouse_position()) {
+                                        } else if fold_bounds.contains(&cx.mouse_position()) {
                                             gpui::black()
                                         } else {
                                             gpui::red()
@@ -1049,7 +1049,12 @@ impl EditorElement {
                                         .chars_at(cursor_position)
                                         .next()
                                         .and_then(|(character, _)| {
-                                            let text = SharedString::from(character.to_string());
+                                            // todo!() currently shape_line panics if text conatins newlines
+                                            let text = if character == '\n' {
+                                                SharedString::from(" ")
+                                            } else {
+                                                SharedString::from(character.to_string())
+                                            };
                                             let len = text.len();
                                             cx.text_system()
                                                 .shape_line(
@@ -1277,7 +1282,12 @@ impl EditorElement {
                 track_bounds,
                 Corners::default(),
                 cx.theme().colors().scrollbar_track_background,
-                Edges::default(), // todo!("style.track.border")
+                Edges {
+                    top: Pixels::ZERO,
+                    right: Pixels::ZERO,
+                    bottom: Pixels::ZERO,
+                    left: px(1.),
+                },
                 cx.theme().colors().scrollbar_track_border,
             );
             let scrollbar_settings = EditorSettings::get_global(cx).scrollbar;
@@ -1302,7 +1312,7 @@ impl EditorElement {
                     cx.paint_quad(
                         bounds,
                         Corners::default(),
-                        cx.theme().colors().scrollbar_thumb_background,
+                        cx.theme().status().info,
                         Edges {
                             top: Pixels::ZERO,
                             right: px(1.),
@@ -1372,7 +1382,7 @@ impl EditorElement {
         }
 
         let mouse_position = cx.mouse_position();
-        if track_bounds.contains_point(&mouse_position) {
+        if track_bounds.contains(&mouse_position) {
             cx.set_cursor_style(CursorStyle::Arrow);
         }
 
@@ -1400,7 +1410,7 @@ impl EditorElement {
                         cx.stop_propagation();
                     } else {
                         editor.scroll_manager.set_is_dragging_scrollbar(false, cx);
-                        if track_bounds.contains_point(&event.position) {
+                        if track_bounds.contains(&event.position) {
                             editor.scroll_manager.show_scrollbar(cx);
                         }
                     }
@@ -1423,7 +1433,7 @@ impl EditorElement {
                 let editor = self.editor.clone();
                 move |event: &MouseDownEvent, phase, cx| {
                     editor.update(cx, |editor, cx| {
-                        if track_bounds.contains_point(&event.position) {
+                        if track_bounds.contains(&event.position) {
                             editor.scroll_manager.set_is_dragging_scrollbar(true, cx);
 
                             let y = event.position.y;
@@ -2497,10 +2507,10 @@ impl EditorElement {
                             gutter_bounds,
                             &stacking_order,
                             cx,
-                        )
+                        );
                     }),
                     MouseButton::Right => editor.update(cx, |editor, cx| {
-                        Self::mouse_right_down(editor, event, &position_map, text_bounds, cx)
+                        Self::mouse_right_down(editor, event, &position_map, text_bounds, cx);
                     }),
                     _ => {}
                 };

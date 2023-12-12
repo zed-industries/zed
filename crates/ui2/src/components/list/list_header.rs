@@ -1,10 +1,6 @@
-use std::rc::Rc;
-
+use crate::{h_stack, prelude::*, Disclosure, Icon, IconElement, IconSize, Label};
 use gpui::{AnyElement, ClickEvent, Div};
 use smallvec::SmallVec;
-
-use crate::prelude::*;
-use crate::{h_stack, Disclosure, Icon, IconElement, IconSize, Label};
 
 #[derive(IntoElement)]
 pub struct ListHeader {
@@ -12,7 +8,7 @@ pub struct ListHeader {
     left_icon: Option<Icon>,
     meta: SmallVec<[AnyElement; 2]>,
     toggle: Option<bool>,
-    on_toggle: Option<Rc<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
+    on_toggle: Option<Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
     inset: bool,
     selected: bool,
 }
@@ -39,7 +35,7 @@ impl ListHeader {
         mut self,
         on_toggle: impl Fn(&ClickEvent, &mut WindowContext) + 'static,
     ) -> Self {
-        self.on_toggle = Some(Rc::new(on_toggle));
+        self.on_toggle = Some(Box::new(on_toggle));
         self
     }
 

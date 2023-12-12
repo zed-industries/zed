@@ -1,10 +1,10 @@
 use super::{display_bounds_from_native, ns_string, MacDisplay, MetalRenderer, NSRange};
 use crate::{
-    display_bounds_to_native, point, px, size, AnyWindowHandle, Bounds, ExternalPaths,
+    display_bounds_to_native, point, px, size, AnyWindowHandle, Bounds, DrawWindow, ExternalPaths,
     FileDropEvent, ForegroundExecutor, GlobalPixels, InputEvent, KeyDownEvent, Keystroke,
     Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     Pixels, PlatformAtlas, PlatformDisplay, PlatformInputHandler, PlatformWindow, Point,
-    PromptLevel, Scene, Size, Timer, WindowAppearance, WindowBounds, WindowKind, WindowOptions,
+    PromptLevel, Size, Timer, WindowAppearance, WindowBounds, WindowKind, WindowOptions,
 };
 use block::ConcreteBlock;
 use cocoa::{
@@ -45,6 +45,7 @@ use std::{
     sync::{Arc, Weak},
     time::Duration,
 };
+use util::ResultExt;
 
 const WINDOW_STATE_IVAR: &str = "windowState";
 
@@ -318,7 +319,7 @@ struct MacWindowState {
     executor: ForegroundExecutor,
     native_window: id,
     renderer: MetalRenderer,
-    scene_to_render: Option<Scene>,
+    draw: Option<DrawWindow>,
     kind: WindowKind,
     event_callback: Option<Box<dyn FnMut(InputEvent) -> bool>>,
     activate_callback: Option<Box<dyn FnMut(bool)>>,
@@ -454,6 +455,7 @@ impl MacWindow {
     pub fn open(
         handle: AnyWindowHandle,
         options: WindowOptions,
+        draw: DrawWindow,
         executor: ForegroundExecutor,
     ) -> Self {
         unsafe {
@@ -545,7 +547,7 @@ impl MacWindow {
                 executor,
                 native_window,
                 renderer: MetalRenderer::new(true),
-                scene_to_render: None,
+                draw: Some(draw),
                 kind: options.kind,
                 event_callback: None,
                 activate_callback: None,
@@ -958,9 +960,8 @@ impl PlatformWindow for MacWindow {
         }
     }
 
-    fn draw(&self, scene: Scene) {
-        let mut this = self.0.lock();
-        this.scene_to_render = Some(scene);
+    fn invalidate(&self) {
+        let this = self.0.lock();
         unsafe {
             let _: () = msg_send![this.native_window.contentView(), setNeedsDisplay: YES];
         }
@@ -1442,8 +1443,11 @@ extern "C" fn set_frame_size(this: &Object, _: Sel, size: NSSize) {
 extern "C" fn display_layer(this: &Object, _: Sel, _: id) {
     unsafe {
         let window_state = get_window_state(this);
-        let mut window_state = window_state.as_ref().lock();
-        if let Some(scene) = window_state.scene_to_render.take() {
+        let mut draw = window_state.lock().draw.take().unwrap();
+        let scene = draw().log_err();
+        let mut window_state = window_state.lock();
+        window_state.draw = Some(draw);
+        if let Some(scene) = scene {
             window_state.renderer.draw(&scene);
         }
     }

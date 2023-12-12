@@ -3,7 +3,8 @@ use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
     ForegroundExecutor, InputEvent, Keymap, MacDispatcher, MacDisplay, MacDisplayLinker,
     MacTextSystem, MacWindow, Menu, MenuItem, PathPromptOptions, Platform, PlatformDisplay,
-    PlatformTextSystem, PlatformWindow, Result, SemanticVersion, VideoTimestamp, WindowOptions,
+    PlatformTextSystem, PlatformWindow, Result, Scene, SemanticVersion, VideoTimestamp,
+    WindowOptions,
 };
 use anyhow::anyhow;
 use block::ConcreteBlock;
@@ -48,6 +49,7 @@ use std::{
     rc::Rc,
     slice, str,
     sync::Arc,
+    time::Duration,
 };
 use time::UtcOffset;
 
@@ -490,8 +492,14 @@ impl Platform for MacPlatform {
         &self,
         handle: AnyWindowHandle,
         options: WindowOptions,
+        draw: Box<dyn FnMut() -> Result<Scene>>,
     ) -> Box<dyn PlatformWindow> {
-        Box::new(MacWindow::open(handle, options, self.foreground_executor()))
+        Box::new(MacWindow::open(
+            handle,
+            options,
+            draw,
+            self.foreground_executor(),
+        ))
     }
 
     fn set_display_link_output_callback(
@@ -648,6 +656,13 @@ impl Platform for MacPlatform {
 
     fn os_name(&self) -> &'static str {
         "macOS"
+    }
+
+    fn double_click_interval(&self) -> Duration {
+        unsafe {
+            let double_click_interval: f64 = msg_send![class!(NSEvent), doubleClickInterval];
+            Duration::from_secs_f64(double_click_interval)
+        }
     }
 
     fn os_version(&self) -> Result<SemanticVersion> {

@@ -633,8 +633,44 @@ impl Item for ProjectDiagnosticsEditor {
         Some("Project Diagnostics".into())
     }
 
-    fn tab_content(&self, _detail: Option<usize>, _: &WindowContext) -> AnyElement {
-        render_summary(&self.summary)
+    fn tab_content(&self, _detail: Option<usize>, selected: bool, _: &WindowContext) -> AnyElement {
+        if self.summary.error_count == 0 && self.summary.warning_count == 0 {
+            let label = Label::new("No problems");
+            label.into_any_element()
+        } else {
+            h_stack()
+                .gap_1()
+                .when(self.summary.error_count > 0, |then| {
+                    then.child(
+                        h_stack()
+                            .gap_1()
+                            .child(IconElement::new(Icon::XCircle).color(Color::Error))
+                            .child(Label::new(self.summary.error_count.to_string()).color(
+                                if selected {
+                                    Color::Default
+                                } else {
+                                    Color::Muted
+                                },
+                            )),
+                    )
+                })
+                .when(self.summary.warning_count > 0, |then| {
+                    then.child(
+                        h_stack()
+                            .child(
+                                IconElement::new(Icon::ExclamationTriangle).color(Color::Warning),
+                            )
+                            .child(Label::new(self.summary.warning_count.to_string()).color(
+                                if selected {
+                                    Color::Default
+                                } else {
+                                    Color::Muted
+                                },
+                            )),
+                    )
+                })
+                .into_any_element()
+        }
     }
 
     fn for_each_project_item(
@@ -780,32 +816,6 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
             )
             .into_any_element()
     })
-}
-
-pub(crate) fn render_summary(summary: &DiagnosticSummary) -> AnyElement {
-    if summary.error_count == 0 && summary.warning_count == 0 {
-        let label = Label::new("No problems");
-        label.into_any_element()
-    } else {
-        h_stack()
-            .gap_1()
-            .when(summary.error_count > 0, |then| {
-                then.child(
-                    h_stack()
-                        .gap_1()
-                        .child(IconElement::new(Icon::XCircle).color(Color::Error))
-                        .child(Label::new(summary.error_count.to_string())),
-                )
-            })
-            .when(summary.warning_count > 0, |then| {
-                then.child(
-                    h_stack()
-                        .child(IconElement::new(Icon::ExclamationTriangle).color(Color::Warning))
-                        .child(Label::new(summary.warning_count.to_string())),
-                )
-            })
-            .into_any_element()
-    }
 }
 
 fn compare_diagnostics<L: language::ToOffset, R: language::ToOffset>(

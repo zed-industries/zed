@@ -57,8 +57,12 @@ where
     T: 'static,
     E: 'static + Debug,
 {
+    #[track_caller]
     pub fn detach_and_log_err(self, cx: &mut AppContext) {
-        cx.foreground_executor().spawn(self.log_err()).detach();
+        let location = core::panic::Location::caller();
+        cx.foreground_executor()
+            .spawn(self.log_tracked_err(*location))
+            .detach();
     }
 }
 

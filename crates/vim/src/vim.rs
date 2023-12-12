@@ -1,3 +1,5 @@
+#![allow(unused)]
+
 #[cfg(test)]
 mod test;
 

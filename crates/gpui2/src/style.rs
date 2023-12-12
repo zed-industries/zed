@@ -608,14 +608,14 @@ mod tests {
                 (
                     1..2,
                     HighlightStyle {
-                        color: Some(blue()),
+                        color: Some(green()),
                         ..Default::default()
                     }
                 ),
                 (
                     2..3,
                     HighlightStyle {
-                        color: Some(blue()),
+                        color: Some(green()),
                         font_style: Some(FontStyle::Italic),
                         ..Default::default()
                     }

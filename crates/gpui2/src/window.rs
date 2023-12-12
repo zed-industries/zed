@@ -3,13 +3,13 @@ use crate::{
     AsyncWindowContext, AvailableSpace, Bounds, BoxShadow, Context, Corners, CursorStyle,
     DevicePixels, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity, EntityId,
     EventEmitter, FileDropEvent, Flatten, FocusEvent, FontId, GlobalElementId, GlyphId, Hsla,
-    ImageData, InputEvent, IsZero, KeyBinding, KeyContext, KeyDownEvent, LayoutId, Model,
-    ModelContext, Modifiers, MonochromeSprite, MouseButton, MouseMoveEvent, MouseUpEvent, Path,
-    Pixels, PlatformAtlas, PlatformDisplay, PlatformInputHandler, PlatformWindow, Point,
+    ImageData, InputEvent, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeystrokeEvent, LayoutId,
+    Model, ModelContext, Modifiers, MonochromeSprite, MouseButton, MouseMoveEvent, MouseUpEvent,
+    Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInputHandler, PlatformWindow, Point,
     PolychromeSprite, PromptLevel, Quad, Render, RenderGlyphParams, RenderImageParams,
-    RenderSvgParams, ScaledPixels, SceneBuilder, Shadow, SharedString, Size, Style, SubscriberSet,
-    Subscription, Surface, TaffyLayoutEngine, Task, Underline, UnderlineStyle, View, VisualContext,
-    WeakView, WindowBounds, WindowOptions, SUBPIXEL_VARIANTS,
+    RenderSvgParams, ScaledPixels, Scene, SceneBuilder, Shadow, SharedString, Size, Style,
+    SubscriberSet, Subscription, Surface, TaffyLayoutEngine, Task, Underline, UnderlineStyle, View,
+    VisualContext, WeakView, WindowBounds, WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::HashMap;
@@ -38,6 +38,8 @@ use std::{
 };
 use util::ResultExt;
 
+const ACTIVE_DRAG_Z_INDEX: u32 = 1;
+
 /// A global stacking order, which is created by stacking successive z-index values.
 /// Each z-index will always be interpreted in the context of its parent z-index.
 #[derive(Deref, DerefMut, Ord, PartialOrd, Eq, PartialEq, Clone, Default, Debug)]
@@ -58,6 +60,16 @@ pub enum DispatchPhase {
     /// you stop event propagation during this phase, you need to know what you're doing. Handlers
     /// outside of the immediate region may rely on detecting non-local events during this phase.
     Capture,
+}
+
+impl DispatchPhase {
+    pub fn bubble(self) -> bool {
+        self == DispatchPhase::Bubble
+    }
+
+    pub fn capture(self) -> bool {
+        self == DispatchPhase::Capture
+    }
 }
 
 type AnyObserver = Box<dyn FnMut(&mut WindowContext) -> bool + 'static>;
@@ -223,8 +235,8 @@ pub struct Window {
     bounds: WindowBounds,
     bounds_observers: SubscriberSet<(), AnyObserver>,
     active: bool,
-    activation_observers: SubscriberSet<(), AnyObserver>,
     pub(crate) dirty: bool,
+    activation_observers: SubscriberSet<(), AnyObserver>,
     pub(crate) last_blur: Option<Option<FocusId>>,
     pub(crate) focus: Option<FocusId>,
 }
@@ -278,7 +290,14 @@ impl Window {
         options: WindowOptions,
         cx: &mut AppContext,
     ) -> Self {
-        let platform_window = cx.platform.open_window(handle, options);
+        let platform_window = cx.platform.open_window(
+            handle,
+            options,
+            Box::new({
+                let mut cx = cx.to_async();
+                move || handle.update(&mut cx, |_, cx| cx.draw())
+            }),
+        );
         let display_id = platform_window.display().id();
         let sprite_atlas = platform_window.sprite_atlas();
         let mouse_position = platform_window.mouse_position();
@@ -349,8 +368,8 @@ impl Window {
             bounds,
             bounds_observers: SubscriberSet::new(),
             active: false,
+            dirty: false,
             activation_observers: SubscriberSet::new(),
-            dirty: true,
             last_blur: None,
             focus: None,
         }
@@ -476,6 +495,29 @@ impl<'a> WindowContext<'a> {
             cx.propagate_event = true;
             cx.dispatch_action_on_node(node_id, action);
         })
+    }
+
+    pub(crate) fn dispatch_keystroke_observers(
+        &mut self,
+        event: &dyn Any,
+        action: Option<Box<dyn Action>>,
+    ) {
+        let Some(key_down_event) = event.downcast_ref::<KeyDownEvent>() else {
+            return;
+        };
+
+        self.keystroke_observers
+            .clone()
+            .retain(&(), move |callback| {
+                (callback)(
+                    &KeystrokeEvent {
+                        keystroke: key_down_event.keystroke.clone(),
+                        action: action.as_ref().map(|action| action.boxed_clone()),
+                    },
+                    self,
+                );
+                true
+            });
     }
 
     /// Schedules the given function to be run at the end of the current effect cycle, allowing entities
@@ -673,7 +715,7 @@ impl<'a> WindowContext<'a> {
         self.window.viewport_size = self.window.platform_window.content_size();
         self.window.bounds = self.window.platform_window.bounds();
         self.window.display_id = self.window.platform_window.display().id();
-        self.window.dirty = true;
+        self.notify();
 
         self.window
             .bounds_observers
@@ -859,7 +901,24 @@ impl<'a> WindowContext<'a> {
     /// same layer as the given stacking order.
     pub fn was_top_layer(&self, point: &Point<Pixels>, level: &StackingOrder) -> bool {
         for (stack, bounds) in self.window.rendered_frame.depth_map.iter() {
-            if bounds.contains_point(point) {
+            if bounds.contains(point) {
+                return level.starts_with(stack) || stack.starts_with(level);
+            }
+        }
+
+        false
+    }
+
+    pub fn was_top_layer_under_active_drag(
+        &self,
+        point: &Point<Pixels>,
+        level: &StackingOrder,
+    ) -> bool {
+        for (stack, bounds) in self.window.rendered_frame.depth_map.iter() {
+            if stack.starts_with(&[ACTIVE_DRAG_Z_INDEX]) {
+                continue;
+            }
+            if bounds.contains(point) {
                 return level.starts_with(stack) || stack.starts_with(level);
             }
         }
@@ -1174,7 +1233,7 @@ impl<'a> WindowContext<'a> {
     }
 
     /// Draw pixels to the display for this window based on the contents of its scene.
-    pub(crate) fn draw(&mut self) {
+    pub(crate) fn draw(&mut self) -> Scene {
         self.text_system().start_frame();
         self.window.platform_window.clear_input_handler();
         self.window.layout_engine.as_mut().unwrap().clear();
@@ -1198,7 +1257,7 @@ impl<'a> WindowContext<'a> {
         });
 
         if let Some(active_drag) = self.app.active_drag.take() {
-            self.with_z_index(1, |cx| {
+            self.with_z_index(ACTIVE_DRAG_Z_INDEX, |cx| {
                 let offset = cx.mouse_position() - active_drag.cursor_offset;
                 let available_space = size(AvailableSpace::MinContent, AvailableSpace::MinContent);
                 active_drag.view.draw(offset, available_space, cx);
@@ -1226,15 +1285,15 @@ impl<'a> WindowContext<'a> {
         mem::swap(&mut window.rendered_frame, &mut window.next_frame);
 
         let scene = self.window.rendered_frame.scene_builder.build();
-        self.window.platform_window.draw(scene);
         let cursor_style = self
             .window
             .requested_cursor_style
             .take()
             .unwrap_or(CursorStyle::Arrow);
         self.platform.set_cursor_style(cursor_style);
-
         self.window.dirty = false;
+
+        scene
     }
 
     /// Dispatch a mouse or keyboard event on the window.
@@ -1406,14 +1465,12 @@ impl<'a> WindowContext<'a> {
             let node = self.window.rendered_frame.dispatch_tree.node(*node_id);
             if node.context.is_some() {
                 if let Some(key_down_event) = event.downcast_ref::<KeyDownEvent>() {
-                    if let Some(found) = self
+                    let mut new_actions = self
                         .window
                         .rendered_frame
                         .dispatch_tree
-                        .dispatch_key(&key_down_event.keystroke, &context_stack)
-                    {
-                        actions.push(found.boxed_clone())
-                    }
+                        .dispatch_key(&key_down_event.keystroke, &context_stack);
+                    actions.append(&mut new_actions);
                 }
 
                 context_stack.pop();
@@ -1421,11 +1478,20 @@ impl<'a> WindowContext<'a> {
         }
 
         for action in actions {
-            self.dispatch_action_on_node(node_id, action);
+            self.dispatch_action_on_node(node_id, action.boxed_clone());
             if !self.propagate_event {
+                self.dispatch_keystroke_observers(event, Some(action));
                 return;
             }
         }
+        self.dispatch_keystroke_observers(event, None);
+    }
+
+    pub fn has_pending_keystrokes(&self) -> bool {
+        self.window
+            .rendered_frame
+            .dispatch_tree
+            .has_pending_keystrokes()
     }
 
     fn dispatch_action_on_node(&mut self, node_id: DispatchNodeId, action: Box<dyn Action>) {

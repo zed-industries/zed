@@ -1923,9 +1923,9 @@ impl Editor {
         self.buffer.read(cx).replica_id()
     }
 
-    //     pub fn leader_peer_id(&self) -> Option<PeerId> {
-    //         self.leader_peer_id
-    //     }
+    pub fn leader_peer_id(&self) -> Option<PeerId> {
+        self.leader_peer_id
+    }
 
     pub fn buffer(&self) -> &Model<MultiBuffer> {
         &self.buffer
@@ -9096,10 +9096,7 @@ impl Editor {
         }
     }
 
-    fn handle_blur(&mut self, cx: &mut ViewContext<Self>) {
-        // todo!()
-        // let blurred_event = EditorBlurred(cx.handle());
-        // cx.emit_global(blurred_event);
+    pub fn handle_blur(&mut self, cx: &mut ViewContext<Self>) {
         self.blink_manager.update(cx, BlinkManager::disable);
         self.buffer
             .update(cx, |buffer, cx| buffer.remove_active_selections(cx));
@@ -9282,10 +9279,6 @@ pub enum EditorEvent {
     },
     Closed,
 }
-
-pub struct EditorFocused(pub View<Editor>);
-pub struct EditorBlurred(pub View<Editor>);
-pub struct EditorReleased(pub WeakView<Editor>);
 
 impl EventEmitter<EditorEvent> for Editor {}
 

@@ -1,14 +1,10 @@
-use std::rc::Rc;
-
+use crate::{prelude::*, Color, Icon, IconButton, IconSize};
 use gpui::ClickEvent;
-
-use crate::prelude::*;
-use crate::{Color, Icon, IconButton, IconSize};
 
 #[derive(IntoElement)]
 pub struct Disclosure {
     is_open: bool,
-    on_toggle: Option<Rc<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
+    on_toggle: Option<Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
 }
 
 impl Disclosure {
@@ -21,7 +17,7 @@ impl Disclosure {
 
     pub fn on_toggle(
         mut self,
-        handler: impl Into<Option<Rc<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>>,
+        handler: impl Into<Option<Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>>,
     ) -> Self {
         self.on_toggle = handler.into();
         self

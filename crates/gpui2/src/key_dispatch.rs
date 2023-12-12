@@ -26,8 +26,8 @@ pub(crate) struct DispatchTree {
 
 #[derive(Default)]
 pub(crate) struct DispatchNode {
-    pub key_listeners: SmallVec<[KeyListener; 2]>,
-    pub action_listeners: SmallVec<[DispatchActionListener; 16]>,
+    pub key_listeners: Vec<KeyListener>,
+    pub action_listeners: Vec<DispatchActionListener>,
     pub context: Option<KeyContext>,
     parent: Option<DispatchNodeId>,
 }
@@ -208,7 +208,7 @@ impl DispatchTree {
         &mut self,
         keystroke: &Keystroke,
         context: &[KeyContext],
-    ) -> Option<Box<dyn Action>> {
+    ) -> Vec<Box<dyn Action>> {
         if !self.keystroke_matchers.contains_key(context) {
             let keystroke_contexts = context.iter().cloned().collect();
             self.keystroke_matchers.insert(
@@ -218,16 +218,22 @@ impl DispatchTree {
         }
 
         let keystroke_matcher = self.keystroke_matchers.get_mut(context).unwrap();
-        if let KeyMatch::Some(action) = keystroke_matcher.match_keystroke(keystroke, context) {
+        if let KeyMatch::Some(actions) = keystroke_matcher.match_keystroke(keystroke, context) {
             // Clear all pending keystrokes when an action has been found.
             for keystroke_matcher in self.keystroke_matchers.values_mut() {
                 keystroke_matcher.clear_pending();
             }
 
-            Some(action)
+            actions
         } else {
-            None
+            vec![]
         }
+    }
+
+    pub fn has_pending_keystrokes(&self) -> bool {
+        self.keystroke_matchers
+            .iter()
+            .any(|(_, matcher)| matcher.has_pending_keystrokes())
     }
 
     pub fn dispatch_path(&self, target: DispatchNodeId) -> SmallVec<[DispatchNodeId; 32]> {

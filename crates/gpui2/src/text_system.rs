@@ -13,7 +13,7 @@ use crate::{
     UnderlineStyle,
 };
 use anyhow::anyhow;
-use collections::HashMap;
+use collections::FxHashMap;
 use core::fmt;
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use smallvec::SmallVec;
@@ -37,10 +37,10 @@ pub const SUBPIXEL_VARIANTS: u8 = 4;
 pub struct TextSystem {
     line_layout_cache: Arc<LineLayoutCache>,
     platform_text_system: Arc<dyn PlatformTextSystem>,
-    font_ids_by_font: RwLock<HashMap<Font, FontId>>,
-    font_metrics: RwLock<HashMap<FontId, FontMetrics>>,
-    raster_bounds: RwLock<HashMap<RenderGlyphParams, Bounds<DevicePixels>>>,
-    wrapper_pool: Mutex<HashMap<FontIdWithSize, Vec<LineWrapper>>>,
+    font_ids_by_font: RwLock<FxHashMap<Font, FontId>>,
+    font_metrics: RwLock<FxHashMap<FontId, FontMetrics>>,
+    raster_bounds: RwLock<FxHashMap<RenderGlyphParams, Bounds<DevicePixels>>>,
+    wrapper_pool: Mutex<FxHashMap<FontIdWithSize, Vec<LineWrapper>>>,
     font_runs_pool: Mutex<Vec<Vec<FontRun>>>,
 }
 

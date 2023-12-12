@@ -2,7 +2,7 @@ use crate::{
     AbsoluteLength, Bounds, DefiniteLength, Edges, Length, Pixels, Point, Size, Style,
     WindowContext,
 };
-use collections::{HashMap, HashSet};
+use collections::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 use std::fmt::Debug;
 use taffy::{
@@ -14,10 +14,10 @@ use taffy::{
 
 pub struct TaffyLayoutEngine {
     taffy: Taffy,
-    children_to_parents: HashMap<LayoutId, LayoutId>,
-    absolute_layout_bounds: HashMap<LayoutId, Bounds<Pixels>>,
-    computed_layouts: HashSet<LayoutId>,
-    nodes_to_measure: HashMap<
+    children_to_parents: FxHashMap<LayoutId, LayoutId>,
+    absolute_layout_bounds: FxHashMap<LayoutId, Bounds<Pixels>>,
+    computed_layouts: FxHashSet<LayoutId>,
+    nodes_to_measure: FxHashMap<
         LayoutId,
         Box<
             dyn FnMut(
@@ -36,10 +36,10 @@ impl TaffyLayoutEngine {
     pub fn new() -> Self {
         TaffyLayoutEngine {
             taffy: Taffy::new(),
-            children_to_parents: HashMap::default(),
-            absolute_layout_bounds: HashMap::default(),
-            computed_layouts: HashSet::default(),
-            nodes_to_measure: HashMap::default(),
+            children_to_parents: FxHashMap::default(),
+            absolute_layout_bounds: FxHashMap::default(),
+            computed_layouts: FxHashSet::default(),
+            nodes_to_measure: FxHashMap::default(),
         }
     }
 
@@ -475,5 +475,14 @@ impl From<TaffyAvailableSpace> for AvailableSpace {
 impl From<Pixels> for AvailableSpace {
     fn from(pixels: Pixels) -> Self {
         AvailableSpace::Definite(pixels)
+    }
+}
+
+impl From<Size<Pixels>> for Size<AvailableSpace> {
+    fn from(size: Size<Pixels>) -> Self {
+        Size {
+            width: AvailableSpace::Definite(size.width),
+            height: AvailableSpace::Definite(size.height),
+        }
     }
 }

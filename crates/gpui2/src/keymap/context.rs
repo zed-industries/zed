@@ -4,7 +4,7 @@ use smallvec::SmallVec;
 use std::fmt;
 
 #[derive(Clone, Default, Eq, PartialEq, Hash)]
-pub struct KeyContext(SmallVec<[ContextEntry; 8]>);
+pub struct KeyContext(SmallVec<[ContextEntry; 1]>);
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 struct ContextEntry {

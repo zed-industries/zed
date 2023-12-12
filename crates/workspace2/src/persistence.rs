@@ -6,12 +6,12 @@ use std::path::Path;
 
 use anyhow::{anyhow, bail, Context, Result};
 use db::{define_connection, query, sqlez::connection::Connection, sqlez_macros::sql};
-use gpui::WindowBounds;
+use gpui::{Axis, WindowBounds};
 
 use util::{unzip_option, ResultExt};
 use uuid::Uuid;
 
-use crate::{Axis, WorkspaceId};
+use crate::WorkspaceId;
 
 use model::{
     GroupId, PaneId, SerializedItem, SerializedPane, SerializedPaneGroup, SerializedWorkspace,
@@ -403,7 +403,7 @@ impl WorkspaceDb {
         .map(|(group_id, axis, pane_id, active, flexes)| {
             if let Some((group_id, axis)) = group_id.zip(axis) {
                 let flexes = flexes
-                    .map(|flexes| serde_json::from_str::<Vec<f32>>(&flexes))
+                    .map(|flexes: String| serde_json::from_str::<Vec<f32>>(&flexes))
                     .transpose()?;
 
                 Ok(SerializedPaneGroup::Group {

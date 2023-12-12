@@ -132,12 +132,12 @@ impl FeedbackModal {
             editor
         });
 
+        // Moved here because providing it inline breaks rustfmt
+        let placeholder_text = "You can use markdown to organize your feedback wiht add code and links, or organize feedback.";
+
         let feedback_editor = cx.build_view(|cx| {
             let mut editor = Editor::for_buffer(buffer, Some(project.clone()), cx);
-            editor.set_placeholder_text(
-                "You can use markdown to organize your feedback wiht add code and links, or organize feedback.",
-                cx,
-            );
+            editor.set_placeholder_text(placeholder_text, cx);
             // editor.set_show_gutter(false, cx);
             editor.set_vertical_scroll_margin(5, cx);
             editor
