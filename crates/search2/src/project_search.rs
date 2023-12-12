@@ -2337,7 +2337,6 @@ pub mod tests {
         }) else {
             panic!("Search view expected to appear after new search event trigger")
         };
-        let search_view_id = search_view.entity_id();
 
         cx.spawn(|mut cx| async move {
             window
@@ -2576,135 +2575,146 @@ pub mod tests {
                 });}).unwrap();
     }
 
-    //     #[gpui::test]
-    //     async fn test_new_project_search_in_directory(
-    //         deterministic: Arc<Deterministic>,
-    //         cx: &mut TestAppContext,
-    //     ) {
-    //         init_test(cx);
+    #[gpui::test]
+    async fn test_new_project_search_in_directory(cx: &mut TestAppContext) {
+        init_test(cx);
 
-    //         let fs = FakeFs::new(cx.background_executor());
-    //         fs.insert_tree(
-    //             "/dir",
-    //             json!({
-    //                 "a": {
-    //                     "one.rs": "const ONE: usize = 1;",
-    //                     "two.rs": "const TWO: usize = one::ONE + one::ONE;",
-    //                 },
-    //                 "b": {
-    //                     "three.rs": "const THREE: usize = one::ONE + two::TWO;",
-    //                     "four.rs": "const FOUR: usize = one::ONE + three::THREE;",
-    //                 },
-    //             }),
-    //         )
-    //         .await;
-    //         let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
-    //         let worktree_id = project.read_with(cx, |project, cx| {
-    //             project.worktrees(cx).next().unwrap().read(cx).id()
-    //         });
-    //         let workspace = cx
-    //             .add_window(|cx| Workspace::test_new(project, cx))
-    //             .root(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/dir",
+            json!({
+                "a": {
+                    "one.rs": "const ONE: usize = 1;",
+                    "two.rs": "const TWO: usize = one::ONE + one::ONE;",
+                },
+                "b": {
+                    "three.rs": "const THREE: usize = one::ONE + two::TWO;",
+                    "four.rs": "const FOUR: usize = one::ONE + three::THREE;",
+                },
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+        let worktree_id = project.read_with(cx, |project, cx| {
+            project.worktrees().next().unwrap().read(cx).id()
+        });
+        let window = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let workspace = window.root(cx).unwrap();
 
-    //         let active_item = cx.read(|cx| {
-    //             workspace
-    //                 .read(cx)
-    //                 .active_pane()
-    //                 .read(cx)
-    //                 .active_item()
-    //                 .and_then(|item| item.downcast::<ProjectSearchView>())
-    //         });
-    //         assert!(
-    //             active_item.is_none(),
-    //             "Expected no search panel to be active, but got: {active_item:?}"
-    //         );
+        let active_item = cx.read(|cx| {
+            workspace
+                .read(cx)
+                .active_pane()
+                .read(cx)
+                .active_item()
+                .and_then(|item| item.downcast::<ProjectSearchView>())
+        });
+        assert!(
+            active_item.is_none(),
+            "Expected no search panel to be active"
+        );
 
-    //         let one_file_entry = cx.update(|cx| {
-    //             workspace
-    //                 .read(cx)
-    //                 .project()
-    //                 .read(cx)
-    //                 .entry_for_path(&(worktree_id, "a/one.rs").into(), cx)
-    //                 .expect("no entry for /a/one.rs file")
-    //         });
-    //         assert!(one_file_entry.is_file());
-    //         workspace.update(cx, |workspace, cx| {
-    //             ProjectSearchView::new_search_in_directory(workspace, &one_file_entry, cx)
-    //         });
-    //         let active_search_entry = cx.read(|cx| {
-    //             workspace
-    //                 .read(cx)
-    //                 .active_pane()
-    //                 .read(cx)
-    //                 .active_item()
-    //                 .and_then(|item| item.downcast::<ProjectSearchView>())
-    //         });
-    //         assert!(
-    //             active_search_entry.is_none(),
-    //             "Expected no search panel to be active for file entry"
-    //         );
+        let one_file_entry = cx.update(|cx| {
+            workspace
+                .read(cx)
+                .project()
+                .read(cx)
+                .entry_for_path(&(worktree_id, "a/one.rs").into(), cx)
+                .expect("no entry for /a/one.rs file")
+        });
+        assert!(one_file_entry.is_file());
+        window
+            .update(cx, |workspace, cx| {
+                ProjectSearchView::new_search_in_directory(workspace, &one_file_entry, cx)
+            })
+            .unwrap();
+        let active_search_entry = cx.read(|cx| {
+            workspace
+                .read(cx)
+                .active_pane()
+                .read(cx)
+                .active_item()
+                .and_then(|item| item.downcast::<ProjectSearchView>())
+        });
+        assert!(
+            active_search_entry.is_none(),
+            "Expected no search panel to be active for file entry"
+        );
 
-    //         let a_dir_entry = cx.update(|cx| {
-    //             workspace
-    //                 .read(cx)
-    //                 .project()
-    //                 .read(cx)
-    //                 .entry_for_path(&(worktree_id, "a").into(), cx)
-    //                 .expect("no entry for /a/ directory")
-    //         });
-    //         assert!(a_dir_entry.is_dir());
-    //         workspace.update(cx, |workspace, cx| {
-    //             ProjectSearchView::new_search_in_directory(workspace, &a_dir_entry, cx)
-    //         });
+        let a_dir_entry = cx.update(|cx| {
+            workspace
+                .read(cx)
+                .project()
+                .read(cx)
+                .entry_for_path(&(worktree_id, "a").into(), cx)
+                .expect("no entry for /a/ directory")
+        });
+        assert!(a_dir_entry.is_dir());
+        window
+            .update(cx, |workspace, cx| {
+                ProjectSearchView::new_search_in_directory(workspace, &a_dir_entry, cx)
+            })
+            .unwrap();
 
-    //         let Some(search_view) = cx.read(|cx| {
-    //             workspace
-    //                 .read(cx)
-    //                 .active_pane()
-    //                 .read(cx)
-    //                 .active_item()
-    //                 .and_then(|item| item.downcast::<ProjectSearchView>())
-    //         }) else {
-    //             panic!("Search view expected to appear after new search in directory event trigger")
-    //         };
-    //         cx.background_executor.run_until_parked();
-    //         search_view.update(cx, |search_view, cx| {
-    //             assert!(
-    //                 search_view.query_editor.is_focused(cx),
-    //                 "On new search in directory, focus should be moved into query editor"
-    //             );
-    //             search_view.excluded_files_editor.update(cx, |editor, cx| {
-    //                 assert!(
-    //                     editor.display_text(cx).is_empty(),
-    //                     "New search in directory should not have any excluded files"
-    //                 );
-    //             });
-    //             search_view.included_files_editor.update(cx, |editor, cx| {
-    //                 assert_eq!(
-    //                     editor.display_text(cx),
-    //                     a_dir_entry.path.to_str().unwrap(),
-    //                     "New search in directory should have included dir entry path"
-    //                 );
-    //             });
-    //         });
-
-    //         search_view.update(cx, |search_view, cx| {
-    //             search_view
-    //                 .query_editor
-    //                 .update(cx, |query_editor, cx| query_editor.set_text("const", cx));
-    //             search_view.search(cx);
-    //         });
-    //         cx.background_executor.run_until_parked();
-    //         search_view.update(cx, |search_view, cx| {
-    //             assert_eq!(
-    //                 search_view
-    //                     .results_editor
-    //                     .update(cx, |editor, cx| editor.display_text(cx)),
-    //                 "\n\nconst ONE: usize = 1;\n\n\nconst TWO: usize = one::ONE + one::ONE;",
-    //                 "New search in directory should have a filter that matches a certain directory"
-    //             );
-    //         });
-    //     }
+        let Some(search_view) = cx.read(|cx| {
+            workspace
+                .read(cx)
+                .active_pane()
+                .read(cx)
+                .active_item()
+                .and_then(|item| item.downcast::<ProjectSearchView>())
+        }) else {
+            panic!("Search view expected to appear after new search in directory event trigger")
+        };
+        cx.background_executor.run_until_parked();
+        window
+            .update(cx, |_, cx| {
+                search_view.update(cx, |search_view, cx| {
+                    assert!(
+                        search_view.query_editor.focus_handle(cx).is_focused(cx),
+                        "On new search in directory, focus should be moved into query editor"
+                    );
+                    search_view.excluded_files_editor.update(cx, |editor, cx| {
+                        assert!(
+                            editor.display_text(cx).is_empty(),
+                            "New search in directory should not have any excluded files"
+                        );
+                    });
+                    search_view.included_files_editor.update(cx, |editor, cx| {
+                        assert_eq!(
+                            editor.display_text(cx),
+                            a_dir_entry.path.to_str().unwrap(),
+                            "New search in directory should have included dir entry path"
+                        );
+                    });
+                });
+            })
+            .unwrap();
+        window
+            .update(cx, |_, cx| {
+                search_view.update(cx, |search_view, cx| {
+                    search_view
+                        .query_editor
+                        .update(cx, |query_editor, cx| query_editor.set_text("const", cx));
+                    search_view.search(cx);
+                });
+            })
+            .unwrap();
+        cx.background_executor.run_until_parked();
+        window
+            .update(cx, |_, cx| {
+                search_view.update(cx, |search_view, cx| {
+                    assert_eq!(
+                search_view
+                    .results_editor
+                    .update(cx, |editor, cx| editor.display_text(cx)),
+                "\n\nconst ONE: usize = 1;\n\n\nconst TWO: usize = one::ONE + one::ONE;",
+                "New search in directory should have a filter that matches a certain directory"
+            );
+                })
+            })
+            .unwrap();
+    }
 
     //     #[gpui::test]
     //     async fn test_search_query_history(cx: &mut TestAppContext) {
