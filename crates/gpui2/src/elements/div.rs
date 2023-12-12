@@ -602,8 +602,7 @@ impl Element for Div {
         cx: &mut WindowContext,
     ) -> (LayoutId, Self::State) {
         let mut child_layout_ids = SmallVec::new();
-        let mut interactivity = mem::take(&mut self.interactivity);
-        let (layout_id, interactive_state) = interactivity.layout(
+        let (layout_id, interactive_state) = self.interactivity.layout(
             element_state.map(|s| s.interactive_state),
             cx,
             |style, cx| {
@@ -617,7 +616,6 @@ impl Element for Div {
                 })
             },
         );
-        self.interactivity = interactivity;
         (
             layout_id,
             DivState {
