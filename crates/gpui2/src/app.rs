@@ -569,59 +569,61 @@ impl AppContext {
     /// such as notifying observers, emitting events, etc. Effects can themselves
     /// cause effects, so we continue looping until all effects are processed.
     fn flush_effects(&mut self) {
-        loop {
-            self.release_dropped_entities();
-            self.release_dropped_focus_handles();
-            if let Some(effect) = self.pending_effects.pop_front() {
-                match effect {
-                    Effect::Notify { emitter } => {
-                        self.apply_notify_effect(emitter);
+        while !self.pending_effects.is_empty() {
+            loop {
+                self.release_dropped_entities();
+                self.release_dropped_focus_handles();
+                if let Some(effect) = self.pending_effects.pop_front() {
+                    match effect {
+                        Effect::Notify { emitter } => {
+                            self.apply_notify_effect(emitter);
+                        }
+                        Effect::Emit {
+                            emitter,
+                            event_type,
+                            event,
+                        } => self.apply_emit_effect(emitter, event_type, event),
+                        Effect::FocusChanged {
+                            window_handle,
+                            focused,
+                        } => {
+                            self.apply_focus_changed_effect(window_handle, focused);
+                        }
+                        Effect::Refresh => {
+                            self.apply_refresh_effect();
+                        }
+                        Effect::NotifyGlobalObservers { global_type } => {
+                            self.apply_notify_global_observers_effect(global_type);
+                        }
+                        Effect::Defer { callback } => {
+                            self.apply_defer_effect(callback);
+                        }
                     }
-                    Effect::Emit {
-                        emitter,
-                        event_type,
-                        event,
-                    } => self.apply_emit_effect(emitter, event_type, event),
-                    Effect::FocusChanged {
-                        window_handle,
-                        focused,
-                    } => {
-                        self.apply_focus_changed_effect(window_handle, focused);
-                    }
-                    Effect::Refresh => {
-                        self.apply_refresh_effect();
-                    }
-                    Effect::NotifyGlobalObservers { global_type } => {
-                        self.apply_notify_global_observers_effect(global_type);
-                    }
-                    Effect::Defer { callback } => {
-                        self.apply_defer_effect(callback);
-                    }
-                }
-            } else {
-                break;
-            }
-        }
-
-        for window in self.windows.values() {
-            if let Some(window) = window.as_ref() {
-                if window.dirty {
-                    window.platform_window.invalidate();
+                } else {
+                    break;
                 }
             }
-        }
 
-        #[cfg(any(test, feature = "test-support"))]
-        for window in self
-            .windows
-            .values()
-            .filter_map(|window| {
-                let window = window.as_ref()?;
-                window.dirty.then_some(window.handle)
-            })
-            .collect::<Vec<_>>()
-        {
-            self.update_window(window, |_, cx| cx.draw()).unwrap();
+            for window in self.windows.values() {
+                if let Some(window) = window.as_ref() {
+                    if window.dirty {
+                        window.platform_window.invalidate();
+                    }
+                }
+            }
+
+            #[cfg(any(test, feature = "test-support"))]
+            for window in self
+                .windows
+                .values()
+                .filter_map(|window| {
+                    let window = window.as_ref()?;
+                    window.dirty.then_some(window.handle)
+                })
+                .collect::<Vec<_>>()
+            {
+                self.update_window(window, |_, cx| cx.draw()).unwrap();
+            }
         }
     }
 

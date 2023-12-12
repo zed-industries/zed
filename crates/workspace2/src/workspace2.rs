@@ -532,7 +532,7 @@ impl Workspace {
             cx.notify()
         })
         .detach();
-        cx.on_window_focus_lost(|this, cx| {
+        cx.on_blur_window(|this, cx| {
             let focus_handle = this.focus_handle(cx);
             cx.focus(&focus_handle);
         })
