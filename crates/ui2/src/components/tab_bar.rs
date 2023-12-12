@@ -89,10 +89,12 @@ impl RenderOnce for TabBar {
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         const HEIGHT_IN_REMS: f32 = 30. / 16.;
 
-        h_stack()
+        div()
             .id(self.id)
             .group("tab_bar")
             .track_focus(&self.focus_handle)
+            .flex()
+            .flex_none()
             .w_full()
             .h(rems(HEIGHT_IN_REMS))
             .bg(cx.theme().colors().tab_bar_background)
