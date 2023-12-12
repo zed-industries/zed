@@ -26,8 +26,8 @@ pub(crate) struct DispatchTree {
 
 #[derive(Default)]
 pub(crate) struct DispatchNode {
-    pub key_listeners: SmallVec<[KeyListener; 2]>,
-    pub action_listeners: SmallVec<[DispatchActionListener; 16]>,
+    pub key_listeners: Vec<KeyListener>,
+    pub action_listeners: Vec<DispatchActionListener>,
     pub context: Option<KeyContext>,
     parent: Option<DispatchNodeId>,
 }

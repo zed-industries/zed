@@ -1093,14 +1093,14 @@ mod tests {
             lsp.receive_notification::<lsp::notification::DidCloseTextDocument>()
                 .await,
             lsp::DidCloseTextDocumentParams {
-                text_document: lsp::TextDocumentIdentifier::new(buffer_2_uri.clone()),
+                text_document: lsp::TextDocumentIdentifier::new(buffer_1_uri.clone()),
             }
         );
         assert_eq!(
             lsp.receive_notification::<lsp::notification::DidCloseTextDocument>()
                 .await,
             lsp::DidCloseTextDocumentParams {
-                text_document: lsp::TextDocumentIdentifier::new(buffer_1_uri.clone()),
+                text_document: lsp::TextDocumentIdentifier::new(buffer_2_uri.clone()),
             }
         );
 
@@ -1119,10 +1119,10 @@ mod tests {
                 .await,
             lsp::DidOpenTextDocumentParams {
                 text_document: lsp::TextDocumentItem::new(
-                    buffer_2_uri.clone(),
+                    buffer_1_uri.clone(),
                     "plaintext".into(),
                     0,
-                    "Goodbye".into()
+                    "Hello world".into()
                 ),
             }
         );
@@ -1131,10 +1131,10 @@ mod tests {
                 .await,
             lsp::DidOpenTextDocumentParams {
                 text_document: lsp::TextDocumentItem::new(
-                    buffer_1_uri.clone(),
+                    buffer_2_uri.clone(),
                     "plaintext".into(),
                     0,
-                    "Hello world".into()
+                    "Goodbye".into()
                 ),
             }
         );

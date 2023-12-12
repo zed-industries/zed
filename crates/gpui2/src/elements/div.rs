@@ -26,7 +26,7 @@ const TOOLTIP_DELAY: Duration = Duration::from_millis(500);
 
 pub struct GroupStyle {
     pub group: SharedString,
-    pub style: StyleRefinement,
+    pub style: Box<StyleRefinement>,
 }
 
 pub trait InteractiveElement: Sized + Element {
@@ -61,7 +61,7 @@ pub trait InteractiveElement: Sized + Element {
     }
 
     fn hover(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self {
-        self.interactivity().hover_style = f(StyleRefinement::default());
+        self.interactivity().hover_style = Some(Box::new(f(StyleRefinement::default())));
         self
     }
 
@@ -72,7 +72,7 @@ pub trait InteractiveElement: Sized + Element {
     ) -> Self {
         self.interactivity().group_hover_style = Some(GroupStyle {
             group: group_name.into(),
-            style: f(StyleRefinement::default()),
+            style: Box::new(f(StyleRefinement::default())),
         });
         self
     }
@@ -319,7 +319,7 @@ pub trait InteractiveElement: Sized + Element {
             TypeId::of::<S>(),
             GroupStyle {
                 group: group_name.into(),
-                style: f(StyleRefinement::default()),
+                style: Box::new(f(StyleRefinement::default())),
             },
         ));
         self
@@ -370,7 +370,7 @@ pub trait StatefulInteractiveElement: InteractiveElement {
     where
         Self: Sized,
     {
-        self.interactivity().active_style = f(StyleRefinement::default());
+        self.interactivity().active_style = Some(Box::new(f(StyleRefinement::default())));
         self
     }
 
@@ -384,7 +384,7 @@ pub trait StatefulInteractiveElement: InteractiveElement {
     {
         self.interactivity().group_active_style = Some(GroupStyle {
             group: group_name.into(),
-            style: f(StyleRefinement::default()),
+            style: Box::new(f(StyleRefinement::default())),
         });
         self
     }
@@ -446,7 +446,7 @@ pub trait FocusableElement: InteractiveElement {
     where
         Self: Sized,
     {
-        self.interactivity().focus_style = f(StyleRefinement::default());
+        self.interactivity().focus_style = Some(Box::new(f(StyleRefinement::default())));
         self
     }
 
@@ -454,7 +454,7 @@ pub trait FocusableElement: InteractiveElement {
     where
         Self: Sized,
     {
-        self.interactivity().in_focus_style = f(StyleRefinement::default());
+        self.interactivity().in_focus_style = Some(Box::new(f(StyleRefinement::default())));
         self
     }
 
@@ -532,7 +532,7 @@ pub trait FocusableElement: InteractiveElement {
     }
 }
 
-pub type FocusListeners = SmallVec<[FocusListener; 2]>;
+pub type FocusListeners = Vec<FocusListener>;
 
 pub type FocusListener = Box<dyn Fn(&FocusHandle, &FocusEvent, &mut WindowContext) + 'static>;
 
@@ -602,8 +602,7 @@ impl Element for Div {
         cx: &mut WindowContext,
     ) -> (LayoutId, Self::State) {
         let mut child_layout_ids = SmallVec::new();
-        let mut interactivity = mem::take(&mut self.interactivity);
-        let (layout_id, interactive_state) = interactivity.layout(
+        let (layout_id, interactive_state) = self.interactivity.layout(
             element_state.map(|s| s.interactive_state),
             cx,
             |style, cx| {
@@ -617,7 +616,6 @@ impl Element for Div {
                 })
             },
         );
-        self.interactivity = interactivity;
         (
             layout_id,
             DivState {
@@ -712,7 +710,7 @@ impl IntoElement for Div {
 }
 
 pub struct DivState {
-    child_layout_ids: SmallVec<[LayoutId; 4]>,
+    child_layout_ids: SmallVec<[LayoutId; 2]>,
     interactive_state: InteractiveElementState,
 }
 
@@ -730,24 +728,24 @@ pub struct Interactivity {
     pub scroll_handle: Option<ScrollHandle>,
     pub focus_listeners: FocusListeners,
     pub group: Option<SharedString>,
-    pub base_style: StyleRefinement,
-    pub focus_style: StyleRefinement,
-    pub in_focus_style: StyleRefinement,
-    pub hover_style: StyleRefinement,
+    pub base_style: Box<StyleRefinement>,
+    pub focus_style: Option<Box<StyleRefinement>>,
+    pub in_focus_style: Option<Box<StyleRefinement>>,
+    pub hover_style: Option<Box<StyleRefinement>>,
     pub group_hover_style: Option<GroupStyle>,
-    pub active_style: StyleRefinement,
+    pub active_style: Option<Box<StyleRefinement>>,
     pub group_active_style: Option<GroupStyle>,
-    pub drag_over_styles: SmallVec<[(TypeId, StyleRefinement); 2]>,
-    pub group_drag_over_styles: SmallVec<[(TypeId, GroupStyle); 2]>,
-    pub mouse_down_listeners: SmallVec<[MouseDownListener; 2]>,
-    pub mouse_up_listeners: SmallVec<[MouseUpListener; 2]>,
-    pub mouse_move_listeners: SmallVec<[MouseMoveListener; 2]>,
-    pub scroll_wheel_listeners: SmallVec<[ScrollWheelListener; 2]>,
-    pub key_down_listeners: SmallVec<[KeyDownListener; 2]>,
-    pub key_up_listeners: SmallVec<[KeyUpListener; 2]>,
-    pub action_listeners: SmallVec<[(TypeId, ActionListener); 8]>,
-    pub drop_listeners: SmallVec<[(TypeId, Box<DropListener>); 2]>,
-    pub click_listeners: SmallVec<[ClickListener; 2]>,
+    pub drag_over_styles: Vec<(TypeId, StyleRefinement)>,
+    pub group_drag_over_styles: Vec<(TypeId, GroupStyle)>,
+    pub mouse_down_listeners: Vec<MouseDownListener>,
+    pub mouse_up_listeners: Vec<MouseUpListener>,
+    pub mouse_move_listeners: Vec<MouseMoveListener>,
+    pub scroll_wheel_listeners: Vec<ScrollWheelListener>,
+    pub key_down_listeners: Vec<KeyDownListener>,
+    pub key_up_listeners: Vec<KeyUpListener>,
+    pub action_listeners: Vec<(TypeId, ActionListener)>,
+    pub drop_listeners: Vec<(TypeId, Box<DropListener>)>,
+    pub click_listeners: Vec<ClickListener>,
     pub drag_listener: Option<DragListener>,
     pub hover_listener: Option<Box<dyn Fn(&bool, &mut WindowContext)>>,
     pub tooltip_builder: Option<TooltipBuilder>,
@@ -1177,12 +1175,16 @@ impl Interactivity {
         style.refine(&self.base_style);
 
         if let Some(focus_handle) = self.tracked_focus_handle.as_ref() {
-            if focus_handle.within_focused(cx) {
-                style.refine(&self.in_focus_style);
+            if let Some(in_focus_style) = self.in_focus_style.as_ref() {
+                if focus_handle.within_focused(cx) {
+                    style.refine(in_focus_style);
+                }
             }
 
-            if focus_handle.is_focused(cx) {
-                style.refine(&self.focus_style);
+            if let Some(focus_style) = self.focus_style.as_ref() {
+                if focus_handle.is_focused(cx) {
+                    style.refine(focus_style);
+                }
             }
         }
 
@@ -1197,13 +1199,13 @@ impl Interactivity {
                     }
                 }
             }
-            if self.hover_style.is_some() {
+            if let Some(hover_style) = self.hover_style.as_ref() {
                 if bounds
                     .intersect(&cx.content_mask().bounds)
                     .contains(&mouse_position)
                     && cx.was_top_layer(&mouse_position, cx.stacking_order())
                 {
-                    style.refine(&self.hover_style);
+                    style.refine(hover_style);
                 }
             }
 
@@ -1239,8 +1241,10 @@ impl Interactivity {
             }
         }
 
-        if clicked_state.element {
-            style.refine(&self.active_style)
+        if let Some(active_style) = self.active_style.as_ref() {
+            if clicked_state.element {
+                style.refine(active_style)
+            }
         }
 
         style
@@ -1255,27 +1259,27 @@ impl Default for Interactivity {
             focusable: false,
             tracked_focus_handle: None,
             scroll_handle: None,
-            focus_listeners: SmallVec::default(),
+            focus_listeners: Vec::default(),
             // scroll_offset: Point::default(),
             group: None,
-            base_style: StyleRefinement::default(),
-            focus_style: StyleRefinement::default(),
-            in_focus_style: StyleRefinement::default(),
-            hover_style: StyleRefinement::default(),
+            base_style: Box::new(StyleRefinement::default()),
+            focus_style: None,
+            in_focus_style: None,
+            hover_style: None,
             group_hover_style: None,
-            active_style: StyleRefinement::default(),
+            active_style: None,
             group_active_style: None,
-            drag_over_styles: SmallVec::new(),
-            group_drag_over_styles: SmallVec::new(),
-            mouse_down_listeners: SmallVec::new(),
-            mouse_up_listeners: SmallVec::new(),
-            mouse_move_listeners: SmallVec::new(),
-            scroll_wheel_listeners: SmallVec::new(),
-            key_down_listeners: SmallVec::new(),
-            key_up_listeners: SmallVec::new(),
-            action_listeners: SmallVec::new(),
-            drop_listeners: SmallVec::new(),
-            click_listeners: SmallVec::new(),
+            drag_over_styles: Vec::new(),
+            group_drag_over_styles: Vec::new(),
+            mouse_down_listeners: Vec::new(),
+            mouse_up_listeners: Vec::new(),
+            mouse_move_listeners: Vec::new(),
+            scroll_wheel_listeners: Vec::new(),
+            key_down_listeners: Vec::new(),
+            key_up_listeners: Vec::new(),
+            action_listeners: Vec::new(),
+            drop_listeners: Vec::new(),
+            click_listeners: Vec::new(),
             drag_listener: None,
             hover_listener: None,
             tooltip_builder: None,

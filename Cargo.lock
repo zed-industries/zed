@@ -1990,7 +1990,7 @@ dependencies = [
 name = "collections"
 version = "0.1.0"
 dependencies = [
- "seahash",
+ "rustc-hash",
 ]
 
 [[package]]
