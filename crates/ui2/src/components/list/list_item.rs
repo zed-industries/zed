@@ -1,5 +1,7 @@
 use crate::{prelude::*, Disclosure};
-use gpui::{px, AnyElement, AnyView, ClickEvent, Div, MouseButton, MouseDownEvent, Pixels};
+use gpui::{
+    px, AnyElement, AnyView, ClickEvent, Div, MouseButton, MouseDownEvent, Pixels, Stateful,
+};
 use smallvec::SmallVec;
 
 #[derive(IntoElement)]
@@ -151,10 +153,11 @@ impl ParentElement for ListItem {
 }
 
 impl RenderOnce for ListItem {
-    type Rendered = Div;
+    type Rendered = Stateful<Div>;
 
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         h_stack()
+            .id("item_container")
             .w_full()
             .flex_1()
             .relative()
@@ -163,15 +166,8 @@ impl RenderOnce for ListItem {
                 this.ml(self.indent_level as f32 * self.indent_step_size)
                     .px_1()
             })
-            .child(
-                h_stack()
-                    .id(self.id)
-                    .w_full()
-                    .flex_1()
-                    .relative()
-                    .gap_1()
-                    .px_2()
-                    .group("list_item")
+            .when(!self.inset, |this| {
+                this
                     // TODO: Add focus state
                     // TODO:debu Add focus state
                     // .when(self.state == InteractionState::Focused, |this| {
@@ -182,6 +178,30 @@ impl RenderOnce for ListItem {
                     .active(|style| style.bg(cx.theme().colors().ghost_element_active))
                     .when(self.selected, |this| {
                         this.bg(cx.theme().colors().ghost_element_selected)
+                    })
+            })
+            .child(
+                h_stack()
+                    .id(self.id)
+                    .w_full()
+                    .flex_1()
+                    .relative()
+                    .gap_1()
+                    .px_2()
+                    .group("list_item")
+                    .when(self.inset, |this| {
+                        this
+                            // TODO: Add focus state
+                            // TODO:debu Add focus state
+                            // .when(self.state == InteractionState::Focused, |this| {
+                            //     this.border()
+                            //         .border_color(cx.theme().colors().border_focused)
+                            // })
+                            .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
+                            .active(|style| style.bg(cx.theme().colors().ghost_element_active))
+                            .when(self.selected, |this| {
+                                this.bg(cx.theme().colors().ghost_element_selected)
+                            })
                     })
                     .when_some(self.on_click, |this, on_click| {
                         this.cursor_pointer().on_click(move |event, cx| {
