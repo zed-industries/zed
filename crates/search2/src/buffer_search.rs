@@ -10,9 +10,9 @@ use collections::HashMap;
 use editor::Editor;
 use futures::channel::oneshot;
 use gpui::{
-    actions, div, impl_actions, red, Action, AppContext, Div, EventEmitter, FocusableView,
-    InteractiveElement as _, IntoElement, KeyContext, ParentElement as _, Render, Styled,
-    Subscription, Task, View, ViewContext, VisualContext as _, WindowContext,
+    actions, div, impl_actions, red, Action, AppContext, ClickEvent, Div, EventEmitter,
+    FocusableView, InteractiveElement as _, IntoElement, KeyContext, ParentElement as _, Render,
+    Styled, Subscription, Task, View, ViewContext, VisualContext as _, WindowContext,
 };
 use project::search::SearchQuery;
 use serde::Deserialize;
@@ -135,10 +135,6 @@ impl Render for BufferSearchBar {
 
             render_search_mode_button(mode, is_active)
         };
-        let search_option_button = |option| {
-            let is_active = self.search_options.contains(option);
-            option.as_button(is_active)
-        };
         let match_count = self
             .active_searchable_item
             .as_ref()
@@ -209,16 +205,20 @@ impl Render for BufferSearchBar {
                     .items_center()
                     .child(IconElement::new(Icon::MagnifyingGlass))
                     .child(self.query_editor.clone())
-                    .children(
-                        supported_options
-                            .case
-                            .then(|| search_option_button(SearchOptions::CASE_SENSITIVE)),
-                    )
-                    .children(
-                        supported_options
-                            .word
-                            .then(|| search_option_button(SearchOptions::WHOLE_WORD)),
-                    ),
+                    .children(supported_options.case.then(|| {
+                        self.render_search_option_button(
+                            SearchOptions::CASE_SENSITIVE,
+                            cx.listener(|this, _, cx| {
+                                this.toggle_case_sensitive(&ToggleCaseSensitive, cx)
+                            }),
+                        )
+                    }))
+                    .children(supported_options.word.then(|| {
+                        self.render_search_option_button(
+                            SearchOptions::WHOLE_WORD,
+                            cx.listener(|this, _, cx| this.toggle_whole_word(&ToggleWholeWord, cx)),
+                        )
+                    })),
             )
             .child(
                 h_stack()
@@ -229,7 +229,12 @@ impl Render for BufferSearchBar {
                             .child(search_button_for_mode(SearchMode::Regex)),
                     )
                     .when(supported_options.replacement, |this| {
-                        this.child(super::toggle_replace_button(self.replace_enabled))
+                        this.child(super::toggle_replace_button(
+                            self.replace_enabled,
+                            cx.listener(|this, _: &ClickEvent, cx| {
+                                this.toggle_replace(&ToggleReplace, cx);
+                            }),
+                        ))
                     }),
             )
             .child(
@@ -572,6 +577,14 @@ impl BufferSearchBar {
             .tooltip(|cx| Tooltip::for_action("Select all matches", &SelectAllMatches, cx))
     }
 
+    fn render_search_option_button(
+        &self,
+        option: SearchOptions,
+        action: impl Fn(&ClickEvent, &mut WindowContext) + 'static,
+    ) -> impl IntoElement {
+        let is_active = self.search_options.contains(option);
+        option.as_button(is_active, action)
+    }
     pub fn activate_search_mode(&mut self, mode: SearchMode, cx: &mut ViewContext<Self>) {
         assert_ne!(
             mode,
