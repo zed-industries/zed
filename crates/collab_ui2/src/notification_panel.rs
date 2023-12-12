@@ -6,9 +6,9 @@ use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
 use futures::StreamExt;
 use gpui::{
-    actions, div, list, px, serde_json, AnyElement, AppContext, AsyncWindowContext, DismissEvent,
-    Div, Element, EventEmitter, FocusHandle, FocusableView, InteractiveElement, IntoElement,
-    ListAlignment, ListScrollEvent, ListState, Model, ParentElement, Render, Stateful,
+    actions, div, list, px, serde_json, AnyElement, AppContext, AsyncWindowContext, CursorStyle,
+    DismissEvent, Div, Element, EventEmitter, FocusHandle, FocusableView, InteractiveElement,
+    IntoElement, ListAlignment, ListScrollEvent, ListState, Model, ParentElement, Render, Stateful,
     StatefulInteractiveElement, Styled, Task, View, ViewContext, VisualContext, WeakView,
     WindowContext,
 };
@@ -19,10 +19,7 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::{sync::Arc, time::Duration};
 use time::{OffsetDateTime, UtcOffset};
-use ui::{
-    h_stack, v_stack, Avatar, Button, ButtonLike, Clickable, Disableable, Icon, IconButton,
-    IconElement, Label,
-};
+use ui::{h_stack, v_stack, Avatar, Button, Clickable, Icon, IconButton, IconElement, Label};
 use util::{ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
@@ -287,9 +284,13 @@ impl NotificationPanel {
                             ),
                         ),
                 )
-                .on_click({
-                    let notification = notification.clone();
-                    cx.listener(move |this, _, cx| this.did_click_notification(&notification, cx))
+                .when(can_navigate, |el| {
+                    el.cursor(CursorStyle::PointingHand).on_click({
+                        let notification = notification.clone();
+                        cx.listener(move |this, _, cx| {
+                            this.did_click_notification(&notification, cx)
+                        })
+                    })
                 })
                 .into_any(),
         )
@@ -405,7 +406,7 @@ impl NotificationPanel {
         } = notification.clone()
         {
             if let Some(workspace) = self.workspace.upgrade() {
-                cx.defer(move |_, cx| {
+                cx.window_context().defer(move |cx| {
                     workspace.update(cx, |workspace, cx| {
                         if let Some(panel) = workspace.focus_panel::<ChatPanel>(cx) {
                             panel.update(cx, |panel, cx| {
@@ -647,7 +648,7 @@ impl NotificationToast {
     fn focus_notification_panel(&self, cx: &mut ViewContext<Self>) {
         let workspace = self.workspace.clone();
         let notification_id = self.notification_id;
-        cx.defer(move |_, cx| {
+        cx.window_context().defer(move |cx| {
             workspace
                 .update(cx, |workspace, cx| {
                     if let Some(panel) = workspace.focus_panel::<NotificationPanel>(cx) {
