@@ -175,14 +175,14 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 assistant_panel,
                 channels_panel,
                 chat_panel,
-                //     notification_panel,
+                notification_panel,
             ) = futures::try_join!(
                 project_panel,
                 terminal_panel,
                 assistant_panel,
                 channels_panel,
                 chat_panel,
-                //     notification_panel,
+                notification_panel,
             )?;
 
             workspace_handle.update(&mut cx, |workspace, cx| {
@@ -192,7 +192,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 workspace.add_panel(assistant_panel, cx);
                 workspace.add_panel(channels_panel, cx);
                 workspace.add_panel(chat_panel, cx);
-                //     workspace.add_panel(notification_panel, cx);
+                workspace.add_panel(notification_panel, cx);
 
                 // if !was_deserialized
                 //     && workspace

@@ -6,11 +6,10 @@ use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
 use futures::StreamExt;
 use gpui::{
-    actions, div, img, px, serde_json, svg, AnyElement, AnyView, AppContext, AsyncAppContext,
-    AsyncWindowContext, Context, CursorStyle, Div, Element, Entity, EventEmitter, Flatten,
-    FocusHandle, FocusableView, InteractiveElement, IntoElement, ListAlignment, ListScrollEvent,
-    ListState, Model, MouseButton, ParentElement, Render, Stateful, StatefulInteractiveElement,
-    Task, View, ViewContext, VisualContext, WeakView, WindowContext,
+    actions, div, px, serde_json, AnyElement, AppContext, AsyncWindowContext, DismissEvent, Div,
+    Element, EventEmitter, FocusHandle, FocusableView, InteractiveElement, IntoElement,
+    ListAlignment, ListScrollEvent, ListState, Model, ParentElement, Render, Stateful,
+    StatefulInteractiveElement, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use notifications::{NotificationEntry, NotificationEvent, NotificationStore};
 use project::Fs;
@@ -19,7 +18,10 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::{sync::Arc, time::Duration};
 use time::{OffsetDateTime, UtcOffset};
-use ui::{h_stack, v_stack, Avatar, Button, Clickable, Icon, IconButton, IconElement, Label, List};
+use ui::{
+    h_stack, v_stack, Avatar, Button, ButtonLike, Clickable, Disableable, Icon, IconButton,
+    IconElement, Label,
+};
 use util::{ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
@@ -98,7 +100,7 @@ impl NotificationPanel {
             })
             .detach();
 
-            let mut notification_list =
+            let notification_list =
                 ListState::new(0, ListAlignment::Top, px(1000.), move |ix, cx| {
                     view.update(cx, |this, cx| {
                         this.render_notification(ix, cx)
@@ -220,58 +222,68 @@ impl NotificationPanel {
         }
 
         Some(
-            h_stack()
-                .children(actor.map(|actor| Avatar::new(actor.avatar_uri.clone())))
+            ButtonLike::new(ix)
                 .child(
-                    v_stack().child(Label::new(text)).child(
-                        h_stack()
-                            .child(Label::new(format_timestamp(
-                                timestamp,
-                                now,
-                                self.local_timezone,
-                            )))
-                            .children(if let Some(is_accepted) = response {
-                                Some(div().child(Label::new(if is_accepted {
-                                    "You accepted"
-                                } else {
-                                    "You declined"
-                                })))
-                            } else if needs_response {
-                                Some(
-                                    h_stack()
-                                        .child(Button::new("decline", "Decline").on_click({
-                                            let notification = notification.clone();
-                                            let view = cx.view().clone();
-                                            move |_, cx| {
-                                                view.update(cx, |this, cx| {
-                                                    this.respond_to_notification(
-                                                        notification.clone(),
-                                                        false,
-                                                        cx,
-                                                    )
-                                                });
-                                            }
-                                        }))
-                                        .child(Button::new("accept", "Accept").on_click({
-                                            let notification = notification.clone();
-                                            let view = cx.view().clone();
-                                            move |_, cx| {
-                                                view.update(cx, |this, cx| {
-                                                    this.respond_to_notification(
-                                                        notification.clone(),
-                                                        true,
-                                                        cx,
-                                                    )
-                                                });
-                                            }
-                                        })),
-                                )
-                            } else {
-                                None
-                            }),
-                    ),
+                    h_stack()
+                        .children(actor.map(|actor| Avatar::new(actor.avatar_uri.clone())))
+                        .child(
+                            v_stack().child(Label::new(text)).child(
+                                h_stack()
+                                    .child(Label::new(format_timestamp(
+                                        timestamp,
+                                        now,
+                                        self.local_timezone,
+                                    )))
+                                    .children(if let Some(is_accepted) = response {
+                                        Some(div().child(Label::new(if is_accepted {
+                                            "You accepted"
+                                        } else {
+                                            "You declined"
+                                        })))
+                                    } else if needs_response {
+                                        Some(
+                                            h_stack()
+                                                .child(Button::new("decline", "Decline").on_click(
+                                                    {
+                                                        let notification = notification.clone();
+                                                        let view = cx.view().clone();
+                                                        move |_, cx| {
+                                                            view.update(cx, |this, cx| {
+                                                                this.respond_to_notification(
+                                                                    notification.clone(),
+                                                                    false,
+                                                                    cx,
+                                                                )
+                                                            });
+                                                        }
+                                                    },
+                                                ))
+                                                .child(Button::new("accept", "Accept").on_click({
+                                                    let notification = notification.clone();
+                                                    let view = cx.view().clone();
+                                                    move |_, cx| {
+                                                        view.update(cx, |this, cx| {
+                                                            this.respond_to_notification(
+                                                                notification.clone(),
+                                                                true,
+                                                                cx,
+                                                            )
+                                                        });
+                                                    }
+                                                })),
+                                        )
+                                    } else {
+                                        None
+                                    }),
+                            ),
+                        ),
                 )
-                .into_any(),
+                .disabled(!can_navigate)
+                .on_click({
+                    let notification = notification.clone();
+                    cx.listener(move |this, _, cx| this.did_click_notification(&notification, cx))
+                })
+                .into_any_element(),
         )
     }
 
@@ -385,7 +397,7 @@ impl NotificationPanel {
         } = notification.clone()
         {
             if let Some(workspace) = self.workspace.upgrade() {
-                cx.app_context().defer(move |cx| {
+                cx.defer(move |_, cx| {
                     workspace.update(cx, |workspace, cx| {
                         if let Some(panel) = workspace.focus_panel::<ChatPanel>(cx) {
                             panel.update(cx, |panel, cx| {
@@ -400,37 +412,34 @@ impl NotificationPanel {
         }
     }
 
-    fn is_showing_notification(&self, notification: &Notification, cx: &AppContext) -> bool {
+    fn is_showing_notification(&self, notification: &Notification, cx: &ViewContext<Self>) -> bool {
         if let Notification::ChannelMessageMention { channel_id, .. } = &notification {
             if let Some(workspace) = self.workspace.upgrade() {
-                return workspace
-                    .read_with(cx, |workspace, cx| {
-                        if let Some(panel) = workspace.panel::<ChatPanel>(cx) {
-                            return panel.read_with(cx, |panel, cx| {
-                                panel.is_scrolled_to_bottom()
-                                    && panel.active_chat().map_or(false, |chat| {
-                                        chat.read(cx).channel_id == *channel_id
-                                    })
-                            });
-                        }
-                        false
-                    })
-                    .unwrap_or_default();
+                return if let Some(panel) = workspace.read(cx).panel::<ChatPanel>(cx) {
+                    let panel = panel.read(cx);
+                    panel.is_scrolled_to_bottom()
+                        && panel
+                            .active_chat()
+                            .map_or(false, |chat| chat.read(cx).channel_id == *channel_id)
+                } else {
+                    false
+                };
             }
         }
 
         false
     }
 
-    fn render_sign_in_prompt(&self, cx: &mut ViewContext<Self>) -> AnyElement {
+    fn render_sign_in_prompt(&self) -> AnyElement {
         Button::new(
             "sign_in_prompt_button",
             "Sign in to view your notifications",
         )
         .on_click({
             let client = self.client.clone();
-            |_, cx| {
-                cx.spawn(|cx| async move {
+            move |_, cx| {
+                let client = client.clone();
+                cx.spawn(move |cx| async move {
                     client.authenticate_and_connect(true, &cx).log_err().await;
                 })
                 .detach()
@@ -477,7 +486,7 @@ impl NotificationPanel {
         self.current_notification_toast = Some((
             notification_id,
             cx.spawn(|this, mut cx| async move {
-                cx.background().timer(TOAST_DURATION).await;
+                cx.background_executor().timer(TOAST_DURATION).await;
                 this.update(&mut cx, |this, cx| this.remove_toast(notification_id, cx))
                     .ok();
             }),
@@ -487,8 +496,8 @@ impl NotificationPanel {
             .update(cx, |workspace, cx| {
                 workspace.dismiss_notification::<NotificationToast>(0, cx);
                 workspace.show_notification(0, cx, |cx| {
-                    let workspace = cx.weak_handle();
-                    cx.add_view(|_| NotificationToast {
+                    let workspace = cx.view().downgrade();
+                    cx.build_view(|_| NotificationToast {
                         notification_id,
                         actor,
                         text,
@@ -527,9 +536,9 @@ impl NotificationPanel {
 impl Render for NotificationPanel {
     type Element = AnyElement;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement {
+    fn render(&mut self, _: &mut ViewContext<Self>) -> AnyElement {
         if self.client.user_id().is_none() {
-            self.render_sign_in_prompt(cx)
+            self.render_sign_in_prompt()
         } else if self.notification_list.item_count() == 0 {
             self.render_empty_state()
         } else {
@@ -569,7 +578,7 @@ impl Render for NotificationPanel {
 
 impl FocusableView for NotificationPanel {
     fn focus_handle(&self, _: &AppContext) -> FocusHandle {
-        self.focus_handle
+        self.focus_handle.clone()
     }
 }
 
@@ -647,10 +656,10 @@ pub enum ToastEvent {
 }
 
 impl NotificationToast {
-    fn focus_notification_panel(&self, cx: &mut AppContext) {
+    fn focus_notification_panel(&self, cx: &mut ViewContext<Self>) {
         let workspace = self.workspace.clone();
         let notification_id = self.notification_id;
-        cx.defer(move |cx| {
+        cx.defer(move |_, cx| {
             workspace
                 .update(cx, |workspace, cx| {
                     if let Some(panel) = workspace.focus_panel::<NotificationPanel>(cx) {
@@ -679,19 +688,17 @@ impl Render for NotificationToast {
             .child(Label::new(self.text.clone()))
             .child(
                 IconButton::new("close", Icon::Close)
-                    .on_click(|_, cx| cx.emit(ToastEvent::Dismiss)),
+                    .on_click(cx.listener(|_, _, cx| cx.emit(ToastEvent::Dismiss))),
             )
-            .on_click({
-                let this = cx.view().clone();
-                |_, cx| {
-                    this.update(cx, |this, cx| this.focus_notification_panel(cx));
-                    cx.emit(ToastEvent::Dismiss);
-                }
-            })
+            .on_click(cx.listener(|this, _, cx| {
+                this.focus_notification_panel(cx);
+                cx.emit(ToastEvent::Dismiss);
+            }))
     }
 }
 
 impl EventEmitter<ToastEvent> for NotificationToast {}
+impl EventEmitter<DismissEvent> for NotificationToast {}
 
 fn format_timestamp(
     mut timestamp: OffsetDateTime,

@@ -422,8 +422,8 @@ impl CollabTitlebarItem {
         current_user: &Arc<User>,
     ) -> Option<FacePile> {
         let followers = project_id.map_or(&[] as &[_], |id| room.followers_for(peer_id, id));
-        let mut pile = FacePile::default();
-        pile.child(
+
+        let pile = FacePile::default().child(
             div()
                 .child(
                     Avatar::new(user.avatar_uri.clone())
@@ -450,6 +450,7 @@ impl CollabTitlebarItem {
                     Some(div().child(Avatar::new(follower.avatar_uri.clone())))
                 })),
         );
+
         Some(pile)
     }
 
