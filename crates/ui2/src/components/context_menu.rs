@@ -251,6 +251,9 @@ impl Render for ContextMenu {
                                 };
 
                                 ListItem::new(label.clone())
+                                    .inset(true)
+                                    .selected(Some(ix) == self.selected_index)
+                                    .on_click(move |_, cx| handler(cx))
                                     .child(
                                         h_stack()
                                             .w_full()
@@ -261,8 +264,6 @@ impl Render for ContextMenu {
                                                     .map(|binding| div().ml_1().child(binding))
                                             })),
                                     )
-                                    .selected(Some(ix) == self.selected_index)
-                                    .on_click(move |_, cx| handler(cx))
                                     .into_any_element()
                             }
                         },
