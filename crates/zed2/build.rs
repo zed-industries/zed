@@ -3,10 +3,7 @@ use std::process::Command;
 fn main() {
     println!("cargo:rustc-env=MACOSX_DEPLOYMENT_TARGET=10.15.7");
 
-    if let Ok(value) = std::env::var("ZED_PREVIEW_CHANNEL") {
-        println!("cargo:rustc-env=ZED_PREVIEW_CHANNEL={value}");
-    }
-
+    println!("cargo:rerun-if-env-changed=ZED_BUNDLE");
     if std::env::var("ZED_BUNDLE").ok().as_deref() == Some("true") {
         // Find WebRTC.framework in the Frameworks folder when running as part of an application bundle.
         println!("cargo:rustc-link-arg=-Wl,-rpath,@executable_path/../Frameworks");
@@ -25,6 +22,7 @@ fn main() {
     println!("cargo:rustc-link-arg=-Wl,-ObjC");
 
     // Populate git sha environment variable if git is available
+    println!("cargo:rerun-if-changed=.git/logs/HEAD");
     if let Ok(output) = Command::new("git").args(["rev-parse", "HEAD"]).output() {
         if output.status.success() {
             let git_sha = String::from_utf8_lossy(&output.stdout);
