@@ -168,9 +168,8 @@ impl FocusHandle {
         self.id.within_focused(cx)
     }
 
-    // TODO kb now never used?
     /// Obtains whether this handle contains the given handle in the most recently rendered frame.
-    pub(crate) fn contains(&self, other: &Self, cx: &WindowContext) -> bool {
+    pub fn contains(&self, other: &Self, cx: &WindowContext) -> bool {
         self.id.contains(other.id, cx)
     }
 }

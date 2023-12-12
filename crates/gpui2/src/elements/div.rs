@@ -441,7 +441,6 @@ pub trait StatefulInteractiveElement: InteractiveElement {
     }
 }
 
-// TODO kb do we leave those on an element?
 pub trait FocusableElement: InteractiveElement {
     fn focus(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self
     where
@@ -456,34 +455,6 @@ pub trait FocusableElement: InteractiveElement {
         Self: Sized,
     {
         self.interactivity().in_focus_style = f(StyleRefinement::default());
-        self
-    }
-
-    fn on_focus(mut self, listener: impl Fn(&FocusEvent, &mut WindowContext) + 'static) -> Self
-    where
-        Self: Sized,
-    {
-        self.interactivity()
-            .focus_listeners
-            .push(Box::new(move |focus_handle, event, cx| {
-                if event.focused.as_ref() == Some(focus_handle) {
-                    listener(event, cx)
-                }
-            }));
-        self
-    }
-
-    fn on_blur(mut self, listener: impl Fn(&FocusEvent, &mut WindowContext) + 'static) -> Self
-    where
-        Self: Sized,
-    {
-        self.interactivity()
-            .focus_listeners
-            .push(Box::new(move |focus_handle, event, cx| {
-                if event.blurred.as_ref() == Some(focus_handle) {
-                    listener(event, cx)
-                }
-            }));
         self
     }
 }
