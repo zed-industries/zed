@@ -1563,7 +1563,7 @@ impl Pane {
 
     fn render_tab_bar(&mut self, cx: &mut ViewContext<'_, Pane>) -> impl IntoElement {
         TabBar::new("tab_bar", self.tab_bar_focus_handle.clone())
-            .start_slot([
+            .start_child(
                 IconButton::new("navigate_backward", Icon::ArrowLeft)
                     .icon_size(IconSize::Small)
                     .on_click({
@@ -1571,6 +1571,8 @@ impl Pane {
                         move |_, cx| view.update(cx, Self::navigate_backward)
                     })
                     .disabled(!self.can_navigate_backward()),
+            )
+            .start_child(
                 IconButton::new("navigate_forward", Icon::ArrowRight)
                     .icon_size(IconSize::Small)
                     .on_click({
@@ -1578,8 +1580,8 @@ impl Pane {
                         move |_, cx| view.update(cx, Self::navigate_backward)
                     })
                     .disabled(!self.can_navigate_forward()),
-            ])
-            .end_slot([
+            )
+            .end_child(
                 div()
                     .child(
                         IconButton::new("plus", Icon::Plus)
@@ -1601,6 +1603,8 @@ impl Pane {
                     .when_some(self.new_item_menu.as_ref(), |el, new_item_menu| {
                         el.child(Self::render_menu_overlay(new_item_menu))
                     }),
+            )
+            .end_child(
                 div()
                     .child(
                         IconButton::new("split", Icon::Split)
@@ -1623,7 +1627,7 @@ impl Pane {
                     .when_some(self.split_item_menu.as_ref(), |el, split_item_menu| {
                         el.child(Self::render_menu_overlay(split_item_menu))
                     }),
-            ])
+            )
             .children(
                 self.items
                     .iter()

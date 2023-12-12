@@ -7,9 +7,9 @@ use crate::prelude::*;
 pub struct TabBar {
     id: ElementId,
     focus_handle: FocusHandle,
-    start_slot: SmallVec<[AnyElement; 2]>,
-    end_slot: SmallVec<[AnyElement; 2]>,
+    start_children: SmallVec<[AnyElement; 2]>,
     children: SmallVec<[AnyElement; 2]>,
+    end_children: SmallVec<[AnyElement; 2]>,
 }
 
 impl TabBar {
@@ -17,25 +17,70 @@ impl TabBar {
         Self {
             id: id.into(),
             focus_handle,
-            start_slot: SmallVec::new(),
-            end_slot: SmallVec::new(),
+            start_children: SmallVec::new(),
             children: SmallVec::new(),
+            end_children: SmallVec::new(),
         }
     }
 
-    pub fn start_slot<E: IntoElement>(mut self, element: impl IntoIterator<Item = E>) -> Self {
-        self.start_slot = element
+    pub fn start_children_mut(&mut self) -> &mut SmallVec<[AnyElement; 2]> {
+        &mut self.start_children
+    }
+
+    pub fn start_child(mut self, start_child: impl IntoElement) -> Self
+    where
+        Self: Sized,
+    {
+        self.start_children_mut()
+            .push(start_child.into_element().into_any());
+        self
+    }
+
+    pub fn start_children(
+        mut self,
+        start_children: impl IntoIterator<Item = impl IntoElement>,
+    ) -> Self
+    where
+        Self: Sized,
+    {
+        self.start_children_mut().extend(
+            start_children
+                .into_iter()
+                .map(|child| child.into_any_element()),
+        );
+        self
+    }
+
+    pub fn end_slot<E: IntoElement>(mut self, element: impl IntoIterator<Item = E>) -> Self {
+        self.end_children = element
             .into_iter()
             .map(IntoElement::into_any_element)
             .collect();
         self
     }
 
-    pub fn end_slot<E: IntoElement>(mut self, element: impl IntoIterator<Item = E>) -> Self {
-        self.end_slot = element
-            .into_iter()
-            .map(IntoElement::into_any_element)
-            .collect();
+    pub fn end_children_mut(&mut self) -> &mut SmallVec<[AnyElement; 2]> {
+        &mut self.end_children
+    }
+
+    pub fn end_child(mut self, end_child: impl IntoElement) -> Self
+    where
+        Self: Sized,
+    {
+        self.end_children_mut()
+            .push(end_child.into_element().into_any());
+        self
+    }
+
+    pub fn end_children(mut self, end_children: impl IntoIterator<Item = impl IntoElement>) -> Self
+    where
+        Self: Sized,
+    {
+        self.end_children_mut().extend(
+            end_children
+                .into_iter()
+                .map(|child| child.into_any_element()),
+        );
         self
     }
 }
@@ -70,7 +115,7 @@ impl RenderOnce for TabBar {
                     .border_b()
                     .border_r()
                     .border_color(cx.theme().colors().border)
-                    .children(self.start_slot),
+                    .children(self.start_children),
             )
             .child(
                 div()
@@ -98,7 +143,7 @@ impl RenderOnce for TabBar {
                     .border_b()
                     .border_l()
                     .border_color(cx.theme().colors().border)
-                    .children(self.end_slot),
+                    .children(self.end_children),
             )
     }
 }
