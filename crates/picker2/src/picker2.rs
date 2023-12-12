@@ -228,7 +228,7 @@ impl<D: PickerDelegate> Render for Picker<D> {
             .when(self.delegate.match_count() > 0, |el| {
                 el.child(
                     v_stack()
-                        .grow()
+                        .flex_grow()
                         .child(
                             uniform_list(
                                 cx.view().clone(),

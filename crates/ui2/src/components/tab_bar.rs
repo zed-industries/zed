@@ -1,22 +1,20 @@
-use gpui::{AnyElement, FocusHandle, Focusable, Stateful};
+use gpui::{AnyElement, Stateful};
 use smallvec::SmallVec;
 
 use crate::prelude::*;
 
 #[derive(IntoElement)]
 pub struct TabBar {
-    id: ElementId,
-    focus_handle: FocusHandle,
+    div: Stateful<Div>,
     start_children: SmallVec<[AnyElement; 2]>,
     children: SmallVec<[AnyElement; 2]>,
     end_children: SmallVec<[AnyElement; 2]>,
 }
 
 impl TabBar {
-    pub fn new(id: impl Into<ElementId>, focus_handle: FocusHandle) -> Self {
+    pub fn new(id: impl Into<ElementId>) -> Self {
         Self {
-            id: id.into(),
-            focus_handle,
+            div: div().id(id),
             start_children: SmallVec::new(),
             children: SmallVec::new(),
             end_children: SmallVec::new(),
@@ -83,16 +81,22 @@ impl ParentElement for TabBar {
     }
 }
 
+impl InteractiveElement for TabBar {
+    fn interactivity(&mut self) -> &mut gpui::Interactivity {
+        self.div.interactivity()
+    }
+}
+
+impl StatefulInteractiveElement for TabBar {}
+
 impl RenderOnce for TabBar {
-    type Rendered = Focusable<Stateful<Div>>;
+    type Rendered = Stateful<Div>;
 
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         const HEIGHT_IN_REMS: f32 = 30. / 16.;
 
-        div()
-            .id(self.id)
+        self.div
             .group("tab_bar")
-            .track_focus(&self.focus_handle)
             .flex()
             .flex_none()
             .w_full()
@@ -128,6 +132,7 @@ impl RenderOnce for TabBar {
                         h_stack()
                             .id("tabs")
                             .z_index(2)
+                            .flex_grow()
                             .overflow_x_scroll()
                             .children(self.children),
                     ),

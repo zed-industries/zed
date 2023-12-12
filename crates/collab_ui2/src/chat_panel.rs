@@ -288,7 +288,11 @@ impl ChatPanel {
                             ),
                     ),
             )
-            .child(div().grow().child(self.render_active_channel_messages(cx)))
+            .child(
+                div()
+                    .flex_grow()
+                    .child(self.render_active_channel_messages(cx)),
+            )
             .child(
                 div()
                     .z_index(1)

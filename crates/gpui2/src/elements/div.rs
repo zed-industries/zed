@@ -61,6 +61,10 @@ pub trait InteractiveElement: Sized {
     }
 
     fn hover(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self {
+        debug_assert!(
+            self.interactivity().hover_style.is_none(),
+            "hover style already set"
+        );
         self.interactivity().hover_style = Some(Box::new(f(StyleRefinement::default())));
         self
     }
@@ -1313,16 +1317,16 @@ where
 
 impl<E> IntoElement for Focusable<E>
 where
-    E: Element,
+    E: IntoElement,
 {
-    type Element = E;
+    type Element = E::Element;
 
     fn element_id(&self) -> Option<ElementId> {
         self.element.element_id()
     }
 
     fn into_element(self) -> Self::Element {
-        self.element
+        self.element.into_element()
     }
 }
 
