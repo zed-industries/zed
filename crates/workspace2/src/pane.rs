@@ -10,7 +10,7 @@ use gpui::{
     actions, impl_actions, overlay, prelude::*, Action, AnchorCorner, AnyWeakView, AppContext,
     AsyncWindowContext, DismissEvent, Div, EntityId, EventEmitter, FocusHandle, Focusable,
     FocusableView, Model, MouseButton, NavigationDirection, Pixels, Point, PromptLevel, Render,
-    Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
+    ScrollHandle, Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use parking_lot::Mutex;
 use project::{Project, ProjectEntryId, ProjectPath};
@@ -177,10 +177,8 @@ pub struct Pane {
     was_focused: bool,
     active_item_index: usize,
     last_focused_view_by_item: HashMap<EntityId, FocusHandle>,
-    autoscroll: bool,
     nav_history: NavHistory,
     toolbar: View<Toolbar>,
-    tab_bar_focus_handle: FocusHandle,
     new_item_menu: Option<View<ContextMenu>>,
     split_item_menu: Option<View<ContextMenu>>,
     //     tab_context_menu: ViewHandle<ContextMenu>,
@@ -190,6 +188,7 @@ pub struct Pane {
     can_split: bool,
     //     render_tab_bar_buttons: Rc<dyn Fn(&mut Pane, &mut ViewContext<Pane>) -> AnyElement<Pane>>,
     subscriptions: Vec<Subscription>,
+    tab_bar_scroll_handle: ScrollHandle,
 }
 
 pub struct ItemNavHistory {
@@ -353,7 +352,6 @@ impl Pane {
             zoomed: false,
             active_item_index: 0,
             last_focused_view_by_item: Default::default(),
-            autoscroll: false,
             nav_history: NavHistory(Arc::new(Mutex::new(NavHistoryState {
                 mode: NavigationMode::Normal,
                 backward_stack: Default::default(),
@@ -364,9 +362,9 @@ impl Pane {
                 next_timestamp,
             }))),
             toolbar: cx.build_view(|_| Toolbar::new()),
-            tab_bar_focus_handle: cx.focus_handle(),
             new_item_menu: None,
             split_item_menu: None,
+            tab_bar_scroll_handle: ScrollHandle::new(),
             // tab_bar_context_menu: TabBarContextMenu {
             //     kind: TabBarContextMenuKind::New,
             //     handle: context_menu,
@@ -469,13 +467,20 @@ impl Pane {
                 }
 
                 active_item.focus_handle(cx).focus(cx);
-            } else if !self.tab_bar_focus_handle.contains_focused(cx) {
-                if let Some(focused) = cx.focused() {
+            } else if let Some(focused) = cx.focused() {
+                if !self.context_menu_focused(cx) {
                     self.last_focused_view_by_item
                         .insert(active_item.item_id(), focused);
                 }
             }
         }
+    }
+
+    fn context_menu_focused(&self, cx: &mut ViewContext<Self>) -> bool {
+        self.new_item_menu
+            .as_ref()
+            .or(self.split_item_menu.as_ref())
+            .map_or(false, |menu| menu.focus_handle(cx).is_focused(cx))
     }
 
     fn focus_out(&mut self, cx: &mut ViewContext<Self>) {
@@ -794,7 +799,7 @@ impl Pane {
                 self.focus_active_item(cx);
             }
 
-            self.autoscroll = true;
+            self.tab_bar_scroll_handle.scroll_to_item(index);
             cx.notify();
         }
     }
@@ -1584,6 +1589,7 @@ impl Pane {
 
     fn render_tab_bar(&mut self, cx: &mut ViewContext<'_, Pane>) -> impl IntoElement {
         TabBar::new("tab_bar")
+            .track_scroll(self.tab_bar_scroll_handle.clone())
             .start_child(
                 IconButton::new("navigate_backward", Icon::ArrowLeft)
                     .icon_size(IconSize::Small)
@@ -1669,7 +1675,6 @@ impl Pane {
                         }),
                     ),
             )
-            .track_focus(&self.tab_bar_focus_handle)
     }
 
     fn render_menu_overlay(menu: &View<ContextMenu>) -> Div {

@@ -1016,6 +1016,10 @@ impl Interactivity {
 
         let overflow = style.overflow;
         if overflow.x == Overflow::Scroll || overflow.y == Overflow::Scroll {
+            if let Some(scroll_handle) = &self.scroll_handle {
+                scroll_handle.0.borrow_mut().overflow = overflow;
+            }
+
             let scroll_offset = element_state
                 .scroll_offset
                 .get_or_insert_with(Rc::default)
@@ -1420,6 +1424,7 @@ struct ScrollHandleState {
     bounds: Bounds<Pixels>,
     child_bounds: Vec<Bounds<Pixels>>,
     requested_scroll_top: Option<(usize, Pixels)>,
+    overflow: Point<Overflow>,
 }
 
 #[derive(Clone)]
@@ -1465,12 +1470,22 @@ impl ScrollHandle {
             return;
         };
 
-        let scroll_offset = state.offset.borrow().y;
+        let mut scroll_offset = state.offset.borrow_mut();
 
-        if bounds.top() + scroll_offset < state.bounds.top() {
-            state.offset.borrow_mut().y = state.bounds.top() - bounds.top();
-        } else if bounds.bottom() + scroll_offset > state.bounds.bottom() {
-            state.offset.borrow_mut().y = state.bounds.bottom() - bounds.bottom();
+        if state.overflow.y == Overflow::Scroll {
+            if bounds.top() + scroll_offset.y < state.bounds.top() {
+                scroll_offset.y = state.bounds.top() - bounds.top();
+            } else if bounds.bottom() + scroll_offset.y > state.bounds.bottom() {
+                scroll_offset.y = state.bounds.bottom() - bounds.bottom();
+            }
+        }
+
+        if state.overflow.x == Overflow::Scroll {
+            if bounds.left() + scroll_offset.x < state.bounds.left() {
+                scroll_offset.x = state.bounds.left() - bounds.left();
+            } else if bounds.right() + scroll_offset.x > state.bounds.right() {
+                scroll_offset.x = state.bounds.right() - bounds.right();
+            }
         }
     }
 
