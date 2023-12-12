@@ -7,12 +7,12 @@ use crate::{
     ToggleCaseSensitive, ToggleReplace, ToggleWholeWord,
 };
 use collections::HashMap;
-use editor::{Editor, EditorMode};
+use editor::Editor;
 use futures::channel::oneshot;
 use gpui::{
     actions, div, impl_actions, red, Action, AppContext, Div, EventEmitter, FocusableView,
     InteractiveElement as _, IntoElement, KeyContext, ParentElement as _, Render, Styled,
-    Subscription, Task, View, ViewContext, VisualContext as _, WeakView, WindowContext,
+    Subscription, Task, View, ViewContext, VisualContext as _, WindowContext,
 };
 use project::search::SearchQuery;
 use serde::Deserialize;
@@ -23,7 +23,7 @@ use util::ResultExt;
 use workspace::{
     item::ItemHandle,
     searchable::{Direction, SearchEvent, SearchableItemHandle, WeakSearchableItemHandle},
-    ToolbarItemLocation, ToolbarItemView,
+    ToolbarItemLocation, ToolbarItemView, Workspace,
 };
 
 #[derive(PartialEq, Clone, Deserialize)]
@@ -40,7 +40,7 @@ pub enum Event {
 }
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_views(|editor: &mut Editor, cx| BufferSearchBar::register(editor, cx))
+    cx.observe_new_views(|editor: &mut Workspace, _| BufferSearchBar::register(editor))
         .detach();
 }
 
@@ -315,17 +315,9 @@ impl ToolbarItemView for BufferSearchBar {
 }
 
 impl BufferSearchBar {
-    pub fn register(editor: &mut Editor, cx: &mut ViewContext<Editor>) {
-        if editor.mode() != EditorMode::Full {
-            return;
-        };
-
-        let handle = cx.view().downgrade();
-
-        editor.register_action(move |deploy: &Deploy, cx| {
-            let Some(pane) = handle.upgrade().and_then(|editor| editor.read(cx).pane(cx)) else {
-                return;
-            };
+    fn register(workspace: &mut Workspace) {
+        workspace.register_action(move |workspace, deploy: &Deploy, cx| {
+            let pane = workspace.active_pane();
 
             pane.update(cx, |this, cx| {
                 this.toolbar().update(cx, |this, cx| {
@@ -341,15 +333,11 @@ impl BufferSearchBar {
             });
         });
         fn register_action<A: Action>(
-            editor: &mut Editor,
-            handle: WeakView<Editor>,
+            workspace: &mut Workspace,
             update: fn(&mut BufferSearchBar, &A, &mut ViewContext<BufferSearchBar>),
         ) {
-            editor.register_action(move |action: &A, cx| {
-                let Some(pane) = handle.upgrade().and_then(|editor| editor.read(cx).pane(cx))
-                else {
-                    return;
-                };
+            workspace.register_action(move |workspace, action: &A, cx| {
+                let pane = workspace.active_pane();
                 pane.update(cx, move |this, cx| {
                     this.toolbar().update(cx, move |this, cx| {
                         if let Some(search_bar) = this.item_of_type::<BufferSearchBar>() {
@@ -361,71 +349,46 @@ impl BufferSearchBar {
             });
         }
 
-        let handle = cx.view().downgrade();
-        register_action(
-            editor,
-            handle.clone(),
-            |this, action: &ToggleCaseSensitive, cx| {
-                if this.supported_options().case {
-                    this.toggle_case_sensitive(action, cx);
-                }
-            },
-        );
-        register_action(
-            editor,
-            handle.clone(),
-            |this, action: &ToggleWholeWord, cx| {
-                if this.supported_options().word {
-                    this.toggle_whole_word(action, cx);
-                }
-            },
-        );
-        register_action(
-            editor,
-            handle.clone(),
-            |this, action: &ToggleReplace, cx| {
-                if this.supported_options().replacement {
-                    this.toggle_replace(action, cx);
-                }
-            },
-        );
-        register_action(editor, handle.clone(), |this, _: &ActivateRegexMode, cx| {
+        register_action(workspace, |this, action: &ToggleCaseSensitive, cx| {
+            if this.supported_options().case {
+                this.toggle_case_sensitive(action, cx);
+            }
+        });
+        register_action(workspace, |this, action: &ToggleWholeWord, cx| {
+            if this.supported_options().word {
+                this.toggle_whole_word(action, cx);
+            }
+        });
+        register_action(workspace, |this, action: &ToggleReplace, cx| {
+            if this.supported_options().replacement {
+                this.toggle_replace(action, cx);
+            }
+        });
+        register_action(workspace, |this, _: &ActivateRegexMode, cx| {
             if this.supported_options().regex {
                 this.activate_search_mode(SearchMode::Regex, cx);
             }
         });
-        register_action(editor, handle.clone(), |this, _: &ActivateTextMode, cx| {
+        register_action(workspace, |this, _: &ActivateTextMode, cx| {
             this.activate_search_mode(SearchMode::Text, cx);
         });
-        register_action(editor, handle.clone(), |this, action: &CycleMode, cx| {
+        register_action(workspace, |this, action: &CycleMode, cx| {
             if this.supported_options().regex {
                 // If regex is not supported then search has just one mode (text) - in that case there's no point in supporting
                 // cycling.
                 this.cycle_mode(action, cx)
             }
         });
-        register_action(
-            editor,
-            handle.clone(),
-            |this, action: &SelectNextMatch, cx| {
-                this.select_next_match(action, cx);
-            },
-        );
-        register_action(
-            editor,
-            handle.clone(),
-            |this, action: &SelectPrevMatch, cx| {
-                this.select_prev_match(action, cx);
-            },
-        );
-        register_action(
-            editor,
-            handle.clone(),
-            |this, action: &SelectAllMatches, cx| {
-                this.select_all_matches(action, cx);
-            },
-        );
-        register_action(editor, handle.clone(), |this, _: &editor::Cancel, cx| {
+        register_action(workspace, |this, action: &SelectNextMatch, cx| {
+            this.select_next_match(action, cx);
+        });
+        register_action(workspace, |this, action: &SelectPrevMatch, cx| {
+            this.select_prev_match(action, cx);
+        });
+        register_action(workspace, |this, action: &SelectAllMatches, cx| {
+            this.select_all_matches(action, cx);
+        });
+        register_action(workspace, |this, _: &editor::Cancel, cx| {
             if !this.dismissed {
                 this.dismiss(&Dismiss, cx);
                 return;
