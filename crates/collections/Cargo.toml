@@ -9,7 +9,7 @@ path = "src/collections.rs"
 doctest = false
 
 [features]
-test-support = ["seahash"]
+test-support = []
 
 [dependencies]
-seahash = { version = "4.1", optional = true }
+rustc-hash = "1.1"
