@@ -653,7 +653,6 @@ pub struct Interactivity {
     pub focusable: bool,
     pub tracked_focus_handle: Option<FocusHandle>,
     pub scroll_handle: Option<ScrollHandle>,
-    pub focus_listeners: FocusListeners,
     pub group: Option<SharedString>,
     pub base_style: Box<StyleRefinement>,
     pub focus_style: Option<Box<StyleRefinement>>,
@@ -1076,13 +1075,6 @@ impl Interactivity {
                     cx.on_action(action_type, listener)
                 }
 
-                if let Some(focus_handle) = element_state.focus_handle.as_ref() {
-                    for listener in self.focus_listeners {
-                        let focus_handle = focus_handle.clone();
-                        cx.on_focus_changed(move |event, cx| listener(&focus_handle, event, cx));
-                    }
-                }
-
                 f(style, scroll_offset.unwrap_or_default(), cx)
             },
         );
@@ -1186,7 +1178,6 @@ impl Default for Interactivity {
             focusable: false,
             tracked_focus_handle: None,
             scroll_handle: None,
-            focus_listeners: Vec::default(),
             // scroll_offset: Point::default(),
             group: None,
             base_style: Box::new(StyleRefinement::default()),
