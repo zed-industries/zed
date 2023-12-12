@@ -2144,711 +2144,770 @@ impl ToolbarItemView for ProjectSearchBar {
     }
 }
 
-// #[cfg(test)]
-// pub mod tests {
-//     use super::*;
-//     use editor::DisplayPoint;
-//     use gpui::{color::Color, executor::Deterministic, TestAppContext};
-//     use project::FakeFs;
-//     use semantic_index::semantic_index_settings::SemanticIndexSettings;
-//     use serde_json::json;
-//     use settings::SettingsStore;
-//     use std::sync::Arc;
-//     use theme::ThemeSettings;
+#[cfg(test)]
+pub mod tests {
+    use super::*;
+    use editor::DisplayPoint;
+    use gpui::{Action, Entity, Hsla, TestAppContext};
+    use project::FakeFs;
+    use semantic_index::semantic_index_settings::SemanticIndexSettings;
+    use serde_json::json;
+    use settings::{Settings, SettingsStore};
+    use std::sync::Arc;
+    use theme::ThemeSettings;
 
-//     #[gpui::test]
-//     async fn test_project_search(deterministic: Arc<Deterministic>, cx: &mut TestAppContext) {
-//         init_test(cx);
+    #[gpui::test]
+    async fn test_project_search(cx: &mut TestAppContext) {
+        init_test(cx);
 
-//         let fs = FakeFs::new(cx.background_executor());
-//         fs.insert_tree(
-//             "/dir",
-//             json!({
-//                 "one.rs": "const ONE: usize = 1;",
-//                 "two.rs": "const TWO: usize = one::ONE + one::ONE;",
-//                 "three.rs": "const THREE: usize = one::ONE + two::TWO;",
-//                 "four.rs": "const FOUR: usize = one::ONE + three::THREE;",
-//             }),
-//         )
-//         .await;
-//         let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
-//         let search = cx.add_model(|cx| ProjectSearch::new(project, cx));
-//         let search_view = cx
-//             .add_window(|cx| ProjectSearchView::new(search.clone(), cx, None))
-//             .root(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/dir",
+            json!({
+                "one.rs": "const ONE: usize = 1;",
+                "two.rs": "const TWO: usize = one::ONE + one::ONE;",
+                "three.rs": "const THREE: usize = one::ONE + two::TWO;",
+                "four.rs": "const FOUR: usize = one::ONE + three::THREE;",
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+        let search = cx.build_model(|cx| ProjectSearch::new(project, cx));
+        let search_view = cx.add_window(|cx| ProjectSearchView::new(search.clone(), cx, None));
 
-//         search_view.update(cx, |search_view, cx| {
-//             search_view
-//                 .query_editor
-//                 .update(cx, |query_editor, cx| query_editor.set_text("TWO", cx));
-//             search_view.search(cx);
-//         });
-//         deterministic.run_until_parked();
-//         search_view.update(cx, |search_view, cx| {
-//             assert_eq!(
-//                 search_view
-//                     .results_editor
-//                     .update(cx, |editor, cx| editor.display_text(cx)),
-//                 "\n\nconst THREE: usize = one::ONE + two::TWO;\n\n\nconst TWO: usize = one::ONE + one::ONE;"
-//             );
-//             assert_eq!(
-//                 search_view
-//                     .results_editor
-//                     .update(cx, |editor, cx| editor.all_text_background_highlights(cx)),
-//                 &[
-//                     (
-//                         DisplayPoint::new(2, 32)..DisplayPoint::new(2, 35),
-//                         Color::red()
-//                     ),
-//                     (
-//                         DisplayPoint::new(2, 37)..DisplayPoint::new(2, 40),
-//                         Color::red()
-//                     ),
-//                     (
-//                         DisplayPoint::new(5, 6)..DisplayPoint::new(5, 9),
-//                         Color::red()
-//                     )
-//                 ]
-//             );
-//             assert_eq!(search_view.active_match_index, Some(0));
-//             assert_eq!(
-//                 search_view
-//                     .results_editor
-//                     .update(cx, |editor, cx| editor.selections.display_ranges(cx)),
-//                 [DisplayPoint::new(2, 32)..DisplayPoint::new(2, 35)]
-//             );
+        search_view
+            .update(cx, |search_view, cx| {
+                search_view
+                    .query_editor
+                    .update(cx, |query_editor, cx| query_editor.set_text("TWO", cx));
+                search_view.search(cx);
+            })
+            .unwrap();
+        cx.background_executor.run_until_parked();
+        search_view.update(cx, |search_view, cx| {
+            assert_eq!(
+                search_view
+                    .results_editor
+                    .update(cx, |editor, cx| editor.display_text(cx)),
+                "\n\nconst THREE: usize = one::ONE + two::TWO;\n\n\nconst TWO: usize = one::ONE + one::ONE;"
+            );
+            let match_background_color = cx.theme().colors().search_match_background;
+            assert_eq!(
+                search_view
+                    .results_editor
+                    .update(cx, |editor, cx| editor.all_text_background_highlights(cx)),
+                &[
+                    (
+                        DisplayPoint::new(2, 32)..DisplayPoint::new(2, 35),
+                        match_background_color
+                    ),
+                    (
+                        DisplayPoint::new(2, 37)..DisplayPoint::new(2, 40),
+                        match_background_color
+                    ),
+                    (
+                        DisplayPoint::new(5, 6)..DisplayPoint::new(5, 9),
+                        match_background_color
+                    )
+                ]
+            );
+            assert_eq!(search_view.active_match_index, Some(0));
+            assert_eq!(
+                search_view
+                    .results_editor
+                    .update(cx, |editor, cx| editor.selections.display_ranges(cx)),
+                [DisplayPoint::new(2, 32)..DisplayPoint::new(2, 35)]
+            );
 
-//             search_view.select_match(Direction::Next, cx);
-//         });
+            search_view.select_match(Direction::Next, cx);
+        }).unwrap();
 
-//         search_view.update(cx, |search_view, cx| {
-//             assert_eq!(search_view.active_match_index, Some(1));
-//             assert_eq!(
-//                 search_view
-//                     .results_editor
-//                     .update(cx, |editor, cx| editor.selections.display_ranges(cx)),
-//                 [DisplayPoint::new(2, 37)..DisplayPoint::new(2, 40)]
-//             );
-//             search_view.select_match(Direction::Next, cx);
-//         });
+        search_view
+            .update(cx, |search_view, cx| {
+                assert_eq!(search_view.active_match_index, Some(1));
+                assert_eq!(
+                    search_view
+                        .results_editor
+                        .update(cx, |editor, cx| editor.selections.display_ranges(cx)),
+                    [DisplayPoint::new(2, 37)..DisplayPoint::new(2, 40)]
+                );
+                search_view.select_match(Direction::Next, cx);
+            })
+            .unwrap();
 
-//         search_view.update(cx, |search_view, cx| {
-//             assert_eq!(search_view.active_match_index, Some(2));
-//             assert_eq!(
-//                 search_view
-//                     .results_editor
-//                     .update(cx, |editor, cx| editor.selections.display_ranges(cx)),
-//                 [DisplayPoint::new(5, 6)..DisplayPoint::new(5, 9)]
-//             );
-//             search_view.select_match(Direction::Next, cx);
-//         });
+        search_view
+            .update(cx, |search_view, cx| {
+                assert_eq!(search_view.active_match_index, Some(2));
+                assert_eq!(
+                    search_view
+                        .results_editor
+                        .update(cx, |editor, cx| editor.selections.display_ranges(cx)),
+                    [DisplayPoint::new(5, 6)..DisplayPoint::new(5, 9)]
+                );
+                search_view.select_match(Direction::Next, cx);
+            })
+            .unwrap();
 
-//         search_view.update(cx, |search_view, cx| {
-//             assert_eq!(search_view.active_match_index, Some(0));
-//             assert_eq!(
-//                 search_view
-//                     .results_editor
-//                     .update(cx, |editor, cx| editor.selections.display_ranges(cx)),
-//                 [DisplayPoint::new(2, 32)..DisplayPoint::new(2, 35)]
-//             );
-//             search_view.select_match(Direction::Prev, cx);
-//         });
+        search_view
+            .update(cx, |search_view, cx| {
+                assert_eq!(search_view.active_match_index, Some(0));
+                assert_eq!(
+                    search_view
+                        .results_editor
+                        .update(cx, |editor, cx| editor.selections.display_ranges(cx)),
+                    [DisplayPoint::new(2, 32)..DisplayPoint::new(2, 35)]
+                );
+                search_view.select_match(Direction::Prev, cx);
+            })
+            .unwrap();
 
-//         search_view.update(cx, |search_view, cx| {
-//             assert_eq!(search_view.active_match_index, Some(2));
-//             assert_eq!(
-//                 search_view
-//                     .results_editor
-//                     .update(cx, |editor, cx| editor.selections.display_ranges(cx)),
-//                 [DisplayPoint::new(5, 6)..DisplayPoint::new(5, 9)]
-//             );
-//             search_view.select_match(Direction::Prev, cx);
-//         });
+        search_view
+            .update(cx, |search_view, cx| {
+                assert_eq!(search_view.active_match_index, Some(2));
+                assert_eq!(
+                    search_view
+                        .results_editor
+                        .update(cx, |editor, cx| editor.selections.display_ranges(cx)),
+                    [DisplayPoint::new(5, 6)..DisplayPoint::new(5, 9)]
+                );
+                search_view.select_match(Direction::Prev, cx);
+            })
+            .unwrap();
 
-//         search_view.update(cx, |search_view, cx| {
-//             assert_eq!(search_view.active_match_index, Some(1));
-//             assert_eq!(
-//                 search_view
-//                     .results_editor
-//                     .update(cx, |editor, cx| editor.selections.display_ranges(cx)),
-//                 [DisplayPoint::new(2, 37)..DisplayPoint::new(2, 40)]
-//             );
-//         });
-//     }
+        search_view
+            .update(cx, |search_view, cx| {
+                assert_eq!(search_view.active_match_index, Some(1));
+                assert_eq!(
+                    search_view
+                        .results_editor
+                        .update(cx, |editor, cx| editor.selections.display_ranges(cx)),
+                    [DisplayPoint::new(2, 37)..DisplayPoint::new(2, 40)]
+                );
+            })
+            .unwrap();
+    }
 
-//     #[gpui::test]
-//     async fn test_project_search_focus(deterministic: Arc<Deterministic>, cx: &mut TestAppContext) {
-//         init_test(cx);
+    #[gpui::test]
+    async fn test_project_search_focus(cx: &mut TestAppContext) {
+        init_test(cx);
 
-//         let fs = FakeFs::new(cx.background_executor());
-//         fs.insert_tree(
-//             "/dir",
-//             json!({
-//                 "one.rs": "const ONE: usize = 1;",
-//                 "two.rs": "const TWO: usize = one::ONE + one::ONE;",
-//                 "three.rs": "const THREE: usize = one::ONE + two::TWO;",
-//                 "four.rs": "const FOUR: usize = one::ONE + three::THREE;",
-//             }),
-//         )
-//         .await;
-//         let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
-//         let window = cx.add_window(|cx| Workspace::test_new(project, cx));
-//         let workspace = window.root(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/dir",
+            json!({
+                "one.rs": "const ONE: usize = 1;",
+                "two.rs": "const TWO: usize = one::ONE + one::ONE;",
+                "three.rs": "const THREE: usize = one::ONE + two::TWO;",
+                "four.rs": "const FOUR: usize = one::ONE + three::THREE;",
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+        let window = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let workspace = window.clone();
 
-//         let active_item = cx.read(|cx| {
-//             workspace
-//                 .read(cx)
-//                 .active_pane()
-//                 .read(cx)
-//                 .active_item()
-//                 .and_then(|item| item.downcast::<ProjectSearchView>())
-//         });
-//         assert!(
-//             active_item.is_none(),
-//             "Expected no search panel to be active, but got: {active_item:?}"
-//         );
+        let active_item = cx.read(|cx| {
+            workspace
+                .read(cx)
+                .unwrap()
+                .active_pane()
+                .read(cx)
+                .active_item()
+                .and_then(|item| item.downcast::<ProjectSearchView>())
+        });
+        assert!(
+            active_item.is_none(),
+            "Expected no search panel to be active"
+        );
 
-//         workspace.update(cx, |workspace, cx| {
-//             ProjectSearchView::deploy(workspace, &workspace::NewSearch, cx)
-//         });
+        workspace
+            .update(cx, |workspace, cx| {
+                ProjectSearchView::deploy(workspace, &workspace::NewSearch, cx)
+            })
+            .unwrap();
 
-//         let Some(search_view) = cx.read(|cx| {
-//             workspace
-//                 .read(cx)
-//                 .active_pane()
-//                 .read(cx)
-//                 .active_item()
-//                 .and_then(|item| item.downcast::<ProjectSearchView>())
-//         }) else {
-//             panic!("Search view expected to appear after new search event trigger")
-//         };
-//         let search_view_id = search_view.id();
+        let Some(search_view) = cx.read(|cx| {
+            workspace
+                .read(cx)
+                .unwrap()
+                .active_pane()
+                .read(cx)
+                .active_item()
+                .and_then(|item| item.downcast::<ProjectSearchView>())
+        }) else {
+            panic!("Search view expected to appear after new search event trigger")
+        };
+        let search_view_id = search_view.entity_id();
 
-//         cx.spawn(|mut cx| async move {
-//             window.dispatch_action(search_view_id, &ToggleFocus, &mut cx);
-//         })
-//         .detach();
-//         deterministic.run_until_parked();
-//         search_view.update(cx, |search_view, cx| {
-//             assert!(
-//                 search_view.query_editor.is_focused(cx),
-//                 "Empty search view should be focused after the toggle focus event: no results panel to focus on",
-//             );
-//         });
+        cx.spawn(|mut cx| async move {
+            window
+                .update(&mut cx, |_, cx| {
+                    cx.dispatch_action(ToggleFocus.boxed_clone())
+                })
+                .unwrap();
+        })
+        .detach();
+        cx.background_executor.run_until_parked();
 
-//         search_view.update(cx, |search_view, cx| {
-//             let query_editor = &search_view.query_editor;
-//             assert!(
-//                 query_editor.is_focused(cx),
-//                 "Search view should be focused after the new search view is activated",
-//             );
-//             let query_text = query_editor.read(cx).text(cx);
-//             assert!(
-//                 query_text.is_empty(),
-//                 "New search query should be empty but got '{query_text}'",
-//             );
-//             let results_text = search_view
-//                 .results_editor
-//                 .update(cx, |editor, cx| editor.display_text(cx));
-//             assert!(
-//                 results_text.is_empty(),
-//                 "Empty search view should have no results but got '{results_text}'"
-//             );
-//         });
+        window.update(cx, |_, cx| {
+            search_view.update(cx, |search_view, cx| {
+                    assert!(
+                        search_view.query_editor.focus_handle(cx).is_focused(cx),
+                        "Empty search view should be focused after the toggle focus event: no results panel to focus on",
+                    );
+                });
+        }).unwrap();
 
-//         search_view.update(cx, |search_view, cx| {
-//             search_view.query_editor.update(cx, |query_editor, cx| {
-//                 query_editor.set_text("sOMETHINGtHATsURELYdOESnOTeXIST", cx)
-//             });
-//             search_view.search(cx);
-//         });
-//         deterministic.run_until_parked();
-//         search_view.update(cx, |search_view, cx| {
-//             let results_text = search_view
-//                 .results_editor
-//                 .update(cx, |editor, cx| editor.display_text(cx));
-//             assert!(
-//                 results_text.is_empty(),
-//                 "Search view for mismatching query should have no results but got '{results_text}'"
-//             );
-//             assert!(
-//                 search_view.query_editor.is_focused(cx),
-//                 "Search view should be focused after mismatching query had been used in search",
-//             );
-//         });
-//         cx.spawn(
-//             |mut cx| async move { window.dispatch_action(search_view_id, &ToggleFocus, &mut cx) },
-//         )
-//         .detach();
-//         deterministic.run_until_parked();
-//         search_view.update(cx, |search_view, cx| {
-//             assert!(
-//                 search_view.query_editor.is_focused(cx),
-//                 "Search view with mismatching query should be focused after the toggle focus event: still no results panel to focus on",
-//             );
-//         });
+        window
+            .update(cx, |_, cx| {
+                search_view.update(cx, |search_view, cx| {
+                    let query_editor = &search_view.query_editor;
+                    assert!(
+                        query_editor.focus_handle(cx).is_focused(cx),
+                        "Search view should be focused after the new search view is activated",
+                    );
+                    let query_text = query_editor.read(cx).text(cx);
+                    assert!(
+                        query_text.is_empty(),
+                        "New search query should be empty but got '{query_text}'",
+                    );
+                    let results_text = search_view
+                        .results_editor
+                        .update(cx, |editor, cx| editor.display_text(cx));
+                    assert!(
+                        results_text.is_empty(),
+                        "Empty search view should have no results but got '{results_text}'"
+                    );
+                });
+            })
+            .unwrap();
 
-//         search_view.update(cx, |search_view, cx| {
-//             search_view
-//                 .query_editor
-//                 .update(cx, |query_editor, cx| query_editor.set_text("TWO", cx));
-//             search_view.search(cx);
-//         });
-//         deterministic.run_until_parked();
-//         search_view.update(cx, |search_view, cx| {
-//             assert_eq!(
-//                 search_view
-//                     .results_editor
-//                     .update(cx, |editor, cx| editor.display_text(cx)),
-//                 "\n\nconst THREE: usize = one::ONE + two::TWO;\n\n\nconst TWO: usize = one::ONE + one::ONE;",
-//                 "Search view results should match the query"
-//             );
-//             assert!(
-//                 search_view.results_editor.is_focused(cx),
-//                 "Search view with mismatching query should be focused after search results are available",
-//             );
-//         });
-//         cx.spawn(|mut cx| async move {
-//             window.dispatch_action(search_view_id, &ToggleFocus, &mut cx);
-//         })
-//         .detach();
-//         deterministic.run_until_parked();
-//         search_view.update(cx, |search_view, cx| {
-//             assert!(
-//                 search_view.results_editor.is_focused(cx),
-//                 "Search view with matching query should still have its results editor focused after the toggle focus event",
-//             );
-//         });
+        window
+            .update(cx, |_, cx| {
+                search_view.update(cx, |search_view, cx| {
+                    search_view.query_editor.update(cx, |query_editor, cx| {
+                        query_editor.set_text("sOMETHINGtHATsURELYdOESnOTeXIST", cx)
+                    });
+                    search_view.search(cx);
+                });
+            })
+            .unwrap();
 
-//         workspace.update(cx, |workspace, cx| {
-//             ProjectSearchView::deploy(workspace, &workspace::NewSearch, cx)
-//         });
-//         deterministic.run_until_parked();
-//         let Some(search_view_2) = cx.read(|cx| {
-//             workspace
-//                 .read(cx)
-//                 .active_pane()
-//                 .read(cx)
-//                 .active_item()
-//                 .and_then(|item| item.downcast::<ProjectSearchView>())
-//         }) else {
-//             panic!("Search view expected to appear after new search event trigger")
-//         };
-//         let search_view_id_2 = search_view_2.id();
-//         assert_ne!(
-//             search_view_2, search_view,
-//             "New search view should be open after `workspace::NewSearch` event"
-//         );
+        cx.background_executor.run_until_parked();
+        window
+            .update(cx, |_, cx| {
+                search_view.update(cx, |search_view, cx| {
+                    let results_text = search_view
+                        .results_editor
+                        .update(cx, |editor, cx| editor.display_text(cx));
+                    assert!(
+                results_text.is_empty(),
+                "Search view for mismatching query should have no results but got '{results_text}'"
+            );
+                    assert!(
+                search_view.query_editor.focus_handle(cx).is_focused(cx),
+                "Search view should be focused after mismatching query had been used in search",
+            );
+                });
+            })
+            .unwrap();
+        cx.spawn(|mut cx| async move {
+            window.update(&mut cx, |_, cx| {
+                cx.dispatch_action(ToggleFocus.boxed_clone())
+            })
+        })
+        .detach();
+        cx.background_executor.run_until_parked();
+        window.update(cx, |_, cx| {
+            search_view.update(cx, |search_view, cx| {
+                    assert!(
+                        search_view.query_editor.focus_handle(cx).is_focused(cx),
+                        "Search view with mismatching query should be focused after the toggle focus event: still no results panel to focus on",
+                    );
+                });
+        }).unwrap();
 
-//         search_view.update(cx, |search_view, cx| {
-//             assert_eq!(search_view.query_editor.read(cx).text(cx), "TWO", "First search view should not have an updated query");
-//             assert_eq!(
-//                 search_view
-//                     .results_editor
-//                     .update(cx, |editor, cx| editor.display_text(cx)),
-//                 "\n\nconst THREE: usize = one::ONE + two::TWO;\n\n\nconst TWO: usize = one::ONE + one::ONE;",
-//                 "Results of the first search view should not update too"
-//             );
-//             assert!(
-//                 !search_view.query_editor.is_focused(cx),
-//                 "Focus should be moved away from the first search view"
-//             );
-//         });
+        window
+            .update(cx, |_, cx| {
+                search_view.update(cx, |search_view, cx| {
+                    search_view
+                        .query_editor
+                        .update(cx, |query_editor, cx| query_editor.set_text("TWO", cx));
+                    search_view.search(cx);
+                })
+            })
+            .unwrap();
+        cx.background_executor.run_until_parked();
+        window.update(cx, |_, cx|
+        search_view.update(cx, |search_view, cx| {
+                assert_eq!(
+                    search_view
+                        .results_editor
+                        .update(cx, |editor, cx| editor.display_text(cx)),
+                    "\n\nconst THREE: usize = one::ONE + two::TWO;\n\n\nconst TWO: usize = one::ONE + one::ONE;",
+                    "Search view results should match the query"
+                );
+                assert!(
+                    search_view.results_editor.focus_handle(cx).is_focused(cx),
+                    "Search view with mismatching query should be focused after search results are available",
+                );
+            })).unwrap();
+        cx.spawn(|mut cx| async move {
+            window
+                .update(&mut cx, |_, cx| {
+                    cx.dispatch_action(ToggleFocus.boxed_clone())
+                })
+                .unwrap();
+        })
+        .detach();
+        cx.background_executor.run_until_parked();
+        window.update(cx, |_, cx| {
+            search_view.update(cx, |search_view, cx| {
+                    assert!(
+                        search_view.results_editor.focus_handle(cx).is_focused(cx),
+                        "Search view with matching query should still have its results editor focused after the toggle focus event",
+                    );
+                });
+        }).unwrap();
 
-//         search_view_2.update(cx, |search_view_2, cx| {
-//             assert_eq!(
-//                 search_view_2.query_editor.read(cx).text(cx),
-//                 "two",
-//                 "New search view should get the query from the text cursor was at during the event spawn (first search view's first result)"
-//             );
-//             assert_eq!(
-//                 search_view_2
-//                     .results_editor
-//                     .update(cx, |editor, cx| editor.display_text(cx)),
-//                 "",
-//                 "No search results should be in the 2nd view yet, as we did not spawn a search for it"
-//             );
-//             assert!(
-//                 search_view_2.query_editor.is_focused(cx),
-//                 "Focus should be moved into query editor fo the new window"
-//             );
-//         });
+        workspace
+            .update(cx, |workspace, cx| {
+                ProjectSearchView::deploy(workspace, &workspace::NewSearch, cx)
+            })
+            .unwrap();
+        cx.background_executor.run_until_parked();
+        let Some(search_view_2) = cx.read(|cx| {
+            workspace
+                .read(cx)
+                .unwrap()
+                .active_pane()
+                .read(cx)
+                .active_item()
+                .and_then(|item| item.downcast::<ProjectSearchView>())
+        }) else {
+            panic!("Search view expected to appear after new search event trigger")
+        };
+        assert!(
+            search_view_2 != search_view,
+            "New search view should be open after `workspace::NewSearch` event"
+        );
 
-//         search_view_2.update(cx, |search_view_2, cx| {
-//             search_view_2
-//                 .query_editor
-//                 .update(cx, |query_editor, cx| query_editor.set_text("FOUR", cx));
-//             search_view_2.search(cx);
-//         });
-//         deterministic.run_until_parked();
-//         search_view_2.update(cx, |search_view_2, cx| {
-//             assert_eq!(
-//                 search_view_2
-//                     .results_editor
-//                     .update(cx, |editor, cx| editor.display_text(cx)),
-//                 "\n\nconst FOUR: usize = one::ONE + three::THREE;",
-//                 "New search view with the updated query should have new search results"
-//             );
-//             assert!(
-//                 search_view_2.results_editor.is_focused(cx),
-//                 "Search view with mismatching query should be focused after search results are available",
-//             );
-//         });
+        window.update(cx, |_, cx| {
+            search_view.update(cx, |search_view, cx| {
+                    assert_eq!(search_view.query_editor.read(cx).text(cx), "TWO", "First search view should not have an updated query");
+                    assert_eq!(
+                        search_view
+                            .results_editor
+                            .update(cx, |editor, cx| editor.display_text(cx)),
+                        "\n\nconst THREE: usize = one::ONE + two::TWO;\n\n\nconst TWO: usize = one::ONE + one::ONE;",
+                        "Results of the first search view should not update too"
+                    );
+                    assert!(
+                        !search_view.query_editor.focus_handle(cx).is_focused(cx),
+                        "Focus should be moved away from the first search view"
+                    );
+                });
+        }).unwrap();
 
-//         cx.spawn(|mut cx| async move {
-//             window.dispatch_action(search_view_id_2, &ToggleFocus, &mut cx);
-//         })
-//         .detach();
-//         deterministic.run_until_parked();
-//         search_view_id_2.update(cx, |search_view_2, cx| {
-//             assert!(
-//                 search_view_2.results_editor.is_focused(cx),
-//                 "Search view with matching query should switch focus to the results editor after the toggle focus event",
-//             );
-//         });
-//     }
+        window.update(cx, |_, cx| {
+            search_view_2.update(cx, |search_view_2, cx| {
+                    assert_eq!(
+                        search_view_2.query_editor.read(cx).text(cx),
+                        "two",
+                        "New search view should get the query from the text cursor was at during the event spawn (first search view's first result)"
+                    );
+                    assert_eq!(
+                        search_view_2
+                            .results_editor
+                            .update(cx, |editor, cx| editor.display_text(cx)),
+                        "",
+                        "No search results should be in the 2nd view yet, as we did not spawn a search for it"
+                    );
+                    assert!(
+                        search_view_2.query_editor.focus_handle(cx).is_focused(cx),
+                        "Focus should be moved into query editor fo the new window"
+                    );
+                });
+        }).unwrap();
 
-//     #[gpui::test]
-//     async fn test_new_project_search_in_directory(
-//         deterministic: Arc<Deterministic>,
-//         cx: &mut TestAppContext,
-//     ) {
-//         init_test(cx);
+        window
+            .update(cx, |_, cx| {
+                search_view_2.update(cx, |search_view_2, cx| {
+                    search_view_2
+                        .query_editor
+                        .update(cx, |query_editor, cx| query_editor.set_text("FOUR", cx));
+                    search_view_2.search(cx);
+                });
+            })
+            .unwrap();
 
-//         let fs = FakeFs::new(cx.background_executor());
-//         fs.insert_tree(
-//             "/dir",
-//             json!({
-//                 "a": {
-//                     "one.rs": "const ONE: usize = 1;",
-//                     "two.rs": "const TWO: usize = one::ONE + one::ONE;",
-//                 },
-//                 "b": {
-//                     "three.rs": "const THREE: usize = one::ONE + two::TWO;",
-//                     "four.rs": "const FOUR: usize = one::ONE + three::THREE;",
-//                 },
-//             }),
-//         )
-//         .await;
-//         let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
-//         let worktree_id = project.read_with(cx, |project, cx| {
-//             project.worktrees(cx).next().unwrap().read(cx).id()
-//         });
-//         let workspace = cx
-//             .add_window(|cx| Workspace::test_new(project, cx))
-//             .root(cx);
+        cx.background_executor.run_until_parked();
+        window.update(cx, |_, cx| {
+            search_view_2.update(cx, |search_view_2, cx| {
+                    assert_eq!(
+                        search_view_2
+                            .results_editor
+                            .update(cx, |editor, cx| editor.display_text(cx)),
+                        "\n\nconst FOUR: usize = one::ONE + three::THREE;",
+                        "New search view with the updated query should have new search results"
+                    );
+                    assert!(
+                        search_view_2.results_editor.focus_handle(cx).is_focused(cx),
+                        "Search view with mismatching query should be focused after search results are available",
+                    );
+                });
+        }).unwrap();
 
-//         let active_item = cx.read(|cx| {
-//             workspace
-//                 .read(cx)
-//                 .active_pane()
-//                 .read(cx)
-//                 .active_item()
-//                 .and_then(|item| item.downcast::<ProjectSearchView>())
-//         });
-//         assert!(
-//             active_item.is_none(),
-//             "Expected no search panel to be active, but got: {active_item:?}"
-//         );
+        cx.spawn(|mut cx| async move {
+            window
+                .update(&mut cx, |_, cx| {
+                    cx.dispatch_action(ToggleFocus.boxed_clone())
+                })
+                .unwrap();
+        })
+        .detach();
+        cx.background_executor.run_until_parked();
+        window.update(cx, |_, cx| {
+            search_view_2.update(cx, |search_view_2, cx| {
+                    assert!(
+                        search_view_2.results_editor.focus_handle(cx).is_focused(cx),
+                        "Search view with matching query should switch focus to the results editor after the toggle focus event",
+                    );
+                });}).unwrap();
+    }
 
-//         let one_file_entry = cx.update(|cx| {
-//             workspace
-//                 .read(cx)
-//                 .project()
-//                 .read(cx)
-//                 .entry_for_path(&(worktree_id, "a/one.rs").into(), cx)
-//                 .expect("no entry for /a/one.rs file")
-//         });
-//         assert!(one_file_entry.is_file());
-//         workspace.update(cx, |workspace, cx| {
-//             ProjectSearchView::new_search_in_directory(workspace, &one_file_entry, cx)
-//         });
-//         let active_search_entry = cx.read(|cx| {
-//             workspace
-//                 .read(cx)
-//                 .active_pane()
-//                 .read(cx)
-//                 .active_item()
-//                 .and_then(|item| item.downcast::<ProjectSearchView>())
-//         });
-//         assert!(
-//             active_search_entry.is_none(),
-//             "Expected no search panel to be active for file entry"
-//         );
+    //     #[gpui::test]
+    //     async fn test_new_project_search_in_directory(
+    //         deterministic: Arc<Deterministic>,
+    //         cx: &mut TestAppContext,
+    //     ) {
+    //         init_test(cx);
 
-//         let a_dir_entry = cx.update(|cx| {
-//             workspace
-//                 .read(cx)
-//                 .project()
-//                 .read(cx)
-//                 .entry_for_path(&(worktree_id, "a").into(), cx)
-//                 .expect("no entry for /a/ directory")
-//         });
-//         assert!(a_dir_entry.is_dir());
-//         workspace.update(cx, |workspace, cx| {
-//             ProjectSearchView::new_search_in_directory(workspace, &a_dir_entry, cx)
-//         });
+    //         let fs = FakeFs::new(cx.background_executor());
+    //         fs.insert_tree(
+    //             "/dir",
+    //             json!({
+    //                 "a": {
+    //                     "one.rs": "const ONE: usize = 1;",
+    //                     "two.rs": "const TWO: usize = one::ONE + one::ONE;",
+    //                 },
+    //                 "b": {
+    //                     "three.rs": "const THREE: usize = one::ONE + two::TWO;",
+    //                     "four.rs": "const FOUR: usize = one::ONE + three::THREE;",
+    //                 },
+    //             }),
+    //         )
+    //         .await;
+    //         let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+    //         let worktree_id = project.read_with(cx, |project, cx| {
+    //             project.worktrees(cx).next().unwrap().read(cx).id()
+    //         });
+    //         let workspace = cx
+    //             .add_window(|cx| Workspace::test_new(project, cx))
+    //             .root(cx);
 
-//         let Some(search_view) = cx.read(|cx| {
-//             workspace
-//                 .read(cx)
-//                 .active_pane()
-//                 .read(cx)
-//                 .active_item()
-//                 .and_then(|item| item.downcast::<ProjectSearchView>())
-//         }) else {
-//             panic!("Search view expected to appear after new search in directory event trigger")
-//         };
-//         deterministic.run_until_parked();
-//         search_view.update(cx, |search_view, cx| {
-//             assert!(
-//                 search_view.query_editor.is_focused(cx),
-//                 "On new search in directory, focus should be moved into query editor"
-//             );
-//             search_view.excluded_files_editor.update(cx, |editor, cx| {
-//                 assert!(
-//                     editor.display_text(cx).is_empty(),
-//                     "New search in directory should not have any excluded files"
-//                 );
-//             });
-//             search_view.included_files_editor.update(cx, |editor, cx| {
-//                 assert_eq!(
-//                     editor.display_text(cx),
-//                     a_dir_entry.path.to_str().unwrap(),
-//                     "New search in directory should have included dir entry path"
-//                 );
-//             });
-//         });
+    //         let active_item = cx.read(|cx| {
+    //             workspace
+    //                 .read(cx)
+    //                 .active_pane()
+    //                 .read(cx)
+    //                 .active_item()
+    //                 .and_then(|item| item.downcast::<ProjectSearchView>())
+    //         });
+    //         assert!(
+    //             active_item.is_none(),
+    //             "Expected no search panel to be active, but got: {active_item:?}"
+    //         );
 
-//         search_view.update(cx, |search_view, cx| {
-//             search_view
-//                 .query_editor
-//                 .update(cx, |query_editor, cx| query_editor.set_text("const", cx));
-//             search_view.search(cx);
-//         });
-//         deterministic.run_until_parked();
-//         search_view.update(cx, |search_view, cx| {
-//             assert_eq!(
-//                 search_view
-//                     .results_editor
-//                     .update(cx, |editor, cx| editor.display_text(cx)),
-//                 "\n\nconst ONE: usize = 1;\n\n\nconst TWO: usize = one::ONE + one::ONE;",
-//                 "New search in directory should have a filter that matches a certain directory"
-//             );
-//         });
-//     }
+    //         let one_file_entry = cx.update(|cx| {
+    //             workspace
+    //                 .read(cx)
+    //                 .project()
+    //                 .read(cx)
+    //                 .entry_for_path(&(worktree_id, "a/one.rs").into(), cx)
+    //                 .expect("no entry for /a/one.rs file")
+    //         });
+    //         assert!(one_file_entry.is_file());
+    //         workspace.update(cx, |workspace, cx| {
+    //             ProjectSearchView::new_search_in_directory(workspace, &one_file_entry, cx)
+    //         });
+    //         let active_search_entry = cx.read(|cx| {
+    //             workspace
+    //                 .read(cx)
+    //                 .active_pane()
+    //                 .read(cx)
+    //                 .active_item()
+    //                 .and_then(|item| item.downcast::<ProjectSearchView>())
+    //         });
+    //         assert!(
+    //             active_search_entry.is_none(),
+    //             "Expected no search panel to be active for file entry"
+    //         );
 
-//     #[gpui::test]
-//     async fn test_search_query_history(cx: &mut TestAppContext) {
-//         init_test(cx);
+    //         let a_dir_entry = cx.update(|cx| {
+    //             workspace
+    //                 .read(cx)
+    //                 .project()
+    //                 .read(cx)
+    //                 .entry_for_path(&(worktree_id, "a").into(), cx)
+    //                 .expect("no entry for /a/ directory")
+    //         });
+    //         assert!(a_dir_entry.is_dir());
+    //         workspace.update(cx, |workspace, cx| {
+    //             ProjectSearchView::new_search_in_directory(workspace, &a_dir_entry, cx)
+    //         });
 
-//         let fs = FakeFs::new(cx.background_executor());
-//         fs.insert_tree(
-//             "/dir",
-//             json!({
-//                 "one.rs": "const ONE: usize = 1;",
-//                 "two.rs": "const TWO: usize = one::ONE + one::ONE;",
-//                 "three.rs": "const THREE: usize = one::ONE + two::TWO;",
-//                 "four.rs": "const FOUR: usize = one::ONE + three::THREE;",
-//             }),
-//         )
-//         .await;
-//         let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
-//         let window = cx.add_window(|cx| Workspace::test_new(project, cx));
-//         let workspace = window.root(cx);
-//         workspace.update(cx, |workspace, cx| {
-//             ProjectSearchView::deploy(workspace, &workspace::NewSearch, cx)
-//         });
+    //         let Some(search_view) = cx.read(|cx| {
+    //             workspace
+    //                 .read(cx)
+    //                 .active_pane()
+    //                 .read(cx)
+    //                 .active_item()
+    //                 .and_then(|item| item.downcast::<ProjectSearchView>())
+    //         }) else {
+    //             panic!("Search view expected to appear after new search in directory event trigger")
+    //         };
+    //         cx.background_executor.run_until_parked();
+    //         search_view.update(cx, |search_view, cx| {
+    //             assert!(
+    //                 search_view.query_editor.is_focused(cx),
+    //                 "On new search in directory, focus should be moved into query editor"
+    //             );
+    //             search_view.excluded_files_editor.update(cx, |editor, cx| {
+    //                 assert!(
+    //                     editor.display_text(cx).is_empty(),
+    //                     "New search in directory should not have any excluded files"
+    //                 );
+    //             });
+    //             search_view.included_files_editor.update(cx, |editor, cx| {
+    //                 assert_eq!(
+    //                     editor.display_text(cx),
+    //                     a_dir_entry.path.to_str().unwrap(),
+    //                     "New search in directory should have included dir entry path"
+    //                 );
+    //             });
+    //         });
 
-//         let search_view = cx.read(|cx| {
-//             workspace
-//                 .read(cx)
-//                 .active_pane()
-//                 .read(cx)
-//                 .active_item()
-//                 .and_then(|item| item.downcast::<ProjectSearchView>())
-//                 .expect("Search view expected to appear after new search event trigger")
-//         });
+    //         search_view.update(cx, |search_view, cx| {
+    //             search_view
+    //                 .query_editor
+    //                 .update(cx, |query_editor, cx| query_editor.set_text("const", cx));
+    //             search_view.search(cx);
+    //         });
+    //         cx.background_executor.run_until_parked();
+    //         search_view.update(cx, |search_view, cx| {
+    //             assert_eq!(
+    //                 search_view
+    //                     .results_editor
+    //                     .update(cx, |editor, cx| editor.display_text(cx)),
+    //                 "\n\nconst ONE: usize = 1;\n\n\nconst TWO: usize = one::ONE + one::ONE;",
+    //                 "New search in directory should have a filter that matches a certain directory"
+    //             );
+    //         });
+    //     }
 
-//         let search_bar = window.add_view(cx, |cx| {
-//             let mut search_bar = ProjectSearchBar::new();
-//             search_bar.set_active_pane_item(Some(&search_view), cx);
-//             // search_bar.show(cx);
-//             search_bar
-//         });
+    //     #[gpui::test]
+    //     async fn test_search_query_history(cx: &mut TestAppContext) {
+    //         init_test(cx);
 
-//         // Add 3 search items into the history + another unsubmitted one.
-//         search_view.update(cx, |search_view, cx| {
-//             search_view.search_options = SearchOptions::CASE_SENSITIVE;
-//             search_view
-//                 .query_editor
-//                 .update(cx, |query_editor, cx| query_editor.set_text("ONE", cx));
-//             search_view.search(cx);
-//         });
-//         cx.foreground().run_until_parked();
-//         search_view.update(cx, |search_view, cx| {
-//             search_view
-//                 .query_editor
-//                 .update(cx, |query_editor, cx| query_editor.set_text("TWO", cx));
-//             search_view.search(cx);
-//         });
-//         cx.foreground().run_until_parked();
-//         search_view.update(cx, |search_view, cx| {
-//             search_view
-//                 .query_editor
-//                 .update(cx, |query_editor, cx| query_editor.set_text("THREE", cx));
-//             search_view.search(cx);
-//         });
-//         cx.foreground().run_until_parked();
-//         search_view.update(cx, |search_view, cx| {
-//             search_view.query_editor.update(cx, |query_editor, cx| {
-//                 query_editor.set_text("JUST_TEXT_INPUT", cx)
-//             });
-//         });
-//         cx.foreground().run_until_parked();
+    //         let fs = FakeFs::new(cx.background_executor());
+    //         fs.insert_tree(
+    //             "/dir",
+    //             json!({
+    //                 "one.rs": "const ONE: usize = 1;",
+    //                 "two.rs": "const TWO: usize = one::ONE + one::ONE;",
+    //                 "three.rs": "const THREE: usize = one::ONE + two::TWO;",
+    //                 "four.rs": "const FOUR: usize = one::ONE + three::THREE;",
+    //             }),
+    //         )
+    //         .await;
+    //         let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+    //         let window = cx.add_window(|cx| Workspace::test_new(project, cx));
+    //         let workspace = window.root(cx);
+    //         workspace.update(cx, |workspace, cx| {
+    //             ProjectSearchView::deploy(workspace, &workspace::NewSearch, cx)
+    //         });
 
-//         // Ensure that the latest input with search settings is active.
-//         search_view.update(cx, |search_view, cx| {
-//             assert_eq!(
-//                 search_view.query_editor.read(cx).text(cx),
-//                 "JUST_TEXT_INPUT"
-//             );
-//             assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
-//         });
+    //         let search_view = cx.read(|cx| {
+    //             workspace
+    //                 .read(cx)
+    //                 .active_pane()
+    //                 .read(cx)
+    //                 .active_item()
+    //                 .and_then(|item| item.downcast::<ProjectSearchView>())
+    //                 .expect("Search view expected to appear after new search event trigger")
+    //         });
 
-//         // Next history query after the latest should set the query to the empty string.
-//         search_bar.update(cx, |search_bar, cx| {
-//             search_bar.next_history_query(&NextHistoryQuery, cx);
-//         });
-//         search_view.update(cx, |search_view, cx| {
-//             assert_eq!(search_view.query_editor.read(cx).text(cx), "");
-//             assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
-//         });
-//         search_bar.update(cx, |search_bar, cx| {
-//             search_bar.next_history_query(&NextHistoryQuery, cx);
-//         });
-//         search_view.update(cx, |search_view, cx| {
-//             assert_eq!(search_view.query_editor.read(cx).text(cx), "");
-//             assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
-//         });
+    //         let search_bar = window.add_view(cx, |cx| {
+    //             let mut search_bar = ProjectSearchBar::new();
+    //             search_bar.set_active_pane_item(Some(&search_view), cx);
+    //             // search_bar.show(cx);
+    //             search_bar
+    //         });
 
-//         // First previous query for empty current query should set the query to the latest submitted one.
-//         search_bar.update(cx, |search_bar, cx| {
-//             search_bar.previous_history_query(&PreviousHistoryQuery, cx);
-//         });
-//         search_view.update(cx, |search_view, cx| {
-//             assert_eq!(search_view.query_editor.read(cx).text(cx), "THREE");
-//             assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
-//         });
+    //         // Add 3 search items into the history + another unsubmitted one.
+    //         search_view.update(cx, |search_view, cx| {
+    //             search_view.search_options = SearchOptions::CASE_SENSITIVE;
+    //             search_view
+    //                 .query_editor
+    //                 .update(cx, |query_editor, cx| query_editor.set_text("ONE", cx));
+    //             search_view.search(cx);
+    //         });
+    //         cx.foreground().run_until_parked();
+    //         search_view.update(cx, |search_view, cx| {
+    //             search_view
+    //                 .query_editor
+    //                 .update(cx, |query_editor, cx| query_editor.set_text("TWO", cx));
+    //             search_view.search(cx);
+    //         });
+    //         cx.foreground().run_until_parked();
+    //         search_view.update(cx, |search_view, cx| {
+    //             search_view
+    //                 .query_editor
+    //                 .update(cx, |query_editor, cx| query_editor.set_text("THREE", cx));
+    //             search_view.search(cx);
+    //         });
+    //         cx.foreground().run_until_parked();
+    //         search_view.update(cx, |search_view, cx| {
+    //             search_view.query_editor.update(cx, |query_editor, cx| {
+    //                 query_editor.set_text("JUST_TEXT_INPUT", cx)
+    //             });
+    //         });
+    //         cx.foreground().run_until_parked();
 
-//         // Further previous items should go over the history in reverse order.
-//         search_bar.update(cx, |search_bar, cx| {
-//             search_bar.previous_history_query(&PreviousHistoryQuery, cx);
-//         });
-//         search_view.update(cx, |search_view, cx| {
-//             assert_eq!(search_view.query_editor.read(cx).text(cx), "TWO");
-//             assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
-//         });
+    //         // Ensure that the latest input with search settings is active.
+    //         search_view.update(cx, |search_view, cx| {
+    //             assert_eq!(
+    //                 search_view.query_editor.read(cx).text(cx),
+    //                 "JUST_TEXT_INPUT"
+    //             );
+    //             assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
+    //         });
 
-//         // Previous items should never go behind the first history item.
-//         search_bar.update(cx, |search_bar, cx| {
-//             search_bar.previous_history_query(&PreviousHistoryQuery, cx);
-//         });
-//         search_view.update(cx, |search_view, cx| {
-//             assert_eq!(search_view.query_editor.read(cx).text(cx), "ONE");
-//             assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
-//         });
-//         search_bar.update(cx, |search_bar, cx| {
-//             search_bar.previous_history_query(&PreviousHistoryQuery, cx);
-//         });
-//         search_view.update(cx, |search_view, cx| {
-//             assert_eq!(search_view.query_editor.read(cx).text(cx), "ONE");
-//             assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
-//         });
+    //         // Next history query after the latest should set the query to the empty string.
+    //         search_bar.update(cx, |search_bar, cx| {
+    //             search_bar.next_history_query(&NextHistoryQuery, cx);
+    //         });
+    //         search_view.update(cx, |search_view, cx| {
+    //             assert_eq!(search_view.query_editor.read(cx).text(cx), "");
+    //             assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
+    //         });
+    //         search_bar.update(cx, |search_bar, cx| {
+    //             search_bar.next_history_query(&NextHistoryQuery, cx);
+    //         });
+    //         search_view.update(cx, |search_view, cx| {
+    //             assert_eq!(search_view.query_editor.read(cx).text(cx), "");
+    //             assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
+    //         });
 
-//         // Next items should go over the history in the original order.
-//         search_bar.update(cx, |search_bar, cx| {
-//             search_bar.next_history_query(&NextHistoryQuery, cx);
-//         });
-//         search_view.update(cx, |search_view, cx| {
-//             assert_eq!(search_view.query_editor.read(cx).text(cx), "TWO");
-//             assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
-//         });
+    //         // First previous query for empty current query should set the query to the latest submitted one.
+    //         search_bar.update(cx, |search_bar, cx| {
+    //             search_bar.previous_history_query(&PreviousHistoryQuery, cx);
+    //         });
+    //         search_view.update(cx, |search_view, cx| {
+    //             assert_eq!(search_view.query_editor.read(cx).text(cx), "THREE");
+    //             assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
+    //         });
 
-//         search_view.update(cx, |search_view, cx| {
-//             search_view
-//                 .query_editor
-//                 .update(cx, |query_editor, cx| query_editor.set_text("TWO_NEW", cx));
-//             search_view.search(cx);
-//         });
-//         cx.foreground().run_until_parked();
-//         search_view.update(cx, |search_view, cx| {
-//             assert_eq!(search_view.query_editor.read(cx).text(cx), "TWO_NEW");
-//             assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
-//         });
+    //         // Further previous items should go over the history in reverse order.
+    //         search_bar.update(cx, |search_bar, cx| {
+    //             search_bar.previous_history_query(&PreviousHistoryQuery, cx);
+    //         });
+    //         search_view.update(cx, |search_view, cx| {
+    //             assert_eq!(search_view.query_editor.read(cx).text(cx), "TWO");
+    //             assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
+    //         });
 
-//         // New search input should add another entry to history and move the selection to the end of the history.
-//         search_bar.update(cx, |search_bar, cx| {
-//             search_bar.previous_history_query(&PreviousHistoryQuery, cx);
-//         });
-//         search_view.update(cx, |search_view, cx| {
-//             assert_eq!(search_view.query_editor.read(cx).text(cx), "THREE");
-//             assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
-//         });
-//         search_bar.update(cx, |search_bar, cx| {
-//             search_bar.previous_history_query(&PreviousHistoryQuery, cx);
-//         });
-//         search_view.update(cx, |search_view, cx| {
-//             assert_eq!(search_view.query_editor.read(cx).text(cx), "TWO");
-//             assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
-//         });
-//         search_bar.update(cx, |search_bar, cx| {
-//             search_bar.next_history_query(&NextHistoryQuery, cx);
-//         });
-//         search_view.update(cx, |search_view, cx| {
-//             assert_eq!(search_view.query_editor.read(cx).text(cx), "THREE");
-//             assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
-//         });
-//         search_bar.update(cx, |search_bar, cx| {
-//             search_bar.next_history_query(&NextHistoryQuery, cx);
-//         });
-//         search_view.update(cx, |search_view, cx| {
-//             assert_eq!(search_view.query_editor.read(cx).text(cx), "TWO_NEW");
-//             assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
-//         });
-//         search_bar.update(cx, |search_bar, cx| {
-//             search_bar.next_history_query(&NextHistoryQuery, cx);
-//         });
-//         search_view.update(cx, |search_view, cx| {
-//             assert_eq!(search_view.query_editor.read(cx).text(cx), "");
-//             assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
-//         });
-//     }
+    //         // Previous items should never go behind the first history item.
+    //         search_bar.update(cx, |search_bar, cx| {
+    //             search_bar.previous_history_query(&PreviousHistoryQuery, cx);
+    //         });
+    //         search_view.update(cx, |search_view, cx| {
+    //             assert_eq!(search_view.query_editor.read(cx).text(cx), "ONE");
+    //             assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
+    //         });
+    //         search_bar.update(cx, |search_bar, cx| {
+    //             search_bar.previous_history_query(&PreviousHistoryQuery, cx);
+    //         });
+    //         search_view.update(cx, |search_view, cx| {
+    //             assert_eq!(search_view.query_editor.read(cx).text(cx), "ONE");
+    //             assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
+    //         });
 
-//     pub fn init_test(cx: &mut TestAppContext) {
-//         cx.foreground().forbid_parking();
-//         let fonts = cx.font_cache();
-//         let mut theme = gpui::fonts::with_font_cache(fonts.clone(), theme::Theme::default);
-//         theme.search.match_background = Color::red();
+    //         // Next items should go over the history in the original order.
+    //         search_bar.update(cx, |search_bar, cx| {
+    //             search_bar.next_history_query(&NextHistoryQuery, cx);
+    //         });
+    //         search_view.update(cx, |search_view, cx| {
+    //             assert_eq!(search_view.query_editor.read(cx).text(cx), "TWO");
+    //             assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
+    //         });
 
-//         cx.update(|cx| {
-//             cx.set_global(SettingsStore::test(cx));
-//             cx.set_global(ActiveSearches::default());
-//             settings::register::<SemanticIndexSettings>(cx);
+    //         search_view.update(cx, |search_view, cx| {
+    //             search_view
+    //                 .query_editor
+    //                 .update(cx, |query_editor, cx| query_editor.set_text("TWO_NEW", cx));
+    //             search_view.search(cx);
+    //         });
+    //         cx.foreground().run_until_parked();
+    //         search_view.update(cx, |search_view, cx| {
+    //             assert_eq!(search_view.query_editor.read(cx).text(cx), "TWO_NEW");
+    //             assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
+    //         });
 
-//             theme::init((), cx);
-//             cx.update_global::<SettingsStore, _, _>(|store, _| {
-//                 let mut settings = store.get::<ThemeSettings>(None).clone();
-//                 settings.theme = Arc::new(theme);
-//                 store.override_global(settings)
-//             });
+    //         // New search input should add another entry to history and move the selection to the end of the history.
+    //         search_bar.update(cx, |search_bar, cx| {
+    //             search_bar.previous_history_query(&PreviousHistoryQuery, cx);
+    //         });
+    //         search_view.update(cx, |search_view, cx| {
+    //             assert_eq!(search_view.query_editor.read(cx).text(cx), "THREE");
+    //             assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
+    //         });
+    //         search_bar.update(cx, |search_bar, cx| {
+    //             search_bar.previous_history_query(&PreviousHistoryQuery, cx);
+    //         });
+    //         search_view.update(cx, |search_view, cx| {
+    //             assert_eq!(search_view.query_editor.read(cx).text(cx), "TWO");
+    //             assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
+    //         });
+    //         search_bar.update(cx, |search_bar, cx| {
+    //             search_bar.next_history_query(&NextHistoryQuery, cx);
+    //         });
+    //         search_view.update(cx, |search_view, cx| {
+    //             assert_eq!(search_view.query_editor.read(cx).text(cx), "THREE");
+    //             assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
+    //         });
+    //         search_bar.update(cx, |search_bar, cx| {
+    //             search_bar.next_history_query(&NextHistoryQuery, cx);
+    //         });
+    //         search_view.update(cx, |search_view, cx| {
+    //             assert_eq!(search_view.query_editor.read(cx).text(cx), "TWO_NEW");
+    //             assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
+    //         });
+    //         search_bar.update(cx, |search_bar, cx| {
+    //             search_bar.next_history_query(&NextHistoryQuery, cx);
+    //         });
+    //         search_view.update(cx, |search_view, cx| {
+    //             assert_eq!(search_view.query_editor.read(cx).text(cx), "");
+    //             assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
+    //         });
+    //     }
 
-//             language::init(cx);
-//             client::init_settings(cx);
-//             editor::init(cx);
-//             workspace::init_settings(cx);
-//             Project::init_settings(cx);
-//             super::init(cx);
-//         });
-//     }
-// }
+    pub fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings = SettingsStore::test(cx);
+            cx.set_global(settings);
+            cx.set_global(ActiveSearches::default());
+            SemanticIndexSettings::register(cx);
+
+            theme::init(theme::LoadThemes::JustBase, cx);
+
+            language::init(cx);
+            client::init_settings(cx);
+            editor::init(cx);
+            workspace::init_settings(cx);
+            Project::init_settings(cx);
+            super::init(cx);
+        });
+    }
+}
