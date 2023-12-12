@@ -2106,6 +2106,7 @@ impl Render for Pane {
             .key_context("Pane")
             .track_focus(&self.focus_handle)
             .size_full()
+            .flex_none()
             .overflow_hidden()
             .on_action(cx.listener(|pane, _: &SplitLeft, cx| pane.split(SplitDirection::Left, cx)))
             .on_action(cx.listener(|pane, _: &SplitUp, cx| pane.split(SplitDirection::Up, cx)))
