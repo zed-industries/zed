@@ -38,6 +38,8 @@ use std::{
 };
 use util::ResultExt;
 
+const ACTIVE_DRAG_Z_INDEX: u32 = 1;
+
 /// A global stacking order, which is created by stacking successive z-index values.
 /// Each z-index will always be interpreted in the context of its parent z-index.
 #[derive(Deref, DerefMut, Ord, PartialOrd, Eq, PartialEq, Clone, Default, Debug)]
@@ -907,6 +909,23 @@ impl<'a> WindowContext<'a> {
         false
     }
 
+    pub fn was_top_layer_under_active_drag(
+        &self,
+        point: &Point<Pixels>,
+        level: &StackingOrder,
+    ) -> bool {
+        for (stack, bounds) in self.window.rendered_frame.depth_map.iter() {
+            if stack.starts_with(&[ACTIVE_DRAG_Z_INDEX]) {
+                continue;
+            }
+            if bounds.contains(point) {
+                return level.starts_with(stack) || stack.starts_with(level);
+            }
+        }
+
+        false
+    }
+
     /// Called during painting to get the current stacking order.
     pub fn stacking_order(&self) -> &StackingOrder {
         &self.window.next_frame.z_index_stack
@@ -1238,7 +1257,7 @@ impl<'a> WindowContext<'a> {
         });
 
         if let Some(active_drag) = self.app.active_drag.take() {
-            self.with_z_index(1, |cx| {
+            self.with_z_index(ACTIVE_DRAG_Z_INDEX, |cx| {
                 let offset = cx.mouse_position() - active_drag.cursor_offset;
                 let available_space = size(AvailableSpace::MinContent, AvailableSpace::MinContent);
                 active_drag.view.draw(offset, available_space, cx);

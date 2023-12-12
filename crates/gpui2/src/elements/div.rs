@@ -763,6 +763,11 @@ impl InteractiveBounds {
     pub fn visibly_contains(&self, point: &Point<Pixels>, cx: &WindowContext) -> bool {
         self.bounds.contains(point) && cx.was_top_layer(&point, &self.stacking_order)
     }
+
+    pub fn drag_target_contains(&self, point: &Point<Pixels>, cx: &WindowContext) -> bool {
+        self.bounds.contains(point)
+            && cx.was_top_layer_under_active_drag(&point, &self.stacking_order)
+    }
 }
 
 impl Interactivity {
@@ -888,30 +893,32 @@ impl Interactivity {
         if cx.active_drag.is_some() {
             let drop_listeners = mem::take(&mut self.drop_listeners);
             let interactive_bounds = interactive_bounds.clone();
-            cx.on_mouse_event(move |event: &MouseUpEvent, phase, cx| {
-                if phase == DispatchPhase::Bubble
-                    && interactive_bounds.visibly_contains(&event.position, &cx)
-                {
-                    if let Some(drag_state_type) =
-                        cx.active_drag.as_ref().map(|drag| drag.view.entity_type())
+            if !drop_listeners.is_empty() {
+                cx.on_mouse_event(move |event: &MouseUpEvent, phase, cx| {
+                    if phase == DispatchPhase::Bubble
+                        && interactive_bounds.drag_target_contains(&event.position, cx)
                     {
-                        for (drop_state_type, listener) in &drop_listeners {
-                            if *drop_state_type == drag_state_type {
-                                let drag = cx
-                                    .active_drag
-                                    .take()
-                                    .expect("checked for type drag state type above");
+                        if let Some(drag_state_type) =
+                            cx.active_drag.as_ref().map(|drag| drag.view.entity_type())
+                        {
+                            for (drop_state_type, listener) in &drop_listeners {
+                                if *drop_state_type == drag_state_type {
+                                    let drag = cx
+                                        .active_drag
+                                        .take()
+                                        .expect("checked for type drag state type above");
 
-                                listener(drag.view.clone(), cx);
-                                cx.notify();
-                                cx.stop_propagation();
+                                    listener(drag.view.clone(), cx);
+                                    cx.notify();
+                                    cx.stop_propagation();
+                                }
                             }
+                        } else {
+                            cx.active_drag = None;
                         }
-                    } else {
-                        cx.active_drag = None;
                     }
-                }
-            });
+                });
+            }
         }
 
         let click_listeners = mem::take(&mut self.click_listeners);
