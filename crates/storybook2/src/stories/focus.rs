@@ -49,8 +49,9 @@ impl Render for FocusStory {
             }))
             .on_focus(cx.listener(|_, _, _| println!("Parent focused")))
             .on_blur(cx.listener(|_, _, _| println!("Parent blurred")))
-            .on_focus_in(cx.listener(|_, _, _| println!("Parent focus_in")))
-            .on_focus_out(cx.listener(|_, _, _| println!("Parent focus_out")))
+            // TODO kb todo!() remove?
+            // .on_focus_in(cx.listener(|_, _, _| println!("Parent focus_in")))
+            // .on_focus_out(cx.listener(|_, _, _| println!("Parent focus_out")))
             .on_key_down(cx.listener(|_, event, _| println!("Key down on parent {:?}", event)))
             .on_key_up(cx.listener(|_, event, _| println!("Key up on parent {:?}", event)))
             .size_full()
@@ -70,8 +71,9 @@ impl Render for FocusStory {
                     .in_focus(|style| style.bg(color_6))
                     .on_focus(cx.listener(|_, _, _| println!("Child 1 focused")))
                     .on_blur(cx.listener(|_, _, _| println!("Child 1 blurred")))
-                    .on_focus_in(cx.listener(|_, _, _| println!("Child 1 focus_in")))
-                    .on_focus_out(cx.listener(|_, _, _| println!("Child 1 focus_out")))
+                    // TODO kb todo!() remove?
+                    // .on_focus_in(cx.listener(|_, _, _| println!("Child 1 focus_in")))
+                    // .on_focus_out(cx.listener(|_, _, _| println!("Child 1 focus_out")))
                     .on_key_down(
                         cx.listener(|_, event, _| println!("Key down on child 1 {:?}", event)),
                     )
@@ -90,8 +92,9 @@ impl Render for FocusStory {
                     .bg(color_4)
                     .on_focus(cx.listener(|_, _, _| println!("Child 2 focused")))
                     .on_blur(cx.listener(|_, _, _| println!("Child 2 blurred")))
-                    .on_focus_in(cx.listener(|_, _, _| println!("Child 2 focus_in")))
-                    .on_focus_out(cx.listener(|_, _, _| println!("Child 2 focus_out")))
+                    // TODO kb todo!() remove?
+                    // .on_focus_in(cx.listener(|_, _, _| println!("Child 2 focus_in")))
+                    // .on_focus_out(cx.listener(|_, _, _| println!("Child 2 focus_out")))
                     .on_key_down(
                         cx.listener(|_, event, _| println!("Key down on child 2 {:?}", event)),
                     )

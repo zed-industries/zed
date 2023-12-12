@@ -10,9 +10,8 @@ pub mod terminal_panel;
 use editor::{scroll::autoscroll::Autoscroll, Editor};
 use gpui::{
     div, impl_actions, overlay, AnyElement, AppContext, DismissEvent, Div, EventEmitter,
-    FocusEvent, FocusHandle, Focusable, FocusableElement, FocusableView, KeyContext, KeyDownEvent,
-    Keystroke, Model, MouseButton, MouseDownEvent, Pixels, Render, Styled, Subscription, Task,
-    View, VisualContext, WeakView,
+    FocusHandle, Focusable, FocusableView, KeyContext, KeyDownEvent, Keystroke, Model, MouseButton,
+    MouseDownEvent, Pixels, Render, Styled, Subscription, Task, View, VisualContext, WeakView,
 };
 use language::Bias;
 use persistence::TERMINAL_DB;
@@ -263,19 +262,13 @@ impl TerminalView {
         })
         .detach();
 
-        let focus = cx.focus_handle();
-        // let focus_in = cx.on_focus_in(&focus, |this, cx| {
-        //     this.has_new_content = false;
-        //     this.terminal.read(cx).focus_in();
-        //     this.blink_cursors(this.blink_epoch, cx);
-        //     cx.notify();
-        // });
-        // let focus_out = cx.on_focus_out(&focus, |this, cx| {
-        //     this.terminal.update(cx, |terminal, _| {
-        //         terminal.focus_out();
-        //     });
-        //     cx.notify();
-        // });
+        let focus_handle = cx.focus_handle();
+        let focus_in = cx.on_focus_in(&focus_handle, |terminal_view, cx| {
+            terminal_view.focus_in(cx);
+        });
+        let focus_out = cx.on_focus_out(&focus_handle, |terminal_view, cx| {
+            terminal_view.focus_out(cx);
+        });
 
         Self {
             terminal,
@@ -289,7 +282,7 @@ impl TerminalView {
             blink_epoch: 0,
             can_navigate_to_selected_word: false,
             workspace_id,
-            _subscriptions: vec![/*focus_in, focus_out*/],
+            _subscriptions: vec![focus_in, focus_out],
         }
     }
 
@@ -614,14 +607,14 @@ impl TerminalView {
         });
     }
 
-    fn focus_in(&mut self, event: &FocusEvent, cx: &mut ViewContext<Self>) {
+    fn focus_in(&mut self, cx: &mut ViewContext<Self>) {
         self.has_new_content = false;
         self.terminal.read(cx).focus_in();
         self.blink_cursors(self.blink_epoch, cx);
         cx.notify();
     }
 
-    fn focus_out(&mut self, event: &FocusEvent, cx: &mut ViewContext<Self>) {
+    fn focus_out(&mut self, cx: &mut ViewContext<Self>) {
         self.terminal.update(cx, |terminal, _| {
             terminal.focus_out();
         });
@@ -650,8 +643,6 @@ impl Render for TerminalView {
             .on_action(cx.listener(TerminalView::clear))
             .on_action(cx.listener(TerminalView::show_character_palette))
             .on_action(cx.listener(TerminalView::select_all))
-            .on_focus_in(cx.listener(Self::focus_in))
-            .on_focus_out(cx.listener(Self::focus_out))
             .on_key_down(cx.listener(Self::key_down))
             .on_mouse_down(
                 MouseButton::Right,

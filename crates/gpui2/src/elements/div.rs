@@ -441,6 +441,7 @@ pub trait StatefulInteractiveElement: InteractiveElement {
     }
 }
 
+// TODO kb do we leave those on an element?
 pub trait FocusableElement: InteractiveElement {
     fn focus(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self
     where
@@ -480,51 +481,6 @@ pub trait FocusableElement: InteractiveElement {
             .focus_listeners
             .push(Box::new(move |focus_handle, event, cx| {
                 if event.blurred.as_ref() == Some(focus_handle) {
-                    listener(event, cx)
-                }
-            }));
-        self
-    }
-
-    fn on_focus_in(mut self, listener: impl Fn(&FocusEvent, &mut WindowContext) + 'static) -> Self
-    where
-        Self: Sized,
-    {
-        self.interactivity()
-            .focus_listeners
-            .push(Box::new(move |focus_handle, event, cx| {
-                let descendant_blurred = event
-                    .blurred
-                    .as_ref()
-                    .map_or(false, |blurred| focus_handle.contains(blurred, cx));
-                let descendant_focused = event
-                    .focused
-                    .as_ref()
-                    .map_or(false, |focused| focus_handle.contains(focused, cx));
-
-                if !descendant_blurred && descendant_focused {
-                    listener(event, cx)
-                }
-            }));
-        self
-    }
-
-    fn on_focus_out(mut self, listener: impl Fn(&FocusEvent, &mut WindowContext) + 'static) -> Self
-    where
-        Self: Sized,
-    {
-        self.interactivity()
-            .focus_listeners
-            .push(Box::new(move |focus_handle, event, cx| {
-                let descendant_blurred = event
-                    .blurred
-                    .as_ref()
-                    .map_or(false, |blurred| focus_handle.contains(blurred, cx));
-                let descendant_focused = event
-                    .focused
-                    .as_ref()
-                    .map_or(false, |focused| focus_handle.contains(focused, cx));
-                if descendant_blurred && !descendant_focused {
                     listener(event, cx)
                 }
             }));
