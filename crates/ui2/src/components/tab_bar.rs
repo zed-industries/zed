@@ -93,11 +93,10 @@ impl RenderOnce for TabBar {
             .id(self.id)
             .group("tab_bar")
             .track_focus(&self.focus_handle)
-            .w_full()
-            .h(rems(HEIGHT_IN_REMS))
-            .overflow_hidden()
             .flex()
             .flex_none()
+            .w_full()
+            .h(rems(HEIGHT_IN_REMS))
             .bg(cx.theme().colors().tab_bar_background)
             .child(
                 h_stack()
@@ -125,7 +124,13 @@ impl RenderOnce for TabBar {
                             .border_b()
                             .border_color(cx.theme().colors().border),
                     )
-                    .child(h_stack().id("tabs").z_index(2).children(self.children)),
+                    .child(
+                        h_stack()
+                            .id("tabs")
+                            .z_index(2)
+                            .overflow_x_scroll()
+                            .children(self.children),
+                    ),
             )
             .child(
                 h_stack()
