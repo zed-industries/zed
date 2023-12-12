@@ -27,6 +27,7 @@ pub enum ComponentStory {
     List,
     ListHeader,
     ListItem,
+    OverflowScroll,
     Scroll,
     Tab,
     TabBar,
@@ -54,6 +55,9 @@ impl ComponentStory {
             Self::List => cx.build_view(|_| ui::ListStory).into(),
             Self::ListHeader => cx.build_view(|_| ui::ListHeaderStory).into(),
             Self::ListItem => cx.build_view(|_| ui::ListItemStory).into(),
+            Self::OverflowScroll => cx
+                .build_view(|_| crate::stories::OverflowScrollStory)
+                .into(),
             Self::Scroll => ScrollStory::view(cx).into(),
             Self::Text => TextStory::view(cx).into(),
             Self::Tab => cx.build_view(|_| ui::TabStory).into(),
