@@ -121,6 +121,7 @@ fn render_replace_button(
     action: impl Action + 'static + Send + Sync,
     icon: Icon,
     tooltip: &'static str,
+    on_click: impl Fn(&gpui::ClickEvent, &mut WindowContext) + 'static,
 ) -> impl IntoElement {
     let id: SharedString = format!("search-replace-{}", action.name()).into();
     IconButton::new(id, icon)
@@ -128,7 +129,5 @@ fn render_replace_button(
             let action = action.boxed_clone();
             move |cx| Tooltip::for_action(tooltip, &*action, cx)
         })
-        .on_click(move |_, cx| {
-            cx.dispatch_action(action.boxed_clone());
-        })
+        .on_click(on_click)
 }

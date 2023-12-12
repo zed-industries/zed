@@ -154,10 +154,21 @@ impl Render for BufferSearchBar {
                 Some(ui::Label::new(message))
             });
         let should_show_replace_input = self.replace_enabled && supported_options.replacement;
-        let replace_all = should_show_replace_input
-            .then(|| super::render_replace_button(ReplaceAll, ui::Icon::ReplaceAll, "Replace all"));
+        let replace_all = should_show_replace_input.then(|| {
+            super::render_replace_button(
+                ReplaceAll,
+                ui::Icon::ReplaceAll,
+                "Replace all",
+                cx.listener(|this, _, cx| this.replace_all(&ReplaceAll, cx)),
+            )
+        });
         let replace_next = should_show_replace_input.then(|| {
-            super::render_replace_button(ReplaceNext, ui::Icon::ReplaceNext, "Replace next")
+            super::render_replace_button(
+                ReplaceNext,
+                ui::Icon::ReplaceNext,
+                "Replace next",
+                cx.listener(|this, _, cx| this.replace_next(&ReplaceNext, cx)),
+            )
         });
         let in_replace = self.replacement_editor.focus_handle(cx).is_focused(cx);
 
