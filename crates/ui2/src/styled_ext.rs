@@ -118,6 +118,16 @@ pub trait StyledExt: Styled + Sized {
         elevated(self, cx, ElevationIndex::ModalSurface)
     }
 
+    /// The theme's primary border color.
+    fn border_primary(self, cx: &mut WindowContext) -> Self {
+        self.border_color(cx.theme().colors().border)
+    }
+
+    /// The theme's secondary or muted border color.
+    fn border_muted(self, cx: &mut WindowContext) -> Self {
+        self.border_color(cx.theme().colors().border_variant)
+    }
+
     fn debug_bg_red(self) -> Self {
         self.bg(gpui::red())
     }
