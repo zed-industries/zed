@@ -122,7 +122,13 @@ impl RenderOnce for TabBar {
                             .border_b()
                             .border_color(cx.theme().colors().border),
                     )
-                    .child(h_stack().id("tabs").z_index(2).children(self.children)),
+                    .child(
+                        h_stack()
+                            .id("tabs")
+                            .z_index(2)
+                            .overflow_x_scroll()
+                            .children(self.children),
+                    ),
             )
             .child(
                 h_stack()
