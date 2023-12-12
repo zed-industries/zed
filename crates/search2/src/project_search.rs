@@ -2148,13 +2148,11 @@ impl ToolbarItemView for ProjectSearchBar {
 pub mod tests {
     use super::*;
     use editor::DisplayPoint;
-    use gpui::{Action, Entity, Hsla, TestAppContext};
+    use gpui::{Action, TestAppContext};
     use project::FakeFs;
     use semantic_index::semantic_index_settings::SemanticIndexSettings;
     use serde_json::json;
     use settings::{Settings, SettingsStore};
-    use std::sync::Arc;
-    use theme::ThemeSettings;
 
     #[gpui::test]
     async fn test_project_search(cx: &mut TestAppContext) {
@@ -2716,192 +2714,319 @@ pub mod tests {
             .unwrap();
     }
 
-    //     #[gpui::test]
-    //     async fn test_search_query_history(cx: &mut TestAppContext) {
-    //         init_test(cx);
+    #[gpui::test]
+    async fn test_search_query_history(cx: &mut TestAppContext) {
+        init_test(cx);
 
-    //         let fs = FakeFs::new(cx.background_executor());
-    //         fs.insert_tree(
-    //             "/dir",
-    //             json!({
-    //                 "one.rs": "const ONE: usize = 1;",
-    //                 "two.rs": "const TWO: usize = one::ONE + one::ONE;",
-    //                 "three.rs": "const THREE: usize = one::ONE + two::TWO;",
-    //                 "four.rs": "const FOUR: usize = one::ONE + three::THREE;",
-    //             }),
-    //         )
-    //         .await;
-    //         let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
-    //         let window = cx.add_window(|cx| Workspace::test_new(project, cx));
-    //         let workspace = window.root(cx);
-    //         workspace.update(cx, |workspace, cx| {
-    //             ProjectSearchView::deploy(workspace, &workspace::NewSearch, cx)
-    //         });
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/dir",
+            json!({
+                "one.rs": "const ONE: usize = 1;",
+                "two.rs": "const TWO: usize = one::ONE + one::ONE;",
+                "three.rs": "const THREE: usize = one::ONE + two::TWO;",
+                "four.rs": "const FOUR: usize = one::ONE + three::THREE;",
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+        let window = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let workspace = window.root(cx).unwrap();
+        window
+            .update(cx, |workspace, cx| {
+                ProjectSearchView::deploy(workspace, &workspace::NewSearch, cx)
+            })
+            .unwrap();
 
-    //         let search_view = cx.read(|cx| {
-    //             workspace
-    //                 .read(cx)
-    //                 .active_pane()
-    //                 .read(cx)
-    //                 .active_item()
-    //                 .and_then(|item| item.downcast::<ProjectSearchView>())
-    //                 .expect("Search view expected to appear after new search event trigger")
-    //         });
+        let search_view = cx.read(|cx| {
+            workspace
+                .read(cx)
+                .active_pane()
+                .read(cx)
+                .active_item()
+                .and_then(|item| item.downcast::<ProjectSearchView>())
+                .expect("Search view expected to appear after new search event trigger")
+        });
 
-    //         let search_bar = window.add_view(cx, |cx| {
-    //             let mut search_bar = ProjectSearchBar::new();
-    //             search_bar.set_active_pane_item(Some(&search_view), cx);
-    //             // search_bar.show(cx);
-    //             search_bar
-    //         });
+        let search_bar = window.build_view(cx, |cx| {
+            let mut search_bar = ProjectSearchBar::new();
+            search_bar.set_active_pane_item(Some(&search_view), cx);
+            // search_bar.show(cx);
+            search_bar
+        });
 
-    //         // Add 3 search items into the history + another unsubmitted one.
-    //         search_view.update(cx, |search_view, cx| {
-    //             search_view.search_options = SearchOptions::CASE_SENSITIVE;
-    //             search_view
-    //                 .query_editor
-    //                 .update(cx, |query_editor, cx| query_editor.set_text("ONE", cx));
-    //             search_view.search(cx);
-    //         });
-    //         cx.foreground().run_until_parked();
-    //         search_view.update(cx, |search_view, cx| {
-    //             search_view
-    //                 .query_editor
-    //                 .update(cx, |query_editor, cx| query_editor.set_text("TWO", cx));
-    //             search_view.search(cx);
-    //         });
-    //         cx.foreground().run_until_parked();
-    //         search_view.update(cx, |search_view, cx| {
-    //             search_view
-    //                 .query_editor
-    //                 .update(cx, |query_editor, cx| query_editor.set_text("THREE", cx));
-    //             search_view.search(cx);
-    //         });
-    //         cx.foreground().run_until_parked();
-    //         search_view.update(cx, |search_view, cx| {
-    //             search_view.query_editor.update(cx, |query_editor, cx| {
-    //                 query_editor.set_text("JUST_TEXT_INPUT", cx)
-    //             });
-    //         });
-    //         cx.foreground().run_until_parked();
+        // Add 3 search items into the history + another unsubmitted one.
+        window
+            .update(cx, |_, cx| {
+                search_view.update(cx, |search_view, cx| {
+                    search_view.search_options = SearchOptions::CASE_SENSITIVE;
+                    search_view
+                        .query_editor
+                        .update(cx, |query_editor, cx| query_editor.set_text("ONE", cx));
+                    search_view.search(cx);
+                });
+            })
+            .unwrap();
 
-    //         // Ensure that the latest input with search settings is active.
-    //         search_view.update(cx, |search_view, cx| {
-    //             assert_eq!(
-    //                 search_view.query_editor.read(cx).text(cx),
-    //                 "JUST_TEXT_INPUT"
-    //             );
-    //             assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
-    //         });
+        cx.background_executor.run_until_parked();
+        window
+            .update(cx, |_, cx| {
+                search_view.update(cx, |search_view, cx| {
+                    search_view
+                        .query_editor
+                        .update(cx, |query_editor, cx| query_editor.set_text("TWO", cx));
+                    search_view.search(cx);
+                });
+            })
+            .unwrap();
+        cx.background_executor.run_until_parked();
+        window
+            .update(cx, |_, cx| {
+                search_view.update(cx, |search_view, cx| {
+                    search_view
+                        .query_editor
+                        .update(cx, |query_editor, cx| query_editor.set_text("THREE", cx));
+                    search_view.search(cx);
+                })
+            })
+            .unwrap();
+        cx.background_executor.run_until_parked();
+        window
+            .update(cx, |_, cx| {
+                search_view.update(cx, |search_view, cx| {
+                    search_view.query_editor.update(cx, |query_editor, cx| {
+                        query_editor.set_text("JUST_TEXT_INPUT", cx)
+                    });
+                })
+            })
+            .unwrap();
+        cx.background_executor.run_until_parked();
 
-    //         // Next history query after the latest should set the query to the empty string.
-    //         search_bar.update(cx, |search_bar, cx| {
-    //             search_bar.next_history_query(&NextHistoryQuery, cx);
-    //         });
-    //         search_view.update(cx, |search_view, cx| {
-    //             assert_eq!(search_view.query_editor.read(cx).text(cx), "");
-    //             assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
-    //         });
-    //         search_bar.update(cx, |search_bar, cx| {
-    //             search_bar.next_history_query(&NextHistoryQuery, cx);
-    //         });
-    //         search_view.update(cx, |search_view, cx| {
-    //             assert_eq!(search_view.query_editor.read(cx).text(cx), "");
-    //             assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
-    //         });
+        // Ensure that the latest input with search settings is active.
+        window
+            .update(cx, |_, cx| {
+                search_view.update(cx, |search_view, cx| {
+                    assert_eq!(
+                        search_view.query_editor.read(cx).text(cx),
+                        "JUST_TEXT_INPUT"
+                    );
+                    assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
+                });
+            })
+            .unwrap();
 
-    //         // First previous query for empty current query should set the query to the latest submitted one.
-    //         search_bar.update(cx, |search_bar, cx| {
-    //             search_bar.previous_history_query(&PreviousHistoryQuery, cx);
-    //         });
-    //         search_view.update(cx, |search_view, cx| {
-    //             assert_eq!(search_view.query_editor.read(cx).text(cx), "THREE");
-    //             assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
-    //         });
+        // Next history query after the latest should set the query to the empty string.
+        window
+            .update(cx, |_, cx| {
+                search_bar.update(cx, |search_bar, cx| {
+                    search_bar.next_history_query(&NextHistoryQuery, cx);
+                })
+            })
+            .unwrap();
+        window
+            .update(cx, |_, cx| {
+                search_view.update(cx, |search_view, cx| {
+                    assert_eq!(search_view.query_editor.read(cx).text(cx), "");
+                    assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
+                });
+            })
+            .unwrap();
+        window
+            .update(cx, |_, cx| {
+                search_bar.update(cx, |search_bar, cx| {
+                    search_bar.next_history_query(&NextHistoryQuery, cx);
+                })
+            })
+            .unwrap();
+        window
+            .update(cx, |_, cx| {
+                search_view.update(cx, |search_view, cx| {
+                    assert_eq!(search_view.query_editor.read(cx).text(cx), "");
+                    assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
+                });
+            })
+            .unwrap();
 
-    //         // Further previous items should go over the history in reverse order.
-    //         search_bar.update(cx, |search_bar, cx| {
-    //             search_bar.previous_history_query(&PreviousHistoryQuery, cx);
-    //         });
-    //         search_view.update(cx, |search_view, cx| {
-    //             assert_eq!(search_view.query_editor.read(cx).text(cx), "TWO");
-    //             assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
-    //         });
+        // First previous query for empty current query should set the query to the latest submitted one.
+        window
+            .update(cx, |_, cx| {
+                search_bar.update(cx, |search_bar, cx| {
+                    search_bar.previous_history_query(&PreviousHistoryQuery, cx);
+                });
+            })
+            .unwrap();
+        window
+            .update(cx, |_, cx| {
+                search_view.update(cx, |search_view, cx| {
+                    assert_eq!(search_view.query_editor.read(cx).text(cx), "THREE");
+                    assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
+                });
+            })
+            .unwrap();
 
-    //         // Previous items should never go behind the first history item.
-    //         search_bar.update(cx, |search_bar, cx| {
-    //             search_bar.previous_history_query(&PreviousHistoryQuery, cx);
-    //         });
-    //         search_view.update(cx, |search_view, cx| {
-    //             assert_eq!(search_view.query_editor.read(cx).text(cx), "ONE");
-    //             assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
-    //         });
-    //         search_bar.update(cx, |search_bar, cx| {
-    //             search_bar.previous_history_query(&PreviousHistoryQuery, cx);
-    //         });
-    //         search_view.update(cx, |search_view, cx| {
-    //             assert_eq!(search_view.query_editor.read(cx).text(cx), "ONE");
-    //             assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
-    //         });
+        // Further previous items should go over the history in reverse order.
+        window
+            .update(cx, |_, cx| {
+                search_bar.update(cx, |search_bar, cx| {
+                    search_bar.previous_history_query(&PreviousHistoryQuery, cx);
+                });
+            })
+            .unwrap();
+        window
+            .update(cx, |_, cx| {
+                search_view.update(cx, |search_view, cx| {
+                    assert_eq!(search_view.query_editor.read(cx).text(cx), "TWO");
+                    assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
+                });
+            })
+            .unwrap();
 
-    //         // Next items should go over the history in the original order.
-    //         search_bar.update(cx, |search_bar, cx| {
-    //             search_bar.next_history_query(&NextHistoryQuery, cx);
-    //         });
-    //         search_view.update(cx, |search_view, cx| {
-    //             assert_eq!(search_view.query_editor.read(cx).text(cx), "TWO");
-    //             assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
-    //         });
+        // Previous items should never go behind the first history item.
+        window
+            .update(cx, |_, cx| {
+                search_bar.update(cx, |search_bar, cx| {
+                    search_bar.previous_history_query(&PreviousHistoryQuery, cx);
+                });
+            })
+            .unwrap();
+        window
+            .update(cx, |_, cx| {
+                search_view.update(cx, |search_view, cx| {
+                    assert_eq!(search_view.query_editor.read(cx).text(cx), "ONE");
+                    assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
+                });
+            })
+            .unwrap();
+        window
+            .update(cx, |_, cx| {
+                search_bar.update(cx, |search_bar, cx| {
+                    search_bar.previous_history_query(&PreviousHistoryQuery, cx);
+                });
+            })
+            .unwrap();
+        window
+            .update(cx, |_, cx| {
+                search_view.update(cx, |search_view, cx| {
+                    assert_eq!(search_view.query_editor.read(cx).text(cx), "ONE");
+                    assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
+                });
+            })
+            .unwrap();
 
-    //         search_view.update(cx, |search_view, cx| {
-    //             search_view
-    //                 .query_editor
-    //                 .update(cx, |query_editor, cx| query_editor.set_text("TWO_NEW", cx));
-    //             search_view.search(cx);
-    //         });
-    //         cx.foreground().run_until_parked();
-    //         search_view.update(cx, |search_view, cx| {
-    //             assert_eq!(search_view.query_editor.read(cx).text(cx), "TWO_NEW");
-    //             assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
-    //         });
+        // Next items should go over the history in the original order.
+        window
+            .update(cx, |_, cx| {
+                search_bar.update(cx, |search_bar, cx| {
+                    search_bar.next_history_query(&NextHistoryQuery, cx);
+                });
+            })
+            .unwrap();
+        window
+            .update(cx, |_, cx| {
+                search_view.update(cx, |search_view, cx| {
+                    assert_eq!(search_view.query_editor.read(cx).text(cx), "TWO");
+                    assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
+                });
+            })
+            .unwrap();
 
-    //         // New search input should add another entry to history and move the selection to the end of the history.
-    //         search_bar.update(cx, |search_bar, cx| {
-    //             search_bar.previous_history_query(&PreviousHistoryQuery, cx);
-    //         });
-    //         search_view.update(cx, |search_view, cx| {
-    //             assert_eq!(search_view.query_editor.read(cx).text(cx), "THREE");
-    //             assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
-    //         });
-    //         search_bar.update(cx, |search_bar, cx| {
-    //             search_bar.previous_history_query(&PreviousHistoryQuery, cx);
-    //         });
-    //         search_view.update(cx, |search_view, cx| {
-    //             assert_eq!(search_view.query_editor.read(cx).text(cx), "TWO");
-    //             assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
-    //         });
-    //         search_bar.update(cx, |search_bar, cx| {
-    //             search_bar.next_history_query(&NextHistoryQuery, cx);
-    //         });
-    //         search_view.update(cx, |search_view, cx| {
-    //             assert_eq!(search_view.query_editor.read(cx).text(cx), "THREE");
-    //             assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
-    //         });
-    //         search_bar.update(cx, |search_bar, cx| {
-    //             search_bar.next_history_query(&NextHistoryQuery, cx);
-    //         });
-    //         search_view.update(cx, |search_view, cx| {
-    //             assert_eq!(search_view.query_editor.read(cx).text(cx), "TWO_NEW");
-    //             assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
-    //         });
-    //         search_bar.update(cx, |search_bar, cx| {
-    //             search_bar.next_history_query(&NextHistoryQuery, cx);
-    //         });
-    //         search_view.update(cx, |search_view, cx| {
-    //             assert_eq!(search_view.query_editor.read(cx).text(cx), "");
-    //             assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
-    //         });
-    //     }
+        window
+            .update(cx, |_, cx| {
+                search_view.update(cx, |search_view, cx| {
+                    search_view
+                        .query_editor
+                        .update(cx, |query_editor, cx| query_editor.set_text("TWO_NEW", cx));
+                    search_view.search(cx);
+                });
+            })
+            .unwrap();
+        cx.background_executor.run_until_parked();
+        window
+            .update(cx, |_, cx| {
+                search_view.update(cx, |search_view, cx| {
+                    assert_eq!(search_view.query_editor.read(cx).text(cx), "TWO_NEW");
+                    assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
+                });
+            })
+            .unwrap();
+
+        // New search input should add another entry to history and move the selection to the end of the history.
+        window
+            .update(cx, |_, cx| {
+                search_bar.update(cx, |search_bar, cx| {
+                    search_bar.previous_history_query(&PreviousHistoryQuery, cx);
+                });
+            })
+            .unwrap();
+        window
+            .update(cx, |_, cx| {
+                search_view.update(cx, |search_view, cx| {
+                    assert_eq!(search_view.query_editor.read(cx).text(cx), "THREE");
+                    assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
+                });
+            })
+            .unwrap();
+        window
+            .update(cx, |_, cx| {
+                search_bar.update(cx, |search_bar, cx| {
+                    search_bar.previous_history_query(&PreviousHistoryQuery, cx);
+                });
+            })
+            .unwrap();
+        window
+            .update(cx, |_, cx| {
+                search_view.update(cx, |search_view, cx| {
+                    assert_eq!(search_view.query_editor.read(cx).text(cx), "TWO");
+                    assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
+                });
+            })
+            .unwrap();
+        window
+            .update(cx, |_, cx| {
+                search_bar.update(cx, |search_bar, cx| {
+                    search_bar.next_history_query(&NextHistoryQuery, cx);
+                });
+            })
+            .unwrap();
+        window
+            .update(cx, |_, cx| {
+                search_view.update(cx, |search_view, cx| {
+                    assert_eq!(search_view.query_editor.read(cx).text(cx), "THREE");
+                    assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
+                });
+            })
+            .unwrap();
+        window
+            .update(cx, |_, cx| {
+                search_bar.update(cx, |search_bar, cx| {
+                    search_bar.next_history_query(&NextHistoryQuery, cx);
+                });
+            })
+            .unwrap();
+        window
+            .update(cx, |_, cx| {
+                search_view.update(cx, |search_view, cx| {
+                    assert_eq!(search_view.query_editor.read(cx).text(cx), "TWO_NEW");
+                    assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
+                });
+            })
+            .unwrap();
+        window
+            .update(cx, |_, cx| {
+                search_bar.update(cx, |search_bar, cx| {
+                    search_bar.next_history_query(&NextHistoryQuery, cx);
+                });
+            })
+            .unwrap();
+        window
+            .update(cx, |_, cx| {
+                search_view.update(cx, |search_view, cx| {
+                    assert_eq!(search_view.query_editor.read(cx).text(cx), "");
+                    assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
+                });
+            })
+            .unwrap();
+    }
 
     pub fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
