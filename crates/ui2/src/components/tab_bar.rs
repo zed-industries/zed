@@ -51,14 +51,6 @@ impl TabBar {
         self
     }
 
-    pub fn end_slot<E: IntoElement>(mut self, element: impl IntoIterator<Item = E>) -> Self {
-        self.end_children = element
-            .into_iter()
-            .map(IntoElement::into_any_element)
-            .collect();
-        self
-    }
-
     pub fn end_children_mut(&mut self) -> &mut SmallVec<[AnyElement; 2]> {
         &mut self.end_children
     }
