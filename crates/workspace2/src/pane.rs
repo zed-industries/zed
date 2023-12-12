@@ -85,7 +85,21 @@ pub struct CloseAllItems {
     pub save_intent: Option<SaveIntent>,
 }
 
-impl_actions!(pane, [CloseAllItems, CloseActiveItem, ActivateItem]);
+#[derive(Clone, PartialEq, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RevealInProjectPanel {
+    pub entry_id: u64,
+}
+
+impl_actions!(
+    pane,
+    [
+        CloseAllItems,
+        CloseActiveItem,
+        ActivateItem,
+        RevealInProjectPanel
+    ]
+);
 
 actions!(
     pane,
@@ -1499,9 +1513,19 @@ impl Pane {
                 )
                 .child(label);
 
-        right_click_menu(ix).trigger(tab).menu(|cx| {
-            ContextMenu::build(cx, |menu, cx| {
-                menu.action("Close", CloseActiveItem { save_intent: None }.boxed_clone())
+        let single_entry_to_resolve = {
+            let item_entries = self.items[ix].project_entry_ids(cx);
+            if item_entries.len() == 1 {
+                Some(item_entries[0])
+            } else {
+                None
+            }
+        };
+
+        right_click_menu(ix).trigger(tab).menu(move |cx| {
+            ContextMenu::build(cx, |menu, _| {
+                let menu = menu
+                    .action("Close", CloseActiveItem { save_intent: None }.boxed_clone())
                     .action("Close Others", CloseInactiveItems.boxed_clone())
                     .separator()
                     .action("Close Left", CloseItemsToTheLeft.boxed_clone())
@@ -1511,7 +1535,19 @@ impl Pane {
                     .action(
                         "Close All",
                         CloseAllItems { save_intent: None }.boxed_clone(),
+                    );
+
+                if let Some(entry) = single_entry_to_resolve {
+                    menu.separator().action(
+                        "Reveal In Project Panel",
+                        RevealInProjectPanel {
+                            entry_id: entry.to_proto(),
+                        }
+                        .boxed_clone(),
                     )
+                } else {
+                    menu
+                }
             })
         })
     }
@@ -2133,6 +2169,15 @@ impl Render for Pane {
                 cx.listener(|pane: &mut Self, action: &CloseActiveItem, cx| {
                     pane.close_active_item(action, cx)
                         .map(|task| task.detach_and_log_err(cx));
+                }),
+            )
+            .on_action(
+                cx.listener(|pane: &mut Self, action: &RevealInProjectPanel, cx| {
+                    pane.project.update(cx, |_, cx| {
+                        cx.emit(project::Event::RevealInProjectPanel(
+                            ProjectEntryId::from_proto(action.entry_id),
+                        ))
+                    })
                 }),
             )
             .child(self.render_tab_bar(cx))

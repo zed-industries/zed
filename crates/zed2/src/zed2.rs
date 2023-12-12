@@ -130,7 +130,6 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
         let vim_mode_indicator = cx.build_view(|cx| vim::ModeIndicator::new(cx));
         let feedback_button = cx
             .build_view(|_| feedback::deploy_feedback_button::DeployFeedbackButton::new(workspace));
-        //     let cursor_position = cx.add_view(|_| editor::items::CursorPosition::new());
         let cursor_position = cx.build_view(|_| editor::items::CursorPosition::new());
         workspace.status_bar().update(cx, |status_bar, cx| {
             status_bar.add_left_item(diagnostic_summary, cx);

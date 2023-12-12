@@ -301,6 +301,7 @@ pub enum Event {
     CollaboratorJoined(proto::PeerId),
     CollaboratorLeft(proto::PeerId),
     RefreshInlayHints,
+    RevealInProjectPanel(ProjectEntryId),
 }
 
 pub enum LanguageServerState {
