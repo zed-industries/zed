@@ -1314,12 +1314,17 @@ impl<'a> WindowContext<'a> {
         mem::swap(&mut window.rendered_frame, &mut window.next_frame);
 
         let scene = self.window.rendered_frame.scene_builder.build();
+
+        // Set the cursor only if we're the active window.
         let cursor_style = self
             .window
             .requested_cursor_style
             .take()
             .unwrap_or(CursorStyle::Arrow);
-        self.platform.set_cursor_style(cursor_style);
+        if self.is_window_active() {
+            self.platform.set_cursor_style(cursor_style);
+        }
+
         self.window.dirty = false;
 
         scene
