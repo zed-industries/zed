@@ -21,7 +21,7 @@ impl SystemSpecs {
         let app_version = ZED_APP_VERSION
             .or_else(|| cx.app_metadata().app_version)
             .map(|v| v.to_string());
-        let release_channel = cx.global::<ReleaseChannel>().dev_name();
+        let release_channel = cx.global::<ReleaseChannel>().display_name();
         let os_name = cx.app_metadata().os_name;
         let system = System::new_all();
         let memory = system.total_memory();
