@@ -532,6 +532,11 @@ impl Workspace {
             cx.notify()
         })
         .detach();
+        cx.on_blur_window(|this, cx| {
+            let focus_handle = this.focus_handle(cx);
+            cx.focus(&focus_handle);
+        })
+        .detach();
 
         let weak_handle = cx.view().downgrade();
         let pane_history_timestamp = Arc::new(AtomicUsize::new(0));
@@ -1633,6 +1638,7 @@ impl Workspace {
                             panel.focus_handle(cx).focus(cx);
                             reveal_dock = true;
                         } else {
+                            // todo!()
                             // if panel.is_zoomed(cx) {
                             //     dock.set_open(false, cx);
                             // }

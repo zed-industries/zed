@@ -4,7 +4,7 @@ use crate::{
 };
 use gpui::{
     px, Action, AppContext, DismissEvent, Div, EventEmitter, FocusHandle, FocusableView,
-    IntoElement, Render, View, VisualContext,
+    IntoElement, Render, Subscription, View, VisualContext,
 };
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrev};
 use std::{rc::Rc, time::Duration};
@@ -25,6 +25,7 @@ pub struct ContextMenu {
     focus_handle: FocusHandle,
     selected_index: Option<usize>,
     delayed: bool,
+    _on_blur_subscription: Subscription,
 }
 
 impl FocusableView for ContextMenu {
@@ -40,14 +41,18 @@ impl ContextMenu {
         cx: &mut WindowContext,
         f: impl FnOnce(Self, &mut WindowContext) -> Self,
     ) -> View<Self> {
-        // let handle = cx.view().downgrade();
         cx.build_view(|cx| {
+            let focus_handle = cx.focus_handle();
+            let _on_blur_subscription = cx.on_blur(&focus_handle, |this: &mut ContextMenu, cx| {
+                this.cancel(&menu::Cancel, cx)
+            });
             f(
                 Self {
                     items: Default::default(),
-                    focus_handle: cx.focus_handle(),
+                    focus_handle,
                     selected_index: None,
                     delayed: false,
+                    _on_blur_subscription,
                 },
                 cx,
             )
@@ -223,7 +228,6 @@ impl Render for ContextMenu {
                     }
                     el
                 })
-                .on_blur(cx.listener(|this, _, cx| this.cancel(&Default::default(), cx)))
                 .flex_none()
                 .child(
                     List::new().children(self.items.iter().enumerate().map(

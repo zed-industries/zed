@@ -599,29 +599,31 @@ impl AppContext {
                     }
                 }
             } else {
-                break;
-            }
-        }
+                for window in self.windows.values() {
+                    if let Some(window) = window.as_ref() {
+                        if window.dirty {
+                            window.platform_window.invalidate();
+                        }
+                    }
+                }
 
-        for window in self.windows.values() {
-            if let Some(window) = window.as_ref() {
-                if window.dirty {
-                    window.platform_window.invalidate();
+                #[cfg(any(test, feature = "test-support"))]
+                for window in self
+                    .windows
+                    .values()
+                    .filter_map(|window| {
+                        let window = window.as_ref()?;
+                        window.dirty.then_some(window.handle)
+                    })
+                    .collect::<Vec<_>>()
+                {
+                    self.update_window(window, |_, cx| cx.draw()).unwrap();
+                }
+
+                if self.pending_effects.is_empty() {
+                    break;
                 }
             }
-        }
-
-        #[cfg(any(test, feature = "test-support"))]
-        for window in self
-            .windows
-            .values()
-            .filter_map(|window| {
-                let window = window.as_ref()?;
-                window.dirty.then_some(window.handle)
-            })
-            .collect::<Vec<_>>()
-        {
-            self.update_window(window, |_, cx| cx.draw()).unwrap();
         }
     }
 
@@ -646,8 +648,6 @@ impl AppContext {
     }
 
     /// Repeatedly called during `flush_effects` to handle a focused handle being dropped.
-    /// For now, we simply blur the window if this happens, but we may want to support invoking
-    /// a window blur handler to restore focus to some logical element.
     fn release_dropped_focus_handles(&mut self) {
         for window_handle in self.windows() {
             window_handle

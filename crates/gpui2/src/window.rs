@@ -169,7 +169,7 @@ impl FocusHandle {
     }
 
     /// Obtains whether this handle contains the given handle in the most recently rendered frame.
-    pub(crate) fn contains(&self, other: &Self, cx: &WindowContext) -> bool {
+    pub fn contains(&self, other: &Self, cx: &WindowContext) -> bool {
         self.id.contains(other.id, cx)
     }
 }
@@ -228,6 +228,7 @@ pub struct Window {
     pub(crate) next_frame: Frame,
     pub(crate) focus_handles: Arc<RwLock<SlotMap<FocusId, AtomicUsize>>>,
     pub(crate) focus_listeners: SubscriberSet<(), AnyWindowFocusListener>,
+    pub(crate) blur_listeners: SubscriberSet<(), AnyObserver>,
     default_prevented: bool,
     mouse_position: Point<Pixels>,
     requested_cursor_style: Option<CursorStyle>,
@@ -361,6 +362,7 @@ impl Window {
             next_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
             focus_handles: Arc::new(RwLock::new(SlotMap::with_key())),
             focus_listeners: SubscriberSet::new(),
+            blur_listeners: SubscriberSet::new(),
             default_prevented: true,
             mouse_position,
             requested_cursor_style: None,
@@ -1234,6 +1236,16 @@ impl<'a> WindowContext<'a> {
 
     /// Draw pixels to the display for this window based on the contents of its scene.
     pub(crate) fn draw(&mut self) -> Scene {
+        let window_was_focused = self
+            .window
+            .focus
+            .and_then(|focus_id| {
+                self.window
+                    .rendered_frame
+                    .dispatch_tree
+                    .focusable_node_id(focus_id)
+            })
+            .is_some();
         self.text_system().start_frame();
         self.window.platform_window.clear_input_handler();
         self.window.layout_engine.as_mut().unwrap().clear();
@@ -1270,6 +1282,23 @@ impl<'a> WindowContext<'a> {
                     .view
                     .draw(active_tooltip.cursor_offset, available_space, cx);
             });
+        }
+
+        let window_is_focused = self
+            .window
+            .focus
+            .and_then(|focus_id| {
+                self.window
+                    .next_frame
+                    .dispatch_tree
+                    .focusable_node_id(focus_id)
+            })
+            .is_some();
+        if window_was_focused && !window_is_focused {
+            self.window
+                .blur_listeners
+                .clone()
+                .retain(&(), |listener| listener(self));
         }
 
         self.window
@@ -2416,6 +2445,22 @@ impl<'a, V: 'static> ViewContext<'a, V> {
             }),
         );
         self.app.defer(move |_| activate());
+        subscription
+    }
+
+    /// Register a listener to be called when the window loses focus.
+    /// Unlike [on_focus_changed], returns a subscription and persists until the subscription
+    /// is dropped.
+    pub fn on_blur_window(
+        &mut self,
+        mut listener: impl FnMut(&mut V, &mut ViewContext<V>) + 'static,
+    ) -> Subscription {
+        let view = self.view.downgrade();
+        let (subscription, activate) = self.window.blur_listeners.insert(
+            (),
+            Box::new(move |cx| view.update(cx, |view, cx| listener(view, cx)).is_ok()),
+        );
+        activate();
         subscription
     }
 
