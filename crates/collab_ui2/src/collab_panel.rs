@@ -1164,7 +1164,8 @@ impl CollabPanel {
                     .child(if is_pending {
                         Label::new("Calling").color(Color::Muted).into_any_element()
                     } else if is_current_user {
-                        IconButton::new("leave-call", Icon::ArrowRight)
+                        IconButton::new("leave-call", Icon::Exit)
+                            .style(ButtonStyle::Subtle)
                             .on_click(cx.listener(move |this, _, cx| {
                                 Self::leave_call(cx);
                             }))
@@ -2218,9 +2219,12 @@ impl CollabPanel {
                     })),
             )
             .child(
-                div()
-                    .p_2()
-                    .child(div().rounded(px(2.0)).child(self.filter_editor.clone())),
+                div().p_2().child(
+                    div()
+                        .border_primary(cx)
+                        .border_t()
+                        .child(self.filter_editor.clone()),
+                ),
             )
     }
 
@@ -2273,22 +2277,33 @@ impl CollabPanel {
         let button = match section {
             Section::ActiveCall => channel_link.map(|channel_link| {
                 let channel_link_copy = channel_link.clone();
-                IconButton::new("channel-link", Icon::Copy)
-                    .on_click(move |_, cx| {
-                        let item = ClipboardItem::new(channel_link_copy.clone());
-                        cx.write_to_clipboard(item)
-                    })
-                    .tooltip(|cx| Tooltip::text("Copy channel link", cx))
+                div()
+                    .invisible()
+                    .group_hover("section-header", |this| this.visible())
+                    .child(
+                        IconButton::new("channel-link", Icon::Copy)
+                            .icon_size(IconSize::Small)
+                            .size(ButtonSize::None)
+                            .on_click(move |_, cx| {
+                                let item = ClipboardItem::new(channel_link_copy.clone());
+                                cx.write_to_clipboard(item)
+                            })
+                            .tooltip(|cx| Tooltip::text("Copy channel link", cx)),
+                    )
             }),
             Section::Contacts => Some(
-                IconButton::new("add-contact", Icon::Plus)
-                    .on_click(cx.listener(|this, _, cx| this.toggle_contact_finder(cx)))
-                    .tooltip(|cx| Tooltip::text("Search for new contact", cx)),
+                div().child(
+                    IconButton::new("add-contact", Icon::Plus)
+                        .on_click(cx.listener(|this, _, cx| this.toggle_contact_finder(cx)))
+                        .tooltip(|cx| Tooltip::text("Search for new contact", cx)),
+                ),
             ),
             Section::Channels => Some(
-                IconButton::new("add-channel", Icon::Plus)
-                    .on_click(cx.listener(|this, _, cx| this.new_root_channel(cx)))
-                    .tooltip(|cx| Tooltip::text("Create a channel", cx)),
+                div().child(
+                    IconButton::new("add-channel", Icon::Plus)
+                        .on_click(cx.listener(|this, _, cx| this.new_root_channel(cx)))
+                        .tooltip(|cx| Tooltip::text("Create a channel", cx)),
+                ),
             ),
             _ => None,
         };
@@ -2303,6 +2318,8 @@ impl CollabPanel {
 
         h_stack()
             .w_full()
+            .group("section-header")
+            .p_1()
             .map(|el| {
                 if can_collapse {
                     el.child(
