@@ -1,12 +1,18 @@
-use crate::{h_stack, prelude::*, Disclosure, Icon, IconElement, IconSize, Label};
+use crate::{h_stack, prelude::*, Disclosure, Label};
 use gpui::{AnyElement, ClickEvent, Div};
-use smallvec::SmallVec;
 
 #[derive(IntoElement)]
 pub struct ListHeader {
+    /// The label of the header.
     label: SharedString,
-    left_icon: Option<Icon>,
-    meta: SmallVec<[AnyElement; 2]>,
+    /// A slot for content that appears before the label, like an icon or avatar.
+    start_slot: Option<AnyElement>,
+    /// A slot for content that appears after the label, usually on the other side of the header.
+    /// This might be a button, a disclosure arrow, a face pile, etc.
+    end_slot: Option<AnyElement>,
+    /// A slot for content that appears on hover after the label
+    /// It will obscure the `end_slot` when visible.
+    end_hover_slot: Option<AnyElement>,
     toggle: Option<bool>,
     on_toggle: Option<Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
     inset: bool,
@@ -17,8 +23,9 @@ impl ListHeader {
     pub fn new(label: impl Into<SharedString>) -> Self {
         Self {
             label: label.into(),
-            left_icon: None,
-            meta: SmallVec::new(),
+            start_slot: None,
+            end_slot: None,
+            end_hover_slot: None,
             inset: false,
             toggle: None,
             on_toggle: None,
@@ -39,13 +46,18 @@ impl ListHeader {
         self
     }
 
-    pub fn left_icon(mut self, left_icon: impl Into<Option<Icon>>) -> Self {
-        self.left_icon = left_icon.into();
+    pub fn start_slot<E: IntoElement>(mut self, start_slot: impl Into<Option<E>>) -> Self {
+        self.start_slot = start_slot.into().map(IntoElement::into_any_element);
         self
     }
 
-    pub fn meta(mut self, meta: impl IntoElement) -> Self {
-        self.meta.push(meta.into_any_element());
+    pub fn end_slot<E: IntoElement>(mut self, end_slot: impl Into<Option<E>>) -> Self {
+        self.end_slot = end_slot.into().map(IntoElement::into_any_element);
+        self
+    }
+
+    pub fn end_hover_slot<E: IntoElement>(mut self, end_hover_slot: impl Into<Option<E>>) -> Self {
+        self.end_hover_slot = end_hover_slot.into().map(IntoElement::into_any_element);
         self
     }
 }
@@ -61,9 +73,9 @@ impl RenderOnce for ListHeader {
     type Rendered = Div;
 
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {
-        h_stack().w_full().relative().child(
+        h_stack().w_full().relative().group("list_header").child(
             div()
-                .h_5()
+                .h_7()
                 .when(self.inset, |this| this.px_2())
                 .when(self.selected, |this| {
                     this.bg(cx.theme().colors().ghost_element_selected)
@@ -77,24 +89,30 @@ impl RenderOnce for ListHeader {
                 .child(
                     h_stack()
                         .gap_1()
+                        .children(
+                            self.toggle
+                                .map(|is_open| Disclosure::new(is_open).on_toggle(self.on_toggle)),
+                        )
                         .child(
                             div()
                                 .flex()
                                 .gap_1()
                                 .items_center()
-                                .children(self.left_icon.map(|i| {
-                                    IconElement::new(i)
-                                        .color(Color::Muted)
-                                        .size(IconSize::Small)
-                                }))
+                                .children(self.start_slot)
                                 .child(Label::new(self.label.clone()).color(Color::Muted)),
-                        )
-                        .children(
-                            self.toggle
-                                .map(|is_open| Disclosure::new(is_open).on_toggle(self.on_toggle)),
                         ),
                 )
-                .child(h_stack().gap_2().items_center().children(self.meta)),
+                .child(h_stack().children(self.end_slot))
+                .when_some(self.end_hover_slot, |this, end_hover_slot| {
+                    this.child(
+                        div()
+                            .invisible()
+                            .group_hover("list_header", |this| this.visible())
+                            .absolute()
+                            .right_0()
+                            .child(end_hover_slot),
+                    )
+                }),
         )
     }
 }

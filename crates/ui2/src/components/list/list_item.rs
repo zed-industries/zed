@@ -1,7 +1,6 @@
-use crate::{prelude::*, Avatar, Disclosure, Icon, IconElement, IconSize};
+use crate::{prelude::*, Disclosure};
 use gpui::{
-    px, AnyElement, AnyView, ClickEvent, Div, ImageSource, MouseButton, MouseDownEvent, Pixels,
-    Stateful,
+    px, AnyElement, AnyView, ClickEvent, Div, MouseButton, MouseDownEvent, Pixels, Stateful,
 };
 use smallvec::SmallVec;
 
@@ -9,11 +8,16 @@ use smallvec::SmallVec;
 pub struct ListItem {
     id: ElementId,
     selected: bool,
-    // TODO: Reintroduce this
-    // disclosure_control_style: DisclosureControlVisibility,
     indent_level: usize,
     indent_step_size: Pixels,
-    left_slot: Option<AnyElement>,
+    /// A slot for content that appears before the children, like an icon or avatar.
+    start_slot: Option<AnyElement>,
+    /// A slot for content that appears after the children, usually on the other side of the header.
+    /// This might be a button, a disclosure arrow, a face pile, etc.
+    end_slot: Option<AnyElement>,
+    /// A slot for content that appears on hover after the children
+    /// It will obscure the `end_slot` when visible.
+    end_hover_slot: Option<AnyElement>,
     toggle: Option<bool>,
     inset: bool,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
@@ -30,7 +34,9 @@ impl ListItem {
             selected: false,
             indent_level: 0,
             indent_step_size: px(12.),
-            left_slot: None,
+            start_slot: None,
+            end_slot: None,
+            end_hover_slot: None,
             toggle: None,
             inset: false,
             on_click: None,
@@ -95,23 +101,40 @@ impl ListItem {
         self
     }
 
-    pub fn left_child(mut self, left_content: impl IntoElement) -> Self {
-        self.left_slot = Some(left_content.into_any_element());
+    // TODO: Remove
+
+    // pub fn left_child(mut self, left_content: impl IntoElement) -> Self {
+    //     self.start_slot = Some(left_content.into_any_element());
+    //     self
+    // }
+
+    // pub fn left_icon(mut self, left_icon: Icon) -> Self {
+    //     self.start_slot = Some(
+    //         IconElement::new(left_icon)
+    //             .size(IconSize::Small)
+    //             .color(Color::Muted)
+    //             .into_any_element(),
+    //     );
+    //     self
+    // }
+
+    // pub fn left_avatar(mut self, left_avatar: impl Into<ImageSource>) -> Self {
+    //     self.start_slot = Some(Avatar::source(left_avatar.into()).into_any_element());
+    //     self
+    // }
+
+    pub fn start_slot<E: IntoElement>(mut self, start_slot: impl Into<Option<E>>) -> Self {
+        self.start_slot = start_slot.into().map(IntoElement::into_any_element);
         self
     }
 
-    pub fn left_icon(mut self, left_icon: Icon) -> Self {
-        self.left_slot = Some(
-            IconElement::new(left_icon)
-                .size(IconSize::Small)
-                .color(Color::Muted)
-                .into_any_element(),
-        );
+    pub fn end_slot<E: IntoElement>(mut self, end_slot: impl Into<Option<E>>) -> Self {
+        self.end_slot = end_slot.into().map(IntoElement::into_any_element);
         self
     }
 
-    pub fn left_avatar(mut self, left_avatar: impl Into<ImageSource>) -> Self {
-        self.left_slot = Some(Avatar::source(left_avatar.into()).into_any_element());
+    pub fn end_hover_slot<E: IntoElement>(mut self, end_hover_slot: impl Into<Option<E>>) -> Self {
+        self.end_hover_slot = end_hover_slot.into().map(IntoElement::into_any_element);
         self
     }
 }
@@ -163,19 +186,33 @@ impl RenderOnce for ListItem {
             })
             .when_some(self.tooltip, |this, tooltip| this.tooltip(tooltip))
             .child(
-                div()
+                h_stack()
                     .when(self.inset, |this| this.px_2())
                     .ml(self.indent_level as f32 * self.indent_step_size)
-                    .flex()
                     .gap_1()
-                    .items_center()
                     .relative()
+                    .group("list_item")
                     .children(
                         self.toggle
                             .map(|is_open| Disclosure::new(is_open).on_toggle(self.on_toggle)),
                     )
-                    .children(self.left_slot)
-                    .children(self.children),
+                    .child(
+                        h_stack()
+                            .gap_1()
+                            .children(self.start_slot)
+                            .children(self.children),
+                    )
+                    .children(self.end_slot)
+                    .when_some(self.end_hover_slot, |this, end_hover_slot| {
+                        this.justify_between().child(
+                            div()
+                                .invisible()
+                                .group_hover("list_header", |this| this.visible())
+                                .absolute()
+                                .right_0()
+                                .child(end_hover_slot),
+                        )
+                    }),
             )
     }
 }
