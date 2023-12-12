@@ -88,14 +88,13 @@ impl SearchOptions {
         options
     }
 
-    pub fn as_button(&self, active: bool) -> impl IntoElement {
+    pub fn as_button(
+        &self,
+        active: bool,
+        action: impl Fn(&gpui::ClickEvent, &mut WindowContext) + 'static,
+    ) -> impl IntoElement {
         IconButton::new(self.label(), self.icon())
-            .on_click({
-                let action = self.to_toggle_action();
-                move |_, cx| {
-                    cx.dispatch_action(action.boxed_clone());
-                }
-            })
+            .on_click(action)
             .style(ButtonStyle::Subtle)
             .when(active, |button| button.style(ButtonStyle::Filled))
             .tooltip({
@@ -106,13 +105,13 @@ impl SearchOptions {
     }
 }
 
-fn toggle_replace_button(active: bool) -> impl IntoElement {
+fn toggle_replace_button(
+    active: bool,
+    action: impl Fn(&gpui::ClickEvent, &mut WindowContext) + 'static,
+) -> impl IntoElement {
     // todo: add toggle_replace button
     IconButton::new("buffer-search-bar-toggle-replace-button", Icon::Replace)
-        .on_click(|_, cx| {
-            cx.dispatch_action(Box::new(ToggleReplace));
-            cx.notify();
-        })
+        .on_click(action)
         .style(ButtonStyle::Subtle)
         .when(active, |button| button.style(ButtonStyle::Filled))
         .tooltip(|cx| Tooltip::for_action("Toggle replace", &ToggleReplace, cx))
@@ -122,6 +121,7 @@ fn render_replace_button(
     action: impl Action + 'static + Send + Sync,
     icon: Icon,
     tooltip: &'static str,
+    on_click: impl Fn(&gpui::ClickEvent, &mut WindowContext) + 'static,
 ) -> impl IntoElement {
     let id: SharedString = format!("search-replace-{}", action.name()).into();
     IconButton::new(id, icon)
@@ -129,7 +129,5 @@ fn render_replace_button(
             let action = action.boxed_clone();
             move |cx| Tooltip::for_action(tooltip, &*action, cx)
         })
-        .on_click(move |_, cx| {
-            cx.dispatch_action(action.boxed_clone());
-        })
+        .on_click(on_click)
 }
