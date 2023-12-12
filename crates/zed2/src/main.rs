@@ -143,7 +143,7 @@ fn main() {
 
         language::init(cx);
         languages::init(languages.clone(), node_runtime.clone(), cx);
-        let user_store = cx.build_model(|cx| UserStore::new(client.clone(), http.clone(), cx));
+        let user_store = cx.build_model(|cx| UserStore::new(client.clone(), cx));
         let workspace_store = cx.build_model(|cx| WorkspaceStore::new(client.clone(), cx));
 
         cx.set_global(client.clone());

@@ -360,7 +360,7 @@ impl AppState {
         let languages = Arc::new(LanguageRegistry::test());
         let http_client = util::http::FakeHttpClient::with_404_response();
         let client = Client::new(http_client.clone(), cx);
-        let user_store = cx.build_model(|cx| UserStore::new(client.clone(), http_client, cx));
+        let user_store = cx.build_model(|cx| UserStore::new(client.clone(), cx));
         let workspace_store = cx.build_model(|cx| WorkspaceStore::new(client.clone(), cx));
 
         theme::init(theme::LoadThemes::JustBase, cx);

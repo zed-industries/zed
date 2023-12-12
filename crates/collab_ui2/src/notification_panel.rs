@@ -6,11 +6,11 @@ use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
 use futures::StreamExt;
 use gpui::{
-    actions, div, img, serde_json, svg, AnyElement, AnyView, AppContext, AsyncAppContext, Context,
-    CursorStyle, Div, Entity, EventEmitter, Flatten, FocusHandle, FocusableView,
-    InteractiveElement, IntoElement, ListAlignment, ListState, Model, MouseButton, ParentElement,
-    Render, Stateful, StatefulInteractiveElement, Task, View, ViewContext, VisualContext, WeakView,
-    WindowContext,
+    actions, div, img, px, serde_json, svg, AnyElement, AnyView, AppContext, AsyncAppContext,
+    AsyncWindowContext, Context, CursorStyle, Div, Element, Entity, EventEmitter, Flatten,
+    FocusHandle, FocusableView, InteractiveElement, IntoElement, ListAlignment, ListScrollEvent,
+    ListState, Model, MouseButton, ParentElement, Render, Stateful, StatefulInteractiveElement,
+    Task, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use notifications::{NotificationEntry, NotificationEvent, NotificationStore};
 use project::Fs;
@@ -80,7 +80,9 @@ impl NotificationPanel {
         let user_store = workspace.app_state().user_store.clone();
         let workspace_handle = workspace.weak_handle();
 
-        cx.build_view(|cx| {
+        cx.build_view(|cx: &mut ViewContext<Self>| {
+            let view = cx.view().clone();
+
             let mut status = client.status();
             cx.spawn(|this, mut cx| async move {
                 while let Some(_) = status.next().await {
@@ -97,25 +99,30 @@ impl NotificationPanel {
             .detach();
 
             let mut notification_list =
-                ListState::new(0, ListAlignment::Top, 1000., move |this, ix, cx| {
-                    this.render_notification(ix, cx).unwrap_or_else(|| div())
+                ListState::new(0, ListAlignment::Top, px(1000.), move |ix, cx| {
+                    view.update(cx, |this, cx| {
+                        this.render_notification(ix, cx)
+                            .unwrap_or_else(|| div().into_any())
+                    })
                 });
-            notification_list.set_scroll_handler(|visible_range, count, this, cx| {
-                if count.saturating_sub(visible_range.end) < LOADING_THRESHOLD {
-                    if let Some(task) = this
-                        .notification_store
-                        .update(cx, |store, cx| store.load_more_notifications(false, cx))
-                    {
-                        task.detach();
+            notification_list.set_scroll_handler(cx.listener(
+                |this, event: &ListScrollEvent, cx| {
+                    if event.count.saturating_sub(event.visible_range.end) < LOADING_THRESHOLD {
+                        if let Some(task) = this
+                            .notification_store
+                            .update(cx, |store, cx| store.load_more_notifications(false, cx))
+                        {
+                            task.detach();
+                        }
                     }
-                }
-            });
+                },
+            ));
 
             let mut this = Self {
                 fs,
                 client,
                 user_store,
-                local_timezone: cx.platform().local_timezone(),
+                local_timezone: cx.local_timezone(),
                 channel_store: ChannelStore::global(cx),
                 notification_store: NotificationStore::global(cx),
                 notification_list,
@@ -146,7 +153,10 @@ impl NotificationPanel {
         })
     }
 
-    pub fn load(workspace: WeakView<Workspace>, cx: AsyncAppContext) -> Task<Result<View<Self>>> {
+    pub fn load(
+        workspace: WeakView<Workspace>,
+        cx: AsyncWindowContext,
+    ) -> Task<Result<View<Self>>> {
         cx.spawn(|mut cx| async move {
             let serialized_panel = if let Some(panel) = cx
                 .background_executor()
@@ -160,24 +170,22 @@ impl NotificationPanel {
                 None
             };
 
-            Flatten::flatten(cx.update(|cx| {
-                workspace.update(cx, |workspace, cx| {
-                    let panel = Self::new(workspace, cx);
-                    if let Some(serialized_panel) = serialized_panel {
-                        panel.update(cx, |panel, cx| {
-                            panel.width = serialized_panel.width;
-                            cx.notify();
-                        });
-                    }
-                    panel
-                })
-            }))
+            workspace.update(&mut cx, |workspace, cx| {
+                let panel = Self::new(workspace, cx);
+                if let Some(serialized_panel) = serialized_panel {
+                    panel.update(cx, |panel, cx| {
+                        panel.width = serialized_panel.width;
+                        cx.notify();
+                    });
+                }
+                panel
+            })
         })
     }
 
     fn serialize(&mut self, cx: &mut ViewContext<Self>) {
         let width = self.width;
-        self.pending_serialization = cx.background().spawn(
+        self.pending_serialization = cx.background_executor().spawn(
             async move {
                 KEY_VALUE_STORE
                     .write_kvp(
@@ -217,17 +225,17 @@ impl NotificationPanel {
                 .child(
                     v_stack().child(Label::new(text)).child(
                         h_stack()
-                            .child(Label::from(format_timestamp(
+                            .child(Label::new(format_timestamp(
                                 timestamp,
                                 now,
                                 self.local_timezone,
                             )))
                             .children(if let Some(is_accepted) = response {
-                                Some(Label::new(if is_accepted {
+                                Some(div().child(Label::new(if is_accepted {
                                     "You accepted"
                                 } else {
                                     "You declined"
-                                }))
+                                })))
                             } else if needs_response {
                                 Some(
                                     h_stack()
@@ -262,7 +270,8 @@ impl NotificationPanel {
                                 None
                             }),
                     ),
-                ),
+                )
+                .into_any(),
         )
     }
 
@@ -355,7 +364,7 @@ impl NotificationPanel {
                 .or_insert_with(|| {
                     let client = self.client.clone();
                     cx.spawn(|this, mut cx| async move {
-                        cx.background().timer(MARK_AS_READ_DELAY).await;
+                        cx.background_executor().timer(MARK_AS_READ_DELAY).await;
                         client
                             .request(proto::MarkNotificationRead { notification_id })
                             .await?;

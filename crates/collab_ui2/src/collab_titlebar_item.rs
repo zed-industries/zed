@@ -232,43 +232,41 @@ impl Render for CollabTitlebarItem {
                     })
                     .child(h_stack().px_1p5().map(|this| {
                         if let Some(user) = current_user {
-                            this.when_some(user.avatar.clone(), |this, avatar| {
-                                // TODO: Finish implementing user menu popover
-                                //
-                                this.child(
-                                    popover_menu("user-menu")
-                                        .menu(|cx| {
-                                            ContextMenu::build(cx, |menu, _| menu.header("ADADA"))
-                                        })
-                                        .trigger(
-                                            ButtonLike::new("user-menu")
-                                                .child(
-                                                    h_stack()
-                                                        .gap_0p5()
-                                                        .child(Avatar::data(avatar))
-                                                        .child(
-                                                            IconElement::new(Icon::ChevronDown)
-                                                                .color(Color::Muted),
-                                                        ),
-                                                )
-                                                .style(ButtonStyle::Subtle)
-                                                .tooltip(move |cx| {
-                                                    Tooltip::text("Toggle User Menu", cx)
-                                                }),
-                                        )
-                                        .anchor(gpui::AnchorCorner::TopRight),
-                                )
-                                // this.child(
-                                //     ButtonLike::new("user-menu")
-                                //         .child(
-                                //             h_stack().gap_0p5().child(Avatar::data(avatar)).child(
-                                //                 IconElement::new(Icon::ChevronDown).color(Color::Muted),
-                                //             ),
-                                //         )
-                                //         .style(ButtonStyle::Subtle)
-                                //         .tooltip(move |cx| Tooltip::text("Toggle User Menu", cx)),
-                                // )
-                            })
+                            // TODO: Finish implementing user menu popover
+                            //
+                            this.child(
+                                popover_menu("user-menu")
+                                    .menu(|cx| {
+                                        ContextMenu::build(cx, |menu, _| menu.header("ADADA"))
+                                    })
+                                    .trigger(
+                                        ButtonLike::new("user-menu")
+                                            .child(
+                                                h_stack()
+                                                    .gap_0p5()
+                                                    .child(Avatar::new(user.avatar_uri.clone()))
+                                                    .child(
+                                                        IconElement::new(Icon::ChevronDown)
+                                                            .color(Color::Muted),
+                                                    ),
+                                            )
+                                            .style(ButtonStyle::Subtle)
+                                            .tooltip(move |cx| {
+                                                Tooltip::text("Toggle User Menu", cx)
+                                            }),
+                                    )
+                                    .anchor(gpui::AnchorCorner::TopRight),
+                            )
+                            // this.child(
+                            //     ButtonLike::new("user-menu")
+                            //         .child(
+                            //             h_stack().gap_0p5().child(Avatar::data(avatar)).child(
+                            //                 IconElement::new(Icon::ChevronDown).color(Color::Muted),
+                            //             ),
+                            //         )
+                            //         .style(ButtonStyle::Subtle)
+                            //         .tooltip(move |cx| Tooltip::text("Toggle User Menu", cx)),
+                            // )
                         } else {
                             this.child(Button::new("sign_in", "Sign in").on_click(move |_, cx| {
                                 let client = client.clone();
@@ -425,26 +423,20 @@ impl CollabTitlebarItem {
     ) -> Option<FacePile> {
         let followers = project_id.map_or(&[] as &[_], |id| room.followers_for(peer_id, id));
         let mut pile = FacePile::default();
-        pile.extend(
-            user.avatar
-                .clone()
-                .map(|avatar| {
-                    div()
-                        .child(
-                            Avatar::data(avatar.clone())
-                                .grayscale(!is_present)
-                                .border_color(if is_speaking {
-                                    gpui::blue()
-                                } else if is_muted {
-                                    gpui::red()
-                                } else {
-                                    Hsla::default()
-                                }),
-                        )
-                        .into_any_element()
-                })
-                .into_iter()
-                .chain(followers.iter().filter_map(|follower_peer_id| {
+        pile.child(
+            div()
+                .child(
+                    Avatar::new(user.avatar_uri.clone())
+                        .grayscale(!is_present)
+                        .border_color(if is_speaking {
+                            gpui::blue()
+                        } else if is_muted {
+                            gpui::red()
+                        } else {
+                            Hsla::default()
+                        }),
+                )
+                .children(followers.iter().filter_map(|follower_peer_id| {
                     let follower = room
                         .remote_participants()
                         .values()
@@ -454,10 +446,8 @@ impl CollabTitlebarItem {
                                 .then_some(current_user)
                         })?
                         .clone();
-                    follower
-                        .avatar
-                        .clone()
-                        .map(|avatar| div().child(Avatar::data(avatar.clone())).into_any_element())
+
+                    Some(div().child(Avatar::new(follower.avatar_uri.clone())))
                 })),
         );
         Some(pile)

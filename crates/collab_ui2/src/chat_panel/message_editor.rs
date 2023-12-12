@@ -234,7 +234,7 @@ mod tests {
                         user: Arc::new(User {
                             github_login: "a-b".into(),
                             id: 101,
-                            avatar: None,
+                            avatar_uri: "avatar_a-b".into(),
                         }),
                         kind: proto::channel_member::Kind::Member,
                         role: proto::ChannelRole::Member,
@@ -243,7 +243,7 @@ mod tests {
                         user: Arc::new(User {
                             github_login: "C_D".into(),
                             id: 102,
-                            avatar: None,
+                            avatar_uri: "avatar_C_D".into(),
                         }),
                         kind: proto::channel_member::Kind::Member,
                         role: proto::ChannelRole::Member,
@@ -275,7 +275,7 @@ mod tests {
         cx.update(|cx| {
             let http = FakeHttpClient::with_404_response();
             let client = Client::new(http.clone(), cx);
-            let user_store = cx.build_model(|cx| UserStore::new(client.clone(), http, cx));
+            let user_store = cx.build_model(|cx| UserStore::new(client.clone(), cx));
             let settings = SettingsStore::test(cx);
             cx.set_global(settings);
             theme::init(theme::LoadThemes::JustBase, cx);

@@ -165,10 +165,10 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 collab_ui::collab_panel::CollabPanel::load(workspace_handle.clone(), cx.clone());
             let chat_panel =
                 collab_ui::chat_panel::ChatPanel::load(workspace_handle.clone(), cx.clone());
-            // let notification_panel = collab_ui::notification_panel::NotificationPanel::load(
-            //     workspace_handle.clone(),
-            //     cx.clone(),
-            // );
+            let notification_panel = collab_ui::notification_panel::NotificationPanel::load(
+                workspace_handle.clone(),
+                cx.clone(),
+            );
             let (
                 project_panel,
                 terminal_panel,

@@ -58,16 +58,8 @@ impl RenderOnce for Avatar {
 }
 
 impl Avatar {
-    pub fn uri(src: impl Into<SharedString>) -> Self {
-        Self::source(src.into().into())
-    }
-
-    pub fn data(src: Arc<ImageData>) -> Self {
-        Self::source(src.into())
-    }
-
-    pub fn source(src: ImageSource) -> Self {
-        Self {
+    pub fn new(src: impl Into<ImageSource>) -> Self {
+        Avatar {
             image: img(src),
             is_available: None,
             border_color: None,

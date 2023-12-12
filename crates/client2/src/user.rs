@@ -2,8 +2,8 @@ use super::{proto, Client, Status, TypedEnvelope};
 use anyhow::{anyhow, Context, Result};
 use collections::{hash_map::Entry, HashMap, HashSet};
 use feature_flags::FeatureFlagAppExt;
-use futures::{channel::mpsc, future, AsyncReadExt, Future, StreamExt};
-use gpui::{AsyncAppContext, EventEmitter, ImageData, Model, ModelContext, Task};
+use futures::{channel::mpsc, AsyncReadExt, Future, StreamExt};
+use gpui::{AsyncAppContext, EventEmitter, ImageData, Model, ModelContext, SharedString, Task};
 use postage::{sink::Sink, watch};
 use rpc::proto::{RequestMessage, UsersResponse};
 use std::sync::{Arc, Weak};
@@ -20,7 +20,7 @@ pub struct ParticipantIndex(pub u32);
 pub struct User {
     pub id: UserId,
     pub github_login: String,
-    pub avatar: Option<Arc<ImageData>>,
+    pub avatar_uri: SharedString,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -76,7 +76,6 @@ pub struct UserStore {
     pending_contact_requests: HashMap<u64, usize>,
     invite_info: Option<InviteInfo>,
     client: Weak<Client>,
-    http: Arc<dyn HttpClient>,
     _maintain_contacts: Task<()>,
     _maintain_current_user: Task<Result<()>>,
 }
@@ -114,7 +113,6 @@ enum UpdateContacts {
 impl UserStore {
     pub fn new(
         client: Arc<Client>,
-        http: Arc<dyn HttpClient>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let (mut current_user_tx, current_user_rx) = watch::channel();
@@ -134,7 +132,6 @@ impl UserStore {
             invite_info: None,
             client: Arc::downgrade(&client),
             update_contacts_tx,
-            http,
             _maintain_contacts: cx.spawn(|this, mut cx| async move {
                 let _subscriptions = rpc_subscriptions;
                 while let Some(message) = update_contacts_rx.next().await {
@@ -445,6 +442,12 @@ impl UserStore {
         self.perform_contact_request(user_id, proto::RemoveContact { user_id }, cx)
     }
 
+    pub fn has_incoming_contact_request(&self, user_id: u64) -> bool {
+        self.incoming_contact_requests
+            .iter()
+            .any(|user| user.id == user_id)
+    }
+
     pub fn respond_to_contact_request(
         &mut self,
         requester_id: u64,
@@ -616,17 +619,14 @@ impl UserStore {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<Arc<User>>>> {
         let client = self.client.clone();
-        let http = self.http.clone();
         cx.spawn(|this, mut cx| async move {
             if let Some(rpc) = client.upgrade() {
                 let response = rpc.request(request).await.context("error loading users")?;
-                let users = future::join_all(
-                    response
-                        .users
-                        .into_iter()
-                        .map(|user| User::new(user, http.as_ref())),
-                )
-                .await;
+                let users = response
+                    .users
+                    .into_iter()
+                    .map(|user| User::new(user))
+                    .collect::<Vec<_>>();
 
                 this.update(&mut cx, |this, _| {
                     for user in &users {
@@ -659,11 +659,11 @@ impl UserStore {
 }
 
 impl User {
-    async fn new(message: proto::User, http: &dyn HttpClient) -> Arc<Self> {
+    fn new(message: proto::User) -> Arc<Self> {
         Arc::new(User {
             id: message.id,
             github_login: message.github_login,
-            avatar: fetch_avatar(http, &message.avatar_url).warn_on_err().await,
+            avatar_uri: message.avatar_url.into(),
         })
     }
 }

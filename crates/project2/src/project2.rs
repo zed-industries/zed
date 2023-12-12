@@ -867,7 +867,7 @@ impl Project {
         languages.set_executor(cx.executor());
         let http_client = util::http::FakeHttpClient::with_404_response();
         let client = cx.update(|cx| client::Client::new(http_client.clone(), cx));
-        let user_store = cx.build_model(|cx| UserStore::new(client.clone(), http_client, cx));
+        let user_store = cx.build_model(|cx| UserStore::new(client.clone(), cx));
         let project = cx.update(|cx| {
             Project::local(
                 client,
