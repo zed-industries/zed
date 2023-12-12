@@ -6,10 +6,10 @@ use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
 use futures::StreamExt;
 use gpui::{
-    actions, div, px, serde_json, AnyElement, AppContext, AsyncWindowContext, DismissEvent, Div,
-    Element, EventEmitter, FocusHandle, FocusableView, InteractiveElement, IntoElement,
+    actions, div, list, px, serde_json, AnyElement, AppContext, AsyncWindowContext, DismissEvent,
+    Div, Element, EventEmitter, FocusHandle, FocusableView, InteractiveElement, IntoElement,
     ListAlignment, ListScrollEvent, ListState, Model, ParentElement, Render, Stateful,
-    StatefulInteractiveElement, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
+    StatefulInteractiveElement, Task, View, ViewContext, VisualContext, WeakView, WindowContext, Styled,
 };
 use notifications::{NotificationEntry, NotificationEvent, NotificationStore};
 use project::Fs;
@@ -73,7 +73,14 @@ pub struct NotificationPresenter {
 
 actions!(notification_panel, [ToggleFocus]);
 
-pub fn init(_cx: &mut AppContext) {}
+pub fn init(cx: &mut AppContext) {
+    cx.observe_new_views(|workspace: &mut Workspace, _| {
+        workspace.register_action(|workspace, _: &ToggleFocus, cx| {
+            workspace.toggle_panel_focus::<NotificationPanel>(cx);
+        });
+    })
+    .detach();
+}
 
 impl NotificationPanel {
     pub fn new(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) -> View<Self> {
@@ -102,9 +109,10 @@ impl NotificationPanel {
 
             let notification_list =
                 ListState::new(0, ListAlignment::Top, px(1000.), move |ix, cx| {
+                    dbg!();
                     view.update(cx, |this, cx| {
-                        this.render_notification(ix, cx)
-                            .unwrap_or_else(|| div().into_any())
+                        this.render_notification(ix, cx).unwrap()
+                            // .unwrap_or_else(|| div().into_any())
                     })
                 });
             notification_list.set_scroll_handler(cx.listener(
@@ -221,6 +229,8 @@ impl NotificationPanel {
             self.did_render_notification(notification_id, &notification, cx);
         }
 
+        println!("rendering a notification");
+        return Some(div().bg(gpui::red()).size_full().into_any());
         Some(
             ButtonLike::new(ix)
                 .child(
@@ -466,6 +476,7 @@ impl NotificationPanel {
                 old_range,
                 new_count,
             } => {
+                dbg!(new_count);
                 self.notification_list.splice(old_range.clone(), *new_count);
                 cx.notify();
             }
@@ -538,40 +549,21 @@ impl Render for NotificationPanel {
 
     fn render(&mut self, _: &mut ViewContext<Self>) -> AnyElement {
         if self.client.user_id().is_none() {
+            dbg!();
             self.render_sign_in_prompt()
         } else if self.notification_list.item_count() == 0 {
+            dbg!();
             self.render_empty_state()
         } else {
+            dbg!(self.notification_list.item_count());
             v_stack()
                 .child(
                     h_stack()
                         .child(Label::new("Notifications"))
                         .child(IconElement::new(Icon::Envelope)),
                 )
-                // todo!()
-                // .child(
-                //     List::new()
-                // )
+                .child(list(self.notification_list.clone()).full())
                 .into_any_element()
-
-            // Flex::column()
-            //     .with_child(
-            //         Flex::row()
-            //             .with_child(Label::new("Notifications", style.title.text.clone()))
-            //             .with_child(ui::svg(&style.title_icon).flex_float())
-            //             .align_children_center()
-            //             .contained()
-            //             .with_style(style.title.container)
-            //             .constrained()
-            //             .with_height(style.title_height),
-            //     )
-            //     .with_child(
-            //         List::new(self.notification_list.clone())
-            //             .contained()
-            //             .with_style(style.list)
-            //             .flex(1., true),
-            //     )
-            //     .into_any()
         }
     }
 }
