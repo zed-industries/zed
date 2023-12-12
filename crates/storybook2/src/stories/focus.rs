@@ -66,9 +66,11 @@ impl Render for FocusStory {
         let color_4 = theme.status().conflict;
         let color_5 = theme.status().ignored;
         let color_6 = theme.status().renamed;
+        let color_7 = theme.status().hint;
 
         div()
             .id("parent")
+            .active(|style| style.bg(color_7))
             .track_focus(&self.parent_focus)
             .key_context("parent")
             .on_action(cx.listener(|_, _action: &ActionA, _cx| {

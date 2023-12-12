@@ -984,7 +984,7 @@ impl Interactivity {
         }
 
         let active_state = element_state.clicked_state.clone();
-        if !active_state.borrow().is_clicked() {
+        if active_state.borrow().is_clicked() {
             cx.on_mouse_event(move |_: &MouseUpEvent, phase, cx| {
                 if phase == DispatchPhase::Capture {
                     *active_state.borrow_mut() = ElementClickedState::default();
