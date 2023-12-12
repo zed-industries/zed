@@ -155,6 +155,8 @@ impl RenderOnce for ListItem {
 
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         h_stack()
+            .w_full()
+            .flex_1()
             .relative()
             // When an item is inset draw the indent spacing outside of the item
             .when(self.inset, |this| {
@@ -164,12 +166,14 @@ impl RenderOnce for ListItem {
             .child(
                 h_stack()
                     .id(self.id)
+                    .w_full()
                     .flex_1()
                     .relative()
                     .gap_1()
                     .px_2()
                     .group("list_item")
                     // TODO: Add focus state
+                    // TODO:debu Add focus state
                     // .when(self.state == InteractionState::Focused, |this| {
                     //     this.border()
                     //         .border_color(cx.theme().colors().border_focused)
@@ -208,6 +212,7 @@ impl RenderOnce for ListItem {
                     )
                     .child(
                         h_stack()
+                            .flex_1()
                             .gap_1()
                             .children(self.start_slot)
                             .children(self.children),
