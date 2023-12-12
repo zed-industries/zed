@@ -1,7 +1,5 @@
 use crate::{prelude::*, Disclosure};
-use gpui::{
-    px, AnyElement, AnyView, ClickEvent, Div, MouseButton, MouseDownEvent, Pixels, Stateful,
-};
+use gpui::{px, AnyElement, AnyView, ClickEvent, Div, MouseButton, MouseDownEvent, Pixels};
 use smallvec::SmallVec;
 
 #[derive(IntoElement)]
@@ -153,45 +151,57 @@ impl ParentElement for ListItem {
 }
 
 impl RenderOnce for ListItem {
-    type Rendered = Stateful<Div>;
+    type Rendered = Div;
 
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {
-        div()
-            .id(self.id)
+        h_stack()
             .relative()
-            // TODO: Add focus state
-            // .when(self.state == InteractionState::Focused, |this| {
-            //     this.border()
-            //         .border_color(cx.theme().colors().border_focused)
-            // })
-            .when(self.inset, |this| this.rounded_md())
-            .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
-            .active(|style| style.bg(cx.theme().colors().ghost_element_active))
-            .when(self.selected, |this| {
-                this.bg(cx.theme().colors().ghost_element_selected)
+            // When an item is inset draw the indent spacing outside of the item
+            .when(self.inset, |this| {
+                this.ml(self.indent_level as f32 * self.indent_step_size)
+                    .px_2()
             })
-            .when_some(self.on_click, |this, on_click| {
-                this.cursor_pointer().on_click(move |event, cx| {
-                    // HACK: GPUI currently fires `on_click` with any mouse button,
-                    // but we only care about the left button.
-                    if event.down.button == MouseButton::Left {
-                        (on_click)(event, cx)
-                    }
-                })
-            })
-            .when_some(self.on_secondary_mouse_down, |this, on_mouse_down| {
-                this.on_mouse_down(MouseButton::Right, move |event, cx| {
-                    (on_mouse_down)(event, cx)
-                })
-            })
-            .when_some(self.tooltip, |this, tooltip| this.tooltip(tooltip))
             .child(
                 h_stack()
-                    .when(self.inset, |this| this.px_2())
-                    .ml(self.indent_level as f32 * self.indent_step_size)
-                    .gap_1()
+                    .id(self.id)
+                    .flex_1()
                     .relative()
+                    .gap_1()
+                    .px_2()
                     .group("list_item")
+                    // TODO: Add focus state
+                    // .when(self.state == InteractionState::Focused, |this| {
+                    //     this.border()
+                    //         .border_color(cx.theme().colors().border_focused)
+                    // })
+                    .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
+                    .active(|style| style.bg(cx.theme().colors().ghost_element_active))
+                    .when(self.selected, |this| {
+                        this.bg(cx.theme().colors().ghost_element_selected)
+                    })
+                    .when_some(self.on_click, |this, on_click| {
+                        this.cursor_pointer().on_click(move |event, cx| {
+                            // HACK: GPUI currently fires `on_click` with any mouse button,
+                            // but we only care about the left button.
+                            if event.down.button == MouseButton::Left {
+                                (on_click)(event, cx)
+                            }
+                        })
+                    })
+                    .when_some(self.on_secondary_mouse_down, |this, on_mouse_down| {
+                        this.on_mouse_down(MouseButton::Right, move |event, cx| {
+                            (on_mouse_down)(event, cx)
+                        })
+                    })
+                    .when_some(self.tooltip, |this, tooltip| this.tooltip(tooltip))
+                    .map(|this| {
+                        if self.inset {
+                            this.rounded_md()
+                        } else {
+                            // When an item is not inset draw the indent spacing inside of the item
+                            this.ml(self.indent_level as f32 * self.indent_step_size)
+                        }
+                    })
                     .children(
                         self.toggle
                             .map(|is_open| Disclosure::new(is_open).on_toggle(self.on_toggle)),
@@ -202,14 +212,25 @@ impl RenderOnce for ListItem {
                             .children(self.start_slot)
                             .children(self.children),
                     )
-                    .children(self.end_slot)
-                    .when_some(self.end_hover_slot, |this, end_hover_slot| {
+                    .when_some(self.end_slot, |this, end_slot| {
                         this.justify_between().child(
-                            div()
-                                .invisible()
-                                .group_hover("list_header", |this| this.visible())
+                            h_stack()
+                                .when(self.end_hover_slot.is_some(), |this| {
+                                    this.visible()
+                                        .group_hover("list_item", |this| this.invisible())
+                                })
+                                .child(end_slot),
+                        )
+                    })
+                    .when_some(self.end_hover_slot, |this, end_hover_slot| {
+                        this.child(
+                            h_stack()
+                                .h_full()
                                 .absolute()
-                                .right_0()
+                                .right_2()
+                                .top_0()
+                                .invisible()
+                                .group_hover("list_item", |this| this.visible())
                                 .child(end_hover_slot),
                         )
                     }),

@@ -1,5 +1,3 @@
-use std::default;
-
 use crate::{prelude::*, Color, Icon, IconButton, IconSize};
 use gpui::ClickEvent;
 
