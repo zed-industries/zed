@@ -74,12 +74,24 @@ impl Toolbar {
             }
         })
     }
+
+    fn secondary_items(&self) -> impl Iterator<Item = &dyn ToolbarItemViewHandle> {
+        self.items.iter().filter_map(|(item, location)| {
+            if *location == ToolbarItemLocation::Secondary {
+                Some(item.as_ref())
+            } else {
+                None
+            }
+        })
+    }
 }
 
 impl Render for Toolbar {
     type Element = Div;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+        let secondary_item = self.secondary_items().next().map(|item| item.to_any());
+
         v_stack()
             .border_b()
             .border_color(cx.theme().colors().border_variant)
@@ -87,8 +99,10 @@ impl Render for Toolbar {
             .child(
                 h_stack()
                     .justify_between()
-                    .children(self.items.iter().map(|(child, _)| child.to_any())),
+                    .child(h_stack().children(self.left_items().map(|item| item.to_any())))
+                    .child(h_stack().children(self.right_items().map(|item| item.to_any()))),
             )
+            .children(secondary_item)
     }
 }
 
