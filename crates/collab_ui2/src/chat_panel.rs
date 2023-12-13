@@ -21,10 +21,7 @@ use settings::{Settings, SettingsStore};
 use std::sync::Arc;
 use theme::ActiveTheme as _;
 use time::{OffsetDateTime, UtcOffset};
-use ui::{
-    h_stack, prelude::WindowContext, v_stack, Avatar, Button, ButtonCommon as _, Clickable, Icon,
-    IconButton, Label, Tooltip,
-};
+use ui::{prelude::*, Avatar, Button, Icon, IconButton, Label, Tooltip};
 use util::{ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
@@ -382,12 +379,11 @@ impl ChatPanel {
             .child(text.element("body".into(), cx))
             .child(
                 div()
-                    .invisible()
                     .absolute()
                     .top_1()
                     .right_2()
                     .w_8()
-                    .group_hover("", |this| this.visible())
+                    .visible_on_hover("")
                     .child(render_remove(message_id_to_remove, cx)),
             )
             .into_any()
