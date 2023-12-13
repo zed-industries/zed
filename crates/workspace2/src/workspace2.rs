@@ -68,6 +68,7 @@ use std::{
 use theme::{ActiveTheme, ThemeSettings};
 pub use toolbar::{Toolbar, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 pub use ui;
+use ui::{prelude::*, Tab, TabBar, TabPosition};
 use util::ResultExt;
 use uuid::Uuid;
 pub use workspace_settings::{AutosaveSetting, WorkspaceSettings};
@@ -3588,6 +3589,43 @@ struct DockDragState(Option<DockPosition>);
 #[derive(Default)]
 struct DockClickReset(Option<Task<()>>);
 
+fn debug_tab_bar() -> impl IntoElement {
+    let tab_count = 20;
+    let selected_tab_index = 3;
+
+    let tabs = (0..tab_count)
+        .map(|index| {
+            Tab::new(index)
+                .selected(index == selected_tab_index)
+                .position(if index == 0 {
+                    TabPosition::First
+                } else if index == tab_count - 1 {
+                    TabPosition::Last
+                } else {
+                    TabPosition::Middle(index.cmp(&selected_tab_index))
+                })
+                .child(Label::new(format!("Tab {}", index + 1)).color(
+                    if index == selected_tab_index {
+                        Color::Default
+                    } else {
+                        Color::Muted
+                    },
+                ))
+        })
+        .collect::<Vec<_>>();
+
+    TabBar::new("tab_bar_1")
+        .start_child(
+            IconButton::new("navigate_backward", Icon::ArrowLeft).icon_size(IconSize::Small),
+        )
+        .start_child(
+            IconButton::new("navigate_forward", Icon::ArrowRight).icon_size(IconSize::Small),
+        )
+        .end_child(IconButton::new("new", Icon::Plus).icon_size(IconSize::Small))
+        .end_child(IconButton::new("split_pane", Icon::Split).icon_size(IconSize::Small))
+        .children(tabs)
+}
+
 impl Render for Workspace {
     type Element = Div;
 
@@ -3627,6 +3665,7 @@ impl Render for Workspace {
                     .flex_1()
                     .w_full()
                     .flex()
+                    .flex_col()
                     .overflow_hidden()
                     .border_t()
                     .border_b()
@@ -3663,55 +3702,49 @@ impl Render for Workspace {
                     }))
                     .child(canvas(|bounds, cx| cx.set_global(WorkspaceBounds(bounds))))
                     .child(self.modal_layer.clone())
-                    .child(self.center.render(
-                        &self.project,
-                        &self.follower_states,
-                        self.active_call(),
-                        &self.active_pane,
-                        self.zoomed.as_ref(),
-                        &self.app_state,
-                        cx,
-                    )), //         .child(
-                        //             div()
-                        //                 .flex()
-                        //                 .flex_row()
-                        //                 .flex_1()
-                        //                 .h_full()
-                        //                 // Left Dock
-                        //                 .child(
-                        //                     div()
-                        //                         .flex()
-                        //                         .flex_none()
-                        //                         .overflow_hidden()
-                        //                         .child(self.left_dock.clone()),
-                        //                 )
-                        //                 // Panes
-                        //                 .child(
-                        //                     div()
-                        //                         .flex()
-                        //                         .flex_col()
-                        //                         .flex_1()
-                        //                         .child(self.center.render(
-                        //                             &self.project,
-                        //                             &self.follower_states,
-                        //                             self.active_call(),
-                        //                             &self.active_pane,
-                        //                             self.zoomed.as_ref(),
-                        //                             &self.app_state,
-                        //                             cx,
-                        //                         ))
-                        //                         .child(self.bottom_dock.clone()),
-                        //                 )
-                        //                 // Right Dock
-                        //                 .child(
-                        //                     div()
-                        //                         .flex()
-                        //                         .flex_none()
-                        //                         .overflow_hidden()
-                        //                         .child(self.right_dock.clone()),
-                        //                 ),
-                        //         )
-                        //         .children(self.render_notifications(cx)),
+                    .child(debug_tab_bar())
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            // .flex_1()
+                            .h_full()
+                            // Left Dock
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_none()
+                                    .overflow_hidden()
+                                    .child(self.left_dock.clone()),
+                            )
+                            // Panes
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .flex_1()
+                                    .child(debug_tab_bar())
+                                    .child(self.center.render(
+                                        &self.project,
+                                        &self.follower_states,
+                                        self.active_call(),
+                                        &self.active_pane,
+                                        self.zoomed.as_ref(),
+                                        &self.app_state,
+                                        cx,
+                                    ))
+                                    .child(self.bottom_dock.clone()),
+                            )
+                            // Right Dock
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_none()
+                                    .overflow_hidden()
+                                    .child(self.right_dock.clone()),
+                            ),
+                    )
+                    .children(self.render_notifications(cx)),
             )
             .child(self.status_bar.clone())
     }
