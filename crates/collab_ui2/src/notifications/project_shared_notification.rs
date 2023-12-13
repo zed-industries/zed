@@ -123,7 +123,7 @@ impl ProjectSharedNotification {
                 self.owner
                     .avatar
                     .clone()
-                    .map(|avatar| Avatar::data(avatar.clone())),
+                    .map(|avatar| Avatar::new(avatar.clone())),
             )
             .child(
                 v_stack()

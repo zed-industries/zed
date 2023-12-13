@@ -120,7 +120,7 @@ impl IncomingCallNotification {
                     .calling_user
                     .avatar
                     .as_ref()
-                    .map(|avatar| Avatar::data(avatar.clone())),
+                    .map(|avatar| Avatar::new(avatar.clone())),
             )
             .child(
                 v_stack()

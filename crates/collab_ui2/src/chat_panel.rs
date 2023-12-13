@@ -369,7 +369,7 @@ impl ChatPanel {
                             .sender
                             .avatar
                             .clone()
-                            .map(|avatar| Avatar::data(avatar)),
+                            .map(|avatar| Avatar::new(avatar)),
                     )
                     .child(Label::new(message.sender.github_login.clone()))
                     .child(Label::new(format_timestamp(

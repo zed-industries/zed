@@ -245,7 +245,7 @@ impl Render for CollabTitlebarItem {
                                                 .child(
                                                     h_stack()
                                                         .gap_0p5()
-                                                        .child(Avatar::data(avatar))
+                                                        .child(Avatar::new(avatar))
                                                         .child(
                                                             IconElement::new(Icon::ChevronDown)
                                                                 .color(Color::Muted),
@@ -261,7 +261,7 @@ impl Render for CollabTitlebarItem {
                                 // this.child(
                                 //     ButtonLike::new("user-menu")
                                 //         .child(
-                                //             h_stack().gap_0p5().child(Avatar::data(avatar)).child(
+                                //             h_stack().gap_0p5().child(Avatar::new(avatar)).child(
                                 //                 IconElement::new(Icon::ChevronDown).color(Color::Muted),
                                 //             ),
                                 //         )
@@ -431,7 +431,7 @@ impl CollabTitlebarItem {
                 .map(|avatar| {
                     div()
                         .child(
-                            Avatar::data(avatar.clone())
+                            Avatar::new(avatar.clone())
                                 .grayscale(!is_present)
                                 .border_color(if is_speaking {
                                     gpui::blue()
@@ -457,7 +457,7 @@ impl CollabTitlebarItem {
                     follower
                         .avatar
                         .clone()
-                        .map(|avatar| div().child(Avatar::data(avatar.clone())).into_any_element())
+                        .map(|avatar| div().child(Avatar::new(avatar.clone())).into_any_element())
                 })),
         );
         Some(pile)

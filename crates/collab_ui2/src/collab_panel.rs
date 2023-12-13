@@ -1155,7 +1155,7 @@ impl CollabPanel {
         let tooltip = format!("Follow {}", user.github_login);
 
         ListItem::new(SharedString::from(user.github_login.clone()))
-            .start_slot(Avatar::data(user.avatar.clone().unwrap()))
+            .start_slot(Avatar::new(user.avatar.clone().unwrap()))
             .child(Label::new(user.github_login.clone()))
             .end_slot(if is_pending {
                 Label::new("Calling").color(Color::Muted).into_any_element()
@@ -2446,7 +2446,7 @@ impl CollabPanel {
             )
             .start_slot(
                 // todo!() handle contacts with no avatar
-                Avatar::data(contact.user.avatar.clone().unwrap())
+                Avatar::new(contact.user.avatar.clone().unwrap())
                     .availability_indicator(if online { Some(!busy) } else { None }),
             )
             .when(online && !busy, |el| {
@@ -2523,11 +2523,7 @@ impl CollabPanel {
                     .child(Label::new(github_login.clone()))
                     .child(h_stack().children(controls)),
             )
-            .start_slot::<Avatar>(
-                user.avatar
-                    .clone()
-                    .map(|avatar| Avatar::source(avatar.into())),
-            )
+            .start_slot::<Avatar>(user.avatar.clone().map(|avatar| Avatar::new(avatar)))
     }
 
     fn render_contact_placeholder(
@@ -2585,7 +2581,7 @@ impl CollabPanel {
             let result = FacePile {
                 faces: participants
                     .iter()
-                    .filter_map(|user| Some(Avatar::data(user.avatar.clone()?).into_any_element()))
+                    .filter_map(|user| Some(Avatar::new(user.avatar.clone()?).into_any_element()))
                     .take(FACEPILE_LIMIT)
                     .chain(if extra_count > 0 {
                         // todo!() @nate - this label looks wrong.
