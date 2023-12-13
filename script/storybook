@@ -1,0 +1,15 @@
+#!/bin/bash
+
+# This script takes a single text input and replaces 'list_item' with the input in a cargo run command
+
+# Check if an argument is provided
+if [ "$#" -ne 1 ]; then
+  echo "Usage: $0 <component_name>"
+  exit 1
+fi
+
+# Assign the argument to a variable
+COMPONENT_NAME="$1"
+
+# Run the cargo command with the provided component name
+cargo run -p storybook2 -- components/"$COMPONENT_NAME"

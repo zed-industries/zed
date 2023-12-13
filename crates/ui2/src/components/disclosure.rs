@@ -1,5 +1,6 @@
-use crate::{prelude::*, Color, Icon, IconButton, IconSize};
 use gpui::ClickEvent;
+
+use crate::{prelude::*, Color, Icon, IconButton, IconSize};
 
 #[derive(IntoElement)]
 pub struct Disclosure {

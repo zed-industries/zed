@@ -1,8 +1,9 @@
-use crate::{prelude::*, Disclosure};
 use gpui::{
     px, AnyElement, AnyView, ClickEvent, Div, MouseButton, MouseDownEvent, Pixels, Stateful,
 };
 use smallvec::SmallVec;
+
+use crate::{prelude::*, Disclosure};
 
 #[derive(IntoElement)]
 pub struct ListItem {
@@ -192,10 +193,15 @@ impl RenderOnce for ListItem {
                             this.ml(self.indent_level as f32 * self.indent_step_size)
                         }
                     })
-                    .children(
-                        self.toggle
-                            .map(|is_open| Disclosure::new(is_open).on_toggle(self.on_toggle)),
-                    )
+                    .children(self.toggle.map(|is_open| {
+                        div()
+                            .flex()
+                            .absolute()
+                            .left(rems(-1.))
+                            .invisible()
+                            .group_hover("", |style| style.visible())
+                            .child(Disclosure::new(is_open).on_toggle(self.on_toggle))
+                    }))
                     .child(
                         h_stack()
                             .flex_1()
