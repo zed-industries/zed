@@ -309,7 +309,6 @@ impl FeedbackModal {
         Ok(())
     }
 
-    // TODO: Escape button calls dismiss
     fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
         cx.emit(DismissEvent)
     }
