@@ -1,0 +1,6 @@
+[book]
+authors = ["Nate Butler"]
+language = "en"
+multilingual = false
+src = "src"
+title = "Zed App Docs"
