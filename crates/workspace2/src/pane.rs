@@ -1664,6 +1664,10 @@ impl Pane {
             )
             .child(
                 div()
+                    .min_w_6()
+                    // HACK: This empty child is currently necessary to force the drop traget to appear
+                    // despite us setting a min width above.
+                    .child("")
                     .h_full()
                     .flex_grow()
                     .drag_over::<DraggedTab>(|bar| {
