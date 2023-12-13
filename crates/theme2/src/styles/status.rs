@@ -1,7 +1,65 @@
-use gpui::Hsla;
+use gpui::{Hsla, WindowContext};
 use refineable::Refineable;
 
-use crate::{blue, grass, neutral, red, yellow};
+use crate::{blue, color_alpha, grass, neutral, red, yellow, ActiveTheme};
+
+#[derive(Clone, Debug)]
+pub enum StatusColor {
+    Conflict,
+    Created,
+    Deleted,
+    Error,
+    Hidden,
+    Hint,
+    Ignored,
+    Info,
+    Modified,
+    Predictive,
+    Renamed,
+    Success,
+    Unreachable,
+    Warning,
+}
+
+impl StatusColor {
+    pub fn fg(self, cx: &mut WindowContext) -> Hsla {
+        match self {
+            Self::Conflict => cx.theme().status().conflict,
+            Self::Created => cx.theme().status().created,
+            Self::Deleted => cx.theme().status().deleted,
+            Self::Error => cx.theme().status().error,
+            Self::Hidden => cx.theme().status().hidden,
+            Self::Hint => cx.theme().status().hint,
+            Self::Ignored => cx.theme().status().ignored,
+            Self::Info => cx.theme().status().info,
+            Self::Modified => cx.theme().status().modified,
+            Self::Predictive => cx.theme().status().predictive,
+            Self::Renamed => cx.theme().status().renamed,
+            Self::Success => cx.theme().status().success,
+            Self::Unreachable => cx.theme().status().unreachable,
+            Self::Warning => cx.theme().status().warning,
+        }
+    }
+
+    pub fn bg(self, cx: &mut WindowContext) -> Hsla {
+        match self {
+            Self::Conflict => color_alpha(cx.theme().status().conflict, 0.12),
+            Self::Created => color_alpha(cx.theme().status().created, 0.12),
+            Self::Deleted => color_alpha(cx.theme().status().deleted, 0.12),
+            Self::Error => color_alpha(cx.theme().status().error, 0.12),
+            Self::Hidden => color_alpha(cx.theme().status().hidden, 0.12),
+            Self::Hint => color_alpha(cx.theme().status().hint, 0.12),
+            Self::Ignored => color_alpha(cx.theme().status().ignored, 0.12),
+            Self::Info => color_alpha(cx.theme().status().info, 0.12),
+            Self::Modified => color_alpha(cx.theme().status().modified, 0.12),
+            Self::Predictive => color_alpha(cx.theme().status().predictive, 0.12),
+            Self::Renamed => color_alpha(cx.theme().status().renamed, 0.12),
+            Self::Success => color_alpha(cx.theme().status().success, 0.12),
+            Self::Unreachable => color_alpha(cx.theme().status().unreachable, 0.12),
+            Self::Warning => color_alpha(cx.theme().status().warning, 0.12),
+        }
+    }
+}
 
 #[derive(Refineable, Clone, Debug)]
 #[refineable(Debug, serde::Deserialize)]
