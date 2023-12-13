@@ -15,7 +15,7 @@ let package = Package(
             targets: ["LiveKitBridge"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/livekit/client-sdk-swift.git", .exact("1.0.12")),
+        .package(url: "https://github.com/livekit/client-sdk-swift.git", .exact("1.1.4")),
     ],
     targets: [
         // Targets are the basic building blocks of a package. A target can define a module or a test suite.
