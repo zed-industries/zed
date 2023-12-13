@@ -417,7 +417,12 @@ impl Item for ProjectSearchView {
             .filter(|query| !query.is_empty())
             .unwrap_or_else(|| "Project search".into());
         h_stack()
-            .child(IconElement::new(Icon::MagnifyingGlass))
+            .gap_2()
+            .child(IconElement::new(Icon::MagnifyingGlass).color(if selected {
+                Color::Default
+            } else {
+                Color::Muted
+            }))
             .child(Label::new(tab_name).color(if selected {
                 Color::Default
             } else {
