@@ -1,3 +1,5 @@
+These docs are intendended to replace both docs.zed.dev and introduce people to how to build Zed from source.
+
 1. `cd docs` from repo root
 1. Install the vercel cli if you haven't already
     - `pnpm i -g vercel`
