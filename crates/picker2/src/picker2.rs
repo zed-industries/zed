@@ -271,7 +271,6 @@ impl<D: PickerDelegate> Render for Picker<D> {
                                 },
                             )
                             .track_scroll(self.scroll_handle.clone())
-                            .p_1()
                         )
                         .max_h_72()
                         .overflow_hidden(),

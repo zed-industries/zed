@@ -1156,7 +1156,7 @@ impl CollabPanel {
         let tooltip = format!("Follow {}", user.github_login);
 
         ListItem::new(SharedString::from(user.github_login.clone()))
-            .left_child(Avatar::new(user.avatar_uri.clone()))
+            .start_slot(Avatar::new(user.avatar_uri.clone()))
             .child(
                 h_stack()
                     .w_full()
@@ -1212,7 +1212,7 @@ impl CollabPanel {
                         .detach_and_log_err(cx);
                 });
             }))
-            .left_child(render_tree_branch(is_last, cx))
+            .start_slot(render_tree_branch(is_last, cx))
             .child(IconButton::new(0, Icon::Folder))
             .child(Label::new(project_name.clone()))
             .tooltip(move |cx| Tooltip::text(format!("Open {}", project_name), cx))
@@ -1305,7 +1305,7 @@ impl CollabPanel {
         let id = peer_id.map_or(usize::MAX, |id| id.as_u64() as usize);
 
         ListItem::new(("screen", id))
-            .left_child(render_tree_branch(is_last, cx))
+            .start_slot(render_tree_branch(is_last, cx))
             .child(IconButton::new(0, Icon::Screen))
             .child(Label::new("Screen"))
             .when_some(peer_id, |this, _| {
@@ -1372,7 +1372,7 @@ impl CollabPanel {
             .on_click(cx.listener(move |this, _, cx| {
                 this.open_channel_notes(channel_id, cx);
             }))
-            .left_child(render_tree_branch(false, cx))
+            .start_slot(render_tree_branch(false, cx))
             .child(IconButton::new(0, Icon::File))
             .child(Label::new("notes"))
             .tooltip(move |cx| Tooltip::text("Open Channel Notes", cx))
@@ -1387,7 +1387,7 @@ impl CollabPanel {
             .on_click(cx.listener(move |this, _, cx| {
                 this.join_channel_chat(channel_id, cx);
             }))
-            .left_child(render_tree_branch(true, cx))
+            .start_slot(render_tree_branch(true, cx))
             .child(IconButton::new(0, Icon::MessageBubbles))
             .child(Label::new("chat"))
             .tooltip(move |cx| Tooltip::text("Open Chat", cx))
@@ -2318,7 +2318,7 @@ impl CollabPanel {
                 } else {
                     el.child(
                         ListHeader::new(text)
-                            .when_some(button, |el, button| el.meta(button))
+                            .when_some(button, |el, button| el.end_slot(button))
                             .selected(is_selected),
                     )
                 }
@@ -2381,7 +2381,7 @@ impl CollabPanel {
                             )
                         }),
                 )
-                .left_child(
+                .start_slot(
                     // todo!() handle contacts with no avatar
                     Avatar::new(contact.user.avatar_uri.clone())
                         .availability_indicator(if online { Some(!busy) } else { None }),
@@ -2460,7 +2460,7 @@ impl CollabPanel {
                     .child(Label::new(github_login.clone()))
                     .child(h_stack().children(controls)),
             )
-            .left_avatar(user.avatar_uri.clone())
+            .start_slot::<Avatar>(user.avatar_uri.clone().map(|avatar| Avatar::new(avatar)))
     }
 
     fn render_contact_placeholder(
@@ -2568,7 +2568,11 @@ impl CollabPanel {
                 ListItem::new(channel_id as usize)
                     .indent_level(depth)
                     .indent_step_size(cx.rem_size() * 14.0 / 16.0) // @todo()! @nate this is to  step over the disclosure toggle
-                    .left_icon(if is_public { Icon::Public } else { Icon::Hash })
+                    .start_slot(
+                        IconElement::new(if is_public { Icon::Public } else { Icon::Hash })
+                            .size(IconSize::Small)
+                            .color(Color::Muted),
+                    )
                     .selected(is_selected || is_active)
                     .child(
                         h_stack()
@@ -2962,7 +2966,11 @@ impl CollabPanel {
         let item = ListItem::new("channel-editor")
             .inset(false)
             .indent_level(depth)
-            .left_icon(Icon::Hash);
+            .start_slot(
+                IconElement::new(Icon::Hash)
+                    .size(IconSize::Small)
+                    .color(Color::Muted),
+            );
 
         if let Some(pending_name) = self
             .channel_editing_state
