@@ -54,6 +54,7 @@ impl SceneBuilder {
             layer_z_values[*layer_id as usize] = ix as f32 / self.layers_by_order.len() as f32;
         }
         self.layers_by_order.clear();
+        self.last_order = None;
 
         // Add all primitives to the BSP splitter to determine draw order
         self.splitter.reset();
