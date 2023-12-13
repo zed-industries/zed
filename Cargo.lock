@@ -1949,6 +1949,7 @@ name = "collab_ui2"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "auto_update2",
  "call2",
  "channel2",
  "client2",

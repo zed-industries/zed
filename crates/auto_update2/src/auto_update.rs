@@ -6,7 +6,7 @@ use db::kvp::KEY_VALUE_STORE;
 use db::RELEASE_CHANNEL;
 use gpui::{
     actions, AppContext, AsyncAppContext, Context as _, Model, ModelContext, SemanticVersion, Task,
-    ViewContext, VisualContext,
+    ViewContext, VisualContext, WindowContext,
 };
 use isahc::AsyncBody;
 use serde::Deserialize;
@@ -125,7 +125,7 @@ pub fn init(http_client: Arc<dyn HttpClient>, server_url: String, cx: &mut AppCo
     }
 }
 
-pub fn check(_: &Check, cx: &mut ViewContext<Workspace>) {
+pub fn check(_: &Check, cx: &mut WindowContext) {
     if let Some(updater) = AutoUpdater::get(cx) {
         updater.update(cx, |updater, cx| updater.poll(cx));
     } else {
