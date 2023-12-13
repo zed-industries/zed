@@ -3680,8 +3680,10 @@ impl Render for Workspace {
                             )
                             // Panes
                             .child(
-                                v_stack()
-                                    .flex_grow()
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .flex_1()
                                     .overflow_hidden()
                                     .h_full()
                                     .child(self.center.render(
