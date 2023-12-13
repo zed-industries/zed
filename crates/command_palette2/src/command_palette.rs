@@ -362,6 +362,7 @@ mod tests {
     use editor::Editor;
     use go_to_line::GoToLine;
     use gpui::TestAppContext;
+    use language::Point;
     use project::Project;
     use workspace::{AppState, Workspace};
 
@@ -459,13 +460,30 @@ mod tests {
         let project = Project::test(app_state.fs.clone(), [], cx).await;
         let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
 
-        cx.simulate_keystrokes("cmd-n cmd-shift-p");
+        cx.simulate_keystrokes("cmd-n");
+
+        let editor = workspace.update(cx, |workspace, cx| {
+            workspace.active_item_as::<Editor>(cx).unwrap()
+        });
+        editor.update(cx, |editor, cx| editor.set_text("1\n2\n3\n4\n5\n6\n", cx));
+
+        cx.simulate_keystrokes("cmd-shift-p");
         cx.simulate_input("go to line: Toggle");
         cx.simulate_keystrokes("enter");
 
         workspace.update(cx, |workspace, cx| {
             assert!(workspace.active_modal::<GoToLine>(cx).is_some())
-        })
+        });
+
+        cx.simulate_keystrokes("3 enter");
+
+        editor.update(cx, |editor, cx| {
+            assert!(editor.focus_handle(cx).is_focused(cx));
+            assert_eq!(
+                editor.selections.last::<Point>(cx).range().start,
+                Point::new(2, 0)
+            );
+        });
     }
 
     fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
