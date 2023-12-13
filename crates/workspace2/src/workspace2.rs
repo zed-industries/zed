@@ -3685,7 +3685,6 @@ impl Render for Workspace {
                                     .flex_col()
                                     .flex_1()
                                     .overflow_hidden()
-                                    .h_full()
                                     .child(self.center.render(
                                         &self.project,
                                         &self.follower_states,
