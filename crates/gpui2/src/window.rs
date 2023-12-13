@@ -1236,6 +1236,8 @@ impl<'a> WindowContext<'a> {
 
     /// Draw pixels to the display for this window based on the contents of its scene.
     pub(crate) fn draw(&mut self) -> Scene {
+        let t0 = std::time::Instant::now();
+
         let window_was_focused = self
             .window
             .focus
@@ -1326,6 +1328,7 @@ impl<'a> WindowContext<'a> {
         }
 
         self.window.dirty = false;
+        eprintln!("frame: {:?}", t0.elapsed());
 
         scene
     }
