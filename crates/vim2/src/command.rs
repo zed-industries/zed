@@ -288,151 +288,147 @@ fn generate_positions(string: &str, query: &str) -> Vec<usize> {
     positions
 }
 
-// #[cfg(test)]
-// mod test {
-//     use std::path::Path;
+#[cfg(test)]
+mod test {
+    use std::path::Path;
 
-//     use crate::test::{NeovimBackedTestContext, VimTestContext};
-//     use gpui::TestAppContext;
-//     use indoc::indoc;
+    use crate::test::{NeovimBackedTestContext, VimTestContext};
+    use gpui::TestAppContext;
+    use indoc::indoc;
 
-//     #[gpui::test]
-//     async fn test_command_basics(cx: &mut TestAppContext) {
-//         if let Foreground::Deterministic { cx_id: _, executor } = cx.foreground().as_ref() {
-//             executor.run_until_parked();
-//         }
-//         let mut cx = NeovimBackedTestContext::new(cx).await;
+    #[gpui::test]
+    async fn test_command_basics(cx: &mut TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
 
-//         cx.set_shared_state(indoc! {"
-//             ˇa
-//             b
-//             c"})
-//             .await;
+        cx.set_shared_state(indoc! {"
+            ˇa
+            b
+            c"})
+            .await;
 
-//         cx.simulate_shared_keystrokes([":", "j", "enter"]).await;
+        cx.simulate_shared_keystrokes([":", "j", "enter"]).await;
 
-//         // hack: our cursor positionining after a join command is wrong
-//         cx.simulate_shared_keystrokes(["^"]).await;
-//         cx.assert_shared_state(indoc! {
-//             "ˇa b
-//             c"
-//         })
-//         .await;
-//     }
+        // hack: our cursor positionining after a join command is wrong
+        cx.simulate_shared_keystrokes(["^"]).await;
+        cx.assert_shared_state(indoc! {
+            "ˇa b
+            c"
+        })
+        .await;
+    }
 
-//     #[gpui::test]
-//     async fn test_command_goto(cx: &mut TestAppContext) {
-//         let mut cx = NeovimBackedTestContext::new(cx).await;
+    #[gpui::test]
+    async fn test_command_goto(cx: &mut TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
 
-//         cx.set_shared_state(indoc! {"
-//             ˇa
-//             b
-//             c"})
-//             .await;
-//         cx.simulate_shared_keystrokes([":", "3", "enter"]).await;
-//         cx.assert_shared_state(indoc! {"
-//             a
-//             b
-//             ˇc"})
-//             .await;
-//     }
+        cx.set_shared_state(indoc! {"
+            ˇa
+            b
+            c"})
+            .await;
+        cx.simulate_shared_keystrokes([":", "3", "enter"]).await;
+        cx.assert_shared_state(indoc! {"
+            a
+            b
+            ˇc"})
+            .await;
+    }
 
-//     #[gpui::test]
-//     async fn test_command_replace(cx: &mut TestAppContext) {
-//         let mut cx = NeovimBackedTestContext::new(cx).await;
+    #[gpui::test]
+    async fn test_command_replace(cx: &mut TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
 
-//         cx.set_shared_state(indoc! {"
-//             ˇa
-//             b
-//             c"})
-//             .await;
-//         cx.simulate_shared_keystrokes([":", "%", "s", "/", "b", "/", "d", "enter"])
-//             .await;
-//         cx.assert_shared_state(indoc! {"
-//             a
-//             ˇd
-//             c"})
-//             .await;
-//         cx.simulate_shared_keystrokes([
-//             ":", "%", "s", ":", ".", ":", "\\", "0", "\\", "0", "enter",
-//         ])
-//         .await;
-//         cx.assert_shared_state(indoc! {"
-//             aa
-//             dd
-//             ˇcc"})
-//             .await;
-//     }
+        cx.set_shared_state(indoc! {"
+            ˇa
+            b
+            c"})
+            .await;
+        cx.simulate_shared_keystrokes([":", "%", "s", "/", "b", "/", "d", "enter"])
+            .await;
+        cx.assert_shared_state(indoc! {"
+            a
+            ˇd
+            c"})
+            .await;
+        cx.simulate_shared_keystrokes([
+            ":", "%", "s", ":", ".", ":", "\\", "0", "\\", "0", "enter",
+        ])
+        .await;
+        cx.assert_shared_state(indoc! {"
+            aa
+            dd
+            ˇcc"})
+            .await;
+    }
 
-//     #[gpui::test]
-//     async fn test_command_search(cx: &mut TestAppContext) {
-//         let mut cx = NeovimBackedTestContext::new(cx).await;
+    #[gpui::test]
+    async fn test_command_search(cx: &mut TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
 
-//         cx.set_shared_state(indoc! {"
-//                 ˇa
-//                 b
-//                 a
-//                 c"})
-//             .await;
-//         cx.simulate_shared_keystrokes([":", "/", "b", "enter"])
-//             .await;
-//         cx.assert_shared_state(indoc! {"
-//                 a
-//                 ˇb
-//                 a
-//                 c"})
-//             .await;
-//         cx.simulate_shared_keystrokes([":", "?", "a", "enter"])
-//             .await;
-//         cx.assert_shared_state(indoc! {"
-//                 ˇa
-//                 b
-//                 a
-//                 c"})
-//             .await;
-//     }
+        cx.set_shared_state(indoc! {"
+                ˇa
+                b
+                a
+                c"})
+            .await;
+        cx.simulate_shared_keystrokes([":", "/", "b", "enter"])
+            .await;
+        cx.assert_shared_state(indoc! {"
+                a
+                ˇb
+                a
+                c"})
+            .await;
+        cx.simulate_shared_keystrokes([":", "?", "a", "enter"])
+            .await;
+        cx.assert_shared_state(indoc! {"
+                ˇa
+                b
+                a
+                c"})
+            .await;
+    }
 
-//     #[gpui::test]
-//     async fn test_command_write(cx: &mut TestAppContext) {
-//         let mut cx = VimTestContext::new(cx, true).await;
-//         let path = Path::new("/root/dir/file.rs");
-//         let fs = cx.workspace(|workspace, cx| workspace.project().read(cx).fs().clone());
+    #[gpui::test]
+    async fn test_command_write(cx: &mut TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        let path = Path::new("/root/dir/file.rs");
+        let fs = cx.workspace(|workspace, cx| workspace.project().read(cx).fs().clone());
 
-//         cx.simulate_keystrokes(["i", "@", "escape"]);
-//         cx.simulate_keystrokes([":", "w", "enter"]);
+        cx.simulate_keystrokes(["i", "@", "escape"]);
+        cx.simulate_keystrokes([":", "w", "enter"]);
 
-//         assert_eq!(fs.load(&path).await.unwrap(), "@\n");
+        assert_eq!(fs.load(&path).await.unwrap(), "@\n");
 
-//         fs.as_fake()
-//             .write_file_internal(path, "oops\n".to_string())
-//             .unwrap();
+        fs.as_fake()
+            .write_file_internal(path, "oops\n".to_string())
+            .unwrap();
 
-//         // conflict!
-//         cx.simulate_keystrokes(["i", "@", "escape"]);
-//         cx.simulate_keystrokes([":", "w", "enter"]);
-//         let window = cx.window;
-//         assert!(window.has_pending_prompt(cx.cx));
-//         // "Cancel"
-//         window.simulate_prompt_answer(0, cx.cx);
-//         assert_eq!(fs.load(&path).await.unwrap(), "oops\n");
-//         assert!(!window.has_pending_prompt(cx.cx));
-//         // force overwrite
-//         cx.simulate_keystrokes([":", "w", "!", "enter"]);
-//         assert!(!window.has_pending_prompt(cx.cx));
-//         assert_eq!(fs.load(&path).await.unwrap(), "@@\n");
-//     }
+        // conflict!
+        cx.simulate_keystrokes(["i", "@", "escape"]);
+        cx.simulate_keystrokes([":", "w", "enter"]);
+        assert!(cx.has_pending_prompt());
+        // "Cancel"
+        cx.simulate_prompt_answer(0);
+        assert_eq!(fs.load(&path).await.unwrap(), "oops\n");
+        assert!(!cx.has_pending_prompt());
+        // force overwrite
+        cx.simulate_keystrokes([":", "w", "!", "enter"]);
+        assert!(!cx.has_pending_prompt());
+        assert_eq!(fs.load(&path).await.unwrap(), "@@\n");
+    }
 
-//     #[gpui::test]
-//     async fn test_command_quit(cx: &mut TestAppContext) {
-//         let mut cx = VimTestContext::new(cx, true).await;
+    #[gpui::test]
+    async fn test_command_quit(cx: &mut TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
 
-//         cx.simulate_keystrokes([":", "n", "e", "w", "enter"]);
-//         cx.workspace(|workspace, cx| assert_eq!(workspace.items(cx).count(), 2));
-//         cx.simulate_keystrokes([":", "q", "enter"]);
-//         cx.workspace(|workspace, cx| assert_eq!(workspace.items(cx).count(), 1));
-//         cx.simulate_keystrokes([":", "n", "e", "w", "enter"]);
-//         cx.workspace(|workspace, cx| assert_eq!(workspace.items(cx).count(), 2));
-//         cx.simulate_keystrokes([":", "q", "a", "enter"]);
-//         cx.workspace(|workspace, cx| assert_eq!(workspace.items(cx).count(), 0));
-//     }
-// }
+        cx.simulate_keystrokes([":", "n", "e", "w", "enter"]);
+        cx.workspace(|workspace, cx| assert_eq!(workspace.items(cx).count(), 2));
+        cx.simulate_keystrokes([":", "q", "enter"]);
+        cx.workspace(|workspace, cx| assert_eq!(workspace.items(cx).count(), 1));
+        cx.simulate_keystrokes([":", "n", "e", "w", "enter"]);
+        cx.workspace(|workspace, cx| assert_eq!(workspace.items(cx).count(), 2));
+        cx.simulate_keystrokes([":", "q", "a", "enter"]);
+        cx.workspace(|workspace, cx| assert_eq!(workspace.items(cx).count(), 0));
+    }
+}

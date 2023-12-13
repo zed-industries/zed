@@ -291,7 +291,9 @@ impl PickerDelegate for CommandPaletteDelegate {
         });
         let action = command.action;
         cx.focus(&self.previous_focus_handle);
-        cx.dispatch_action(action);
+        cx.window_context()
+            .spawn(move |mut cx| async move { cx.update(|_, cx| cx.dispatch_action(action)) })
+            .detach_and_log_err(cx);
         self.dismissed(cx);
     }
 
