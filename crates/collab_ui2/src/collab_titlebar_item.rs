@@ -262,7 +262,7 @@ impl Render for CollabTitlebarItem {
                             // this.child(
                             //     ButtonLike::new("user-menu")
                             //         .child(
-                            //             h_stack().gap_0p5().child(Avatar::new(avatar)).child(
+                            //             h_stack().gap_0p5().child(Avatar::data(avatar)).child(
                             //                 IconElement::new(Icon::ChevronDown).color(Color::Muted),
                             //             ),
                             //         )
