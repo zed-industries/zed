@@ -1332,8 +1332,9 @@ impl<'a> WindowContext<'a> {
 
     /// Dispatch a mouse or keyboard event on the window.
     pub fn dispatch_event(&mut self, event: InputEvent) -> bool {
-        // Handlers may set this to false by calling `stop_propagation`
+        // Handlers may set this to false by calling `stop_propagation`.
         self.app.propagate_event = true;
+        // Handlers may set this to true by calling `prevent_default`.
         self.window.default_prevented = false;
 
         let event = match event {

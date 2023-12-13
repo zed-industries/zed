@@ -755,6 +755,26 @@ impl Interactivity {
             }
         }
 
+        // If this element can be focused, register a mouse down listener
+        // that will automatically transfer focus when hitting the element.
+        // This behavior can be suppressed by using `cx.prevent_default()`.
+        if let Some(focus_handle) = element_state.focus_handle.clone() {
+            cx.on_mouse_event({
+                let interactive_bounds = interactive_bounds.clone();
+                move |event: &MouseDownEvent, phase, cx| {
+                    if phase == DispatchPhase::Bubble
+                        && !cx.default_prevented()
+                        && interactive_bounds.visibly_contains(&event.position, cx)
+                    {
+                        cx.focus(&focus_handle);
+                        // If there is a parent that is also focusable, prevent it
+                        // from trasferring focus because we already did so.
+                        cx.prevent_default();
+                    }
+                }
+            });
+        }
+
         for listener in self.mouse_down_listeners.drain(..) {
             let interactive_bounds = interactive_bounds.clone();
             cx.on_mouse_event(move |event: &MouseDownEvent, phase, cx| {
