@@ -1,8 +1,8 @@
 use crate::{
     history::SearchHistory, mode::SearchMode, ActivateRegexMode, ActivateSemanticMode,
     ActivateTextMode, CycleMode, NextHistoryQuery, PreviousHistoryQuery, ReplaceAll, ReplaceNext,
-    SearchOptions, SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleReplace,
-    ToggleWholeWord,
+    SearchOptions, SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleIncludeIgnored,
+    ToggleReplace, ToggleWholeWord,
 };
 use anyhow::{Context as _, Result};
 use collections::HashMap;
@@ -1530,7 +1530,22 @@ impl Render for ProjectSearchBar {
                                 .flex_1()
                                 .border_1()
                                 .mr_2()
-                                .child(search.included_files_editor.clone()),
+                                .child(search.included_files_editor.clone())
+                                .when(search.current_mode != SearchMode::Semantic, |this| {
+                                    this.child(
+                                        SearchOptions::INCLUDE_IGNORED.as_button(
+                                            search
+                                                .search_options
+                                                .contains(SearchOptions::INCLUDE_IGNORED),
+                                            cx.listener(|this, _, cx| {
+                                                this.toggle_search_option(
+                                                    SearchOptions::INCLUDE_IGNORED,
+                                                    cx,
+                                                );
+                                            }),
+                                        ),
+                                    )
+                                }),
                         )
                         .child(
                             h_stack()
@@ -1671,34 +1686,14 @@ impl Render for ProjectSearchBar {
             .on_action(cx.listener(|this, _: &ToggleFilters, cx| {
                 this.toggle_filters(cx);
             }))
-            .on_action(cx.listener(|this, _: &ToggleWholeWord, cx| {
-                this.toggle_search_option(SearchOptions::WHOLE_WORD, cx);
-            }))
-            .on_action(cx.listener(|this, _: &ToggleCaseSensitive, cx| {
-                this.toggle_search_option(SearchOptions::CASE_SENSITIVE, cx);
-            }))
-            .on_action(cx.listener(|this, action, cx| {
-                this.toggle_replace(action, cx);
-            }))
             .on_action(cx.listener(|this, _: &ActivateTextMode, cx| {
                 this.activate_search_mode(SearchMode::Text, cx)
             }))
             .on_action(cx.listener(|this, _: &ActivateRegexMode, cx| {
                 this.activate_search_mode(SearchMode::Regex, cx)
             }))
-            .on_action(cx.listener(|this, action, cx| {
-                if let Some(search) = this.active_project_search.as_ref() {
-                    search.update(cx, |this, cx| {
-                        this.replace_next(action, cx);
-                    })
-                }
-            }))
-            .on_action(cx.listener(|this, action, cx| {
-                if let Some(search) = this.active_project_search.as_ref() {
-                    search.update(cx, |this, cx| {
-                        this.replace_all(action, cx);
-                    })
-                }
+            .on_action(cx.listener(|this, _: &ActivateSemanticMode, cx| {
+                this.activate_search_mode(SearchMode::Semantic, cx)
             }))
             .on_action(cx.listener(|this, action, cx| {
                 this.tab(action, cx);
@@ -1709,6 +1704,36 @@ impl Render for ProjectSearchBar {
             .on_action(cx.listener(|this, action, cx| {
                 this.cycle_mode(action, cx);
             }))
+            .when(search.current_mode != SearchMode::Semantic, |this| {
+                this.on_action(cx.listener(|this, action, cx| {
+                    this.toggle_replace(action, cx);
+                }))
+                .on_action(cx.listener(|this, _: &ToggleWholeWord, cx| {
+                    this.toggle_search_option(SearchOptions::WHOLE_WORD, cx);
+                }))
+                .on_action(cx.listener(|this, _: &ToggleCaseSensitive, cx| {
+                    this.toggle_search_option(SearchOptions::CASE_SENSITIVE, cx);
+                }))
+                .on_action(cx.listener(|this, action, cx| {
+                    if let Some(search) = this.active_project_search.as_ref() {
+                        search.update(cx, |this, cx| {
+                            this.replace_next(action, cx);
+                        })
+                    }
+                }))
+                .on_action(cx.listener(|this, action, cx| {
+                    if let Some(search) = this.active_project_search.as_ref() {
+                        search.update(cx, |this, cx| {
+                            this.replace_all(action, cx);
+                        })
+                    }
+                }))
+                .when(search.filters_enabled, |this| {
+                    this.on_action(cx.listener(|this, _: &ToggleIncludeIgnored, cx| {
+                        this.toggle_search_option(SearchOptions::INCLUDE_IGNORED, cx);
+                    }))
+                })
+            })
             .child(query_column)
             .child(mode_column)
             .child(replace_column)
