@@ -237,6 +237,7 @@ pub struct Window {
     bounds_observers: SubscriberSet<(), AnyObserver>,
     active: bool,
     pub(crate) dirty: bool,
+    pub(crate) drawing: bool,
     activation_observers: SubscriberSet<(), AnyObserver>,
     pub(crate) last_blur: Option<Option<FocusId>>,
     pub(crate) focus: Option<FocusId>,
@@ -371,6 +372,7 @@ impl Window {
             bounds_observers: SubscriberSet::new(),
             active: false,
             dirty: false,
+            drawing: false,
             activation_observers: SubscriberSet::new(),
             last_blur: None,
             focus: None,
@@ -422,7 +424,9 @@ impl<'a> WindowContext<'a> {
 
     /// Mark the window as dirty, scheduling it to be redrawn on the next frame.
     pub fn notify(&mut self) {
-        self.window.dirty = true;
+        if !self.window.drawing {
+            self.window.dirty = true;
+        }
     }
 
     /// Close this window.
@@ -1237,6 +1241,8 @@ impl<'a> WindowContext<'a> {
     /// Draw pixels to the display for this window based on the contents of its scene.
     pub(crate) fn draw(&mut self) -> Scene {
         let t0 = std::time::Instant::now();
+        self.window.dirty = false;
+        self.window.drawing = true;
 
         let window_was_focused = self
             .window
@@ -1327,7 +1333,7 @@ impl<'a> WindowContext<'a> {
             self.platform.set_cursor_style(cursor_style);
         }
 
-        self.window.dirty = false;
+        self.window.drawing = false;
         eprintln!("frame: {:?}", t0.elapsed());
 
         scene
@@ -2346,10 +2352,12 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     }
 
     pub fn notify(&mut self) {
-        self.window_cx.notify();
-        self.window_cx.app.push_effect(Effect::Notify {
-            emitter: self.view.model.entity_id,
-        });
+        if !self.window.drawing {
+            self.window_cx.notify();
+            self.window_cx.app.push_effect(Effect::Notify {
+                emitter: self.view.model.entity_id,
+            });
+        }
     }
 
     pub fn observe_window_bounds(
