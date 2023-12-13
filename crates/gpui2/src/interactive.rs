@@ -1,6 +1,5 @@
 use crate::{
-    div, point, Div, Element, FocusHandle, IntoElement, Keystroke, Modifiers, Pixels, Point,
-    Render, ViewContext,
+    div, point, Div, Element, IntoElement, Keystroke, Modifiers, Pixels, Point, Render, ViewContext,
 };
 use smallvec::SmallVec;
 use std::{any::Any, fmt::Debug, marker::PhantomData, ops::Deref, path::PathBuf};
@@ -288,11 +287,6 @@ impl InputEvent {
             InputEvent::FileDrop(_) => None,
         }
     }
-}
-
-pub struct FocusEvent {
-    pub blurred: Option<FocusHandle>,
-    pub focused: Option<FocusHandle>,
 }
 
 #[cfg(test)]
