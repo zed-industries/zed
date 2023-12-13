@@ -60,14 +60,6 @@ impl ListItem {
         self
     }
 
-    pub fn on_drag(
-        mut self,
-        handler: impl Fn(&MouseDownEvent, &mut WindowContext) + 'static,
-    ) -> Self {
-        self.on_secondary_mouse_down = Some(Box::new(handler));
-        self
-    }
-
     pub fn tooltip(mut self, tooltip: impl Fn(&mut WindowContext) -> AnyView + 'static) -> Self {
         self.tooltip = Some(Box::new(tooltip));
         self
@@ -100,28 +92,6 @@ impl ListItem {
         self.on_toggle = Some(Box::new(on_toggle));
         self
     }
-
-    // TODO: Remove
-
-    // pub fn left_child(mut self, left_content: impl IntoElement) -> Self {
-    //     self.start_slot = Some(left_content.into_any_element());
-    //     self
-    // }
-
-    // pub fn left_icon(mut self, left_icon: Icon) -> Self {
-    //     self.start_slot = Some(
-    //         IconElement::new(left_icon)
-    //             .size(IconSize::Small)
-    //             .color(Color::Muted)
-    //             .into_any_element(),
-    //     );
-    //     self
-    // }
-
-    // pub fn left_avatar(mut self, left_avatar: impl Into<ImageSource>) -> Self {
-    //     self.start_slot = Some(Avatar::source(left_avatar.into()).into_any_element());
-    //     self
-    // }
 
     pub fn start_slot<E: IntoElement>(mut self, start_slot: impl Into<Option<E>>) -> Self {
         self.start_slot = start_slot.into().map(IntoElement::into_any_element);
@@ -168,7 +138,6 @@ impl RenderOnce for ListItem {
             .when(!self.inset, |this| {
                 this
                     // TODO: Add focus state
-                    // TODO:debu Add focus state
                     // .when(self.state == InteractionState::Focused, |this| {
                     //     this.border()
                     //         .border_color(cx.theme().colors().border_focused)
@@ -190,7 +159,6 @@ impl RenderOnce for ListItem {
                     .when(self.inset, |this| {
                         this
                             // TODO: Add focus state
-                            // TODO:debu Add focus state
                             // .when(self.state == InteractionState::Focused, |this| {
                             //     this.border()
                             //         .border_color(cx.theme().colors().border_focused)
