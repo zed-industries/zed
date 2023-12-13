@@ -1250,6 +1250,7 @@ impl CompletionsMenu {
                         let documentation_label =
                             if let Some(Documentation::SingleLine(text)) = documentation {
                                 Some(SharedString::from(text.clone()))
+                                    .filter(|text| !text.trim().is_empty())
                             } else {
                                 None
                             };
