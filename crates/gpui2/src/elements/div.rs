@@ -656,7 +656,6 @@ pub struct Interactivity {
     pub focusable: bool,
     pub tracked_focus_handle: Option<FocusHandle>,
     pub scroll_handle: Option<ScrollHandle>,
-    pub focus_listeners: FocusListeners,
     pub group: Option<SharedString>,
     pub base_style: Box<StyleRefinement>,
     pub focus_style: Option<Box<StyleRefinement>>,
@@ -757,6 +756,26 @@ impl Interactivity {
             if hovered {
                 cx.set_cursor_style(mouse_cursor);
             }
+        }
+
+        // If this element can be focused, register a mouse down listener
+        // that will automatically transfer focus when hitting the element.
+        // This behavior can be suppressed by using `cx.prevent_default()`.
+        if let Some(focus_handle) = element_state.focus_handle.clone() {
+            cx.on_mouse_event({
+                let interactive_bounds = interactive_bounds.clone();
+                move |event: &MouseDownEvent, phase, cx| {
+                    if phase == DispatchPhase::Bubble
+                        && !cx.default_prevented()
+                        && interactive_bounds.visibly_contains(&event.position, cx)
+                    {
+                        cx.focus(&focus_handle);
+                        // If there is a parent that is also focusable, prevent it
+                        // from trasferring focus because we already did so.
+                        cx.prevent_default();
+                    }
+                }
+            });
         }
 
         for listener in self.mouse_down_listeners.drain(..) {
@@ -988,7 +1007,7 @@ impl Interactivity {
         }
 
         let active_state = element_state.clicked_state.clone();
-        if !active_state.borrow().is_clicked() {
+        if active_state.borrow().is_clicked() {
             cx.on_mouse_event(move |_: &MouseUpEvent, phase, cx| {
                 if phase == DispatchPhase::Capture {
                     *active_state.borrow_mut() = ElementClickedState::default();
@@ -1002,7 +1021,7 @@ impl Interactivity {
                 .and_then(|group_active| GroupBounds::get(&group_active.group, cx));
             let interactive_bounds = interactive_bounds.clone();
             cx.on_mouse_event(move |down: &MouseDownEvent, phase, cx| {
-                if phase == DispatchPhase::Bubble {
+                if phase == DispatchPhase::Bubble && !cx.default_prevented() {
                     let group =
                         active_group_bounds.map_or(false, |bounds| bounds.contains(&down.position));
                     let element = interactive_bounds.visibly_contains(&down.position, cx);
@@ -1081,13 +1100,6 @@ impl Interactivity {
 
                 for (action_type, listener) in self.action_listeners {
                     cx.on_action(action_type, listener)
-                }
-
-                if let Some(focus_handle) = element_state.focus_handle.as_ref() {
-                    for listener in self.focus_listeners {
-                        let focus_handle = focus_handle.clone();
-                        cx.on_focus_changed(move |event, cx| listener(&focus_handle, event, cx));
-                    }
                 }
 
                 f(style, scroll_offset.unwrap_or_default(), cx)
@@ -1193,7 +1205,6 @@ impl Default for Interactivity {
             focusable: false,
             tracked_focus_handle: None,
             scroll_handle: None,
-            focus_listeners: Vec::default(),
             // scroll_offset: Point::default(),
             group: None,
             base_style: Box::new(StyleRefinement::default()),
