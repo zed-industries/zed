@@ -131,7 +131,7 @@ impl Element for Overlay {
                     anchor_corner = anchor_corner.switch_axis(Axis::Horizontal);
                 }
 
-                if bounds.top() < limits.top() || bounds.bottom() > limits.bottom() {
+                if desired.top() < limits.top() || desired.bottom() > limits.bottom() {
                     anchor_corner = anchor_corner.switch_axis(Axis::Vertical);
                 }
 
