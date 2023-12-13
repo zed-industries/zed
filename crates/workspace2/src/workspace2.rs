@@ -3704,46 +3704,70 @@ impl Render for Workspace {
                     .child(self.modal_layer.clone())
                     .child(debug_tab_bar())
                     .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            // .flex_1()
-                            .h_full()
-                            // Left Dock
+                        h_stack()
                             .child(
-                                div()
-                                    .flex()
+                                v_stack()
                                     .flex_none()
-                                    .overflow_hidden()
-                                    .child(self.left_dock.clone()),
+                                    .w_32()
+                                    .h_full()
+                                    .debug_bg_red()
+                                    .child("Left"),
                             )
-                            // Panes
                             .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
+                                v_stack()
                                     .flex_1()
-                                    .child(debug_tab_bar())
-                                    .child(self.center.render(
-                                        &self.project,
-                                        &self.follower_states,
-                                        self.active_call(),
-                                        &self.active_pane,
-                                        self.zoomed.as_ref(),
-                                        &self.app_state,
-                                        cx,
-                                    ))
-                                    .child(self.bottom_dock.clone()),
+                                    .w_32()
+                                    .h_full()
+                                    .debug_bg_cyan()
+                                    .child("Center")
+                                    .child(debug_tab_bar()),
                             )
-                            // Right Dock
                             .child(
-                                div()
-                                    .flex()
+                                v_stack()
                                     .flex_none()
-                                    .overflow_hidden()
-                                    .child(self.right_dock.clone()),
+                                    .w_32()
+                                    .h_full()
+                                    .debug_bg_magenta()
+                                    .child("Right"),
                             ),
                     )
+                    // .child(
+                    //     h_stack()
+                    //         // Left Dock
+                    //         .child(
+                    //             div()
+                    //                 .flex()
+                    //                 .flex_none()
+                    //                 .overflow_hidden()
+                    //                 .child(self.left_dock.clone()),
+                    //         )
+                    //         // Panes
+                    //         .child(
+                    //             div()
+                    //                 .flex()
+                    //                 .flex_col()
+                    //                 .flex_1()
+                    //                 .child(debug_tab_bar())
+                    //                 .child(self.center.render(
+                    //                     &self.project,
+                    //                     &self.follower_states,
+                    //                     self.active_call(),
+                    //                     &self.active_pane,
+                    //                     self.zoomed.as_ref(),
+                    //                     &self.app_state,
+                    //                     cx,
+                    //                 ))
+                    //                 .child(self.bottom_dock.clone()),
+                    //         )
+                    //         // Right Dock
+                    //         .child(
+                    //             div()
+                    //                 .flex()
+                    //                 .flex_none()
+                    //                 .overflow_hidden()
+                    //                 .child(self.right_dock.clone()),
+                    //         ),
+                    // )
                     .children(self.render_notifications(cx)),
             )
             .child(self.status_bar.clone())
