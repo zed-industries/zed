@@ -3,8 +3,8 @@ use call::{ActiveCall, ParticipantLocation, Room};
 use client::{proto::PeerId, Client, ParticipantIndex, User, UserStore};
 use gpui::{
     actions, canvas, div, overlay, point, px, rems, AppContext, DismissEvent, Div, Element,
-    FocusableView, Hsla, InteractiveElement, IntoElement, Model, Overlay, ParentElement, Path,
-    Render, Stateful, StatefulInteractiveElement, Styled, Subscription, ViewContext, VisualContext,
+    FocusableView, Hsla, InteractiveElement, IntoElement, Model, ParentElement, Path, Render,
+    Stateful, StatefulInteractiveElement, Styled, Subscription, ViewContext, VisualContext,
     WeakView, WindowBounds,
 };
 use project::{Project, RepositoryEntry};
