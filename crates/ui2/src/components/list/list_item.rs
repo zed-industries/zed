@@ -198,6 +198,8 @@ impl RenderOnce for ListItem {
                             .flex()
                             .absolute()
                             .left(rems(-1.))
+                            .invisible()
+                            .group_hover("", |style| style.visible())
                             .child(Disclosure::new(is_open).on_toggle(self.on_toggle))
                     }))
                     .child(
