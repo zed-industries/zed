@@ -1,9 +1,9 @@
 use std::{iter, mem, ops::Range};
 
 use crate::{
-    black, phi, point, rems, AbsoluteLength, BorrowAppContext, BorrowWindow, Bounds, ContentMask,
-    Corners, CornersRefinement, CursorStyle, DefiniteLength, Edges, EdgesRefinement, Font,
-    FontFeatures, FontStyle, FontWeight, Hsla, Length, Pixels, Point, PointRefinement, Rgba,
+    black, phi, point, quad, rems, AbsoluteLength, BorrowAppContext, BorrowWindow, Bounds,
+    ContentMask, Corners, CornersRefinement, CursorStyle, DefiniteLength, Edges, EdgesRefinement,
+    Font, FontFeatures, FontStyle, FontWeight, Hsla, Length, Pixels, Point, PointRefinement, Rgba,
     SharedString, Size, SizeRefinement, Styled, TextRun, WindowContext,
 };
 use collections::HashSet;
@@ -348,13 +348,13 @@ impl Style {
         let background_color = self.background.as_ref().and_then(Fill::color);
         if background_color.is_some() || self.is_border_visible() {
             cx.with_z_index(1, |cx| {
-                cx.paint_quad(
+                cx.paint_quad(quad(
                     bounds,
                     self.corner_radii.to_pixels(bounds.size, rem_size),
                     background_color.unwrap_or_default(),
                     self.border_widths.to_pixels(rem_size),
                     self.border_color.unwrap_or_default(),
-                );
+                ));
             });
         }
     }

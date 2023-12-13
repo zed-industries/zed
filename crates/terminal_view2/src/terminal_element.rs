@@ -1,9 +1,9 @@
 use editor::{Cursor, HighlightedRange, HighlightedRangeLine};
 use gpui::{
-    black, div, point, px, red, relative, transparent_black, AnyElement, AsyncWindowContext,
-    AvailableSpace, Bounds, DispatchPhase, Element, ElementId, ExternalPaths, FocusHandle, Font,
-    FontStyle, FontWeight, HighlightStyle, Hsla, InteractiveElement, InteractiveElementState,
-    IntoElement, LayoutId, Model, ModelContext, ModifiersChangedEvent, MouseButton, Pixels,
+    black, div, fill, point, px, red, relative, AnyElement, AsyncWindowContext, AvailableSpace,
+    Bounds, DispatchPhase, Element, ElementId, ExternalPaths, FocusHandle, Font, FontStyle,
+    FontWeight, HighlightStyle, Hsla, InteractiveElement, InteractiveElementState, IntoElement,
+    LayoutId, Model, ModelContext, ModifiersChangedEvent, MouseButton, Pixels,
     PlatformInputHandler, Point, Rgba, ShapedLine, Size, StatefulInteractiveElement, Styled,
     TextRun, TextStyle, TextSystem, UnderlineStyle, WhiteSpace, WindowContext,
 };
@@ -133,13 +133,7 @@ impl LayoutRect {
         )
         .into();
 
-        cx.paint_quad(
-            Bounds::new(position, size),
-            Default::default(),
-            self.color,
-            Default::default(),
-            transparent_black(),
-        );
+        cx.paint_quad(fill(Bounds::new(position, size), self.color));
     }
 }
 
@@ -775,13 +769,7 @@ impl Element for TerminalElement {
 
         let theme = cx.theme();
 
-        cx.paint_quad(
-            bounds,
-            Default::default(),
-            layout.background_color,
-            Default::default(),
-            Hsla::default(),
-        );
+        cx.paint_quad(fill(bounds, layout.background_color));
         let origin = bounds.origin + Point::new(layout.gutter, px(0.));
 
         let terminal_input_handler = TerminalInputHandler {

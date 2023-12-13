@@ -1,15 +1,15 @@
 use crate::{
-    key_dispatch::DispatchActionListener, px, size, Action, AnyDrag, AnyView, AppContext,
-    AsyncWindowContext, AvailableSpace, Bounds, BoxShadow, Context, Corners, CursorStyle,
-    DevicePixels, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity, EntityId,
-    EventEmitter, FileDropEvent, Flatten, FocusEvent, FontId, GlobalElementId, GlyphId, Hsla,
-    ImageData, InputEvent, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeystrokeEvent, LayoutId,
-    Model, ModelContext, Modifiers, MonochromeSprite, MouseButton, MouseMoveEvent, MouseUpEvent,
-    Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInputHandler, PlatformWindow, Point,
-    PolychromeSprite, PromptLevel, Quad, Render, RenderGlyphParams, RenderImageParams,
-    RenderSvgParams, ScaledPixels, Scene, SceneBuilder, Shadow, SharedString, Size, Style,
-    SubscriberSet, Subscription, Surface, TaffyLayoutEngine, Task, Underline, UnderlineStyle, View,
-    VisualContext, WeakView, WindowBounds, WindowOptions, SUBPIXEL_VARIANTS,
+    key_dispatch::DispatchActionListener, px, size, transparent_black, Action, AnyDrag, AnyView,
+    AppContext, AsyncWindowContext, AvailableSpace, Bounds, BoxShadow, Context, Corners,
+    CursorStyle, DevicePixels, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity,
+    EntityId, EventEmitter, FileDropEvent, Flatten, FocusEvent, FontId, GlobalElementId, GlyphId,
+    Hsla, ImageData, InputEvent, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeystrokeEvent,
+    LayoutId, Model, ModelContext, Modifiers, MonochromeSprite, MouseButton, MouseMoveEvent,
+    MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInputHandler,
+    PlatformWindow, Point, PolychromeSprite, PromptLevel, Quad, Render, RenderGlyphParams,
+    RenderImageParams, RenderSvgParams, ScaledPixels, Scene, SceneBuilder, Shadow, SharedString,
+    Size, Style, SubscriberSet, Subscription, Surface, TaffyLayoutEngine, Task, Underline,
+    UnderlineStyle, View, VisualContext, WeakView, WindowBounds, WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::HashMap;
@@ -963,14 +963,8 @@ impl<'a> WindowContext<'a> {
 
     /// Paint one or more quads into the scene for the next frame at the current stacking context.
     /// Quads are colored rectangular regions with an optional background, border, and corner radius.
-    pub fn paint_quad(
-        &mut self,
-        bounds: Bounds<Pixels>,
-        corner_radii: Corners<Pixels>,
-        background: impl Into<Hsla>,
-        border_widths: Edges<Pixels>,
-        border_color: impl Into<Hsla>,
-    ) {
+    /// see [`fill`], [`outline`], and [`quad`] to construct this type.
+    pub fn paint_quad(&mut self, quad: PaintQuad) {
         let scale_factor = self.scale_factor();
         let content_mask = self.content_mask();
 
@@ -979,12 +973,12 @@ impl<'a> WindowContext<'a> {
             &window.next_frame.z_index_stack,
             Quad {
                 order: 0,
-                bounds: bounds.scale(scale_factor),
+                bounds: quad.bounds.scale(scale_factor),
                 content_mask: content_mask.scale(scale_factor),
-                background: background.into(),
-                border_color: border_color.into(),
-                corner_radii: corner_radii.scale(scale_factor),
-                border_widths: border_widths.scale(scale_factor),
+                background: quad.background,
+                border_color: quad.border_color,
+                corner_radii: quad.corner_radii.scale(scale_factor),
+                border_widths: quad.border_widths.scale(scale_factor),
             },
         );
     }
@@ -2960,5 +2954,87 @@ impl From<(&'static str, usize)> for ElementId {
 impl From<(&'static str, u64)> for ElementId {
     fn from((name, id): (&'static str, u64)) -> Self {
         ElementId::NamedInteger(name.into(), id as usize)
+    }
+}
+
+/// A rectangle, to be rendered on the screen by GPUI at the given position and size.
+pub struct PaintQuad {
+    bounds: Bounds<Pixels>,
+    corner_radii: Corners<Pixels>,
+    background: Hsla,
+    border_widths: Edges<Pixels>,
+    border_color: Hsla,
+}
+
+impl PaintQuad {
+    /// Set the corner radii of the quad.
+    pub fn corner_radii(self, corner_radii: impl Into<Corners<Pixels>>) -> Self {
+        PaintQuad {
+            corner_radii: corner_radii.into(),
+            ..self
+        }
+    }
+
+    /// Set the border widths of the quad.
+    pub fn border_widths(self, border_widths: impl Into<Edges<Pixels>>) -> Self {
+        PaintQuad {
+            border_widths: border_widths.into(),
+            ..self
+        }
+    }
+
+    /// Set the border color of the quad.
+    pub fn border_color(self, border_color: impl Into<Hsla>) -> Self {
+        PaintQuad {
+            border_color: border_color.into(),
+            ..self
+        }
+    }
+
+    /// Set the background color of the quad.
+    pub fn background(self, background: impl Into<Hsla>) -> Self {
+        PaintQuad {
+            background: background.into(),
+            ..self
+        }
+    }
+}
+
+/// Create a quad with the given parameters.
+pub fn quad(
+    bounds: Bounds<Pixels>,
+    corner_radii: impl Into<Corners<Pixels>>,
+    background: impl Into<Hsla>,
+    border_widths: impl Into<Edges<Pixels>>,
+    border_color: impl Into<Hsla>,
+) -> PaintQuad {
+    PaintQuad {
+        bounds,
+        corner_radii: corner_radii.into(),
+        background: background.into(),
+        border_widths: border_widths.into(),
+        border_color: border_color.into(),
+    }
+}
+
+/// Create a filled quad with the given bounds and background color.
+pub fn fill(bounds: impl Into<Bounds<Pixels>>, background: impl Into<Hsla>) -> PaintQuad {
+    PaintQuad {
+        bounds: bounds.into(),
+        corner_radii: (0.).into(),
+        background: background.into(),
+        border_widths: (0.).into(),
+        border_color: transparent_black(),
+    }
+}
+
+/// Create a rectangle outline with the given bounds, border color, and a 1px border width
+pub fn outline(bounds: impl Into<Bounds<Pixels>>, border_color: impl Into<Hsla>) -> PaintQuad {
+    PaintQuad {
+        bounds: bounds.into(),
+        corner_radii: (0.).into(),
+        background: transparent_black(),
+        border_widths: (1.).into(),
+        border_color: border_color.into(),
     }
 }

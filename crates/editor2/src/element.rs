@@ -23,13 +23,14 @@ use anyhow::Result;
 use collections::{BTreeMap, HashMap};
 use git::diff::DiffHunkStatus;
 use gpui::{
-    div, overlay, point, px, relative, size, transparent_black, Action, AnchorCorner, AnyElement,
-    AsyncWindowContext, AvailableSpace, BorrowWindow, Bounds, ContentMask, Corners, CursorStyle,
-    DispatchPhase, Edges, Element, ElementId, ElementInputHandler, Entity, EntityId, Hsla,
-    InteractiveBounds, InteractiveElement, IntoElement, LineLayout, ModifiersChangedEvent,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, RenderOnce,
-    ScrollWheelEvent, ShapedLine, SharedString, Size, StackingOrder, StatefulInteractiveElement,
-    Style, Styled, TextRun, TextStyle, View, ViewContext, WeakView, WindowContext, WrappedLine,
+    div, fill, outline, overlay, point, px, quad, relative, size, transparent_black, Action,
+    AnchorCorner, AnyElement, AsyncWindowContext, AvailableSpace, BorrowWindow, Bounds,
+    ContentMask, Corners, CursorStyle, DispatchPhase, Edges, Element, ElementId,
+    ElementInputHandler, Entity, EntityId, Hsla, InteractiveBounds, InteractiveElement,
+    IntoElement, LineLayout, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, ParentElement, Pixels, RenderOnce, ScrollWheelEvent, ShapedLine, SharedString,
+    Size, StackingOrder, StatefulInteractiveElement, Style, Styled, TextRun, TextStyle, View,
+    ViewContext, WeakView, WindowContext, WrappedLine,
 };
 use itertools::Itertools;
 use language::{language_settings::ShowWhitespaceSetting, Language};
@@ -620,20 +621,8 @@ impl EditorElement {
         let scroll_top =
             layout.position_map.snapshot.scroll_position().y * layout.position_map.line_height;
         let gutter_bg = cx.theme().colors().editor_gutter_background;
-        cx.paint_quad(
-            gutter_bounds,
-            Corners::default(),
-            gutter_bg,
-            Edges::default(),
-            transparent_black(),
-        );
-        cx.paint_quad(
-            text_bounds,
-            Corners::default(),
-            self.style.background,
-            Edges::default(),
-            transparent_black(),
-        );
+        cx.paint_quad(fill(gutter_bounds, gutter_bg));
+        cx.paint_quad(fill(text_bounds, self.style.background));
 
         if let EditorMode::Full = layout.mode {
             let mut active_rows = layout.active_rows.iter().peekable();
@@ -657,13 +646,7 @@ impl EditorElement {
                         layout.position_map.line_height * (end_row - start_row + 1) as f32,
                     );
                     let active_line_bg = cx.theme().colors().editor_active_line_background;
-                    cx.paint_quad(
-                        Bounds { origin, size },
-                        Corners::default(),
-                        active_line_bg,
-                        Edges::default(),
-                        transparent_black(),
-                    );
+                    cx.paint_quad(fill(Bounds { origin, size }, active_line_bg));
                 }
             }
 
@@ -679,13 +662,7 @@ impl EditorElement {
                     layout.position_map.line_height * highlighted_rows.len() as f32,
                 );
                 let highlighted_line_bg = cx.theme().colors().editor_highlighted_line_background;
-                cx.paint_quad(
-                    Bounds { origin, size },
-                    Corners::default(),
-                    highlighted_line_bg,
-                    Edges::default(),
-                    transparent_black(),
-                );
+                cx.paint_quad(fill(Bounds { origin, size }, highlighted_line_bg));
             }
 
             let scroll_left =
@@ -706,16 +683,13 @@ impl EditorElement {
                 } else {
                     cx.theme().colors().editor_wrap_guide
                 };
-                cx.paint_quad(
+                cx.paint_quad(fill(
                     Bounds {
                         origin: point(x, text_bounds.origin.y),
                         size: size(px(1.), text_bounds.size.height),
                     },
-                    Corners::default(),
                     color,
-                    Edges::default(),
-                    transparent_black(),
-                );
+                ));
             }
         }
     }
@@ -812,13 +786,13 @@ impl EditorElement {
                     let highlight_origin = bounds.origin + point(-width, start_y);
                     let highlight_size = size(width * 2., end_y - start_y);
                     let highlight_bounds = Bounds::new(highlight_origin, highlight_size);
-                    cx.paint_quad(
+                    cx.paint_quad(quad(
                         highlight_bounds,
                         Corners::all(1. * line_height),
                         gpui::yellow(), // todo!("use the right color")
                         Edges::default(),
                         transparent_black(),
-                    );
+                    ));
 
                     continue;
                 }
@@ -845,13 +819,13 @@ impl EditorElement {
                     let highlight_origin = bounds.origin + point(-width, start_y);
                     let highlight_size = size(width * 2., end_y - start_y);
                     let highlight_bounds = Bounds::new(highlight_origin, highlight_size);
-                    cx.paint_quad(
+                    cx.paint_quad(quad(
                         highlight_bounds,
                         Corners::all(1. * line_height),
                         cx.theme().status().deleted,
                         Edges::default(),
                         transparent_black(),
-                    );
+                    ));
 
                     continue;
                 }
@@ -867,13 +841,13 @@ impl EditorElement {
             let highlight_origin = bounds.origin + point(-width, start_y);
             let highlight_size = size(width * 2., end_y - start_y);
             let highlight_bounds = Bounds::new(highlight_origin, highlight_size);
-            cx.paint_quad(
+            cx.paint_quad(quad(
                 highlight_bounds,
                 Corners::all(0.05 * line_height),
                 color, // todo!("use the right color")
                 Edges::default(),
                 transparent_black(),
-            );
+            ));
         }
     }
 
@@ -1278,7 +1252,7 @@ impl EditorElement {
         let thumb_bounds = Bounds::from_corners(point(left, thumb_top), point(right, thumb_bottom));
 
         if layout.show_scrollbars {
-            cx.paint_quad(
+            cx.paint_quad(quad(
                 track_bounds,
                 Corners::default(),
                 cx.theme().colors().scrollbar_track_background,
@@ -1289,7 +1263,7 @@ impl EditorElement {
                     left: px(1.),
                 },
                 cx.theme().colors().scrollbar_track_border,
-            );
+            ));
             let scrollbar_settings = EditorSettings::get_global(cx).scrollbar;
             if layout.is_singleton && scrollbar_settings.selections {
                 let start_anchor = Anchor::min();
@@ -1309,7 +1283,7 @@ impl EditorElement {
                         end_y = start_y + px(1.);
                     }
                     let bounds = Bounds::from_corners(point(left, start_y), point(right, end_y));
-                    cx.paint_quad(
+                    cx.paint_quad(quad(
                         bounds,
                         Corners::default(),
                         cx.theme().status().info,
@@ -1320,7 +1294,7 @@ impl EditorElement {
                             left: px(1.),
                         },
                         cx.theme().colors().scrollbar_thumb_border,
-                    );
+                    ));
                 }
             }
 
@@ -1352,7 +1326,7 @@ impl EditorElement {
                         DiffHunkStatus::Modified => cx.theme().status().modified,
                         DiffHunkStatus::Removed => cx.theme().status().deleted,
                     };
-                    cx.paint_quad(
+                    cx.paint_quad(quad(
                         bounds,
                         Corners::default(),
                         color,
@@ -1363,11 +1337,11 @@ impl EditorElement {
                             left: px(1.),
                         },
                         cx.theme().colors().scrollbar_thumb_border,
-                    );
+                    ));
                 }
             }
 
-            cx.paint_quad(
+            cx.paint_quad(quad(
                 thumb_bounds,
                 Corners::default(),
                 cx.theme().colors().scrollbar_thumb_background,
@@ -1378,7 +1352,7 @@ impl EditorElement {
                     left: px(1.),
                 },
                 cx.theme().colors().scrollbar_thumb_border,
-            );
+            ));
         }
 
         let mouse_position = cx.mouse_position();
@@ -3085,23 +3059,13 @@ impl Cursor {
         };
 
         //Draw background or border quad
-        if matches!(self.shape, CursorShape::Hollow) {
-            cx.paint_quad(
-                bounds,
-                Corners::default(),
-                transparent_black(),
-                Edges::all(px(1.)),
-                self.color,
-            );
+        let cursor = if matches!(self.shape, CursorShape::Hollow) {
+            outline(bounds, self.color)
         } else {
-            cx.paint_quad(
-                bounds,
-                Corners::default(),
-                self.color,
-                Edges::default(),
-                transparent_black(),
-            );
-        }
+            fill(bounds, self.color)
+        };
+
+        cx.paint_quad(cursor);
 
         if let Some(block_text) = &self.block_text {
             block_text.paint(self.origin + origin, self.line_height, cx);
