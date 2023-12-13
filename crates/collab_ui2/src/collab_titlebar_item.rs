@@ -464,6 +464,7 @@ impl CollabTitlebarItem {
                                 .then_some(current_user)
                         })?
                         .clone();
+
                     Some(div().child(Avatar::new(follower.avatar_uri.clone())))
                 })),
         );
