@@ -1597,7 +1597,8 @@ impl Pane {
                         let view = cx.view().clone();
                         move |_, cx| view.update(cx, Self::navigate_backward)
                     })
-                    .disabled(!self.can_navigate_backward()),
+                    .disabled(!self.can_navigate_backward())
+                    .tooltip(|cx| Tooltip::for_action("Go Back", &GoBack, cx)),
             )
             .start_child(
                 IconButton::new("navigate_forward", Icon::ArrowRight)
@@ -1606,7 +1607,8 @@ impl Pane {
                         let view = cx.view().clone();
                         move |_, cx| view.update(cx, Self::navigate_backward)
                     })
-                    .disabled(!self.can_navigate_forward()),
+                    .disabled(!self.can_navigate_forward())
+                    .tooltip(|cx| Tooltip::for_action("Go Forward", &GoForward, cx)),
             )
             .end_child(
                 div()
@@ -1625,7 +1627,8 @@ impl Pane {
                                 })
                                 .detach();
                                 this.new_item_menu = Some(menu);
-                            })),
+                            }))
+                            .tooltip(|cx| Tooltip::text("New...", cx)),
                     )
                     .when_some(self.new_item_menu.as_ref(), |el, new_item_menu| {
                         el.child(Self::render_menu_overlay(new_item_menu))
@@ -1649,7 +1652,8 @@ impl Pane {
                                 })
                                 .detach();
                                 this.split_item_menu = Some(menu);
-                            })),
+                            }))
+                            .tooltip(|cx| Tooltip::text("Split Pane", cx)),
                     )
                     .when_some(self.split_item_menu.as_ref(), |el, split_item_menu| {
                         el.child(Self::render_menu_overlay(split_item_menu))
