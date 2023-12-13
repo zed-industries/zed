@@ -1,7 +1,8 @@
 use crate::{
-    history::SearchHistory, mode::SearchMode, ActivateRegexMode, ActivateTextMode, CycleMode,
-    NextHistoryQuery, PreviousHistoryQuery, ReplaceAll, ReplaceNext, SearchOptions,
-    SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleReplace, ToggleWholeWord,
+    history::SearchHistory, mode::SearchMode, ActivateRegexMode, ActivateSemanticMode,
+    ActivateTextMode, CycleMode, NextHistoryQuery, PreviousHistoryQuery, ReplaceAll, ReplaceNext,
+    SearchOptions, SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleReplace,
+    ToggleWholeWord,
 };
 use anyhow::{Context as _, Result};
 use collections::HashMap;
@@ -29,7 +30,7 @@ use std::{
     mem,
     ops::{Not, Range},
     path::PathBuf,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use ui::{
@@ -283,195 +284,85 @@ impl Render for ProjectSearchView {
             let model = self.model.read(cx);
             let has_no_results = model.no_results.unwrap_or(false);
             let is_search_underway = model.pending_search.is_some();
-            let major_text = if is_search_underway {
+            let mut major_text = if is_search_underway {
                 Label::new("Searching...")
             } else if has_no_results {
-                Label::new("No results for a given query")
+                Label::new("No results")
             } else {
                 Label::new(format!("{} search all files", self.current_mode.label()))
             };
+
+            let mut show_minor_text = true;
+            let semantic_status = self.semantic_state.as_ref().and_then(|semantic| {
+                let status = semantic.index_status;
+                                match status {
+                                    SemanticIndexStatus::NotAuthenticated => {
+                                        major_text = Label::new("Not Authenticated");
+                                        show_minor_text = false;
+                                        Some(
+                                            "API Key Missing: Please set 'OPENAI_API_KEY' in Environment Variables. If you authenticated using the Assistant Panel, please restart Zed to Authenticate.".to_string())
+                                    }
+                                    SemanticIndexStatus::Indexed => Some("Indexing complete".to_string()),
+                                    SemanticIndexStatus::Indexing {
+                                        remaining_files,
+                                        rate_limit_expiry,
+                                    } => {
+                                        if remaining_files == 0 {
+                                            Some("Indexing...".to_string())
+                                        } else {
+                                            if let Some(rate_limit_expiry) = rate_limit_expiry {
+                                                let remaining_seconds =
+                                                    rate_limit_expiry.duration_since(Instant::now());
+                                                if remaining_seconds > Duration::from_secs(0) {
+                                                    Some(format!(
+                                                        "Remaining files to index (rate limit resets in {}s): {}",
+                                                        remaining_seconds.as_secs(),
+                                                        remaining_files
+                                                    ))
+                                                } else {
+                                                    Some(format!("Remaining files to index: {}", remaining_files))
+                                                }
+                                            } else {
+                                                Some(format!("Remaining files to index: {}", remaining_files))
+                                            }
+                                        }
+                                    }
+                                    SemanticIndexStatus::NotIndexed => None,
+                                }
+            });
             let major_text = div().justify_center().max_w_96().child(major_text);
-            let middle_text = div()
-                .items_center()
-                .max_w_96()
-                .child(Label::new(self.landing_text_minor()).size(LabelSize::Small));
+
+            let minor_text: Option<SharedString> = if let Some(no_results) = model.no_results {
+                if model.pending_search.is_none() && no_results {
+                    Some("No results found in this project for the provided query".into())
+                } else {
+                    None
+                }
+            } else {
+                if let Some(mut semantic_status) = semantic_status {
+                    semantic_status.extend(self.landing_text_minor().chars());
+                    Some(semantic_status.into())
+                } else {
+                    Some(self.landing_text_minor())
+                }
+            };
+            let minor_text = minor_text.map(|text| {
+                div()
+                    .items_center()
+                    .max_w_96()
+                    .child(Label::new(text).size(LabelSize::Small))
+            });
             v_stack().flex_1().size_full().justify_center().child(
                 h_stack()
                     .size_full()
                     .justify_center()
                     .child(h_stack().flex_1())
-                    .child(v_stack().child(major_text).child(middle_text))
+                    .child(v_stack().child(major_text).children(minor_text))
                     .child(h_stack().flex_1()),
             )
         }
     }
 }
-
-// impl Entity for ProjectSearchView {
-//     type Event = ViewEvent;
-// }
-
-// impl View for ProjectSearchView {
-//     fn ui_name() -> &'static str {
-//         "ProjectSearchView"
-//     }
-
-//     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-//         let model = &self.model.read(cx);
-//         if model.match_ranges.is_empty() {
-//             enum Status {}
-
-//             let theme = theme::current(cx).clone();
-
-//             // If Search is Active -> Major: Searching..., Minor: None
-//             // If Semantic -> Major: "Search using Natural Language", Minor: {Status}/n{ex...}/n{ex...}
-//             // If Regex -> Major: "Search using Regex", Minor: {ex...}
-//             // If Text -> Major: "Text search all files and folders", Minor: {...}
-
-//             let current_mode = self.current_mode;
-//             let mut major_text = if model.pending_search.is_some() {
-//                 Cow::Borrowed("Searching...")
-//             } else if model.no_results.is_some_and(|v| v) {
-//                 Cow::Borrowed("No Results")
-//             } else {
-//                 match current_mode {
-//                     SearchMode::Text => Cow::Borrowed("Text search all files and folders"),
-//                     SearchMode::Semantic => {
-//                         Cow::Borrowed("Search all code objects using Natural Language")
-//                     }
-//                     SearchMode::Regex => Cow::Borrowed("Regex search all files and folders"),
-//                 }
-//             };
-
-//             let mut show_minor_text = true;
-//             let semantic_status = self.semantic_state.as_ref().and_then(|semantic| {
-//                 let status = semantic.index_status;
-//                 match status {
-//                     SemanticIndexStatus::NotAuthenticated => {
-//                         major_text = Cow::Borrowed("Not Authenticated");
-//                         show_minor_text = false;
-//                         Some(vec![
-//                             "API Key Missing: Please set 'OPENAI_API_KEY' in Environment Variables."
-//                                 .to_string(), "If you authenticated using the Assistant Panel, please restart Zed to Authenticate.".to_string()])
-//                     }
-//                     SemanticIndexStatus::Indexed => Some(vec!["Indexing complete".to_string()]),
-//                     SemanticIndexStatus::Indexing {
-//                         remaining_files,
-//                         rate_limit_expiry,
-//                     } => {
-//                         if remaining_files == 0 {
-//                             Some(vec![format!("Indexing...")])
-//                         } else {
-//                             if let Some(rate_limit_expiry) = rate_limit_expiry {
-//                                 let remaining_seconds =
-//                                     rate_limit_expiry.duration_since(Instant::now());
-//                                 if remaining_seconds > Duration::from_secs(0) {
-//                                     Some(vec![format!(
-//                                         "Remaining files to index (rate limit resets in {}s): {}",
-//                                         remaining_seconds.as_secs(),
-//                                         remaining_files
-//                                     )])
-//                                 } else {
-//                                     Some(vec![format!("Remaining files to index: {}", remaining_files)])
-//                                 }
-//                             } else {
-//                                 Some(vec![format!("Remaining files to index: {}", remaining_files)])
-//                             }
-//                         }
-//                     }
-//                     SemanticIndexStatus::NotIndexed => None,
-//                 }
-//             });
-
-//             let minor_text = if let Some(no_results) = model.no_results {
-//                 if model.pending_search.is_none() && no_results {
-//                     vec!["No results found in this project for the provided query".to_owned()]
-//                 } else {
-//                     vec![]
-//                 }
-//             } else {
-//                 match current_mode {
-//                     SearchMode::Semantic => {
-//                         let mut minor_text: Vec<String> = Vec::new();
-//                         minor_text.push("".into());
-//                         if let Some(semantic_status) = semantic_status {
-//                             minor_text.extend(semantic_status);
-//                         }
-//                         if show_minor_text {
-//                             minor_text
-//                                 .push("Simply explain the code you are looking to find.".into());
-//                             minor_text.push(
-//                                 "ex. 'prompt user for permissions to index their project'".into(),
-//                             );
-//                         }
-//                         minor_text
-//                     }
-//                     _ => vec![
-//                         "".to_owned(),
-//                         "Include/exclude specific paths with the filter option.".to_owned(),
-//                         "Matching exact word and/or casing is available too.".to_owned(),
-//                     ],
-//                 }
-//             };
-
-//             MouseEventHandler::new::<Status, _>(0, cx, |_, _| {
-//                 Flex::column()
-//                     .with_child(Flex::column().contained().flex(1., true))
-//                     .with_child(
-//                         Flex::column()
-//                             .align_children_center()
-//                             .with_child(Label::new(
-//                                 major_text,
-//                                 theme.search.major_results_status.clone(),
-//                             ))
-//                             .with_children(
-//                                 minor_text.into_iter().map(|x| {
-//                                     Label::new(x, theme.search.minor_results_status.clone())
-//                                 }),
-//                             )
-//                             .aligned()
-//                             .top()
-//                             .contained()
-//                             .flex(7., true),
-//                     )
-//                     .contained()
-//                     .with_background_color(theme.editor.background)
-//             })
-//             .on_down(MouseButton::Left, |_, _, cx| {
-//                 cx.focus_parent();
-//             })
-//             .into_any_named("project search view")
-//         } else {
-//             ChildView::new(&self.results_editor, cx)
-//                 .flex(1., true)
-//                 .into_any_named("project search view")
-//         }
-//     }
-
-//     fn focus_in(&mut self, _: AnyView, cx: &mut ViewContext<Self>) {
-//         let handle = cx.weak_handle();
-//         cx.update_global(|state: &mut ActiveSearches, cx| {
-//             state
-//                 .0
-//                 .insert(self.model.read(cx).project.downgrade(), handle)
-//         });
-
-//         cx.update_global(|state: &mut ActiveSettings, cx| {
-//             state.0.insert(
-//                 self.model.read(cx).project.downgrade(),
-//                 self.current_settings(),
-//             );
-//         });
-
-//         if cx.is_self_focused() {
-//             if self.query_editor_was_focused {
-//                 cx.focus(&self.query_editor);
-//             } else {
-//                 cx.focus(&self.results_editor);
-//             }
-//         }
-//     }
-// }
 
 impl FocusableView for ProjectSearchView {
     fn focus_handle(&self, cx: &AppContext) -> gpui::FocusHandle {
@@ -1256,7 +1147,7 @@ impl ProjectSearchView {
     fn landing_text_minor(&self) -> SharedString {
         match self.current_mode {
             SearchMode::Text | SearchMode::Regex => "Include/exclude specific paths with the filter option. Matching exact word and/or casing is available too.".into(),
-            SearchMode::Semantic => ".Simply explain the code you are looking to find. ex. 'prompt user for permissions to index their project'".into()
+            SearchMode::Semantic => "\nSimply explain the code you are looking to find. ex. 'prompt user for permissions to index their project'".into()
         }
     }
 }
@@ -1277,8 +1168,8 @@ impl ProjectSearchBar {
     fn cycle_mode(&self, _: &CycleMode, cx: &mut ViewContext<Self>) {
         if let Some(view) = self.active_project_search.as_ref() {
             view.update(cx, |this, cx| {
-                // todo: po: 2nd argument of `next_mode` should be `SemanticIndex::enabled(cx))`, but we need to flesh out port of semantic_index first.
-                let new_mode = crate::mode::next_mode(&this.current_mode, false);
+                let new_mode =
+                    crate::mode::next_mode(&this.current_mode, SemanticIndex::enabled(cx));
                 this.activate_search_mode(new_mode, cx);
                 let editor_handle = this.query_editor.focus_handle(cx);
                 cx.focus(&editor_handle);
@@ -1548,7 +1439,7 @@ impl Render for ProjectSearchBar {
             });
         }
         let search = search.read(cx);
-
+        let semantic_is_available = SemanticIndex::enabled(cx);
         let query_column = v_stack()
             //.flex_1()
             .child(
@@ -1578,42 +1469,51 @@ impl Render for ProjectSearchBar {
                                             .unwrap_or_default(),
                                     ),
                             )
-                            .child(
-                                IconButton::new(
-                                    "project-search-case-sensitive",
-                                    Icon::CaseSensitive,
-                                )
-                                .tooltip(|cx| {
-                                    Tooltip::for_action(
-                                        "Toggle case sensitive",
-                                        &ToggleCaseSensitive,
-                                        cx,
+                            .when(search.current_mode != SearchMode::Semantic, |this| {
+                                this.child(
+                                    IconButton::new(
+                                        "project-search-case-sensitive",
+                                        Icon::CaseSensitive,
                                     )
-                                })
-                                .selected(self.is_option_enabled(SearchOptions::CASE_SENSITIVE, cx))
-                                .on_click(cx.listener(
-                                    |this, _, cx| {
-                                        this.toggle_search_option(
-                                            SearchOptions::CASE_SENSITIVE,
-                                            cx,
-                                        );
-                                    },
-                                )),
-                            )
-                            .child(
-                                IconButton::new("project-search-whole-word", Icon::WholeWord)
                                     .tooltip(|cx| {
                                         Tooltip::for_action(
-                                            "Toggle whole word",
-                                            &ToggleWholeWord,
+                                            "Toggle case sensitive",
+                                            &ToggleCaseSensitive,
                                             cx,
                                         )
                                     })
-                                    .selected(self.is_option_enabled(SearchOptions::WHOLE_WORD, cx))
-                                    .on_click(cx.listener(|this, _, cx| {
-                                        this.toggle_search_option(SearchOptions::WHOLE_WORD, cx);
-                                    })),
-                            ),
+                                    .selected(
+                                        self.is_option_enabled(SearchOptions::CASE_SENSITIVE, cx),
+                                    )
+                                    .on_click(cx.listener(
+                                        |this, _, cx| {
+                                            this.toggle_search_option(
+                                                SearchOptions::CASE_SENSITIVE,
+                                                cx,
+                                            );
+                                        },
+                                    )),
+                                )
+                                .child(
+                                    IconButton::new("project-search-whole-word", Icon::WholeWord)
+                                        .tooltip(|cx| {
+                                            Tooltip::for_action(
+                                                "Toggle whole word",
+                                                &ToggleWholeWord,
+                                                cx,
+                                            )
+                                        })
+                                        .selected(
+                                            self.is_option_enabled(SearchOptions::WHOLE_WORD, cx),
+                                        )
+                                        .on_click(cx.listener(|this, _, cx| {
+                                            this.toggle_search_option(
+                                                SearchOptions::WHOLE_WORD,
+                                                cx,
+                                            );
+                                        })),
+                                )
+                            }),
                     )
                     .border_2()
                     .bg(white())
@@ -1668,7 +1568,23 @@ impl Render for ProjectSearchBar {
                                         cx,
                                     )
                                 }),
-                        ),
+                        )
+                        .when(semantic_is_available, |this| {
+                            this.child(
+                                Button::new("project-search-semantic-button", "Semantic")
+                                    .selected(search.current_mode == SearchMode::Semantic)
+                                    .on_click(cx.listener(|this, _, cx| {
+                                        this.activate_search_mode(SearchMode::Semantic, cx)
+                                    }))
+                                    .tooltip(|cx| {
+                                        Tooltip::for_action(
+                                            "Toggle semantic search",
+                                            &ActivateSemanticMode,
+                                            cx,
+                                        )
+                                    }),
+                            )
+                        }),
                 )
                 .child(
                     IconButton::new("project-search-toggle-replace", Icon::Replace)
