@@ -90,6 +90,7 @@ members = [
     "crates/project_panel",
     "crates/project_panel2",
     "crates/project_symbols",
+    "crates/project_symbols2",
     "crates/quick_action_bar2",
     "crates/recent_projects",
     "crates/recent_projects2",

@@ -6510,6 +6510,7 @@ dependencies = [
  "theme2",
  "ui2",
  "util",
+ "workspace2",
 ]
 
 [[package]]
@@ -7017,6 +7018,29 @@ dependencies = [
  "theme",
  "util",
  "workspace",
+]
+
+[[package]]
+name = "project_symbols2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "editor2",
+ "futures 0.3.28",
+ "fuzzy2",
+ "gpui2",
+ "language2",
+ "lsp2",
+ "ordered-float 2.10.0",
+ "picker2",
+ "postage",
+ "project2",
+ "settings2",
+ "smol",
+ "text2",
+ "theme2",
+ "util",
+ "workspace2",
 ]
 
 [[package]]
@@ -12081,6 +12105,7 @@ dependencies = [
  "postage",
  "project2",
  "project_panel2",
+ "project_symbols2",
  "quick_action_bar2",
  "rand 0.8.5",
  "recent_projects2",
