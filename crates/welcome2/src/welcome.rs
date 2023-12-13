@@ -11,6 +11,7 @@ use gpui::{
 use settings::{Settings, SettingsStore};
 use std::sync::Arc;
 use ui::{prelude::*, Checkbox};
+use vim::VimModeSetting;
 use workspace::{
     dock::DockPosition,
     item::{Item, ItemEvent},
@@ -128,29 +129,26 @@ impl Render for WelcomePage {
                         .border_color(cx.theme().colors().border)
                         .rounded_md()
                         .child(
-                            // todo!("vim setting")
                             h_stack()
                                 .gap_2()
                                 .child(
                                     Checkbox::new(
                                         "enable-vim",
-                                        if false
-                                        /* VimSettings::get_global(cx).enabled */
-                                        {
+                                        if VimModeSetting::get_global(cx).0 {
                                             ui::Selection::Selected
                                         } else {
                                             ui::Selection::Unselected
                                         },
-                                    ),
-                                    // .on_click(cx.listener(
-                                    //     move |this, selection, cx| {
-                                    //         this.update_settings::<VimSettings>(
-                                    //             selection,
-                                    //             cx,
-                                    //             |settings, value| settings.enabled = value,
-                                    //         );
-                                    //     },
-                                    // )),
+                                    )
+                                    .on_click(cx.listener(
+                                        move |this, selection, cx| {
+                                            this.update_settings::<VimModeSetting>(
+                                                selection,
+                                                cx,
+                                                |setting, value| *setting = Some(value),
+                                            );
+                                        },
+                                    )),
                                 )
                                 .child(Label::new("Enable vim mode")),
                         )

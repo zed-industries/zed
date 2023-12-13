@@ -65,35 +65,40 @@ fn released(entity_id: EntityId, cx: &mut WindowContext) {
     });
 }
 
-// #[cfg(test)]
-// mod test {
-//     use crate::{test::VimTestContext, Vim};
-//     use editor::Editor;
-//     use gpui::{Context, Entity};
-//     use language::Buffer;
+#[cfg(test)]
+mod test {
+    use crate::{test::VimTestContext, Vim};
+    use editor::Editor;
+    use gpui::{Context, Entity};
+    use language::Buffer;
 
-//     // regression test for blur called with a different active editor
-//     #[gpui::test]
-//     async fn test_blur_focus(cx: &mut gpui::TestAppContext) {
-//         let mut cx = VimTestContext::new(cx, true).await;
+    // regression test for blur called with a different active editor
+    #[gpui::test]
+    async fn test_blur_focus(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
 
-//         let buffer = cx.build_model(|_| Buffer::new(0, 0, "a = 1\nb = 2\n"));
-//         let window2 = cx.add_window(|cx| Editor::for_buffer(buffer, None, cx));
-//         let editor2 = cx
-//             .update(|cx| window2.update(cx, |editor, cx| cx.view()))
-//             .unwrap();
+        let buffer = cx.build_model(|_| Buffer::new(0, 0, "a = 1\nb = 2\n"));
+        let window2 = cx.add_window(|cx| Editor::for_buffer(buffer, None, cx));
+        let editor2 = cx
+            .update(|cx| {
+                window2.update(cx, |_, cx| {
+                    cx.focus_self();
+                    cx.view().clone()
+                })
+            })
+            .unwrap();
 
-//         cx.update(|cx| {
-//             let vim = Vim::read(cx);
-//             assert_eq!(
-//                 vim.active_editor.unwrap().entity_id().unwrap(),
-//                 editor2.entity_id()
-//             )
-//         });
+        cx.update(|cx| {
+            let vim = Vim::read(cx);
+            assert_eq!(
+                vim.active_editor.as_ref().unwrap().entity_id(),
+                editor2.entity_id(),
+            )
+        });
 
-//         // no panic when blurring an editor in a different window.
-//         cx.update_editor(|editor1, cx| {
-//             editor1.focus_out(cx.handle().into_any(), cx);
-//         });
-//     }
-// }
+        // no panic when blurring an editor in a different window.
+        cx.update_editor(|editor1, cx| {
+            editor1.handle_blur(cx);
+        });
+    }
+}
