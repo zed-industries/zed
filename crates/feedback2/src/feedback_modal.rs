@@ -53,7 +53,7 @@ pub struct FeedbackModal {
     email_address_editor: View<Editor>,
     awaiting_submission: bool,
     user_submitted: bool,
-    discarded: bool,
+    user_discarded: bool,
     character_count: i32,
 }
 
@@ -71,7 +71,7 @@ impl ModalView for FeedbackModal {
             return true;
         }
 
-        if self.discarded {
+        if self.user_discarded {
             return true;
         }
 
@@ -85,7 +85,7 @@ impl ModalView for FeedbackModal {
         cx.spawn(move |this, mut cx| async move {
             if answer.await.ok() == Some(0) {
                 this.update(&mut cx, |this, cx| {
-                    this.discarded = true;
+                    this.user_discarded = true;
                     cx.emit(DismissEvent)
                 })
                 .log_err();
@@ -184,7 +184,7 @@ impl FeedbackModal {
             email_address_editor,
             awaiting_submission: false,
             user_submitted: false,
-            discarded: false,
+            user_discarded: false,
             character_count: 0,
         }
     }
