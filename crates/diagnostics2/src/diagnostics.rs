@@ -13,10 +13,10 @@ use editor::{
 };
 use futures::future::try_join_all;
 use gpui::{
-    actions, div, AnyElement, AnyView, AppContext, Context, Div, EventEmitter, FocusEvent,
-    FocusHandle, Focusable, FocusableElement, FocusableView, InteractiveElement, IntoElement,
-    Model, ParentElement, Render, SharedString, Styled, Subscription, Task, View, ViewContext,
-    VisualContext, WeakView, WindowContext,
+    actions, div, AnyElement, AnyView, AppContext, Context, Div, EventEmitter, FocusHandle,
+    Focusable, FocusableView, InteractiveElement, IntoElement, Model, ParentElement, Render,
+    SharedString, Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView,
+    WindowContext,
 };
 use language::{
     Anchor, Bias, Buffer, Diagnostic, DiagnosticEntry, DiagnosticSeverity, Point, Selection,
@@ -109,7 +109,6 @@ impl Render for ProjectDiagnosticsEditor {
         div()
             .track_focus(&self.focus_handle)
             .size_full()
-            .on_focus_in(cx.listener(Self::focus_in))
             .on_action(cx.listener(Self::toggle_warnings))
             .child(child)
     }
@@ -149,6 +148,11 @@ impl ProjectDiagnosticsEditor {
                 _ => {}
             });
 
+        let focus_handle = cx.focus_handle();
+
+        let focus_in_subscription =
+            cx.on_focus_in(&focus_handle, |diagnostics, cx| diagnostics.focus_in(cx));
+
         let excerpts = cx.build_model(|cx| MultiBuffer::new(project_handle.read(cx).replica_id()));
         let editor = cx.build_view(|cx| {
             let mut editor =
@@ -171,13 +175,17 @@ impl ProjectDiagnosticsEditor {
             summary,
             workspace,
             excerpts,
-            focus_handle: cx.focus_handle(),
+            focus_handle,
             editor,
             path_states: Default::default(),
             paths_to_update: HashMap::default(),
             include_warnings: ProjectDiagnosticsSettings::get_global(cx).include_warnings,
             current_diagnostics: HashMap::default(),
-            _subscriptions: vec![project_event_subscription, editor_event_subscription],
+            _subscriptions: vec![
+                project_event_subscription,
+                editor_event_subscription,
+                focus_in_subscription,
+            ],
         };
         this.update_excerpts(None, cx);
         this
@@ -202,7 +210,7 @@ impl ProjectDiagnosticsEditor {
         cx.notify();
     }
 
-    fn focus_in(&mut self, _: &FocusEvent, cx: &mut ViewContext<Self>) {
+    fn focus_in(&mut self, cx: &mut ViewContext<Self>) {
         if self.focus_handle.is_focused(cx) && !self.path_states.is_empty() {
             self.editor.focus_handle(cx).focus(cx)
         }

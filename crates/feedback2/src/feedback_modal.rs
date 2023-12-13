@@ -53,6 +53,7 @@ pub struct FeedbackModal {
     email_address_editor: View<Editor>,
     awaiting_submission: bool,
     user_submitted: bool,
+    discarded: bool,
     character_count: i32,
 }
 
@@ -64,21 +65,35 @@ impl FocusableView for FeedbackModal {
 impl EventEmitter<DismissEvent> for FeedbackModal {}
 
 impl ModalView for FeedbackModal {
-    fn dismiss(&mut self, cx: &mut ViewContext<Self>) -> Task<bool> {
+    fn on_before_dismiss(&mut self, cx: &mut ViewContext<Self>) -> bool {
         if self.user_submitted {
             self.set_user_submitted(false, cx);
-            return cx.spawn(|_, _| async { true });
+            return true;
+        }
+
+        if self.discarded {
+            return true;
         }
 
         let has_feedback = self.feedback_editor.read(cx).text_option(cx).is_some();
-
         if !has_feedback {
-            return cx.spawn(|_, _| async { true });
+            return true;
         }
 
         let answer = cx.prompt(PromptLevel::Info, "Discard feedback?", &["Yes", "No"]);
 
-        cx.spawn(|_, _| async { answer.await.ok() == Some(0) })
+        cx.spawn(move |this, mut cx| async move {
+            if answer.await.ok() == Some(0) {
+                this.update(&mut cx, |this, cx| {
+                    this.discarded = true;
+                    cx.emit(DismissEvent)
+                })
+                .log_err();
+            }
+        })
+        .detach();
+
+        false
     }
 }
 
@@ -133,7 +148,8 @@ impl FeedbackModal {
         });
 
         // Moved here because providing it inline breaks rustfmt
-        let placeholder_text = "You can use markdown to organize your feedback wiht add code and links, or organize feedback.";
+        let placeholder_text =
+            "You can use markdown to organize your feedback with code and links.";
 
         let feedback_editor = cx.build_view(|cx| {
             let mut editor = Editor::for_buffer(buffer, Some(project.clone()), cx);
@@ -168,6 +184,7 @@ impl FeedbackModal {
             email_address_editor,
             awaiting_submission: false,
             user_submitted: false,
+            discarded: false,
             character_count: 0,
         }
     }

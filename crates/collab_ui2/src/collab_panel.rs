@@ -19,6 +19,7 @@ mod contact_finder;
 use contact_finder::ContactFinder;
 use menu::{Cancel, Confirm, SelectNext, SelectPrev};
 use rpc::proto::{self, PeerId};
+use smallvec::SmallVec;
 use theme::{ActiveTheme, ThemeSettings};
 // use context_menu::{ContextMenu, ContextMenuItem};
 // use db::kvp::KEY_VALUE_STORE;
@@ -1155,7 +1156,7 @@ impl CollabPanel {
         let tooltip = format!("Follow {}", user.github_login);
 
         ListItem::new(SharedString::from(user.github_login.clone()))
-            .start_slot(Avatar::new(user.avatar.clone().unwrap()))
+            .start_slot(Avatar::new(user.avatar_uri.clone()))
             .child(Label::new(user.github_login.clone()))
             .end_slot(if is_pending {
                 Label::new("Calling").color(Color::Muted).into_any_element()
@@ -2414,44 +2415,45 @@ impl CollabPanel {
         let busy = contact.busy || calling;
         let user_id = contact.user.id;
         let github_login = SharedString::from(contact.user.github_login.clone());
-        let mut item = ListItem::new(github_login.clone())
-            .on_click(cx.listener(move |this, _, cx| this.call(user_id, cx)))
-            .child(
-                h_stack()
-                    .w_full()
-                    .justify_between()
-                    .child(Label::new(github_login.clone()))
-                    .when(calling, |el| {
-                        el.child(Label::new("Calling").color(Color::Muted))
-                    })
-                    .when(!calling, |el| {
-                        el.child(
-                            div()
-                                .id("remove_contact")
-                                .invisible()
-                                .group_hover("", |style| style.visible())
-                                .child(
-                                    IconButton::new("remove_contact", Icon::Close)
-                                        .icon_color(Color::Muted)
-                                        .tooltip(|cx| Tooltip::text("Remove Contact", cx))
-                                        .on_click(cx.listener({
-                                            let github_login = github_login.clone();
-                                            move |this, _, cx| {
-                                                this.remove_contact(user_id, &github_login, cx);
-                                            }
-                                        })),
-                                ),
-                        )
-                    }),
-            )
-            .start_slot(
-                // todo!() handle contacts with no avatar
-                Avatar::new(contact.user.avatar.clone().unwrap())
-                    .availability_indicator(if online { Some(!busy) } else { None }),
-            )
-            .when(online && !busy, |el| {
-                el.on_click(cx.listener(move |this, _, cx| this.call(user_id, cx)))
-            });
+        let mut item =
+            ListItem::new(github_login.clone())
+                .on_click(cx.listener(move |this, _, cx| this.call(user_id, cx)))
+                .child(
+                    h_stack()
+                        .w_full()
+                        .justify_between()
+                        .child(Label::new(github_login.clone()))
+                        .when(calling, |el| {
+                            el.child(Label::new("Calling").color(Color::Muted))
+                        })
+                        .when(!calling, |el| {
+                            el.child(
+                                div()
+                                    .id("remove_contact")
+                                    .invisible()
+                                    .group_hover("", |style| style.visible())
+                                    .child(
+                                        IconButton::new("remove_contact", Icon::Close)
+                                            .icon_color(Color::Muted)
+                                            .tooltip(|cx| Tooltip::text("Remove Contact", cx))
+                                            .on_click(cx.listener({
+                                                let github_login = github_login.clone();
+                                                move |this, _, cx| {
+                                                    this.remove_contact(user_id, &github_login, cx);
+                                                }
+                                            })),
+                                    ),
+                            )
+                        }),
+                )
+                .start_slot(
+                    // todo!() handle contacts with no avatar
+                    Avatar::new(contact.user.avatar_uri.clone())
+                        .availability_indicator(if online { Some(!busy) } else { None }),
+                )
+                .when(online && !busy, |el| {
+                    el.on_click(cx.listener(move |this, _, cx| this.call(user_id, cx)))
+                });
 
         div()
             .id(github_login.clone())
@@ -2523,7 +2525,7 @@ impl CollabPanel {
                     .child(Label::new(github_login.clone()))
                     .child(h_stack().children(controls)),
             )
-            .start_slot::<Avatar>(user.avatar.clone().map(|avatar| Avatar::new(avatar)))
+            .start_slot::<Avatar>(Avatar::new(user.avatar_uri))
     }
 
     fn render_contact_placeholder(
@@ -2581,7 +2583,9 @@ impl CollabPanel {
             let result = FacePile {
                 faces: participants
                     .iter()
-                    .filter_map(|user| Some(Avatar::new(user.avatar.clone()?).into_any_element()))
+                    .filter_map(|user| {
+                        Some(Avatar::new(user.avatar_uri.clone()).into_any_element())
+                    })
                     .take(FACEPILE_LIMIT)
                     .chain(if extra_count > 0 {
                         // todo!() @nate - this label looks wrong.
@@ -2589,7 +2593,7 @@ impl CollabPanel {
                     } else {
                         None
                     })
-                    .collect::<Vec<_>>(),
+                    .collect::<SmallVec<_>>(),
             };
 
             Some(result)

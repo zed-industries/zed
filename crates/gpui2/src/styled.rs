@@ -303,7 +303,7 @@ pub trait Styled: Sized {
 
     /// Sets the element to allow a flex item to grow to fill any available space.
     /// [Docs](https://tailwindcss.com/docs/flex-grow)
-    fn grow(mut self) -> Self {
+    fn flex_grow(mut self) -> Self {
         self.style().flex_grow = Some(1.);
         self
     }

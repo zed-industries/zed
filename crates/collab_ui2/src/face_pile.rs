@@ -1,11 +1,11 @@
 use gpui::{
-    div, AnyElement, Div, ElementId, IntoElement, ParentElement as _, RenderOnce, Styled,
-    WindowContext,
+    div, AnyElement, Div, ElementId, IntoElement, ParentElement, RenderOnce, Styled, WindowContext,
 };
+use smallvec::SmallVec;
 
 #[derive(Default, IntoElement)]
 pub struct FacePile {
-    pub faces: Vec<AnyElement>,
+    pub faces: SmallVec<[AnyElement; 2]>,
 }
 
 impl RenderOnce for FacePile {
@@ -25,8 +25,8 @@ impl RenderOnce for FacePile {
     }
 }
 
-impl Extend<AnyElement> for FacePile {
-    fn extend<T: IntoIterator<Item = AnyElement>>(&mut self, children: T) {
-        self.faces.extend(children);
+impl ParentElement for FacePile {
+    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement; 2]> {
+        &mut self.faces
     }
 }

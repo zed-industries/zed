@@ -164,24 +164,24 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 collab_ui::collab_panel::CollabPanel::load(workspace_handle.clone(), cx.clone());
             let chat_panel =
                 collab_ui::chat_panel::ChatPanel::load(workspace_handle.clone(), cx.clone());
-            // let notification_panel = collab_ui::notification_panel::NotificationPanel::load(
-            //     workspace_handle.clone(),
-            //     cx.clone(),
-            // );
+            let notification_panel = collab_ui::notification_panel::NotificationPanel::load(
+                workspace_handle.clone(),
+                cx.clone(),
+            );
             let (
                 project_panel,
                 terminal_panel,
                 assistant_panel,
                 channels_panel,
                 chat_panel,
-                //     notification_panel,
+                notification_panel,
             ) = futures::try_join!(
                 project_panel,
                 terminal_panel,
                 assistant_panel,
                 channels_panel,
                 chat_panel,
-                //     notification_panel,
+                notification_panel,
             )?;
 
             workspace_handle.update(&mut cx, |workspace, cx| {
@@ -191,7 +191,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 workspace.add_panel(assistant_panel, cx);
                 workspace.add_panel(channels_panel, cx);
                 workspace.add_panel(chat_panel, cx);
-                //     workspace.add_panel(notification_panel, cx);
+                workspace.add_panel(notification_panel, cx);
 
                 // if !was_deserialized
                 //     && workspace

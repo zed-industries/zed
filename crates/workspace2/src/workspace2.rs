@@ -363,7 +363,7 @@ impl AppState {
         let languages = Arc::new(LanguageRegistry::test());
         let http_client = util::http::FakeHttpClient::with_404_response();
         let client = Client::new(http_client.clone(), cx);
-        let user_store = cx.build_model(|cx| UserStore::new(client.clone(), http_client, cx));
+        let user_store = cx.build_model(|cx| UserStore::new(client.clone(), cx));
         let workspace_store = cx.build_model(|cx| WorkspaceStore::new(client.clone(), cx));
 
         theme::init(theme::LoadThemes::JustBase, cx);
@@ -530,6 +530,11 @@ impl Workspace {
                 _ => {}
             }
             cx.notify()
+        })
+        .detach();
+        cx.on_blur_window(|this, cx| {
+            let focus_handle = this.focus_handle(cx);
+            cx.focus(&focus_handle);
         })
         .detach();
 
@@ -1633,6 +1638,7 @@ impl Workspace {
                             panel.focus_handle(cx).focus(cx);
                             reveal_dock = true;
                         } else {
+                            // todo!()
                             // if panel.is_zoomed(cx) {
                             //     dock.set_open(false, cx);
                             // }
@@ -3621,6 +3627,7 @@ impl Render for Workspace {
                     .flex_1()
                     .w_full()
                     .flex()
+                    .flex_col()
                     .overflow_hidden()
                     .border_t()
                     .border_b()
@@ -3661,7 +3668,6 @@ impl Render for Workspace {
                         div()
                             .flex()
                             .flex_row()
-                            .flex_1()
                             .h_full()
                             // Left Dock
                             .child(
@@ -3677,6 +3683,7 @@ impl Render for Workspace {
                                     .flex()
                                     .flex_col()
                                     .flex_1()
+                                    .overflow_hidden()
                                     .child(self.center.render(
                                         &self.project,
                                         &self.follower_states,

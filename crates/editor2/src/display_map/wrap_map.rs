@@ -184,7 +184,6 @@ impl WrapMap {
                 Ok((snapshot, edits)) => {
                     self.snapshot = snapshot;
                     self.edits_since_sync = self.edits_since_sync.compose(&edits);
-                    cx.notify();
                 }
                 Err(wrap_task) => {
                     self.background_task = Some(cx.spawn(|this, mut cx| async move {

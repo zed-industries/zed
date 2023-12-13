@@ -288,7 +288,11 @@ impl ChatPanel {
                             ),
                     ),
             )
-            .child(div().grow().child(self.render_active_channel_messages(cx)))
+            .child(
+                div()
+                    .flex_grow()
+                    .child(self.render_active_channel_messages(cx)),
+            )
             .child(
                 div()
                     .z_index(1)
@@ -364,13 +368,7 @@ impl ChatPanel {
         if !is_continuation {
             result = result.child(
                 h_stack()
-                    .children(
-                        message
-                            .sender
-                            .avatar
-                            .clone()
-                            .map(|avatar| Avatar::new(avatar)),
-                    )
+                    .child(Avatar::new(message.sender.avatar_uri.clone()))
                     .child(Label::new(message.sender.github_login.clone()))
                     .child(Label::new(format_timestamp(
                         message.timestamp,
@@ -659,7 +657,7 @@ mod tests {
             timestamp: OffsetDateTime::now_utc(),
             sender: Arc::new(client::User {
                 github_login: "fgh".into(),
-                avatar: None,
+                avatar_uri: "avatar_fgh".into(),
                 id: 103,
             }),
             nonce: 5,

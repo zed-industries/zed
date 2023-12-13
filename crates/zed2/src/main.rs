@@ -143,7 +143,7 @@ fn main() {
 
         language::init(cx);
         languages::init(languages.clone(), node_runtime.clone(), cx);
-        let user_store = cx.build_model(|cx| UserStore::new(client.clone(), http.clone(), cx));
+        let user_store = cx.build_model(|cx| UserStore::new(client.clone(), cx));
         let workspace_store = cx.build_model(|cx| WorkspaceStore::new(client.clone(), cx));
 
         cx.set_global(client.clone());
@@ -220,6 +220,7 @@ fn main() {
         // activity_indicator::init(cx);
         // language_tools::init(cx);
         call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
+        notifications::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         collab_ui::init(&app_state, cx);
         feedback::init(cx);
         welcome::init(cx);

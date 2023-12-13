@@ -1250,6 +1250,7 @@ impl CompletionsMenu {
                         let documentation_label =
                             if let Some(Documentation::SingleLine(text)) = documentation {
                                 Some(SharedString::from(text.clone()))
+                                    .filter(|text| !text.trim().is_empty())
                             } else {
                                 None
                             };
@@ -2171,7 +2172,6 @@ impl Editor {
 
         self.blink_manager.update(cx, BlinkManager::pause_blinking);
         cx.emit(EditorEvent::SelectionsChanged { local });
-        cx.emit(SearchEvent::MatchesInvalidated);
 
         if self.selections.disjoint_anchors().len() == 1 {
             cx.emit(SearchEvent::ActiveMatchChanged)
@@ -8300,7 +8300,9 @@ impl Editor {
         self.style.as_ref()
     }
 
-    pub fn set_wrap_width(&self, width: Option<Pixels>, cx: &mut AppContext) -> bool {
+    // Called by the element. This method is not designed to be called outside of the editor
+    // element's layout code because it does not notify when rewrapping is computed synchronously.
+    pub(crate) fn set_wrap_width(&self, width: Option<Pixels>, cx: &mut AppContext) -> bool {
         self.display_map
             .update(cx, |map, cx| map.set_wrap_width(width, cx))
     }

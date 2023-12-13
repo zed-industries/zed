@@ -29,7 +29,7 @@ pub struct GroupStyle {
     pub style: Box<StyleRefinement>,
 }
 
-pub trait InteractiveElement: Sized + Element {
+pub trait InteractiveElement: Sized {
     fn interactivity(&mut self) -> &mut Interactivity;
 
     fn group(mut self, group: impl Into<SharedString>) -> Self {
@@ -61,6 +61,10 @@ pub trait InteractiveElement: Sized + Element {
     }
 
     fn hover(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self {
+        debug_assert!(
+            self.interactivity().hover_style.is_none(),
+            "hover style already set"
+        );
         self.interactivity().hover_style = Some(Box::new(f(StyleRefinement::default())));
         self
     }
@@ -436,7 +440,6 @@ pub trait StatefulInteractiveElement: InteractiveElement {
             "calling tooltip more than once on the same element is not supported"
         );
         self.interactivity().tooltip_builder = Some(Rc::new(build_tooltip));
-
         self
     }
 }
@@ -455,79 +458,6 @@ pub trait FocusableElement: InteractiveElement {
         Self: Sized,
     {
         self.interactivity().in_focus_style = Some(Box::new(f(StyleRefinement::default())));
-        self
-    }
-
-    fn on_focus(mut self, listener: impl Fn(&FocusEvent, &mut WindowContext) + 'static) -> Self
-    where
-        Self: Sized,
-    {
-        self.interactivity()
-            .focus_listeners
-            .push(Box::new(move |focus_handle, event, cx| {
-                if event.focused.as_ref() == Some(focus_handle) {
-                    listener(event, cx)
-                }
-            }));
-        self
-    }
-
-    fn on_blur(mut self, listener: impl Fn(&FocusEvent, &mut WindowContext) + 'static) -> Self
-    where
-        Self: Sized,
-    {
-        self.interactivity()
-            .focus_listeners
-            .push(Box::new(move |focus_handle, event, cx| {
-                if event.blurred.as_ref() == Some(focus_handle) {
-                    listener(event, cx)
-                }
-            }));
-        self
-    }
-
-    fn on_focus_in(mut self, listener: impl Fn(&FocusEvent, &mut WindowContext) + 'static) -> Self
-    where
-        Self: Sized,
-    {
-        self.interactivity()
-            .focus_listeners
-            .push(Box::new(move |focus_handle, event, cx| {
-                let descendant_blurred = event
-                    .blurred
-                    .as_ref()
-                    .map_or(false, |blurred| focus_handle.contains(blurred, cx));
-                let descendant_focused = event
-                    .focused
-                    .as_ref()
-                    .map_or(false, |focused| focus_handle.contains(focused, cx));
-
-                if !descendant_blurred && descendant_focused {
-                    listener(event, cx)
-                }
-            }));
-        self
-    }
-
-    fn on_focus_out(mut self, listener: impl Fn(&FocusEvent, &mut WindowContext) + 'static) -> Self
-    where
-        Self: Sized,
-    {
-        self.interactivity()
-            .focus_listeners
-            .push(Box::new(move |focus_handle, event, cx| {
-                let descendant_blurred = event
-                    .blurred
-                    .as_ref()
-                    .map_or(false, |blurred| focus_handle.contains(blurred, cx));
-                let descendant_focused = event
-                    .focused
-                    .as_ref()
-                    .map_or(false, |focused| focus_handle.contains(focused, cx));
-                if descendant_blurred && !descendant_focused {
-                    listener(event, cx)
-                }
-            }));
         self
     }
 }
@@ -726,7 +656,6 @@ pub struct Interactivity {
     pub focusable: bool,
     pub tracked_focus_handle: Option<FocusHandle>,
     pub scroll_handle: Option<ScrollHandle>,
-    pub focus_listeners: FocusListeners,
     pub group: Option<SharedString>,
     pub base_style: Box<StyleRefinement>,
     pub focus_style: Option<Box<StyleRefinement>>,
@@ -827,6 +756,26 @@ impl Interactivity {
             if hovered {
                 cx.set_cursor_style(mouse_cursor);
             }
+        }
+
+        // If this element can be focused, register a mouse down listener
+        // that will automatically transfer focus when hitting the element.
+        // This behavior can be suppressed by using `cx.prevent_default()`.
+        if let Some(focus_handle) = element_state.focus_handle.clone() {
+            cx.on_mouse_event({
+                let interactive_bounds = interactive_bounds.clone();
+                move |event: &MouseDownEvent, phase, cx| {
+                    if phase == DispatchPhase::Bubble
+                        && !cx.default_prevented()
+                        && interactive_bounds.visibly_contains(&event.position, cx)
+                    {
+                        cx.focus(&focus_handle);
+                        // If there is a parent that is also focusable, prevent it
+                        // from trasferring focus because we already did so.
+                        cx.prevent_default();
+                    }
+                }
+            });
         }
 
         for listener in self.mouse_down_listeners.drain(..) {
@@ -1058,7 +1007,7 @@ impl Interactivity {
         }
 
         let active_state = element_state.clicked_state.clone();
-        if !active_state.borrow().is_clicked() {
+        if active_state.borrow().is_clicked() {
             cx.on_mouse_event(move |_: &MouseUpEvent, phase, cx| {
                 if phase == DispatchPhase::Capture {
                     *active_state.borrow_mut() = ElementClickedState::default();
@@ -1072,7 +1021,7 @@ impl Interactivity {
                 .and_then(|group_active| GroupBounds::get(&group_active.group, cx));
             let interactive_bounds = interactive_bounds.clone();
             cx.on_mouse_event(move |down: &MouseDownEvent, phase, cx| {
-                if phase == DispatchPhase::Bubble {
+                if phase == DispatchPhase::Bubble && !cx.default_prevented() {
                     let group =
                         active_group_bounds.map_or(false, |bounds| bounds.contains(&down.position));
                     let element = interactive_bounds.visibly_contains(&down.position, cx);
@@ -1086,6 +1035,10 @@ impl Interactivity {
 
         let overflow = style.overflow;
         if overflow.x == Overflow::Scroll || overflow.y == Overflow::Scroll {
+            if let Some(scroll_handle) = &self.scroll_handle {
+                scroll_handle.0.borrow_mut().overflow = overflow;
+            }
+
             let scroll_offset = element_state
                 .scroll_offset
                 .get_or_insert_with(Rc::default)
@@ -1147,13 +1100,6 @@ impl Interactivity {
 
                 for (action_type, listener) in self.action_listeners {
                     cx.on_action(action_type, listener)
-                }
-
-                if let Some(focus_handle) = element_state.focus_handle.as_ref() {
-                    for listener in self.focus_listeners {
-                        let focus_handle = focus_handle.clone();
-                        cx.on_focus_changed(move |event, cx| listener(&focus_handle, event, cx));
-                    }
                 }
 
                 f(style, scroll_offset.unwrap_or_default(), cx)
@@ -1259,7 +1205,6 @@ impl Default for Interactivity {
             focusable: false,
             tracked_focus_handle: None,
             scroll_handle: None,
-            focus_listeners: Vec::default(),
             // scroll_offset: Point::default(),
             group: None,
             base_style: Box::new(StyleRefinement::default()),
@@ -1387,16 +1332,16 @@ where
 
 impl<E> IntoElement for Focusable<E>
 where
-    E: Element,
+    E: IntoElement,
 {
-    type Element = E;
+    type Element = E::Element;
 
     fn element_id(&self) -> Option<ElementId> {
         self.element.element_id()
     }
 
     fn into_element(self) -> Self::Element {
-        self.element
+        self.element.into_element()
     }
 }
 
@@ -1490,6 +1435,7 @@ struct ScrollHandleState {
     bounds: Bounds<Pixels>,
     child_bounds: Vec<Bounds<Pixels>>,
     requested_scroll_top: Option<(usize, Pixels)>,
+    overflow: Point<Overflow>,
 }
 
 #[derive(Clone)]
@@ -1535,12 +1481,22 @@ impl ScrollHandle {
             return;
         };
 
-        let scroll_offset = state.offset.borrow().y;
+        let mut scroll_offset = state.offset.borrow_mut();
 
-        if bounds.top() + scroll_offset < state.bounds.top() {
-            state.offset.borrow_mut().y = state.bounds.top() - bounds.top();
-        } else if bounds.bottom() + scroll_offset > state.bounds.bottom() {
-            state.offset.borrow_mut().y = state.bounds.bottom() - bounds.bottom();
+        if state.overflow.y == Overflow::Scroll {
+            if bounds.top() + scroll_offset.y < state.bounds.top() {
+                scroll_offset.y = state.bounds.top() - bounds.top();
+            } else if bounds.bottom() + scroll_offset.y > state.bounds.bottom() {
+                scroll_offset.y = state.bounds.bottom() - bounds.bottom();
+            }
+        }
+
+        if state.overflow.x == Overflow::Scroll {
+            if bounds.left() + scroll_offset.x < state.bounds.left() {
+                scroll_offset.x = state.bounds.left() - bounds.left();
+            } else if bounds.right() + scroll_offset.x > state.bounds.right() {
+                scroll_offset.x = state.bounds.right() - bounds.right();
+            }
         }
     }
 

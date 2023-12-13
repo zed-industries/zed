@@ -1753,7 +1753,7 @@ dependencies = [
 
 [[package]]
 name = "collab"
-version = "0.30.1"
+version = "0.31.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2046,8 +2046,10 @@ dependencies = [
  "editor2",
  "env_logger 0.9.3",
  "fuzzy2",
+ "go_to_line2",
  "gpui2",
  "language2",
+ "menu2",
  "picker2",
  "project2",
  "serde",
@@ -11423,6 +11425,7 @@ dependencies = [
  "theme_selector2",
  "ui2",
  "util",
+ "vim2",
  "workspace2",
 ]
 
@@ -11879,7 +11882,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.117.0"
+version = "0.118.0"
 dependencies = [
  "activity_indicator",
  "ai",
@@ -12071,6 +12074,7 @@ dependencies = [
  "lsp2",
  "menu2",
  "node_runtime",
+ "notifications2",
  "num_cpus",
  "outline2",
  "parking_lot 0.11.2",

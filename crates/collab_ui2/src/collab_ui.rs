@@ -39,6 +39,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
     collab_panel::init(cx);
     channel_view::init(cx);
     chat_panel::init(cx);
+    notification_panel::init(cx);
     notifications::init(&app_state, cx);
 
     // cx.add_global_action(toggle_screen_sharing);

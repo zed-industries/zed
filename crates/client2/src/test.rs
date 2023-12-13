@@ -8,7 +8,6 @@ use rpc::{
     ConnectionId, Peer, Receipt, TypedEnvelope,
 };
 use std::sync::Arc;
-use util::http::FakeHttpClient;
 
 pub struct FakeServer {
     peer: Arc<Peer>,
@@ -195,8 +194,7 @@ impl FakeServer {
         client: Arc<Client>,
         cx: &mut TestAppContext,
     ) -> Model<UserStore> {
-        let http_client = FakeHttpClient::with_404_response();
-        let user_store = cx.build_model(|cx| UserStore::new(client, http_client, cx));
+        let user_store = cx.build_model(|cx| UserStore::new(client, cx));
         assert_eq!(
             self.receive::<proto::GetUsers>()
                 .await

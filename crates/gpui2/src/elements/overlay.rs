@@ -106,41 +106,45 @@ impl Element for Overlay {
             size: cx.viewport_size(),
         };
 
-        match self.fit_mode {
-            OverlayFitMode::SnapToWindow => {
-                // Snap the horizontal edges of the overlay to the horizontal edges of the window if
-                // its horizontal bounds overflow
-                if desired.right() > limits.right() {
-                    desired.origin.x -= desired.right() - limits.right();
-                } else if desired.left() < limits.left() {
-                    desired.origin.x = limits.origin.x;
-                }
+        if self.fit_mode == OverlayFitMode::SwitchAnchor {
+            let mut anchor_corner = self.anchor_corner;
 
-                // Snap the vertical edges of the overlay to the vertical edges of the window if
-                // its vertical bounds overflow.
-                if desired.bottom() > limits.bottom() {
-                    desired.origin.y -= desired.bottom() - limits.bottom();
-                } else if desired.top() < limits.top() {
-                    desired.origin.y = limits.origin.y;
-                }
-            }
-            OverlayFitMode::SwitchAnchor => {
-                let mut anchor_corner = self.anchor_corner;
-
-                if desired.left() < limits.left() || desired.right() > limits.right() {
+            if desired.left() < limits.left() || desired.right() > limits.right() {
+                let switched = anchor_corner
+                    .switch_axis(Axis::Horizontal)
+                    .get_bounds(origin, size);
+                if !(switched.left() < limits.left() || switched.right() > limits.right()) {
                     anchor_corner = anchor_corner.switch_axis(Axis::Horizontal);
-                }
-
-                if bounds.top() < limits.top() || bounds.bottom() > limits.bottom() {
-                    anchor_corner = anchor_corner.switch_axis(Axis::Vertical);
-                }
-
-                // Update bounds if needed
-                if anchor_corner != self.anchor_corner {
-                    desired = anchor_corner.get_bounds(origin, size)
+                    desired = switched
                 }
             }
-            OverlayFitMode::None => {}
+
+            if desired.top() < limits.top() || desired.bottom() > limits.bottom() {
+                let switched = anchor_corner
+                    .switch_axis(Axis::Vertical)
+                    .get_bounds(origin, size);
+                if !(switched.top() < limits.top() || switched.bottom() > limits.bottom()) {
+                    desired = switched;
+                }
+            }
+        }
+
+        // Snap the horizontal edges of the overlay to the horizontal edges of the window if
+        // its horizontal bounds overflow, aligning to the left if it is wider than the limits.
+        if desired.right() > limits.right() {
+            desired.origin.x -= desired.right() - limits.right();
+        }
+        if desired.left() < limits.left() {
+            desired.origin.x = limits.origin.x;
+        }
+
+        // Snap the vertical edges of the overlay to the vertical edges of the window if
+        // its vertical bounds overflow, aligning to the top if it is taller than the limits.
+        if desired.bottom() > limits.bottom() {
+            desired.origin.y -= desired.bottom() - limits.bottom();
+        }
+        if desired.top() < limits.top() {
+            desired.origin.y = limits.origin.y;
         }
 
         cx.with_element_offset(desired.origin - bounds.origin, |cx| {
@@ -170,11 +174,10 @@ enum Axis {
     Vertical,
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq)]
 pub enum OverlayFitMode {
     SnapToWindow,
     SwitchAnchor,
-    None,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

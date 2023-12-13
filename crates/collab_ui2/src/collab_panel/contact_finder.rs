@@ -7,7 +7,7 @@ use gpui::{
 use picker::{Picker, PickerDelegate};
 use std::sync::Arc;
 use theme::ActiveTheme as _;
-use ui::prelude::*;
+use ui::{prelude::*, Avatar};
 use util::{ResultExt as _, TryFutureExt};
 use workspace::ModalView;
 
@@ -187,7 +187,7 @@ impl PickerDelegate for ContactFinderDelegate {
             div()
                 .flex_1()
                 .justify_between()
-                .children(user.avatar.clone().map(|avatar| img(avatar)))
+                .child(Avatar::new(user.avatar_uri.clone()))
                 .child(Label::new(user.github_login.clone()))
                 .children(icon_path.map(|icon_path| svg().path(icon_path))),
         )

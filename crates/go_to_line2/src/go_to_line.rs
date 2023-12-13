@@ -92,7 +92,6 @@ impl GoToLine {
         cx: &mut ViewContext<Self>,
     ) {
         match event {
-            // todo!() this isn't working...
             editor::EditorEvent::Blurred => cx.emit(DismissEvent),
             editor::EditorEvent::BufferEdited { .. } => self.highlight_current_line(cx),
             _ => {}

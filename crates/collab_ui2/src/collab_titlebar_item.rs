@@ -2,11 +2,13 @@ use crate::face_pile::FacePile;
 use call::{ActiveCall, ParticipantLocation, Room};
 use client::{proto::PeerId, Client, ParticipantIndex, User, UserStore};
 use gpui::{
-    actions, canvas, div, point, px, rems, AppContext, Div, Element, Hsla, InteractiveElement,
-    IntoElement, Model, ParentElement, Path, Render, Stateful, StatefulInteractiveElement, Styled,
-    Subscription, ViewContext, VisualContext, WeakView, WindowBounds,
+    actions, canvas, div, overlay, point, px, rems, AppContext, DismissEvent, Div, Element,
+    FocusableView, Hsla, InteractiveElement, IntoElement, Model, ParentElement, Path, Render,
+    Stateful, StatefulInteractiveElement, Styled, Subscription, ViewContext, VisualContext,
+    WeakView, WindowBounds,
 };
 use project::{Project, RepositoryEntry};
+use recent_projects::RecentProjects;
 use std::sync::Arc;
 use theme::{ActiveTheme, PlayerColors};
 use ui::{
@@ -14,7 +16,7 @@ use ui::{
     IconButton, IconElement, KeyBinding, Tooltip,
 };
 use util::ResultExt;
-use workspace::{notifications::NotifyResultExt, Workspace};
+use workspace::{notifications::NotifyResultExt, Workspace, WORKSPACE_DB};
 
 const MAX_PROJECT_NAME_LENGTH: usize = 40;
 const MAX_BRANCH_NAME_LENGTH: usize = 40;
@@ -49,7 +51,7 @@ pub struct CollabTitlebarItem {
     client: Arc<Client>,
     workspace: WeakView<Workspace>,
     //branch_popover: Option<ViewHandle<BranchList>>,
-    //project_popover: Option<ViewHandle<recent_projects::RecentProjects>>,
+    project_popover: Option<recent_projects::RecentProjects>,
     //user_menu: ViewHandle<ContextMenu>,
     _subscriptions: Vec<Subscription>,
 }
@@ -232,43 +234,41 @@ impl Render for CollabTitlebarItem {
                     })
                     .child(h_stack().px_1p5().map(|this| {
                         if let Some(user) = current_user {
-                            this.when_some(user.avatar.clone(), |this, avatar| {
-                                // TODO: Finish implementing user menu popover
-                                //
-                                this.child(
-                                    popover_menu("user-menu")
-                                        .menu(|cx| {
-                                            ContextMenu::build(cx, |menu, _| menu.header("ADADA"))
-                                        })
-                                        .trigger(
-                                            ButtonLike::new("user-menu")
-                                                .child(
-                                                    h_stack()
-                                                        .gap_0p5()
-                                                        .child(Avatar::new(avatar))
-                                                        .child(
-                                                            IconElement::new(Icon::ChevronDown)
-                                                                .color(Color::Muted),
-                                                        ),
-                                                )
-                                                .style(ButtonStyle::Subtle)
-                                                .tooltip(move |cx| {
-                                                    Tooltip::text("Toggle User Menu", cx)
-                                                }),
-                                        )
-                                        .anchor(gpui::AnchorCorner::TopRight),
-                                )
-                                // this.child(
-                                //     ButtonLike::new("user-menu")
-                                //         .child(
-                                //             h_stack().gap_0p5().child(Avatar::new(avatar)).child(
-                                //                 IconElement::new(Icon::ChevronDown).color(Color::Muted),
-                                //             ),
-                                //         )
-                                //         .style(ButtonStyle::Subtle)
-                                //         .tooltip(move |cx| Tooltip::text("Toggle User Menu", cx)),
-                                // )
-                            })
+                            // TODO: Finish implementing user menu popover
+                            //
+                            this.child(
+                                popover_menu("user-menu")
+                                    .menu(|cx| {
+                                        ContextMenu::build(cx, |menu, _| menu.header("ADADA"))
+                                    })
+                                    .trigger(
+                                        ButtonLike::new("user-menu")
+                                            .child(
+                                                h_stack()
+                                                    .gap_0p5()
+                                                    .child(Avatar::new(user.avatar_uri.clone()))
+                                                    .child(
+                                                        IconElement::new(Icon::ChevronDown)
+                                                            .color(Color::Muted),
+                                                    ),
+                                            )
+                                            .style(ButtonStyle::Subtle)
+                                            .tooltip(move |cx| {
+                                                Tooltip::text("Toggle User Menu", cx)
+                                            }),
+                                    )
+                                    .anchor(gpui::AnchorCorner::TopRight),
+                            )
+                            // this.child(
+                            //     ButtonLike::new("user-menu")
+                            //         .child(
+                            //             h_stack().gap_0p5().child(Avatar::new(avatar)).child(
+                            //                 IconElement::new(Icon::ChevronDown).color(Color::Muted),
+                            //             ),
+                            //         )
+                            //         .style(ButtonStyle::Subtle)
+                            //         .tooltip(move |cx| Tooltip::text("Toggle User Menu", cx)),
+                            // )
                         } else {
                             this.child(Button::new("sign_in", "Sign in").on_click(move |_, cx| {
                                 let client = client.clone();
@@ -330,7 +330,7 @@ impl CollabTitlebarItem {
             //             menu
             //         }),
             //         branch_popover: None,
-            //         project_popover: None,
+            project_popover: None,
             _subscriptions: subscriptions,
         }
     }
@@ -368,11 +368,27 @@ impl CollabTitlebarItem {
 
         let name = util::truncate_and_trailoff(name, MAX_PROJECT_NAME_LENGTH);
 
-        div().border().border_color(gpui::red()).child(
-            Button::new("project_name_trigger", name)
-                .style(ButtonStyle::Subtle)
-                .tooltip(move |cx| Tooltip::text("Recent Projects", cx)),
-        )
+        div()
+            .border()
+            .border_color(gpui::red())
+            .child(
+                Button::new("project_name_trigger", name)
+                    .style(ButtonStyle::Subtle)
+                    .tooltip(move |cx| Tooltip::text("Recent Projects", cx))
+                    .on_click(cx.listener(|this, _, cx| {
+                        this.toggle_project_menu(&ToggleProjectMenu, cx);
+                    })),
+            )
+            .children(self.project_popover.as_ref().map(|popover| {
+                overlay().child(
+                    div()
+                        .min_w_56()
+                        .on_mouse_down_out(cx.listener_for(&popover.picker, |picker, _, cx| {
+                            picker.cancel(&Default::default(), cx)
+                        }))
+                        .child(popover.picker.clone()),
+                )
+            }))
     }
 
     pub fn render_project_branch(&self, cx: &mut ViewContext<Self>) -> Option<impl Element> {
@@ -424,27 +440,21 @@ impl CollabTitlebarItem {
         current_user: &Arc<User>,
     ) -> Option<FacePile> {
         let followers = project_id.map_or(&[] as &[_], |id| room.followers_for(peer_id, id));
-        let mut pile = FacePile::default();
-        pile.extend(
-            user.avatar
-                .clone()
-                .map(|avatar| {
-                    div()
-                        .child(
-                            Avatar::new(avatar.clone())
-                                .grayscale(!is_present)
-                                .border_color(if is_speaking {
-                                    gpui::blue()
-                                } else if is_muted {
-                                    gpui::red()
-                                } else {
-                                    Hsla::default()
-                                }),
-                        )
-                        .into_any_element()
-                })
-                .into_iter()
-                .chain(followers.iter().filter_map(|follower_peer_id| {
+
+        let pile = FacePile::default().child(
+            div()
+                .child(
+                    Avatar::new(user.avatar_uri.clone())
+                        .grayscale(!is_present)
+                        .border_color(if is_speaking {
+                            gpui::blue()
+                        } else if is_muted {
+                            gpui::red()
+                        } else {
+                            Hsla::default()
+                        }),
+                )
+                .children(followers.iter().filter_map(|follower_peer_id| {
                     let follower = room
                         .remote_participants()
                         .values()
@@ -454,12 +464,10 @@ impl CollabTitlebarItem {
                                 .then_some(current_user)
                         })?
                         .clone();
-                    follower
-                        .avatar
-                        .clone()
-                        .map(|avatar| div().child(Avatar::new(avatar.clone())).into_any_element())
+                    Some(div().child(Avatar::new(follower.avatar_uri.clone())))
                 })),
         );
+
         Some(pile)
     }
 
@@ -620,43 +628,40 @@ impl CollabTitlebarItem {
     //     cx.notify();
     // }
 
-    // pub fn toggle_project_menu(&mut self, _: &ToggleProjectMenu, cx: &mut ViewContext<Self>) {
-    //     let workspace = self.workspace.clone();
-    //     if self.project_popover.take().is_none() {
-    //         cx.spawn(|this, mut cx| async move {
-    //             let workspaces = WORKSPACE_DB
-    //                 .recent_workspaces_on_disk()
-    //                 .await
-    //                 .unwrap_or_default()
-    //                 .into_iter()
-    //                 .map(|(_, location)| location)
-    //                 .collect();
+    pub fn toggle_project_menu(&mut self, _: &ToggleProjectMenu, cx: &mut ViewContext<Self>) {
+        let workspace = self.workspace.clone();
+        if self.project_popover.take().is_none() {
+            cx.spawn(|this, mut cx| async move {
+                let workspaces = WORKSPACE_DB
+                    .recent_workspaces_on_disk()
+                    .await
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|(_, location)| location)
+                    .collect();
 
-    //             let workspace = workspace.clone();
-    //             this.update(&mut cx, move |this, cx| {
-    //                 let view = cx.add_view(|cx| build_recent_projects(workspace, workspaces, cx));
+                let workspace = workspace.clone();
+                this.update(&mut cx, move |this, cx| {
+                    let view = RecentProjects::open_popover(workspace, workspaces, cx);
 
-    //                 cx.subscribe(&view, |this, _, event, cx| {
-    //                     match event {
-    //                         PickerEvent::Dismiss => {
-    //                             this.project_popover = None;
-    //                         }
-    //                     }
-
-    //                     cx.notify();
-    //                 })
-    //                 .detach();
-    //                 cx.focus(&view);
-    //                 this.branch_popover.take();
-    //                 this.project_popover = Some(view);
-    //                 cx.notify();
-    //             })
-    //             .log_err();
-    //         })
-    //         .detach();
-    //     }
-    //     cx.notify();
-    // }
+                    cx.subscribe(&view.picker, |this, _, _: &DismissEvent, cx| {
+                        this.project_popover = None;
+                        cx.notify();
+                    })
+                    .detach();
+                    let focus_handle = view.focus_handle(cx);
+                    cx.focus(&focus_handle);
+                    // todo!()
+                    //this.branch_popover.take();
+                    this.project_popover = Some(view);
+                    cx.notify();
+                })
+                .log_err();
+            })
+            .detach();
+        }
+        cx.notify();
+    }
 
     // fn render_user_menu_button(
     //     &self,
