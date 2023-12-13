@@ -2525,7 +2525,7 @@ impl CollabPanel {
                     .child(Label::new(github_login.clone()))
                     .child(h_stack().children(controls)),
             )
-            .start_slot::<Avatar>(Avatar::new(user.avatar_uri))
+            .start_slot(Avatar::new(user.avatar_uri.clone()))
     }
 
     fn render_contact_placeholder(
