@@ -3620,92 +3620,102 @@ impl Render for Workspace {
             .border()
             .border_color(cx.theme().colors().border)
             .children(self.titlebar_item.clone())
-            .child(
-                div()
-                    .id("workspace")
-                    .relative()
-                    .flex_1()
-                    .w_full()
-                    .flex()
-                    .overflow_hidden()
-                    .border_t()
-                    .border_b()
-                    .border_color(cx.theme().colors().border)
-                    .on_mouse_up(gpui::MouseButton::Left, |_, cx| {
-                        cx.update_global(|drag: &mut DockDragState, cx| {
-                            drag.0 = None;
-                        })
-                    })
-                    .on_mouse_move(cx.listener(|workspace, e: &MouseMoveEvent, cx| {
-                        if let Some(types) = &cx.global::<DockDragState>().0 {
-                            let workspace_bounds = cx.global::<WorkspaceBounds>().0;
-                            match types {
-                                DockPosition::Left => {
-                                    let size = e.position.x;
-                                    workspace.left_dock.update(cx, |left_dock, cx| {
-                                        left_dock.resize_active_panel(Some(size.0), cx);
-                                    });
-                                }
-                                DockPosition::Right => {
-                                    let size = workspace_bounds.size.width - e.position.x;
-                                    workspace.right_dock.update(cx, |right_dock, cx| {
-                                        right_dock.resize_active_panel(Some(size.0), cx);
-                                    });
-                                }
-                                DockPosition::Bottom => {
-                                    let size = workspace_bounds.size.height - e.position.y;
-                                    workspace.bottom_dock.update(cx, |bottom_dock, cx| {
-                                        bottom_dock.resize_active_panel(Some(size.0), cx);
-                                    });
-                                }
-                            }
-                        }
-                    }))
-                    .child(canvas(|bounds, cx| cx.set_global(WorkspaceBounds(bounds))))
-                    .child(self.modal_layer.clone())
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .flex_1()
-                            .h_full()
-                            // Left Dock
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_none()
-                                    .overflow_hidden()
-                                    .child(self.left_dock.clone()),
-                            )
-                            // Panes
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .flex_1()
-                                    .child(self.center.render(
-                                        &self.project,
-                                        &self.follower_states,
-                                        self.active_call(),
-                                        &self.active_pane,
-                                        self.zoomed.as_ref(),
-                                        &self.app_state,
-                                        cx,
-                                    ))
-                                    .child(self.bottom_dock.clone()),
-                            )
-                            // Right Dock
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_none()
-                                    .overflow_hidden()
-                                    .child(self.right_dock.clone()),
-                            ),
-                    )
-                    .children(self.render_notifications(cx)),
-            )
-            .child(self.status_bar.clone())
+            .child(self.center.render(
+                &self.project,
+                &self.follower_states,
+                self.active_call(),
+                &self.active_pane,
+                self.zoomed.as_ref(),
+                &self.app_state,
+                cx,
+            ))
+
+            // .child(
+            //     div()
+            //         .id("workspace")
+            //         .relative()
+            //         .flex_1()
+            //         .w_full()
+            //         .flex()
+            //         .overflow_hidden()
+            //         .border_t()
+            //         .border_b()
+            //         .border_color(cx.theme().colors().border)
+            //         .on_mouse_up(gpui::MouseButton::Left, |_, cx| {
+            //             cx.update_global(|drag: &mut DockDragState, cx| {
+            //                 drag.0 = None;
+            //             })
+            //         })
+            //         .on_mouse_move(cx.listener(|workspace, e: &MouseMoveEvent, cx| {
+            //             if let Some(types) = &cx.global::<DockDragState>().0 {
+            //                 let workspace_bounds = cx.global::<WorkspaceBounds>().0;
+            //                 match types {
+            //                     DockPosition::Left => {
+            //                         let size = e.position.x;
+            //                         workspace.left_dock.update(cx, |left_dock, cx| {
+            //                             left_dock.resize_active_panel(Some(size.0), cx);
+            //                         });
+            //                     }
+            //                     DockPosition::Right => {
+            //                         let size = workspace_bounds.size.width - e.position.x;
+            //                         workspace.right_dock.update(cx, |right_dock, cx| {
+            //                             right_dock.resize_active_panel(Some(size.0), cx);
+            //                         });
+            //                     }
+            //                     DockPosition::Bottom => {
+            //                         let size = workspace_bounds.size.height - e.position.y;
+            //                         workspace.bottom_dock.update(cx, |bottom_dock, cx| {
+            //                             bottom_dock.resize_active_panel(Some(size.0), cx);
+            //                         });
+            //                     }
+            //                 }
+            //             }
+            //         }))
+            //         .child(canvas(|bounds, cx| cx.set_global(WorkspaceBounds(bounds))))
+            //         .child(self.modal_layer.clone())
+            //         .child(
+            //             div()
+            //                 .flex()
+            //                 .flex_row()
+            //                 .flex_1()
+            //                 .h_full()
+            //                 // Left Dock
+            //                 .child(
+            //                     div()
+            //                         .flex()
+            //                         .flex_none()
+            //                         .overflow_hidden()
+            //                         .child(self.left_dock.clone()),
+            //                 )
+            //                 // Panes
+            //                 .child(
+            //                     div()
+            //                         .flex()
+            //                         .flex_col()
+            //                         .flex_1()
+            //                         .child(self.center.render(
+            //                             &self.project,
+            //                             &self.follower_states,
+            //                             self.active_call(),
+            //                             &self.active_pane,
+            //                             self.zoomed.as_ref(),
+            //                             &self.app_state,
+            //                             cx,
+            //                         ))
+            //                         .child(self.bottom_dock.clone()),
+            //                 )
+            //                 // Right Dock
+            //                 .child(
+            //                     div()
+            //                         .flex()
+            //                         .flex_none()
+            //                         .overflow_hidden()
+            //                         .child(self.right_dock.clone()),
+            //                 ),
+            //         )
+            //         .children(self.render_notifications(cx)),
+            // )
+            // .child(self.status_bar.clone())
     }
 }
 
