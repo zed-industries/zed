@@ -3711,24 +3711,26 @@ impl Render for Workspace {
                                     .w_32()
                                     .h_full()
                                     .debug_bg_red()
-                                    .child("Left"),
+                                    .child(self.left_dock.clone()),
                             )
-                            .child(
-                                v_stack()
-                                    .flex_1()
-                                    .w_32()
-                                    .h_full()
-                                    .debug_bg_cyan()
-                                    .child("Center")
-                                    .child(debug_tab_bar()),
-                            )
+                            .child(v_stack().flex_1().w_32().h_full().debug_bg_cyan().child(
+                                self.center.render(
+                                    &self.project,
+                                    &self.follower_states,
+                                    self.active_call(),
+                                    &self.active_pane,
+                                    self.zoomed.as_ref(),
+                                    &self.app_state,
+                                    cx,
+                                ),
+                            ))
                             .child(
                                 v_stack()
                                     .flex_none()
                                     .w_32()
                                     .h_full()
                                     .debug_bg_magenta()
-                                    .child("Right"),
+                                    .child(self.right_dock.clone()),
                             ),
                     )
                     // .child(
@@ -3738,7 +3740,7 @@ impl Render for Workspace {
                     //             div()
                     //                 .flex()
                     //                 .flex_none()
-                    //                 .overflow_hidden()
+                    //                 // .overflow_hidden()
                     //                 .child(self.left_dock.clone()),
                     //         )
                     //         // Panes
@@ -3764,7 +3766,7 @@ impl Render for Workspace {
                     //             div()
                     //                 .flex()
                     //                 .flex_none()
-                    //                 .overflow_hidden()
+                    //                 // .overflow_hidden()
                     //                 .child(self.right_dock.clone()),
                     //         ),
                     // )
