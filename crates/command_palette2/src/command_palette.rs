@@ -360,6 +360,7 @@ mod tests {
 
     use super::*;
     use editor::Editor;
+    use go_to_line::GoToLine;
     use gpui::TestAppContext;
     use project::Project;
     use workspace::{AppState, Workspace};
@@ -383,7 +384,6 @@ mod tests {
     #[gpui::test]
     async fn test_command_palette(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
-
         let project = Project::test(app_state.fs.clone(), [], cx).await;
         let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
 
@@ -453,12 +453,29 @@ mod tests {
         });
     }
 
+    #[gpui::test]
+    async fn test_go_to_line(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        let project = Project::test(app_state.fs.clone(), [], cx).await;
+        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
+
+        cx.simulate_keystrokes("cmd-n cmd-shift-p");
+        cx.simulate_input("go to line: Toggle");
+        cx.simulate_keystrokes("enter");
+
+        workspace.update(cx, |workspace, cx| {
+            assert!(workspace.active_modal::<GoToLine>(cx).is_some())
+        })
+    }
+
     fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
         cx.update(|cx| {
             let app_state = AppState::test(cx);
             theme::init(theme::LoadThemes::JustBase, cx);
             language::init(cx);
             editor::init(cx);
+            menu::init();
+            go_to_line::init(cx);
             workspace::init(app_state.clone(), cx);
             init(cx);
             Project::init_settings(cx);
