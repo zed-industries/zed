@@ -3704,10 +3704,13 @@ impl Render for Workspace {
                     .child(self.modal_layer.clone())
                     .child(
                         h_stack()
+                            .h_full()
                             // Left Dock
                             .child(
-                                v_stack()
+                                div()
+                                    .flex()
                                     .flex_none()
+                                    .overflow_hidden()
                                     .debug_bg_red()
                                     .child(self.left_dock.clone()),
                             )
@@ -3731,8 +3734,10 @@ impl Render for Workspace {
                             )
                             // Right Dock
                             .child(
-                                v_stack()
+                                div()
+                                    .flex()
                                     .flex_none()
+                                    .overflow_hidden()
                                     .debug_bg_magenta()
                                     .child(self.right_dock.clone()),
                             ),
