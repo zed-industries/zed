@@ -3666,7 +3666,9 @@ impl Render for Workspace {
                     .child(canvas(|bounds, cx| cx.set_global(WorkspaceBounds(bounds))))
                     .child(self.modal_layer.clone())
                     .child(
-                        h_stack()
+                        div()
+                            .flex()
+                            .flex_row()
                             .h_full()
                             // Left Dock
                             .child(
@@ -3674,7 +3676,6 @@ impl Render for Workspace {
                                     .flex()
                                     .flex_none()
                                     .overflow_hidden()
-                                    .debug_bg_red()
                                     .child(self.left_dock.clone()),
                             )
                             // Panes
@@ -3683,7 +3684,6 @@ impl Render for Workspace {
                                     .flex_grow()
                                     .overflow_hidden()
                                     .h_full()
-                                    .debug_bg_cyan()
                                     .child(self.center.render(
                                         &self.project,
                                         &self.follower_states,
@@ -3701,7 +3701,6 @@ impl Render for Workspace {
                                     .flex()
                                     .flex_none()
                                     .overflow_hidden()
-                                    .debug_bg_magenta()
                                     .child(self.right_dock.clone()),
                             ),
                     )
