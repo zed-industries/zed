@@ -26,7 +26,7 @@ theme_selector = { package = "theme_selector2", path = "../theme_selector2" }
 util = { path = "../util" }
 picker = { package = "picker2", path = "../picker2" }
 workspace = { package = "workspace2", path = "../workspace2" }
-# vim = { package = "vim2", path = "../vim2" }
+vim = { package = "vim2", path = "../vim2" }
 
 anyhow.workspace = true
 log.workspace = true

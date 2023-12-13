@@ -11423,6 +11423,7 @@ dependencies = [
  "theme_selector2",
  "ui2",
  "util",
+ "vim2",
  "workspace2",
 ]
 
