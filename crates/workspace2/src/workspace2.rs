@@ -3708,8 +3708,8 @@ impl Render for Workspace {
                             .child(
                                 v_stack()
                                     .flex_none()
-                                    .w_32()
-                                    .h_full()
+                                    // .w_32()
+                                    // .h_full()
                                     .debug_bg_red()
                                     .child(self.left_dock.clone()),
                             )
@@ -3732,8 +3732,8 @@ impl Render for Workspace {
                             .child(
                                 v_stack()
                                     .flex_none()
-                                    .w_32()
-                                    .h_full()
+                                    // .w_32()
+                                    // .h_full()
                                     .debug_bg_magenta()
                                     .child(self.right_dock.clone()),
                             ),
