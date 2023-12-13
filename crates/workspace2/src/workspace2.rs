@@ -29,9 +29,9 @@ use futures::{
     Future, FutureExt, StreamExt,
 };
 use gpui::{
-    actions, canvas, div, impl_actions, point, size, Action, AnyModel, AnyView, AnyWeakView,
-    AnyWindowHandle, AppContext, AsyncAppContext, AsyncWindowContext, Bounds, Context, Div,
-    DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle, FocusableView, GlobalPixels,
+    actions, canvas, div, impl_actions, outline, point, size, Action, AnyModel, AnyView,
+    AnyWeakView, AnyWindowHandle, AppContext, AsyncAppContext, AsyncWindowContext, Bounds, Context,
+    Div, DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle, FocusableView, GlobalPixels,
     InteractiveElement, KeyContext, ManagedView, Model, ModelContext, ParentElement,
     PathPromptOptions, Pixels, Point, PromptLevel, Render, Size, Styled, Subscription, Task, View,
     ViewContext, VisualContext, WeakView, WindowBounds, WindowContext, WindowHandle, WindowOptions,
@@ -3627,26 +3627,33 @@ impl Render for Workspace {
                     .border_t()
                     .border_b()
                     .border_color(cx.theme().colors().border)
-                    .child(canvas(
-                        cx.listener(|workspace, bounds, cx| workspace.bounds = *bounds),
-                    ))
+                    .child(
+                        canvas(cx.listener(|workspace, bounds, cx| {
+                            cx.with_z_index(100, |cx| {
+                                cx.paint_quad(outline(*bounds, gpui::green()));
+                            });
+                            workspace.bounds = *bounds;
+                        }))
+                        .absolute()
+                        .size_full(),
+                    )
                     .on_drag_move(
                         cx.listener(|workspace, e: &DragMoveEvent<DraggedDock>, cx| {
                             match e.drag.read(cx).0 {
                                 DockPosition::Left => {
-                                    let size = e.event.position.x;
+                                    let size = workspace.bounds.left() + e.event.position.x;
                                     workspace.left_dock.update(cx, |left_dock, cx| {
                                         left_dock.resize_active_panel(Some(size.0), cx);
                                     });
                                 }
                                 DockPosition::Right => {
-                                    let size = workspace.bounds.size.width - e.event.position.x;
+                                    let size = workspace.bounds.right() - e.event.position.x;
                                     workspace.right_dock.update(cx, |right_dock, cx| {
                                         right_dock.resize_active_panel(Some(size.0), cx);
                                     });
                                 }
                                 DockPosition::Bottom => {
-                                    let size = workspace.bounds.size.height - e.event.position.y;
+                                    let size = workspace.bounds.bottom() - e.event.position.y;
                                     workspace.bottom_dock.update(cx, |bottom_dock, cx| {
                                         bottom_dock.resize_active_panel(Some(size.0), cx);
                                     });
