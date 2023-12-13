@@ -2586,7 +2586,8 @@ impl CollabPanel {
             )
             .child(
                 ListItem::new(channel_id as usize)
-                    .indent_level(depth)
+                    // Offset the indent depth by one to give us room to show the disclosure.
+                    .indent_level(depth + 1)
                     .indent_step_size(cx.rem_size() * 14.0 / 16.0) // @todo()! @nate this is to  step over the disclosure toggle
                     .selected(is_selected || is_active)
                     .toggle(disclosed)
