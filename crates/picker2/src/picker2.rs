@@ -1,8 +1,8 @@
 use editor::Editor;
 use gpui::{
-    div, prelude::*, rems, uniform_list, AnyElement, AppContext, Div, FocusHandle, FocusableView,
-    MouseButton, MouseDownEvent, Render, Task, UniformListScrollHandle, View, ViewContext,
-    WindowContext,
+    div, prelude::*, rems, uniform_list, AnyElement, AppContext, DismissEvent, Div, EventEmitter,
+    FocusHandle, FocusableView, MouseButton, MouseDownEvent, Render, Task, UniformListScrollHandle,
+    View, ViewContext, WindowContext,
 };
 use std::{cmp, sync::Arc};
 use ui::{prelude::*, v_stack, Color, Divider, Label};
@@ -113,8 +113,9 @@ impl<D: PickerDelegate> Picker<D> {
         cx.notify();
     }
 
-    fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
+    pub fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
         self.delegate.dismissed(cx);
+        cx.emit(DismissEvent);
     }
 
     fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
@@ -146,9 +147,15 @@ impl<D: PickerDelegate> Picker<D> {
         event: &editor::EditorEvent,
         cx: &mut ViewContext<Self>,
     ) {
-        if let editor::EditorEvent::BufferEdited = event {
-            let query = self.editor.read(cx).text(cx);
-            self.update_matches(query, cx);
+        match event {
+            editor::EditorEvent::BufferEdited => {
+                let query = self.editor.read(cx).text(cx);
+                self.update_matches(query, cx);
+            }
+            editor::EditorEvent::Blurred => {
+                self.cancel(&menu::Cancel, cx);
+            }
+            _ => {}
         }
     }
 
@@ -188,6 +195,8 @@ impl<D: PickerDelegate> Picker<D> {
             .update(cx, |editor, cx| editor.set_text(query, cx));
     }
 }
+
+impl<D: PickerDelegate> EventEmitter<DismissEvent> for Picker<D> {}
 
 impl<D: PickerDelegate> Render for Picker<D> {
     type Element = Div;
