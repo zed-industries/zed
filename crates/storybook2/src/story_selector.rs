@@ -61,7 +61,7 @@ impl ComponentStory {
             Self::Scroll => ScrollStory::view(cx).into(),
             Self::Text => TextStory::view(cx).into(),
             Self::Tab => cx.build_view(|_| ui::TabStory).into(),
-            Self::TabBar => cx.build_view(|cx| ui::TabBarStory::new(cx)).into(),
+            Self::TabBar => cx.build_view(|_| ui::TabBarStory).into(),
             Self::ViewportUnits => cx.build_view(|_| crate::stories::ViewportUnitsStory).into(),
             Self::ZIndex => cx.build_view(|_| ZIndexStory).into(),
             Self::Picker => PickerStory::new(cx).into(),

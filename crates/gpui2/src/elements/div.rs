@@ -29,7 +29,7 @@ pub struct GroupStyle {
     pub style: Box<StyleRefinement>,
 }
 
-pub trait InteractiveElement: Sized + Element {
+pub trait InteractiveElement: Sized {
     fn interactivity(&mut self) -> &mut Interactivity;
 
     fn group(mut self, group: impl Into<SharedString>) -> Self {
@@ -61,6 +61,10 @@ pub trait InteractiveElement: Sized + Element {
     }
 
     fn hover(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self {
+        debug_assert!(
+            self.interactivity().hover_style.is_none(),
+            "hover style already set"
+        );
         self.interactivity().hover_style = Some(Box::new(f(StyleRefinement::default())));
         self
     }
@@ -436,7 +440,6 @@ pub trait StatefulInteractiveElement: InteractiveElement {
             "calling tooltip more than once on the same element is not supported"
         );
         self.interactivity().tooltip_builder = Some(Rc::new(build_tooltip));
-
         self
     }
 }
@@ -1013,6 +1016,10 @@ impl Interactivity {
 
         let overflow = style.overflow;
         if overflow.x == Overflow::Scroll || overflow.y == Overflow::Scroll {
+            if let Some(scroll_handle) = &self.scroll_handle {
+                scroll_handle.0.borrow_mut().overflow = overflow;
+            }
+
             let scroll_offset = element_state
                 .scroll_offset
                 .get_or_insert_with(Rc::default)
@@ -1314,16 +1321,16 @@ where
 
 impl<E> IntoElement for Focusable<E>
 where
-    E: Element,
+    E: IntoElement,
 {
-    type Element = E;
+    type Element = E::Element;
 
     fn element_id(&self) -> Option<ElementId> {
         self.element.element_id()
     }
 
     fn into_element(self) -> Self::Element {
-        self.element
+        self.element.into_element()
     }
 }
 
@@ -1417,6 +1424,7 @@ struct ScrollHandleState {
     bounds: Bounds<Pixels>,
     child_bounds: Vec<Bounds<Pixels>>,
     requested_scroll_top: Option<(usize, Pixels)>,
+    overflow: Point<Overflow>,
 }
 
 #[derive(Clone)]
@@ -1462,12 +1470,22 @@ impl ScrollHandle {
             return;
         };
 
-        let scroll_offset = state.offset.borrow().y;
+        let mut scroll_offset = state.offset.borrow_mut();
 
-        if bounds.top() + scroll_offset < state.bounds.top() {
-            state.offset.borrow_mut().y = state.bounds.top() - bounds.top();
-        } else if bounds.bottom() + scroll_offset > state.bounds.bottom() {
-            state.offset.borrow_mut().y = state.bounds.bottom() - bounds.bottom();
+        if state.overflow.y == Overflow::Scroll {
+            if bounds.top() + scroll_offset.y < state.bounds.top() {
+                scroll_offset.y = state.bounds.top() - bounds.top();
+            } else if bounds.bottom() + scroll_offset.y > state.bounds.bottom() {
+                scroll_offset.y = state.bounds.bottom() - bounds.bottom();
+            }
+        }
+
+        if state.overflow.x == Overflow::Scroll {
+            if bounds.left() + scroll_offset.x < state.bounds.left() {
+                scroll_offset.x = state.bounds.left() - bounds.left();
+            } else if bounds.right() + scroll_offset.x > state.bounds.right() {
+                scroll_offset.x = state.bounds.right() - bounds.right();
+            }
         }
     }
 

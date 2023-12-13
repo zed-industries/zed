@@ -1,10 +1,7 @@
-use std::cmp::Ordering;
-use std::rc::Rc;
-
-use gpui::{AnyElement, AnyView, ClickEvent, IntoElement, MouseButton};
-use smallvec::SmallVec;
-
 use crate::prelude::*;
+use gpui::{AnyElement, IntoElement, Stateful};
+use smallvec::SmallVec;
+use std::cmp::Ordering;
 
 /// The position of a [`Tab`] within a list of tabs.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -29,12 +26,10 @@ pub enum TabCloseSide {
 
 #[derive(IntoElement)]
 pub struct Tab {
-    id: ElementId,
+    div: Stateful<Div>,
     selected: bool,
     position: TabPosition,
     close_side: TabCloseSide,
-    on_click: Option<Rc<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
-    tooltip: Option<Box<dyn Fn(&mut WindowContext) -> AnyView + 'static>>,
     start_slot: Option<AnyElement>,
     end_slot: Option<AnyElement>,
     children: SmallVec<[AnyElement; 2]>,
@@ -43,12 +38,10 @@ pub struct Tab {
 impl Tab {
     pub fn new(id: impl Into<ElementId>) -> Self {
         Self {
-            id: id.into(),
+            div: div().id(id),
             selected: false,
             position: TabPosition::First,
             close_side: TabCloseSide::End,
-            on_click: None,
-            tooltip: None,
             start_slot: None,
             end_slot: None,
             children: SmallVec::new(),
@@ -65,16 +58,6 @@ impl Tab {
         self
     }
 
-    pub fn on_click(mut self, handler: impl Fn(&ClickEvent, &mut WindowContext) + 'static) -> Self {
-        self.on_click = Some(Rc::new(handler));
-        self
-    }
-
-    pub fn tooltip(mut self, tooltip: impl Fn(&mut WindowContext) -> AnyView + 'static) -> Self {
-        self.tooltip = Some(Box::new(tooltip));
-        self
-    }
-
     pub fn start_slot<E: IntoElement>(mut self, element: impl Into<Option<E>>) -> Self {
         self.start_slot = element.into().map(IntoElement::into_any_element);
         self
@@ -85,6 +68,14 @@ impl Tab {
         self
     }
 }
+
+impl InteractiveElement for Tab {
+    fn interactivity(&mut self) -> &mut gpui::Interactivity {
+        self.div.interactivity()
+    }
+}
+
+impl StatefulInteractiveElement for Tab {}
 
 impl Selectable for Tab {
     fn selected(mut self, selected: bool) -> Self {
@@ -100,7 +91,7 @@ impl ParentElement for Tab {
 }
 
 impl RenderOnce for Tab {
-    type Rendered = Div;
+    type Rendered = Stateful<Div>;
 
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         const HEIGHT_IN_REMS: f32 = 30. / 16.;
@@ -120,7 +111,7 @@ impl RenderOnce for Tab {
             ),
         };
 
-        div()
+        self.div
             .h(rems(HEIGHT_IN_REMS))
             .bg(tab_bg)
             .border_color(cx.theme().colors().border)
@@ -146,7 +137,6 @@ impl RenderOnce for Tab {
             .child(
                 h_stack()
                     .group("")
-                    .id(self.id)
                     .relative()
                     .h_full()
                     .px_5()
@@ -154,18 +144,6 @@ impl RenderOnce for Tab {
                     .text_color(text_color)
                     // .hover(|style| style.bg(tab_hover_bg))
                     // .active(|style| style.bg(tab_active_bg))
-                    .when_some(self.on_click, |tab, on_click| {
-                        tab.cursor_pointer().on_click(move |event, cx| {
-                            // HACK: GPUI currently fires `on_click` with any mouse button,
-                            // but we only care about the left button.
-                            if event.down.button == MouseButton::Left {
-                                (on_click)(event, cx)
-                            }
-                        })
-                    })
-                    .when_some(self.tooltip, |tab, tooltip| {
-                        tab.tooltip(move |cx| tooltip(cx))
-                    })
                     .child(
                         h_stack()
                             .w_3()

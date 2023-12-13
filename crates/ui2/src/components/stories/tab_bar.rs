@@ -1,19 +1,9 @@
-use gpui::{Div, FocusHandle, Render};
+use gpui::{Div, Render};
 use story::Story;
 
 use crate::{prelude::*, Tab, TabBar, TabPosition};
 
-pub struct TabBarStory {
-    tab_bar_focus_handle: FocusHandle,
-}
-
-impl TabBarStory {
-    pub fn new(cx: &mut ViewContext<Self>) -> Self {
-        Self {
-            tab_bar_focus_handle: cx.focus_handle(),
-        }
-    }
-}
+pub struct TabBarStory;
 
 impl Render for TabBarStory {
     type Element = Div;
@@ -48,7 +38,7 @@ impl Render for TabBarStory {
             .child(Story::label("Default"))
             .child(
                 h_stack().child(
-                    TabBar::new("tab_bar_1", self.tab_bar_focus_handle.clone())
+                    TabBar::new("tab_bar_1")
                         .start_child(
                             IconButton::new("navigate_backward", Icon::ArrowLeft)
                                 .icon_size(IconSize::Small),

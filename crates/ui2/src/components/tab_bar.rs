@@ -1,4 +1,4 @@
-use gpui::{AnyElement, FocusHandle, Focusable, Stateful};
+use gpui::{AnyElement, ScrollHandle, Stateful};
 use smallvec::SmallVec;
 
 use crate::prelude::*;
@@ -6,21 +6,26 @@ use crate::prelude::*;
 #[derive(IntoElement)]
 pub struct TabBar {
     id: ElementId,
-    focus_handle: FocusHandle,
     start_children: SmallVec<[AnyElement; 2]>,
     children: SmallVec<[AnyElement; 2]>,
     end_children: SmallVec<[AnyElement; 2]>,
+    scroll_handle: Option<ScrollHandle>,
 }
 
 impl TabBar {
-    pub fn new(id: impl Into<ElementId>, focus_handle: FocusHandle) -> Self {
+    pub fn new(id: impl Into<ElementId>) -> Self {
         Self {
             id: id.into(),
-            focus_handle,
             start_children: SmallVec::new(),
             children: SmallVec::new(),
             end_children: SmallVec::new(),
+            scroll_handle: None,
         }
+    }
+
+    pub fn track_scroll(mut self, scroll_handle: ScrollHandle) -> Self {
+        self.scroll_handle = Some(scroll_handle);
+        self
     }
 
     pub fn start_children_mut(&mut self) -> &mut SmallVec<[AnyElement; 2]> {
@@ -84,7 +89,7 @@ impl ParentElement for TabBar {
 }
 
 impl RenderOnce for TabBar {
-    type Rendered = Focusable<Stateful<Div>>;
+    type Rendered = Stateful<Div>;
 
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         const HEIGHT_IN_REMS: f32 = 30. / 16.;
@@ -92,7 +97,6 @@ impl RenderOnce for TabBar {
         div()
             .id(self.id)
             .group("tab_bar")
-            .track_focus(&self.focus_handle)
             .flex()
             .flex_none()
             .w_full()
@@ -128,7 +132,11 @@ impl RenderOnce for TabBar {
                         h_stack()
                             .id("tabs")
                             .z_index(2)
+                            .flex_grow()
                             .overflow_x_scroll()
+                            .when_some(self.scroll_handle, |cx, scroll_handle| {
+                                cx.track_scroll(&scroll_handle)
+                            })
                             .children(self.children),
                     ),
             )
