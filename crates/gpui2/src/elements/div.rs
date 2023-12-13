@@ -1018,7 +1018,7 @@ impl Interactivity {
                 .and_then(|group_active| GroupBounds::get(&group_active.group, cx));
             let interactive_bounds = interactive_bounds.clone();
             cx.on_mouse_event(move |down: &MouseDownEvent, phase, cx| {
-                if phase == DispatchPhase::Bubble {
+                if phase == DispatchPhase::Bubble && !cx.default_prevented() {
                     let group =
                         active_group_bounds.map_or(false, |bounds| bounds.contains(&down.position));
                     let element = interactive_bounds.visibly_contains(&down.position, cx);
