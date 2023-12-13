@@ -28,6 +28,7 @@ actions!(
         CycleMode,
         ToggleWholeWord,
         ToggleCaseSensitive,
+        ToggleIncludeIgnored,
         ToggleReplace,
         SelectNextMatch,
         SelectPrevMatch,
@@ -57,6 +58,7 @@ impl SearchOptions {
         match *self {
             SearchOptions::WHOLE_WORD => "Match Whole Word",
             SearchOptions::CASE_SENSITIVE => "Match Case",
+            SearchOptions::INCLUDE_IGNORED => "Include ignored",
             _ => panic!("{:?} is not a named SearchOption", self),
         }
     }
@@ -65,6 +67,7 @@ impl SearchOptions {
         match *self {
             SearchOptions::WHOLE_WORD => ui::Icon::WholeWord,
             SearchOptions::CASE_SENSITIVE => ui::Icon::CaseSensitive,
+            SearchOptions::INCLUDE_IGNORED => ui::Icon::FileGit,
             _ => panic!("{:?} is not a named SearchOption", self),
         }
     }
@@ -73,6 +76,7 @@ impl SearchOptions {
         match *self {
             SearchOptions::WHOLE_WORD => Box::new(ToggleWholeWord),
             SearchOptions::CASE_SENSITIVE => Box::new(ToggleCaseSensitive),
+            SearchOptions::INCLUDE_IGNORED => Box::new(ToggleIncludeIgnored),
             _ => panic!("{:?} is not a named SearchOption", self),
         }
     }
@@ -85,6 +89,7 @@ impl SearchOptions {
         let mut options = SearchOptions::NONE;
         options.set(SearchOptions::WHOLE_WORD, query.whole_word());
         options.set(SearchOptions::CASE_SENSITIVE, query.case_sensitive());
+        options.set(SearchOptions::INCLUDE_IGNORED, query.include_ignored());
         options
     }
 
