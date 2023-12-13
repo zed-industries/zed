@@ -159,7 +159,6 @@ impl RenderOnce for ListItem {
         h_stack()
             .id("item_container")
             .w_full()
-            .flex_1()
             .relative()
             // When an item is inset draw the indent spacing outside of the item
             .when(self.inset, |this| {
@@ -184,7 +183,6 @@ impl RenderOnce for ListItem {
                 h_stack()
                     .id(self.id)
                     .w_full()
-                    .flex_1()
                     .relative()
                     .gap_1()
                     .px_2()
