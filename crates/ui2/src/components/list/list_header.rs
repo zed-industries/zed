@@ -60,6 +60,11 @@ impl ListHeader {
         self.end_hover_slot = end_hover_slot.into().map(IntoElement::into_any_element);
         self
     }
+
+    pub fn inset(mut self, inset: bool) -> Self {
+        self.inset = inset;
+        self
+    }
 }
 
 impl Selectable for ListHeader {

@@ -1156,25 +1156,20 @@ impl CollabPanel {
 
         ListItem::new(SharedString::from(user.github_login.clone()))
             .start_slot(Avatar::data(user.avatar.clone().unwrap()))
-            .child(
-                h_stack()
-                    .w_full()
-                    .justify_between()
-                    .child(Label::new(user.github_login.clone()))
-                    .child(if is_pending {
-                        Label::new("Calling").color(Color::Muted).into_any_element()
-                    } else if is_current_user {
-                        IconButton::new("leave-call", Icon::Exit)
-                            .style(ButtonStyle::Subtle)
-                            .on_click(cx.listener(move |this, _, cx| {
-                                Self::leave_call(cx);
-                            }))
-                            .tooltip(|cx| Tooltip::text("Leave Call", cx))
-                            .into_any_element()
-                    } else {
-                        div().into_any_element()
-                    }),
-            )
+            .child(Label::new(user.github_login.clone()))
+            .end_slot(if is_pending {
+                Label::new("Calling").color(Color::Muted).into_any_element()
+            } else if is_current_user {
+                IconButton::new("leave-call", Icon::Exit)
+                    .style(ButtonStyle::Subtle)
+                    .on_click(cx.listener(move |this, _, cx| {
+                        Self::leave_call(cx);
+                    }))
+                    .tooltip(|cx| Tooltip::text("Leave Call", cx))
+                    .into_any_element()
+            } else {
+                div().into_any_element()
+            })
             .when_some(peer_id, |this, peer_id| {
                 this.tooltip(move |cx| Tooltip::text(tooltip.clone(), cx))
                     .on_click(cx.listener(move |this, _, cx| {
@@ -2332,29 +2327,28 @@ impl CollabPanel {
             | Section::Offline => true,
         };
 
+        // @marshall TODO: I was in the middle of moving this over to using ListHeader
+        // unfortunately without adding the drag functions or a drag trait to the ListHeader
+        // we'll need to either wrap in a h_stack, or go do the work to add those.
+        // Old version commented below.
         h_stack()
             .w_full()
             .group("section-header")
-            .p_1()
-            .map(|el| {
-                if can_collapse {
-                    el.child(
-                        ListItem::new(text.clone())
-                            .child(div().w_full().child(Label::new(text)))
-                            .selected(is_selected)
-                            .toggle(Some(!is_collapsed))
-                            .on_click(cx.listener(move |this, _, cx| {
-                                this.toggle_section_expanded(section, cx)
-                            })),
+            .child(
+                ListHeader::new(text)
+                    .toggle(if can_collapse {
+                        Some(!is_collapsed)
+                    } else {
+                        None
+                    })
+                    .inset(true)
+                    .end_slot(
+                        IconButton::new("add-contact", Icon::Plus)
+                            .on_click(cx.listener(|this, _, cx| this.toggle_contact_finder(cx)))
+                            .tooltip(|cx| Tooltip::text("Search for new contact", cx)),
                     )
-                } else {
-                    el.child(
-                        ListHeader::new(text)
-                            .when_some(button, |el, button| el.end_slot(button))
-                            .selected(is_selected),
-                    )
-                }
-            })
+                    .selected(is_selected),
+            )
             .when(section == Section::Channels, |el| {
                 el.drag_over::<DraggedChannelView>(|style| {
                     style.bg(cx.theme().colors().ghost_element_hover)
@@ -2369,6 +2363,44 @@ impl CollabPanel {
                     },
                 ))
             })
+
+        // h_stack()
+        //     .w_full()
+        //     .group("section-header")
+        //     .p_1()
+        //     .map(|el| {
+        //         if can_collapse {
+        //             el.child(
+        //                 ListItem::new(text.clone())
+        //                     .child(div().w_full().child(Label::new(text)))
+        //                     .selected(is_selected)
+        //                     .toggle(Some(!is_collapsed))
+        //                     .on_click(cx.listener(move |this, _, cx| {
+        //                         this.toggle_section_expanded(section, cx)
+        //                     })),
+        //             )
+        //         } else {
+        //             el.child(
+        //                 ListHeader::new(text)
+        //                     .when_some(button, |el, button| el.end_slot(button))
+        //                     .selected(is_selected),
+        //             )
+        //         }
+        //     })
+        // .when(section == Section::Channels, |el| {
+        //     el.drag_over::<DraggedChannelView>(|style| {
+        //         style.bg(cx.theme().colors().ghost_element_hover)
+        //     })
+        //     .on_drop(cx.listener(
+        //         move |this, view: &View<DraggedChannelView>, cx| {
+        //             this.channel_store
+        //                 .update(cx, |channel_store, cx| {
+        //                     channel_store.move_channel(view.read(cx).channel.id, None, cx)
+        //                 })
+        //                 .detach_and_log_err(cx)
+        //         },
+        //     ))
+        // })
     }
 
     fn render_contact(
