@@ -45,19 +45,17 @@ impl Render for ListItemStory {
             .child(
                 ListItem::new("with_start slot avatar")
                     .child("Hello, world!")
-                    .start_slot(Avatar::source(
-                        SharedString::from("https://avatars.githubusercontent.com/u/1714999?v=4")
-                            .into(),
-                    )),
+                    .start_slot(Avatar::new(SharedString::from(
+                        "https://avatars.githubusercontent.com/u/1714999?v=4",
+                    ))),
             )
             .child(Story::label("With end slot"))
             .child(
                 ListItem::new("with_left_avatar")
                     .child("Hello, world!")
-                    .end_slot(Avatar::source(
-                        SharedString::from("https://avatars.githubusercontent.com/u/1714999?v=4")
-                            .into(),
-                    )),
+                    .end_slot(Avatar::new(SharedString::from(
+                        "https://avatars.githubusercontent.com/u/1714999?v=4",
+                    ))),
             )
             .child(Story::label("With end hover slot"))
             .child(
@@ -66,41 +64,25 @@ impl Render for ListItemStory {
                     .end_slot(
                         h_stack()
                             .gap_2()
-                            .child(Avatar::source(
-                                SharedString::from(
-                                    "https://avatars.githubusercontent.com/u/1789?v=4",
-                                )
-                                .into(),
-                            ))
-                            .child(Avatar::source(
-                                SharedString::from(
-                                    "https://avatars.githubusercontent.com/u/1789?v=4",
-                                )
-                                .into(),
-                            ))
-                            .child(Avatar::source(
-                                SharedString::from(
-                                    "https://avatars.githubusercontent.com/u/1789?v=4",
-                                )
-                                .into(),
-                            ))
-                            .child(Avatar::source(
-                                SharedString::from(
-                                    "https://avatars.githubusercontent.com/u/1789?v=4",
-                                )
-                                .into(),
-                            ))
-                            .child(Avatar::source(
-                                SharedString::from(
-                                    "https://avatars.githubusercontent.com/u/1789?v=4",
-                                )
-                                .into(),
-                            )),
+                            .child(Avatar::new(SharedString::from(
+                                "https://avatars.githubusercontent.com/u/1789?v=4",
+                            )))
+                            .child(Avatar::new(SharedString::from(
+                                "https://avatars.githubusercontent.com/u/1789?v=4",
+                            )))
+                            .child(Avatar::new(SharedString::from(
+                                "https://avatars.githubusercontent.com/u/1789?v=4",
+                            )))
+                            .child(Avatar::new(SharedString::from(
+                                "https://avatars.githubusercontent.com/u/1789?v=4",
+                            )))
+                            .child(Avatar::new(SharedString::from(
+                                "https://avatars.githubusercontent.com/u/1789?v=4",
+                            ))),
                     )
-                    .end_hover_slot(Avatar::source(
-                        SharedString::from("https://avatars.githubusercontent.com/u/1714999?v=4")
-                            .into(),
-                    )),
+                    .end_hover_slot(Avatar::new(SharedString::from(
+                        "https://avatars.githubusercontent.com/u/1714999?v=4",
+                    ))),
             )
             .child(Story::label("With `on_click`"))
             .child(
