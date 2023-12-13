@@ -29,6 +29,11 @@ pub struct GroupStyle {
     pub style: Box<StyleRefinement>,
 }
 
+pub struct DragMoveEvent<W: Render> {
+    pub event: MouseMoveEvent,
+    pub drag: View<W>,
+}
+
 pub trait InteractiveElement: Sized {
     fn interactivity(&mut self) -> &mut Interactivity;
 
@@ -186,6 +191,34 @@ pub trait InteractiveElement: Sized {
             move |event, bounds, phase, cx| {
                 if phase == DispatchPhase::Bubble && bounds.visibly_contains(&event.position, cx) {
                     (listener)(event, cx);
+                }
+            },
+        ));
+        self
+    }
+
+    fn on_drag_move<W>(
+        mut self,
+        listener: impl Fn(&DragMoveEvent<W>, &mut WindowContext) + 'static,
+    ) -> Self
+    where
+        W: Render,
+    {
+        self.interactivity().mouse_move_listeners.push(Box::new(
+            move |event, bounds, phase, cx| {
+                if phase == DispatchPhase::Capture
+                    && bounds.drag_target_contains(&event.position, cx)
+                {
+                    if let Some(view) = cx.active_drag().and_then(|view| view.downcast::<W>().ok())
+                    {
+                        (listener)(
+                            &DragMoveEvent {
+                                event: event.clone(),
+                                drag: view,
+                            },
+                            cx,
+                        );
+                    }
                 }
             },
         ));
@@ -403,7 +436,7 @@ pub trait StatefulInteractiveElement: InteractiveElement {
         self
     }
 
-    fn on_drag<W>(mut self, listener: impl Fn(&mut WindowContext) -> View<W> + 'static) -> Self
+    fn on_drag<W>(mut self, constructor: impl Fn(&mut WindowContext) -> View<W> + 'static) -> Self
     where
         Self: Sized,
         W: 'static + Render,
@@ -413,7 +446,7 @@ pub trait StatefulInteractiveElement: InteractiveElement {
             "calling on_drag more than once on the same element is not supported"
         );
         self.interactivity().drag_listener = Some(Box::new(move |cursor_offset, cx| AnyDrag {
-            view: listener(cx).into(),
+            view: constructor(cx).into(),
             cursor_offset,
         }));
         self

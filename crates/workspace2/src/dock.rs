@@ -1,5 +1,5 @@
+use crate::DraggedDock;
 use crate::{status_bar::StatusItemView, Workspace};
-use crate::{DockClickReset, DockDragState};
 use gpui::{
     div, px, Action, AnchorCorner, AnyView, AppContext, Axis, ClickEvent, Div, Entity, EntityId,
     EventEmitter, FocusHandle, FocusableView, IntoElement, MouseButton, ParentElement, Render,
@@ -493,27 +493,10 @@ impl Render for Dock {
             let handler = div()
                 .id("resize-handle")
                 .bg(cx.theme().colors().border)
-                .on_mouse_down(gpui::MouseButton::Left, move |_, cx| {
-                    cx.update_global(|drag: &mut DockDragState, cx| drag.0 = Some(position))
-                })
+                .on_drag(move |cx| cx.build_view(|_| DraggedDock(position)))
                 .on_click(cx.listener(|v, e: &ClickEvent, cx| {
-                    if e.down.button == MouseButton::Left {
-                        cx.update_global(|state: &mut DockClickReset, cx| {
-                            if state.0.is_some() {
-                                state.0 = None;
-                                v.resize_active_panel(None, cx)
-                            } else {
-                                let double_click = cx.double_click_interval();
-                                let timer = cx.background_executor().timer(double_click);
-                                state.0 = Some(cx.spawn(|_, mut cx| async move {
-                                    timer.await;
-                                    cx.update_global(|state: &mut DockClickReset, cx| {
-                                        state.0 = None;
-                                    })
-                                    .ok();
-                                }));
-                            }
-                        })
+                    if e.down.button == MouseButton::Left && e.down.click_count == 2 {
+                        v.resize_active_panel(None, cx)
                     }
                 }));
 
