@@ -176,11 +176,11 @@ use feature_flags::{ChannelsAlpha, FeatureFlagAppExt, FeatureFlagViewExt};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
     actions, canvas, div, img, impl_actions, overlay, point, prelude::*, px, rems, serde_json,
-    size, Action, AppContext, AsyncWindowContext, Bounds, ClipboardItem, DismissEvent, Div,
-    EventEmitter, FocusHandle, Focusable, FocusableView, Hsla, InteractiveElement, IntoElement,
-    Length, Model, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Quad, Render,
-    RenderOnce, ScrollHandle, SharedString, Size, Stateful, Styled, Subscription, Task, View,
-    ViewContext, VisualContext, WeakView,
+    size, Action, AnyElement, AppContext, AsyncWindowContext, Bounds, ClipboardItem, DismissEvent,
+    Div, EventEmitter, FocusHandle, Focusable, FocusableView, Hsla, InteractiveElement,
+    IntoElement, Length, Model, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Quad,
+    Render, RenderOnce, ScrollHandle, SharedString, Size, Stateful, Styled, Subscription, Task,
+    View, ViewContext, VisualContext, WeakView,
 };
 use project::{Fs, Project};
 use serde_derive::{Deserialize, Serialize};
@@ -2302,20 +2302,19 @@ impl CollabPanel {
                             })
                             .tooltip(|cx| Tooltip::text("Copy channel link", cx)),
                     )
+                    .into_any_element()
             }),
             Section::Contacts => Some(
-                div().child(
-                    IconButton::new("add-contact", Icon::Plus)
-                        .on_click(cx.listener(|this, _, cx| this.toggle_contact_finder(cx)))
-                        .tooltip(|cx| Tooltip::text("Search for new contact", cx)),
-                ),
+                IconButton::new("add-contact", Icon::Plus)
+                    .on_click(cx.listener(|this, _, cx| this.toggle_contact_finder(cx)))
+                    .tooltip(|cx| Tooltip::text("Search for new contact", cx))
+                    .into_any_element(),
             ),
             Section::Channels => Some(
-                div().child(
-                    IconButton::new("add-channel", Icon::Plus)
-                        .on_click(cx.listener(|this, _, cx| this.new_root_channel(cx)))
-                        .tooltip(|cx| Tooltip::text("Create a channel", cx)),
-                ),
+                IconButton::new("add-channel", Icon::Plus)
+                    .on_click(cx.listener(|this, _, cx| this.new_root_channel(cx)))
+                    .tooltip(|cx| Tooltip::text("Create a channel", cx))
+                    .into_any_element(),
             ),
             _ => None,
         };
@@ -2328,10 +2327,6 @@ impl CollabPanel {
             | Section::Offline => true,
         };
 
-        // @marshall TODO: I was in the middle of moving this over to using ListHeader
-        // unfortunately without adding the drag functions or a drag trait to the ListHeader
-        // we'll need to either wrap in a h_stack, or go do the work to add those.
-        // Old version commented below.
         h_stack()
             .w_full()
             .group("section-header")
@@ -2343,11 +2338,7 @@ impl CollabPanel {
                         None
                     })
                     .inset(true)
-                    .end_slot(
-                        IconButton::new("add-contact", Icon::Plus)
-                            .on_click(cx.listener(|this, _, cx| this.toggle_contact_finder(cx)))
-                            .tooltip(|cx| Tooltip::text("Search for new contact", cx)),
-                    )
+                    .end_slot::<AnyElement>(button)
                     .selected(is_selected),
             )
             .when(section == Section::Channels, |el| {
@@ -2364,44 +2355,6 @@ impl CollabPanel {
                     },
                 ))
             })
-
-        // h_stack()
-        //     .w_full()
-        //     .group("section-header")
-        //     .p_1()
-        //     .map(|el| {
-        //         if can_collapse {
-        //             el.child(
-        //                 ListItem::new(text.clone())
-        //                     .child(div().w_full().child(Label::new(text)))
-        //                     .selected(is_selected)
-        //                     .toggle(Some(!is_collapsed))
-        //                     .on_click(cx.listener(move |this, _, cx| {
-        //                         this.toggle_section_expanded(section, cx)
-        //                     })),
-        //             )
-        //         } else {
-        //             el.child(
-        //                 ListHeader::new(text)
-        //                     .when_some(button, |el, button| el.end_slot(button))
-        //                     .selected(is_selected),
-        //             )
-        //         }
-        //     })
-        // .when(section == Section::Channels, |el| {
-        //     el.drag_over::<DraggedChannelView>(|style| {
-        //         style.bg(cx.theme().colors().ghost_element_hover)
-        //     })
-        //     .on_drop(cx.listener(
-        //         move |this, view: &View<DraggedChannelView>, cx| {
-        //             this.channel_store
-        //                 .update(cx, |channel_store, cx| {
-        //                     channel_store.move_channel(view.read(cx).channel.id, None, cx)
-        //                 })
-        //                 .detach_and_log_err(cx)
-        //         },
-        //     ))
-        // })
     }
 
     fn render_contact(
