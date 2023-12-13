@@ -41,7 +41,7 @@ use workspace::{
     notifications::simple_message_notification::MessageNotification, open_new, AppState, NewFile,
     NewWindow, Workspace, WorkspaceSettings,
 };
-use zed_actions::{OpenBrowser, OpenZedURL, Quit};
+use zed_actions::{OpenBrowser, OpenSettings, OpenZedURL, Quit};
 
 actions!(
     zed,
@@ -59,7 +59,6 @@ actions!(
         OpenLicenses,
         OpenLocalSettings,
         OpenLog,
-        OpenSettings,
         OpenTelemetryLog,
         ResetBufferFontSize,
         ResetDatabase,

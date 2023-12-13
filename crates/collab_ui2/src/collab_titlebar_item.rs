@@ -1,8 +1,8 @@
 use crate::face_pile::FacePile;
 use call::{ActiveCall, ParticipantLocation, Room};
-use client::{proto::PeerId, Client, ParticipantIndex, User, UserStore};
+use client::{proto::PeerId, Client, ParticipantIndex, SignOut, User, UserStore};
 use gpui::{
-    actions, canvas, div, overlay, point, px, rems, AppContext, DismissEvent, Div, Element,
+    actions, canvas, div, overlay, point, px, rems, Action, AppContext, DismissEvent, Div, Element,
     FocusableView, Hsla, InteractiveElement, IntoElement, Model, ParentElement, Path, Render,
     Stateful, StatefulInteractiveElement, Styled, Subscription, ViewContext, VisualContext,
     WeakView, WindowBounds,
@@ -16,7 +16,7 @@ use ui::{
     IconButton, IconElement, KeyBinding, Tooltip,
 };
 use util::ResultExt;
-use workspace::{notifications::NotifyResultExt, Workspace, WORKSPACE_DB};
+use workspace::{notifications::NotifyResultExt, Feedback, Workspace, WORKSPACE_DB};
 
 const MAX_PROJECT_NAME_LENGTH: usize = 40;
 const MAX_BRANCH_NAME_LENGTH: usize = 40;
@@ -239,7 +239,19 @@ impl Render for CollabTitlebarItem {
                             this.child(
                                 popover_menu("user-menu")
                                     .menu(|cx| {
-                                        ContextMenu::build(cx, |menu, _| menu.header("ADADA"))
+                                        ContextMenu::build(cx, |menu, _| {
+                                            menu.action(
+                                                "Settings",
+                                                zed_actions::OpenSettings.boxed_clone(),
+                                            )
+                                            .action("Theme", theme_selector::Toggle.boxed_clone())
+                                            .separator()
+                                            .action(
+                                                "Share Feedback",
+                                                feedback::GiveFeedback.boxed_clone(),
+                                            )
+                                            .action("Sign Out", client::SignOut.boxed_clone())
+                                        })
                                     })
                                     .trigger(
                                         ButtonLike::new("user-menu")
@@ -259,16 +271,6 @@ impl Render for CollabTitlebarItem {
                                     )
                                     .anchor(gpui::AnchorCorner::TopRight),
                             )
-                            // this.child(
-                            //     ButtonLike::new("user-menu")
-                            //         .child(
-                            //             h_stack().gap_0p5().child(Avatar::data(avatar)).child(
-                            //                 IconElement::new(Icon::ChevronDown).color(Color::Muted),
-                            //             ),
-                            //         )
-                            //         .style(ButtonStyle::Subtle)
-                            //         .tooltip(move |cx| Tooltip::text("Toggle User Menu", cx)),
-                            // )
                         } else {
                             this.child(Button::new("sign_in", "Sign in").on_click(move |_, cx| {
                                 let client = client.clone();
@@ -280,6 +282,36 @@ impl Render for CollabTitlebarItem {
                                 })
                                 .detach();
                             }))
+                            .child(
+                                popover_menu("user-menu")
+                                    .menu(|cx| {
+                                        ContextMenu::build(cx, |menu, _| {
+                                            menu.action(
+                                                "Settings",
+                                                zed_actions::OpenSettings.boxed_clone(),
+                                            )
+                                            .action("Theme", theme_selector::Toggle.boxed_clone())
+                                            .separator()
+                                            .action(
+                                                "Share Feedback",
+                                                feedback::GiveFeedback.boxed_clone(),
+                                            )
+                                        })
+                                    })
+                                    .trigger(
+                                        ButtonLike::new("user-menu")
+                                            .child(
+                                                h_stack().gap_0p5().child(
+                                                    IconElement::new(Icon::ChevronDown)
+                                                        .color(Color::Muted),
+                                                ),
+                                            )
+                                            .style(ButtonStyle::Subtle)
+                                            .tooltip(move |cx| {
+                                                Tooltip::text("Toggle User Menu", cx)
+                                            }),
+                                    ),
+                            )
                         }
                     })),
             )
