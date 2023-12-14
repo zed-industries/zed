@@ -231,6 +231,7 @@ pub struct NavigationEntry {
     pub timestamp: usize,
 }
 
+#[derive(Clone)]
 struct DraggedTab {
     pub pane: View<Pane>,
     pub ix: usize,
@@ -1514,24 +1515,25 @@ impl Pane {
                 .on_click(cx.listener(move |pane: &mut Self, event, cx| {
                     pane.activate_item(ix, true, true, cx)
                 }))
-                .on_drag({
-                    let pane = cx.view().clone();
-                    move |cx| {
-                        cx.build_view(|cx| DraggedTab {
-                            pane: pane.clone(),
-                            detail,
-                            item_id,
-                            is_active,
-                            ix,
-                        })
-                    }
-                })
-                .drag_over::<DraggedTab>(|tab| tab.bg(cx.theme().colors().tab_active_background))
-                .on_drop(
-                    cx.listener(move |this, dragged_tab: &View<DraggedTab>, cx| {
-                        this.handle_tab_drop(dragged_tab, ix, cx)
-                    }),
+                .on_drag(
+                    DraggedTab {
+                        pane: cx.view().clone(),
+                        detail,
+                        item_id,
+                        is_active,
+                        ix,
+                    },
+                    |tab, cx| cx.build_view(|cx| tab.clone()),
                 )
+                .drag_over::<DraggedTab>(|tab| tab.bg(cx.theme().colors().tab_active_background))
+                .drag_over::<ProjectEntryId>(|tab| tab.bg(gpui::red()))
+                .on_drop(cx.listener(move |this, dragged_tab: &DraggedTab, cx| {
+                    this.handle_tab_drop(dragged_tab, ix, cx)
+                }))
+                .on_drop(cx.listener(move |this, entry_id: &ProjectEntryId, cx| {
+                    dbg!(entry_id);
+                    this.handle_project_entry_drop(entry_id, ix, cx)
+                }))
                 .when_some(item.tab_tooltip_text(cx), |tab, text| {
                     tab.tooltip(move |cx| Tooltip::text(text.clone(), cx))
                 })
@@ -1677,11 +1679,13 @@ impl Pane {
                     .drag_over::<DraggedTab>(|bar| {
                         bar.bg(cx.theme().colors().tab_active_background)
                     })
-                    .on_drop(
-                        cx.listener(move |this, dragged_tab: &View<DraggedTab>, cx| {
-                            this.handle_tab_drop(dragged_tab, this.items.len(), cx)
-                        }),
-                    ),
+                    .drag_over::<ProjectEntryId>(|bar| bar.bg(gpui::red()))
+                    .on_drop(cx.listener(move |this, dragged_tab: &DraggedTab, cx| {
+                        this.handle_tab_drop(dragged_tab, this.items.len(), cx)
+                    }))
+                    .on_drop(cx.listener(move |this, entry_id: &ProjectEntryId, cx| {
+                        this.handle_project_entry_drop(entry_id, this.items.len(), cx)
+                    })),
             )
     }
 
@@ -1743,11 +1747,10 @@ impl Pane {
 
     fn handle_tab_drop(
         &mut self,
-        dragged_tab: &View<DraggedTab>,
+        dragged_tab: &DraggedTab,
         ix: usize,
         cx: &mut ViewContext<'_, Pane>,
     ) {
-        let dragged_tab = dragged_tab.read(cx);
         let item_id = dragged_tab.item_id;
         let from_pane = dragged_tab.pane.clone();
         let to_pane = cx.view().clone();
@@ -1760,13 +1763,37 @@ impl Pane {
             .log_err();
     }
 
+    fn handle_project_entry_drop(
+        &mut self,
+        project_entry_id: &ProjectEntryId,
+        ix: usize,
+        cx: &mut ViewContext<'_, Pane>,
+    ) {
+        let to_pane = cx.view().downgrade();
+        let project_entry_id = *project_entry_id;
+        self.workspace
+            .update(cx, |workspace, cx| {
+                cx.defer(move |workspace, cx| {
+                    if let Some(path) = workspace
+                        .project()
+                        .read(cx)
+                        .path_for_entry(project_entry_id, cx)
+                    {
+                        workspace
+                            .open_path(path, Some(to_pane), true, cx)
+                            .detach_and_log_err(cx);
+                    }
+                });
+            })
+            .log_err();
+    }
+
     fn handle_split_tab_drop(
         &mut self,
-        dragged_tab: &View<DraggedTab>,
+        dragged_tab: &DraggedTab,
         split_direction: SplitDirection,
         cx: &mut ViewContext<'_, Pane>,
     ) {
-        let dragged_tab = dragged_tab.read(cx);
         let item_id = dragged_tab.item_id;
         let from_pane = dragged_tab.pane.clone();
         let to_pane = cx.view().clone();
@@ -1780,8 +1807,35 @@ impl Pane {
                         .map(|item| item.boxed_clone());
                     if let Some(item) = item {
                         if let Some(item) = item.clone_on_split(workspace.database_id(), cx) {
-                            workspace.split_item(split_direction, item, cx);
+                            let pane = workspace.split_pane(to_pane, split_direction, cx);
+                            workspace.move_item(from_pane, pane, item_id, 0, cx);
                         }
+                    }
+                });
+            })
+            .log_err();
+    }
+
+    fn handle_split_project_entry_drop(
+        &mut self,
+        project_entry_id: &ProjectEntryId,
+        split_direction: SplitDirection,
+        cx: &mut ViewContext<'_, Pane>,
+    ) {
+        let project_entry_id = *project_entry_id;
+        let current_pane = cx.view().clone();
+        self.workspace
+            .update(cx, |workspace, cx| {
+                cx.defer(move |workspace, cx| {
+                    if let Some(path) = workspace
+                        .project()
+                        .read(cx)
+                        .path_for_entry(project_entry_id, cx)
+                    {
+                        let pane = workspace.split_pane(current_pane, split_direction, cx);
+                        workspace
+                            .open_path(path, Some(pane.downgrade()), true, cx)
+                            .detach_and_log_err(cx);
                     }
                 });
             })
@@ -1894,11 +1948,17 @@ impl Render for Pane {
                             .full()
                             .z_index(1)
                             .drag_over::<DraggedTab>(|style| style.bg(drag_target_color))
-                            .on_drop(cx.listener(
-                                move |this, dragged_tab: &View<DraggedTab>, cx| {
-                                    this.handle_tab_drop(dragged_tab, this.active_item_index(), cx)
-                                },
-                            )),
+                            .drag_over::<ProjectEntryId>(|style| style.bg(gpui::red()))
+                            .on_drop(cx.listener(move |this, dragged_tab: &DraggedTab, cx| {
+                                this.handle_tab_drop(dragged_tab, this.active_item_index(), cx)
+                            }))
+                            .on_drop(cx.listener(move |this, entry_id: &ProjectEntryId, cx| {
+                                this.handle_project_entry_drop(
+                                    entry_id,
+                                    this.active_item_index(),
+                                    cx,
+                                )
+                            })),
                     )
                     .children(
                         [
@@ -1915,9 +1975,15 @@ impl Render for Pane {
                                 .invisible()
                                 .bg(drag_target_color)
                                 .drag_over::<DraggedTab>(|style| style.visible())
+                                .drag_over::<ProjectEntryId>(|style| style.visible())
+                                .on_drop(cx.listener(move |this, dragged_tab: &DraggedTab, cx| {
+                                    this.handle_split_tab_drop(dragged_tab, direction, cx)
+                                }))
                                 .on_drop(cx.listener(
-                                    move |this, dragged_tab: &View<DraggedTab>, cx| {
-                                        this.handle_split_tab_drop(dragged_tab, direction, cx)
+                                    move |this, entry_id: &ProjectEntryId, cx| {
+                                        this.handle_split_project_entry_drop(
+                                            entry_id, direction, cx,
+                                        )
                                     },
                                 ));
                             match direction {

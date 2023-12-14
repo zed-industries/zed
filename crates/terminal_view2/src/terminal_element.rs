@@ -792,7 +792,6 @@ impl Element for TerminalElement {
             .on_drop::<ExternalPaths>(move |external_paths, cx| {
                 cx.focus(&terminal_focus_handle);
                 let mut new_text = external_paths
-                    .read(cx)
                     .paths()
                     .iter()
                     .map(|path| format!(" {path:?}"))
