@@ -1359,7 +1359,6 @@ impl<'a> WindowContext<'a> {
             }
             InputEvent::MouseExited(mouse_exited) => {
                 // todo!("Should we record that the mouse is outside of the window somehow? Or are these global pixels?")
-                self.window.mouse_position = mouse_exited.position;
                 self.window.modifiers = mouse_exited.modifiers;
 
                 InputEvent::MouseExited(mouse_exited)
