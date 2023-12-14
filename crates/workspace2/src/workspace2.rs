@@ -2036,20 +2036,20 @@ impl Workspace {
             _ => bounding_box.center(),
         };
 
-        let distance_to_next = 1.; //todo(pane dividers styling)
+        let distance_to_next = 8.; //todo(pane dividers styling)
 
         let target = match direction {
             SplitDirection::Left => {
-                Point::new(bounding_box.origin.x - distance_to_next.into(), center.y)
+                Point::new(bounding_box.left() - distance_to_next.into(), center.y)
             }
             SplitDirection::Right => {
                 Point::new(bounding_box.right() + distance_to_next.into(), center.y)
             }
             SplitDirection::Up => {
-                Point::new(center.x, bounding_box.origin.y - distance_to_next.into())
+                Point::new(center.x, bounding_box.top() - distance_to_next.into())
             }
             SplitDirection::Down => {
-                Point::new(center.x, bounding_box.top() + distance_to_next.into())
+                Point::new(center.x, bounding_box.bottom() + distance_to_next.into())
             }
         };
         self.center.pane_at_pixel_position(target)
