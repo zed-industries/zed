@@ -1759,6 +1759,34 @@ impl Pane {
             })
             .log_err();
     }
+
+    fn handle_split_tab_drop(
+        &mut self,
+        dragged_tab: &View<DraggedTab>,
+        split_direction: SplitDirection,
+        cx: &mut ViewContext<'_, Pane>,
+    ) {
+        let dragged_tab = dragged_tab.read(cx);
+        let item_id = dragged_tab.item_id;
+        let from_pane = dragged_tab.pane.clone();
+        let to_pane = cx.view().clone();
+        self.workspace
+            .update(cx, |workspace, cx| {
+                cx.defer(move |workspace, cx| {
+                    let item = from_pane
+                        .read(cx)
+                        .items()
+                        .find(|item| item.item_id() == item_id)
+                        .map(|item| item.boxed_clone());
+                    if let Some(item) = item {
+                        if let Some(item) = item.clone_on_split(workspace.database_id(), cx) {
+                            workspace.split_item(split_direction, item, cx);
+                        }
+                    }
+                });
+            })
+            .log_err();
+    }
 }
 
 impl FocusableView for Pane {
@@ -1852,7 +1880,54 @@ impl Render for Pane {
             .child(self.render_tab_bar(cx))
             .child(self.toolbar.clone())
             .child(if let Some(item) = self.active_item() {
-                div().flex().flex_1().child(item.to_any())
+                let mut drag_target_color = cx.theme().colors().text;
+                drag_target_color.a = 0.5;
+
+                div()
+                    .flex()
+                    .flex_1()
+                    .relative()
+                    .child(item.to_any())
+                    .child(
+                        div()
+                            .absolute()
+                            .full()
+                            .z_index(1)
+                            .drag_over::<DraggedTab>(|style| style.bg(drag_target_color))
+                            .on_drop(cx.listener(
+                                move |this, dragged_tab: &View<DraggedTab>, cx| {
+                                    this.handle_tab_drop(dragged_tab, this.active_item_index(), cx)
+                                },
+                            )),
+                    )
+                    .children(
+                        [
+                            (SplitDirection::Up, 2),
+                            (SplitDirection::Down, 2),
+                            (SplitDirection::Left, 3),
+                            (SplitDirection::Right, 3),
+                        ]
+                        .into_iter()
+                        .map(|(direction, z_index)| {
+                            let div = div()
+                                .absolute()
+                                .z_index(z_index)
+                                .invisible()
+                                .bg(drag_target_color)
+                                .drag_over::<DraggedTab>(|style| style.visible())
+                                .on_drop(cx.listener(
+                                    move |this, dragged_tab: &View<DraggedTab>, cx| {
+                                        this.handle_split_tab_drop(dragged_tab, direction, cx)
+                                    },
+                                ));
+                            match direction {
+                                SplitDirection::Up => div.top_0().left_0().right_0().h_32(),
+                                SplitDirection::Down => div.left_0().bottom_0().right_0().h_32(),
+                                SplitDirection::Left => div.top_0().left_0().bottom_0().w_32(),
+                                SplitDirection::Right => div.top_0().bottom_0().right_0().w_32(),
+                            }
+                        }),
+                    )
             } else {
                 h_stack()
                     .items_center()

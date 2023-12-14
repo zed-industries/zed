@@ -1,11 +1,12 @@
 use editor::Editor;
 use gpui::{
     div, prelude::*, rems, uniform_list, AnyElement, AppContext, DismissEvent, Div, EventEmitter,
-    FocusHandle, FocusableView, MouseButton, MouseDownEvent, Render, Task, UniformListScrollHandle,
-    View, ViewContext, WindowContext,
+    FocusHandle, FocusableView, Length, MouseButton, MouseDownEvent, Render, Task,
+    UniformListScrollHandle, View, ViewContext, WindowContext,
 };
 use std::{cmp, sync::Arc};
 use ui::{prelude::*, v_stack, Color, Divider, Label};
+use workspace::ModalView;
 
 pub struct Picker<D: PickerDelegate> {
     pub delegate: D,
@@ -13,6 +14,7 @@ pub struct Picker<D: PickerDelegate> {
     editor: View<Editor>,
     pending_update_matches: Option<Task<()>>,
     confirm_on_update: Option<bool>,
+    width: Option<Length>,
 }
 
 pub trait PickerDelegate: Sized + 'static {
@@ -55,9 +57,15 @@ impl<D: PickerDelegate> Picker<D> {
             scroll_handle: UniformListScrollHandle::new(),
             pending_update_matches: None,
             confirm_on_update: None,
+            width: None,
         };
         this.update_matches("".to_string(), cx);
         this
+    }
+
+    pub fn width(mut self, width: impl Into<gpui::Length>) -> Self {
+        self.width = Some(width.into());
+        self
     }
 
     pub fn focus(&self, cx: &mut WindowContext) {
@@ -197,6 +205,7 @@ impl<D: PickerDelegate> Picker<D> {
 }
 
 impl<D: PickerDelegate> EventEmitter<DismissEvent> for Picker<D> {}
+impl<D: PickerDelegate> ModalView for Picker<D> {}
 
 impl<D: PickerDelegate> Render for Picker<D> {
     type Element = Div;
@@ -221,6 +230,9 @@ impl<D: PickerDelegate> Render for Picker<D> {
         div()
             .key_context("picker")
             .size_full()
+            .when_some(self.width, |el, width| {
+                el.w(width)
+            })
             .overflow_hidden()
             .elevation_3(cx)
             .on_action(cx.listener(Self::select_next))
@@ -271,7 +283,6 @@ impl<D: PickerDelegate> Render for Picker<D> {
                                 },
                             )
                             .track_scroll(self.scroll_handle.clone())
-                            .p_1()
                         )
                         .max_h_72()
                         .overflow_hidden(),

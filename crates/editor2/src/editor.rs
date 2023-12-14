@@ -9763,19 +9763,15 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, is_valid: bool) -> Rend
                     .px_1p5()
                     .child(HighlightedLabel::new(line.clone(), highlights.clone()))
                     .child(
-                        div()
-                            .border()
-                            .border_color(gpui::red())
-                            .invisible()
-                            .group_hover(group_id, |style| style.visible())
-                            .child(
-                                IconButton::new(copy_id.clone(), Icon::Copy)
-                                    .icon_color(Color::Muted)
-                                    .size(ButtonSize::Compact)
-                                    .style(ButtonStyle::Transparent)
-                                    .on_click(cx.listener(move |_, _, cx| write_to_clipboard))
-                                    .tooltip(|cx| Tooltip::text("Copy diagnostic message", cx)),
-                            ),
+                        div().border().border_color(gpui::red()).child(
+                            IconButton::new(copy_id.clone(), Icon::Copy)
+                                .icon_color(Color::Muted)
+                                .size(ButtonSize::Compact)
+                                .style(ButtonStyle::Transparent)
+                                .visible_on_hover(group_id)
+                                .on_click(cx.listener(move |_, _, cx| write_to_clipboard))
+                                .tooltip(|cx| Tooltip::text("Copy diagnostic message", cx)),
+                        ),
                     )
             }))
             .into_any_element()

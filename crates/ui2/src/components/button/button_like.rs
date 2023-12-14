@@ -2,7 +2,6 @@ use gpui::{relative, DefiniteLength};
 use gpui::{rems, transparent_black, AnyElement, AnyView, ClickEvent, Div, Hsla, Rems, Stateful};
 use smallvec::SmallVec;
 
-use crate::h_stack;
 use crate::prelude::*;
 
 pub trait ButtonCommon: Clickable + Disableable {
@@ -250,6 +249,7 @@ impl ButtonSize {
 /// This is also used to build the prebuilt buttons.
 #[derive(IntoElement)]
 pub struct ButtonLike {
+    base: Div,
     id: ElementId,
     pub(super) style: ButtonStyle,
     pub(super) disabled: bool,
@@ -264,6 +264,7 @@ pub struct ButtonLike {
 impl ButtonLike {
     pub fn new(id: impl Into<ElementId>) -> Self {
         Self {
+            base: div(),
             id: id.into(),
             style: ButtonStyle::default(),
             disabled: false,
@@ -331,6 +332,13 @@ impl ButtonCommon for ButtonLike {
     }
 }
 
+impl VisibleOnHover for ButtonLike {
+    fn visible_on_hover(mut self, group_name: impl Into<SharedString>) -> Self {
+        self.base = self.base.visible_on_hover(group_name);
+        self
+    }
+}
+
 impl ParentElement for ButtonLike {
     fn children_mut(&mut self) -> &mut SmallVec<[AnyElement; 2]> {
         &mut self.children
@@ -341,7 +349,8 @@ impl RenderOnce for ButtonLike {
     type Rendered = Stateful<Div>;
 
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {
-        h_stack()
+        self.base
+            .h_flex()
             .id(self.id.clone())
             .group("")
             .flex_none()

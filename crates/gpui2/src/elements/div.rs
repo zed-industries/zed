@@ -893,7 +893,7 @@ impl Interactivity {
         if style
             .background
             .as_ref()
-            .is_some_and(|fill| fill.color().is_some_and(|color| !color.is_transparent()))
+            .is_some_and(|fill| fill.color().is_some())
         {
             cx.with_z_index(style.z_index.unwrap_or(0), |cx| cx.add_opaque_layer(bounds))
         }
@@ -1273,78 +1273,84 @@ impl Interactivity {
         let mut style = Style::default();
         style.refine(&self.base_style);
 
-        if let Some(focus_handle) = self.tracked_focus_handle.as_ref() {
-            if let Some(in_focus_style) = self.in_focus_style.as_ref() {
-                if focus_handle.within_focused(cx) {
-                    style.refine(in_focus_style);
+        cx.with_z_index(style.z_index.unwrap_or(0), |cx| {
+            if let Some(focus_handle) = self.tracked_focus_handle.as_ref() {
+                if let Some(in_focus_style) = self.in_focus_style.as_ref() {
+                    if focus_handle.within_focused(cx) {
+                        style.refine(in_focus_style);
+                    }
                 }
-            }
 
-            if let Some(focus_style) = self.focus_style.as_ref() {
-                if focus_handle.is_focused(cx) {
-                    style.refine(focus_style);
-                }
-            }
-        }
-
-        if let Some(bounds) = bounds {
-            let mouse_position = cx.mouse_position();
-            if let Some(group_hover) = self.group_hover_style.as_ref() {
-                if let Some(group_bounds) = GroupBounds::get(&group_hover.group, cx) {
-                    if group_bounds.contains(&mouse_position)
-                        && cx.was_top_layer(&mouse_position, cx.stacking_order())
-                    {
-                        style.refine(&group_hover.style);
+                if let Some(focus_style) = self.focus_style.as_ref() {
+                    if focus_handle.is_focused(cx) {
+                        style.refine(focus_style);
                     }
                 }
             }
-            if let Some(hover_style) = self.hover_style.as_ref() {
-                if bounds
-                    .intersect(&cx.content_mask().bounds)
-                    .contains(&mouse_position)
-                    && cx.was_top_layer(&mouse_position, cx.stacking_order())
-                {
-                    style.refine(hover_style);
-                }
-            }
 
-            if let Some(drag) = cx.active_drag.take() {
-                for (state_type, group_drag_style) in &self.group_drag_over_styles {
-                    if let Some(group_bounds) = GroupBounds::get(&group_drag_style.group, cx) {
-                        if *state_type == drag.view.entity_type()
-                            && group_bounds.contains(&mouse_position)
+            if let Some(bounds) = bounds {
+                let mouse_position = cx.mouse_position();
+                if let Some(group_hover) = self.group_hover_style.as_ref() {
+                    if let Some(group_bounds) = GroupBounds::get(&group_hover.group, cx) {
+                        if group_bounds.contains(&mouse_position)
+                            && cx.was_top_layer(&mouse_position, cx.stacking_order())
                         {
-                            style.refine(&group_drag_style.style);
+                            style.refine(&group_hover.style);
                         }
                     }
                 }
-
-                for (state_type, drag_over_style) in &self.drag_over_styles {
-                    if *state_type == drag.view.entity_type()
-                        && bounds
-                            .intersect(&cx.content_mask().bounds)
-                            .contains(&mouse_position)
+                if let Some(hover_style) = self.hover_style.as_ref() {
+                    if bounds
+                        .intersect(&cx.content_mask().bounds)
+                        .contains(&mouse_position)
+                        && cx.was_top_layer(&mouse_position, cx.stacking_order())
                     {
-                        style.refine(drag_over_style);
+                        style.refine(hover_style);
                     }
                 }
 
-                cx.active_drag = Some(drag);
-            }
-        }
+                if let Some(drag) = cx.active_drag.take() {
+                    for (state_type, group_drag_style) in &self.group_drag_over_styles {
+                        if let Some(group_bounds) = GroupBounds::get(&group_drag_style.group, cx) {
+                            if *state_type == drag.view.entity_type()
+                                && group_bounds.contains(&mouse_position)
+                            {
+                                style.refine(&group_drag_style.style);
+                            }
+                        }
+                    }
 
-        let clicked_state = element_state.clicked_state.borrow();
-        if clicked_state.group {
-            if let Some(group) = self.group_active_style.as_ref() {
-                style.refine(&group.style)
-            }
-        }
+                    for (state_type, drag_over_style) in &self.drag_over_styles {
+                        if *state_type == drag.view.entity_type()
+                            && bounds
+                                .intersect(&cx.content_mask().bounds)
+                                .contains(&mouse_position)
+                            && cx.was_top_layer_under_active_drag(
+                                &mouse_position,
+                                cx.stacking_order(),
+                            )
+                        {
+                            style.refine(drag_over_style);
+                        }
+                    }
 
-        if let Some(active_style) = self.active_style.as_ref() {
-            if clicked_state.element {
-                style.refine(active_style)
+                    cx.active_drag = Some(drag);
+                }
             }
-        }
+
+            let clicked_state = element_state.clicked_state.borrow();
+            if clicked_state.group {
+                if let Some(group) = self.group_active_style.as_ref() {
+                    style.refine(&group.style)
+                }
+            }
+
+            if let Some(active_style) = self.active_style.as_ref() {
+                if clicked_state.element {
+                    style.refine(active_style)
+                }
+            }
+        });
 
         style
     }

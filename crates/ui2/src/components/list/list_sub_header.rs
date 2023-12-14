@@ -6,7 +6,7 @@ use crate::{h_stack, Icon, IconElement, IconSize, Label};
 #[derive(IntoElement)]
 pub struct ListSubHeader {
     label: SharedString,
-    left_icon: Option<Icon>,
+    start_slot: Option<Icon>,
     inset: bool,
 }
 
@@ -14,13 +14,13 @@ impl ListSubHeader {
     pub fn new(label: impl Into<SharedString>) -> Self {
         Self {
             label: label.into(),
-            left_icon: None,
+            start_slot: None,
             inset: false,
         }
     }
 
     pub fn left_icon(mut self, left_icon: Option<Icon>) -> Self {
-        self.left_icon = left_icon;
+        self.start_slot = left_icon;
         self
     }
 }
@@ -44,7 +44,7 @@ impl RenderOnce for ListSubHeader {
                         .flex()
                         .gap_1()
                         .items_center()
-                        .children(self.left_icon.map(|i| {
+                        .children(self.start_slot.map(|i| {
                             IconElement::new(i)
                                 .color(Color::Muted)
                                 .size(IconSize::Small)
