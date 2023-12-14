@@ -231,6 +231,7 @@ pub struct Window {
     pub(crate) blur_listeners: SubscriberSet<(), AnyObserver>,
     default_prevented: bool,
     mouse_position: Point<Pixels>,
+    modifiers: Modifiers,
     requested_cursor_style: Option<CursorStyle>,
     scale_factor: f32,
     bounds: WindowBounds,
@@ -302,6 +303,7 @@ impl Window {
         let display_id = platform_window.display().id();
         let sprite_atlas = platform_window.sprite_atlas();
         let mouse_position = platform_window.mouse_position();
+        let modifiers = platform_window.modifiers();
         let content_size = platform_window.content_size();
         let scale_factor = platform_window.scale_factor();
         let bounds = platform_window.bounds();
@@ -365,6 +367,7 @@ impl Window {
             blur_listeners: SubscriberSet::new(),
             default_prevented: true,
             mouse_position,
+            modifiers,
             requested_cursor_style: None,
             scale_factor,
             bounds,
@@ -877,6 +880,11 @@ impl<'a> WindowContext<'a> {
         self.window.mouse_position
     }
 
+    /// The current state of the keyboard's modifiers
+    pub fn modifiers(&self) -> Modifiers {
+        self.window.modifiers
+    }
+
     pub fn set_cursor_style(&mut self, style: CursorStyle) {
         self.window.requested_cursor_style = Some(style)
     }
@@ -1336,15 +1344,34 @@ impl<'a> WindowContext<'a> {
             // API for the mouse position can only occur on the main thread.
             InputEvent::MouseMove(mouse_move) => {
                 self.window.mouse_position = mouse_move.position;
+                self.window.modifiers = mouse_move.modifiers;
                 InputEvent::MouseMove(mouse_move)
             }
             InputEvent::MouseDown(mouse_down) => {
                 self.window.mouse_position = mouse_down.position;
+                self.window.modifiers = mouse_down.modifiers;
                 InputEvent::MouseDown(mouse_down)
             }
             InputEvent::MouseUp(mouse_up) => {
                 self.window.mouse_position = mouse_up.position;
+                self.window.modifiers = mouse_up.modifiers;
                 InputEvent::MouseUp(mouse_up)
+            }
+            InputEvent::MouseExited(mouse_exited) => {
+                // todo!("Should we record that the mouse is outside of the window somehow? Or are these global pixels?")
+                self.window.mouse_position = mouse_exited.position;
+                self.window.modifiers = mouse_exited.modifiers;
+
+                InputEvent::MouseExited(mouse_exited)
+            }
+            InputEvent::ModifiersChanged(modifiers_changed) => {
+                self.window.modifiers = modifiers_changed.modifiers;
+                InputEvent::ModifiersChanged(modifiers_changed)
+            }
+            InputEvent::ScrollWheel(scroll_wheel) => {
+                self.window.mouse_position = scroll_wheel.position;
+                self.window.modifiers = scroll_wheel.modifiers;
+                InputEvent::ScrollWheel(scroll_wheel)
             }
             // Translate dragging and dropping of external files from the operating system
             // to internal drag and drop events.
@@ -1388,7 +1415,7 @@ impl<'a> WindowContext<'a> {
                     click_count: 1,
                 }),
             },
-            _ => event,
+            InputEvent::KeyDown(_) | InputEvent::KeyUp(_) => event,
         };
 
         if let Some(any_mouse_event) = event.mouse_event() {

@@ -6,6 +6,7 @@ use crate::{
     SharedString, Size, StackingOrder, Style, StyleRefinement, Styled, Task, View, Visibility,
     WindowContext,
 };
+
 use collections::HashMap;
 use refineable::Refineable;
 use smallvec::SmallVec;
@@ -526,11 +527,19 @@ pub type DragEventListener = Box<dyn Fn(&MouseMoveEvent, &mut WindowContext) + '
 
 pub type ActionListener = Box<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext) + 'static>;
 
+#[track_caller]
 pub fn div() -> Div {
-    Div {
+    let mut div = Div {
         interactivity: Interactivity::default(),
         children: SmallVec::default(),
+    };
+
+    #[cfg(debug_assertions)]
+    {
+        div.interactivity.location = Some(*core::panic::Location::caller());
     }
+
+    div
 }
 
 pub struct Div {
@@ -708,6 +717,9 @@ pub struct Interactivity {
     pub drag_listener: Option<DragListener>,
     pub hover_listener: Option<Box<dyn Fn(&bool, &mut WindowContext)>>,
     pub tooltip_builder: Option<TooltipBuilder>,
+
+    #[cfg(debug_assertions)]
+    pub location: Option<core::panic::Location<'static>>,
 }
 
 #[derive(Clone, Debug)]
@@ -775,6 +787,96 @@ impl Interactivity {
             const FONT_SIZE: crate::Pixels = crate::Pixels(10.);
             let element_id = format!("{:?}", self.element_id.unwrap());
             let str_len = element_id.len();
+
+            let render_debug_text = |cx: &mut WindowContext| {
+                if let Some(text) = cx
+                    .text_system()
+                    .shape_text(
+                        &element_id,
+                        FONT_SIZE,
+                        &[cx.text_style().to_run(str_len)],
+                        None,
+                    )
+                    .ok()
+                    .map(|mut text| text.pop())
+                    .flatten()
+                {
+                    text.paint(bounds.origin, FONT_SIZE, cx).ok();
+
+                    let text_bounds = crate::Bounds {
+                        origin: bounds.origin,
+                        size: text.size(FONT_SIZE),
+                    };
+                    if self.location.is_some()
+                        && text_bounds.contains(&cx.mouse_position())
+                        && cx.modifiers().command
+                    {
+                        let command_held = cx.modifiers().command;
+                        cx.on_key_event({
+                            let text_bounds = text_bounds.clone();
+                            move |e: &crate::ModifiersChangedEvent, _phase, cx| {
+                                if e.modifiers.command != command_held
+                                    && text_bounds.contains(&cx.mouse_position())
+                                {
+                                    cx.notify();
+                                }
+                            }
+                        });
+
+                        let hovered = bounds.contains(&cx.mouse_position());
+                        cx.on_mouse_event(move |event: &MouseMoveEvent, phase, cx| {
+                            if phase == DispatchPhase::Capture {
+                                if bounds.contains(&event.position) != hovered {
+                                    cx.notify();
+                                }
+                            }
+                        });
+
+                        cx.on_mouse_event({
+                            let location = self.location.clone().unwrap();
+                            let text_bounds = text_bounds.clone();
+                            move |e: &crate::MouseDownEvent, phase, cx| {
+                                if text_bounds.contains(&e.position) && phase.capture() {
+                                    cx.stop_propagation();
+                                    let Ok(dir) = std::env::current_dir() else {
+                                        return;
+                                    };
+
+                                    eprintln!(
+                                        "This element is created at:\n{}:{}:{}",
+                                        location.file(),
+                                        location.line(),
+                                        location.column()
+                                    );
+
+                                    std::process::Command::new("zed")
+                                        .arg(format!(
+                                            "{}/{}:{}:{}",
+                                            dir.to_string_lossy(),
+                                            location.file(),
+                                            location.line(),
+                                            location.column()
+                                        ))
+                                        .spawn()
+                                        .ok();
+                                }
+                            }
+                        });
+                        cx.paint_quad(crate::outline(
+                            crate::Bounds {
+                                origin: bounds.origin
+                                    + crate::point(crate::px(0.), FONT_SIZE - px(2.)),
+                                size: crate::Size {
+                                    width: text_bounds.size.width,
+                                    height: crate::px(1.),
+                                },
+                            },
+                            crate::red(),
+                        ))
+                    }
+                }
+            };
+
             cx.with_z_index(1, |cx| {
                 cx.with_text_style(
                     Some(crate::TextStyleRefinement {
@@ -783,18 +885,7 @@ impl Interactivity {
                         background_color: Some(crate::white()),
                         ..Default::default()
                     }),
-                    |cx| {
-                        if let Ok(text) = cx.text_system().shape_text(
-                            &element_id,
-                            FONT_SIZE,
-                            &[cx.text_style().to_run(str_len)],
-                            None,
-                        ) {
-                            if let Some(text) = text.first() {
-                                text.paint(bounds.origin, FONT_SIZE, cx).ok();
-                            }
-                        }
-                    },
+                    render_debug_text,
                 )
             });
         }
@@ -1290,6 +1381,9 @@ impl Default for Interactivity {
             drag_listener: None,
             hover_listener: None,
             tooltip_builder: None,
+
+            #[cfg(debug_assertions)]
+            location: None,
         }
     }
 }
