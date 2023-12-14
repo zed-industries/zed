@@ -10883,6 +10883,7 @@ dependencies = [
  "fuzzy2",
  "gpui2",
  "picker2",
+ "ui2",
  "util",
  "workspace2",
 ]
