@@ -213,7 +213,7 @@ pub trait InteractiveElement: Sized {
         listener: impl Fn(&DragMoveEvent<T>, &mut WindowContext) + 'static,
     ) -> Self
     where
-        T: Render,
+        T: 'static,
     {
         self.interactivity().mouse_move_listeners.push(Box::new(
             move |event, bounds, phase, cx| {
@@ -223,7 +223,7 @@ pub trait InteractiveElement: Sized {
                     if cx
                         .active_drag
                         .as_ref()
-                        .is_some_and(|drag| drag.value.type_id() == TypeId::of::<T>())
+                        .is_some_and(|drag| (*drag.value).type_id() == TypeId::of::<T>())
                     {
                         (listener)(
                             &DragMoveEvent {
