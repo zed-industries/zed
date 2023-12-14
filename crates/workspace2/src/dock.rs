@@ -1,10 +1,9 @@
 use crate::DraggedDock;
 use crate::{status_bar::StatusItemView, Workspace};
 use gpui::{
-    div, px, red, Action, AnchorCorner, AnyView, AppContext, Axis, ClickEvent, Div, Entity,
-    EntityId, EventEmitter, FocusHandle, FocusableView, IntoElement, MouseButton, ParentElement,
-    Render, SharedString, Styled, Subscription, View, ViewContext, VisualContext, WeakView,
-    WindowContext,
+    div, px, Action, AnchorCorner, AnyView, AppContext, Axis, ClickEvent, Div, Entity, EntityId,
+    EventEmitter, FocusHandle, FocusableView, IntoElement, MouseButton, ParentElement, Render,
+    SharedString, Styled, Subscription, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -493,16 +492,16 @@ impl Render for Dock {
             let position = self.position;
             let handler = div()
                 .id("resize-handle")
-                // .bg(cx.theme().colors().border)
-                .bg(red())
+                .bg(cx.theme().colors().border)
                 .on_drag(move |cx| cx.build_view(|_| DraggedDock(position)))
                 .on_click(cx.listener(|v, e: &ClickEvent, cx| {
                     if e.down.button == MouseButton::Left && e.down.click_count == 2 {
                         v.resize_active_panel(None, cx)
                     }
-                }));
+                }))
+                .z_index(1);
 
-            const HANDLE_SIZE: Pixels = Pixels(4. * 3.);
+            const HANDLE_SIZE: Pixels = Pixels(6.);
 
             match self.position() {
                 DockPosition::Left => {
