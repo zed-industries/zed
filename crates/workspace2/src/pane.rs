@@ -1777,10 +1777,11 @@ impl Pane {
                         .read(cx)
                         .items()
                         .find(|item| item.item_id() == item_id)
-                        .map(|i| i.boxed_clone());
-
+                        .map(|item| item.boxed_clone());
                     if let Some(item) = item {
-                        workspace.split_item(split_direction, item, cx);
+                        if let Some(item) = item.clone_on_split(workspace.database_id(), cx) {
+                            workspace.split_item(split_direction, item, cx);
+                        }
                     }
                 });
             })
