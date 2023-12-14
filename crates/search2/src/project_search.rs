@@ -1523,44 +1523,7 @@ impl Render for ProjectSearchBar {
                     .border_2()
                     .bg(white())
                     .rounded_lg(),
-            )
-            .when(search.filters_enabled, |this| {
-                this.child(
-                    h_stack()
-                        .mt_2()
-                        .flex_1()
-                        .justify_between()
-                        .child(
-                            h_stack()
-                                .flex_1()
-                                .border_1()
-                                .mr_2()
-                                .child(search.included_files_editor.clone())
-                                .when(search.current_mode != SearchMode::Semantic, |this| {
-                                    this.child(
-                                        SearchOptions::INCLUDE_IGNORED.as_button(
-                                            search
-                                                .search_options
-                                                .contains(SearchOptions::INCLUDE_IGNORED),
-                                            cx.listener(|this, _, cx| {
-                                                this.toggle_search_option(
-                                                    SearchOptions::INCLUDE_IGNORED,
-                                                    cx,
-                                                );
-                                            }),
-                                        ),
-                                    )
-                                }),
-                        )
-                        .child(
-                            h_stack()
-                                .flex_1()
-                                .border_1()
-                                .ml_2()
-                                .child(search.excluded_files_editor.clone()),
-                        ),
-                )
-            });
+            );
         let mode_column = v_stack().items_start().justify_start().child(
             h_stack()
                 .child(
@@ -1682,9 +1645,8 @@ impl Render for ProjectSearchBar {
                     }))
                     .tooltip(|cx| Tooltip::for_action("Go to next match", &SelectNextMatch, cx)),
             ]);
-        h_stack()
+        v_stack()
             .key_context(key_context)
-            .size_full()
             .p_1()
             .m_2()
             .justify_between()
@@ -1739,10 +1701,50 @@ impl Render for ProjectSearchBar {
                     }))
                 })
             })
-            .child(query_column)
-            .child(mode_column)
-            .child(replace_column)
-            .child(actions_column)
+            .child(
+                h_stack()
+                    .child(query_column)
+                    .child(mode_column)
+                    .child(replace_column)
+                    .child(actions_column),
+            )
+            .when(search.filters_enabled, |this| {
+                this.child(
+                    h_stack()
+                        .mt_2()
+                        .flex_1()
+                        .justify_between()
+                        .child(
+                            h_stack()
+                                .flex_1()
+                                .border_1()
+                                .mr_2()
+                                .child(search.included_files_editor.clone())
+                                .when(search.current_mode != SearchMode::Semantic, |this| {
+                                    this.child(
+                                        SearchOptions::INCLUDE_IGNORED.as_button(
+                                            search
+                                                .search_options
+                                                .contains(SearchOptions::INCLUDE_IGNORED),
+                                            cx.listener(|this, _, cx| {
+                                                this.toggle_search_option(
+                                                    SearchOptions::INCLUDE_IGNORED,
+                                                    cx,
+                                                );
+                                            }),
+                                        ),
+                                    )
+                                }),
+                        )
+                        .child(
+                            h_stack()
+                                .flex_1()
+                                .border_1()
+                                .ml_2()
+                                .child(search.excluded_files_editor.clone()),
+                        ),
+                )
+            })
     }
 }
 // impl Entity for ProjectSearchBar {
