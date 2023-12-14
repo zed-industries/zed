@@ -2,19 +2,21 @@
 
 ## Introduction
 
-[Since ~February 2022, the Zed Industries team has been exclusively using Zed to build Zed](https://x.com/nathansobo/status/1497958891509932035). We've built these tools to specifically address our own issues and frustrations with the current state of collaborative coding. These are not features we've built to simply look flashy, we work in channels every week, aggressively dogfooding our own tools.
+[Since ~February 2022, the Zed Industries team has been exclusively using Zed to build Zed](https://x.com/nathansobo/status/1497958891509932035). We've built these tools to specifically address our own issues and frustrations with the current state of collaborative coding. These are not features we've built to simply look flashy, we work in channels every day of the workweek, aggressively dogfooding everything.
 
-![Staff usage of channels (metrics were not being collected before August, 2023)](./assets/screenshots/staff_usage_of_channels.png)
+![Staff usage of channels](./assets/screenshots/staff_usage_of_channels.png)
 
-While we still have improvements to make, we believe we've sanded down a lot of the sharp edges and that experience is both smooth and enjoyable - one that gets you as close to hypothetically sitting next to your teammates as possible, even if you're potentially on different sides of the globe. We want to continue working this way amongst ourselves, but we are extremely excited to work with *you* in this way. We invite you to contribute to Zed *through* Zed.
+*Metrics were not being collected before August 2023*
+
+While we still have improvements to make, we believe we've sanded down a lot of the sharp edges and that the experience is both smooth and enjoyable - one that gets you as close to hypothetically sitting next to your teammates as possible, even if you're potentially on different sides of the globe. We want to continue working this way amongst ourselves and we are extremely excited to work with *you* in this way. We invite you to contribute to Zed *through* Zed.
 
 If you're new to Zed's channels, here's a guide [link to up-to-date docs] to help bring you up to speed.
 
 ## Contribution ideas
 
-*If you already have an idea of what you'd like to contribute, you can skip this section.*
+If you already have an idea of what you'd like to contribute, you can skip this section, otherwise, here are a few resources to help you find something to work on:
 
-- Our public roadmap [include link] shows the largest, most-wanted features we plan to add to Zed.
+- Our public roadmap [include link] details what features we plan to add to Zed.
 - Our [Top-Ranking Issues issue](https://github.com/zed-industries/community/issues/52) shows the most popular feature requests and issues, as voted on by the community.
 
 *If you are a plugin developer looking to contribute by building out the Zed ecosystem, have a look at these [issues](https://github.com/zed-industries/community/issues?q=is%3Aopen+is%3Aissue+label%3A%22potential+plugin%22+sort%3Areactions-%2B1-desc).*
