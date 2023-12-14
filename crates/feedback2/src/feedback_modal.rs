@@ -206,14 +206,16 @@ impl FeedbackModal {
             if answer == Some(0) {
                 match email.clone() {
                     Some(email) => {
-                        let _ = KEY_VALUE_STORE
+                        KEY_VALUE_STORE
                             .write_kvp(DATABASE_KEY_NAME.to_string(), email)
-                            .await;
+                            .await
+                            .ok();
                     }
                     None => {
-                        let _ = KEY_VALUE_STORE
+                        KEY_VALUE_STORE
                             .delete_kvp(DATABASE_KEY_NAME.to_string())
-                            .await;
+                            .await
+                            .ok();
                     }
                 };
 
