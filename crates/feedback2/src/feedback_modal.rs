@@ -1,4 +1,4 @@
-use std::{ops::RangeInclusive, sync::Arc};
+use std::{ops::RangeInclusive, sync::Arc, time::Duration};
 
 use anyhow::{anyhow, bail};
 use client::{Client, ZED_SECRET_CLIENT_TOKEN, ZED_SERVER_URL};
@@ -22,6 +22,7 @@ use crate::{system_specs::SystemSpecs, GiveFeedback, OpenZedCommunityRepo};
 
 // For UI testing purposes
 const SEND_SUCCESS_IN_DEV_MODE: bool = true;
+const SEND_TIME_IN_DEV_MODE: Duration = Duration::from_secs(2);
 
 // Temporary, until tests are in place
 #[cfg(debug_assertions)]
@@ -47,14 +48,19 @@ struct FeedbackRequestBody<'a> {
     token: &'a str,
 }
 
+#[derive(PartialEq)]
+enum FeedbackModalState {
+    CanSubmit,
+    DismissModal,
+    AwaitingSubmissionResponse,
+}
+
 pub struct FeedbackModal {
     system_specs: SystemSpecs,
     feedback_editor: View<Editor>,
     email_address_editor: View<Editor>,
-    awaiting_submission: bool,
-    user_submitted: bool,
-    user_discarded: bool,
     character_count: i32,
+    state: FeedbackModalState,
 }
 
 impl FocusableView for FeedbackModal {
@@ -66,12 +72,7 @@ impl EventEmitter<DismissEvent> for FeedbackModal {}
 
 impl ModalView for FeedbackModal {
     fn on_before_dismiss(&mut self, cx: &mut ViewContext<Self>) -> bool {
-        if self.user_submitted {
-            self.set_user_submitted(false, cx);
-            return true;
-        }
-
-        if self.user_discarded {
+        if self.state == FeedbackModalState::DismissModal {
             return true;
         }
 
@@ -85,7 +86,7 @@ impl ModalView for FeedbackModal {
         cx.spawn(move |this, mut cx| async move {
             if answer.await.ok() == Some(0) {
                 this.update(&mut cx, |this, cx| {
-                    this.user_discarded = true;
+                    this.state = FeedbackModalState::DismissModal;
                     cx.emit(DismissEvent)
                 })
                 .log_err();
@@ -182,9 +183,7 @@ impl FeedbackModal {
             system_specs: system_specs.clone(),
             feedback_editor,
             email_address_editor,
-            awaiting_submission: false,
-            user_submitted: false,
-            user_discarded: false,
+            state: FeedbackModalState::CanSubmit,
             character_count: 0,
         }
     }
@@ -205,19 +204,22 @@ impl FeedbackModal {
             if answer == Some(0) {
                 match email.clone() {
                     Some(email) => {
-                        let _ = KEY_VALUE_STORE
+                        KEY_VALUE_STORE
                             .write_kvp(DATABASE_KEY_NAME.to_string(), email)
-                            .await;
+                            .await
+                            .ok();
                     }
                     None => {
-                        let _ = KEY_VALUE_STORE
+                        KEY_VALUE_STORE
                             .delete_kvp(DATABASE_KEY_NAME.to_string())
-                            .await;
+                            .await
+                            .ok();
                     }
                 };
 
                 this.update(&mut cx, |this, cx| {
-                    this.set_awaiting_submission(true, cx);
+                    this.state = FeedbackModalState::AwaitingSubmissionResponse;
+                    cx.notify();
                 })
                 .log_err();
 
@@ -227,7 +229,8 @@ impl FeedbackModal {
                 match res {
                     Ok(_) => {
                         this.update(&mut cx, |this, cx| {
-                            this.set_user_submitted(true, cx);
+                            this.state = FeedbackModalState::DismissModal;
+                            cx.notify();
                             cx.emit(DismissEvent)
                         })
                         .ok();
@@ -244,7 +247,9 @@ impl FeedbackModal {
                                 prompt.await.ok();
                             })
                             .detach();
-                            this.set_awaiting_submission(false, cx);
+
+                            this.state = FeedbackModalState::CanSubmit;
+                            cx.notify();
                         })
                         .log_err();
                     }
@@ -256,16 +261,6 @@ impl FeedbackModal {
         Task::ready(Ok(()))
     }
 
-    fn set_awaiting_submission(&mut self, awaiting_submission: bool, cx: &mut ViewContext<Self>) {
-        self.awaiting_submission = awaiting_submission;
-        cx.notify();
-    }
-
-    fn set_user_submitted(&mut self, user_submitted: bool, cx: &mut ViewContext<Self>) {
-        self.user_submitted = user_submitted;
-        cx.notify();
-    }
-
     async fn submit_feedback(
         feedback_text: &str,
         email: Option<String>,
@@ -273,6 +268,8 @@ impl FeedbackModal {
         system_specs: SystemSpecs,
     ) -> anyhow::Result<()> {
         if DEV_MODE {
+            smol::Timer::after(SEND_TIME_IN_DEV_MODE).await;
+
             if SEND_SUCCESS_IN_DEV_MODE {
                 return Ok(());
             } else {
@@ -325,10 +322,13 @@ impl Render for FeedbackModal {
 
         let valid_character_count = FEEDBACK_CHAR_LIMIT.contains(&self.character_count);
 
-        let allow_submission =
-            valid_character_count && valid_email_address && !self.awaiting_submission;
+        let awaiting_submission_response =
+            self.state == FeedbackModalState::AwaitingSubmissionResponse;
 
-        let submit_button_text = if self.awaiting_submission {
+        let allow_submission =
+            valid_character_count && valid_email_address && !awaiting_submission_response;
+
+        let submit_button_text = if awaiting_submission_response {
             "Submitting..."
         } else {
             "Submit"
