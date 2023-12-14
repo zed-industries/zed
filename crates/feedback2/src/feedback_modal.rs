@@ -48,19 +48,31 @@ struct FeedbackRequestBody<'a> {
     token: &'a str,
 }
 
-#[derive(PartialEq)]
-enum FeedbackModalState {
+#[derive(Debug, Clone, PartialEq)]
+enum InvalidStateIssue {
+    EmailAddress,
+    CharacterCount,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum CannotSubmitReason {
+    InvalidState { issues: Vec<InvalidStateIssue> },
+    AwaitingSubmission,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum SubmissionState {
     CanSubmit,
-    DismissModal,
-    AwaitingSubmissionResponse,
+    CannotSubmit { reason: CannotSubmitReason },
 }
 
 pub struct FeedbackModal {
     system_specs: SystemSpecs,
     feedback_editor: View<Editor>,
     email_address_editor: View<Editor>,
+    submission_state: Option<SubmissionState>,
+    dismiss_modal: bool,
     character_count: i32,
-    state: FeedbackModalState,
 }
 
 impl FocusableView for FeedbackModal {
@@ -72,7 +84,7 @@ impl EventEmitter<DismissEvent> for FeedbackModal {}
 
 impl ModalView for FeedbackModal {
     fn on_before_dismiss(&mut self, cx: &mut ViewContext<Self>) -> bool {
-        if self.state == FeedbackModalState::DismissModal {
+        if self.dismiss_modal {
             return true;
         }
 
@@ -86,7 +98,7 @@ impl ModalView for FeedbackModal {
         cx.spawn(move |this, mut cx| async move {
             if answer.await.ok() == Some(0) {
                 this.update(&mut cx, |this, cx| {
-                    this.state = FeedbackModalState::DismissModal;
+                    this.dismiss_modal = true;
                     cx.emit(DismissEvent)
                 })
                 .log_err();
@@ -179,7 +191,8 @@ impl FeedbackModal {
             system_specs: system_specs.clone(),
             feedback_editor,
             email_address_editor,
-            state: FeedbackModalState::CanSubmit,
+            submission_state: None,
+            dismiss_modal: false,
             character_count: 0,
         }
     }
@@ -214,7 +227,9 @@ impl FeedbackModal {
                 };
 
                 this.update(&mut cx, |this, cx| {
-                    this.state = FeedbackModalState::AwaitingSubmissionResponse;
+                    this.submission_state = Some(SubmissionState::CannotSubmit {
+                        reason: CannotSubmitReason::AwaitingSubmission,
+                    });
                     cx.notify();
                 })
                 .log_err();
@@ -225,7 +240,7 @@ impl FeedbackModal {
                 match res {
                     Ok(_) => {
                         this.update(&mut cx, |this, cx| {
-                            this.state = FeedbackModalState::DismissModal;
+                            this.dismiss_modal = true;
                             cx.notify();
                             cx.emit(DismissEvent)
                         })
@@ -244,7 +259,7 @@ impl FeedbackModal {
                             })
                             .detach();
 
-                            this.state = FeedbackModalState::CanSubmit;
+                            this.submission_state = Some(SubmissionState::CanSubmit);
                             cx.notify();
                         })
                         .log_err();
@@ -302,6 +317,67 @@ impl FeedbackModal {
         Ok(())
     }
 
+    fn update_submission_state(&mut self, cx: &mut ViewContext<Self>) {
+        if self.awaiting_submission() {
+            return;
+        }
+
+        let mut invalid_state_issues = Vec::new();
+
+        let valid_email_address = match self.email_address_editor.read(cx).text_option(cx) {
+            Some(email_address) => Regex::new(EMAIL_REGEX).unwrap().is_match(&email_address),
+            None => true,
+        };
+
+        if !valid_email_address {
+            invalid_state_issues.push(InvalidStateIssue::EmailAddress);
+        }
+
+        if !FEEDBACK_CHAR_LIMIT.contains(&self.character_count) {
+            invalid_state_issues.push(InvalidStateIssue::CharacterCount);
+        }
+
+        if invalid_state_issues.is_empty() {
+            self.submission_state = Some(SubmissionState::CanSubmit);
+        } else {
+            self.submission_state = Some(SubmissionState::CannotSubmit {
+                reason: CannotSubmitReason::InvalidState {
+                    issues: invalid_state_issues,
+                },
+            });
+        }
+    }
+
+    fn valid_email_address(&self) -> bool {
+        !self.in_invalid_state(InvalidStateIssue::EmailAddress)
+    }
+
+    fn valid_character_count(&self) -> bool {
+        !self.in_invalid_state(InvalidStateIssue::CharacterCount)
+    }
+
+    fn in_invalid_state(&self, a: InvalidStateIssue) -> bool {
+        match self.submission_state {
+            Some(SubmissionState::CannotSubmit {
+                reason: CannotSubmitReason::InvalidState { ref issues },
+            }) => issues.contains(&a),
+            _ => false,
+        }
+    }
+
+    fn awaiting_submission(&self) -> bool {
+        matches!(
+            self.submission_state,
+            Some(SubmissionState::CannotSubmit {
+                reason: CannotSubmitReason::AwaitingSubmission
+            })
+        )
+    }
+
+    fn can_submit(&self) -> bool {
+        matches!(self.submission_state, Some(SubmissionState::CanSubmit))
+    }
+
     fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
         cx.emit(DismissEvent)
     }
@@ -311,20 +387,9 @@ impl Render for FeedbackModal {
     type Element = Div;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-        let valid_email_address = match self.email_address_editor.read(cx).text_option(cx) {
-            Some(email_address) => Regex::new(EMAIL_REGEX).unwrap().is_match(&email_address),
-            None => true,
-        };
+        self.update_submission_state(cx);
 
-        let valid_character_count = FEEDBACK_CHAR_LIMIT.contains(&self.character_count);
-
-        let awaiting_submission_response =
-            self.state == FeedbackModalState::AwaitingSubmissionResponse;
-
-        let allow_submission =
-            valid_character_count && valid_email_address && !awaiting_submission_response;
-
-        let submit_button_text = if awaiting_submission_response {
+        let submit_button_text = if self.awaiting_submission() {
             "Submitting..."
         } else {
             "Submit"
@@ -362,7 +427,7 @@ impl Render for FeedbackModal {
                         *FEEDBACK_CHAR_LIMIT.end() - self.character_count
                     )
                 })
-                .color(if valid_character_count {
+                .color(if self.valid_character_count() {
                     Color::Success
                 } else {
                     Color::Error
@@ -386,7 +451,7 @@ impl Render for FeedbackModal {
                             .p_2()
                             .border()
                             .rounded_md()
-                            .border_color(if valid_email_address {
+                            .border_color(if self.valid_email_address() {
                                 cx.theme().colors().border
                             } else {
                                 red()
@@ -423,7 +488,7 @@ impl Render for FeedbackModal {
                                             })),
                                     )
                                     .child(
-                                        Button::new("send_feedback", submit_button_text)
+                                        Button::new("submit_feedback", submit_button_text)
                                             .color(Color::Accent)
                                             .style(ButtonStyle::Filled)
                                             .on_click(cx.listener(|this, _, cx| {
@@ -437,7 +502,7 @@ impl Render for FeedbackModal {
                                                     cx,
                                                 )
                                             })
-                                            .when(!allow_submission, |this| this.disabled(true)),
+                                            .when(!self.can_submit(), |this| this.disabled(true)),
                                     ),
                             ),
                     ),
@@ -447,3 +512,42 @@ impl Render for FeedbackModal {
 
 // TODO: Maybe store email address whenever the modal is closed, versus just on submit, so users can remove it if they want without submitting
 // TODO: Testing of various button states, dismissal prompts, etc.
+
+// #[cfg(test)]
+// mod test {
+//     use super::*;
+
+//     #[test]
+//     fn test_invalid_email_addresses() {
+//         let markdown = markdown.await.log_err();
+//         let buffer = project.update(&mut cx, |project, cx| {
+//             project.create_buffer("", markdown, cx)
+//         })??;
+
+//         workspace.update(&mut cx, |workspace, cx| {
+//             let system_specs = SystemSpecs::new(cx);
+
+//             workspace.toggle_modal(cx, move |cx| {
+//                 let feedback_modal = FeedbackModal::new(system_specs, project, buffer, cx);
+
+//                 assert!(!feedback_modal.can_submit());
+//                 assert!(!feedback_modal.valid_email_address(cx));
+//                 assert!(!feedback_modal.valid_character_count());
+
+//                 feedback_modal
+//                     .email_address_editor
+//                     .update(cx, |this, cx| this.set_text("a", cx));
+//                 feedback_modal.set_submission_state(cx);
+
+//                 assert!(!feedback_modal.valid_email_address(cx));
+
+//                 feedback_modal
+//                     .email_address_editor
+//                     .update(cx, |this, cx| this.set_text("a&b.com", cx));
+//                 feedback_modal.set_submission_state(cx);
+
+//                 assert!(feedback_modal.valid_email_address(cx));
+//             });
+//         })?;
+//     }
+// }
