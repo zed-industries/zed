@@ -128,7 +128,7 @@ impl RenderOnce for ListItem {
 
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         h_stack()
-            .id("item_container")
+            .id(self.id)
             .w_full()
             .relative()
             // When an item is inset draw the indent spacing outside of the item
@@ -151,7 +151,7 @@ impl RenderOnce for ListItem {
             })
             .child(
                 h_stack()
-                    .id(self.id)
+                    .id("inner_list_item")
                     .w_full()
                     .relative()
                     .gap_1()
