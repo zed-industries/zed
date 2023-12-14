@@ -43,6 +43,7 @@ pub fn dracula() -> UserThemeFamily {
                     tab_active_background: Some(rgba(0x282a36ff).into()),
                     scrollbar_track_background: Some(rgba(0x282a36ff).into()),
                     scrollbar_track_border: Some(rgba(0x191a21ff).into()),
+                    editor_foreground: Some(rgba(0xf8f8f2ff).into()),
                     editor_background: Some(rgba(0x282a36ff).into()),
                     editor_gutter_background: Some(rgba(0x282a36ff).into()),
                     editor_line_number: Some(rgba(0x6272a4ff).into()),

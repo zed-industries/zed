@@ -142,6 +142,16 @@ impl VsCodeThemeConverter {
             .as_ref()
             .traverse(|color| try_parse_color(&color))?;
 
+        let vscode_token_colors_foreground = self
+            .theme
+            .token_colors
+            .iter()
+            .find(|token_color| token_color.scope.is_none())
+            .and_then(|token_color| token_color.settings.foreground.as_ref())
+            .traverse(|color| try_parse_color(&color))
+            .ok()
+            .flatten();
+
         Ok(ThemeColorsRefinement {
             border: vscode_panel_border,
             border_variant: vscode_panel_border,
@@ -197,16 +207,7 @@ impl VsCodeThemeConverter {
                 .foreground
                 .as_ref()
                 .traverse(|color| try_parse_color(&color))?
-                .or_else(|| {
-                    self.theme
-                        .token_colors
-                        .iter()
-                        .find(|token_color| token_color.scope.is_none())
-                        .and_then(|token_color| token_color.settings.foreground.as_ref())
-                        .traverse(|color| try_parse_color(&color))
-                        .ok()
-                        .flatten()
-                }),
+                .or(vscode_token_colors_foreground),
             text_muted: vscode_colors
                 .tab_inactive_foreground
                 .as_ref()
@@ -226,6 +227,11 @@ impl VsCodeThemeConverter {
                 .as_ref()
                 .traverse(|color| try_parse_color(&color))?
                 .or(vscode_editor_background),
+            editor_foreground: vscode_colors
+                .foreground
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?
+                .or(vscode_token_colors_foreground),
             editor_background: vscode_editor_background,
             editor_gutter_background: vscode_editor_background,
             editor_line_number: vscode_colors
