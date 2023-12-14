@@ -22,6 +22,7 @@ use crate::{system_specs::SystemSpecs, GiveFeedback, OpenZedCommunityRepo};
 
 // For UI testing purposes
 const SEND_SUCCESS_IN_DEV_MODE: bool = true;
+const SEND_TIME_IN_DEV_MODE: Duration = Duration::from_secs(2);
 
 // Temporary, until tests are in place
 #[cfg(debug_assertions)]
@@ -273,6 +274,8 @@ impl FeedbackModal {
         system_specs: SystemSpecs,
     ) -> anyhow::Result<()> {
         if DEV_MODE {
+            smol::Timer::after(SEND_TIME_IN_DEV_MODE).await;
+
             if SEND_SUCCESS_IN_DEV_MODE {
                 return Ok(());
             } else {

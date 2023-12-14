@@ -3265,6 +3265,7 @@ dependencies = [
  "serde_derive",
  "settings2",
  "smallvec",
+ "smol",
  "sysinfo",
  "theme2",
  "tree-sitter-markdown",
