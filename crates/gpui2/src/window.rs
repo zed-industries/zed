@@ -38,28 +38,34 @@ use std::{
 };
 use util::ResultExt;
 
-const ACTIVE_DRAG_Z_INDEX: u32 = 1;
+const ACTIVE_DRAG_Z_INDEX: u8 = 1;
 
 /// A global stacking order, which is created by stacking successive z-index values.
 /// Each z-index will always be interpreted in the context of its parent z-index.
-#[derive(Deref, DerefMut, Ord, PartialOrd, Eq, PartialEq, Clone, Debug)]
-pub struct StackingOrder(pub(crate) Arc<Vec<u32>>);
+#[derive(Deref, DerefMut, Clone, Debug, Ord, PartialOrd, PartialEq, Eq)]
+pub struct StackingOrder {
+    #[deref]
+    #[deref_mut]
+    z_indices: Arc<SmallVec<[u8; 8]>>,
+}
 
 impl Default for StackingOrder {
     fn default() -> Self {
-        StackingOrder(Arc::new(Vec::new()))
+        StackingOrder {
+            z_indices: Arc::new(SmallVec::new()),
+        }
     }
 }
 
 impl StackingOrder {
     /// Pushes a new z-index onto the stacking order.
-    pub fn push(&mut self, z_index: u32) {
-        Arc::make_mut(&mut self.0).push(z_index);
+    pub fn push(&mut self, z_index: u8) {
+        Arc::make_mut(&mut self.z_indices).push(z_index);
     }
 
     /// Pops the last z-index off the stacking order.
     pub fn pop(&mut self) {
-        Arc::make_mut(&mut self.0).pop();
+        Arc::make_mut(&mut self.z_indices).pop();
     }
 }
 
@@ -905,7 +911,7 @@ impl<'a> WindowContext<'a> {
 
     /// Called during painting to invoke the given closure in a new stacking context. The given
     /// z-index is interpreted relative to the previous call to `stack`.
-    pub fn with_z_index<R>(&mut self, z_index: u32, f: impl FnOnce(&mut Self) -> R) -> R {
+    pub fn with_z_index<R>(&mut self, z_index: u8, f: impl FnOnce(&mut Self) -> R) -> R {
         self.window.next_frame.z_index_stack.push(z_index);
         let result = f(self);
         self.window.next_frame.z_index_stack.pop();
@@ -2233,7 +2239,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         &mut self.window_cx
     }
 
-    pub fn with_z_index<R>(&mut self, z_index: u32, f: impl FnOnce(&mut Self) -> R) -> R {
+    pub fn with_z_index<R>(&mut self, z_index: u8, f: impl FnOnce(&mut Self) -> R) -> R {
         self.window.next_frame.z_index_stack.push(z_index);
         let result = f(self);
         self.window.next_frame.z_index_stack.pop();

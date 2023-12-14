@@ -107,7 +107,7 @@ pub struct Style {
     /// The mouse cursor style shown when the mouse pointer is over an element.
     pub mouse_cursor: Option<CursorStyle>,
 
-    pub z_index: Option<u32>,
+    pub z_index: Option<u8>,
 }
 
 impl Styled for StyleRefinement {

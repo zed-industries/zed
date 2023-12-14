@@ -646,7 +646,10 @@ pub struct DivState {
 
 impl DivState {
     pub fn is_active(&self) -> bool {
-        self.interactive_state.pending_mouse_down.borrow().is_some()
+        self.interactive_state
+            .pending_mouse_down
+            .as_ref()
+            .map_or(false, |pending| pending.borrow().is_some())
     }
 }
 
@@ -872,11 +875,17 @@ impl Interactivity {
         let drag_listener = self.drag_listener;
 
         if !click_listeners.is_empty() || drag_listener.is_some() {
-            let pending_mouse_down = element_state.pending_mouse_down.clone();
+            let pending_mouse_down = element_state
+                .pending_mouse_down
+                .get_or_insert_with(Default::default)
+                .clone();
             let mouse_down = pending_mouse_down.borrow().clone();
             if let Some(mouse_down) = mouse_down {
                 if let Some(drag_listener) = drag_listener {
-                    let active_state = element_state.clicked_state.clone();
+                    let active_state = element_state
+                        .clicked_state
+                        .get_or_insert_with(Default::default)
+                        .clone();
                     let interactive_bounds = interactive_bounds.clone();
 
                     cx.on_mouse_event(move |event: &MouseMoveEvent, phase, cx| {
@@ -929,8 +938,14 @@ impl Interactivity {
         }
 
         if let Some(hover_listener) = self.hover_listener.take() {
-            let was_hovered = element_state.hover_state.clone();
-            let has_mouse_down = element_state.pending_mouse_down.clone();
+            let was_hovered = element_state
+                .hover_state
+                .get_or_insert_with(Default::default)
+                .clone();
+            let has_mouse_down = element_state
+                .pending_mouse_down
+                .get_or_insert_with(Default::default)
+                .clone();
             let interactive_bounds = interactive_bounds.clone();
 
             cx.on_mouse_event(move |event: &MouseMoveEvent, phase, cx| {
@@ -951,8 +966,14 @@ impl Interactivity {
         }
 
         if let Some(tooltip_builder) = self.tooltip_builder.take() {
-            let active_tooltip = element_state.active_tooltip.clone();
-            let pending_mouse_down = element_state.pending_mouse_down.clone();
+            let active_tooltip = element_state
+                .active_tooltip
+                .get_or_insert_with(Default::default)
+                .clone();
+            let pending_mouse_down = element_state
+                .pending_mouse_down
+                .get_or_insert_with(Default::default)
+                .clone();
             let interactive_bounds = interactive_bounds.clone();
 
             cx.on_mouse_event(move |event: &MouseMoveEvent, phase, cx| {
@@ -994,19 +1015,30 @@ impl Interactivity {
                 }
             });
 
-            let active_tooltip = element_state.active_tooltip.clone();
+            let active_tooltip = element_state
+                .active_tooltip
+                .get_or_insert_with(Default::default)
+                .clone();
             cx.on_mouse_event(move |_: &MouseDownEvent, _, _| {
                 active_tooltip.borrow_mut().take();
             });
 
-            if let Some(active_tooltip) = element_state.active_tooltip.borrow().as_ref() {
+            if let Some(active_tooltip) = element_state
+                .active_tooltip
+                .get_or_insert_with(Default::default)
+                .borrow()
+                .as_ref()
+            {
                 if active_tooltip.tooltip.is_some() {
                     cx.active_tooltip = active_tooltip.tooltip.clone()
                 }
             }
         }
 
-        let active_state = element_state.clicked_state.clone();
+        let active_state = element_state
+            .clicked_state
+            .get_or_insert_with(Default::default)
+            .clone();
         if active_state.borrow().is_clicked() {
             cx.on_mouse_event(move |_: &MouseUpEvent, phase, cx| {
                 if phase == DispatchPhase::Capture {
@@ -1180,7 +1212,10 @@ impl Interactivity {
             }
         }
 
-        let clicked_state = element_state.clicked_state.borrow();
+        let clicked_state = element_state
+            .clicked_state
+            .get_or_insert_with(Default::default)
+            .borrow();
         if clicked_state.group {
             if let Some(group) = self.group_active_style.as_ref() {
                 style.refine(&group.style)
@@ -1235,11 +1270,11 @@ impl Default for Interactivity {
 #[derive(Default)]
 pub struct InteractiveElementState {
     pub focus_handle: Option<FocusHandle>,
-    pub clicked_state: Rc<RefCell<ElementClickedState>>,
-    pub hover_state: Rc<RefCell<bool>>,
-    pub pending_mouse_down: Rc<RefCell<Option<MouseDownEvent>>>,
+    pub clicked_state: Option<Rc<RefCell<ElementClickedState>>>,
+    pub hover_state: Option<Rc<RefCell<bool>>>,
+    pub pending_mouse_down: Option<Rc<RefCell<Option<MouseDownEvent>>>>,
     pub scroll_offset: Option<Rc<RefCell<Point<Pixels>>>>,
-    pub active_tooltip: Rc<RefCell<Option<ActiveTooltip>>>,
+    pub active_tooltip: Option<Rc<RefCell<Option<ActiveTooltip>>>>,
 }
 
 pub struct ActiveTooltip {

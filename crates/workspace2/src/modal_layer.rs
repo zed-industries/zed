@@ -116,7 +116,7 @@ impl Render for ModalLayer {
             .size_full()
             .top_0()
             .left_0()
-            .z_index(400)
+            .z_index(169)
             .child(
                 v_stack()
                     .h(px(0.0))
