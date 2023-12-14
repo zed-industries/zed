@@ -1,60 +1,15 @@
 #!/bin/bash
 
-options=(
-  "auto_height_editor"
-  "avatar"
-  "button"
-  "checkbox"
-  "context_menu"
-  "cursor"
-  "disclosure"
-  "focus"
-  "icon"
-  "icon_button"
-  "keybinding"
-  "label"
-  "list"
-  "list_header"
-  "list_item"
-  "overflow_scroll"
-  "scroll"
-  "tab"
-  "tab_bar"
-  "text"
-  "viewport_units"
-  "z_index"
-  "picker"
-)
+# This script takes a single text input and replaces 'list_item' with the input in a cargo run command
 
-run_story() {
-  echo "Running story: $1"
-  cargo run -p storybook2 -- "$1"
-}
-
-if [ "$#" -gt 0 ]; then
-  story_arg="$1"
-  # Add prefix 'components/' if not present
-  if [[ $story_arg != components/* ]]; then
-    story_arg="components/$story_arg"
-  fi
-  # Check if the provided story is a valid option
-  for opt in "${options[@]}"; do
-    if [[ "components/$opt" == "$story_arg" ]]; then
-      run_story "$story_arg"
-      exit
-    fi
-  done
-  echo "Invalid story name: $1"
+# Check if an argument is provided
+if [ "$#" -ne 1 ]; then
+  echo "Usage: $0 <component_name>"
   exit 1
 fi
 
-prompt="Please select a story:"
-PS3="$prompt "
-select story in "${options[@]}"; do
-  if [[ -n $story ]]; then
-    run_story "components/$story"
-    break
-  else
-    echo "Invalid option"
-  fi
-done
+# Assign the argument to a variable
+COMPONENT_NAME="$1"
+
+# Run the cargo command with the provided component name
+cargo run -p storybook2 -- components/"$COMPONENT_NAME"
