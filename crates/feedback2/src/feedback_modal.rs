@@ -160,23 +160,19 @@ impl FeedbackModal {
             editor
         });
 
-        cx.subscribe(
-            &feedback_editor,
-            |this, editor, event: &EditorEvent, cx| match event {
-                EditorEvent::Edited => {
-                    this.character_count = editor
-                        .read(cx)
-                        .buffer()
-                        .read(cx)
-                        .as_singleton()
-                        .expect("Feedback editor is never a multi-buffer")
-                        .read(cx)
-                        .len() as i32;
-                    cx.notify();
-                }
-                _ => {}
-            },
-        )
+        cx.subscribe(&feedback_editor, |this, editor, event: &EditorEvent, cx| {
+            if *event == EditorEvent::Edited {
+                this.character_count = editor
+                    .read(cx)
+                    .buffer()
+                    .read(cx)
+                    .as_singleton()
+                    .expect("Feedback editor is never a multi-buffer")
+                    .read(cx)
+                    .len() as i32;
+                cx.notify();
+            }
+        })
         .detach();
 
         Self {
