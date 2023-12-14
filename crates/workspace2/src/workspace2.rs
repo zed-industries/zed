@@ -1145,7 +1145,7 @@ impl Workspace {
         let window = cx.window_handle();
 
         cx.spawn(|this, mut cx| async move {
-            let workspace_count = cx.update(|_, cx| {
+            let workspace_count = (*cx).update(|cx| {
                 cx.windows()
                     .iter()
                     .filter(|window| window.downcast::<Workspace>().is_some())
