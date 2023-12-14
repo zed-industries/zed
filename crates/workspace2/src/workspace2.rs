@@ -3,13 +3,12 @@
 
 pub mod dock;
 pub mod item;
+mod modal_layer;
 pub mod notifications;
 pub mod pane;
 pub mod pane_group;
 mod persistence;
 pub mod searchable;
-// todo!()
-mod modal_layer;
 pub mod shared_screen;
 mod status_bar;
 mod toolbar;
@@ -3313,42 +3312,12 @@ impl Workspace {
             )
             .on_action(cx.listener(Workspace::open))
             .on_action(cx.listener(Workspace::close_window))
-
-        //     cx.add_action(Workspace::activate_pane_at_index);
-        //     cx.add_action(|workspace: &mut Workspace, _: &ReopenClosedItem, cx| {
-        //         workspace.reopen_closed_item(cx).detach();
-        //     });
-        //     cx.add_action(|workspace: &mut Workspace, _: &GoBack, cx| {
-        //         workspace
-        //             .go_back(workspace.active_pane().downgrade(), cx)
-        //             .detach();
-        //     });
-        //     cx.add_action(|workspace: &mut Workspace, _: &GoForward, cx| {
-        //         workspace
-        //             .go_forward(workspace.active_pane().downgrade(), cx)
-        //             .detach();
-        //     });
-
-        //     cx.add_action(|_: &mut Workspace, _: &install_cli::Install, cx| {
-        //         cx.spawn(|workspace, mut cx| async move {
-        //             let err = install_cli::install_cli(&cx)
-        //                 .await
-        //                 .context("Failed to create CLI symlink");
-
-        //             workspace.update(&mut cx, |workspace, cx| {
-        //                 if matches!(err, Err(_)) {
-        //                     err.notify_err(workspace, cx);
-        //                 } else {
-        //                     workspace.show_notification(1, cx, |cx| {
-        //                         cx.build_view(|_| {
-        //                             MessageNotification::new("Successfully installed the `zed` binary")
-        //                         })
-        //                     });
-        //                 }
-        //             })
-        //         })
-        //         .detach();
-        //     });
+            .on_action(cx.listener(Workspace::activate_pane_at_index))
+            .on_action(
+                cx.listener(|workspace: &mut Workspace, _: &ReopenClosedItem, cx| {
+                    workspace.reopen_closed_item(cx).detach();
+                }),
+            )
     }
 
     #[cfg(any(test, feature = "test-support"))]
