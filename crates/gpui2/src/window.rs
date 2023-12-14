@@ -46,26 +46,14 @@ const ACTIVE_DRAG_Z_INDEX: u8 = 1;
 pub struct StackingOrder {
     #[deref]
     #[deref_mut]
-    z_indices: Arc<SmallVec<[u8; 8]>>,
+    z_indices: SmallVec<[u8; 32]>,
 }
 
 impl Default for StackingOrder {
     fn default() -> Self {
         StackingOrder {
-            z_indices: Arc::new(SmallVec::new()),
+            z_indices: SmallVec::new(),
         }
-    }
-}
-
-impl StackingOrder {
-    /// Pushes a new z-index onto the stacking order.
-    pub fn push(&mut self, z_index: u8) {
-        Arc::make_mut(&mut self.z_indices).push(z_index);
-    }
-
-    /// Pops the last z-index off the stacking order.
-    pub fn pop(&mut self) {
-        Arc::make_mut(&mut self.z_indices).pop();
     }
 }
 

@@ -748,10 +748,10 @@ impl Interactivity {
             cx.with_z_index(style.z_index.unwrap_or(0), |cx| cx.add_opaque_layer(bounds))
         }
 
-        let interactive_bounds = Rc::new(InteractiveBounds {
+        let interactive_bounds = InteractiveBounds {
             bounds: bounds.intersect(&cx.content_mask().bounds),
             stacking_order: cx.stacking_order().clone(),
-        });
+        };
 
         if let Some(mouse_cursor) = style.mouse_cursor {
             let mouse_position = &cx.mouse_position();
@@ -784,28 +784,28 @@ impl Interactivity {
         for listener in self.mouse_down_listeners {
             let interactive_bounds = interactive_bounds.clone();
             cx.on_mouse_event(move |event: &MouseDownEvent, phase, cx| {
-                listener(event, &*interactive_bounds, phase, cx);
+                listener(event, &interactive_bounds, phase, cx);
             })
         }
 
         for listener in self.mouse_up_listeners {
             let interactive_bounds = interactive_bounds.clone();
             cx.on_mouse_event(move |event: &MouseUpEvent, phase, cx| {
-                listener(event, &*interactive_bounds, phase, cx);
+                listener(event, &interactive_bounds, phase, cx);
             })
         }
 
         for listener in self.mouse_move_listeners {
             let interactive_bounds = interactive_bounds.clone();
             cx.on_mouse_event(move |event: &MouseMoveEvent, phase, cx| {
-                listener(event, &*interactive_bounds, phase, cx);
+                listener(event, &interactive_bounds, phase, cx);
             })
         }
 
         for listener in self.scroll_wheel_listeners {
             let interactive_bounds = interactive_bounds.clone();
             cx.on_mouse_event(move |event: &ScrollWheelEvent, phase, cx| {
-                listener(event, &*interactive_bounds, phase, cx);
+                listener(event, &interactive_bounds, phase, cx);
             })
         }
 
