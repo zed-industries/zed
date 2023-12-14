@@ -633,4 +633,16 @@ pub trait Styled: Sized {
             .line_height = Some(line_height.into());
         self
     }
+
+    #[cfg(debug_assertions)]
+    fn debug(mut self) -> Self {
+        self.style().debug = Some(true);
+        self
+    }
+
+    #[cfg(debug_assertions)]
+    fn debug_below(mut self) -> Self {
+        self.style().debug_below = Some(true);
+        self
+    }
 }

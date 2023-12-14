@@ -197,41 +197,41 @@ impl Element for UniformList {
                 );
 
                 cx.with_z_index(style.z_index.unwrap_or(0), |cx| {
-                    style.paint(bounds, cx);
+                    style.paint(bounds, cx, |cx| {
+                        if self.item_count > 0 {
+                            if let Some(scroll_handle) = self.scroll_handle.clone() {
+                                scroll_handle.0.borrow_mut().replace(ScrollHandleState {
+                                    item_height,
+                                    list_height: padded_bounds.size.height,
+                                    scroll_offset: shared_scroll_offset,
+                                });
+                            }
 
-                    if self.item_count > 0 {
-                        if let Some(scroll_handle) = self.scroll_handle.clone() {
-                            scroll_handle.0.borrow_mut().replace(ScrollHandleState {
-                                item_height,
-                                list_height: padded_bounds.size.height,
-                                scroll_offset: shared_scroll_offset,
+                            let first_visible_element_ix =
+                                (-scroll_offset.y / item_height).floor() as usize;
+                            let last_visible_element_ix =
+                                ((-scroll_offset.y + padded_bounds.size.height) / item_height)
+                                    .ceil() as usize;
+                            let visible_range = first_visible_element_ix
+                                ..cmp::min(last_visible_element_ix, self.item_count);
+
+                            let items = (self.render_items)(visible_range.clone(), cx);
+                            cx.with_z_index(1, |cx| {
+                                let content_mask = ContentMask { bounds };
+                                cx.with_content_mask(Some(content_mask), |cx| {
+                                    for (item, ix) in items.into_iter().zip(visible_range) {
+                                        let item_origin = padded_bounds.origin
+                                            + point(px(0.), item_height * ix + scroll_offset.y);
+                                        let available_space = size(
+                                            AvailableSpace::Definite(padded_bounds.size.width),
+                                            AvailableSpace::Definite(item_height),
+                                        );
+                                        item.draw(item_origin, available_space, cx);
+                                    }
+                                });
                             });
                         }
-
-                        let first_visible_element_ix =
-                            (-scroll_offset.y / item_height).floor() as usize;
-                        let last_visible_element_ix =
-                            ((-scroll_offset.y + padded_bounds.size.height) / item_height).ceil()
-                                as usize;
-                        let visible_range = first_visible_element_ix
-                            ..cmp::min(last_visible_element_ix, self.item_count);
-
-                        let items = (self.render_items)(visible_range.clone(), cx);
-                        cx.with_z_index(1, |cx| {
-                            let content_mask = ContentMask { bounds };
-                            cx.with_content_mask(Some(content_mask), |cx| {
-                                for (item, ix) in items.into_iter().zip(visible_range) {
-                                    let item_origin = padded_bounds.origin
-                                        + point(px(0.), item_height * ix + scroll_offset.y);
-                                    let available_space = size(
-                                        AvailableSpace::Definite(padded_bounds.size.width),
-                                        AvailableSpace::Definite(item_height),
-                                    );
-                                    item.draw(item_origin, available_space, cx);
-                                }
-                            });
-                        });
-                    }
+                    });
                 })
             },
         );

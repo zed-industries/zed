@@ -640,10 +640,7 @@ impl Element for Div {
                 let z_index = style.z_index.unwrap_or(0);
 
                 cx.with_z_index(z_index, |cx| {
-                    cx.with_z_index(0, |cx| {
-                        style.paint(bounds, cx);
-                    });
-                    cx.with_z_index(1, |cx| {
+                    style.paint(bounds, cx, |cx| {
                         cx.with_text_style(style.text_style().cloned(), |cx| {
                             cx.with_content_mask(style.overflow_mask(bounds), |cx| {
                                 cx.with_element_offset(scroll_offset, |cx| {
@@ -653,7 +650,7 @@ impl Element for Div {
                                 })
                             })
                         })
-                    })
+                    });
                 })
             },
         );

@@ -14,6 +14,9 @@ pub use taffy::style::{
     Overflow, Position,
 };
 
+#[cfg(debug_assertions)]
+pub struct DebugBelow;
+
 pub type StyleCascade = Cascade<Style>;
 
 #[derive(Clone, Refineable, Debug)]
@@ -108,6 +111,11 @@ pub struct Style {
     pub mouse_cursor: Option<CursorStyle>,
 
     pub z_index: Option<u32>,
+
+    #[cfg(debug_assertions)]
+    pub debug: bool,
+    #[cfg(debug_assertions)]
+    pub debug_below: bool,
 }
 
 impl Styled for StyleRefinement {
@@ -334,7 +342,22 @@ impl Style {
     }
 
     /// Paints the background of an element styled with this style.
-    pub fn paint(&self, bounds: Bounds<Pixels>, cx: &mut WindowContext) {
+    pub fn paint(
+        &self,
+        bounds: Bounds<Pixels>,
+        cx: &mut WindowContext,
+        continuation: impl FnOnce(&mut WindowContext),
+    ) {
+        #[cfg(debug_assertions)]
+        if self.debug_below {
+            cx.set_global(DebugBelow)
+        }
+
+        #[cfg(debug_assertions)]
+        if self.debug || cx.has_global::<DebugBelow>() {
+            cx.paint_quad(crate::outline(bounds, crate::red()));
+        }
+
         let rem_size = cx.rem_size();
 
         cx.with_z_index(0, |cx| {
@@ -356,6 +379,15 @@ impl Style {
                     self.border_color.unwrap_or_default(),
                 ));
             });
+        }
+
+        cx.with_z_index(2, |cx| {
+            continuation(cx);
+        });
+
+        #[cfg(debug_assertions)]
+        if self.debug_below {
+            cx.remove_global::<DebugBelow>();
         }
     }
 
@@ -404,6 +436,11 @@ impl Default for Style {
             text: TextStyleRefinement::default(),
             mouse_cursor: None,
             z_index: None,
+
+            #[cfg(debug_assertions)]
+            debug: false,
+            #[cfg(debug_assertions)]
+            debug_below: false,
         }
     }
 }
