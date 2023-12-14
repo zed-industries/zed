@@ -6,8 +6,8 @@ use db::kvp::KEY_VALUE_STORE;
 use editor::{Editor, EditorEvent};
 use futures::AsyncReadExt;
 use gpui::{
-    div, rems, serde_json, AppContext, DismissEvent, Div, EventEmitter, FocusHandle, FocusableView,
-    Model, PromptLevel, Render, Task, View, ViewContext,
+    div, red, rems, serde_json, AppContext, DismissEvent, Div, EventEmitter, FocusHandle,
+    FocusableView, Model, PromptLevel, Render, Task, View, ViewContext,
 };
 use isahc::Request;
 use language::Buffer;
@@ -390,7 +390,11 @@ impl Render for FeedbackModal {
                             .p_2()
                             .border()
                             .rounded_md()
-                            .border_color(cx.theme().colors().border)
+                            .border_color(if valid_email_address {
+                                cx.theme().colors().border
+                            } else {
+                                red()
+                            })
                             .child(self.email_address_editor.clone()),
                     )
                     .child(
