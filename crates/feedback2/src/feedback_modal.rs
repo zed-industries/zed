@@ -426,8 +426,6 @@ impl Render for FeedbackModal {
                                         Button::new("send_feedback", submit_button_text)
                                             .color(Color::Accent)
                                             .style(ButtonStyle::Filled)
-                                            // TODO: Ensure that while submitting, "Sending..." is shown and disable the button
-                                            // TODO: If submit errors: show popup with error, don't close modal, set text back to "Submit", and re-enable button
                                             .on_click(cx.listener(|this, _, cx| {
                                                 this.submit(cx).detach();
                                             }))
