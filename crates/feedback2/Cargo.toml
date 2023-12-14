@@ -26,16 +26,17 @@ ui = { package = "ui2", path = "../ui2" }
 util = { path = "../util" }
 workspace = { package = "workspace2", path = "../workspace2"}
 
-log.workspace = true
-futures.workspace = true
 anyhow.workspace = true
-smallvec.workspace = true
+futures.workspace = true
 human_bytes = "0.4.1"
 isahc.workspace = true
 lazy_static.workspace = true
+log.workspace = true
 postage.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
+smallvec.workspace = true
+smol.workspace = true
 sysinfo.workspace = true
 tree-sitter-markdown = { git = "https://github.com/MDeiml/tree-sitter-markdown", rev = "330ecab87a3e3a7211ac69bbadc19eabecdb1cca" }
 urlencoding = "2.1.2"

@@ -10,6 +10,7 @@ use taffy::style::Overflow;
 /// uniform_list provides lazy rendering for a set of items that are of uniform height.
 /// When rendered into a container with overflow-y: hidden and a fixed (or max) height,
 /// uniform_list will only render the visible subset of items.
+#[track_caller]
 pub fn uniform_list<I, R, V>(
     view: View<V>,
     id: I,
@@ -42,6 +43,10 @@ where
         interactivity: Interactivity {
             element_id: Some(id.into()),
             base_style: Box::new(base_style),
+
+            #[cfg(debug_assertions)]
+            location: Some(*core::panic::Location::caller()),
+
             ..Default::default()
         },
         scroll_handle: None,
@@ -197,41 +202,41 @@ impl Element for UniformList {
                 );
 
                 cx.with_z_index(style.z_index.unwrap_or(0), |cx| {
-                    style.paint(bounds, cx);
+                    style.paint(bounds, cx, |cx| {
+                        if self.item_count > 0 {
+                            if let Some(scroll_handle) = self.scroll_handle.clone() {
+                                scroll_handle.0.borrow_mut().replace(ScrollHandleState {
+                                    item_height,
+                                    list_height: padded_bounds.size.height,
+                                    scroll_offset: shared_scroll_offset,
+                                });
+                            }
 
-                    if self.item_count > 0 {
-                        if let Some(scroll_handle) = self.scroll_handle.clone() {
-                            scroll_handle.0.borrow_mut().replace(ScrollHandleState {
-                                item_height,
-                                list_height: padded_bounds.size.height,
-                                scroll_offset: shared_scroll_offset,
+                            let first_visible_element_ix =
+                                (-scroll_offset.y / item_height).floor() as usize;
+                            let last_visible_element_ix =
+                                ((-scroll_offset.y + padded_bounds.size.height) / item_height)
+                                    .ceil() as usize;
+                            let visible_range = first_visible_element_ix
+                                ..cmp::min(last_visible_element_ix, self.item_count);
+
+                            let items = (self.render_items)(visible_range.clone(), cx);
+                            cx.with_z_index(1, |cx| {
+                                let content_mask = ContentMask { bounds };
+                                cx.with_content_mask(Some(content_mask), |cx| {
+                                    for (item, ix) in items.into_iter().zip(visible_range) {
+                                        let item_origin = padded_bounds.origin
+                                            + point(px(0.), item_height * ix + scroll_offset.y);
+                                        let available_space = size(
+                                            AvailableSpace::Definite(padded_bounds.size.width),
+                                            AvailableSpace::Definite(item_height),
+                                        );
+                                        item.draw(item_origin, available_space, cx);
+                                    }
+                                });
                             });
                         }
-
-                        let first_visible_element_ix =
-                            (-scroll_offset.y / item_height).floor() as usize;
-                        let last_visible_element_ix =
-                            ((-scroll_offset.y + padded_bounds.size.height) / item_height).ceil()
-                                as usize;
-                        let visible_range = first_visible_element_ix
-                            ..cmp::min(last_visible_element_ix, self.item_count);
-
-                        let items = (self.render_items)(visible_range.clone(), cx);
-                        cx.with_z_index(1, |cx| {
-                            let content_mask = ContentMask { bounds };
-                            cx.with_content_mask(Some(content_mask), |cx| {
-                                for (item, ix) in items.into_iter().zip(visible_range) {
-                                    let item_origin = padded_bounds.origin
-                                        + point(px(0.), item_height * ix + scroll_offset.y);
-                                    let available_space = size(
-                                        AvailableSpace::Definite(padded_bounds.size.width),
-                                        AvailableSpace::Definite(item_height),
-                                    );
-                                    item.draw(item_origin, available_space, cx);
-                                }
-                            });
-                        });
-                    }
+                    });
                 })
             },
         );

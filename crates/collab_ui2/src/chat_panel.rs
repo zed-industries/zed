@@ -21,10 +21,7 @@ use settings::{Settings, SettingsStore};
 use std::sync::Arc;
 use theme::ActiveTheme as _;
 use time::{OffsetDateTime, UtcOffset};
-use ui::{
-    h_stack, prelude::WindowContext, v_stack, Avatar, Button, ButtonCommon as _, Clickable, Icon,
-    IconButton, Label, Tooltip,
-};
+use ui::{prelude::*, Avatar, Button, Icon, IconButton, Label, Tooltip};
 use util::{ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
@@ -382,13 +379,18 @@ impl ChatPanel {
             .child(text.element("body".into(), cx))
             .child(
                 div()
-                    .invisible()
                     .absolute()
                     .top_1()
                     .right_2()
                     .w_8()
-                    .group_hover("", |this| this.visible())
-                    .child(render_remove(message_id_to_remove, cx)),
+                    .visible_on_hover("")
+                    .children(message_id_to_remove.map(|message_id| {
+                        IconButton::new(("remove", message_id), Icon::XCircle).on_click(
+                            cx.listener(move |this, _, cx| {
+                                this.remove_message(message_id, cx);
+                            }),
+                        )
+                    })),
             )
             .into_any()
     }
@@ -525,18 +527,6 @@ impl ChatPanel {
                 .update(cx, |call, cx| call.join_channel(channel_id, cx))
                 .detach_and_log_err(cx);
         }
-    }
-}
-
-fn render_remove(message_id_to_remove: Option<u64>, cx: &mut ViewContext<ChatPanel>) -> AnyElement {
-    if let Some(message_id) = message_id_to_remove {
-        IconButton::new(("remove", message_id), Icon::XCircle)
-            .on_click(cx.listener(move |this, _, cx| {
-                this.remove_message(message_id, cx);
-            }))
-            .into_any_element()
-    } else {
-        div().into_any_element()
     }
 }
 

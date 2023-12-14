@@ -1,7 +1,7 @@
 use gpui::{Div, Render};
 use story::Story;
 
-use crate::prelude::*;
+use crate::{prelude::*, Avatar};
 use crate::{Icon, ListItem};
 
 pub struct ListItemStory;
@@ -9,24 +9,80 @@ pub struct ListItemStory;
 impl Render for ListItemStory {
     type Element = Div;
 
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         Story::container()
+            .bg(cx.theme().colors().background)
             .child(Story::title_for::<ListItem>())
             .child(Story::label("Default"))
             .child(ListItem::new("hello_world").child("Hello, world!"))
-            .child(Story::label("With left icon"))
+            .child(Story::label("Inset"))
             .child(
-                ListItem::new("with_left_icon")
+                ListItem::new("inset_list_item")
+                    .inset(true)
+                    .start_slot(
+                        IconElement::new(Icon::Bell)
+                            .size(IconSize::Small)
+                            .color(Color::Muted),
+                    )
                     .child("Hello, world!")
-                    .left_icon(Icon::Bell),
+                    .end_slot(
+                        IconElement::new(Icon::Bell)
+                            .size(IconSize::Small)
+                            .color(Color::Muted),
+                    ),
             )
-            .child(Story::label("With left avatar"))
+            .child(Story::label("With start slot icon"))
+            .child(
+                ListItem::new("with start slot_icon")
+                    .child("Hello, world!")
+                    .start_slot(
+                        IconElement::new(Icon::Bell)
+                            .size(IconSize::Small)
+                            .color(Color::Muted),
+                    ),
+            )
+            .child(Story::label("With start slot avatar"))
+            .child(
+                ListItem::new("with_start slot avatar")
+                    .child("Hello, world!")
+                    .start_slot(Avatar::new(SharedString::from(
+                        "https://avatars.githubusercontent.com/u/1714999?v=4",
+                    ))),
+            )
+            .child(Story::label("With end slot"))
             .child(
                 ListItem::new("with_left_avatar")
                     .child("Hello, world!")
-                    .left_avatar(SharedString::from(
+                    .end_slot(Avatar::new(SharedString::from(
                         "https://avatars.githubusercontent.com/u/1714999?v=4",
-                    )),
+                    ))),
+            )
+            .child(Story::label("With end hover slot"))
+            .child(
+                ListItem::new("with_end_hover_slot")
+                    .child("Hello, world!")
+                    .end_slot(
+                        h_stack()
+                            .gap_2()
+                            .child(Avatar::new(SharedString::from(
+                                "https://avatars.githubusercontent.com/u/1789?v=4",
+                            )))
+                            .child(Avatar::new(SharedString::from(
+                                "https://avatars.githubusercontent.com/u/1789?v=4",
+                            )))
+                            .child(Avatar::new(SharedString::from(
+                                "https://avatars.githubusercontent.com/u/1789?v=4",
+                            )))
+                            .child(Avatar::new(SharedString::from(
+                                "https://avatars.githubusercontent.com/u/1789?v=4",
+                            )))
+                            .child(Avatar::new(SharedString::from(
+                                "https://avatars.githubusercontent.com/u/1789?v=4",
+                            ))),
+                    )
+                    .end_hover_slot(Avatar::new(SharedString::from(
+                        "https://avatars.githubusercontent.com/u/1714999?v=4",
+                    ))),
             )
             .child(Story::label("With `on_click`"))
             .child(

@@ -1,9 +1,9 @@
 use std::{iter, mem, ops::Range};
 
 use crate::{
-    black, phi, point, rems, AbsoluteLength, BorrowAppContext, BorrowWindow, Bounds, ContentMask,
-    Corners, CornersRefinement, CursorStyle, DefiniteLength, Edges, EdgesRefinement, Font,
-    FontFeatures, FontStyle, FontWeight, Hsla, Length, Pixels, Point, PointRefinement, Rgba,
+    black, phi, point, quad, rems, AbsoluteLength, BorrowAppContext, BorrowWindow, Bounds,
+    ContentMask, Corners, CornersRefinement, CursorStyle, DefiniteLength, Edges, EdgesRefinement,
+    Font, FontFeatures, FontStyle, FontWeight, Hsla, Length, Pixels, Point, PointRefinement, Rgba,
     SharedString, Size, SizeRefinement, Styled, TextRun, WindowContext,
 };
 use collections::HashSet;
@@ -13,6 +13,9 @@ pub use taffy::style::{
     AlignContent, AlignItems, AlignSelf, Display, FlexDirection, FlexWrap, JustifyContent,
     Overflow, Position,
 };
+
+#[cfg(debug_assertions)]
+pub struct DebugBelow;
 
 pub type StyleCascade = Cascade<Style>;
 
@@ -108,6 +111,11 @@ pub struct Style {
     pub mouse_cursor: Option<CursorStyle>,
 
     pub z_index: Option<u8>,
+
+    #[cfg(debug_assertions)]
+    pub debug: bool,
+    #[cfg(debug_assertions)]
+    pub debug_below: bool,
 }
 
 impl Styled for StyleRefinement {
@@ -334,7 +342,22 @@ impl Style {
     }
 
     /// Paints the background of an element styled with this style.
-    pub fn paint(&self, bounds: Bounds<Pixels>, cx: &mut WindowContext) {
+    pub fn paint(
+        &self,
+        bounds: Bounds<Pixels>,
+        cx: &mut WindowContext,
+        continuation: impl FnOnce(&mut WindowContext),
+    ) {
+        #[cfg(debug_assertions)]
+        if self.debug_below {
+            cx.set_global(DebugBelow)
+        }
+
+        #[cfg(debug_assertions)]
+        if self.debug || cx.has_global::<DebugBelow>() {
+            cx.paint_quad(crate::outline(bounds, crate::red()));
+        }
+
         let rem_size = cx.rem_size();
 
         cx.with_z_index(0, |cx| {
@@ -348,14 +371,23 @@ impl Style {
         let background_color = self.background.as_ref().and_then(Fill::color);
         if background_color.is_some() || self.is_border_visible() {
             cx.with_z_index(1, |cx| {
-                cx.paint_quad(
+                cx.paint_quad(quad(
                     bounds,
                     self.corner_radii.to_pixels(bounds.size, rem_size),
                     background_color.unwrap_or_default(),
                     self.border_widths.to_pixels(rem_size),
                     self.border_color.unwrap_or_default(),
-                );
+                ));
             });
+        }
+
+        cx.with_z_index(2, |cx| {
+            continuation(cx);
+        });
+
+        #[cfg(debug_assertions)]
+        if self.debug_below {
+            cx.remove_global::<DebugBelow>();
         }
     }
 
@@ -404,6 +436,11 @@ impl Default for Style {
             text: TextStyleRefinement::default(),
             mouse_cursor: None,
             z_index: None,
+
+            #[cfg(debug_assertions)]
+            debug: false,
+            #[cfg(debug_assertions)]
+            debug_below: false,
         }
     }
 }

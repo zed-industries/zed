@@ -30,11 +30,11 @@ use futures::{
 };
 use gpui::{
     actions, canvas, div, impl_actions, point, size, Action, AnyModel, AnyView, AnyWeakView,
-    AnyWindowHandle, AppContext, AsyncAppContext, AsyncWindowContext, Bounds, Context, Div, Entity,
-    EntityId, EventEmitter, FocusHandle, FocusableView, GlobalPixels, InteractiveElement,
-    KeyContext, ManagedView, Model, ModelContext, MouseMoveEvent, ParentElement, PathPromptOptions,
-    Pixels, Point, PromptLevel, Render, Size, Styled, Subscription, Task, View, ViewContext,
-    VisualContext, WeakView, WindowBounds, WindowContext, WindowHandle, WindowOptions,
+    AnyWindowHandle, AppContext, AsyncAppContext, AsyncWindowContext, Bounds, Context, Div,
+    DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle, FocusableView, GlobalPixels,
+    InteractiveElement, KeyContext, ManagedView, Model, ModelContext, ParentElement,
+    PathPromptOptions, Pixels, Point, PromptLevel, Render, Size, Styled, Subscription, Task, View,
+    ViewContext, VisualContext, WeakView, WindowBounds, WindowContext, WindowHandle, WindowOptions,
 };
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, ProjectItem};
 use itertools::Itertools;
@@ -227,9 +227,6 @@ pub fn init_settings(cx: &mut AppContext) {
 }
 
 pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
-    cx.default_global::<DockDragState>();
-    cx.default_global::<DockClickReset>();
-
     init_settings(cx);
     notifications::init(cx);
 
@@ -466,6 +463,7 @@ pub struct Workspace {
     _observe_current_user: Task<Result<()>>,
     _schedule_serialize: Option<Task<()>>,
     pane_history_timestamp: Arc<AtomicUsize>,
+    bounds: Bounds<Pixels>,
 }
 
 impl EventEmitter<Event> for Workspace {}
@@ -708,6 +706,8 @@ impl Workspace {
             subscriptions,
             pane_history_timestamp,
             workspace_actions: Default::default(),
+            // This data will be incorrect, but it will be overwritten by the time it needs to be used.
+            bounds: Default::default(),
         }
     }
 
@@ -1145,7 +1145,7 @@ impl Workspace {
         let window = cx.window_handle();
 
         cx.spawn(|this, mut cx| async move {
-            let workspace_count = cx.update(|_, cx| {
+            let workspace_count = (*cx).update(|cx| {
                 cx.windows()
                     .iter()
                     .filter(|window| window.downcast::<Workspace>().is_some())
@@ -3580,13 +3580,8 @@ impl FocusableView for Workspace {
 
 struct WorkspaceBounds(Bounds<Pixels>);
 
-//todo!("remove this when better drag APIs are in GPUI2")
-#[derive(Default)]
-struct DockDragState(Option<DockPosition>);
-
-//todo!("remove this when better double APIs are in GPUI2")
-#[derive(Default)]
-struct DockClickReset(Option<Task<()>>);
+#[derive(Render)]
+struct DraggedDock(DockPosition);
 
 impl Render for Workspace {
     type Element = Div;
@@ -3632,37 +3627,37 @@ impl Render for Workspace {
                     .border_t()
                     .border_b()
                     .border_color(cx.theme().colors().border)
-                    .on_mouse_up(gpui::MouseButton::Left, |_, cx| {
-                        cx.update_global(|drag: &mut DockDragState, cx| {
-                            drag.0 = None;
-                        })
-                    })
-                    .on_mouse_move(cx.listener(|workspace, e: &MouseMoveEvent, cx| {
-                        if let Some(types) = &cx.global::<DockDragState>().0 {
-                            let workspace_bounds = cx.global::<WorkspaceBounds>().0;
-                            match types {
+                    .child(
+                        canvas(cx.listener(|workspace, bounds, cx| {
+                            workspace.bounds = *bounds;
+                        }))
+                        .absolute()
+                        .size_full(),
+                    )
+                    .on_drag_move(
+                        cx.listener(|workspace, e: &DragMoveEvent<DraggedDock>, cx| {
+                            match e.drag.read(cx).0 {
                                 DockPosition::Left => {
-                                    let size = e.position.x;
+                                    let size = workspace.bounds.left() + e.event.position.x;
                                     workspace.left_dock.update(cx, |left_dock, cx| {
                                         left_dock.resize_active_panel(Some(size.0), cx);
                                     });
                                 }
                                 DockPosition::Right => {
-                                    let size = workspace_bounds.size.width - e.position.x;
+                                    let size = workspace.bounds.right() - e.event.position.x;
                                     workspace.right_dock.update(cx, |right_dock, cx| {
                                         right_dock.resize_active_panel(Some(size.0), cx);
                                     });
                                 }
                                 DockPosition::Bottom => {
-                                    let size = workspace_bounds.size.height - e.position.y;
+                                    let size = workspace.bounds.bottom() - e.event.position.y;
                                     workspace.bottom_dock.update(cx, |bottom_dock, cx| {
                                         bottom_dock.resize_active_panel(Some(size.0), cx);
                                     });
                                 }
                             }
-                        }
-                    }))
-                    .child(canvas(|bounds, cx| cx.set_global(WorkspaceBounds(bounds))))
+                        }),
+                    )
                     .child(self.modal_layer.clone())
                     .child(
                         div()

@@ -23,7 +23,7 @@ use util::ResultExt;
 use workspace::{
     item::ItemHandle,
     searchable::{Direction, SearchEvent, SearchableItemHandle, WeakSearchableItemHandle},
-    ToolbarItemLocation, ToolbarItemView, Workspace,
+    ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
 };
 
 #[derive(PartialEq, Clone, Deserialize)]
@@ -456,6 +456,9 @@ impl BufferSearchBar {
             cx.focus(&handle);
         }
         cx.emit(Event::UpdateLocation);
+        cx.emit(ToolbarItemEvent::ChangeLocation(
+            ToolbarItemLocation::Hidden,
+        ));
         cx.notify();
     }
 
@@ -488,6 +491,9 @@ impl BufferSearchBar {
         self.dismissed = false;
         cx.notify();
         cx.emit(Event::UpdateLocation);
+        cx.emit(ToolbarItemEvent::ChangeLocation(
+            ToolbarItemLocation::Secondary,
+        ));
         true
     }
 

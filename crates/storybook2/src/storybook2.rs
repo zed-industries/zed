@@ -5,6 +5,7 @@ mod story_selector;
 use std::sync::Arc;
 
 use clap::Parser;
+use dialoguer::FuzzySelect;
 use gpui::{
     div, px, size, AnyView, AppContext, Bounds, Div, Render, ViewContext, VisualContext,
     WindowBounds, WindowOptions,
@@ -12,11 +13,12 @@ use gpui::{
 use log::LevelFilter;
 use settings2::{default_settings, Settings, SettingsStore};
 use simplelog::SimpleLogger;
+use strum::IntoEnumIterator;
 use theme2::{ThemeRegistry, ThemeSettings};
 use ui::prelude::*;
 
 use crate::assets::Assets;
-use crate::story_selector::StorySelector;
+use crate::story_selector::{ComponentStory, StorySelector};
 
 // gpui::actions! {
 //     storybook,
@@ -43,7 +45,17 @@ fn main() {
 
     let args = Args::parse();
 
-    let story_selector = args.story.clone();
+    let story_selector = args.story.clone().unwrap_or_else(|| {
+        let stories = ComponentStory::iter().collect::<Vec<_>>();
+
+        let selection = FuzzySelect::new()
+            .with_prompt("Choose a story to run:")
+            .items(&stories)
+            .interact()
+            .unwrap();
+
+        StorySelector::Component(stories[selection])
+    });
     let theme_name = args.theme.unwrap_or("One Dark".to_string());
 
     let asset_source = Arc::new(Assets);
@@ -58,7 +70,7 @@ fn main() {
 
         theme2::init(theme2::LoadThemes::All, cx);
 
-        let selector = story_selector.unwrap_or(StorySelector::KitchenSink);
+        let selector = story_selector;
 
         let theme_registry = cx.global::<ThemeRegistry>();
         let mut theme_settings = ThemeSettings::get_global(cx).clone();
