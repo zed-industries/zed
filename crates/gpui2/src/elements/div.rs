@@ -890,10 +890,11 @@ impl Interactivity {
             });
         }
 
-        if style
-            .background
-            .as_ref()
-            .is_some_and(|fill| fill.color().is_some())
+        if style.visibility == Visibility::Visible
+            && style
+                .background
+                .as_ref()
+                .is_some_and(|fill| fill.color().is_some())
         {
             cx.with_z_index(style.z_index.unwrap_or(0), |cx| cx.add_opaque_layer(bounds))
         }
