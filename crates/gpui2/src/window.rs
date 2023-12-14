@@ -12,7 +12,7 @@ use crate::{
     VisualContext, WeakView, WindowBounds, WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::{anyhow, Context as _, Result};
-use collections::HashMap;
+use collections::FxHashMap;
 use derive_more::{Deref, DerefMut};
 use futures::{
     channel::{mpsc, oneshot},
@@ -263,8 +263,8 @@ pub(crate) struct ElementStateBox {
 
 // #[derive(Default)]
 pub(crate) struct Frame {
-    pub(crate) element_states: HashMap<GlobalElementId, ElementStateBox>,
-    mouse_listeners: HashMap<TypeId, Vec<(StackingOrder, AnyMouseListener)>>,
+    pub(crate) element_states: FxHashMap<GlobalElementId, ElementStateBox>,
+    mouse_listeners: FxHashMap<TypeId, Vec<(StackingOrder, AnyMouseListener)>>,
     pub(crate) dispatch_tree: DispatchTree,
     pub(crate) focus_listeners: Vec<AnyFocusListener>,
     pub(crate) scene_builder: SceneBuilder,
@@ -277,8 +277,8 @@ pub(crate) struct Frame {
 impl Frame {
     fn new(dispatch_tree: DispatchTree) -> Self {
         Frame {
-            element_states: HashMap::default(),
-            mouse_listeners: HashMap::default(),
+            element_states: FxHashMap::default(),
+            mouse_listeners: FxHashMap::default(),
             dispatch_tree,
             focus_listeners: Vec::new(),
             scene_builder: SceneBuilder::default(),
