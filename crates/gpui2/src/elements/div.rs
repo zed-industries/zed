@@ -544,17 +544,20 @@ pub type ActionListener = Box<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext
 
 #[track_caller]
 pub fn div() -> Div {
-    let mut div = Div {
-        interactivity: Interactivity::default(),
-        children: SmallVec::default(),
+    #[cfg(debug_assertions)]
+    let interactivity = {
+        let mut interactivity = Interactivity::default();
+        interactivity.location = Some(*core::panic::Location::caller());
+        interactivity
     };
 
-    #[cfg(debug_assertions)]
-    {
-        div.interactivity.location = Some(*core::panic::Location::caller());
-    }
+    #[cfg(not(debug_assertions))]
+    let interactivity = Interactivity::default();
 
-    div
+    Div {
+        interactivity,
+        children: SmallVec::default(),
+    }
 }
 
 pub struct Div {
