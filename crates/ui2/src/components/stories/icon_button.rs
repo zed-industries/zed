@@ -1,5 +1,5 @@
-use gpui::{Component, Div, Render};
-use story::{Story, StoryContainer, StoryItem, StorySection};
+use gpui::{Component, Render};
+use story::{StoryContainer, StoryItem, StorySection};
 
 use crate::{prelude::*, Tooltip};
 use crate::{Icon, IconButton};
