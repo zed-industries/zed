@@ -182,7 +182,7 @@ dependencies = [
  "alacritty_config",
  "alacritty_config_derive",
  "base64 0.13.1",
- "bitflags 2.4.0",
+ "bitflags 2.4.1",
  "home",
  "libc",
  "log",
@@ -1025,9 +1025,9 @@ checksum = "bef38d45163c2f1dde094a7dfd33ccf595c92905c8f8f4fdc18d06fb1037718a"
 
 [[package]]
 name = "bitflags"
-version = "2.4.0"
+version = "2.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b4682ae6287fcf752ecaabbfcc7b6f9b72aa33933dc23a554d853aea8eea8635"
+checksum = "327762f6e5a765692301e5bb513e0d9fef63be86bbc14528052b1cd3e6f03e07"
 dependencies = [
  "serde",
 ]
@@ -3280,6 +3280,7 @@ name = "feedback2"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bitflags 2.4.1",
  "client2",
  "db2",
  "editor2",
@@ -4026,7 +4027,7 @@ dependencies = [
  "async-task",
  "backtrace",
  "bindgen 0.65.1",
- "bitflags 2.4.0",
+ "bitflags 2.4.1",
  "block",
  "cbindgen",
  "cocoa",
@@ -6195,7 +6196,7 @@ version = "0.10.57"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bac25ee399abb46215765b1cb35bc0212377e58a061560d8b29b024fd0430e7c"
 dependencies = [
- "bitflags 2.4.0",
+ "bitflags 2.4.1",
  "cfg-if 1.0.0",
  "foreign-types",
  "libc",
@@ -7915,7 +7916,7 @@ version = "0.29.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "549b9d036d571d42e6e85d1c1425e2ac83491075078ca9a15be021c56b1641f2"
 dependencies = [
- "bitflags 2.4.0",
+ "bitflags 2.4.1",
  "fallible-iterator",
  "fallible-streaming-iterator",
  "hashlink",
@@ -8031,7 +8032,7 @@ version = "0.38.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "747c788e9ce8e92b12cd485c49ddf90723550b654b32508f979b71a7b1ecda4f"
 dependencies = [
- "bitflags 2.4.0",
+ "bitflags 2.4.1",
  "errno 0.3.3",
  "libc",
  "linux-raw-sys 0.4.7",
@@ -9134,7 +9135,7 @@ dependencies = [
  "atoi",
  "base64 0.21.4",
  "bigdecimal",
- "bitflags 2.4.0",
+ "bitflags 2.4.1",
  "byteorder",
  "bytes 1.5.0",
  "chrono",
@@ -9181,7 +9182,7 @@ dependencies = [
  "atoi",
  "base64 0.21.4",
  "bigdecimal",
- "bitflags 2.4.0",
+ "bitflags 2.4.1",
  "byteorder",
  "chrono",
  "crc",

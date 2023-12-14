@@ -1,6 +1,7 @@
 use std::{ops::RangeInclusive, sync::Arc, time::Duration};
 
 use anyhow::{anyhow, bail};
+use bitflags::bitflags;
 use client::{Client, ZED_SECRET_CLIENT_TOKEN, ZED_SERVER_URL};
 use db::kvp::KEY_VALUE_STORE;
 use editor::{Editor, EditorEvent};
@@ -48,15 +49,17 @@ struct FeedbackRequestBody<'a> {
     token: &'a str,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-enum InvalidStateIssue {
-    EmailAddress,
-    CharacterCount,
+bitflags! {
+    #[derive(Debug, Clone, PartialEq)]
+    struct InvalidStateFlags: u8 {
+        const EmailAddress = 0b00000001;
+        const CharacterCount = 0b00000010;
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
 enum CannotSubmitReason {
-    InvalidState { issues: Vec<InvalidStateIssue> },
+    InvalidState { flags: InvalidStateFlags },
     AwaitingSubmission,
 }
 
@@ -322,7 +325,7 @@ impl FeedbackModal {
             return;
         }
 
-        let mut invalid_state_issues = Vec::new();
+        let mut invalid_state_flags = InvalidStateFlags::empty();
 
         let valid_email_address = match self.email_address_editor.read(cx).text_option(cx) {
             Some(email_address) => Regex::new(EMAIL_REGEX).unwrap().is_match(&email_address),
@@ -330,37 +333,37 @@ impl FeedbackModal {
         };
 
         if !valid_email_address {
-            invalid_state_issues.push(InvalidStateIssue::EmailAddress);
+            invalid_state_flags |= InvalidStateFlags::EmailAddress;
         }
 
         if !FEEDBACK_CHAR_LIMIT.contains(&self.character_count) {
-            invalid_state_issues.push(InvalidStateIssue::CharacterCount);
+            invalid_state_flags |= InvalidStateFlags::CharacterCount;
         }
 
-        if invalid_state_issues.is_empty() {
+        if invalid_state_flags.is_empty() {
             self.submission_state = Some(SubmissionState::CanSubmit);
         } else {
             self.submission_state = Some(SubmissionState::CannotSubmit {
                 reason: CannotSubmitReason::InvalidState {
-                    issues: invalid_state_issues,
+                    flags: invalid_state_flags,
                 },
             });
         }
     }
 
     fn valid_email_address(&self) -> bool {
-        !self.in_invalid_state(InvalidStateIssue::EmailAddress)
+        !self.in_invalid_state(InvalidStateFlags::EmailAddress)
     }
 
     fn valid_character_count(&self) -> bool {
-        !self.in_invalid_state(InvalidStateIssue::CharacterCount)
+        !self.in_invalid_state(InvalidStateFlags::CharacterCount)
     }
 
-    fn in_invalid_state(&self, a: InvalidStateIssue) -> bool {
+    fn in_invalid_state(&self, flag: InvalidStateFlags) -> bool {
         match self.submission_state {
             Some(SubmissionState::CannotSubmit {
-                reason: CannotSubmitReason::InvalidState { ref issues },
-            }) => issues.contains(&a),
+                reason: CannotSubmitReason::InvalidState { ref flags },
+            }) => flags.contains(flag),
             _ => false,
         }
     }
