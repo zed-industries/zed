@@ -10,7 +10,7 @@ use gpui::{
 use project::{Project, RepositoryEntry};
 use recent_projects::RecentProjects;
 use std::sync::Arc;
-use theme::{ActiveTheme, PlayerColors};
+use theme::{ActiveTheme, PlayerColors, StatusColor};
 use ui::{
     h_stack, popover_menu, prelude::*, Avatar, Button, ButtonLike, ButtonStyle, ContextMenu, Icon,
     IconButton, IconElement, KeyBinding, Tooltip,
@@ -169,6 +169,7 @@ impl Render for CollabTitlebarItem {
                         let is_shared = self.project.read(cx).is_shared();
                         let is_muted = room.is_muted(cx);
                         let is_deafened = room.is_deafened().unwrap_or(false);
+                        let is_sharing_screen = room.is_screen_sharing();
 
                         this.child(
                             Button::new(
@@ -227,6 +228,8 @@ impl Render for CollabTitlebarItem {
                         .child(
                             IconButton::new("screen-share", ui::Icon::Screen)
                                 .style(ButtonStyle::Subtle)
+                                .selected(is_sharing_screen)
+                                .selected_style(Some(ButtonStyle::Tinted(StatusColor::Info)))
                                 .on_click(move |_, cx| {
                                     crate::toggle_screen_sharing(&Default::default(), cx)
                                 }),

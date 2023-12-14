@@ -3,7 +3,7 @@ use refineable::Refineable;
 
 use crate::{blue, color_alpha, grass, neutral, red, yellow, ActiveTheme};
 
-#[derive(Clone, Debug)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
 pub enum StatusColor {
     Conflict,
     Created,
@@ -21,43 +21,44 @@ pub enum StatusColor {
     Warning,
 }
 
-impl StatusColor {
-    pub fn fg(self, cx: &mut WindowContext) -> Hsla {
-        match self {
-            Self::Conflict => cx.theme().status().conflict,
-            Self::Created => cx.theme().status().created,
-            Self::Deleted => cx.theme().status().deleted,
-            Self::Error => cx.theme().status().error,
-            Self::Hidden => cx.theme().status().hidden,
-            Self::Hint => cx.theme().status().hint,
-            Self::Ignored => cx.theme().status().ignored,
-            Self::Info => cx.theme().status().info,
-            Self::Modified => cx.theme().status().modified,
-            Self::Predictive => cx.theme().status().predictive,
-            Self::Renamed => cx.theme().status().renamed,
-            Self::Success => cx.theme().status().success,
-            Self::Unreachable => cx.theme().status().unreachable,
-            Self::Warning => cx.theme().status().warning,
-        }
-    }
+macro_rules! status_color_functions {
+    ($($fn_name:ident, $alpha:expr);+ $(;)?) => {
+        $(
+            pub fn $fn_name(self, cx: &mut WindowContext) -> Hsla {
+                match self {
+                    Self::Conflict => color_alpha(cx.theme().status().conflict, $alpha),
+                    Self::Created => color_alpha(cx.theme().status().created, $alpha),
+                    Self::Deleted => color_alpha(cx.theme().status().deleted, $alpha),
+                    Self::Error => color_alpha(cx.theme().status().error, $alpha),
+                    Self::Hidden => color_alpha(cx.theme().status().hidden, $alpha),
+                    Self::Hint => color_alpha(cx.theme().status().hint, $alpha),
+                    Self::Ignored => color_alpha(cx.theme().status().ignored, $alpha),
+                    Self::Info => color_alpha(cx.theme().status().info, $alpha),
+                    Self::Modified => color_alpha(cx.theme().status().modified, $alpha),
+                    Self::Predictive => color_alpha(cx.theme().status().predictive, $alpha),
+                    Self::Renamed => color_alpha(cx.theme().status().renamed, $alpha),
+                    Self::Success => color_alpha(cx.theme().status().success, $alpha),
+                    Self::Unreachable => color_alpha(cx.theme().status().unreachable, $alpha),
+                    Self::Warning => color_alpha(cx.theme().status().warning, $alpha),
+                }
+            }
+        )+
+    };
+}
 
-    pub fn bg(self, cx: &mut WindowContext) -> Hsla {
-        match self {
-            Self::Conflict => color_alpha(cx.theme().status().conflict, 0.12),
-            Self::Created => color_alpha(cx.theme().status().created, 0.12),
-            Self::Deleted => color_alpha(cx.theme().status().deleted, 0.12),
-            Self::Error => color_alpha(cx.theme().status().error, 0.12),
-            Self::Hidden => color_alpha(cx.theme().status().hidden, 0.12),
-            Self::Hint => color_alpha(cx.theme().status().hint, 0.12),
-            Self::Ignored => color_alpha(cx.theme().status().ignored, 0.12),
-            Self::Info => color_alpha(cx.theme().status().info, 0.12),
-            Self::Modified => color_alpha(cx.theme().status().modified, 0.12),
-            Self::Predictive => color_alpha(cx.theme().status().predictive, 0.12),
-            Self::Renamed => color_alpha(cx.theme().status().renamed, 0.12),
-            Self::Success => color_alpha(cx.theme().status().success, 0.12),
-            Self::Unreachable => color_alpha(cx.theme().status().unreachable, 0.12),
-            Self::Warning => color_alpha(cx.theme().status().warning, 0.12),
-        }
+impl StatusColor {
+    status_color_functions! {
+        fg, 1.0;
+        fg_hover, 0.9;
+        fb_disabled, 0.5;
+        bg, 0.12;
+        bg_hover, 0.16;
+        bg_active, 0.24;
+        bg_disabled, 0.08;
+        border, 0.15;
+        border_hover, 0.2;
+        border_active, 0.3;
+        border_disabled, 0.1;
     }
 }
 

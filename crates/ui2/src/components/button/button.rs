@@ -18,6 +18,7 @@ pub struct Button {
     icon_size: Option<IconSize>,
     icon_color: Option<Color>,
     selected_icon: Option<Icon>,
+    selected_style: Option<ButtonStyle>,
 }
 
 impl Button {
@@ -32,6 +33,7 @@ impl Button {
             icon_size: None,
             icon_color: None,
             selected_icon: None,
+            selected_style: None,
         }
     }
 
@@ -124,6 +126,11 @@ impl ButtonCommon for Button {
 
     fn tooltip(mut self, tooltip: impl Fn(&mut WindowContext) -> AnyView + 'static) -> Self {
         self.base = self.base.tooltip(tooltip);
+        self
+    }
+
+    fn selected_style(mut self, style: impl Into<Option<ButtonStyle>>) -> Self {
+        self.selected_style = style.into();
         self
     }
 }
