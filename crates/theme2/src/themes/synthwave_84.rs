@@ -39,7 +39,6 @@ pub fn synthwave_84() -> UserThemeFamily {
                     scrollbar_thumb_border: Some(rgba(0x9d8bca30).into()),
                     scrollbar_track_background: Some(rgba(0x262335ff).into()),
                     scrollbar_track_border: Some(rgba(0x34294fb3).into()),
-                    editor_foreground: Some(rgba(0xffffffff).into()),
                     editor_background: Some(rgba(0x262335ff).into()),
                     editor_gutter_background: Some(rgba(0x262335ff).into()),
                     editor_line_number: Some(rgba(0xffffff73).into()),

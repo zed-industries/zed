@@ -132,6 +132,11 @@ impl VsCodeThemeConverter {
             .as_ref()
             .traverse(|color| try_parse_color(&color))?;
 
+        let vscode_editor_foreground = vscode_colors
+            .editor_foreground
+            .as_ref()
+            .traverse(|color| try_parse_color(&color))?;
+
         let vscode_editor_background = vscode_colors
             .editor_background
             .as_ref()
@@ -227,11 +232,7 @@ impl VsCodeThemeConverter {
                 .as_ref()
                 .traverse(|color| try_parse_color(&color))?
                 .or(vscode_editor_background),
-            editor_foreground: vscode_colors
-                .foreground
-                .as_ref()
-                .traverse(|color| try_parse_color(&color))?
-                .or(vscode_token_colors_foreground),
+            editor_foreground: vscode_editor_foreground.or(vscode_token_colors_foreground),
             editor_background: vscode_editor_background,
             editor_gutter_background: vscode_editor_background,
             editor_line_number: vscode_colors
