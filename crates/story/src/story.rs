@@ -1,5 +1,7 @@
-use gpui::{div, hsla, AnyElement, Div, ElementId, Hsla, SharedString, Stateful, WindowContext};
-use gpui::{prelude::*, px};
+use gpui::{
+    div, hsla, prelude::*, px, rems, AnyElement, Div, ElementId, Hsla, SharedString, WindowContext,
+};
+use itertools::Itertools;
 use smallvec::SmallVec;
 
 use std::path::PathBuf;
@@ -37,7 +39,7 @@ impl StoryColor {
             border: hsla(216. / 360., 11. / 100., 91. / 100., 1.),
             background: hsla(0. / 360., 0. / 100., 100. / 100., 1.),
             card_background: hsla(0. / 360., 0. / 100., 96. / 100., 1.),
-            divider: hsla(216. / 360., 11. / 100., 91. / 100., 1.),
+            divider: hsla(216. / 360., 11. / 100., 86. / 100., 1.),
             link: hsla(206. / 360., 100. / 100., 50. / 100., 1.),
         }
     }
@@ -112,7 +114,11 @@ impl Story {
     }
 
     pub fn section() -> Div {
-        div().mt_4().mb_2()
+        div()
+            .p_4()
+            .m_4()
+            .border()
+            .border_color(story_color().border)
     }
 
     pub fn section_title() -> Div {
@@ -127,12 +133,12 @@ impl Story {
         div()
             .size_full()
             .p_2()
+            .max_w(rems(36.))
             .bg(gpui::black())
-            .border()
-            .border_color(story_color().border)
             .rounded_md()
             .text_sm()
             .text_color(gpui::white())
+            .overflow_hidden()
             .child(code.into())
     }
 
@@ -206,20 +212,23 @@ impl RenderOnce for StoryItem {
         div()
             .my_2()
             .flex()
+            .gap_4()
             .w_full()
             .child(
                 Story::v_stack()
                     .px_2()
-                    .flex_none()
                     .w_1_2()
                     .min_h_px()
                     .child(Story::label(self.label))
                     .child(
                         div()
-                            .rounded_sm()
+                            .rounded_md()
                             .bg(story_color().card_background)
                             .border()
                             .border_color(story_color().border)
+                            .py_1()
+                            .px_2()
+                            .overflow_hidden()
                             .child(self.item),
                     )
                     .when_some(self.description, |this, description| {
@@ -233,7 +242,7 @@ impl RenderOnce for StoryItem {
                     .w_1_2()
                     .min_h_px()
                     .when_some(self.usage, |this, usage| {
-                        this.child(Story::label("Usage"))
+                        this.child(Story::label("Example Usage"))
                             .child(Story::code_block(usage))
                     }),
             )
@@ -264,6 +273,11 @@ impl RenderOnce for StorySection {
     type Rendered = Div;
 
     fn render(self, _cx: &mut WindowContext) -> Self::Rendered {
+        let children: SmallVec<[AnyElement; 2]> = SmallVec::from_iter(Itertools::intersperse_with(
+            self.children.into_iter(),
+            || Story::divider().into_any_element(),
+        ));
+
         Story::section()
             // Section title
             .py_2()
@@ -271,7 +285,7 @@ impl RenderOnce for StorySection {
             .when_some(self.description.clone(), |section, description| {
                 section.child(Story::description(description))
             })
-            .child(div().flex().flex_col().gap_2().children(self.children))
+            .child(div().flex().flex_col().gap_2().children(children))
             .child(Story::divider())
     }
 }

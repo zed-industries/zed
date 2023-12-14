@@ -1,4 +1,4 @@
-use gpui::{div, Div, ParentElement, Render, Styled, View, VisualContext, WindowContext};
+use gpui::{div, red, Div, ParentElement, Render, Styled, View, VisualContext, WindowContext};
 use indoc::indoc;
 use story::*;
 
@@ -13,22 +13,64 @@ impl TextStory {
 impl Render for TextStory {
     type Element = Div;
 
-    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> Self::Element {
-        // let # = "The quick brown fox jumps over the lazy dog. Meanwhile, the lazy dog decided it was time for a change. He started daily workout routines, ate healthier and became the fastest dog in town.";
-
+    fn render(&mut self, _cx: &mut gpui::ViewContext<Self>) -> Self::Element {
         Story::container2::<TextStory>("crates/storybook2/src/stories/text.rs").child(
-            StorySection::new().child(
-                StoryItem::new(
-                    "Default Text",
-                    div().flex().child(div().max_w_96().child("foo")),
+            StorySection::new()
+                .child(
+                    StoryItem::new("Default", div().bg(gpui::blue()).child("Hello World!"))
+                        .usage(indoc! {r##"
+                            div()
+                                .child("Hello World!")
+                            "##
+                        }),
                 )
-                .description("Text with a max-width. Wraps based on set max-width.")
-                .usage(indoc! {r##"
-                    div().max_w_96()
-                        .child("Some text that you want to wrap.")
-                    "##
-                }),
-            ),
+                .child(
+                    StoryItem::new("Wrapping Text",
+                        div().max_w_96()
+                            .child(
+                                concat!(
+                                    "The quick brown fox jumps over the lazy dog. ",
+                                    "Meanwhile, the lazy dog decided it was time for a change. ",
+                                    "He started daily workout routines, ate healthier and became the fastest dog in town.",
+                                )
+                            )
+                    )
+                    .description("Set a width or max-width to enable text wrapping.")
+                    .usage(indoc! {r##"
+                        div()
+                            .max_w_96()
+                            .child("Some text that you want to wrap.")
+                        "##
+                    })
+                )
+                .child(
+                    StoryItem::new("tbd",
+                    div().flex().w_96().child(div().overflow_hidden().child(concat!(
+                            "flex-row. width 96. overflow-hidden. The quick brown fox jumps over the lazy dog. ",
+                            "Meanwhile, the lazy dog decided it was time for a change. ",
+                            "He started daily workout routines, ate healthier and became the fastest dog in town.",
+                        )))
+                    )
+                )
+                .child(
+                    StoryItem::new("Text in Horizontal Flex",
+                        div().flex().w_96().bg(red()).child(concat!(
+                                        "flex-row. width 96. The quick brown fox jumps over the lazy dog. ",
+                                        "Meanwhile, the lazy dog decided it was time for a change. ",
+                                        "He started daily workout routines, ate healthier and became the fastest dog in town.",
+                                    ))
+                    )
+                    .usage(indoc! {r##"
+                        // NOTE: When rendering text in a horizonal flex container,
+                        // Taffy will not pass width constraints down from the parent.
+                        // To fix this, render text in a parent with overflow: hidden
+
+                        div()
+                            .max_w_96()
+                            .child("Some text that you want to wrap.")
+                        "##
+                    })
+                )
         )
     }
 }
