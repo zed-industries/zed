@@ -695,7 +695,6 @@ impl TerminalElement {
             move |external_paths, cx| {
                 cx.focus(&focus);
                 let mut new_text = external_paths
-                    .read(cx)
                     .paths()
                     .iter()
                     .map(|path| format!(" {path:?}"))

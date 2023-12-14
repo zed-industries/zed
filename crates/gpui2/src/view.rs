@@ -7,6 +7,7 @@ use crate::{
 use anyhow::{Context, Result};
 use std::{
     any::TypeId,
+    fmt,
     hash::{Hash, Hasher},
 };
 
@@ -305,6 +306,20 @@ impl<V: 'static + Render> From<WeakView<V>> for AnyWeakView {
             layout: any_view::layout::<V>,
             paint: any_view::paint::<V>,
         }
+    }
+}
+
+impl PartialEq for AnyWeakView {
+    fn eq(&self, other: &Self) -> bool {
+        self.model == other.model
+    }
+}
+
+impl std::fmt::Debug for AnyWeakView {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AnyWeakView")
+            .field("entity_id", &self.model.entity_id)
+            .finish_non_exhaustive()
     }
 }
 

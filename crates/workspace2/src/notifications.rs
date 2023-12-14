@@ -104,12 +104,9 @@ impl Workspace {
             })
         {
             let notification = build_notification(cx);
-            cx.subscribe(
-                &notification,
-                move |this, handle, event: &DismissEvent, cx| {
-                    this.dismiss_notification_internal(type_id, id, cx);
-                },
-            )
+            cx.subscribe(&notification, move |this, _, _: &DismissEvent, cx| {
+                this.dismiss_notification_internal(type_id, id, cx);
+            })
             .detach();
             self.notifications
                 .push((type_id, id, Box::new(notification)));
@@ -173,21 +170,15 @@ impl Workspace {
 
 pub mod simple_message_notification {
     use gpui::{
-        div, AnyElement, AppContext, DismissEvent, Div, EventEmitter, InteractiveElement,
-        ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, TextStyle,
-        ViewContext,
+        div, DismissEvent, Div, EventEmitter, InteractiveElement, ParentElement, Render,
+        SharedString, StatefulInteractiveElement, Styled, ViewContext,
     };
     use std::sync::Arc;
     use ui::prelude::*;
     use ui::{h_stack, v_stack, Button, Icon, IconElement, Label, StyledExt};
 
-    enum NotificationMessage {
-        Text(SharedString),
-        Element(fn(TextStyle, &AppContext) -> AnyElement),
-    }
-
     pub struct MessageNotification {
-        message: NotificationMessage,
+        message: SharedString,
         on_click: Option<Arc<dyn Fn(&mut ViewContext<Self>)>>,
         click_message: Option<SharedString>,
     }
@@ -200,22 +191,11 @@ pub mod simple_message_notification {
             S: Into<SharedString>,
         {
             Self {
-                message: NotificationMessage::Text(message.into()),
+                message: message.into(),
                 on_click: None,
                 click_message: None,
             }
         }
-
-        // not needed I think (only for the "new panel" toast, which is outdated now)
-        // pub fn new_element(
-        //     message: fn(TextStyle, &AppContext) -> AnyElement,
-        // ) -> MessageNotification {
-        //     Self {
-        //         message: NotificationMessage::Element(message),
-        //         on_click: None,
-        //         click_message: None,
-        //     }
-        // }
 
         pub fn with_click_message<S>(mut self, message: S) -> Self
         where
@@ -248,18 +228,13 @@ pub mod simple_message_notification {
                 .child(
                     h_stack()
                         .justify_between()
-                        .child(div().max_w_80().child(match &self.message {
-                            NotificationMessage::Text(text) => Label::new(text.clone()),
-                            NotificationMessage::Element(element) => {
-                                todo!()
-                            }
-                        }))
+                        .child(div().max_w_80().child(Label::new(self.message.clone())))
                         .child(
                             div()
                                 .id("cancel")
                                 .child(IconElement::new(Icon::Close))
                                 .cursor_pointer()
-                                .on_click(cx.listener(|this, event, cx| this.dismiss(cx))),
+                                .on_click(cx.listener(|this, _, cx| this.dismiss(cx))),
                         ),
                 )
                 .children(self.click_message.iter().map(|message| {

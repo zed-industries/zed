@@ -1590,12 +1590,16 @@ impl Render for ProjectSearchBar {
         );
         let replace_column = if search.replace_enabled {
             h_stack()
-                .p_1()
                 .flex_1()
-                .border_2()
+                .h_full()
+                .gap_2()
+                .px_2()
+                .py_1()
+                .border_1()
+                .border_color(cx.theme().colors().border)
                 .rounded_lg()
                 .child(IconElement::new(Icon::Replace).size(ui::IconSize::Small))
-                .child(search.replacement_editor.clone())
+                .child(self.render_text_input(&search.replacement_editor, cx))
         } else {
             // Fill out the space if we don't have a replacement editor.
             h_stack().flex_1()
@@ -1658,10 +1662,10 @@ impl Render for ProjectSearchBar {
             ]);
         v_stack()
             .key_context(key_context)
+            .flex_grow()
             .p_1()
             .m_2()
             .gap_2()
-            .justify_between()
             .on_action(cx.listener(|this, _: &ToggleFilters, cx| {
                 this.toggle_filters(cx);
             }))
@@ -1713,10 +1717,59 @@ impl Render for ProjectSearchBar {
                     }))
                 })
             })
-            .child(query_column)
-            .child(mode_column)
-            .child(replace_column)
-            .child(actions_column)
+            .child(
+                h_stack()
+                    .justify_between()
+                    .child(query_column)
+                    .child(mode_column)
+                    .child(replace_column)
+                    .child(actions_column),
+            )
+            .when(search.filters_enabled, |this| {
+                this.child(
+                    h_stack()
+                        .flex_1()
+                        .gap_2()
+                        .justify_between()
+                        .child(
+                            h_stack()
+                                .flex_1()
+                                .h_full()
+                                .px_2()
+                                .py_1()
+                                .border_1()
+                                .border_color(cx.theme().colors().border)
+                                .rounded_lg()
+                                .child(self.render_text_input(&search.included_files_editor, cx))
+                                .when(search.current_mode != SearchMode::Semantic, |this| {
+                                    this.child(
+                                        SearchOptions::INCLUDE_IGNORED.as_button(
+                                            search
+                                                .search_options
+                                                .contains(SearchOptions::INCLUDE_IGNORED),
+                                            cx.listener(|this, _, cx| {
+                                                this.toggle_search_option(
+                                                    SearchOptions::INCLUDE_IGNORED,
+                                                    cx,
+                                                );
+                                            }),
+                                        ),
+                                    )
+                                }),
+                        )
+                        .child(
+                            h_stack()
+                                .flex_1()
+                                .h_full()
+                                .px_2()
+                                .py_1()
+                                .border_1()
+                                .border_color(cx.theme().colors().border)
+                                .rounded_lg()
+                                .child(self.render_text_input(&search.excluded_files_editor, cx)),
+                        ),
+                )
+            })
     }
 }
 // impl Entity for ProjectSearchBar {

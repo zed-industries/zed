@@ -109,8 +109,22 @@ impl Render for Toolbar {
             .child(
                 h_stack()
                     .justify_between()
-                    .child(h_stack().children(self.left_items().map(|item| item.to_any())))
-                    .child(h_stack().children(self.right_items().map(|item| item.to_any()))),
+                    .when(self.left_items().count() > 0, |this| {
+                        this.child(
+                            h_stack()
+                                .flex_1()
+                                .justify_start()
+                                .children(self.left_items().map(|item| item.to_any())),
+                        )
+                    })
+                    .when(self.right_items().count() > 0, |this| {
+                        this.child(
+                            h_stack()
+                                .flex_1()
+                                .justify_end()
+                                .children(self.right_items().map(|item| item.to_any())),
+                        )
+                    }),
             )
             .children(secondary_item)
     }
