@@ -1095,7 +1095,7 @@ impl EditorElement {
                     }
                 });
 
-                cx.with_z_index(1, |cx| {
+                cx.with_z_index(2, |cx| {
                     if let Some((position, mut context_menu)) = layout.context_menu.take() {
                         let available_space =
                             size(AvailableSpace::MinContent, AvailableSpace::MinContent);
@@ -2825,14 +2825,16 @@ impl Element for EditorElement {
                     self.paint_text(text_bounds, &mut layout, cx);
 
                     if !layout.blocks.is_empty() {
-                        cx.with_z_index(1, |cx| {
+                        // z-index of 0 so that it is on the same mouse event layer as the editor's
+                        // mouse events
+                        cx.with_z_index(0, |cx| {
                             cx.with_element_id(Some("editor_blocks"), |cx| {
                                 self.paint_blocks(bounds, &mut layout, cx);
                             });
                         })
                     }
 
-                    cx.with_z_index(2, |cx| self.paint_scrollbar(bounds, &mut layout, cx));
+                    cx.with_z_index(1, |cx| self.paint_scrollbar(bounds, &mut layout, cx));
                 });
             });
         })
