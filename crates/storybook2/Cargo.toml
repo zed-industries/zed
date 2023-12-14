@@ -3,10 +3,15 @@ name = "storybook2"
 version = "0.1.0"
 edition = "2021"
 publish = false
+default-run = "storybook"
 
 [[bin]]
 name = "storybook"
-path = "src/storybook2.rs"
+path = "src/bin/storybook2.rs"
+
+[[bin]]
+name = "print_storybook_script"
+path = "src/bin/print_storybook_script.rs"
 
 [dependencies]
 anyhow.workspace = true

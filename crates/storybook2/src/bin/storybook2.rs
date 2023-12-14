@@ -1,7 +1,3 @@
-mod assets;
-mod stories;
-mod story_selector;
-
 use std::sync::Arc;
 
 use clap::Parser;
@@ -15,8 +11,9 @@ use simplelog::SimpleLogger;
 use theme2::{ThemeRegistry, ThemeSettings};
 use ui::prelude::*;
 
-use crate::assets::Assets;
-use crate::story_selector::StorySelector;
+use storybook2::assets::Assets;
+pub use storybook2::story_selector::*;
+// pub use crate::story_selector::{ComponentStory, StorySelector};
 
 // gpui::actions! {
 //     storybook,
