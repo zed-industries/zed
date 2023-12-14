@@ -642,10 +642,6 @@ impl Element for Div {
             &mut element_state.interactive_state,
             cx,
             |style, scroll_offset, cx| {
-                if style.visibility == Visibility::Hidden {
-                    return;
-                }
-
                 let z_index = style.z_index.unwrap_or(0);
 
                 cx.with_z_index(z_index, |cx| {
@@ -779,6 +775,10 @@ impl Interactivity {
     ) {
         let style = self.compute_style(Some(bounds), element_state, cx);
 
+        if style.visibility == Visibility::Hidden {
+            return;
+        }
+
         #[cfg(debug_assertions)]
         if self.element_id.is_some()
             && (style.debug || style.debug_below || cx.has_global::<crate::DebugBelow>())
@@ -890,11 +890,10 @@ impl Interactivity {
             });
         }
 
-        if style.visibility == Visibility::Visible
-            && style
-                .background
-                .as_ref()
-                .is_some_and(|fill| fill.color().is_some())
+        if style
+            .background
+            .as_ref()
+            .is_some_and(|fill| fill.color().is_some_and(|color| !color.is_transparent()))
         {
             cx.with_z_index(style.z_index.unwrap_or(0), |cx| cx.add_opaque_layer(bounds))
         }
