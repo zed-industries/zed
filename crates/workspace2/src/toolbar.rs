@@ -55,6 +55,12 @@ pub struct Toolbar {
 }
 
 impl Toolbar {
+    fn has_any_visible_items(&self) -> bool {
+        self.items
+            .iter()
+            .any(|(_item, location)| *location != ToolbarItemLocation::Hidden)
+    }
+
     fn left_items(&self) -> impl Iterator<Item = &dyn ToolbarItemViewHandle> {
         self.items.iter().filter_map(|(item, location)| {
             if *location == ToolbarItemLocation::PrimaryLeft {
@@ -90,6 +96,10 @@ impl Render for Toolbar {
     type Element = Div;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+        if !self.has_any_visible_items() {
+            return div();
+        }
+
         let secondary_item = self.secondary_items().next().map(|item| item.to_any());
 
         v_stack()
