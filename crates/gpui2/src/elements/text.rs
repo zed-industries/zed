@@ -6,7 +6,7 @@ use crate::{
 use anyhow::anyhow;
 use parking_lot::{Mutex, MutexGuard};
 use smallvec::SmallVec;
-use std::{cell::Cell, ops::Range, rc::Rc, sync::Arc};
+use std::{cell::Cell, mem, ops::Range, rc::Rc, sync::Arc};
 use util::ResultExt;
 
 impl Element for &'static str {
@@ -22,7 +22,7 @@ impl Element for &'static str {
         (layout_id, state)
     }
 
-    fn paint(self, bounds: Bounds<Pixels>, state: &mut TextState, cx: &mut WindowContext) {
+    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut TextState, cx: &mut WindowContext) {
         state.paint(bounds, self, cx)
     }
 }
@@ -52,7 +52,7 @@ impl Element for SharedString {
         (layout_id, state)
     }
 
-    fn paint(self, bounds: Bounds<Pixels>, state: &mut TextState, cx: &mut WindowContext) {
+    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut TextState, cx: &mut WindowContext) {
         let text_str: &str = self.as_ref();
         state.paint(bounds, text_str, cx)
     }
@@ -128,7 +128,7 @@ impl Element for StyledText {
         (layout_id, state)
     }
 
-    fn paint(self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut WindowContext) {
+    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut WindowContext) {
         state.paint(bounds, &self.text, cx)
     }
 }
@@ -356,8 +356,8 @@ impl Element for InteractiveText {
         }
     }
 
-    fn paint(self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut WindowContext) {
-        if let Some(click_listener) = self.click_listener {
+    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut WindowContext) {
+        if let Some(click_listener) = self.click_listener.take() {
             if let Some(ix) = state
                 .text_state
                 .index_for_position(bounds, cx.mouse_position())
@@ -374,13 +374,14 @@ impl Element for InteractiveText {
             let text_state = state.text_state.clone();
             let mouse_down = state.mouse_down_index.clone();
             if let Some(mouse_down_index) = mouse_down.get() {
+                let clickable_ranges = mem::take(&mut self.clickable_ranges);
                 cx.on_mouse_event(move |event: &MouseUpEvent, phase, cx| {
                     if phase == DispatchPhase::Bubble {
                         if let Some(mouse_up_index) =
                             text_state.index_for_position(bounds, event.position)
                         {
                             click_listener(
-                                &self.clickable_ranges,
+                                &clickable_ranges,
                                 InteractiveTextClickEvent {
                                     mouse_down_index,
                                     mouse_up_index,

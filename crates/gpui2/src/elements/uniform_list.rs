@@ -155,7 +155,7 @@ impl Element for UniformList {
     }
 
     fn paint(
-        self,
+        &mut self,
         bounds: Bounds<crate::Pixels>,
         element_state: &mut Self::State,
         cx: &mut WindowContext,
@@ -220,11 +220,11 @@ impl Element for UniformList {
                             let visible_range = first_visible_element_ix
                                 ..cmp::min(last_visible_element_ix, self.item_count);
 
-                            let items = (self.render_items)(visible_range.clone(), cx);
+                            let mut items = (self.render_items)(visible_range.clone(), cx);
                             cx.with_z_index(1, |cx| {
                                 let content_mask = ContentMask { bounds };
                                 cx.with_content_mask(Some(content_mask), |cx| {
-                                    for (item, ix) in items.into_iter().zip(visible_range) {
+                                    for (item, ix) in items.iter_mut().zip(visible_range) {
                                         let item_origin = padded_bounds.origin
                                             + point(px(0.), item_height * ix + scroll_offset.y);
                                         let available_space = size(

@@ -112,21 +112,21 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
     }
 
     fn paint(
-        self,
+        &mut self,
         bounds: Bounds<gpui::Pixels>,
         element_state: &mut Self::State,
         cx: &mut WindowContext,
     ) {
-        if let Some(child) = element_state.child_element.take() {
+        if let Some(mut child) = element_state.child_element.take() {
             child.paint(cx);
         }
 
-        if let Some(menu) = element_state.menu_element.take() {
+        if let Some(mut menu) = element_state.menu_element.take() {
             menu.paint(cx);
             return;
         }
 
-        let Some(builder) = self.menu_builder else {
+        let Some(builder) = self.menu_builder.take() else {
             return;
         };
         let menu = element_state.menu.clone();

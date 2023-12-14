@@ -2,8 +2,8 @@ use editor::{Cursor, HighlightedRange, HighlightedRangeLine};
 use gpui::{
     black, div, fill, point, px, red, relative, AnyElement, AsyncWindowContext, AvailableSpace,
     Bounds, DispatchPhase, Element, ElementId, ExternalPaths, FocusHandle, Font, FontStyle,
-    FontWeight, HighlightStyle, Hsla, InteractiveElement, InteractiveElementState, IntoElement,
-    LayoutId, Model, ModelContext, ModifiersChangedEvent, MouseButton, Pixels,
+    FontWeight, HighlightStyle, Hsla, InteractiveElement, InteractiveElementState, Interactivity,
+    IntoElement, LayoutId, Model, ModelContext, ModifiersChangedEvent, MouseButton, Pixels,
     PlatformInputHandler, Point, Rgba, ShapedLine, Size, StatefulInteractiveElement, Styled,
     TextRun, TextStyle, TextSystem, UnderlineStyle, WhiteSpace, WindowContext,
 };
@@ -145,11 +145,11 @@ pub struct TerminalElement {
     focused: bool,
     cursor_visible: bool,
     can_navigate_to_selected_word: bool,
-    interactivity: gpui::Interactivity,
+    interactivity: Interactivity,
 }
 
 impl InteractiveElement for TerminalElement {
-    fn interactivity(&mut self) -> &mut gpui::Interactivity {
+    fn interactivity(&mut self) -> &mut Interactivity {
         &mut self.interactivity
     }
 }
@@ -605,141 +605,157 @@ impl TerminalElement {
     }
 
     fn register_mouse_listeners(
-        self,
+        &mut self,
         origin: Point<Pixels>,
         mode: TermMode,
         bounds: Bounds<Pixels>,
         cx: &mut WindowContext,
-    ) -> Self {
+    ) {
         let focus = self.focus.clone();
-        let connection = self.terminal.clone();
+        let terminal = self.terminal.clone();
 
-        let mut this = self
-            .on_mouse_down(MouseButton::Left, {
-                let connection = connection.clone();
-                let focus = focus.clone();
-                move |e, cx| {
-                    cx.focus(&focus);
-                    //todo!(context menu)
-                    // v.context_menu.update(cx, |menu, _cx| menu.delay_cancel());
-                    connection.update(cx, |terminal, cx| {
-                        terminal.mouse_down(&e, origin);
+        self.interactivity.on_mouse_down(MouseButton::Left, {
+            let terminal = terminal.clone();
+            let focus = focus.clone();
+            move |e, cx| {
+                cx.focus(&focus);
+                //todo!(context menu)
+                // v.context_menu.update(cx, |menu, _cx| menu.delay_cancel());
+                terminal.update(cx, |terminal, cx| {
+                    terminal.mouse_down(&e, origin);
 
+                    cx.notify();
+                })
+            }
+        });
+        self.interactivity.on_mouse_move({
+            let terminal = terminal.clone();
+            let focus = focus.clone();
+            move |e, cx| {
+                if e.pressed_button.is_some() && focus.is_focused(cx) && !cx.has_active_drag() {
+                    terminal.update(cx, |terminal, cx| {
+                        terminal.mouse_drag(e, origin, bounds);
                         cx.notify();
                     })
                 }
-            })
-            .on_mouse_move({
-                let connection = connection.clone();
-                let focus = focus.clone();
-                move |e, cx| {
-                    if e.pressed_button.is_some() && focus.is_focused(cx) && !cx.has_active_drag() {
-                        connection.update(cx, |terminal, cx| {
-                            terminal.mouse_drag(e, origin, bounds);
-                            cx.notify();
-                        })
+            }
+        });
+        self.interactivity.on_mouse_up(
+            MouseButton::Left,
+            TerminalElement::generic_button_handler(
+                terminal.clone(),
+                origin,
+                focus.clone(),
+                move |terminal, origin, e, cx| {
+                    terminal.mouse_up(&e, origin, cx);
+                },
+            ),
+        );
+        self.interactivity.on_click({
+            let terminal = terminal.clone();
+            move |e, cx| {
+                if e.down.button == MouseButton::Right {
+                    let mouse_mode = terminal.update(cx, |terminal, _cx| {
+                        terminal.mouse_mode(e.down.modifiers.shift)
+                    });
+
+                    if !mouse_mode {
+                        //todo!(context menu)
+                        // view.deploy_context_menu(e.position, cx);
                     }
                 }
-            })
-            .on_mouse_up(
-                MouseButton::Left,
+            }
+        });
+
+        self.interactivity.on_mouse_move({
+            let terminal = terminal.clone();
+            let focus = focus.clone();
+            move |e, cx| {
+                if focus.is_focused(cx) {
+                    terminal.update(cx, |terminal, cx| {
+                        terminal.mouse_move(&e, origin);
+                        cx.notify();
+                    })
+                }
+            }
+        });
+        self.interactivity.on_scroll_wheel({
+            let terminal = terminal.clone();
+            move |e, cx| {
+                terminal.update(cx, |terminal, cx| {
+                    terminal.scroll_wheel(e, origin);
+                    cx.notify();
+                })
+            }
+        });
+
+        self.interactivity.on_drop::<ExternalPaths>({
+            let focus = focus.clone();
+            let terminal = terminal.clone();
+            move |external_paths, cx| {
+                cx.focus(&focus);
+                let mut new_text = external_paths
+                    .read(cx)
+                    .paths()
+                    .iter()
+                    .map(|path| format!(" {path:?}"))
+                    .join("");
+                new_text.push(' ');
+                terminal.update(cx, |terminal, _| {
+                    // todo!() long paths are not displayed properly albeit the text is there
+                    terminal.paste(&new_text);
+                });
+            }
+        });
+
+        // Mouse mode handlers:
+        // All mouse modes need the extra click handlers
+        if mode.intersects(TermMode::MOUSE_MODE) {
+            self.interactivity.on_mouse_down(
+                MouseButton::Right,
                 TerminalElement::generic_button_handler(
-                    connection.clone(),
+                    terminal.clone(),
+                    origin,
+                    focus.clone(),
+                    move |terminal, origin, e, _cx| {
+                        terminal.mouse_down(&e, origin);
+                    },
+                ),
+            );
+            self.interactivity.on_mouse_down(
+                MouseButton::Middle,
+                TerminalElement::generic_button_handler(
+                    terminal.clone(),
+                    origin,
+                    focus.clone(),
+                    move |terminal, origin, e, _cx| {
+                        terminal.mouse_down(&e, origin);
+                    },
+                ),
+            );
+            self.interactivity.on_mouse_up(
+                MouseButton::Right,
+                TerminalElement::generic_button_handler(
+                    terminal.clone(),
                     origin,
                     focus.clone(),
                     move |terminal, origin, e, cx| {
                         terminal.mouse_up(&e, origin, cx);
                     },
                 ),
-            )
-            .on_click({
-                let connection = connection.clone();
-                move |e, cx| {
-                    if e.down.button == MouseButton::Right {
-                        let mouse_mode = connection.update(cx, |terminal, _cx| {
-                            terminal.mouse_mode(e.down.modifiers.shift)
-                        });
-
-                        if !mouse_mode {
-                            //todo!(context menu)
-                            // view.deploy_context_menu(e.position, cx);
-                        }
-                    }
-                }
-            })
-            .on_mouse_move({
-                let connection = connection.clone();
-                let focus = focus.clone();
-                move |e, cx| {
-                    if focus.is_focused(cx) {
-                        connection.update(cx, |terminal, cx| {
-                            terminal.mouse_move(&e, origin);
-                            cx.notify();
-                        })
-                    }
-                }
-            })
-            .on_scroll_wheel({
-                let connection = connection.clone();
-                move |e, cx| {
-                    connection.update(cx, |terminal, cx| {
-                        terminal.scroll_wheel(e, origin);
-                        cx.notify();
-                    })
-                }
-            });
-
-        // Mouse mode handlers:
-        // All mouse modes need the extra click handlers
-        if mode.intersects(TermMode::MOUSE_MODE) {
-            this = this
-                .on_mouse_down(
-                    MouseButton::Right,
-                    TerminalElement::generic_button_handler(
-                        connection.clone(),
-                        origin,
-                        focus.clone(),
-                        move |terminal, origin, e, _cx| {
-                            terminal.mouse_down(&e, origin);
-                        },
-                    ),
-                )
-                .on_mouse_down(
-                    MouseButton::Middle,
-                    TerminalElement::generic_button_handler(
-                        connection.clone(),
-                        origin,
-                        focus.clone(),
-                        move |terminal, origin, e, _cx| {
-                            terminal.mouse_down(&e, origin);
-                        },
-                    ),
-                )
-                .on_mouse_up(
-                    MouseButton::Right,
-                    TerminalElement::generic_button_handler(
-                        connection.clone(),
-                        origin,
-                        focus.clone(),
-                        move |terminal, origin, e, cx| {
-                            terminal.mouse_up(&e, origin, cx);
-                        },
-                    ),
-                )
-                .on_mouse_up(
-                    MouseButton::Middle,
-                    TerminalElement::generic_button_handler(
-                        connection,
-                        origin,
-                        focus,
-                        move |terminal, origin, e, cx| {
-                            terminal.mouse_up(&e, origin, cx);
-                        },
-                    ),
-                )
+            );
+            self.interactivity.on_mouse_up(
+                MouseButton::Middle,
+                TerminalElement::generic_button_handler(
+                    terminal,
+                    origin,
+                    focus,
+                    move |terminal, origin, e, cx| {
+                        terminal.mouse_up(&e, origin, cx);
+                    },
+                ),
+            );
         }
-
-        this
     }
 }
 
@@ -764,7 +780,12 @@ impl Element for TerminalElement {
         (layout_id, interactive_state)
     }
 
-    fn paint(self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut WindowContext<'_>) {
+    fn paint(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        state: &mut Self::State,
+        cx: &mut WindowContext<'_>,
+    ) {
         let mut layout = self.compute_layout(bounds, cx);
 
         let theme = cx.theme();
@@ -783,33 +804,19 @@ impl Element for TerminalElement {
 
         let terminal_focus_handle = self.focus.clone();
         let terminal_handle = self.terminal.clone();
-        let mut this: TerminalElement = self
-            .register_mouse_listeners(origin, layout.mode, bounds, cx)
-            .drag_over::<ExternalPaths>(|style| {
-                // todo!() why does not it work? z-index of elements?
-                style.bg(cx.theme().colors().ghost_element_hover)
-            })
-            .on_drop::<ExternalPaths>(move |external_paths, cx| {
-                cx.focus(&terminal_focus_handle);
-                let mut new_text = external_paths
-                    .read(cx)
-                    .paths()
-                    .iter()
-                    .map(|path| format!(" {path:?}"))
-                    .join("");
-                new_text.push(' ');
-                terminal_handle.update(cx, |terminal, _| {
-                    // todo!() long paths are not displayed properly albeit the text is there
-                    terminal.paste(&new_text);
-                });
-            });
+        self.register_mouse_listeners(origin, layout.mode, bounds, cx);
 
-        let interactivity = mem::take(&mut this.interactivity);
+        // todo!(change this to work in terms of on_drag_move or some such)
+        // .drag_over::<ExternalPaths>(|style| {
+        //     // todo!() why does not it work? z-index of elements?
+        //     style.bg(cx.theme().colors().ghost_element_hover)
+        // })
 
+        let mut interactivity = mem::take(&mut self.interactivity);
         interactivity.paint(bounds, bounds.size, state, cx, |_, _, cx| {
-            cx.handle_input(&this.focus, terminal_input_handler);
+            cx.handle_input(&self.focus, terminal_input_handler);
 
-            this.register_key_listeners(cx);
+            self.register_key_listeners(cx);
 
             for rect in &layout.rects {
                 rect.paint(origin, &layout, cx);
@@ -840,7 +847,7 @@ impl Element for TerminalElement {
                 }
             });
 
-            if this.cursor_visible {
+            if self.cursor_visible {
                 cx.with_z_index(3, |cx| {
                     if let Some(cursor) = &layout.cursor {
                         cursor.paint(origin, cx);
@@ -848,7 +855,7 @@ impl Element for TerminalElement {
                 });
             }
 
-            if let Some(element) = layout.hyperlink_tooltip.take() {
+            if let Some(mut element) = layout.hyperlink_tooltip.take() {
                 let width: AvailableSpace = bounds.size.width.into();
                 let height: AvailableSpace = bounds.size.height.into();
                 element.draw(origin, Size { width, height }, cx)

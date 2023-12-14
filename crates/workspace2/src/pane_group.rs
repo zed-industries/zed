@@ -896,7 +896,7 @@ mod element {
         }
 
         fn paint(
-            self,
+            &mut self,
             bounds: gpui::Bounds<ui::prelude::Pixels>,
             state: &mut Self::State,
             cx: &mut ui::prelude::WindowContext,
@@ -912,7 +912,7 @@ mod element {
             let mut bounding_boxes = self.bounding_boxes.lock();
             bounding_boxes.clear();
 
-            for (ix, child) in self.children.into_iter().enumerate() {
+            for (ix, mut child) in self.children.iter_mut().enumerate() {
                 //todo!(active_pane_magnification)
                 // If usign active pane magnification, need to switch to using
                 // 1 for all non-active panes, and then the magnification for the

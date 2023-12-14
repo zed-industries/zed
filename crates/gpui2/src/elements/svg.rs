@@ -36,8 +36,12 @@ impl Element for Svg {
         })
     }
 
-    fn paint(self, bounds: Bounds<Pixels>, element_state: &mut Self::State, cx: &mut WindowContext)
-    where
+    fn paint(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        element_state: &mut Self::State,
+        cx: &mut WindowContext,
+    ) where
         Self: Sized,
     {
         self.interactivity
