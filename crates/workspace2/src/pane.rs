@@ -7,7 +7,7 @@ use crate::{
 use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
 use gpui::{
-    actions, impl_actions, overlay, prelude::*, Action, AnchorCorner, AnyWeakView, AppContext,
+    actions, impl_actions, overlay, prelude::*, Action, AnchorCorner, AppContext,
     AsyncWindowContext, DismissEvent, Div, EntityId, EventEmitter, FocusHandle, Focusable,
     FocusableView, Model, MouseButton, NavigationDirection, Pixels, Point, PromptLevel, Render,
     ScrollHandle, Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
@@ -164,11 +164,6 @@ impl fmt::Debug for Event {
     }
 }
 
-struct FocusedView {
-    view: AnyWeakView,
-    focus_handle: FocusHandle,
-}
-
 pub struct Pane {
     focus_handle: FocusHandle,
     items: Vec<Box<dyn ItemHandle>>,
@@ -187,7 +182,7 @@ pub struct Pane {
     //     can_drop: Rc<dyn Fn(&DragAndDrop<Workspace>, &WindowContext) -> bool>,
     can_split: bool,
     //     render_tab_bar_buttons: Rc<dyn Fn(&mut Pane, &mut ViewContext<Pane>) -> AnyElement<Pane>>,
-    subscriptions: Vec<Subscription>,
+    _subscriptions: Vec<Subscription>,
     tab_bar_scroll_handle: ScrollHandle,
 }
 
@@ -432,12 +427,8 @@ impl Pane {
             //         })
             //         .into_any()
             // }),
-            subscriptions,
+            _subscriptions: subscriptions,
         }
-    }
-
-    pub(crate) fn workspace(&self) -> &WeakView<Workspace> {
-        &self.workspace
     }
 
     pub fn has_focus(&self, cx: &WindowContext) -> bool {
@@ -1468,21 +1459,6 @@ impl Pane {
         let label = item.tab_content(Some(detail), is_active, cx);
         let close_side = &ItemSettings::get_global(cx).close_position;
 
-        let (text_color, tab_bg, tab_hover_bg, tab_active_bg) = match ix == self.active_item_index {
-            false => (
-                cx.theme().colors().text_muted,
-                cx.theme().colors().tab_inactive_background,
-                cx.theme().colors().ghost_element_hover,
-                cx.theme().colors().ghost_element_active,
-            ),
-            true => (
-                cx.theme().colors().text,
-                cx.theme().colors().tab_active_background,
-                cx.theme().colors().element_hover,
-                cx.theme().colors().element_active,
-            ),
-        };
-
         let indicator = maybe!({
             let indicator_color = match (item.has_conflict(cx), item.is_dirty(cx)) {
                 (true, _) => Color::Warning,
@@ -1498,57 +1474,55 @@ impl Pane {
         let is_last_item = ix == self.items.len() - 1;
         let position_relative_to_active_item = ix.cmp(&self.active_item_index);
 
-        let tab =
-            Tab::new(ix)
-                .position(if is_first_item {
-                    TabPosition::First
-                } else if is_last_item {
-                    TabPosition::Last
-                } else {
-                    TabPosition::Middle(position_relative_to_active_item)
-                })
-                .close_side(match close_side {
-                    ClosePosition::Left => ui::TabCloseSide::Start,
-                    ClosePosition::Right => ui::TabCloseSide::End,
-                })
-                .selected(is_active)
-                .on_click(cx.listener(move |pane: &mut Self, event, cx| {
-                    pane.activate_item(ix, true, true, cx)
-                }))
-                .on_drag(
-                    DraggedTab {
-                        pane: cx.view().clone(),
-                        detail,
-                        item_id,
-                        is_active,
-                        ix,
-                    },
-                    |tab, cx| cx.build_view(|cx| tab.clone()),
-                )
-                .drag_over::<DraggedTab>(|tab| tab.bg(cx.theme().colors().tab_active_background))
-                .drag_over::<ProjectEntryId>(|tab| tab.bg(gpui::red()))
-                .on_drop(cx.listener(move |this, dragged_tab: &DraggedTab, cx| {
-                    this.handle_tab_drop(dragged_tab, ix, cx)
-                }))
-                .on_drop(cx.listener(move |this, entry_id: &ProjectEntryId, cx| {
-                    dbg!(entry_id);
-                    this.handle_project_entry_drop(entry_id, ix, cx)
-                }))
-                .when_some(item.tab_tooltip_text(cx), |tab, text| {
-                    tab.tooltip(move |cx| Tooltip::text(text.clone(), cx))
-                })
-                .start_slot::<Indicator>(indicator)
-                .end_slot(
-                    IconButton::new("close tab", Icon::Close)
-                        .icon_color(Color::Muted)
-                        .size(ButtonSize::None)
-                        .icon_size(IconSize::XSmall)
-                        .on_click(cx.listener(move |pane, _, cx| {
-                            pane.close_item_by_id(item_id, SaveIntent::Close, cx)
-                                .detach_and_log_err(cx);
-                        })),
-                )
-                .child(label);
+        let tab = Tab::new(ix)
+            .position(if is_first_item {
+                TabPosition::First
+            } else if is_last_item {
+                TabPosition::Last
+            } else {
+                TabPosition::Middle(position_relative_to_active_item)
+            })
+            .close_side(match close_side {
+                ClosePosition::Left => ui::TabCloseSide::Start,
+                ClosePosition::Right => ui::TabCloseSide::End,
+            })
+            .selected(is_active)
+            .on_click(
+                cx.listener(move |pane: &mut Self, _, cx| pane.activate_item(ix, true, true, cx)),
+            )
+            .on_drag(
+                DraggedTab {
+                    pane: cx.view().clone(),
+                    detail,
+                    item_id,
+                    is_active,
+                    ix,
+                },
+                |tab, cx| cx.build_view(|_| tab.clone()),
+            )
+            .drag_over::<DraggedTab>(|tab| tab.bg(cx.theme().colors().tab_active_background))
+            .drag_over::<ProjectEntryId>(|tab| tab.bg(gpui::red()))
+            .on_drop(cx.listener(move |this, dragged_tab: &DraggedTab, cx| {
+                this.handle_tab_drop(dragged_tab, ix, cx)
+            }))
+            .on_drop(cx.listener(move |this, entry_id: &ProjectEntryId, cx| {
+                this.handle_project_entry_drop(entry_id, cx)
+            }))
+            .when_some(item.tab_tooltip_text(cx), |tab, text| {
+                tab.tooltip(move |cx| Tooltip::text(text.clone(), cx))
+            })
+            .start_slot::<Indicator>(indicator)
+            .end_slot(
+                IconButton::new("close tab", Icon::Close)
+                    .icon_color(Color::Muted)
+                    .size(ButtonSize::None)
+                    .icon_size(IconSize::XSmall)
+                    .on_click(cx.listener(move |pane, _, cx| {
+                        pane.close_item_by_id(item_id, SaveIntent::Close, cx)
+                            .detach_and_log_err(cx);
+                    })),
+            )
+            .child(label);
 
         let single_entry_to_resolve = {
             let item_entries = self.items[ix].project_entry_ids(cx);
@@ -1618,12 +1592,12 @@ impl Pane {
                         IconButton::new("plus", Icon::Plus)
                             .icon_size(IconSize::Small)
                             .on_click(cx.listener(|this, _, cx| {
-                                let menu = ContextMenu::build(cx, |menu, cx| {
+                                let menu = ContextMenu::build(cx, |menu, _| {
                                     menu.action("New File", NewFile.boxed_clone())
                                         .action("New Terminal", NewCenterTerminal.boxed_clone())
                                         .action("New Search", NewSearch.boxed_clone())
                                 });
-                                cx.subscribe(&menu, |this, _, event: &DismissEvent, cx| {
+                                cx.subscribe(&menu, |this, _, _: &DismissEvent, cx| {
                                     this.focus(cx);
                                     this.new_item_menu = None;
                                 })
@@ -1642,13 +1616,13 @@ impl Pane {
                         IconButton::new("split", Icon::Split)
                             .icon_size(IconSize::Small)
                             .on_click(cx.listener(|this, _, cx| {
-                                let menu = ContextMenu::build(cx, |menu, cx| {
+                                let menu = ContextMenu::build(cx, |menu, _| {
                                     menu.action("Split Right", SplitRight.boxed_clone())
                                         .action("Split Left", SplitLeft.boxed_clone())
                                         .action("Split Up", SplitUp.boxed_clone())
                                         .action("Split Down", SplitDown.boxed_clone())
                                 });
-                                cx.subscribe(&menu, |this, _, event: &DismissEvent, cx| {
+                                cx.subscribe(&menu, |this, _, _: &DismissEvent, cx| {
                                     this.focus(cx);
                                     this.split_item_menu = None;
                                 })
@@ -1684,7 +1658,7 @@ impl Pane {
                         this.handle_tab_drop(dragged_tab, this.items.len(), cx)
                     }))
                     .on_drop(cx.listener(move |this, entry_id: &ProjectEntryId, cx| {
-                        this.handle_project_entry_drop(entry_id, this.items.len(), cx)
+                        this.handle_project_entry_drop(entry_id, cx)
                     })),
             )
     }
@@ -1755,7 +1729,7 @@ impl Pane {
         let from_pane = dragged_tab.pane.clone();
         let to_pane = cx.view().clone();
         self.workspace
-            .update(cx, |workspace, cx| {
+            .update(cx, |_, cx| {
                 cx.defer(move |workspace, cx| {
                     workspace.move_item(from_pane, to_pane, item_id, ix, cx);
                 });
@@ -1766,13 +1740,12 @@ impl Pane {
     fn handle_project_entry_drop(
         &mut self,
         project_entry_id: &ProjectEntryId,
-        ix: usize,
         cx: &mut ViewContext<'_, Pane>,
     ) {
         let to_pane = cx.view().downgrade();
         let project_entry_id = *project_entry_id;
         self.workspace
-            .update(cx, |workspace, cx| {
+            .update(cx, |_, cx| {
                 cx.defer(move |workspace, cx| {
                     if let Some(path) = workspace
                         .project()
@@ -1798,19 +1771,10 @@ impl Pane {
         let from_pane = dragged_tab.pane.clone();
         let to_pane = cx.view().clone();
         self.workspace
-            .update(cx, |workspace, cx| {
+            .update(cx, |_, cx| {
                 cx.defer(move |workspace, cx| {
-                    let item = from_pane
-                        .read(cx)
-                        .items()
-                        .find(|item| item.item_id() == item_id)
-                        .map(|item| item.boxed_clone());
-                    if let Some(item) = item {
-                        if let Some(item) = item.clone_on_split(workspace.database_id(), cx) {
-                            let pane = workspace.split_pane(to_pane, split_direction, cx);
-                            workspace.move_item(from_pane, pane, item_id, 0, cx);
-                        }
-                    }
+                    let pane = workspace.split_pane(to_pane, split_direction, cx);
+                    workspace.move_item(from_pane, pane, item_id, 0, cx);
                 });
             })
             .log_err();
@@ -1825,7 +1789,7 @@ impl Pane {
         let project_entry_id = *project_entry_id;
         let current_pane = cx.view().clone();
         self.workspace
-            .update(cx, |workspace, cx| {
+            .update(cx, |_, cx| {
                 cx.defer(move |workspace, cx| {
                     if let Some(path) = workspace
                         .project()
@@ -1853,8 +1817,6 @@ impl Render for Pane {
     type Element = Focusable<Div>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-        let this = cx.view().downgrade();
-
         v_stack()
             .key_context("Pane")
             .track_focus(&self.focus_handle)
@@ -1953,11 +1915,7 @@ impl Render for Pane {
                                 this.handle_tab_drop(dragged_tab, this.active_item_index(), cx)
                             }))
                             .on_drop(cx.listener(move |this, entry_id: &ProjectEntryId, cx| {
-                                this.handle_project_entry_drop(
-                                    entry_id,
-                                    this.active_item_index(),
-                                    cx,
-                                )
+                                this.handle_project_entry_drop(entry_id, cx)
                             })),
                     )
                     .children(
