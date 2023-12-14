@@ -486,12 +486,9 @@ impl Render for Dock {
         if let Some(entry) = self.visible_entry() {
             let size = entry.panel.size(cx);
 
-            let mut pre_resize_handle = None;
-            let mut post_resize_handle = None;
             let position = self.position;
-            let handler = div()
+            let mut handle = div()
                 .id("resize-handle")
-                .bg(cx.theme().colors().border)
                 .on_drag(DraggedDock(position), |dock, cx| {
                     cx.build_view(|_| dock.clone())
                 })
@@ -506,16 +503,31 @@ impl Render for Dock {
 
             match self.position() {
                 DockPosition::Left => {
-                    post_resize_handle =
-                        Some(handler.min_w(HANDLE_SIZE).h_full().cursor_col_resize())
+                    handle = handle
+                        .absolute()
+                        .right(px(0.))
+                        .top(px(0.))
+                        .h_full()
+                        .w(HANDLE_SIZE)
+                        .cursor_col_resize();
                 }
                 DockPosition::Bottom => {
-                    pre_resize_handle =
-                        Some(handler.w_full().min_h(HANDLE_SIZE).cursor_row_resize())
+                    handle = handle
+                        .absolute()
+                        .top(px(0.))
+                        .left(px(0.))
+                        .w_full()
+                        .h(HANDLE_SIZE)
+                        .cursor_row_resize();
                 }
                 DockPosition::Right => {
-                    pre_resize_handle =
-                        Some(handler.min_w(HANDLE_SIZE).h_full().cursor_col_resize())
+                    handle = handle
+                        .absolute()
+                        .top(px(0.))
+                        .left(px(0.))
+                        .w_full()
+                        .h(HANDLE_SIZE)
+                        .cursor_col_resize();
                 }
             }
 
@@ -531,16 +543,15 @@ impl Render for Dock {
                     DockPosition::Right => this.border_l(),
                     DockPosition::Bottom => this.border_t(),
                 })
-                .children(pre_resize_handle)
                 .child(
                     div()
                         .map(|this| match self.position().axis() {
-                            Axis::Horizontal => this.min_w(px(size) - HANDLE_SIZE).h_full(),
-                            Axis::Vertical => this.min_h(px(size) - HANDLE_SIZE).w_full(),
+                            Axis::Horizontal => this.min_w(px(size)).h_full(),
+                            Axis::Vertical => this.min_h(px(size)).w_full(),
                         })
                         .child(entry.panel.to_any()),
                 )
-                .children(post_resize_handle)
+                .child(handle)
         } else {
             div()
         }
