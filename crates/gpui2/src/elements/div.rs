@@ -778,28 +778,28 @@ impl Interactivity {
             });
         }
 
-        for listener in self.mouse_down_listeners.drain(..) {
+        for listener in self.mouse_down_listeners {
             let interactive_bounds = interactive_bounds.clone();
             cx.on_mouse_event(move |event: &MouseDownEvent, phase, cx| {
                 listener(event, &*interactive_bounds, phase, cx);
             })
         }
 
-        for listener in self.mouse_up_listeners.drain(..) {
+        for listener in self.mouse_up_listeners {
             let interactive_bounds = interactive_bounds.clone();
             cx.on_mouse_event(move |event: &MouseUpEvent, phase, cx| {
                 listener(event, &*interactive_bounds, phase, cx);
             })
         }
 
-        for listener in self.mouse_move_listeners.drain(..) {
+        for listener in self.mouse_move_listeners {
             let interactive_bounds = interactive_bounds.clone();
             cx.on_mouse_event(move |event: &MouseMoveEvent, phase, cx| {
                 listener(event, &*interactive_bounds, phase, cx);
             })
         }
 
-        for listener in self.scroll_wheel_listeners.drain(..) {
+        for listener in self.scroll_wheel_listeners {
             let interactive_bounds = interactive_bounds.clone();
             cx.on_mouse_event(move |event: &ScrollWheelEvent, phase, cx| {
                 listener(event, &*interactive_bounds, phase, cx);
@@ -868,8 +868,8 @@ impl Interactivity {
             }
         }
 
-        let click_listeners = mem::take(&mut self.click_listeners);
-        let drag_listener = mem::take(&mut self.drag_listener);
+        let click_listeners = self.click_listeners;
+        let drag_listener = self.drag_listener;
 
         if !click_listeners.is_empty() || drag_listener.is_some() {
             let pending_mouse_down = element_state.pending_mouse_down.clone();
@@ -1086,13 +1086,13 @@ impl Interactivity {
             self.key_context.clone(),
             element_state.focus_handle.clone(),
             |_, cx| {
-                for listener in self.key_down_listeners.drain(..) {
+                for listener in self.key_down_listeners {
                     cx.on_key_event(move |event: &KeyDownEvent, phase, cx| {
                         listener(event, phase, cx);
                     })
                 }
 
-                for listener in self.key_up_listeners.drain(..) {
+                for listener in self.key_up_listeners {
                     cx.on_key_event(move |event: &KeyUpEvent, phase, cx| {
                         listener(event, phase, cx);
                     })

@@ -42,8 +42,26 @@ const ACTIVE_DRAG_Z_INDEX: u32 = 1;
 
 /// A global stacking order, which is created by stacking successive z-index values.
 /// Each z-index will always be interpreted in the context of its parent z-index.
-#[derive(Deref, DerefMut, Ord, PartialOrd, Eq, PartialEq, Clone, Default, Debug)]
-pub struct StackingOrder(pub(crate) SmallVec<[u32; 16]>);
+#[derive(Deref, DerefMut, Ord, PartialOrd, Eq, PartialEq, Clone, Debug)]
+pub struct StackingOrder(pub(crate) Arc<Vec<u32>>);
+
+impl Default for StackingOrder {
+    fn default() -> Self {
+        StackingOrder(Arc::new(Vec::new()))
+    }
+}
+
+impl StackingOrder {
+    /// Pushes a new z-index onto the stacking order.
+    pub fn push(&mut self, z_index: u32) {
+        Arc::make_mut(&mut self.0).push(z_index);
+    }
+
+    /// Pops the last z-index off the stacking order.
+    pub fn pop(&mut self) {
+        Arc::make_mut(&mut self.0).pop();
+    }
+}
 
 /// Represents the two different phases when dispatching events.
 #[derive(Default, Copy, Clone, Debug, Eq, PartialEq)]
@@ -2892,12 +2910,12 @@ impl AnyWindowHandle {
     }
 }
 
-#[cfg(any(test, feature = "test-support"))]
-impl From<SmallVec<[u32; 16]>> for StackingOrder {
-    fn from(small_vec: SmallVec<[u32; 16]>) -> Self {
-        StackingOrder(small_vec)
-    }
-}
+// #[cfg(any(test, feature = "test-support"))]
+// impl From<SmallVec<[u32; 16]>> for StackingOrder {
+//     fn from(small_vec: SmallVec<[u32; 16]>) -> Self {
+//         StackingOrder(small_vec)
+//     }
+// }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub enum ElementId {
