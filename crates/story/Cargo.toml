@@ -8,3 +8,4 @@ publish = false
 
 [dependencies]
 gpui = { package = "gpui2", path = "../gpui2" }
+smallvec.workspace = true
