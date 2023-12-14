@@ -2,14 +2,15 @@ use anyhow::{anyhow, bail, Result};
 use fs::repository::Branch;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, div, AppContext, CursorStyle, DismissEvent, Div, ParentElement, Task, View,
-    ViewContext, VisualContext, WindowContext,
+    actions, div, rems, AppContext, DismissEvent, Div, EventEmitter, FocusHandle, FocusableView,
+    ParentElement, Render, SharedString, Styled, Task, View, ViewContext, VisualContext,
+    WindowContext,
 };
 use picker::{Picker, PickerDelegate};
-use std::{ops::Not, sync::Arc};
-use ui::HighlightedLabel;
+use std::sync::Arc;
+use ui::{v_stack, HighlightedLabel, ListItem, Selectable};
 use util::ResultExt;
-use workspace::{Toast, Workspace};
+use workspace::{ModalView, Toast, Workspace};
 
 actions!(branches, [OpenRecent]);
 
@@ -17,12 +18,33 @@ pub fn init(cx: &mut AppContext) {
     // todo!() po
     cx.observe_new_views(|workspace: &mut Workspace, _| {
         workspace.register_action(|workspace, action, cx| {
-            toggle(workspace, action, cx).log_err();
+            ModalBranchList::toggle_modal(workspace, action, cx).log_err();
         });
     })
     .detach();
 }
 pub type BranchList = Picker<BranchListDelegate>;
+
+pub struct ModalBranchList {
+    pub picker: View<Picker<BranchListDelegate>>,
+}
+
+impl ModalView for ModalBranchList {}
+impl EventEmitter<DismissEvent> for ModalBranchList {}
+
+impl FocusableView for ModalBranchList {
+    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+        self.picker.focus_handle(cx)
+    }
+}
+
+impl Render for ModalBranchList {
+    type Element = Div;
+
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
+        v_stack().w(rems(34.)).child(self.picker.clone())
+    }
+}
 
 pub fn build_branch_list(
     workspace: View<Workspace>,
@@ -35,16 +57,20 @@ pub fn build_branch_list(
     Ok(cx.build_view(|cx| Picker::new(delegate, cx)))
 }
 
-fn toggle(
-    workspace: &mut Workspace,
-    _: &OpenRecent,
-    cx: &mut ViewContext<Workspace>,
-) -> Result<()> {
-    // Modal branch picker has a longer trailoff than a popover one.
-    let delegate = BranchListDelegate::new(workspace, cx.view().clone(), 70, cx)?;
-    workspace.toggle_modal(cx, |cx| Picker::new(delegate, cx));
+impl ModalBranchList {
+    fn toggle_modal(
+        workspace: &mut Workspace,
+        _: &OpenRecent,
+        cx: &mut ViewContext<Workspace>,
+    ) -> Result<()> {
+        // Modal branch picker has a longer trailoff than a popover one.
+        let delegate = BranchListDelegate::new(workspace, cx.view().clone(), 70, cx)?;
+        workspace.toggle_modal(cx, |cx| ModalBranchList {
+            picker: cx.build_view(|cx| Picker::new(delegate, cx)),
+        });
 
-    Ok(())
+        Ok(())
+    }
 }
 
 pub struct BranchListDelegate {
@@ -94,7 +120,7 @@ impl BranchListDelegate {
 }
 
 impl PickerDelegate for BranchListDelegate {
-    type ListItem = Div;
+    type ListItem = ListItem;
     fn placeholder_text(&self) -> Arc<str> {
         "Select branch...".into()
     }
@@ -229,7 +255,7 @@ impl PickerDelegate for BranchListDelegate {
         &self,
         ix: usize,
         selected: bool,
-        cx: &mut ViewContext<Picker<Self>>,
+        _cx: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let hit = &self.matches[ix];
         let shortened_branch_name =
@@ -240,20 +266,11 @@ impl PickerDelegate for BranchListDelegate {
             .filter(|index| index < &&self.branch_name_trailoff_after)
             .copied()
             .collect();
-        Some(div().child(HighlightedLabel::new(shortened_branch_name, highlights)))
-        // Flex::row()
-        //     .with_child(
-        //         Label::new(shortened_branch_name.clone(), style.label.clone())
-        //             .with_highlights(highlights)
-        //             .contained()
-        //             .aligned()
-        //             .left(),
-        //     )
-        //     .contained()
-        //     .with_style(style.container)
-        //     .constrained()
-        //     .with_height(theme.collab_panel.tabbed_modal.row_height)
-        //     .into_any()
+        Some(
+            ListItem::new(SharedString::from(format!("vcs-menu-{ix}")))
+                .start_slot(HighlightedLabel::new(shortened_branch_name, highlights))
+                .selected(selected),
+        )
     }
     // fn render_header(
     //     &self,
