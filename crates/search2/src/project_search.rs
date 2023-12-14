@@ -1429,6 +1429,36 @@ impl ProjectSearchBar {
         };
         new_placeholder_text
     }
+
+    fn render_text_input(&self, editor: &View<Editor>, cx: &ViewContext<Self>) -> impl IntoElement {
+        let settings = ThemeSettings::get_global(cx);
+        let text_style = TextStyle {
+            color: if editor.read(cx).read_only() {
+                cx.theme().colors().text_disabled
+            } else {
+                cx.theme().colors().text
+            },
+            font_family: settings.ui_font.family.clone(),
+            font_features: settings.ui_font.features,
+            font_size: rems(0.875).into(),
+            font_weight: FontWeight::NORMAL,
+            font_style: FontStyle::Normal,
+            line_height: relative(1.3).into(),
+            background_color: None,
+            underline: None,
+            white_space: WhiteSpace::Normal,
+        };
+
+        EditorElement::new(
+            &editor,
+            EditorStyle {
+                background: cx.theme().colors().editor_background,
+                local_player: cx.theme().players().local(),
+                text: text_style,
+                ..Default::default()
+            },
+        )
+    }
 }
 
 impl Render for ProjectSearchBar {
@@ -1462,35 +1492,7 @@ impl Render for ProjectSearchBar {
                 .on_action(cx.listener(|this, action, cx| this.previous_history_query(action, cx)))
                 .on_action(cx.listener(|this, action, cx| this.next_history_query(action, cx)))
                 .child(IconElement::new(Icon::MagnifyingGlass))
-                .child({
-                    let settings = ThemeSettings::get_global(cx);
-                    let text_style = TextStyle {
-                        color: if search.query_editor.read(cx).read_only() {
-                            cx.theme().colors().text_disabled
-                        } else {
-                            cx.theme().colors().text
-                        },
-                        font_family: settings.ui_font.family.clone(),
-                        font_features: settings.ui_font.features,
-                        font_size: rems(0.875).into(),
-                        font_weight: FontWeight::NORMAL,
-                        font_style: FontStyle::Normal,
-                        line_height: relative(1.).into(),
-                        background_color: None,
-                        underline: None,
-                        white_space: WhiteSpace::Normal,
-                    };
-
-                    EditorElement::new(
-                        &search.query_editor,
-                        EditorStyle {
-                            background: cx.theme().colors().editor_background,
-                            local_player: cx.theme().players().local(),
-                            text: text_style,
-                            ..Default::default()
-                        },
-                    )
-                })
+                .child(self.render_text_input(&search.query_editor, cx))
                 .child(
                     h_stack()
                         .child(
@@ -1673,6 +1675,7 @@ impl Render for ProjectSearchBar {
             .key_context(key_context)
             .p_1()
             .m_2()
+            .gap_2()
             .justify_between()
             .on_action(cx.listener(|this, _: &ToggleFilters, cx| {
                 this.toggle_filters(cx);
@@ -1735,15 +1738,18 @@ impl Render for ProjectSearchBar {
             .when(search.filters_enabled, |this| {
                 this.child(
                     h_stack()
-                        .mt_2()
                         .flex_1()
+                        .gap_2()
                         .justify_between()
                         .child(
                             h_stack()
                                 .flex_1()
+                                .h_full()
+                                .p_1()
                                 .border_1()
-                                .mr_2()
-                                .child(search.included_files_editor.clone())
+                                .border_color(cx.theme().colors().border)
+                                .rounded_lg()
+                                .child(self.render_text_input(&search.included_files_editor, cx))
                                 .when(search.current_mode != SearchMode::Semantic, |this| {
                                     this.child(
                                         SearchOptions::INCLUDE_IGNORED.as_button(
@@ -1763,9 +1769,12 @@ impl Render for ProjectSearchBar {
                         .child(
                             h_stack()
                                 .flex_1()
+                                .h_full()
+                                .p_1()
                                 .border_1()
-                                .ml_2()
-                                .child(search.excluded_files_editor.clone()),
+                                .border_color(cx.theme().colors().border)
+                                .rounded_lg()
+                                .child(self.render_text_input(&search.excluded_files_editor, cx)),
                         ),
                 )
             })
