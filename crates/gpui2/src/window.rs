@@ -46,7 +46,7 @@ const ACTIVE_DRAG_Z_INDEX: u8 = 1;
 pub struct StackingOrder {
     #[deref]
     #[deref_mut]
-    z_indices: SmallVec<[u8; 32]>,
+    z_indices: SmallVec<[u8; 64]>,
 }
 
 impl Default for StackingOrder {
