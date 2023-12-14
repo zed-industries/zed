@@ -2289,18 +2289,15 @@ impl CollabPanel {
         let button = match section {
             Section::ActiveCall => channel_link.map(|channel_link| {
                 let channel_link_copy = channel_link.clone();
-                div()
+                IconButton::new("channel-link", Icon::Copy)
+                    .icon_size(IconSize::Small)
+                    .size(ButtonSize::None)
                     .visible_on_hover("section-header")
-                    .child(
-                        IconButton::new("channel-link", Icon::Copy)
-                            .icon_size(IconSize::Small)
-                            .size(ButtonSize::None)
-                            .on_click(move |_, cx| {
-                                let item = ClipboardItem::new(channel_link_copy.clone());
-                                cx.write_to_clipboard(item)
-                            })
-                            .tooltip(|cx| Tooltip::text("Copy channel link", cx)),
-                    )
+                    .on_click(move |_, cx| {
+                        let item = ClipboardItem::new(channel_link_copy.clone());
+                        cx.write_to_clipboard(item)
+                    })
+                    .tooltip(|cx| Tooltip::text("Copy channel link", cx))
                     .into_any_element()
             }),
             Section::Contacts => Some(
@@ -2380,17 +2377,16 @@ impl CollabPanel {
                         })
                         .when(!calling, |el| {
                             el.child(
-                                div().visible_on_hover("").child(
-                                    IconButton::new("remove_contact", Icon::Close)
-                                        .icon_color(Color::Muted)
-                                        .tooltip(|cx| Tooltip::text("Remove Contact", cx))
-                                        .on_click(cx.listener({
-                                            let github_login = github_login.clone();
-                                            move |this, _, cx| {
-                                                this.remove_contact(user_id, &github_login, cx);
-                                            }
-                                        })),
-                                ),
+                                IconButton::new("remove_contact", Icon::Close)
+                                    .icon_color(Color::Muted)
+                                    .visible_on_hover("")
+                                    .tooltip(|cx| Tooltip::text("Remove Contact", cx))
+                                    .on_click(cx.listener({
+                                        let github_login = github_login.clone();
+                                        move |this, _, cx| {
+                                            this.remove_contact(user_id, &github_login, cx);
+                                        }
+                                    })),
                             )
                         }),
                 )
@@ -2619,38 +2615,32 @@ impl CollabPanel {
                     .end_slot(
                         h_stack()
                             .child(
-                                div()
-                                    .id("channel_chat")
-                                    .when(!has_messages_notification, |el| el.visible_on_hover(""))
-                                    .child(
-                                        IconButton::new("channel_chat", Icon::MessageBubbles)
-                                            .icon_color(if has_messages_notification {
-                                                Color::Default
-                                            } else {
-                                                Color::Muted
-                                            })
-                                            .on_click(cx.listener(move |this, _, cx| {
-                                                this.join_channel_chat(channel_id, cx)
-                                            }))
-                                            .tooltip(|cx| Tooltip::text("Open channel chat", cx)),
-                                    ),
+                                IconButton::new("channel_chat", Icon::MessageBubbles)
+                                    .icon_color(if has_messages_notification {
+                                        Color::Default
+                                    } else {
+                                        Color::Muted
+                                    })
+                                    .when(!has_messages_notification, |this| {
+                                        this.visible_on_hover("")
+                                    })
+                                    .on_click(cx.listener(move |this, _, cx| {
+                                        this.join_channel_chat(channel_id, cx)
+                                    }))
+                                    .tooltip(|cx| Tooltip::text("Open channel chat", cx)),
                             )
                             .child(
-                                div()
-                                    .id("channel_notes")
-                                    .when(!has_notes_notification, |el| el.visible_on_hover(""))
-                                    .child(
-                                        IconButton::new("channel_notes", Icon::File)
-                                            .icon_color(if has_notes_notification {
-                                                Color::Default
-                                            } else {
-                                                Color::Muted
-                                            })
-                                            .on_click(cx.listener(move |this, _, cx| {
-                                                this.open_channel_notes(channel_id, cx)
-                                            }))
-                                            .tooltip(|cx| Tooltip::text("Open channel notes", cx)),
-                                    ),
+                                IconButton::new("channel_notes", Icon::File)
+                                    .icon_color(if has_notes_notification {
+                                        Color::Default
+                                    } else {
+                                        Color::Muted
+                                    })
+                                    .when(!has_notes_notification, |this| this.visible_on_hover(""))
+                                    .on_click(cx.listener(move |this, _, cx| {
+                                        this.open_channel_notes(channel_id, cx)
+                                    }))
+                                    .tooltip(|cx| Tooltip::text("Open channel notes", cx)),
                             ),
                     ),
             )

@@ -384,7 +384,13 @@ impl ChatPanel {
                     .right_2()
                     .w_8()
                     .visible_on_hover("")
-                    .child(render_remove(message_id_to_remove, cx)),
+                    .children(message_id_to_remove.map(|message_id| {
+                        IconButton::new(("remove", message_id), Icon::XCircle).on_click(
+                            cx.listener(move |this, _, cx| {
+                                this.remove_message(message_id, cx);
+                            }),
+                        )
+                    })),
             )
             .into_any()
     }
@@ -521,18 +527,6 @@ impl ChatPanel {
                 .update(cx, |call, cx| call.join_channel(channel_id, cx))
                 .detach_and_log_err(cx);
         }
-    }
-}
-
-fn render_remove(message_id_to_remove: Option<u64>, cx: &mut ViewContext<ChatPanel>) -> AnyElement {
-    if let Some(message_id) = message_id_to_remove {
-        IconButton::new(("remove", message_id), Icon::XCircle)
-            .on_click(cx.listener(move |this, _, cx| {
-                this.remove_message(message_id, cx);
-            }))
-            .into_any_element()
-    } else {
-        div().into_any_element()
     }
 }
 

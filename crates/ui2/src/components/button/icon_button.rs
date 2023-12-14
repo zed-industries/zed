@@ -98,6 +98,13 @@ impl ButtonCommon for IconButton {
     }
 }
 
+impl VisibleOnHover for IconButton {
+    fn visible_on_hover(mut self, group_name: impl Into<SharedString>) -> Self {
+        self.base = self.base.visible_on_hover(group_name);
+        self
+    }
+}
+
 impl RenderOnce for IconButton {
     type Rendered = ButtonLike;
 
