@@ -243,6 +243,9 @@ pub struct Window {
     pub(crate) dirty: bool,
     activation_observers: SubscriberSet<(), AnyObserver>,
     pub(crate) focus: Option<FocusId>,
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) focus_invalidated: bool,
 }
 
 pub(crate) struct ElementStateBox {
@@ -381,6 +384,9 @@ impl Window {
             dirty: false,
             activation_observers: SubscriberSet::new(),
             focus: None,
+
+            #[cfg(any(test, feature = "test-support"))]
+            focus_invalidated: false,
         }
     }
 }
@@ -461,6 +467,12 @@ impl<'a> WindowContext<'a> {
             .rendered_frame
             .dispatch_tree
             .clear_pending_keystrokes();
+
+        #[cfg(any(test, feature = "test-support"))]
+        {
+            self.window.focus_invalidated = true;
+        }
+
         self.notify();
     }
 
@@ -1274,13 +1286,15 @@ impl<'a> WindowContext<'a> {
         self.window.root_view = Some(root_view);
 
         let previous_focus_path = self.window.rendered_frame.focus_path();
-
-        let window = &mut self.window;
-        mem::swap(&mut window.rendered_frame, &mut window.next_frame);
-
+        mem::swap(&mut self.window.rendered_frame, &mut self.window.next_frame);
         let current_focus_path = self.window.rendered_frame.focus_path();
 
         if previous_focus_path != current_focus_path {
+            #[cfg(any(test, feature = "test-support"))]
+            {
+                self.window.focus_invalidated = false;
+            }
+
             if !previous_focus_path.is_empty() && current_focus_path.is_empty() {
                 self.window
                     .blur_listeners

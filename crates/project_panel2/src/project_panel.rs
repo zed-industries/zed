@@ -739,6 +739,7 @@ impl ProjectPanel {
             });
             self.filename_editor.update(cx, |editor, cx| {
                 editor.clear(cx);
+                println!("focusing");
                 editor.focus(cx);
             });
             self.update_visible_entries(Some((worktree_id, NEW_ENTRY_ID)), cx);

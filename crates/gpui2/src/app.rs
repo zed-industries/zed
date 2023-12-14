@@ -571,6 +571,7 @@ impl AppContext {
         loop {
             self.release_dropped_entities();
             self.release_dropped_focus_handles();
+
             if let Some(effect) = self.pending_effects.pop_front() {
                 match effect {
                     Effect::Notify { emitter } => {
@@ -610,7 +611,8 @@ impl AppContext {
                     .values()
                     .filter_map(|window| {
                         let window = window.as_ref()?;
-                        window.dirty.then_some(window.handle)
+                        dbg!(window.focus_invalidated);
+                        (window.dirty || window.focus_invalidated).then_some(window.handle)
                     })
                     .collect::<Vec<_>>()
                 {
