@@ -767,6 +767,38 @@ impl Interactivity {
     ) {
         let style = self.compute_style(Some(bounds), element_state, cx);
 
+        #[cfg(debug_assertions)]
+        if self.element_id.is_some()
+            && (style.debug || style.debug_below || cx.has_global::<crate::DebugBelow>())
+            && bounds.contains(&cx.mouse_position())
+        {
+            const FONT_SIZE: crate::Pixels = crate::Pixels(10.);
+            let element_id = format!("{:?}", self.element_id.unwrap());
+            let str_len = element_id.len();
+            cx.with_z_index(1, |cx| {
+                cx.with_text_style(
+                    Some(crate::TextStyleRefinement {
+                        color: Some(crate::red()),
+                        line_height: Some(FONT_SIZE.into()),
+                        background_color: Some(crate::white()),
+                        ..Default::default()
+                    }),
+                    |cx| {
+                        if let Ok(text) = cx.text_system().shape_text(
+                            &element_id,
+                            FONT_SIZE,
+                            &[cx.text_style().to_run(str_len)],
+                            None,
+                        ) {
+                            if let Some(text) = text.first() {
+                                text.paint(bounds.origin, FONT_SIZE, cx).ok();
+                            }
+                        }
+                    },
+                )
+            });
+        }
+
         if style
             .background
             .as_ref()
