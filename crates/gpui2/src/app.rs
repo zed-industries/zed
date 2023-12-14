@@ -1138,6 +1138,10 @@ impl AppContext {
     pub fn has_active_drag(&self) -> bool {
         self.active_drag.is_some()
     }
+
+    pub fn active_drag(&self) -> Option<AnyView> {
+        self.active_drag.as_ref().map(|drag| drag.view.clone())
+    }
 }
 
 impl Context for AppContext {

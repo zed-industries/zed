@@ -1,5 +1,5 @@
+use crate::DraggedDock;
 use crate::{status_bar::StatusItemView, Workspace};
-use crate::{DockClickReset, DockDragState};
 use gpui::{
     div, px, Action, AnchorCorner, AnyView, AppContext, Axis, ClickEvent, Div, Entity, EntityId,
     EventEmitter, FocusHandle, FocusableView, IntoElement, MouseButton, ParentElement, Render,
@@ -493,47 +493,37 @@ impl Render for Dock {
             let handler = div()
                 .id("resize-handle")
                 .bg(cx.theme().colors().border)
-                .on_mouse_down(gpui::MouseButton::Left, move |_, cx| {
-                    cx.update_global(|drag: &mut DockDragState, cx| drag.0 = Some(position))
-                })
+                .on_drag(move |cx| cx.build_view(|_| DraggedDock(position)))
                 .on_click(cx.listener(|v, e: &ClickEvent, cx| {
-                    if e.down.button == MouseButton::Left {
-                        cx.update_global(|state: &mut DockClickReset, cx| {
-                            if state.0.is_some() {
-                                state.0 = None;
-                                v.resize_active_panel(None, cx)
-                            } else {
-                                let double_click = cx.double_click_interval();
-                                let timer = cx.background_executor().timer(double_click);
-                                state.0 = Some(cx.spawn(|_, mut cx| async move {
-                                    timer.await;
-                                    cx.update_global(|state: &mut DockClickReset, cx| {
-                                        state.0 = None;
-                                    })
-                                    .ok();
-                                }));
-                            }
-                        })
+                    if e.down.button == MouseButton::Left && e.down.click_count == 2 {
+                        v.resize_active_panel(None, cx)
                     }
-                }));
+                }))
+                .z_index(1);
+
+            const HANDLE_SIZE: Pixels = Pixels(6.);
 
             match self.position() {
                 DockPosition::Left => {
-                    post_resize_handle = Some(handler.w_1().h_full().cursor_col_resize())
+                    post_resize_handle =
+                        Some(handler.min_w(HANDLE_SIZE).h_full().cursor_col_resize())
                 }
                 DockPosition::Bottom => {
-                    pre_resize_handle = Some(handler.w_full().h_1().cursor_row_resize())
+                    pre_resize_handle =
+                        Some(handler.w_full().min_h(HANDLE_SIZE).cursor_row_resize())
                 }
                 DockPosition::Right => {
-                    pre_resize_handle = Some(handler.w_full().h_1().cursor_col_resize())
+                    pre_resize_handle =
+                        Some(handler.min_w(HANDLE_SIZE).h_full().cursor_col_resize())
                 }
             }
 
             div()
+                .flex()
                 .border_color(cx.theme().colors().border)
                 .map(|this| match self.position().axis() {
-                    Axis::Horizontal => this.w(px(size)).h_full(),
-                    Axis::Vertical => this.h(px(size)).w_full(),
+                    Axis::Horizontal => this.w(px(size)).h_full().flex_row(),
+                    Axis::Vertical => this.h(px(size)).w_full().flex_col(),
                 })
                 .map(|this| match self.position() {
                     DockPosition::Left => this.border_r(),
@@ -541,7 +531,14 @@ impl Render for Dock {
                     DockPosition::Bottom => this.border_t(),
                 })
                 .children(pre_resize_handle)
-                .child(entry.panel.to_any())
+                .child(
+                    div()
+                        .map(|this| match self.position().axis() {
+                            Axis::Horizontal => this.min_w(px(size) - HANDLE_SIZE).h_full(),
+                            Axis::Vertical => this.min_h(px(size) - HANDLE_SIZE).w_full(),
+                        })
+                        .child(entry.panel.to_any()),
+                )
                 .children(post_resize_handle)
         } else {
             div()

@@ -6,6 +6,7 @@ use crate::{
     SharedString, Size, StackingOrder, Style, StyleRefinement, Styled, Task, View, Visibility,
     WindowContext,
 };
+
 use collections::HashMap;
 use refineable::Refineable;
 use smallvec::SmallVec;
@@ -27,6 +28,11 @@ const TOOLTIP_DELAY: Duration = Duration::from_millis(500);
 pub struct GroupStyle {
     pub group: SharedString,
     pub style: Box<StyleRefinement>,
+}
+
+pub struct DragMoveEvent<W: Render> {
+    pub event: MouseMoveEvent,
+    pub drag: View<W>,
 }
 
 pub trait InteractiveElement: Sized {
@@ -186,6 +192,34 @@ pub trait InteractiveElement: Sized {
             move |event, bounds, phase, cx| {
                 if phase == DispatchPhase::Bubble && bounds.visibly_contains(&event.position, cx) {
                     (listener)(event, cx);
+                }
+            },
+        ));
+        self
+    }
+
+    fn on_drag_move<W>(
+        mut self,
+        listener: impl Fn(&DragMoveEvent<W>, &mut WindowContext) + 'static,
+    ) -> Self
+    where
+        W: Render,
+    {
+        self.interactivity().mouse_move_listeners.push(Box::new(
+            move |event, bounds, phase, cx| {
+                if phase == DispatchPhase::Capture
+                    && bounds.drag_target_contains(&event.position, cx)
+                {
+                    if let Some(view) = cx.active_drag().and_then(|view| view.downcast::<W>().ok())
+                    {
+                        (listener)(
+                            &DragMoveEvent {
+                                event: event.clone(),
+                                drag: view,
+                            },
+                            cx,
+                        );
+                    }
                 }
             },
         ));
@@ -403,7 +437,7 @@ pub trait StatefulInteractiveElement: InteractiveElement {
         self
     }
 
-    fn on_drag<W>(mut self, listener: impl Fn(&mut WindowContext) -> View<W> + 'static) -> Self
+    fn on_drag<W>(mut self, constructor: impl Fn(&mut WindowContext) -> View<W> + 'static) -> Self
     where
         Self: Sized,
         W: 'static + Render,
@@ -413,7 +447,7 @@ pub trait StatefulInteractiveElement: InteractiveElement {
             "calling on_drag more than once on the same element is not supported"
         );
         self.interactivity().drag_listener = Some(Box::new(move |cursor_offset, cx| AnyDrag {
-            view: listener(cx).into(),
+            view: constructor(cx).into(),
             cursor_offset,
         }));
         self
@@ -493,11 +527,19 @@ pub type DragEventListener = Box<dyn Fn(&MouseMoveEvent, &mut WindowContext) + '
 
 pub type ActionListener = Box<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext) + 'static>;
 
+#[track_caller]
 pub fn div() -> Div {
-    Div {
+    let mut div = Div {
         interactivity: Interactivity::default(),
         children: SmallVec::default(),
+    };
+
+    #[cfg(debug_assertions)]
+    {
+        div.interactivity.location = Some(*core::panic::Location::caller());
     }
+
+    div
 }
 
 pub struct Div {
@@ -607,10 +649,7 @@ impl Element for Div {
                 let z_index = style.z_index.unwrap_or(0);
 
                 cx.with_z_index(z_index, |cx| {
-                    cx.with_z_index(0, |cx| {
-                        style.paint(bounds, cx);
-                    });
-                    cx.with_z_index(1, |cx| {
+                    style.paint(bounds, cx, |cx| {
                         cx.with_text_style(style.text_style().cloned(), |cx| {
                             cx.with_content_mask(style.overflow_mask(bounds), |cx| {
                                 cx.with_element_offset(scroll_offset, |cx| {
@@ -620,7 +659,7 @@ impl Element for Div {
                                 })
                             })
                         })
-                    })
+                    });
                 })
             },
         );
@@ -678,6 +717,9 @@ pub struct Interactivity {
     pub drag_listener: Option<DragListener>,
     pub hover_listener: Option<Box<dyn Fn(&bool, &mut WindowContext)>>,
     pub tooltip_builder: Option<TooltipBuilder>,
+
+    #[cfg(debug_assertions)]
+    pub location: Option<core::panic::Location<'static>>,
 }
 
 #[derive(Clone, Debug)]
@@ -736,6 +778,117 @@ impl Interactivity {
         f: impl FnOnce(Style, Point<Pixels>, &mut WindowContext),
     ) {
         let style = self.compute_style(Some(bounds), element_state, cx);
+
+        #[cfg(debug_assertions)]
+        if self.element_id.is_some()
+            && (style.debug || style.debug_below || cx.has_global::<crate::DebugBelow>())
+            && bounds.contains(&cx.mouse_position())
+        {
+            const FONT_SIZE: crate::Pixels = crate::Pixels(10.);
+            let element_id = format!("{:?}", self.element_id.unwrap());
+            let str_len = element_id.len();
+
+            let render_debug_text = |cx: &mut WindowContext| {
+                if let Some(text) = cx
+                    .text_system()
+                    .shape_text(
+                        &element_id,
+                        FONT_SIZE,
+                        &[cx.text_style().to_run(str_len)],
+                        None,
+                    )
+                    .ok()
+                    .map(|mut text| text.pop())
+                    .flatten()
+                {
+                    text.paint(bounds.origin, FONT_SIZE, cx).ok();
+
+                    let text_bounds = crate::Bounds {
+                        origin: bounds.origin,
+                        size: text.size(FONT_SIZE),
+                    };
+                    if self.location.is_some()
+                        && text_bounds.contains(&cx.mouse_position())
+                        && cx.modifiers().command
+                    {
+                        let command_held = cx.modifiers().command;
+                        cx.on_key_event({
+                            let text_bounds = text_bounds.clone();
+                            move |e: &crate::ModifiersChangedEvent, _phase, cx| {
+                                if e.modifiers.command != command_held
+                                    && text_bounds.contains(&cx.mouse_position())
+                                {
+                                    cx.notify();
+                                }
+                            }
+                        });
+
+                        let hovered = bounds.contains(&cx.mouse_position());
+                        cx.on_mouse_event(move |event: &MouseMoveEvent, phase, cx| {
+                            if phase == DispatchPhase::Capture {
+                                if bounds.contains(&event.position) != hovered {
+                                    cx.notify();
+                                }
+                            }
+                        });
+
+                        cx.on_mouse_event({
+                            let location = self.location.clone().unwrap();
+                            let text_bounds = text_bounds.clone();
+                            move |e: &crate::MouseDownEvent, phase, cx| {
+                                if text_bounds.contains(&e.position) && phase.capture() {
+                                    cx.stop_propagation();
+                                    let Ok(dir) = std::env::current_dir() else {
+                                        return;
+                                    };
+
+                                    eprintln!(
+                                        "This element is created at:\n{}:{}:{}",
+                                        location.file(),
+                                        location.line(),
+                                        location.column()
+                                    );
+
+                                    std::process::Command::new("zed")
+                                        .arg(format!(
+                                            "{}/{}:{}:{}",
+                                            dir.to_string_lossy(),
+                                            location.file(),
+                                            location.line(),
+                                            location.column()
+                                        ))
+                                        .spawn()
+                                        .ok();
+                                }
+                            }
+                        });
+                        cx.paint_quad(crate::outline(
+                            crate::Bounds {
+                                origin: bounds.origin
+                                    + crate::point(crate::px(0.), FONT_SIZE - px(2.)),
+                                size: crate::Size {
+                                    width: text_bounds.size.width,
+                                    height: crate::px(1.),
+                                },
+                            },
+                            crate::red(),
+                        ))
+                    }
+                }
+            };
+
+            cx.with_z_index(1, |cx| {
+                cx.with_text_style(
+                    Some(crate::TextStyleRefinement {
+                        color: Some(crate::red()),
+                        line_height: Some(FONT_SIZE.into()),
+                        background_color: Some(crate::white()),
+                        ..Default::default()
+                    }),
+                    render_debug_text,
+                )
+            });
+        }
 
         if style
             .background
@@ -1234,6 +1387,9 @@ impl Default for Interactivity {
             drag_listener: None,
             hover_listener: None,
             tooltip_builder: None,
+
+            #[cfg(debug_assertions)]
+            location: None,
         }
     }
 }
