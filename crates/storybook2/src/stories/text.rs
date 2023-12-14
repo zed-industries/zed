@@ -50,7 +50,7 @@ impl Render for TextStory {
     ))))
             // NOTE: When rendering text in a horizonal flex container,
             // Taffy will not pass width constraints down from the parent.
-            // To fix this, render text in a praent with overflow: hidden, which
+            // To fix this, render text in a parent with overflow: hidden
                     .child(div().h_5())
                     .child(div().flex().w_96().bg(red()).child(concat!(
                 "flex-row. width 96. The quick brown fox jumps over the lazy dog. ",
