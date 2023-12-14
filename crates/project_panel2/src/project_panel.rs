@@ -739,7 +739,6 @@ impl ProjectPanel {
             });
             self.filename_editor.update(cx, |editor, cx| {
                 editor.clear(cx);
-                println!("focusing");
                 editor.focus(cx);
             });
             self.update_visible_entries(Some((worktree_id, NEW_ENTRY_ID)), cx);
@@ -1672,7 +1671,7 @@ mod tests {
         path::{Path, PathBuf},
         sync::atomic::{self, AtomicUsize},
     };
-    use workspace::AppState;
+    use workspace::{dock::PanelHandle, AppState};
 
     #[gpui::test]
     async fn test_visible_list(cx: &mut gpui::TestAppContext) {
@@ -2281,7 +2280,12 @@ mod tests {
         let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
         let panel = workspace
-            .update(cx, |workspace, cx| ProjectPanel::new(workspace, cx))
+            .update(cx, |workspace, cx| {
+                let panel = ProjectPanel::new(workspace, cx);
+                workspace.add_panel(panel.clone(), cx);
+                workspace.toggle_dock(panel.read(cx).position(cx), cx);
+                panel
+            })
             .unwrap();
 
         select_path(&panel, "root1", cx);

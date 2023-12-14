@@ -470,6 +470,7 @@ impl<'a> WindowContext<'a> {
 
         #[cfg(any(test, feature = "test-support"))]
         {
+            println!("invalidating focus");
             self.window.focus_invalidated = true;
         }
 
@@ -1237,6 +1238,11 @@ impl<'a> WindowContext<'a> {
 
     /// Draw pixels to the display for this window based on the contents of its scene.
     pub(crate) fn draw(&mut self) -> Scene {
+        #[cfg(any(test, feature = "test-support"))]
+        {
+            self.window.focus_invalidated = false;
+        }
+
         self.text_system().start_frame();
         self.window.platform_window.clear_input_handler();
         self.window.layout_engine.as_mut().unwrap().clear();
@@ -1290,11 +1296,6 @@ impl<'a> WindowContext<'a> {
         let current_focus_path = self.window.rendered_frame.focus_path();
 
         if previous_focus_path != current_focus_path {
-            #[cfg(any(test, feature = "test-support"))]
-            {
-                self.window.focus_invalidated = false;
-            }
-
             if !previous_focus_path.is_empty() && current_focus_path.is_empty() {
                 self.window
                     .blur_listeners
