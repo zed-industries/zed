@@ -1,5 +1,6 @@
 use gpui::{
-    div, hsla, prelude::*, px, rems, AnyElement, Div, ElementId, Hsla, SharedString, WindowContext,
+    div, hsla, prelude::*, px, rems, AnyElement, Div, ElementId, Hsla, SharedString, Stateful,
+    WindowContext,
 };
 use itertools::Itertools;
 use smallvec::SmallVec;
@@ -49,47 +50,134 @@ pub fn story_color() -> StoryColor {
     StoryColor::new()
 }
 
-pub struct Story {}
+#[derive(IntoElement)]
+pub struct StoryContainer {
+    title: SharedString,
+    relative_path: &'static str,
+    children: SmallVec<[AnyElement; 2]>,
+}
 
-impl Story {
-    pub fn container() -> Div {
-        div()
-            .size_full()
-            .flex()
-            .flex_col()
-            .bg(story_color().background)
+impl StoryContainer {
+    pub fn new(title: impl Into<SharedString>, relative_path: &'static str) -> Self {
+        Self {
+            title: title.into(),
+            relative_path,
+            children: SmallVec::new(),
+        }
     }
+}
 
-    // TODO: Move all stories to container2, then rename
-    pub fn container2<T>(relative_path: &'static str) -> Div {
+impl ParentElement for StoryContainer {
+    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement; 2]> {
+        &mut self.children
+    }
+}
+
+impl RenderOnce for StoryContainer {
+    type Rendered = Stateful<Div>;
+
+    fn render(self, _cx: &mut WindowContext) -> Self::Rendered {
         div()
             .size_full()
             .flex()
             .flex_col()
+            .id("story_container")
             .bg(story_color().background)
             .child(
                 div()
                     .flex()
+                    .flex_none()
+                    .w_full()
                     .justify_between()
                     .p_2()
+                    .bg(story_color().background)
                     .border_b()
                     .border_color(story_color().border)
-                    .child(Story::title_for::<T>())
+                    .child(Story::title(self.title))
                     .child(
                         div()
                             .text_xs()
                             .text_color(story_color().primary)
-                            .child(Story::open_story_link(relative_path)),
+                            .child(Story::open_story_link(self.relative_path)),
                     ),
             )
+            .child(
+                div()
+                    .w_full()
+                    .h_px()
+                    .flex_1()
+                    .id("story_body")
+                    .overflow_hidden_x()
+                    .overflow_y_scroll()
+                    .flex()
+                    .flex_col()
+                    .pb_4()
+                    .children(self.children),
+            )
+    }
+}
+
+pub struct Story {}
+
+impl Story {
+    pub fn container() -> Div {
+        div().size_full().overflow_hidden().child(
+            div()
+                .id("story_container")
+                .overflow_y_scroll()
+                .w_full()
+                .min_h_full()
+                .flex()
+                .flex_col()
+                .bg(story_color().background),
+        )
+    }
+
+    // TODO: Move all stories to container2, then rename
+    pub fn container2<T>(relative_path: &'static str) -> Div {
+        div().size_full().child(
+            div()
+                .size_full()
+                .id("story_container")
+                .overflow_y_scroll()
+                .flex()
+                .flex_col()
+                .flex_none()
+                .child(
+                    div()
+                        .flex()
+                        .justify_between()
+                        .p_2()
+                        .border_b()
+                        .border_color(story_color().border)
+                        .child(Story::title_for::<T>())
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(story_color().primary)
+                                .child(Story::open_story_link(relative_path)),
+                        ),
+                )
+                .child(
+                    div()
+                        .w_full()
+                        .min_h_full()
+                        .flex()
+                        .flex_col()
+                        .bg(story_color().background),
+                ),
+        )
     }
 
     pub fn open_story_link(relative_path: &'static str) -> impl Element {
         let path = PathBuf::from_iter([relative_path]);
+
         div()
-            .id(SharedString::from(format!("id_{}", relative_path)))
+            .flex()
+            .gap_2()
             .text_xs()
             .text_color(story_color().primary)
+            .id(SharedString::from(format!("id_{}", relative_path)))
             .on_click({
                 let path = path.clone();
 
@@ -99,7 +187,7 @@ impl Story {
                     std::process::Command::new("zed").arg(path).spawn().ok();
                 }
             })
-            .child(Story::link(path.to_string_lossy().to_string()))
+            .children(vec![div().child(Story::link("Open in Zed →"))])
     }
 
     pub fn title(title: impl Into<SharedString>) -> impl Element {

@@ -1,4 +1,7 @@
-use gpui::{div, red, Div, ParentElement, Render, Styled, View, VisualContext, WindowContext};
+use gpui::{
+    div, green, red, Component, Div, HighlightStyle, InteractiveText, IntoElement, ParentElement,
+    Render, Styled, StyledText, View, VisualContext, WindowContext,
+};
 use indoc::indoc;
 use story::*;
 
@@ -11,10 +14,13 @@ impl TextStory {
 }
 
 impl Render for TextStory {
-    type Element = Div;
+    type Element = Component<StoryContainer>;
 
-    fn render(&mut self, _cx: &mut gpui::ViewContext<Self>) -> Self::Element {
-        Story::container2::<TextStory>("crates/storybook2/src/stories/text.rs").child(
+    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> Self::Element {
+        StoryContainer::new("Text Story", "crates/storybook2/src/stories/text.rs")
+            .children(
+                vec![
+
             StorySection::new()
                 .child(
                     StoryItem::new("Default", div().bg(gpui::blue()).child("Hello World!"))
@@ -71,9 +77,43 @@ impl Render for TextStory {
                         "##
                     })
                 )
-        )
+                .child(
+                    StoryItem::new("Interactive Text",
+                        InteractiveText::new(
+                            "interactive",
+                            StyledText::new("Hello world, how is it going?").with_highlights(&cx.text_style(), [
+                                (6..11, HighlightStyle {
+                                    background_color: Some(green()),
+                                    ..Default::default()
+                                }),
+                            ]),
+                        )
+                        .on_click(vec![2..4, 1..3, 7..9], |range_ix, _cx| {
+                            println!("Clicked range {range_ix}");
+                        })
+                    )
+                    .usage(indoc! {r##"
+                        InteractiveText::new(
+                            "interactive",
+                            StyledText::new("Hello world, how is it going?").with_highlights(&cx.text_style(), [
+                                (6..11, HighlightStyle {
+                                    background_color: Some(green()),
+                                    ..Default::default()
+                                }),
+                            ]),
+                        )
+                        .on_click(vec![2..4, 1..3, 7..9], |range_ix, _cx| {
+                            println!("Clicked range {range_ix}");
+                        })
+                        "##
+                    })
+                )
+        ]
+            ).into_element()
     }
 }
+
+// TODO: Check all were updated to new style and remove
 
 // impl Render for TextStory {
 //     type Element = Div;
