@@ -111,10 +111,9 @@ impl RenderOnce for ListHeader {
                 .when_some(self.end_hover_slot, |this, end_hover_slot| {
                     this.child(
                         div()
-                            .invisible()
-                            .group_hover("list_header", |this| this.visible())
                             .absolute()
                             .right_0()
+                            .visible_on_hover("list_header")
                             .child(end_hover_slot),
                     )
                 }),

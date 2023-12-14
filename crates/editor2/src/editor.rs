@@ -9766,8 +9766,7 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, is_valid: bool) -> Rend
                         div()
                             .border()
                             .border_color(gpui::red())
-                            .invisible()
-                            .group_hover(group_id, |style| style.visible())
+                            .visible_on_hover(group_id)
                             .child(
                                 IconButton::new(copy_id.clone(), Icon::Copy)
                                     .icon_color(Color::Muted)

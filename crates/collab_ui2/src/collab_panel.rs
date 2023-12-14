@@ -2290,8 +2290,7 @@ impl CollabPanel {
             Section::ActiveCall => channel_link.map(|channel_link| {
                 let channel_link_copy = channel_link.clone();
                 div()
-                    .invisible()
-                    .group_hover("section-header", |this| this.visible())
+                    .visible_on_hover("section-header")
                     .child(
                         IconButton::new("channel-link", Icon::Copy)
                             .icon_size(IconSize::Small)
@@ -2381,21 +2380,17 @@ impl CollabPanel {
                         })
                         .when(!calling, |el| {
                             el.child(
-                                div()
-                                    .id("remove_contact")
-                                    .invisible()
-                                    .group_hover("", |style| style.visible())
-                                    .child(
-                                        IconButton::new("remove_contact", Icon::Close)
-                                            .icon_color(Color::Muted)
-                                            .tooltip(|cx| Tooltip::text("Remove Contact", cx))
-                                            .on_click(cx.listener({
-                                                let github_login = github_login.clone();
-                                                move |this, _, cx| {
-                                                    this.remove_contact(user_id, &github_login, cx);
-                                                }
-                                            })),
-                                    ),
+                                div().visible_on_hover("").child(
+                                    IconButton::new("remove_contact", Icon::Close)
+                                        .icon_color(Color::Muted)
+                                        .tooltip(|cx| Tooltip::text("Remove Contact", cx))
+                                        .on_click(cx.listener({
+                                            let github_login = github_login.clone();
+                                            move |this, _, cx| {
+                                                this.remove_contact(user_id, &github_login, cx);
+                                            }
+                                        })),
+                                ),
                             )
                         }),
                 )
@@ -2626,8 +2621,7 @@ impl CollabPanel {
                             .child(
                                 div()
                                     .id("channel_chat")
-                                    .when(!has_messages_notification, |el| el.invisible())
-                                    .group_hover("", |style| style.visible())
+                                    .when(!has_messages_notification, |el| el.visible_on_hover(""))
                                     .child(
                                         IconButton::new("channel_chat", Icon::MessageBubbles)
                                             .icon_color(if has_messages_notification {
@@ -2644,8 +2638,7 @@ impl CollabPanel {
                             .child(
                                 div()
                                     .id("channel_notes")
-                                    .when(!has_notes_notification, |el| el.invisible())
-                                    .group_hover("", |style| style.visible())
+                                    .when(!has_notes_notification, |el| el.visible_on_hover(""))
                                     .child(
                                         IconButton::new("channel_notes", Icon::File)
                                             .icon_color(if has_notes_notification {
