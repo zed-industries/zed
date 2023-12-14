@@ -46,6 +46,7 @@ pub fn nord() -> UserThemeFamily {
                     scrollbar_thumb_border: Some(rgba(0x434c5e99).into()),
                     scrollbar_track_background: Some(rgba(0x2e3440ff).into()),
                     scrollbar_track_border: Some(rgba(0x3b4252ff).into()),
+                    editor_foreground: Some(rgba(0xd8dee9ff).into()),
                     editor_background: Some(rgba(0x2e3440ff).into()),
                     editor_gutter_background: Some(rgba(0x2e3440ff).into()),
                     editor_line_number: Some(rgba(0x4c566aff).into()),

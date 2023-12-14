@@ -201,6 +201,7 @@ impl<'a> Debug for ThemeColorsRefinementPrinter<'a> {
                 self.0.scrollbar_track_background,
             ),
             ("scrollbar_track_border", self.0.scrollbar_track_border),
+            ("editor_foreground", self.0.editor_foreground),
             ("editor_background", self.0.editor_background),
             ("editor_gutter_background", self.0.editor_gutter_background),
             (
