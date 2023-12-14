@@ -3580,7 +3580,7 @@ impl FocusableView for Workspace {
 
 struct WorkspaceBounds(Bounds<Pixels>);
 
-#[derive(Render)]
+#[derive(Clone, Render)]
 struct DraggedDock(DockPosition);
 
 impl Render for Workspace {
@@ -3636,7 +3636,7 @@ impl Render for Workspace {
                     )
                     .on_drag_move(
                         cx.listener(|workspace, e: &DragMoveEvent<DraggedDock>, cx| {
-                            match e.drag.read(cx).0 {
+                            match e.drag(cx).0 {
                                 DockPosition::Left => {
                                     let size = workspace.bounds.left() + e.event.position.x;
                                     workspace.left_dock.update(cx, |left_dock, cx| {

@@ -493,7 +493,9 @@ impl Render for Dock {
             let handler = div()
                 .id("resize-handle")
                 .bg(cx.theme().colors().border)
-                .on_drag(move |cx| cx.build_view(|_| DraggedDock(position)))
+                .on_drag(DraggedDock(position), |dock, cx| {
+                    cx.build_view(|_| dock.clone())
+                })
                 .on_click(cx.listener(|v, e: &ClickEvent, cx| {
                     if e.down.button == MouseButton::Left && e.down.click_count == 2 {
                         v.resize_active_panel(None, cx)

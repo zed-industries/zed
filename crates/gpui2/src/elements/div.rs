@@ -15,6 +15,7 @@ use std::{
     cell::RefCell,
     cmp::Ordering,
     fmt::Debug,
+    marker::PhantomData,
     mem,
     rc::Rc,
     time::Duration,
@@ -30,9 +31,18 @@ pub struct GroupStyle {
     pub style: Box<StyleRefinement>,
 }
 
-pub struct DragMoveEvent<W: Render> {
+pub struct DragMoveEvent<T> {
     pub event: MouseMoveEvent,
-    pub drag: View<W>,
+    drag: PhantomData<T>,
+}
+
+impl<T: 'static> DragMoveEvent<T> {
+    pub fn drag<'b>(&self, cx: &'b AppContext) -> &'b T {
+        cx.active_drag
+            .as_ref()
+            .and_then(|drag| drag.value.downcast_ref::<T>())
+            .expect("DragMoveEvent is only valid when the stored active drag is of the same type.")
+    }
 }
 
 pub trait InteractiveElement: Sized {
@@ -198,24 +208,27 @@ pub trait InteractiveElement: Sized {
         self
     }
 
-    fn on_drag_move<W>(
+    fn on_drag_move<T>(
         mut self,
-        listener: impl Fn(&DragMoveEvent<W>, &mut WindowContext) + 'static,
+        listener: impl Fn(&DragMoveEvent<T>, &mut WindowContext) + 'static,
     ) -> Self
     where
-        W: Render,
+        T: Render,
     {
         self.interactivity().mouse_move_listeners.push(Box::new(
             move |event, bounds, phase, cx| {
                 if phase == DispatchPhase::Capture
                     && bounds.drag_target_contains(&event.position, cx)
                 {
-                    if let Some(view) = cx.active_drag().and_then(|view| view.downcast::<W>().ok())
+                    if cx
+                        .active_drag
+                        .as_ref()
+                        .is_some_and(|drag| drag.value.type_id() == TypeId::of::<T>())
                     {
                         (listener)(
                             &DragMoveEvent {
                                 event: event.clone(),
-                                drag: view,
+                                drag: PhantomData,
                             },
                             cx,
                         );
@@ -363,14 +376,11 @@ pub trait InteractiveElement: Sized {
         self
     }
 
-    fn on_drop<W: 'static>(
-        mut self,
-        listener: impl Fn(&View<W>, &mut WindowContext) + 'static,
-    ) -> Self {
+    fn on_drop<T: 'static>(mut self, listener: impl Fn(&T, &mut WindowContext) + 'static) -> Self {
         self.interactivity().drop_listeners.push((
-            TypeId::of::<W>(),
-            Box::new(move |dragged_view, cx| {
-                listener(&dragged_view.downcast().unwrap(), cx);
+            TypeId::of::<T>(),
+            Box::new(move |dragged_value, cx| {
+                listener(dragged_value.downcast_ref().unwrap(), cx);
             }),
         ));
         self
@@ -437,19 +447,24 @@ pub trait StatefulInteractiveElement: InteractiveElement {
         self
     }
 
-    fn on_drag<W>(mut self, constructor: impl Fn(&mut WindowContext) -> View<W> + 'static) -> Self
+    fn on_drag<T, W>(
+        mut self,
+        value: T,
+        constructor: impl Fn(&T, &mut WindowContext) -> View<W> + 'static,
+    ) -> Self
     where
         Self: Sized,
+        T: 'static,
         W: 'static + Render,
     {
         debug_assert!(
             self.interactivity().drag_listener.is_none(),
             "calling on_drag more than once on the same element is not supported"
         );
-        self.interactivity().drag_listener = Some(Box::new(move |cursor_offset, cx| AnyDrag {
-            view: constructor(cx).into(),
-            cursor_offset,
-        }));
+        self.interactivity().drag_listener = Some((
+            Box::new(value),
+            Box::new(move |value, cx| constructor(value.downcast_ref().unwrap(), cx).into()),
+        ));
         self
     }
 
@@ -513,9 +528,9 @@ pub type ScrollWheelListener =
 
 pub type ClickListener = Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>;
 
-pub type DragListener = Box<dyn Fn(Point<Pixels>, &mut WindowContext) -> AnyDrag + 'static>;
+pub type DragListener = Box<dyn Fn(&dyn Any, &mut WindowContext) -> AnyView + 'static>;
 
-type DropListener = dyn Fn(AnyView, &mut WindowContext) + 'static;
+type DropListener = Box<dyn Fn(&dyn Any, &mut WindowContext) + 'static>;
 
 pub type TooltipBuilder = Rc<dyn Fn(&mut WindowContext) -> AnyView + 'static>;
 
@@ -712,9 +727,9 @@ pub struct Interactivity {
     pub key_down_listeners: Vec<KeyDownListener>,
     pub key_up_listeners: Vec<KeyUpListener>,
     pub action_listeners: Vec<(TypeId, ActionListener)>,
-    pub drop_listeners: Vec<(TypeId, Box<DropListener>)>,
+    pub drop_listeners: Vec<(TypeId, DropListener)>,
     pub click_listeners: Vec<ClickListener>,
-    pub drag_listener: Option<DragListener>,
+    pub drag_listener: Option<(Box<dyn Any>, DragListener)>,
     pub hover_listener: Option<Box<dyn Fn(&bool, &mut WindowContext)>>,
     pub tooltip_builder: Option<TooltipBuilder>,
 
@@ -998,8 +1013,10 @@ impl Interactivity {
                     if phase == DispatchPhase::Bubble
                         && interactive_bounds.drag_target_contains(&event.position, cx)
                     {
-                        if let Some(drag_state_type) =
-                            cx.active_drag.as_ref().map(|drag| drag.view.entity_type())
+                        if let Some(drag_state_type) = cx
+                            .active_drag
+                            .as_ref()
+                            .map(|drag| drag.value.as_ref().type_id())
                         {
                             for (drop_state_type, listener) in &drop_listeners {
                                 if *drop_state_type == drag_state_type {
@@ -1008,7 +1025,7 @@ impl Interactivity {
                                         .take()
                                         .expect("checked for type drag state type above");
 
-                                    listener(drag.view.clone(), cx);
+                                    listener(drag.value.as_ref(), cx);
                                     cx.notify();
                                     cx.stop_propagation();
                                 }
@@ -1022,13 +1039,13 @@ impl Interactivity {
         }
 
         let click_listeners = mem::take(&mut self.click_listeners);
-        let drag_listener = mem::take(&mut self.drag_listener);
+        let mut drag_listener = mem::take(&mut self.drag_listener);
 
         if !click_listeners.is_empty() || drag_listener.is_some() {
             let pending_mouse_down = element_state.pending_mouse_down.clone();
             let mouse_down = pending_mouse_down.borrow().clone();
             if let Some(mouse_down) = mouse_down {
-                if let Some(drag_listener) = drag_listener {
+                if drag_listener.is_some() {
                     let active_state = element_state.clicked_state.clone();
                     let interactive_bounds = interactive_bounds.clone();
 
@@ -1041,10 +1058,18 @@ impl Interactivity {
                             && interactive_bounds.visibly_contains(&event.position, cx)
                             && (event.position - mouse_down.position).magnitude() > DRAG_THRESHOLD
                         {
+                            let (drag_value, drag_listener) = drag_listener
+                                .take()
+                                .expect("The notify below should invalidate this callback");
+
                             *active_state.borrow_mut() = ElementClickedState::default();
                             let cursor_offset = event.position - bounds.origin;
-                            let drag = drag_listener(cursor_offset, cx);
-                            cx.active_drag = Some(drag);
+                            let drag = (drag_listener)(drag_value.as_ref(), cx);
+                            cx.active_drag = Some(AnyDrag {
+                                view: drag,
+                                value: drag_value,
+                                cursor_offset,
+                            });
                             cx.notify();
                             cx.stop_propagation();
                         }
@@ -1312,7 +1337,7 @@ impl Interactivity {
                 if let Some(drag) = cx.active_drag.take() {
                     for (state_type, group_drag_style) in &self.group_drag_over_styles {
                         if let Some(group_bounds) = GroupBounds::get(&group_drag_style.group, cx) {
-                            if *state_type == drag.view.entity_type()
+                            if *state_type == drag.value.as_ref().type_id()
                                 && group_bounds.contains(&mouse_position)
                             {
                                 style.refine(&group_drag_style.style);
@@ -1321,7 +1346,7 @@ impl Interactivity {
                     }
 
                     for (state_type, drag_over_style) in &self.drag_over_styles {
-                        if *state_type == drag.view.entity_type()
+                        if *state_type == drag.value.as_ref().type_id()
                             && bounds
                                 .intersect(&cx.content_mask().bounds)
                                 .contains(&mouse_position)

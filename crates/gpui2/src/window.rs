@@ -806,7 +806,7 @@ impl<'a> WindowContext<'a> {
     /// a specific need to register a global listener.
     pub fn on_mouse_event<Event: 'static>(
         &mut self,
-        handler: impl Fn(&Event, DispatchPhase, &mut WindowContext) + 'static,
+        mut handler: impl FnMut(&Event, DispatchPhase, &mut WindowContext) + 'static,
     ) {
         let order = self.window.next_frame.z_index_stack.clone();
         self.window
@@ -1379,6 +1379,7 @@ impl<'a> WindowContext<'a> {
                     self.window.mouse_position = position;
                     if self.active_drag.is_none() {
                         self.active_drag = Some(AnyDrag {
+                            value: Box::new(files.clone()),
                             view: self.build_view(|_| files).into(),
                             cursor_offset: position,
                         });

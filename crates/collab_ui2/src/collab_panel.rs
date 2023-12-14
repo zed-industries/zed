@@ -2552,12 +2552,11 @@ impl CollabPanel {
             .group("")
             .flex()
             .w_full()
-            .on_drag({
-                let channel = channel.clone();
-                move |cx| {
-                    let channel = channel.clone();
-                    cx.build_view(|cx| DraggedChannelView { channel, width })
-                }
+            .on_drag(channel.clone(), move |channel, cx| {
+                cx.build_view(|cx| DraggedChannelView {
+                    channel: channel.clone(),
+                    width,
+                })
             })
             .drag_over::<DraggedChannelView>(|style| {
                 style.bg(cx.theme().colors().ghost_element_hover)
