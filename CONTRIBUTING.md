@@ -36,6 +36,9 @@ Reviewing code in a pull request, after the fact, is hard and tedious - the team
 Other things to mention here
 - [ ] Etiquette
 - [ ] CLA
+- [ ] Importance of tests
+- [ ] Look over Piotr's PR and pull in what this is missing (tour of the codebase, etc.)
+    - https://github.com/zed-industries/zed/pull/3143/files
 
 Things to do:
 - [ ] Put names devs who "own" each channel in the channel notes
