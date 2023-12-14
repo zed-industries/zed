@@ -2,7 +2,7 @@ use anyhow::{anyhow, bail, Result};
 use fs::repository::Branch;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, div, rems, AppContext, DismissEvent, Div, EventEmitter, FocusHandle, FocusableView,
+    actions, rems, AppContext, DismissEvent, Div, EventEmitter, FocusHandle, FocusableView,
     ParentElement, Render, SharedString, Styled, Task, View, ViewContext, VisualContext,
     WindowContext,
 };
