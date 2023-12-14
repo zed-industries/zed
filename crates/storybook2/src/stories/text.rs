@@ -1,5 +1,5 @@
 use gpui::{
-    div, green, red, Component, Div, HighlightStyle, InteractiveText, IntoElement, ParentElement,
+    div, green, red, Component, HighlightStyle, InteractiveText, IntoElement, ParentElement,
     Render, Styled, StyledText, View, VisualContext, WindowContext,
 };
 use indoc::indoc;
