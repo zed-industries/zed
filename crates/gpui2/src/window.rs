@@ -1334,7 +1334,7 @@ impl<'a> WindowContext<'a> {
         }
 
         self.window.drawing = false;
-        eprintln!("frame: {:?}", t0.elapsed());
+        eprintln!("window draw: {:?}", t0.elapsed());
 
         scene
     }

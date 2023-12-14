@@ -209,8 +209,14 @@ impl AnyView {
     ) {
         cx.with_absolute_element_offset(origin, |cx| {
             let (layout_id, rendered_element) = (self.layout)(self, cx);
+            let start_time = std::time::Instant::now();
             cx.compute_layout(layout_id, available_space);
+            let duration = start_time.elapsed();
+            println!("compute layout: {:?}", duration);
+            let start_time = std::time::Instant::now();
             (self.paint)(self, rendered_element, cx);
+            let duration = start_time.elapsed();
+            println!("paint: {:?}", duration);
         })
     }
 }

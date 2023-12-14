@@ -187,6 +187,8 @@ impl MetalRenderer {
     }
 
     pub fn draw(&mut self, scene: &Scene) {
+        let start = std::time::Instant::now();
+
         let layer = self.layer.clone();
         let viewport_size = layer.drawable_size();
         let viewport_size: Size<DevicePixels> = size(
@@ -303,6 +305,10 @@ impl MetalRenderer {
 
         command_buffer.commit();
         self.sprite_atlas.clear_textures(AtlasTextureKind::Path);
+
+        let duration_since_start = start.elapsed();
+        println!("renderer draw: {:?}", duration_since_start);
+
         command_buffer.wait_until_completed();
         drawable.present();
     }
