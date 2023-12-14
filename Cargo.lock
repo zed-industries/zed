@@ -4991,6 +4991,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "language_tools2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "client2",
+ "collections",
+ "editor2",
+ "env_logger 0.9.3",
+ "futures 0.3.28",
+ "gpui2",
+ "language2",
+ "lsp2",
+ "project2",
+ "serde",
+ "settings2",
+ "theme2",
+ "tree-sitter",
+ "unindent",
+ "util",
+ "workspace2",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

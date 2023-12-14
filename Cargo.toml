@@ -64,6 +64,7 @@ members = [
     "crates/language_selector",
     "crates/language_selector2",
     "crates/language_tools",
+    "crates/language_tools2",
     "crates/live_kit_client",
     "crates/live_kit_server",
     "crates/lsp",
