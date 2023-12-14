@@ -1982,6 +1982,7 @@ dependencies = [
  "tree-sitter-markdown",
  "ui2",
  "util",
+ "vcs_menu2",
  "workspace2",
  "zed_actions2",
 ]
@@ -10871,6 +10872,20 @@ dependencies = [
  "theme",
  "util",
  "workspace",
+]
+
+[[package]]
+name = "vcs_menu2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "fs2",
+ "fuzzy2",
+ "gpui2",
+ "picker2",
+ "ui2",
+ "util",
+ "workspace2",
 ]
 
 [[package]]

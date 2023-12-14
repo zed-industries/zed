@@ -47,7 +47,7 @@ settings = { package = "settings2", path = "../settings2" }
 feature_flags = { package = "feature_flags2", path = "../feature_flags2"}
 theme = { package = "theme2", path = "../theme2" }
 # theme_selector = { path = "../theme_selector" }
-# vcs_menu = { path = "../vcs_menu" }
+vcs_menu = { package = "vcs_menu2", path = "../vcs_menu2" }
 ui = { package = "ui2", path = "../ui2" }
 util = { path = "../util" }
 workspace = { package = "workspace2", path = "../workspace2" }
