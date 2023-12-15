@@ -1,35 +1,32 @@
 use editor::{scroll::autoscroll::Autoscroll, Anchor, Editor, ExcerptId};
 use gpui::{
-    actions,
-    elements::{
-        AnchorCorner, Empty, Flex, Label, MouseEventHandler, Overlay, OverlayFitMode,
-        ParentElement, ScrollTarget, Stack, UniformList, UniformListState,
-    },
-    fonts::TextStyle,
-    AppContext, CursorStyle, Element, Entity, Model, MouseButton, View, View, ViewContext,
-    WeakView,
+    actions, AnchorCorner, AppContext, CursorStyle, Div, Element, Empty, Entity, Focusable, Model,
+    MouseButton, Overlay, OverlayFitMode, ParentElement, Render, TextStyle, UniformList,
+    UniformListState, View, ViewContext, VisualContext, WeakView,
 };
 use language::{Buffer, OwnedSyntaxLayerInfo, SyntaxLayerInfo};
 use std::{mem, ops::Range, sync::Arc};
-use theme::{Theme, ThemeSettings};
+use theme::{ActiveTheme, Theme, ThemeSettings};
 use tree_sitter::{Node, TreeCursor};
 use workspace::{
     item::{Item, ItemHandle},
+    ui::v_stack,
     ToolbarItemLocation, ToolbarItemView, Workspace,
 };
 
 actions!(debug, [OpenSyntaxTreeView]);
 
 pub fn init(cx: &mut AppContext) {
-    cx.add_action(
-        move |workspace: &mut Workspace, _: &OpenSyntaxTreeView, cx: _| {
+    cx.observe_new_views(|workspace: &mut Workspace, _| {
+        workspace.register_action(|workspace, _: &OpenSyntaxTreeView, cx| {
             let active_item = workspace.active_item(cx);
             let workspace_handle = workspace.weak_handle();
             let syntax_tree_view =
                 cx.build_view(|cx| SyntaxTreeView::new(workspace_handle, active_item, cx));
             workspace.add_item(Box::new(syntax_tree_view), cx);
-        },
-    );
+        });
+    })
+    .detach();
 }
 
 pub struct SyntaxTreeView {
@@ -49,7 +46,7 @@ pub struct SyntaxTreeToolbarItemView {
 }
 
 struct EditorState {
-    editor: ViewHandle<Editor>,
+    editor: View<Editor>,
     active_buffer: Option<BufferState>,
     _subscription: gpui::Subscription,
 }
@@ -79,7 +76,7 @@ impl SyntaxTreeView {
 
         this.workspace_updated(active_item, cx);
         cx.observe(
-            &workspace_handle.upgrade(cx).unwrap(),
+            &workspace_handle.upgrade().unwrap(),
             |this, workspace, cx| {
                 this.workspace_updated(workspace.read(cx).active_item(cx), cx);
             },
@@ -95,7 +92,7 @@ impl SyntaxTreeView {
         cx: &mut ViewContext<Self>,
     ) {
         if let Some(item) = active_item {
-            if item.id() != cx.view_id() {
+            if item.item_id() != cx.entity_id() {
                 if let Some(editor) = item.act_as::<Editor>(cx) {
                     self.set_editor(editor, cx);
                 }
@@ -103,7 +100,7 @@ impl SyntaxTreeView {
         }
     }
 
-    fn set_editor(&mut self, editor: ViewHandle<Editor>, cx: &mut ViewContext<Self>) {
+    fn set_editor(&mut self, editor: View<Editor>, cx: &mut ViewContext<Self>) {
         if let Some(state) = &self.editor {
             if state.editor == editor {
                 return;
@@ -115,8 +112,8 @@ impl SyntaxTreeView {
 
         let subscription = cx.subscribe(&editor, |this, _, event, cx| {
             let did_reparse = match event {
-                editor::Event::Reparsed => true,
-                editor::Event::SelectionsChanged { .. } => false,
+                editor::EditorEvent::Reparsed => true,
+                editor::EditorEvent::SelectionsChanged { .. } => false,
                 _ => return,
             };
             this.editor_updated(did_reparse, cx);
@@ -490,7 +487,7 @@ impl SyntaxTreeToolbarItemView {
         &mut self,
         cx: &mut ViewContext<'_, '_, Self>,
     ) -> Option<gpui::AnyElement<Self>> {
-        let theme = theme::current(cx).clone();
+        let theme = cx.theme().clone();
         let tree_view = self.tree_view.as_ref()?;
         let tree_view = tree_view.read(cx);
 
@@ -502,12 +499,12 @@ impl SyntaxTreeToolbarItemView {
         enum Menu {}
 
         Some(
-            Stack::new()
-                .with_child(Self::render_header(&theme, &active_layer, cx))
-                .with_children(self.menu_open.then(|| {
-                    Overlay::new(
-                        MouseEventHandler::new::<Menu, _>(0, cx, move |_, cx| {
-                            Flex::column()
+            v_stack()
+                .child(Self::render_header(&theme, &active_layer, cx))
+                .children(self.menu_open.then(|| {
+                    overlay(
+                        mouse_event_handler::<Menu, _>(0, cx, move |_, cx| {
+                            v_stack()
                                 .with_children(active_buffer.syntax_layers().enumerate().map(
                                     |(ix, layer)| {
                                         Self::render_menu_item(&theme, &active_layer, layer, ix, cx)
@@ -525,16 +522,9 @@ impl SyntaxTreeToolbarItemView {
                         }),
                     )
                     .with_hoverable(true)
-                    .with_fit_mode(OverlayFitMode::SwitchAnchor)
-                    .with_anchor_corner(AnchorCorner::TopLeft)
-                    .with_z_index(999)
-                    .aligned()
-                    .bottom()
-                    .left()
+                    .with_fit_content()
+                    .into_any()
                 }))
-                .aligned()
-                .left()
-                .clipped()
                 .into_any(),
         )
     }
@@ -639,14 +629,13 @@ fn format_node_range(node: Node) -> String {
     )
 }
 
-impl Entity for SyntaxTreeToolbarItemView {
-    type Event = ();
-}
+impl Render for SyntaxTreeToolbarItemView {
+    type Element = Focusable<Div>;
 
-impl View for SyntaxTreeToolbarItemView {
-    fn ui_name() -> &'static str {
-        "SyntaxTreeToolbarItemView"
-    }
+    // todo!()
+    // fn ui_name() -> &'static str {
+    //     "SyntaxTreeToolbarItemView"
+    // }
 
     fn render(&mut self, cx: &mut ViewContext<'_, '_, Self>) -> gpui::AnyElement<Self> {
         self.render_menu(cx)

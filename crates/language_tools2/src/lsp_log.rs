@@ -2,24 +2,19 @@ use collections::{HashMap, VecDeque};
 use editor::{Editor, MoveToEnd};
 use futures::{channel::mpsc, StreamExt};
 use gpui::{
-    actions,
-    elements::{
-        AnchorCorner, ChildView, Empty, Flex, Label, MouseEventHandler, Overlay, OverlayFitMode,
-        ParentElement, Stack,
-    },
-    platform::{CursorStyle, MouseButton},
-    AnyElement, AppContext, Element, Entity, Model, ModelContext, Subscription, View, View,
-    ViewContext, WeakModel,
+    actions, AnchorCorner, AnyElement, AppContext, Context, CursorStyle, Element, Empty, Entity,
+    Model, ModelContext, MouseButton, Overlay, OverlayFitMode, Subscription, View, ViewContext,
+    VisualContext, WeakModel,
 };
 use language::{LanguageServerId, LanguageServerName};
 use lsp::IoKind;
 use project::{search::SearchQuery, Project};
 use std::{borrow::Cow, sync::Arc};
-use theme::{ui, Theme};
+use theme::Theme;
 use workspace::{
     item::{Item, ItemHandle},
     searchable::{SearchableItem, SearchableItemHandle},
-    ToolbarItemLocation, ToolbarItemView, Workspace, WorkspaceCreated,
+    ToolbarItemLocation, ToolbarItemView, Workspace,
 };
 
 const SEND_LINE: &str = "// Send:";
@@ -83,37 +78,29 @@ pub(crate) struct LogMenuItem {
 actions!(debug, [OpenLanguageServerLogs]);
 
 pub fn init(cx: &mut AppContext) {
-    let log_store = cx.add_model(|cx| LogStore::new(cx));
+    let log_store = cx.build_model(|cx| LogStore::new(cx));
 
-    cx.subscribe_global::<WorkspaceCreated, _>({
-        let log_store = log_store.clone();
-        move |event, cx| {
-            let workspace = &event.0;
-            if let Some(workspace) = workspace.upgrade(cx) {
-                let project = workspace.read(cx).project().clone();
-                if project.read(cx).is_local() {
-                    log_store.update(cx, |store, cx| {
-                        store.add_project(&project, cx);
-                    });
-                }
-            }
+    cx.observe_new_views(|workspace: &mut Workspace, cx| {
+        let project = workspace.project();
+        if project.read(cx).is_local() {
+            log_store.update(cx, |store, cx| {
+                store.add_project(&project, cx);
+            });
         }
-    })
-    .detach();
 
-    cx.add_action(
-        move |workspace: &mut Workspace, _: &OpenLanguageServerLogs, cx: _| {
+        workspace.register_action(|workspace, _: &OpenLanguageServerLogs, cx| {
             let project = workspace.project().read(cx);
             if project.is_local() {
                 workspace.add_item(
-                    Box::new(cx.add_view(|cx| {
+                    Box::new(cx.build_view(|cx| {
                         LspLogView::new(workspace.project().clone(), log_store.clone(), cx)
                     })),
                     cx,
                 );
             }
-        },
-    );
+        });
+    })
+    .detach();
 }
 
 impl LogStore {
@@ -204,8 +191,7 @@ impl LogStore {
             let server_id = server.server_id();
             server.on_notification::<lsp::notification::LogMessage, _>({
                 move |params, mut cx| {
-                    if let Some((project, this)) =
-                        weak_project.upgrade(&mut cx).zip(this.upgrade(&mut cx))
+                    if let Some((project, this)) = weak_project.upgrade().zip(this.upgrade(&mut cx))
                     {
                         this.update(&mut cx, |this, cx| {
                             this.add_language_server_log(&project, server_id, &params.message, cx);
@@ -314,7 +300,7 @@ impl LogStore {
             IoKind::StdOut => true,
             IoKind::StdIn => false,
             IoKind::StdErr => {
-                let project = project.upgrade(cx)?;
+                let project = project.upgrade()?;
                 let message = format!("stderr: {}", message.trim());
                 self.add_language_server_log(&project, language_server_id, &message, cx);
                 return Some(());
@@ -446,7 +432,7 @@ impl LspLogView {
         log_contents: String,
         cx: &mut ViewContext<Self>,
     ) -> (View<Editor>, Subscription) {
-        let editor = cx.add_view(|cx| {
+        let editor = cx.build_view(|cx| {
             let mut editor = Editor::multi_line(None, cx);
             editor.set_text(log_contents, cx);
             editor.move_to_end(&MoveToEnd, cx);
