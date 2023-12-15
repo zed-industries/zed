@@ -270,6 +270,7 @@ impl Member {
                     project,
                     basis + 1,
                     follower_states,
+                    active_call,
                     active_pane,
                     zoomed,
                     app_state,
@@ -277,133 +278,6 @@ impl Member {
                 )
                 .into_any(),
         }
-
-        // enum FollowIntoExternalProject {}
-
-        // match self {
-        //     Member::Pane(pane) => {
-        //         let pane_element = if Some(&**pane) == zoomed {
-        //             Empty::new().into_any()
-        //         } else {
-        //             ChildView::new(pane, cx).into_any()
-        //         };
-
-        //         let leader = follower_states.get(pane).and_then(|state| {
-        //             let room = active_call?.read(cx).room()?.read(cx);
-        //             room.remote_participant_for_peer_id(state.leader_id)
-        //         });
-
-        //         let mut leader_border = Border::default();
-        //         let mut leader_status_box = None;
-        //         if let Some(leader) = &leader {
-        //             let leader_color = theme
-        //                 .editor
-        //                 .selection_style_for_room_participant(leader.participant_index.0)
-        //                 .cursor;
-        //             leader_border = Border::all(theme.workspace.leader_border_width, leader_color);
-        //             leader_border
-        //                 .color
-        //                 .fade_out(1. - theme.workspace.leader_border_opacity);
-        //             leader_border.overlay = true;
-
-        //             leader_status_box = match leader.location {
-        //                 ParticipantLocation::SharedProject {
-        //                     project_id: leader_project_id,
-        //                 } => {
-        //                     if Some(leader_project_id) == project.read(cx).remote_id() {
-        //                         None
-        //                     } else {
-        //                         let leader_user = leader.user.clone();
-        //                         let leader_user_id = leader.user.id;
-        //                         Some(
-        //                             MouseEventHandler::new::<FollowIntoExternalProject, _>(
-        //                                 pane.id(),
-        //                                 cx,
-        //                                 |_, _| {
-        //                                     Label::new(
-        //                                         format!(
-        //                                             "Follow {} to their active project",
-        //                                             leader_user.github_login,
-        //                                         ),
-        //                                         theme
-        //                                             .workspace
-        //                                             .external_location_message
-        //                                             .text
-        //                                             .clone(),
-        //                                     )
-        //                                     .contained()
-        //                                     .with_style(
-        //                                         theme.workspace.external_location_message.container,
-        //                                     )
-        //                                 },
-        //                             )
-        //                             .with_cursor_style(CursorStyle::PointingHand)
-        //                             .on_click(MouseButton::Left, move |_, this, cx| {
-        //                                 crate::join_remote_project(
-        //                                     leader_project_id,
-        //                                     leader_user_id,
-        //                                     this.app_state().clone(),
-        //                                     cx,
-        //                                 )
-        //                                 .detach_and_log_err(cx);
-        //                             })
-        //                             .aligned()
-        //                             .bottom()
-        //                             .right()
-        //                             .into_any(),
-        //                         )
-        //                     }
-        //                 }
-        //                 ParticipantLocation::UnsharedProject => Some(
-        //                     Label::new(
-        //                         format!(
-        //                             "{} is viewing an unshared Zed project",
-        //                             leader.user.github_login
-        //                         ),
-        //                         theme.workspace.external_location_message.text.clone(),
-        //                     )
-        //                     .contained()
-        //                     .with_style(theme.workspace.external_location_message.container)
-        //                     .aligned()
-        //                     .bottom()
-        //                     .right()
-        //                     .into_any(),
-        //                 ),
-        //                 ParticipantLocation::External => Some(
-        //                     Label::new(
-        //                         format!(
-        //                             "{} is viewing a window outside of Zed",
-        //                             leader.user.github_login
-        //                         ),
-        //                         theme.workspace.external_location_message.text.clone(),
-        //                     )
-        //                     .contained()
-        //                     .with_style(theme.workspace.external_location_message.container)
-        //                     .aligned()
-        //                     .bottom()
-        //                     .right()
-        //                     .into_any(),
-        //                 ),
-        //             };
-        //         }
-
-        //         Stack::new()
-        //             .with_child(pane_element.contained().with_border(leader_border))
-        //             .with_children(leader_status_box)
-        //             .into_any()
-        //     }
-        //     Member::Axis(axis) => axis.render(
-        //         project,
-        //         basis + 1,
-        //         theme,
-        //         follower_states,
-        //         active_call,
-        //         active_pane,
-        //         zoomed,
-        //         app_state,
-        //         cx,
-        //     ),
-        // }
     }
 
     fn collect_panes<'a>(&'a self, panes: &mut Vec<&'a View<Pane>>) {
@@ -586,6 +460,7 @@ impl PaneAxis {
         project: &Model<Project>,
         basis: usize,
         follower_states: &HashMap<View<Pane>, FollowerState>,
+        active_call: Option<&Model<ActiveCall>>,
         active_pane: &View<Pane>,
         zoomed: Option<&AnyWeakView>,
         app_state: &Arc<AppState>,
@@ -604,25 +479,18 @@ impl PaneAxis {
             if member.contains(active_pane) {
                 active_pane_ix = Some(ix);
             }
-
-            match member {
-                Member::Axis(axis) => axis
-                    .render(
-                        project,
-                        (basis + ix) * 10,
-                        follower_states,
-                        active_pane,
-                        zoomed,
-                        app_state,
-                        cx,
-                    )
-                    .into_any_element(),
-                Member::Pane(pane) => div()
-                    .size_full()
-                    .border()
-                    .child(pane.clone())
-                    .into_any_element(),
-            }
+            member
+                .render(
+                    project,
+                    (basis + ix) * 10,
+                    follower_states,
+                    active_call,
+                    active_pane,
+                    zoomed,
+                    app_state,
+                    cx,
+                )
+                .into_any_element()
         }))
         .with_active_pane(active_pane_ix)
         .into_any_element()
