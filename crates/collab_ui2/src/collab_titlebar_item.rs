@@ -169,6 +169,7 @@ impl Render for CollabTitlebarItem {
             .child(
                 h_stack()
                     .gap_1()
+                    .pr_1()
                     .when_some(room, |this, room| {
                         let room = room.read(cx);
                         let is_shared = self.project.read(cx).is_shared();
