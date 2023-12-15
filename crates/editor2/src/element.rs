@@ -2284,8 +2284,8 @@ impl EditorElement {
                                 .cursor_pointer()
                                 .hover(|style| style.bg(cx.theme().colors().element_hover))
                                 .on_click(cx.listener(|_editor, _event, _cx| {
-                                    // TODO: Implement collapsing path headers
-                                    todo!("Clicking path header")
+                                    // todo!() Implement collapsing path headers
+                                    // todo!("Clicking path header")
                                 }))
                                 .child(
                                     h_stack()
