@@ -23,7 +23,7 @@ pub trait IntoElement: Sized {
         self.into_element().into_any()
     }
 
-    fn draw<T, R>(
+    fn draw_and_update_state<T, R>(
         self,
         origin: Point<Pixels>,
         available_space: Size<T>,
@@ -92,7 +92,7 @@ pub trait Element: 'static + IntoElement {
         cx: &mut WindowContext,
     ) -> (LayoutId, Self::State);
 
-    fn paint(self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut WindowContext);
+    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut WindowContext);
 
     fn into_any(self) -> AnyElement {
         AnyElement::new(self)
@@ -150,8 +150,8 @@ impl<C: RenderOnce> Element for Component<C> {
         }
     }
 
-    fn paint(self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut WindowContext) {
-        let element = state.rendered_element.take().unwrap();
+    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut WindowContext) {
+        let mut element = state.rendered_element.take().unwrap();
         if let Some(element_id) = element.element_id() {
             cx.with_element_state(element_id, |element_state, cx| {
                 let mut element_state = element_state.unwrap();
@@ -420,7 +420,7 @@ impl AnyElement {
         self.0.layout(cx)
     }
 
-    pub fn paint(mut self, cx: &mut WindowContext) {
+    pub fn paint(&mut self, cx: &mut WindowContext) {
         self.0.paint(cx)
     }
 
@@ -435,7 +435,7 @@ impl AnyElement {
 
     /// Initializes this element and performs layout in the available space, then paints it at the given origin.
     pub fn draw(
-        mut self,
+        &mut self,
         origin: Point<Pixels>,
         available_space: Size<AvailableSpace>,
         cx: &mut WindowContext,
@@ -465,8 +465,8 @@ impl Element for AnyElement {
         (layout_id, ())
     }
 
-    fn paint(self, _: Bounds<Pixels>, _: &mut Self::State, cx: &mut WindowContext) {
-        self.paint(cx);
+    fn paint(&mut self, _: Bounds<Pixels>, _: &mut Self::State, cx: &mut WindowContext) {
+        self.paint(cx)
     }
 }
 
@@ -482,48 +482,37 @@ impl IntoElement for AnyElement {
     }
 }
 
-// impl<V, E, F> Element for Option<F>
-// where
-//     V: 'static,
-//     E: Element,
-//     F: FnOnce(&mut V, &mut WindowContext<'_, V>) -> E + 'static,
-// {
-//     type State = Option<AnyElement>;
+/// The empty element, which renders nothing.
+pub type Empty = ();
 
-//     fn element_id(&self) -> Option<ElementId> {
-//         None
-//     }
+impl IntoElement for () {
+    type Element = Self;
 
-//     fn layout(
-//         &mut self,
-//         _: Option<Self::State>,
-//         cx: &mut WindowContext,
-//     ) -> (LayoutId, Self::State) {
-//         let render = self.take().unwrap();
-//         let mut element = (render)(view_state, cx).into_any();
-//         let layout_id = element.layout(view_state, cx);
-//         (layout_id, Some(element))
-//     }
+    fn element_id(&self) -> Option<ElementId> {
+        None
+    }
 
-//     fn paint(
-//         self,
-//         _bounds: Bounds<Pixels>,
-//         rendered_element: &mut Self::State,
-//         cx: &mut WindowContext,
-//     ) {
-//         rendered_element.take().unwrap().paint(view_state, cx);
-//     }
-// }
+    fn into_element(self) -> Self::Element {
+        self
+    }
+}
 
-// impl<V, E, F> RenderOnce for Option<F>
-// where
-//     V: 'static,
-//     E: Element,
-//     F: FnOnce(&mut V, &mut WindowContext) -> E + 'static,
-// {
-//     type Element = Self;
+impl Element for () {
+    type State = ();
 
-//     fn render(self) -> Self::Element {
-//         self
-//     }
-// }
+    fn layout(
+        &mut self,
+        _state: Option<Self::State>,
+        cx: &mut WindowContext,
+    ) -> (LayoutId, Self::State) {
+        (cx.request_layout(&crate::Style::default(), None), ())
+    }
+
+    fn paint(
+        &mut self,
+        _bounds: Bounds<Pixels>,
+        _state: &mut Self::State,
+        _cx: &mut WindowContext,
+    ) {
+    }
+}

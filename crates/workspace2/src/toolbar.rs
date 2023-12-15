@@ -55,6 +55,12 @@ pub struct Toolbar {
 }
 
 impl Toolbar {
+    fn has_any_visible_items(&self) -> bool {
+        self.items
+            .iter()
+            .any(|(_item, location)| *location != ToolbarItemLocation::Hidden)
+    }
+
     fn left_items(&self) -> impl Iterator<Item = &dyn ToolbarItemViewHandle> {
         self.items.iter().filter_map(|(item, location)| {
             if *location == ToolbarItemLocation::PrimaryLeft {
@@ -74,12 +80,28 @@ impl Toolbar {
             }
         })
     }
+
+    fn secondary_items(&self) -> impl Iterator<Item = &dyn ToolbarItemViewHandle> {
+        self.items.iter().filter_map(|(item, location)| {
+            if *location == ToolbarItemLocation::Secondary {
+                Some(item.as_ref())
+            } else {
+                None
+            }
+        })
+    }
 }
 
 impl Render for Toolbar {
     type Element = Div;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+        if !self.has_any_visible_items() {
+            return div();
+        }
+
+        let secondary_item = self.secondary_items().next().map(|item| item.to_any());
+
         v_stack()
             .border_b()
             .border_color(cx.theme().colors().border_variant)
@@ -87,8 +109,24 @@ impl Render for Toolbar {
             .child(
                 h_stack()
                     .justify_between()
-                    .children(self.items.iter().map(|(child, _)| child.to_any())),
+                    .when(self.left_items().count() > 0, |this| {
+                        this.child(
+                            h_stack()
+                                .flex_1()
+                                .justify_start()
+                                .children(self.left_items().map(|item| item.to_any())),
+                        )
+                    })
+                    .when(self.right_items().count() > 0, |this| {
+                        this.child(
+                            h_stack()
+                                .flex_1()
+                                .justify_end()
+                                .children(self.right_items().map(|item| item.to_any())),
+                        )
+                    }),
             )
+            .children(secondary_item)
     }
 }
 

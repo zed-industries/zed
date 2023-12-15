@@ -18,7 +18,6 @@ gpui = { package = "gpui2", path = "../gpui2" }
 language = { package = "language2", path = "../language2" }
 menu = { package = "menu2", path = "../menu2" }
 project = { package = "project2", path = "../project2" }
-regex.workspace = true
 search = { package = "search2", path = "../search2" }
 settings = { package = "settings2", path = "../settings2" }
 theme = { package = "theme2", path = "../theme2" }
@@ -26,16 +25,20 @@ ui = { package = "ui2", path = "../ui2" }
 util = { path = "../util" }
 workspace = { package = "workspace2", path = "../workspace2"}
 
-log.workspace = true
-futures.workspace = true
-anyhow.workspace = true
-smallvec.workspace = true
+bitflags = "2.4.1"
 human_bytes = "0.4.1"
+
+anyhow.workspace = true
+futures.workspace = true
 isahc.workspace = true
 lazy_static.workspace = true
+log.workspace = true
 postage.workspace = true
+regex.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
+smallvec.workspace = true
+smol.workspace = true
 sysinfo.workspace = true
 tree-sitter-markdown = { git = "https://github.com/MDeiml/tree-sitter-markdown", rev = "330ecab87a3e3a7211ac69bbadc19eabecdb1cca" }
 urlencoding = "2.1.2"

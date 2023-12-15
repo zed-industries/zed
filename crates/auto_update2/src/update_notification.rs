@@ -2,6 +2,7 @@ use gpui::{
     div, DismissEvent, Div, EventEmitter, InteractiveElement, ParentElement, Render,
     SemanticVersion, StatefulInteractiveElement, Styled, ViewContext,
 };
+use menu::Cancel;
 use util::channel::ReleaseChannel;
 use workspace::ui::{h_stack, v_stack, Icon, IconElement, Label, StyledExt};
 
@@ -18,6 +19,7 @@ impl Render for UpdateNotification {
         let app_name = cx.global::<ReleaseChannel>().display_name();
 
         v_stack()
+            .on_action(cx.listener(UpdateNotification::dismiss))
             .elevation_3(cx)
             .p_4()
             .child(
@@ -32,7 +34,7 @@ impl Render for UpdateNotification {
                             .id("cancel")
                             .child(IconElement::new(Icon::Close))
                             .cursor_pointer()
-                            .on_click(cx.listener(|this, _, cx| this.dismiss(cx))),
+                            .on_click(cx.listener(|this, _, cx| this.dismiss(&menu::Cancel, cx))),
                     ),
             )
             .child(
@@ -50,7 +52,7 @@ impl UpdateNotification {
         Self { version }
     }
 
-    pub fn dismiss(&mut self, cx: &mut ViewContext<Self>) {
+    pub fn dismiss(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
         cx.emit(DismissEvent);
     }
 }

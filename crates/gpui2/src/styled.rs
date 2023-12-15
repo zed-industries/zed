@@ -12,7 +12,7 @@ pub trait Styled: Sized {
 
     gpui2_macros::style_helpers!();
 
-    fn z_index(mut self, z_index: u32) -> Self {
+    fn z_index(mut self, z_index: u8) -> Self {
         self.style().z_index = Some(z_index);
         self
     }
@@ -631,6 +631,18 @@ pub trait Styled: Sized {
         self.text_style()
             .get_or_insert_with(Default::default)
             .line_height = Some(line_height.into());
+        self
+    }
+
+    #[cfg(debug_assertions)]
+    fn debug(mut self) -> Self {
+        self.style().debug = Some(true);
+        self
+    }
+
+    #[cfg(debug_assertions)]
+    fn debug_below(mut self) -> Self {
+        self.style().debug_below = Some(true);
         self
     }
 }

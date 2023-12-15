@@ -920,7 +920,7 @@ pub mod test {
     impl EventEmitter<ItemEvent> for TestItem {}
 
     impl FocusableView for TestItem {
-        fn focus_handle(&self, cx: &AppContext) -> gpui::FocusHandle {
+        fn focus_handle(&self, _: &AppContext) -> gpui::FocusHandle {
             self.focus_handle.clone()
         }
     }
@@ -942,8 +942,8 @@ pub mod test {
         fn tab_content(
             &self,
             detail: Option<usize>,
-            selected: bool,
-            cx: &ui::prelude::WindowContext,
+            _selected: bool,
+            _cx: &ui::prelude::WindowContext,
         ) -> AnyElement {
             self.tab_detail.set(detail);
             gpui::div().into_any_element()

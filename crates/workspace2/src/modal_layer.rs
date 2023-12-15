@@ -5,7 +5,7 @@ use gpui::{
 use ui::{h_stack, v_stack};
 
 pub trait ModalView: ManagedView {
-    fn on_before_dismiss(&mut self, cx: &mut ViewContext<Self>) -> bool {
+    fn on_before_dismiss(&mut self, _: &mut ViewContext<Self>) -> bool {
         true
     }
 }
@@ -27,7 +27,7 @@ impl<V: ModalView> ModalViewHandle for View<V> {
 
 pub struct ActiveModal {
     modal: Box<dyn ModalViewHandle>,
-    subscription: Subscription,
+    _subscription: Subscription,
     previous_focus_handle: Option<FocusHandle>,
     focus_handle: FocusHandle,
 }
@@ -63,7 +63,7 @@ impl ModalLayer {
     {
         self.active_modal = Some(ActiveModal {
             modal: Box::new(new_modal.clone()),
-            subscription: cx.subscribe(&new_modal, |this, modal, _: &DismissEvent, cx| {
+            _subscription: cx.subscribe(&new_modal, |this, _, _: &DismissEvent, cx| {
                 this.hide_modal(cx);
             }),
             previous_focus_handle: cx.focused(),
@@ -116,7 +116,7 @@ impl Render for ModalLayer {
             .size_full()
             .top_0()
             .left_0()
-            .z_index(400)
+            .z_index(169)
             .child(
                 v_stack()
                     .h(px(0.0))

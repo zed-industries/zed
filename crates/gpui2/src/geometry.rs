@@ -1592,6 +1592,17 @@ impl Edges<Pixels> {
     }
 }
 
+impl Into<Edges<Pixels>> for f32 {
+    fn into(self) -> Edges<Pixels> {
+        Edges {
+            top: self.into(),
+            right: self.into(),
+            bottom: self.into(),
+            left: self.into(),
+        }
+    }
+}
+
 /// Represents the corners of a box in a 2D space, such as border radius.
 ///
 /// Each field represents the size of the corner on one side of the box: `top_left`, `top_right`, `bottom_right`, and `bottom_left`.
@@ -1807,6 +1818,28 @@ where
 }
 
 impl<T> Copy for Corners<T> where T: Copy + Clone + Default + Debug {}
+
+impl Into<Corners<Pixels>> for f32 {
+    fn into(self) -> Corners<Pixels> {
+        Corners {
+            top_left: self.into(),
+            top_right: self.into(),
+            bottom_right: self.into(),
+            bottom_left: self.into(),
+        }
+    }
+}
+
+impl Into<Corners<Pixels>> for Pixels {
+    fn into(self) -> Corners<Pixels> {
+        Corners {
+            top_left: self,
+            top_right: self,
+            bottom_right: self,
+            bottom_left: self,
+        }
+    }
+}
 
 /// Represents a length in pixels, the base unit of measurement in the UI framework.
 ///

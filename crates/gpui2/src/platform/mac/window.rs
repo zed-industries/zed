@@ -9,9 +9,10 @@ use crate::{
 use block::ConcreteBlock;
 use cocoa::{
     appkit::{
-        CGPoint, NSApplication, NSBackingStoreBuffered, NSFilenamesPboardType, NSPasteboard,
-        NSScreen, NSView, NSViewHeightSizable, NSViewWidthSizable, NSWindow, NSWindowButton,
-        NSWindowCollectionBehavior, NSWindowStyleMask, NSWindowTitleVisibility,
+        CGPoint, NSApplication, NSBackingStoreBuffered, NSEventModifierFlags,
+        NSFilenamesPboardType, NSPasteboard, NSScreen, NSView, NSViewHeightSizable,
+        NSViewWidthSizable, NSWindow, NSWindowButton, NSWindowCollectionBehavior,
+        NSWindowStyleMask, NSWindowTitleVisibility,
     },
     base::{id, nil},
     foundation::{
@@ -742,6 +743,26 @@ impl PlatformWindow for MacWindow {
                 .mouseLocationOutsideOfEventStream()
         };
         convert_mouse_position(position, self.content_size().height)
+    }
+
+    fn modifiers(&self) -> Modifiers {
+        unsafe {
+            let modifiers: NSEventModifierFlags = msg_send![class!(NSEvent), modifierFlags];
+
+            let control = modifiers.contains(NSEventModifierFlags::NSControlKeyMask);
+            let alt = modifiers.contains(NSEventModifierFlags::NSAlternateKeyMask);
+            let shift = modifiers.contains(NSEventModifierFlags::NSShiftKeyMask);
+            let command = modifiers.contains(NSEventModifierFlags::NSCommandKeyMask);
+            let function = modifiers.contains(NSEventModifierFlags::NSFunctionKeyMask);
+
+            Modifiers {
+                control,
+                alt,
+                shift,
+                command,
+                function,
+            }
+        }
     }
 
     fn as_any_mut(&mut self) -> &mut dyn Any {

@@ -17,6 +17,7 @@ pub type LayerId = u32;
 pub type DrawOrder = u32;
 
 pub(crate) struct SceneBuilder {
+    last_order: Option<(StackingOrder, LayerId)>,
     layers_by_order: BTreeMap<StackingOrder, LayerId>,
     splitter: BspSplitter<(PrimitiveKind, usize)>,
     shadows: Vec<Shadow>,
@@ -31,6 +32,7 @@ pub(crate) struct SceneBuilder {
 impl Default for SceneBuilder {
     fn default() -> Self {
         SceneBuilder {
+            last_order: None,
             layers_by_order: BTreeMap::new(),
             splitter: BspSplitter::new(),
             shadows: Vec::new(),
@@ -52,6 +54,7 @@ impl SceneBuilder {
             layer_z_values[*layer_id as usize] = ix as f32 / self.layers_by_order.len() as f32;
         }
         self.layers_by_order.clear();
+        self.last_order = None;
 
         // Add all primitives to the BSP splitter to determine draw order
         self.splitter.reset();
@@ -156,14 +159,7 @@ impl SceneBuilder {
             return;
         }
 
-        let layer_id = if let Some(layer_id) = self.layers_by_order.get(order) {
-            *layer_id
-        } else {
-            let next_id = self.layers_by_order.len() as LayerId;
-            self.layers_by_order.insert(order.clone(), next_id);
-            next_id
-        };
-
+        let layer_id = self.layer_id_for_order(order);
         match primitive {
             Primitive::Shadow(mut shadow) => {
                 shadow.order = layer_id;
@@ -195,6 +191,24 @@ impl SceneBuilder {
                 self.surfaces.push(surface);
             }
         }
+    }
+
+    fn layer_id_for_order(&mut self, order: &StackingOrder) -> u32 {
+        if let Some((last_order, last_layer_id)) = self.last_order.as_ref() {
+            if last_order == order {
+                return *last_layer_id;
+            }
+        };
+
+        let layer_id = if let Some(layer_id) = self.layers_by_order.get(order) {
+            *layer_id
+        } else {
+            let next_id = self.layers_by_order.len() as LayerId;
+            self.layers_by_order.insert(order.clone(), next_id);
+            next_id
+        };
+        self.last_order = Some((order.clone(), layer_id));
+        layer_id
     }
 }
 

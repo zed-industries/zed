@@ -41,7 +41,7 @@ use workspace::{
     notifications::simple_message_notification::MessageNotification, open_new, AppState, NewFile,
     NewWindow, Workspace, WorkspaceSettings,
 };
-use zed_actions::{OpenBrowser, OpenZedURL, Quit};
+use zed_actions::{OpenBrowser, OpenSettings, OpenZedURL, Quit};
 
 actions!(
     zed,
@@ -59,7 +59,6 @@ actions!(
         OpenLicenses,
         OpenLocalSettings,
         OpenLog,
-        OpenSettings,
         OpenTelemetryLog,
         ResetBufferFontSize,
         ResetDatabase,
@@ -427,7 +426,7 @@ fn initialize_pane(workspace: &mut Workspace, pane: &View<Pane>, cx: &mut ViewCo
                 cx.build_view(|_| QuickActionBar::new(buffer_search_bar, workspace));
             toolbar.add_item(quick_action_bar, cx);
             let diagnostic_editor_controls = cx.build_view(|_| diagnostics::ToolbarControls::new());
-            //     toolbar.add_item(diagnostic_editor_controls, cx);
+            toolbar.add_item(diagnostic_editor_controls, cx);
             let project_search_bar = cx.build_view(|_| ProjectSearchBar::new());
             toolbar.add_item(project_search_bar, cx);
             //     let lsp_log_item =

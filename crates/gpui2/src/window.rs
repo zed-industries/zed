@@ -1,18 +1,18 @@
 use crate::{
-    key_dispatch::DispatchActionListener, px, size, Action, AnyDrag, AnyView, AppContext,
-    AsyncWindowContext, AvailableSpace, Bounds, BoxShadow, Context, Corners, CursorStyle,
-    DevicePixels, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity, EntityId,
-    EventEmitter, FileDropEvent, Flatten, FontId, GlobalElementId, GlyphId, Hsla, ImageData,
-    InputEvent, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeystrokeEvent, LayoutId, Model,
-    ModelContext, Modifiers, MonochromeSprite, MouseButton, MouseMoveEvent, MouseUpEvent, Path,
-    Pixels, PlatformAtlas, PlatformDisplay, PlatformInputHandler, PlatformWindow, Point,
+    key_dispatch::DispatchActionListener, px, size, transparent_black, Action, AnyDrag, AnyView,
+    AppContext, AsyncWindowContext, AvailableSpace, Bounds, BoxShadow, Context, Corners,
+    CursorStyle, DevicePixels, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity,
+    EntityId, EventEmitter, FileDropEvent, Flatten, FontId, GlobalElementId, GlyphId, Hsla,
+    ImageData, InputEvent, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeystrokeEvent, LayoutId,
+    Model, ModelContext, Modifiers, MonochromeSprite, MouseButton, MouseMoveEvent, MouseUpEvent,
+    Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInputHandler, PlatformWindow, Point,
     PolychromeSprite, PromptLevel, Quad, Render, RenderGlyphParams, RenderImageParams,
     RenderSvgParams, ScaledPixels, Scene, SceneBuilder, Shadow, SharedString, Size, Style,
     SubscriberSet, Subscription, Surface, TaffyLayoutEngine, Task, Underline, UnderlineStyle, View,
     VisualContext, WeakView, WindowBounds, WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::{anyhow, Context as _, Result};
-use collections::HashMap;
+use collections::FxHashMap;
 use derive_more::{Deref, DerefMut};
 use futures::{
     channel::{mpsc, oneshot},
@@ -38,12 +38,24 @@ use std::{
 };
 use util::ResultExt;
 
-const ACTIVE_DRAG_Z_INDEX: u32 = 1;
+const ACTIVE_DRAG_Z_INDEX: u8 = 1;
 
 /// A global stacking order, which is created by stacking successive z-index values.
 /// Each z-index will always be interpreted in the context of its parent z-index.
-#[derive(Deref, DerefMut, Ord, PartialOrd, Eq, PartialEq, Clone, Default, Debug)]
-pub struct StackingOrder(pub(crate) SmallVec<[u32; 16]>);
+#[derive(Deref, DerefMut, Clone, Debug, Ord, PartialOrd, PartialEq, Eq)]
+pub struct StackingOrder {
+    #[deref]
+    #[deref_mut]
+    z_indices: SmallVec<[u8; 64]>,
+}
+
+impl Default for StackingOrder {
+    fn default() -> Self {
+        StackingOrder {
+            z_indices: SmallVec::new(),
+        }
+    }
+}
 
 /// Represents the two different phases when dispatching events.
 #[derive(Default, Copy, Clone, Debug, Eq, PartialEq)]
@@ -235,12 +247,14 @@ pub struct Window {
     blur_listeners: SubscriberSet<(), AnyObserver>,
     default_prevented: bool,
     mouse_position: Point<Pixels>,
+    modifiers: Modifiers,
     requested_cursor_style: Option<CursorStyle>,
     scale_factor: f32,
     bounds: WindowBounds,
     bounds_observers: SubscriberSet<(), AnyObserver>,
     active: bool,
     pub(crate) dirty: bool,
+    pub(crate) drawing: bool,
     activation_observers: SubscriberSet<(), AnyObserver>,
     pub(crate) focus: Option<FocusId>,
 
@@ -257,8 +271,8 @@ pub(crate) struct ElementStateBox {
 // #[derive(Default)]
 pub(crate) struct Frame {
     focus: Option<FocusId>,
-    pub(crate) element_states: HashMap<GlobalElementId, ElementStateBox>,
-    mouse_listeners: HashMap<TypeId, Vec<(StackingOrder, AnyMouseListener)>>,
+    pub(crate) element_states: FxHashMap<GlobalElementId, ElementStateBox>,
+    mouse_listeners: FxHashMap<TypeId, Vec<(StackingOrder, AnyMouseListener)>>,
     pub(crate) dispatch_tree: DispatchTree,
     pub(crate) scene_builder: SceneBuilder,
     pub(crate) depth_map: Vec<(StackingOrder, Bounds<Pixels>)>,
@@ -271,8 +285,8 @@ impl Frame {
     fn new(dispatch_tree: DispatchTree) -> Self {
         Frame {
             focus: None,
-            element_states: HashMap::default(),
-            mouse_listeners: HashMap::default(),
+            element_states: FxHashMap::default(),
+            mouse_listeners: FxHashMap::default(),
             dispatch_tree,
             scene_builder: SceneBuilder::default(),
             z_index_stack: StackingOrder::default(),
@@ -313,6 +327,7 @@ impl Window {
         let display_id = platform_window.display().id();
         let sprite_atlas = platform_window.sprite_atlas();
         let mouse_position = platform_window.mouse_position();
+        let modifiers = platform_window.modifiers();
         let content_size = platform_window.content_size();
         let scale_factor = platform_window.scale_factor();
         let bounds = platform_window.bounds();
@@ -376,12 +391,14 @@ impl Window {
             blur_listeners: SubscriberSet::new(),
             default_prevented: true,
             mouse_position,
+            modifiers,
             requested_cursor_style: None,
             scale_factor,
             bounds,
             bounds_observers: SubscriberSet::new(),
             active: false,
             dirty: false,
+            drawing: false,
             activation_observers: SubscriberSet::new(),
             focus: None,
 
@@ -435,7 +452,9 @@ impl<'a> WindowContext<'a> {
 
     /// Mark the window as dirty, scheduling it to be redrawn on the next frame.
     pub fn notify(&mut self) {
-        self.window.dirty = true;
+        if !self.window.drawing {
+            self.window.dirty = true;
+        }
     }
 
     /// Close this window.
@@ -805,7 +824,7 @@ impl<'a> WindowContext<'a> {
     /// a specific need to register a global listener.
     pub fn on_mouse_event<Event: 'static>(
         &mut self,
-        handler: impl Fn(&Event, DispatchPhase, &mut WindowContext) + 'static,
+        mut handler: impl FnMut(&Event, DispatchPhase, &mut WindowContext) + 'static,
     ) {
         let order = self.window.next_frame.z_index_stack.clone();
         self.window
@@ -879,13 +898,18 @@ impl<'a> WindowContext<'a> {
         self.window.mouse_position
     }
 
+    /// The current state of the keyboard's modifiers
+    pub fn modifiers(&self) -> Modifiers {
+        self.window.modifiers
+    }
+
     pub fn set_cursor_style(&mut self, style: CursorStyle) {
         self.window.requested_cursor_style = Some(style)
     }
 
     /// Called during painting to invoke the given closure in a new stacking context. The given
     /// z-index is interpreted relative to the previous call to `stack`.
-    pub fn with_z_index<R>(&mut self, z_index: u32, f: impl FnOnce(&mut Self) -> R) -> R {
+    pub fn with_z_index<R>(&mut self, z_index: u8, f: impl FnOnce(&mut Self) -> R) -> R {
         self.window.next_frame.z_index_stack.push(z_index);
         let result = f(self);
         self.window.next_frame.z_index_stack.pop();
@@ -965,14 +989,8 @@ impl<'a> WindowContext<'a> {
 
     /// Paint one or more quads into the scene for the next frame at the current stacking context.
     /// Quads are colored rectangular regions with an optional background, border, and corner radius.
-    pub fn paint_quad(
-        &mut self,
-        bounds: Bounds<Pixels>,
-        corner_radii: Corners<Pixels>,
-        background: impl Into<Hsla>,
-        border_widths: Edges<Pixels>,
-        border_color: impl Into<Hsla>,
-    ) {
+    /// see [`fill`], [`outline`], and [`quad`] to construct this type.
+    pub fn paint_quad(&mut self, quad: PaintQuad) {
         let scale_factor = self.scale_factor();
         let content_mask = self.content_mask();
 
@@ -981,12 +999,12 @@ impl<'a> WindowContext<'a> {
             &window.next_frame.z_index_stack,
             Quad {
                 order: 0,
-                bounds: bounds.scale(scale_factor),
+                bounds: quad.bounds.scale(scale_factor),
                 content_mask: content_mask.scale(scale_factor),
-                background: background.into(),
-                border_color: border_color.into(),
-                corner_radii: corner_radii.scale(scale_factor),
-                border_widths: border_widths.scale(scale_factor),
+                background: quad.background,
+                border_color: quad.border_color,
+                corner_radii: quad.corner_radii.scale(scale_factor),
+                border_widths: quad.border_widths.scale(scale_factor),
             },
         );
     }
@@ -1238,6 +1256,10 @@ impl<'a> WindowContext<'a> {
 
     /// Draw pixels to the display for this window based on the contents of its scene.
     pub(crate) fn draw(&mut self) -> Scene {
+        let t0 = std::time::Instant::now();
+        self.window.dirty = false;
+        self.window.drawing = true;
+
         #[cfg(any(test, feature = "test-support"))]
         {
             self.window.focus_invalidated = false;
@@ -1325,7 +1347,8 @@ impl<'a> WindowContext<'a> {
             self.platform.set_cursor_style(cursor_style);
         }
 
-        self.window.dirty = false;
+        self.window.drawing = false;
+        eprintln!("window draw: {:?}", t0.elapsed());
 
         scene
     }
@@ -1342,15 +1365,33 @@ impl<'a> WindowContext<'a> {
             // API for the mouse position can only occur on the main thread.
             InputEvent::MouseMove(mouse_move) => {
                 self.window.mouse_position = mouse_move.position;
+                self.window.modifiers = mouse_move.modifiers;
                 InputEvent::MouseMove(mouse_move)
             }
             InputEvent::MouseDown(mouse_down) => {
                 self.window.mouse_position = mouse_down.position;
+                self.window.modifiers = mouse_down.modifiers;
                 InputEvent::MouseDown(mouse_down)
             }
             InputEvent::MouseUp(mouse_up) => {
                 self.window.mouse_position = mouse_up.position;
+                self.window.modifiers = mouse_up.modifiers;
                 InputEvent::MouseUp(mouse_up)
+            }
+            InputEvent::MouseExited(mouse_exited) => {
+                // todo!("Should we record that the mouse is outside of the window somehow? Or are these global pixels?")
+                self.window.modifiers = mouse_exited.modifiers;
+
+                InputEvent::MouseExited(mouse_exited)
+            }
+            InputEvent::ModifiersChanged(modifiers_changed) => {
+                self.window.modifiers = modifiers_changed.modifiers;
+                InputEvent::ModifiersChanged(modifiers_changed)
+            }
+            InputEvent::ScrollWheel(scroll_wheel) => {
+                self.window.mouse_position = scroll_wheel.position;
+                self.window.modifiers = scroll_wheel.modifiers;
+                InputEvent::ScrollWheel(scroll_wheel)
             }
             // Translate dragging and dropping of external files from the operating system
             // to internal drag and drop events.
@@ -1359,6 +1400,7 @@ impl<'a> WindowContext<'a> {
                     self.window.mouse_position = position;
                     if self.active_drag.is_none() {
                         self.active_drag = Some(AnyDrag {
+                            value: Box::new(files.clone()),
                             view: self.build_view(|_| files).into(),
                             cursor_offset: position,
                         });
@@ -1394,7 +1436,7 @@ impl<'a> WindowContext<'a> {
                     click_count: 1,
                 }),
             },
-            _ => event,
+            InputEvent::KeyDown(_) | InputEvent::KeyUp(_) => event,
         };
 
         if let Some(any_mouse_event) = event.mouse_event() {
@@ -2190,7 +2232,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         &mut self.window_cx
     }
 
-    pub fn with_z_index<R>(&mut self, z_index: u32, f: impl FnOnce(&mut Self) -> R) -> R {
+    pub fn with_z_index<R>(&mut self, z_index: u8, f: impl FnOnce(&mut Self) -> R) -> R {
         self.window.next_frame.z_index_stack.push(z_index);
         let result = f(self);
         self.window.next_frame.z_index_stack.pop();
@@ -2327,10 +2369,12 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     }
 
     pub fn notify(&mut self) {
-        self.window_cx.notify();
-        self.window_cx.app.push_effect(Effect::Notify {
-            emitter: self.view.model.entity_id,
-        });
+        if !self.window.drawing {
+            self.window_cx.notify();
+            self.window_cx.app.push_effect(Effect::Notify {
+                emitter: self.view.model.entity_id,
+            });
+        }
     }
 
     pub fn observe_window_bounds(
@@ -2865,12 +2909,12 @@ impl AnyWindowHandle {
     }
 }
 
-#[cfg(any(test, feature = "test-support"))]
-impl From<SmallVec<[u32; 16]>> for StackingOrder {
-    fn from(small_vec: SmallVec<[u32; 16]>) -> Self {
-        StackingOrder(small_vec)
-    }
-}
+// #[cfg(any(test, feature = "test-support"))]
+// impl From<SmallVec<[u32; 16]>> for StackingOrder {
+//     fn from(small_vec: SmallVec<[u32; 16]>) -> Self {
+//         StackingOrder(small_vec)
+//     }
+// }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub enum ElementId {
@@ -2944,5 +2988,87 @@ impl From<(&'static str, usize)> for ElementId {
 impl From<(&'static str, u64)> for ElementId {
     fn from((name, id): (&'static str, u64)) -> Self {
         ElementId::NamedInteger(name.into(), id as usize)
+    }
+}
+
+/// A rectangle, to be rendered on the screen by GPUI at the given position and size.
+pub struct PaintQuad {
+    bounds: Bounds<Pixels>,
+    corner_radii: Corners<Pixels>,
+    background: Hsla,
+    border_widths: Edges<Pixels>,
+    border_color: Hsla,
+}
+
+impl PaintQuad {
+    /// Set the corner radii of the quad.
+    pub fn corner_radii(self, corner_radii: impl Into<Corners<Pixels>>) -> Self {
+        PaintQuad {
+            corner_radii: corner_radii.into(),
+            ..self
+        }
+    }
+
+    /// Set the border widths of the quad.
+    pub fn border_widths(self, border_widths: impl Into<Edges<Pixels>>) -> Self {
+        PaintQuad {
+            border_widths: border_widths.into(),
+            ..self
+        }
+    }
+
+    /// Set the border color of the quad.
+    pub fn border_color(self, border_color: impl Into<Hsla>) -> Self {
+        PaintQuad {
+            border_color: border_color.into(),
+            ..self
+        }
+    }
+
+    /// Set the background color of the quad.
+    pub fn background(self, background: impl Into<Hsla>) -> Self {
+        PaintQuad {
+            background: background.into(),
+            ..self
+        }
+    }
+}
+
+/// Create a quad with the given parameters.
+pub fn quad(
+    bounds: Bounds<Pixels>,
+    corner_radii: impl Into<Corners<Pixels>>,
+    background: impl Into<Hsla>,
+    border_widths: impl Into<Edges<Pixels>>,
+    border_color: impl Into<Hsla>,
+) -> PaintQuad {
+    PaintQuad {
+        bounds,
+        corner_radii: corner_radii.into(),
+        background: background.into(),
+        border_widths: border_widths.into(),
+        border_color: border_color.into(),
+    }
+}
+
+/// Create a filled quad with the given bounds and background color.
+pub fn fill(bounds: impl Into<Bounds<Pixels>>, background: impl Into<Hsla>) -> PaintQuad {
+    PaintQuad {
+        bounds: bounds.into(),
+        corner_radii: (0.).into(),
+        background: background.into(),
+        border_widths: (0.).into(),
+        border_color: transparent_black(),
+    }
+}
+
+/// Create a rectangle outline with the given bounds, border color, and a 1px border width
+pub fn outline(bounds: impl Into<Bounds<Pixels>>, border_color: impl Into<Hsla>) -> PaintQuad {
+    PaintQuad {
+        bounds: bounds.into(),
+        corner_radii: (0.).into(),
+        background: transparent_black(),
+        border_widths: (1.).into(),
+        border_color: border_color.into(),
     }
 }

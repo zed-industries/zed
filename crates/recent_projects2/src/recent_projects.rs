@@ -23,14 +23,15 @@ pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(RecentProjects::register).detach();
 }
 
+#[derive(Clone)]
 pub struct RecentProjects {
-    picker: View<Picker<RecentProjectsDelegate>>,
+    pub picker: View<Picker<RecentProjectsDelegate>>,
 }
 
 impl ModalView for RecentProjects {}
 
 impl RecentProjects {
-    fn new(delegate: RecentProjectsDelegate, cx: &mut ViewContext<Self>) -> Self {
+    fn new(delegate: RecentProjectsDelegate, cx: &mut WindowContext<'_>) -> Self {
         Self {
             picker: cx.build_view(|cx| Picker::new(delegate, cx)),
         }
@@ -86,6 +87,16 @@ impl RecentProjects {
             Ok(())
         }))
     }
+    pub fn open_popover(
+        workspace: WeakView<Workspace>,
+        workspaces: Vec<WorkspaceLocation>,
+        cx: &mut WindowContext<'_>,
+    ) -> Self {
+        Self::new(
+            RecentProjectsDelegate::new(workspace, workspaces, false),
+            cx,
+        )
+    }
 }
 
 impl EventEmitter<DismissEvent> for RecentProjects {}
@@ -127,7 +138,7 @@ impl RecentProjectsDelegate {
         }
     }
 }
-
+impl EventEmitter<DismissEvent> for RecentProjectsDelegate {}
 impl PickerDelegate for RecentProjectsDelegate {
     type ListItem = ListItem;
 
@@ -202,11 +213,11 @@ impl PickerDelegate for RecentProjectsDelegate {
                         .open_workspace_for_paths(workspace_location.paths().as_ref().clone(), cx)
                 })
                 .detach_and_log_err(cx);
-            self.dismissed(cx);
+            cx.emit(DismissEvent);
         }
     }
 
-    fn dismissed(&mut self, _cx: &mut ViewContext<Picker<Self>>) {}
+    fn dismissed(&mut self, _: &mut ViewContext<Picker<Self>>) {}
 
     fn render_match(
         &self,
