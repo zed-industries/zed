@@ -165,7 +165,7 @@ struct ChannelMoveClipboard {
 
 const COLLABORATION_PANEL_KEY: &'static str = "CollaborationPanel";
 
-use std::{iter::once, mem, sync::Arc};
+use std::{mem, sync::Arc};
 
 use call::ActiveCall;
 use channel::{Channel, ChannelEvent, ChannelId, ChannelStore};
@@ -175,12 +175,11 @@ use editor::Editor;
 use feature_flags::{ChannelsAlpha, FeatureFlagAppExt, FeatureFlagViewExt};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
-    actions, canvas, div, fill, img, impl_actions, list, overlay, point, prelude::*, px, rems,
-    serde_json, size, Action, AnyElement, AppContext, AsyncWindowContext, Bounds, ClipboardItem,
-    DismissEvent, Div, EventEmitter, FocusHandle, Focusable, FocusableView, Hsla,
-    InteractiveElement, IntoElement, Length, ListOffset, ListState, Model, MouseDownEvent,
-    ParentElement, Pixels, Point, PromptLevel, Quad, Render, RenderOnce, ScrollHandle,
-    SharedString, Size, Stateful, Styled, Subscription, Task, View, ViewContext, VisualContext,
+    actions, canvas, div, fill, impl_actions, list, overlay, point, prelude::*, px, serde_json,
+    AnyElement, AppContext, AsyncWindowContext, Bounds, ClipboardItem, DismissEvent, Div,
+    EventEmitter, FocusHandle, Focusable, FocusableView, InteractiveElement, IntoElement,
+    ListOffset, ListState, Model, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel,
+    Render, RenderOnce, SharedString, Styled, Subscription, Task, View, ViewContext, VisualContext,
     WeakView,
 };
 use project::{Fs, Project};
@@ -189,7 +188,7 @@ use settings::{Settings, SettingsStore};
 use ui::prelude::*;
 use ui::{
     h_stack, v_stack, Avatar, Button, Color, ContextMenu, Icon, IconButton, IconElement, IconSize,
-    Label, List, ListHeader, ListItem, Tooltip,
+    Label, ListHeader, ListItem, Tooltip,
 };
 use util::{maybe, ResultExt, TryFutureExt};
 use workspace::{
@@ -1023,9 +1022,10 @@ impl CollabPanel {
                     })
                     .unwrap_or_else(|| (old_index, old_offset));
 
-                // TODO: How to handle this with `list`?
-                // self.scroll_handle
-                //     .set_logical_scroll_top(new_index, new_offset);
+                self.list_state.scroll_to(ListOffset {
+                    item_ix: new_index,
+                    offset_in_item: new_offset,
+                });
             }
         }
 
@@ -1851,15 +1851,14 @@ impl CollabPanel {
         let Some(channel) = self.selected_channel() else {
             return;
         };
-        // TODO: How to handle now that we're using `list`?
-        // let Some(bounds) = self
-        //     .selection
-        //     .and_then(|ix| self.scroll_handle.bounds_for_item(ix))
-        // else {
-        //     return;
-        // };
-        //
-        // self.deploy_channel_context_menu(bounds.center(), channel.id, self.selection.unwrap(), cx);
+        let Some(bounds) = self
+            .selection
+            .and_then(|ix| self.list_state.bounds_for_item(ix))
+        else {
+            return;
+        };
+
+        self.deploy_channel_context_menu(bounds.center(), channel.id, self.selection.unwrap(), cx);
         cx.stop_propagation();
     }
 
@@ -2047,12 +2046,7 @@ impl CollabPanel {
         )
     }
 
-    fn render_list_entry(
-        &mut self,
-        // entry: &ListEntry,
-        ix: usize,
-        cx: &mut ViewContext<Self>,
-    ) -> AnyElement {
+    fn render_list_entry(&mut self, ix: usize, cx: &mut ViewContext<Self>) -> AnyElement {
         let entry = &self.entries[ix];
 
         let is_selected = self.selection == Some(ix);
@@ -2120,14 +2114,7 @@ impl CollabPanel {
     fn render_signed_in(&mut self, cx: &mut ViewContext<Self>) -> Div {
         v_stack()
             .size_full()
-            .child(
-                v_stack()
-                    .size_full()
-                    // .id("scroll")
-                    // .overflow_y_scroll()
-                    // .track_scroll(&self.scroll_handle)
-                    .child(list(self.list_state.clone()).full().into_any_element()),
-            )
+            .child(list(self.list_state.clone()).full())
             .child(
                 div().p_2().child(
                     div()
