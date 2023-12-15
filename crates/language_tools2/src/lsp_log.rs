@@ -741,11 +741,13 @@ impl Render for LspLogToolbarItemView {
         let _server_selected = current_server.is_some();
 
         let lsp_menu = h_stack()
+            .size_full()
             .child(Self::render_language_server_menu_header(current_server, cx))
             .children(if self.menu_open {
                 Some(
                     overlay().child(
                         v_stack()
+                            .size_full()
                             // todo!()
                             // .scrollable::<LspLogScroll>(0, None, cx)
                             .children(menu_rows.into_iter().map(|row| {
@@ -769,11 +771,11 @@ impl Render for LspLogToolbarItemView {
                        // .with_hoverable(true)
                        // .with_fit_mode(OverlayFitMode::SwitchAnchor)
                        // .with_anchor_corner(AnchorCorner::TopLeft)
-                       // .with_z_index(999),
                 )
             } else {
                 None
-            });
+            })
+            .z_index(99);
 
         let log_cleanup_button = div()
             .child(Label::new("Clear"))
@@ -794,6 +796,7 @@ impl Render for LspLogToolbarItemView {
             .cursor(CursorStyle::PointingHand);
 
         h_stack()
+            .size_full()
             .child(lsp_menu)
             .child(log_cleanup_button)
             .border_1()
@@ -897,6 +900,7 @@ impl LspLogToolbarItemView {
         cx: &mut ViewContext<Self>,
     ) -> Div {
         v_stack()
+            .size_full()
             .child(Label::new(format!("{} ({})", name.0, worktree_root_name)))
             .child(
                 div()
@@ -911,6 +915,7 @@ impl LspLogToolbarItemView {
             )
             .child(
                 h_stack()
+                    .size_full()
                     .child(Label::new(RPC_MESSAGES))
                     .child(
                         Checkbox::new(
@@ -940,6 +945,7 @@ impl LspLogToolbarItemView {
             )
             .border_1()
             .border_color(red())
+            .bg(red())
     }
 }
 

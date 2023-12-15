@@ -319,7 +319,7 @@ impl SyntaxTreeView {
             anonymous_node_style.color = color;
         }
 
-        let mut row = h_stack();
+        let mut row = h_stack().size_full();
         if let Some(field_name) = cursor.field_name() {
             let mut field_style = style.clone();
             if let Some(color) = property_color {
@@ -378,6 +378,8 @@ impl Render for SyntaxTreeView {
             self.hover_state_changed(cx);
         }
 
+        let mut rendered = div();
+
         if let Some(layer) = self
             .editor
             .as_ref()
@@ -390,7 +392,7 @@ impl Render for SyntaxTreeView {
             // todo!()
             // let list_hovered = state.hovered();
             let list_hovered = false;
-            uniform_list(
+            let list = uniform_list(
                 cx.view().clone(),
                 "SyntaxTreeView",
                 layer.node().descendant_count(),
@@ -444,9 +446,11 @@ impl Render for SyntaxTreeView {
                 }),
             )
             .text_bg(editor_colors.background);
+
+            rendered = rendered.child(list);
         }
 
-        div()
+        rendered
     }
 }
 
@@ -505,10 +509,12 @@ impl SyntaxTreeToolbarItemView {
 
         Some(
             v_stack()
+                .size_full()
                 .child(Self::render_header(&active_layer, cx))
                 .children(self.menu_open.then(|| {
                     overlay().child(
                         v_stack()
+                            .size_full()
                             .children(active_buffer.syntax_layers().enumerate().map(
                                 |(ix, layer)| Self::render_menu_item(&active_layer, layer, ix, cx),
                             ))
@@ -519,7 +525,8 @@ impl SyntaxTreeToolbarItemView {
                                 }
                             })),
                     )
-                })),
+                }))
+                .z_index(99),
         )
     }
 
@@ -545,6 +552,7 @@ impl SyntaxTreeToolbarItemView {
 
     fn render_header(active_layer: &OwnedSyntaxLayerInfo, cx: &mut ViewContext<Self>) -> Div {
         h_stack()
+            .size_full()
             .child(Label::new(active_layer.language.name()))
             .child(Label::new(format_node_range(active_layer.node())))
             .on_mouse_down(
@@ -567,6 +575,7 @@ impl SyntaxTreeToolbarItemView {
         // todo!() styling
         let _is_selected = layer.node() == active_layer.node();
         h_stack()
+            .size_full()
             .child(Label::new(layer.language.name().to_string()))
             .child(Label::new(format_node_range(layer.node())))
             .cursor(CursorStyle::PointingHand)
@@ -578,6 +587,7 @@ impl SyntaxTreeToolbarItemView {
             )
             .border_1()
             .border_color(red())
+            .bg(red())
     }
 }
 
