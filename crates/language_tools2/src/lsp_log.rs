@@ -1,20 +1,22 @@
 use collections::{HashMap, VecDeque};
-use editor::{Editor, MoveToEnd};
+use editor::{Editor, EditorElement, EditorEvent, MoveToEnd};
 use futures::{channel::mpsc, StreamExt};
 use gpui::{
-    actions, AnchorCorner, AnyElement, AppContext, Context, CursorStyle, Element, Empty, Entity,
-    Model, ModelContext, MouseButton, Overlay, OverlayFitMode, Subscription, View, ViewContext,
-    VisualContext, WeakModel,
+    actions, div, overlay, red, AnchorCorner, AnyElement, AppContext, Context, CursorStyle, Div,
+    EventEmitter, FocusHandle, FocusableView, InteractiveElement, IntoElement, Model, ModelContext,
+    MouseButton, OverlayFitMode, ParentElement, Render, Styled, Subscription, View, ViewContext,
+    VisualContext, WeakModel, WindowContext,
 };
 use language::{LanguageServerId, LanguageServerName};
 use lsp::IoKind;
 use project::{search::SearchQuery, Project};
 use std::{borrow::Cow, sync::Arc};
-use theme::Theme;
+use theme::{ActiveTheme, Theme};
+use ui::{h_stack, v_stack, Label};
 use workspace::{
     item::{Item, ItemHandle},
-    searchable::{SearchableItem, SearchableItemHandle},
-    ToolbarItemLocation, ToolbarItemView, Workspace,
+    searchable::{SearchEvent, SearchableItem, SearchableItemHandle},
+    ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
 };
 
 const SEND_LINE: &str = "// Send:";
@@ -50,6 +52,7 @@ pub struct LspLogView {
     current_server_id: Option<LanguageServerId>,
     is_showing_rpc_trace: bool,
     project: Model<Project>,
+    focus_handle: FocusHandle,
     _log_store_subscriptions: Vec<Subscription>,
 }
 
@@ -110,9 +113,9 @@ impl LogStore {
             projects: HashMap::default(),
             io_tx,
         };
-        cx.spawn_weak(|this, mut cx| async move {
+        cx.spawn(|this, mut cx| async move {
             while let Some((project, server_id, io_kind, message)) = io_rx.next().await {
-                if let Some(this) = this.upgrade(&cx) {
+                if let Some(this) = this.upgrade() {
                     this.update(&mut cx, |this, cx| {
                         this.on_io(project, server_id, io_kind, &message, cx);
                     });
@@ -120,7 +123,7 @@ impl LogStore {
             }
             anyhow::Ok(())
         })
-        .detach();
+        .detach_and_log_err(cx);
         this
     }
 
@@ -131,7 +134,7 @@ impl LogStore {
             ProjectState {
                 servers: HashMap::default(),
                 _subscriptions: [
-                    cx.observe_release(&project, move |this, _, _| {
+                    cx.observe_release(project, move |this, _, _| {
                         this.projects.remove(&weak_project);
                     }),
                     cx.subscribe(project, |this, project, event, cx| match event {
@@ -185,14 +188,13 @@ impl LogStore {
                     .ok();
             })
         });
-        let this = cx.weak_handle();
+        let this = cx.handle().downgrade();
         let weak_project = project.downgrade();
         server_state._lsp_logs_subscription = server.map(|server| {
             let server_id = server.server_id();
             server.on_notification::<lsp::notification::LogMessage, _>({
                 move |params, mut cx| {
-                    if let Some((project, this)) = weak_project.upgrade().zip(this.upgrade(&mut cx))
-                    {
+                    if let Some((project, this)) = weak_project.upgrade().zip(this.upgrade()) {
                         this.update(&mut cx, |this, cx| {
                             this.add_language_server_log(&project, server_id, &params.message, cx);
                         });
@@ -413,14 +415,25 @@ impl LspLogView {
             }
         });
         let (editor, editor_subscription) = Self::editor_for_logs(String::new(), cx);
+
+        let focus_handle = cx.focus_handle();
+        let focus_subscription = cx.on_focus(&focus_handle, |log_view, cx| {
+            cx.focus_view(&log_view.editor);
+        });
+
         let mut this = Self {
+            focus_handle,
             editor,
             editor_subscription,
             project,
             log_store,
             current_server_id: None,
             is_showing_rpc_trace: false,
-            _log_store_subscriptions: vec![model_changes_subscription, events_subscriptions],
+            _log_store_subscriptions: vec![
+                model_changes_subscription,
+                events_subscriptions,
+                focus_subscription,
+            ],
         };
         if let Some(server_id) = server_id {
             this.show_logs_for_server(server_id, cx);
@@ -433,13 +446,18 @@ impl LspLogView {
         cx: &mut ViewContext<Self>,
     ) -> (View<Editor>, Subscription) {
         let editor = cx.build_view(|cx| {
-            let mut editor = Editor::multi_line(None, cx);
+            let mut editor = Editor::multi_line(cx);
             editor.set_text(log_contents, cx);
             editor.move_to_end(&MoveToEnd, cx);
             editor.set_read_only(true);
             editor
         });
-        let editor_subscription = cx.subscribe(&editor, |_, _, event, cx| cx.emit(event.clone()));
+        let editor_subscription = cx.subscribe(
+            &editor,
+            |_, _, event: &EditorEvent, cx: &mut ViewContext<'_, LspLogView>| {
+                cx.emit(event.clone())
+            },
+        );
         (editor, editor_subscription)
     }
 
@@ -526,7 +544,7 @@ impl LspLogView {
                 .as_singleton()
                 .expect("log buffer should be a singleton")
                 .update(cx, |_, cx| {
-                    cx.spawn_weak({
+                    cx.spawn({
                         let buffer = cx.handle();
                         |_, mut cx| async move {
                             let language = language.await.ok();
@@ -574,30 +592,34 @@ fn log_contents(lines: &VecDeque<String>) -> String {
     }
 }
 
-impl View for LspLogView {
-    fn ui_name() -> &'static str {
-        "LspLogView"
-    }
+impl Render for LspLogView {
+    // todo!()
+    // fn ui_name() -> &'static str {
+    //     "LspLogView"
+    // }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-        ChildView::new(&self.editor, cx).into_any()
-    }
+    type Element = EditorElement;
 
-    fn focus_in(&mut self, _: gpui::AnyView, cx: &mut ViewContext<Self>) {
-        if cx.is_self_focused() {
-            cx.focus(&self.editor);
-        }
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+        self.editor.update(cx, |editor, cx| editor.render(cx))
+    }
+}
+
+impl FocusableView for LspLogView {
+    fn focus_handle(&self, _: &AppContext) -> FocusHandle {
+        self.focus_handle.clone()
     }
 }
 
 impl Item for LspLogView {
-    fn tab_content<V: 'static>(
-        &self,
-        _: Option<usize>,
-        style: &theme::Tab,
-        _: &AppContext,
-    ) -> AnyElement<V> {
-        Label::new("LSP Logs", style.label.clone()).into_any()
+    type Event = EditorEvent;
+
+    fn to_item_events(event: &Self::Event, f: impl FnMut(workspace::item::ItemEvent)) {
+        Editor::to_item_events(event, f)
+    }
+
+    fn tab_content(&self, _: Option<usize>, _: bool, _: &WindowContext<'_>) -> AnyElement {
+        Label::new("LSP Logs").into_any_element()
     }
 
     fn as_searchable(&self, handle: &View<Self>) -> Option<Box<dyn SearchableItemHandle>> {
@@ -607,15 +629,6 @@ impl Item for LspLogView {
 
 impl SearchableItem for LspLogView {
     type Match = <Editor as SearchableItem>::Match;
-
-    fn to_search_event(
-        &mut self,
-        event: &Self::Event,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<workspace::searchable::SearchEvent> {
-        self.editor
-            .update(cx, |editor, cx| editor.to_search_event(event, cx))
-    }
 
     fn clear_matches(&mut self, cx: &mut ViewContext<Self>) {
         self.editor.update(cx, |e, cx| e.clear_matches(cx))
@@ -675,6 +688,8 @@ impl SearchableItem for LspLogView {
     }
 }
 
+impl EventEmitter<ToolbarItemEvent> for LspLogToolbarItemView {}
+
 impl ToolbarItemView for LspLogToolbarItemView {
     fn set_active_pane_item(
         &mut self,
@@ -688,9 +703,7 @@ impl ToolbarItemView for LspLogToolbarItemView {
                 self._log_view_subscription = Some(cx.observe(&log_view, |_, _, cx| {
                     cx.notify();
                 }));
-                return ToolbarItemLocation::PrimaryLeft {
-                    flex: Some((1., false)),
-                };
+                return ToolbarItemLocation::PrimaryLeft;
             }
         }
         self.log_view = None;
@@ -699,15 +712,17 @@ impl ToolbarItemView for LspLogToolbarItemView {
     }
 }
 
-impl View for LspLogToolbarItemView {
-    fn ui_name() -> &'static str {
-        "LspLogView"
-    }
+impl Render for LspLogToolbarItemView {
+    type Element = Div;
+    // todo!()
+    // fn ui_name() -> &'static str {
+    //     "LspLogView"
+    // }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-        let theme = theme::current(cx).clone();
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Div {
+        let theme = cx.theme().clone();
         let Some(log_view) = self.log_view.as_ref() else {
-            return Empty::new().into_any();
+            return div();
         };
         let (menu_rows, current_server_id) = log_view.update(cx, |log_view, cx| {
             let menu_rows = log_view.menu_items(cx).unwrap_or_default();
@@ -726,19 +741,15 @@ impl View for LspLogToolbarItemView {
 
         enum LspLogScroll {}
         enum Menu {}
-        let lsp_menu = Stack::new()
-            .with_child(Self::render_language_server_menu_header(
-                current_server,
-                &theme,
-                cx,
-            ))
-            .with_children(if self.menu_open {
+        let lsp_menu = h_stack()
+            .child(Self::render_language_server_menu_header(current_server, cx))
+            .children(if self.menu_open {
                 Some(
-                    Overlay::new(
-                        MouseEventHandler::new::<Menu, _>(0, cx, move |_, cx| {
-                            Flex::column()
+                    overlay()
+                        .child(
+                            v_stack()
                                 .scrollable::<LspLogScroll>(0, None, cx)
-                                .with_children(menu_rows.into_iter().map(|row| {
+                                .children(menu_rows.into_iter().map(|row| {
                                     Self::render_language_server_menu_item(
                                         row.server_id,
                                         row.server_name,
@@ -750,51 +761,27 @@ impl View for LspLogToolbarItemView {
                                         cx,
                                     )
                                 }))
-                                .contained()
-                                .with_style(theme.toolbar_dropdown_menu.container)
-                                .constrained()
-                                .with_width(400.)
-                                .with_height(400.)
-                        })
-                        .on_down_out(MouseButton::Left, |_, this, cx| {
-                            this.menu_open = false;
-                            cx.notify()
-                        }),
-                    )
-                    .with_hoverable(true)
-                    .with_fit_mode(OverlayFitMode::SwitchAnchor)
-                    .with_anchor_corner(AnchorCorner::TopLeft)
-                    .with_z_index(999)
-                    .aligned()
-                    .bottom()
-                    .left(),
+                                .on_down_out(MouseButton::Left, |_, this, cx| {
+                                    this.menu_open = false;
+                                    cx.notify()
+                                }),
+                        )
+                        .with_hoverable(true)
+                        .with_fit_mode(OverlayFitMode::SwitchAnchor)
+                        .with_anchor_corner(AnchorCorner::TopLeft)
+                        .with_z_index(999)
+                        .bottom()
+                        .left(),
                 )
             } else {
                 None
-            })
-            .aligned()
-            .left()
-            .clipped();
+            });
 
         enum LspCleanupButton {}
-        let log_cleanup_button =
-            MouseEventHandler::new::<LspCleanupButton, _>(1, cx, |state, cx| {
-                let theme = theme::current(cx).clone();
-                let style = theme
-                    .workspace
-                    .toolbar
-                    .toggleable_text_tool
-                    .in_state(server_selected)
-                    .style_for(state);
-                Label::new("Clear", style.text.clone())
-                    .aligned()
-                    .contained()
-                    .with_style(style.container)
-                    .constrained()
-                    .with_height(theme.toolbar_dropdown_menu.row_height / 6.0 * 5.0)
-            })
-            .on_click(MouseButton::Left, move |_, this, cx| {
-                if let Some(log_view) = this.log_view.as_ref() {
+        let log_cleanup_button = div()
+            .child(Label::new("Clear"))
+            .on_mouse_down(MouseButton::Left, move |_, cx| {
+                if let Some(log_view) = self.log_view.as_ref() {
                     log_view.update(cx, |log_view, cx| {
                         log_view.editor.update(cx, |editor, cx| {
                             editor.set_read_only(false);
@@ -804,17 +791,13 @@ impl View for LspLogToolbarItemView {
                     })
                 }
             })
-            .with_cursor_style(CursorStyle::PointingHand)
-            .aligned()
-            .right();
+            .cursor(CursorStyle::PointingHand);
 
-        Flex::row()
-            .with_child(lsp_menu)
-            .with_child(log_cleanup_button)
-            .contained()
-            .aligned()
-            .left()
-            .into_any_named("lsp log controls")
+        h_stack()
+            .child(lsp_menu)
+            .child(log_cleanup_button)
+            .border_1()
+            .border_color(red())
     }
 }
 
@@ -871,37 +854,37 @@ impl LspLogToolbarItemView {
 
     fn render_language_server_menu_header(
         current_server: Option<LogMenuItem>,
-        theme: &Arc<Theme>,
         cx: &mut ViewContext<Self>,
-    ) -> impl Element<Self> {
+    ) -> Div {
+        let view = cx.view().clone();
         enum ToggleMenu {}
-        MouseEventHandler::new::<ToggleMenu, _>(0, cx, move |state, _| {
-            let label: Cow<str> = current_server
-                .and_then(|row| {
-                    Some(
-                        format!(
-                            "{} ({}) - {}",
-                            row.server_name.0,
-                            row.worktree_root_name,
-                            if row.rpc_trace_selected {
-                                RPC_MESSAGES
-                            } else {
-                                SERVER_LOGS
-                            },
-                        )
-                        .into(),
+        let label: Cow<str> = current_server
+            .and_then(|row| {
+                Some(
+                    format!(
+                        "{} ({}) - {}",
+                        row.server_name.0,
+                        row.worktree_root_name,
+                        if row.rpc_trace_selected {
+                            RPC_MESSAGES
+                        } else {
+                            SERVER_LOGS
+                        },
                     )
+                    .into(),
+                )
+            })
+            .unwrap_or_else(|| "No server selected".into());
+        div()
+            .child(Label::new(label))
+            .cursor(CursorStyle::PointingHand)
+            .on_mouse_down(MouseButton::Left, move |_, cx| {
+                view.update(cx, |view, cx| {
+                    view.toggle_menu(cx);
                 })
-                .unwrap_or_else(|| "No server selected".into());
-            let style = theme.toolbar_dropdown_menu.header.style_for(state);
-            Label::new(label, style.text.clone())
-                .contained()
-                .with_style(style.container)
-        })
-        .with_cursor_style(CursorStyle::PointingHand)
-        .on_click(MouseButton::Left, move |_, view, cx| {
-            view.toggle_menu(cx);
-        })
+            })
+            .border_1()
+            .border_color(red())
     }
 
     fn render_language_server_menu_item(
@@ -913,78 +896,52 @@ impl LspLogToolbarItemView {
         rpc_trace_selected: bool,
         theme: &Arc<Theme>,
         cx: &mut ViewContext<Self>,
-    ) -> impl Element<Self> {
+    ) -> Div {
         enum ActivateLog {}
         enum ActivateRpcTrace {}
         enum LanguageServerCheckbox {}
 
-        Flex::column()
-            .with_child({
-                let style = &theme.toolbar_dropdown_menu.section_header;
-                Label::new(
-                    format!("{} ({})", name.0, worktree_root_name),
-                    style.text.clone(),
-                )
-                .contained()
-                .with_style(style.container)
-                .constrained()
-                .with_height(theme.toolbar_dropdown_menu.row_height)
-            })
-            .with_child(
-                MouseEventHandler::new::<ActivateLog, _>(id.0, cx, move |state, _| {
-                    let style = theme
-                        .toolbar_dropdown_menu
-                        .item
-                        .in_state(logs_selected)
-                        .style_for(state);
-                    Label::new(SERVER_LOGS, style.text.clone())
-                        .contained()
-                        .with_style(style.container)
-                        .constrained()
-                        .with_height(theme.toolbar_dropdown_menu.row_height)
-                })
-                .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(MouseButton::Left, move |_, view, cx| {
-                    view.show_logs_for_server(id, cx);
-                }),
+        let view = cx.view().clone();
+
+        v_stack()
+            .child(Label::new(format!("{} ({})", name.0, worktree_root_name)))
+            .child(
+                div()
+                    .child(Label::new(SERVER_LOGS))
+                    .cursor(CursorStyle::PointingHand)
+                    .on_mouse_down(MouseButton::Left, move |_, cx| {
+                        view.update(cx, |view, cx| {
+                            view.show_logs_for_server(id, cx);
+                        })
+                    }),
             )
-            .with_child(
-                MouseEventHandler::new::<ActivateRpcTrace, _>(id.0, cx, move |state, cx| {
-                    let style = theme
-                        .toolbar_dropdown_menu
-                        .item
-                        .in_state(rpc_trace_selected)
-                        .style_for(state);
-                    Flex::row()
-                        .with_child(
-                            Label::new(RPC_MESSAGES, style.text.clone())
-                                .constrained()
-                                .with_height(theme.toolbar_dropdown_menu.row_height),
+            .child(
+                h_stack()
+                    .child(Label::new(RPC_MESSAGES))
+                    .child(
+                        ui::checkbox_with_label::<LanguageServerCheckbox, _, Self, _>(
+                            div(),
+                            &theme.welcome.checkbox,
+                            rpc_trace_enabled,
+                            id.0,
+                            cx,
+                            move |this, enabled, cx| {
+                                this.toggle_logging_for_server(id, enabled, cx);
+                            },
                         )
-                        .with_child(
-                            ui::checkbox_with_label::<LanguageServerCheckbox, _, Self, _>(
-                                Empty::new(),
-                                &theme.welcome.checkbox,
-                                rpc_trace_enabled,
-                                id.0,
-                                cx,
-                                move |this, enabled, cx| {
-                                    this.toggle_logging_for_server(id, enabled, cx);
-                                },
-                            )
-                            .flex_float(),
-                        )
-                        .align_children_center()
-                        .contained()
-                        .with_style(style.container)
-                        .constrained()
-                        .with_height(theme.toolbar_dropdown_menu.row_height)
-                })
-                .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(MouseButton::Left, move |_, view, cx| {
-                    view.show_rpc_trace_for_server(id, cx);
-                }),
+                        .flex_float(),
+                    )
+                    .border_1()
+                    .border_color(red())
+                    .cursor(CursorStyle::PointingHand)
+                    .on_mouse_down(MouseButton::Left, move |_, cx| {
+                        view.update(cx, |view, cx| {
+                            view.show_rpc_trace_for_server(id, cx);
+                        })
+                    }),
             )
+            .border_1()
+            .border_color(red())
     }
 }
 
@@ -996,14 +953,7 @@ pub enum Event {
     },
 }
 
-impl Entity for LogStore {
-    type Event = Event;
-}
-
-impl Entity for LspLogView {
-    type Event = editor::Event;
-}
-
-impl Entity for LspLogToolbarItemView {
-    type Event = ();
-}
+impl EventEmitter<Event> for LogStore {}
+impl EventEmitter<Event> for LspLogView {}
+impl EventEmitter<EditorEvent> for LspLogView {}
+impl EventEmitter<SearchEvent> for LspLogView {}

@@ -1652,14 +1652,11 @@ impl Editor {
         Self::new(EditorMode::SingleLine, buffer, None, cx)
     }
 
-    //     pub fn multi_line(
-    //         field_editor_style: Option<Arc<GetFieldEditorTheme>>,
-    //         cx: &mut ViewContext<Self>,
-    //     ) -> Self {
-    //         let buffer = cx.build_model(|cx| Buffer::new(0, cx.model_id() as u64, String::new()));
-    //         let buffer = cx.build_model(|cx| MultiBuffer::singleton(buffer, cx));
-    //         Self::new(EditorMode::Full, buffer, None, field_editor_style, cx)
-    //     }
+    pub fn multi_line(cx: &mut ViewContext<Self>) -> Self {
+        let buffer = cx.build_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), String::new()));
+        let buffer = cx.build_model(|cx| MultiBuffer::singleton(buffer, cx));
+        Self::new(EditorMode::Full, buffer, None, cx)
+    }
 
     pub fn auto_height(max_lines: usize, cx: &mut ViewContext<Self>) -> Self {
         let buffer = cx.build_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), String::new()));

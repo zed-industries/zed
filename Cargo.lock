@@ -5008,6 +5008,7 @@ dependencies = [
  "settings2",
  "theme2",
  "tree-sitter",
+ "ui2",
  "unindent",
  "util",
  "workspace2",
