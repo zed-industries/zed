@@ -415,16 +415,16 @@ impl AnyElement {
     {
         let element =
             FRAME_ARENA.with_borrow_mut(|arena| arena.alloc(Some(DrawableElement::new(element))));
-        let element = unsafe { element.map(|element| element as &mut dyn ElementObject) };
+        let element = element.map(|element| element as &mut dyn ElementObject);
         AnyElement(element)
     }
 
     pub fn layout(&mut self, cx: &mut WindowContext) -> LayoutId {
-        unsafe { self.0.get_mut() }.layout(cx)
+        self.0.layout(cx)
     }
 
     pub fn paint(&mut self, cx: &mut WindowContext) {
-        unsafe { self.0.get_mut() }.paint(cx)
+        self.0.paint(cx)
     }
 
     /// Initializes this element and performs layout within the given available space to determine its size.
@@ -433,7 +433,7 @@ impl AnyElement {
         available_space: Size<AvailableSpace>,
         cx: &mut WindowContext,
     ) -> Size<Pixels> {
-        unsafe { self.0.get_mut() }.measure(available_space, cx)
+        self.0.measure(available_space, cx)
     }
 
     /// Initializes this element and performs layout in the available space, then paints it at the given origin.
@@ -443,11 +443,11 @@ impl AnyElement {
         available_space: Size<AvailableSpace>,
         cx: &mut WindowContext,
     ) {
-        unsafe { self.0.get_mut() }.draw(origin, available_space, cx)
+        self.0.draw(origin, available_space, cx)
     }
 
     pub fn inner_id(&self) -> Option<ElementId> {
-        unsafe { self.0.get() }.element_id()
+        self.0.element_id()
     }
 }
 

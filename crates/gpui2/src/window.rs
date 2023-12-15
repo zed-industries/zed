@@ -99,7 +99,7 @@ struct FocusEvent {
 slotmap::new_key_type! { pub struct FocusId; }
 
 thread_local! {
-    pub static FRAME_ARENA: RefCell<Arena> = RefCell::new(Arena::default());
+    pub static FRAME_ARENA: RefCell<Arena> = RefCell::new(Arena::new(16 * 1024 * 1024));
 }
 
 impl FocusId {
@@ -829,14 +829,15 @@ impl<'a> WindowContext<'a> {
         mut handler: impl FnMut(&Event, DispatchPhase, &mut WindowContext) + 'static,
     ) {
         let order = self.window.next_frame.z_index_stack.clone();
-        let handler = FRAME_ARENA.with_borrow_mut(|arena| {
-            arena.alloc(
-                move |event: &dyn Any, phase: DispatchPhase, cx: &mut WindowContext<'_>| {
-                    handler(event.downcast_ref().unwrap(), phase, cx)
-                },
-            )
-        });
-        let handler = unsafe { handler.map(|handler| handler as _) };
+        let handler = FRAME_ARENA
+            .with_borrow_mut(|arena| {
+                arena.alloc(
+                    move |event: &dyn Any, phase: DispatchPhase, cx: &mut WindowContext<'_>| {
+                        handler(event.downcast_ref().unwrap(), phase, cx)
+                    },
+                )
+            })
+            .map(|handler| handler as _);
         self.window
             .next_frame
             .mouse_listeners
@@ -855,14 +856,15 @@ impl<'a> WindowContext<'a> {
         &mut self,
         listener: impl Fn(&Event, DispatchPhase, &mut WindowContext) + 'static,
     ) {
-        let listener = FRAME_ARENA.with_borrow_mut(|arena| {
-            arena.alloc(move |event: &dyn Any, phase, cx: &mut WindowContext<'_>| {
-                if let Some(event) = event.downcast_ref::<Event>() {
-                    listener(event, phase, cx)
-                }
+        let listener = FRAME_ARENA
+            .with_borrow_mut(|arena| {
+                arena.alloc(move |event: &dyn Any, phase, cx: &mut WindowContext<'_>| {
+                    if let Some(event) = event.downcast_ref::<Event>() {
+                        listener(event, phase, cx)
+                    }
+                })
             })
-        });
-        let listener = unsafe { listener.map(|handler| handler as _) };
+            .map(|handler| handler as _);
         self.window.next_frame.dispatch_tree.on_key_event(listener);
     }
 
@@ -877,8 +879,9 @@ impl<'a> WindowContext<'a> {
         action_type: TypeId,
         listener: impl Fn(&dyn Any, DispatchPhase, &mut WindowContext) + 'static,
     ) {
-        let listener = FRAME_ARENA.with_borrow_mut(|arena| arena.alloc(listener));
-        let listener = unsafe { listener.map(|handler| handler as _) };
+        let listener = FRAME_ARENA
+            .with_borrow_mut(|arena| arena.alloc(listener))
+            .map(|handler| handler as _);
         self.window
             .next_frame
             .dispatch_tree
@@ -1284,14 +1287,15 @@ impl<'a> WindowContext<'a> {
             cx.with_key_dispatch(Some(KeyContext::default()), None, |_, cx| {
                 for (action_type, action_listeners) in &cx.app.global_action_listeners {
                     for action_listener in action_listeners.iter().cloned() {
-                        let listener = FRAME_ARENA.with_borrow_mut(|arena| {
-                            arena.alloc(
-                                move |action: &dyn Any, phase, cx: &mut WindowContext<'_>| {
-                                    action_listener(action, phase, cx)
-                                },
-                            )
-                        });
-                        let listener = unsafe { listener.map(|listener| listener as _) };
+                        let listener = FRAME_ARENA
+                            .with_borrow_mut(|arena| {
+                                arena.alloc(
+                                    move |action: &dyn Any, phase, cx: &mut WindowContext<'_>| {
+                                        action_listener(action, phase, cx)
+                                    },
+                                )
+                            })
+                            .map(|listener| listener as _);
                         cx.window
                             .next_frame
                             .dispatch_tree
@@ -1478,7 +1482,6 @@ impl<'a> WindowContext<'a> {
             // Capture phase, events bubble from back to front. Handlers for this phase are used for
             // special purposes, such as detecting events outside of a given Bounds.
             for (_, handler) in &mut handlers {
-                let handler = unsafe { handler.get_mut() };
                 handler(event, DispatchPhase::Capture, self);
                 if !self.app.propagate_event {
                     break;
@@ -1488,7 +1491,6 @@ impl<'a> WindowContext<'a> {
             // Bubble phase, where most normal handlers do their work.
             if self.app.propagate_event {
                 for (_, handler) in handlers.iter_mut().rev() {
-                    let handler = unsafe { handler.get_mut() };
                     handler(event, DispatchPhase::Bubble, self);
                     if !self.app.propagate_event {
                         break;
@@ -1538,8 +1540,7 @@ impl<'a> WindowContext<'a> {
                 context_stack.push(context);
             }
 
-            for mut key_listener in node.key_listeners.clone() {
-                let key_listener = unsafe { key_listener.get_mut() };
+            for key_listener in node.key_listeners.clone() {
                 key_listener(event, DispatchPhase::Capture, self);
                 if !self.propagate_event {
                     return;
@@ -1551,8 +1552,7 @@ impl<'a> WindowContext<'a> {
         for node_id in dispatch_path.iter().rev() {
             // Handle low level key events
             let node = self.window.rendered_frame.dispatch_tree.node(*node_id);
-            for mut key_listener in node.key_listeners.clone() {
-                let key_listener = unsafe { key_listener.get_mut() };
+            for key_listener in node.key_listeners.clone() {
                 key_listener(event, DispatchPhase::Bubble, self);
                 if !self.propagate_event {
                     return;
@@ -1604,12 +1604,11 @@ impl<'a> WindowContext<'a> {
             let node = self.window.rendered_frame.dispatch_tree.node(*node_id);
             for DispatchActionListener {
                 action_type,
-                mut listener,
+                listener,
             } in node.action_listeners.clone()
             {
                 let any_action = action.as_any();
                 if action_type == any_action.type_id() {
-                    let listener = unsafe { listener.get_mut() };
                     listener(any_action, DispatchPhase::Capture, self);
                     if !self.propagate_event {
                         return;
@@ -1622,13 +1621,12 @@ impl<'a> WindowContext<'a> {
             let node = self.window.rendered_frame.dispatch_tree.node(*node_id);
             for DispatchActionListener {
                 action_type,
-                mut listener,
+                listener,
             } in node.action_listeners.clone()
             {
                 let any_action = action.as_any();
                 if action_type == any_action.type_id() {
                     self.propagate_event = false; // Actions stop propagation by default during the bubble phase
-                    let listener = unsafe { listener.get_mut() };
                     listener(any_action, DispatchPhase::Bubble, self);
                     if !self.propagate_event {
                         return;
