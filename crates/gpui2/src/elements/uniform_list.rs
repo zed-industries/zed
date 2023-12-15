@@ -196,16 +196,16 @@ impl Element for UniformList {
                 let padding = style.padding.to_pixels(bounds.size.into(), cx.rem_size());
 
                 let padded_bounds = Bounds::from_corners(
-                    bounds.origin + point(border.left + padding.left, border.top + padding.top),
-                    bounds.lower_right()
-                        - point(border.right + padding.right, border.bottom + padding.bottom),
+                    bounds.origin + point(border.left + padding.left, border.top),
+                    bounds.lower_right() - point(border.right + padding.right, border.bottom),
                 );
 
                 cx.with_z_index(style.z_index.unwrap_or(0), |cx| {
                     style.paint(bounds, cx, |cx| {
                         if self.item_count > 0 {
-                            let min_scroll_offset =
-                                padded_bounds.size.height - (item_height * self.item_count);
+                            let content_height =
+                                item_height * self.item_count + padding.top + padding.bottom;
+                            let min_scroll_offset = padded_bounds.size.height - content_height;
                             if scroll_offset.y < min_scroll_offset {
                                 shared_scroll_offset.borrow_mut().y = min_scroll_offset;
                                 scroll_offset.y = min_scroll_offset;
@@ -220,7 +220,7 @@ impl Element for UniformList {
                             }
 
                             let first_visible_element_ix =
-                                (-scroll_offset.y / item_height).floor() as usize;
+                                (-(scroll_offset.y + padding.top) / item_height).floor() as usize;
                             let last_visible_element_ix =
                                 ((-scroll_offset.y + padded_bounds.size.height) / item_height)
                                     .ceil() as usize;
@@ -233,7 +233,10 @@ impl Element for UniformList {
                                 cx.with_content_mask(Some(content_mask), |cx| {
                                     for (item, ix) in items.iter_mut().zip(visible_range) {
                                         let item_origin = padded_bounds.origin
-                                            + point(px(0.), item_height * ix + scroll_offset.y);
+                                            + point(
+                                                px(0.),
+                                                item_height * ix + scroll_offset.y + padding.top,
+                                            );
                                         let available_space = size(
                                             AvailableSpace::Definite(padded_bounds.size.width),
                                             AvailableSpace::Definite(item_height),
