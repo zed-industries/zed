@@ -76,6 +76,10 @@ impl<T: ?Sized> ArenaRef<T> {
         ArenaRef(NonNull::new_unchecked(u))
     }
 
+    pub unsafe fn get(&self) -> &T {
+        self.0.as_ref()
+    }
+
     pub unsafe fn get_mut(&mut self) -> &mut T {
         self.0.as_mut()
     }

@@ -27,6 +27,7 @@ use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
     borrow::{Borrow, BorrowMut, Cow},
+    cell::RefCell,
     fmt::Debug,
     future::Future,
     hash::{Hash, Hasher},
@@ -96,6 +97,10 @@ struct FocusEvent {
 }
 
 slotmap::new_key_type! { pub struct FocusId; }
+
+thread_local! {
+    pub static FRAME_ARENA: RefCell<Arena> = RefCell::new(Arena::default());
+}
 
 impl FocusId {
     /// Obtains whether the element associated with this handle is currently focused.
@@ -272,7 +277,6 @@ pub(crate) struct ElementStateBox {
 
 pub(crate) struct Frame {
     focus: Option<FocusId>,
-    arena: Arena,
     pub(crate) element_states: FxHashMap<GlobalElementId, ElementStateBox>,
     mouse_listeners: FxHashMap<TypeId, Vec<(StackingOrder, AnyMouseListener)>>,
     pub(crate) dispatch_tree: DispatchTree,
@@ -287,7 +291,6 @@ impl Frame {
     fn new(dispatch_tree: DispatchTree) -> Self {
         Frame {
             focus: None,
-            arena: Arena::default(),
             element_states: FxHashMap::default(),
             mouse_listeners: FxHashMap::default(),
             dispatch_tree,
@@ -302,7 +305,6 @@ impl Frame {
     fn clear(&mut self) {
         self.element_states.clear();
         self.mouse_listeners.values_mut().for_each(Vec::clear);
-        self.arena.clear();
         self.dispatch_tree.clear();
         self.depth_map.clear();
     }
@@ -827,11 +829,13 @@ impl<'a> WindowContext<'a> {
         mut handler: impl FnMut(&Event, DispatchPhase, &mut WindowContext) + 'static,
     ) {
         let order = self.window.next_frame.z_index_stack.clone();
-        let handler = self.window.next_frame.arena.alloc(
-            move |event: &dyn Any, phase: DispatchPhase, cx: &mut WindowContext<'_>| {
-                handler(event.downcast_ref().unwrap(), phase, cx)
-            },
-        );
+        let handler = FRAME_ARENA.with_borrow_mut(|arena| {
+            arena.alloc(
+                move |event: &dyn Any, phase: DispatchPhase, cx: &mut WindowContext<'_>| {
+                    handler(event.downcast_ref().unwrap(), phase, cx)
+                },
+            )
+        });
         let handler = unsafe { handler.map(|handler| handler as _) };
         self.window
             .next_frame
@@ -851,13 +855,13 @@ impl<'a> WindowContext<'a> {
         &mut self,
         listener: impl Fn(&Event, DispatchPhase, &mut WindowContext) + 'static,
     ) {
-        let listener = self.window.next_frame.arena.alloc(
-            move |event: &dyn Any, phase, cx: &mut WindowContext<'_>| {
+        let listener = FRAME_ARENA.with_borrow_mut(|arena| {
+            arena.alloc(move |event: &dyn Any, phase, cx: &mut WindowContext<'_>| {
                 if let Some(event) = event.downcast_ref::<Event>() {
                     listener(event, phase, cx)
                 }
-            },
-        );
+            })
+        });
         let listener = unsafe { listener.map(|handler| handler as _) };
         self.window.next_frame.dispatch_tree.on_key_event(listener);
     }
@@ -873,7 +877,7 @@ impl<'a> WindowContext<'a> {
         action_type: TypeId,
         listener: impl Fn(&dyn Any, DispatchPhase, &mut WindowContext) + 'static,
     ) {
-        let listener = self.window.next_frame.arena.alloc(listener);
+        let listener = FRAME_ARENA.with_borrow_mut(|arena| arena.alloc(listener));
         let listener = unsafe { listener.map(|handler| handler as _) };
         self.window
             .next_frame
@@ -1273,17 +1277,20 @@ impl<'a> WindowContext<'a> {
         self.window.platform_window.clear_input_handler();
         self.window.layout_engine.as_mut().unwrap().clear();
         self.window.next_frame.clear();
+        FRAME_ARENA.with_borrow_mut(|arena| arena.clear());
         let root_view = self.window.root_view.take().unwrap();
 
         self.with_z_index(0, |cx| {
             cx.with_key_dispatch(Some(KeyContext::default()), None, |_, cx| {
                 for (action_type, action_listeners) in &cx.app.global_action_listeners {
                     for action_listener in action_listeners.iter().cloned() {
-                        let listener = cx.window.next_frame.arena.alloc(
-                            move |action: &dyn Any, phase, cx: &mut WindowContext<'_>| {
-                                action_listener(action, phase, cx)
-                            },
-                        );
+                        let listener = FRAME_ARENA.with_borrow_mut(|arena| {
+                            arena.alloc(
+                                move |action: &dyn Any, phase, cx: &mut WindowContext<'_>| {
+                                    action_listener(action, phase, cx)
+                                },
+                            )
+                        });
                         let listener = unsafe { listener.map(|listener| listener as _) };
                         cx.window
                             .next_frame

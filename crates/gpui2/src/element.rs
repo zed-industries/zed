@@ -1,6 +1,6 @@
 use crate::{
-    AvailableSpace, BorrowWindow, Bounds, ElementId, LayoutId, Pixels, Point, Size, ViewContext,
-    WindowContext,
+    arena::ArenaRef, AvailableSpace, BorrowWindow, Bounds, ElementId, LayoutId, Pixels, Point,
+    Size, ViewContext, WindowContext, FRAME_ARENA,
 };
 use derive_more::{Deref, DerefMut};
 pub(crate) use smallvec::SmallVec;
@@ -405,7 +405,7 @@ where
     }
 }
 
-pub struct AnyElement(Box<dyn ElementObject>);
+pub struct AnyElement(ArenaRef<dyn ElementObject>);
 
 impl AnyElement {
     pub fn new<E>(element: E) -> Self
@@ -413,15 +413,18 @@ impl AnyElement {
         E: 'static + Element,
         E::State: Any,
     {
-        AnyElement(Box::new(Some(DrawableElement::new(element))) as Box<dyn ElementObject>)
+        let element =
+            FRAME_ARENA.with_borrow_mut(|arena| arena.alloc(Some(DrawableElement::new(element))));
+        let element = unsafe { element.map(|element| element as &mut dyn ElementObject) };
+        AnyElement(element)
     }
 
     pub fn layout(&mut self, cx: &mut WindowContext) -> LayoutId {
-        self.0.layout(cx)
+        unsafe { self.0.get_mut() }.layout(cx)
     }
 
     pub fn paint(&mut self, cx: &mut WindowContext) {
-        self.0.paint(cx)
+        unsafe { self.0.get_mut() }.paint(cx)
     }
 
     /// Initializes this element and performs layout within the given available space to determine its size.
@@ -430,7 +433,7 @@ impl AnyElement {
         available_space: Size<AvailableSpace>,
         cx: &mut WindowContext,
     ) -> Size<Pixels> {
-        self.0.measure(available_space, cx)
+        unsafe { self.0.get_mut() }.measure(available_space, cx)
     }
 
     /// Initializes this element and performs layout in the available space, then paints it at the given origin.
@@ -440,16 +443,11 @@ impl AnyElement {
         available_space: Size<AvailableSpace>,
         cx: &mut WindowContext,
     ) {
-        self.0.draw(origin, available_space, cx)
-    }
-
-    /// Converts this `AnyElement` into a trait object that can be stored and manipulated.
-    pub fn into_any(self) -> AnyElement {
-        AnyElement::new(self)
+        unsafe { self.0.get_mut() }.draw(origin, available_space, cx)
     }
 
     pub fn inner_id(&self) -> Option<ElementId> {
-        self.0.element_id()
+        unsafe { self.0.get() }.element_id()
     }
 }
 
@@ -478,6 +476,10 @@ impl IntoElement for AnyElement {
     }
 
     fn into_element(self) -> Self::Element {
+        self
+    }
+
+    fn into_any_element(self) -> AnyElement {
         self
     }
 }
