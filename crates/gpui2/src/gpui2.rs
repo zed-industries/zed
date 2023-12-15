@@ -2,6 +2,7 @@
 mod action;
 mod app;
 
+mod arena;
 mod assets;
 mod color;
 mod element;
