@@ -178,9 +178,10 @@ use gpui::{
     actions, canvas, div, fill, img, impl_actions, list, overlay, point, prelude::*, px, rems,
     serde_json, size, Action, AnyElement, AppContext, AsyncWindowContext, Bounds, ClipboardItem,
     DismissEvent, Div, EventEmitter, FocusHandle, Focusable, FocusableView, Hsla,
-    InteractiveElement, IntoElement, Length, ListState, Model, MouseDownEvent, ParentElement,
-    Pixels, Point, PromptLevel, Quad, Render, RenderOnce, ScrollHandle, SharedString, Size,
-    Stateful, Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView,
+    InteractiveElement, IntoElement, Length, ListOffset, ListState, Model, MouseDownEvent,
+    ParentElement, Pixels, Point, PromptLevel, Quad, Render, RenderOnce, ScrollHandle,
+    SharedString, Size, Stateful, Styled, Subscription, Task, View, ViewContext, VisualContext,
+    WeakView,
 };
 use project::{Fs, Project};
 use serde_derive::{Deserialize, Serialize};
@@ -314,7 +315,6 @@ pub struct CollabPanel {
     client: Arc<Client>,
     project: Model<Project>,
     match_candidates: Vec<StringMatchCandidate>,
-    scroll_handle: ScrollHandle,
     subscriptions: Vec<Subscription>,
     collapsed_sections: Vec<Section>,
     collapsed_channels: Vec<ChannelId>,
@@ -469,7 +469,6 @@ impl CollabPanel {
                 project: workspace.project().clone(),
                 subscriptions: Vec::default(),
                 match_candidates: Vec::default(),
-                scroll_handle: ScrollHandle::new(),
                 collapsed_sections: vec![Section::Offline],
                 collapsed_channels: Vec::default(),
                 workspace: workspace.weak_handle(),
@@ -583,6 +582,13 @@ impl CollabPanel {
             }
             .log_err(),
         );
+    }
+
+    fn scroll_to_item(&mut self, ix: usize) {
+        self.list_state.scroll_to(ListOffset {
+            item_ix: ix,
+            offset_in_item: px(0.),
+        })
     }
 
     fn update_entries(&mut self, select_same_item: bool, cx: &mut ViewContext<Self>) {
@@ -968,7 +974,7 @@ impl CollabPanel {
                 for (ix, entry) in self.entries.iter().enumerate() {
                     if *entry == prev_selected_entry {
                         self.selection = Some(ix);
-                        self.scroll_handle.scroll_to_item(ix);
+                        self.scroll_to_item(ix);
                         break;
                     }
                 }
@@ -979,16 +985,19 @@ impl CollabPanel {
                     None
                 } else {
                     let ix = prev_selection.min(self.entries.len() - 1);
-                    self.scroll_handle.scroll_to_item(ix);
+                    self.scroll_to_item(ix);
                     Some(ix)
                 }
             });
         }
 
         if scroll_to_top {
-            self.scroll_handle.scroll_to_item(0)
+            self.scroll_to_item(0)
         } else {
-            let (old_index, old_offset) = self.scroll_handle.logical_scroll_top();
+            let ListOffset {
+                item_ix: old_index,
+                offset_in_item: old_offset,
+            } = self.list_state.logical_scroll_top();
             // Attempt to maintain the same scroll position.
             if let Some(old_top_entry) = old_entries.get(old_index) {
                 let (new_index, new_offset) = self
@@ -1014,8 +1023,9 @@ impl CollabPanel {
                     })
                     .unwrap_or_else(|| (old_index, old_offset));
 
-                self.scroll_handle
-                    .set_logical_scroll_top(new_index, new_offset);
+                // TODO: How to handle this with `list`?
+                // self.scroll_handle
+                //     .set_logical_scroll_top(new_index, new_offset);
             }
         }
 
@@ -1506,7 +1516,7 @@ impl CollabPanel {
         }
 
         if let Some(ix) = self.selection {
-            self.scroll_handle.scroll_to_item(ix)
+            self.scroll_to_item(ix)
         }
         cx.notify();
     }
@@ -1518,7 +1528,7 @@ impl CollabPanel {
         }
 
         if let Some(ix) = self.selection {
-            self.scroll_handle.scroll_to_item(ix)
+            self.scroll_to_item(ix)
         }
         cx.notify();
     }
@@ -1841,14 +1851,15 @@ impl CollabPanel {
         let Some(channel) = self.selected_channel() else {
             return;
         };
-        let Some(bounds) = self
-            .selection
-            .and_then(|ix| self.scroll_handle.bounds_for_item(ix))
-        else {
-            return;
-        };
-
-        self.deploy_channel_context_menu(bounds.center(), channel.id, self.selection.unwrap(), cx);
+        // TODO: How to handle now that we're using `list`?
+        // let Some(bounds) = self
+        //     .selection
+        //     .and_then(|ix| self.scroll_handle.bounds_for_item(ix))
+        // else {
+        //     return;
+        // };
+        //
+        // self.deploy_channel_context_menu(bounds.center(), channel.id, self.selection.unwrap(), cx);
         cx.stop_propagation();
     }
 
