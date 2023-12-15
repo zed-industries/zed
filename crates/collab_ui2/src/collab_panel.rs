@@ -2225,18 +2225,14 @@ impl CollabPanel {
                     .selected(is_selected),
             )
             .when(section == Section::Channels, |el| {
-                el.drag_over::<Channel>(|style| {
-                    style.bg(cx.theme().colors().ghost_element_hover)
-                })
-                .on_drop(cx.listener(
-                    move |this, dragged_channel: &Channel, cx| {
+                el.drag_over::<Channel>(|style| style.bg(cx.theme().colors().ghost_element_hover))
+                    .on_drop(cx.listener(move |this, dragged_channel: &Channel, cx| {
                         this.channel_store
                             .update(cx, |channel_store, cx| {
                                 channel_store.move_channel(dragged_channel.id, None, cx)
                             })
                             .detach_and_log_err(cx)
-                    },
-                ))
+                    }))
             });
 
         if section == Section::Offline {
@@ -2451,22 +2447,14 @@ impl CollabPanel {
                     width,
                 })
             })
-            .drag_over::<Channel>(|style| {
-                style.bg(cx.theme().colors().ghost_element_hover)
-            })
-            .on_drop(
-                cx.listener(move |this, dragged_channel: &Channel, cx| {
-                    this.channel_store
-                        .update(cx, |channel_store, cx| {
-                            channel_store.move_channel(
-                                dragged_channel.id,
-                                Some(channel_id),
-                                cx,
-                            )
-                        })
-                        .detach_and_log_err(cx)
-                }),
-            )
+            .drag_over::<Channel>(|style| style.bg(cx.theme().colors().ghost_element_hover))
+            .on_drop(cx.listener(move |this, dragged_channel: &Channel, cx| {
+                this.channel_store
+                    .update(cx, |channel_store, cx| {
+                        channel_store.move_channel(dragged_channel.id, Some(channel_id), cx)
+                    })
+                    .detach_and_log_err(cx)
+            }))
             .child(
                 ListItem::new(channel_id as usize)
                     // Offset the indent depth by one to give us room to show the disclosure.
