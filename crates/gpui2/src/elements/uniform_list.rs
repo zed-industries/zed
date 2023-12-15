@@ -206,7 +206,9 @@ impl Element for UniformList {
                             let content_height =
                                 item_height * self.item_count + padding.top + padding.bottom;
                             let min_scroll_offset = padded_bounds.size.height - content_height;
-                            if scroll_offset.y < min_scroll_offset {
+                            let is_scrolled = scroll_offset.y != px(0.);
+
+                            if is_scrolled && scroll_offset.y < min_scroll_offset {
                                 shared_scroll_offset.borrow_mut().y = min_scroll_offset;
                                 scroll_offset.y = min_scroll_offset;
                             }
