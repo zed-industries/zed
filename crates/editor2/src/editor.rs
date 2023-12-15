@@ -4260,11 +4260,7 @@ impl Editor {
                 fold_data
                     .map(|(fold_status, buffer_row, active)| {
                         (active || gutter_hovered || fold_status == FoldStatus::Folded).then(|| {
-                            let icon = match fold_status {
-                                FoldStatus::Folded => ui::Icon::ChevronRight,
-                                FoldStatus::Foldable => ui::Icon::ChevronDown,
-                            };
-                            IconButton::new(ix as usize, icon)
+                            IconButton::new(ix as usize, ui::Icon::ChevronDown)
                                 .on_click(cx.listener(move |editor, e, cx| match fold_status {
                                     FoldStatus::Folded => {
                                         editor.unfold_at(&UnfoldAt { buffer_row }, cx);
@@ -4274,6 +4270,10 @@ impl Editor {
                                     }
                                 }))
                                 .icon_color(ui::Color::Muted)
+                                .icon_size(ui::IconSize::Small)
+                                .selected(fold_status == FoldStatus::Folded)
+                                .selected_icon(ui::Icon::ChevronRight)
+                                .size(ui::ButtonSize::None)
                         })
                     })
                     .flatten()
