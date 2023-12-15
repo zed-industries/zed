@@ -165,7 +165,7 @@ struct ChannelMoveClipboard {
 
 const COLLABORATION_PANEL_KEY: &'static str = "CollaborationPanel";
 
-use std::{iter::once, mem, sync::Arc};
+use std::{mem, sync::Arc};
 
 use call::ActiveCall;
 use channel::{Channel, ChannelEvent, ChannelId, ChannelStore};
@@ -175,12 +175,12 @@ use editor::Editor;
 use feature_flags::{ChannelsAlpha, FeatureFlagAppExt, FeatureFlagViewExt};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
-    actions, canvas, div, fill, img, impl_actions, overlay, point, prelude::*, px, rems,
-    serde_json, size, Action, AnyElement, AppContext, AsyncWindowContext, Bounds, ClipboardItem,
-    DismissEvent, Div, EventEmitter, FocusHandle, Focusable, FocusableView, Hsla,
-    InteractiveElement, IntoElement, Length, Model, MouseDownEvent, ParentElement, Pixels, Point,
-    PromptLevel, Quad, Render, RenderOnce, ScrollHandle, SharedString, Size, Stateful, Styled,
-    Subscription, Task, View, ViewContext, VisualContext, WeakView,
+    actions, canvas, div, fill, impl_actions, list, overlay, point, prelude::*, px, serde_json,
+    AnyElement, AppContext, AsyncWindowContext, Bounds, ClipboardItem, DismissEvent, Div,
+    EventEmitter, FocusHandle, Focusable, FocusableView, InteractiveElement, IntoElement,
+    ListOffset, ListState, Model, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel,
+    Render, RenderOnce, SharedString, Styled, Subscription, Task, View, ViewContext, VisualContext,
+    WeakView,
 };
 use project::{Fs, Project};
 use serde_derive::{Deserialize, Serialize};
@@ -188,7 +188,7 @@ use settings::{Settings, SettingsStore};
 use ui::prelude::*;
 use ui::{
     h_stack, v_stack, Avatar, Button, Color, ContextMenu, Icon, IconButton, IconElement, IconSize,
-    Label, List, ListHeader, ListItem, Tooltip,
+    Label, ListHeader, ListItem, Tooltip,
 };
 use util::{maybe, ResultExt, TryFutureExt};
 use workspace::{
@@ -303,6 +303,7 @@ pub struct CollabPanel {
     channel_clipboard: Option<ChannelMoveClipboard>,
     pending_serialization: Task<Option<()>>,
     context_menu: Option<(View<ContextMenu>, Point<Pixels>, Subscription)>,
+    list_state: ListState,
     filter_editor: View<Editor>,
     channel_name_editor: View<Editor>,
     channel_editing_state: Option<ChannelEditingState>,
@@ -313,7 +314,6 @@ pub struct CollabPanel {
     client: Arc<Client>,
     project: Model<Project>,
     match_candidates: Vec<StringMatchCandidate>,
-    scroll_handle: ScrollHandle,
     subscriptions: Vec<Subscription>,
     collapsed_sections: Vec<Section>,
     collapsed_channels: Vec<ChannelId>,
@@ -398,7 +398,7 @@ enum ListEntry {
 impl CollabPanel {
     pub fn new(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) -> View<Self> {
         cx.build_view(|cx| {
-            //             let view_id = cx.view_id();
+            let view = cx.view().clone();
 
             let filter_editor = cx.build_view(|cx| {
                 let mut editor = Editor::single_line(cx);
@@ -445,136 +445,10 @@ impl CollabPanel {
             })
             .detach();
 
-            //             let list_state =
-            //                 ListState::<Self>::new(0, Orientation::Top, 1000., move |this, ix, cx| {
-            //                     let theme = theme::current(cx).clone();
-            //                     let is_selected = this.selection == Some(ix);
-            //                     let current_project_id = this.project.read(cx).remote_id();
-
-            //                     match &this.entries[ix] {
-            //                         ListEntry::Header(section) => {
-            //                             let is_collapsed = this.collapsed_sections.contains(section);
-            //                             this.render_header(*section, &theme, is_selected, is_collapsed, cx)
-            //                         }
-            //                         ListEntry::CallParticipant {
-            //                             user,
-            //                             peer_id,
-            //                             is_pending,
-            //                         } => Self::render_call_participant(
-            //                             user,
-            //                             *peer_id,
-            //                             this.user_store.clone(),
-            //                             *is_pending,
-            //                             is_selected,
-            //                             &theme,
-            //                             cx,
-            //                         ),
-            //                         ListEntry::ParticipantProject {
-            //                             project_id,
-            //                             worktree_root_names,
-            //                             host_user_id,
-            //                             is_last,
-            //                         } => Self::render_participant_project(
-            //                             *project_id,
-            //                             worktree_root_names,
-            //                             *host_user_id,
-            //                             Some(*project_id) == current_project_id,
-            //                             *is_last,
-            //                             is_selected,
-            //                             &theme,
-            //                             cx,
-            //                         ),
-            //                         ListEntry::ParticipantScreen { peer_id, is_last } => {
-            //                             Self::render_participant_screen(
-            //                                 *peer_id,
-            //                                 *is_last,
-            //                                 is_selected,
-            //                                 &theme.collab_panel,
-            //                                 cx,
-            //                             )
-            //                         }
-            //                         ListEntry::Channel {
-            //                             channel,
-            //                             depth,
-            //                             has_children,
-            //                         } => {
-            //                             let channel_row = this.render_channel(
-            //                                 &*channel,
-            //                                 *depth,
-            //                                 &theme,
-            //                                 is_selected,
-            //                                 *has_children,
-            //                                 ix,
-            //                                 cx,
-            //                             );
-
-            //                             if is_selected && this.context_menu_on_selected {
-            //                                 Stack::new()
-            //                                     .with_child(channel_row)
-            //                                     .with_child(
-            //                                         ChildView::new(&this.context_menu, cx)
-            //                                             .aligned()
-            //                                             .bottom()
-            //                                             .right(),
-            //                                     )
-            //                                     .into_any()
-            //                             } else {
-            //                                 return channel_row;
-            //                             }
-            //                         }
-            //                         ListEntry::ChannelNotes { channel_id } => this.render_channel_notes(
-            //                             *channel_id,
-            //                             &theme.collab_panel,
-            //                             is_selected,
-            //                             ix,
-            //                             cx,
-            //                         ),
-            //                         ListEntry::ChannelChat { channel_id } => this.render_channel_chat(
-            //                             *channel_id,
-            //                             &theme.collab_panel,
-            //                             is_selected,
-            //                             ix,
-            //                             cx,
-            //                         ),
-            //                         ListEntry::ChannelInvite(channel) => Self::render_channel_invite(
-            //                             channel.clone(),
-            //                             this.channel_store.clone(),
-            //                             &theme.collab_panel,
-            //                             is_selected,
-            //                             cx,
-            //                         ),
-            //                         ListEntry::IncomingRequest(user) => Self::render_contact_request(
-            //                             user.clone(),
-            //                             this.user_store.clone(),
-            //                             &theme.collab_panel,
-            //                             true,
-            //                             is_selected,
-            //                             cx,
-            //                         ),
-            //                         ListEntry::OutgoingRequest(user) => Self::render_contact_request(
-            //                             user.clone(),
-            //                             this.user_store.clone(),
-            //                             &theme.collab_panel,
-            //                             false,
-            //                             is_selected,
-            //                             cx,
-            //                         ),
-            //                         ListEntry::Contact { contact, calling } => Self::render_contact(
-            //                             contact,
-            //                             *calling,
-            //                             &this.project,
-            //                             &theme,
-            //                             is_selected,
-            //                             cx,
-            //                         ),
-            //                         ListEntry::ChannelEditor { depth } => {
-            //                             this.render_channel_editor(&theme, *depth, cx)
-            //                         }
-            //                         ListEntry::ContactPlaceholder => {
-            //                             this.render_contact_placeholder(&theme.collab_panel, is_selected, cx)
-            //                         }
-            //                     }
-            //                 });
+            let list_state =
+                ListState::new(0, gpui::ListAlignment::Top, px(1000.), move |ix, cx| {
+                    view.update(cx, |view, cx| view.render_list_entry(ix, cx))
+                });
 
             let mut this = Self {
                 width: None,
@@ -583,6 +457,7 @@ impl CollabPanel {
                 fs: workspace.app_state().fs.clone(),
                 pending_serialization: Task::ready(None),
                 context_menu: None,
+                list_state,
                 channel_name_editor,
                 filter_editor,
                 entries: Vec::default(),
@@ -593,7 +468,6 @@ impl CollabPanel {
                 project: workspace.project().clone(),
                 subscriptions: Vec::default(),
                 match_candidates: Vec::default(),
-                scroll_handle: ScrollHandle::new(),
                 collapsed_sections: vec![Section::Offline],
                 collapsed_channels: Vec::default(),
                 workspace: workspace.weak_handle(),
@@ -707,6 +581,10 @@ impl CollabPanel {
             }
             .log_err(),
         );
+    }
+
+    fn scroll_to_item(&mut self, ix: usize) {
+        self.list_state.scroll_to_reveal_item(ix)
     }
 
     fn update_entries(&mut self, select_same_item: bool, cx: &mut ViewContext<Self>) {
@@ -1084,13 +962,15 @@ impl CollabPanel {
             self.entries.push(ListEntry::ContactPlaceholder);
         }
 
+        self.list_state.reset(self.entries.len());
+
         if select_same_item {
             if let Some(prev_selected_entry) = prev_selected_entry {
                 self.selection.take();
                 for (ix, entry) in self.entries.iter().enumerate() {
                     if *entry == prev_selected_entry {
                         self.selection = Some(ix);
-                        self.scroll_handle.scroll_to_item(ix);
+                        self.scroll_to_item(ix);
                         break;
                     }
                 }
@@ -1101,16 +981,19 @@ impl CollabPanel {
                     None
                 } else {
                     let ix = prev_selection.min(self.entries.len() - 1);
-                    self.scroll_handle.scroll_to_item(ix);
+                    self.scroll_to_item(ix);
                     Some(ix)
                 }
             });
         }
 
         if scroll_to_top {
-            self.scroll_handle.scroll_to_item(0)
+            self.scroll_to_item(0)
         } else {
-            let (old_index, old_offset) = self.scroll_handle.logical_scroll_top();
+            let ListOffset {
+                item_ix: old_index,
+                offset_in_item: old_offset,
+            } = self.list_state.logical_scroll_top();
             // Attempt to maintain the same scroll position.
             if let Some(old_top_entry) = old_entries.get(old_index) {
                 let (new_index, new_offset) = self
@@ -1136,8 +1019,10 @@ impl CollabPanel {
                     })
                     .unwrap_or_else(|| (old_index, old_offset));
 
-                self.scroll_handle
-                    .set_logical_scroll_top(new_index, new_offset);
+                self.list_state.scroll_to(ListOffset {
+                    item_ix: new_index,
+                    offset_in_item: new_offset,
+                });
             }
         }
 
@@ -1628,7 +1513,7 @@ impl CollabPanel {
         }
 
         if let Some(ix) = self.selection {
-            self.scroll_handle.scroll_to_item(ix)
+            self.scroll_to_item(ix)
         }
         cx.notify();
     }
@@ -1640,7 +1525,7 @@ impl CollabPanel {
         }
 
         if let Some(ix) = self.selection {
-            self.scroll_handle.scroll_to_item(ix)
+            self.scroll_to_item(ix)
         }
         cx.notify();
     }
@@ -1965,7 +1850,7 @@ impl CollabPanel {
         };
         let Some(bounds) = self
             .selection
-            .and_then(|ix| self.scroll_handle.bounds_for_item(ix))
+            .and_then(|ix| self.list_state.bounds_for_item(ix))
         else {
             return;
         };
@@ -2158,78 +2043,75 @@ impl CollabPanel {
         )
     }
 
+    fn render_list_entry(&mut self, ix: usize, cx: &mut ViewContext<Self>) -> AnyElement {
+        let entry = &self.entries[ix];
+
+        let is_selected = self.selection == Some(ix);
+        match entry {
+            ListEntry::Header(section) => {
+                let is_collapsed = self.collapsed_sections.contains(section);
+                self.render_header(*section, is_selected, is_collapsed, cx)
+                    .into_any_element()
+            }
+            ListEntry::Contact { contact, calling } => self
+                .render_contact(contact, *calling, is_selected, cx)
+                .into_any_element(),
+            ListEntry::ContactPlaceholder => self
+                .render_contact_placeholder(is_selected, cx)
+                .into_any_element(),
+            ListEntry::IncomingRequest(user) => self
+                .render_contact_request(user, true, is_selected, cx)
+                .into_any_element(),
+            ListEntry::OutgoingRequest(user) => self
+                .render_contact_request(user, false, is_selected, cx)
+                .into_any_element(),
+            ListEntry::Channel {
+                channel,
+                depth,
+                has_children,
+            } => self
+                .render_channel(channel, *depth, *has_children, is_selected, ix, cx)
+                .into_any_element(),
+            ListEntry::ChannelEditor { depth } => {
+                self.render_channel_editor(*depth, cx).into_any_element()
+            }
+            ListEntry::CallParticipant {
+                user,
+                peer_id,
+                is_pending,
+            } => self
+                .render_call_participant(user, *peer_id, *is_pending, cx)
+                .into_any_element(),
+            ListEntry::ParticipantProject {
+                project_id,
+                worktree_root_names,
+                host_user_id,
+                is_last,
+            } => self
+                .render_participant_project(
+                    *project_id,
+                    &worktree_root_names,
+                    *host_user_id,
+                    *is_last,
+                    cx,
+                )
+                .into_any_element(),
+            ListEntry::ParticipantScreen { peer_id, is_last } => self
+                .render_participant_screen(*peer_id, *is_last, cx)
+                .into_any_element(),
+            ListEntry::ChannelNotes { channel_id } => self
+                .render_channel_notes(*channel_id, cx)
+                .into_any_element(),
+            ListEntry::ChannelChat { channel_id } => {
+                self.render_channel_chat(*channel_id, cx).into_any_element()
+            }
+        }
+    }
+
     fn render_signed_in(&mut self, cx: &mut ViewContext<Self>) -> Div {
         v_stack()
             .size_full()
-            .child(
-                v_stack()
-                    .size_full()
-                    .id("scroll")
-                    .overflow_y_scroll()
-                    .track_scroll(&self.scroll_handle)
-                    .children(self.entries.iter().enumerate().map(|(ix, entry)| {
-                        let is_selected = self.selection == Some(ix);
-                        match entry {
-                            ListEntry::Header(section) => {
-                                let is_collapsed = self.collapsed_sections.contains(section);
-                                self.render_header(*section, is_selected, is_collapsed, cx)
-                                    .into_any_element()
-                            }
-                            ListEntry::Contact { contact, calling } => self
-                                .render_contact(contact, *calling, is_selected, cx)
-                                .into_any_element(),
-                            ListEntry::ContactPlaceholder => self
-                                .render_contact_placeholder(is_selected, cx)
-                                .into_any_element(),
-                            ListEntry::IncomingRequest(user) => self
-                                .render_contact_request(user, true, is_selected, cx)
-                                .into_any_element(),
-                            ListEntry::OutgoingRequest(user) => self
-                                .render_contact_request(user, false, is_selected, cx)
-                                .into_any_element(),
-                            ListEntry::Channel {
-                                channel,
-                                depth,
-                                has_children,
-                            } => self
-                                .render_channel(channel, *depth, *has_children, is_selected, ix, cx)
-                                .into_any_element(),
-                            ListEntry::ChannelEditor { depth } => {
-                                self.render_channel_editor(*depth, cx).into_any_element()
-                            }
-                            ListEntry::CallParticipant {
-                                user,
-                                peer_id,
-                                is_pending,
-                            } => self
-                                .render_call_participant(user, *peer_id, *is_pending, cx)
-                                .into_any_element(),
-                            ListEntry::ParticipantProject {
-                                project_id,
-                                worktree_root_names,
-                                host_user_id,
-                                is_last,
-                            } => self
-                                .render_participant_project(
-                                    *project_id,
-                                    &worktree_root_names,
-                                    *host_user_id,
-                                    *is_last,
-                                    cx,
-                                )
-                                .into_any_element(),
-                            ListEntry::ParticipantScreen { peer_id, is_last } => self
-                                .render_participant_screen(*peer_id, *is_last, cx)
-                                .into_any_element(),
-                            ListEntry::ChannelNotes { channel_id } => self
-                                .render_channel_notes(*channel_id, cx)
-                                .into_any_element(),
-                            ListEntry::ChannelChat { channel_id } => {
-                                self.render_channel_chat(*channel_id, cx).into_any_element()
-                            }
-                        }
-                    })),
-            )
+            .child(list(self.list_state.clone()).full())
             .child(
                 div().p_2().child(
                     div()
@@ -2343,18 +2225,14 @@ impl CollabPanel {
                     .selected(is_selected),
             )
             .when(section == Section::Channels, |el| {
-                el.drag_over::<DraggedChannelView>(|style| {
-                    style.bg(cx.theme().colors().ghost_element_hover)
-                })
-                .on_drop(cx.listener(
-                    move |this, view: &View<DraggedChannelView>, cx| {
+                el.drag_over::<Channel>(|style| style.bg(cx.theme().colors().ghost_element_hover))
+                    .on_drop(cx.listener(move |this, dragged_channel: &Channel, cx| {
                         this.channel_store
                             .update(cx, |channel_store, cx| {
-                                channel_store.move_channel(view.read(cx).channel.id, None, cx)
+                                channel_store.move_channel(dragged_channel.id, None, cx)
                             })
                             .detach_and_log_err(cx)
-                    },
-                ))
+                    }))
             });
 
         if section == Section::Offline {
@@ -2569,22 +2447,14 @@ impl CollabPanel {
                     width,
                 })
             })
-            .drag_over::<DraggedChannelView>(|style| {
-                style.bg(cx.theme().colors().ghost_element_hover)
-            })
-            .on_drop(
-                cx.listener(move |this, view: &View<DraggedChannelView>, cx| {
-                    this.channel_store
-                        .update(cx, |channel_store, cx| {
-                            channel_store.move_channel(
-                                view.read(cx).channel.id,
-                                Some(channel_id),
-                                cx,
-                            )
-                        })
-                        .detach_and_log_err(cx)
-                }),
-            )
+            .drag_over::<Channel>(|style| style.bg(cx.theme().colors().ghost_element_hover))
+            .on_drop(cx.listener(move |this, dragged_channel: &Channel, cx| {
+                this.channel_store
+                    .update(cx, |channel_store, cx| {
+                        channel_store.move_channel(dragged_channel.id, Some(channel_id), cx)
+                    })
+                    .detach_and_log_err(cx)
+            }))
             .child(
                 ListItem::new(channel_id as usize)
                     // Offset the indent depth by one to give us room to show the disclosure.
