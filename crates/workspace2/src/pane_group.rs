@@ -172,6 +172,10 @@ impl Member {
     ) -> impl IntoElement {
         match self {
             Member::Pane(pane) => {
+                if zoomed == Some(&pane.downgrade().into()) {
+                    return div().into_any();
+                }
+
                 let leader = follower_states.get(pane).and_then(|state| {
                     let room = active_call?.read(cx).room()?.read(cx);
                     room.remote_participant_for_peer_id(state.leader_id)
