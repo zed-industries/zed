@@ -17,10 +17,9 @@ use strum::IntoEnumIterator;
 use theme2::{ThemeRegistry, ThemeSettings};
 use ui::prelude::*;
 
-pub use indoc::indoc;
-use storybook2::assets::Assets;
 use crate::assets::Assets;
 use crate::story_selector::{ComponentStory, StorySelector};
+pub use indoc::indoc;
 
 // gpui::actions! {
 //     storybook,
