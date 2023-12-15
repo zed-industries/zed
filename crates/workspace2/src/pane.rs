@@ -1897,19 +1897,14 @@ impl Render for Pane {
                     .on_drag_move::<ProjectEntryId>(cx.listener(Self::handle_drag_move))
                     .map(|div| {
                         if let Some(item) = self.active_item() {
-                            div.flex_col()
+                            div.v_flex()
                                 .child(self.toolbar.clone())
                                 .child(item.to_any())
                         } else {
-                            div.flex()
-                                .flex_row()
-                                .items_center()
-                                .size_full()
-                                .justify_center()
-                                .child(
-                                    Label::new("Open a file or project to get started.")
-                                        .color(Color::Muted),
-                                )
+                            div.h_flex().size_full().justify_center().child(
+                                Label::new("Open a file or project to get started.")
+                                    .color(Color::Muted),
+                            )
                         }
                     })
                     .child(
