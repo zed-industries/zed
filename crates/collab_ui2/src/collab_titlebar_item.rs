@@ -1,9 +1,10 @@
 use crate::face_pile::FacePile;
+use auto_update::AutoUpdateStatus;
 use call::{ActiveCall, ParticipantLocation, Room};
 use client::{proto::PeerId, Client, ParticipantIndex, User, UserStore};
 use gpui::{
-    actions, canvas, div, overlay, point, px, rems, AnyElement, AppContext, DismissEvent, Div,
-    Element, FocusableView, Hsla, InteractiveElement, IntoElement, Model, ParentElement, Path,
+    actions, canvas, div, overlay, point, px, rems, Action, AnyElement, AppContext, DismissEvent,
+    Div, Element, FocusableView, Hsla, InteractiveElement, IntoElement, Model, ParentElement, Path,
     Render, Stateful, StatefulInteractiveElement, Styled, Subscription, View, ViewContext,
     VisualContext, WeakView, WindowBounds,
 };
@@ -53,7 +54,6 @@ pub struct CollabTitlebarItem {
     workspace: WeakView<Workspace>,
     branch_popover: Option<View<BranchList>>,
     project_popover: Option<recent_projects::RecentProjects>,
-    //user_menu: ViewHandle<ContextMenu>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -233,68 +233,17 @@ impl Render for CollabTitlebarItem {
                                 }),
                         )
                     })
-                    .child(
-                        h_stack()
-                            .border_color(gpui::red())
-                            .border_1()
-                            .px_1p5()
-                            .map(|this| {
-                                if let Some(user) = current_user {
-                                    // TODO: Finish implementing user menu popover
-                                    //
-                                    this.child(
-                                        popover_menu("user-menu")
-                                            .menu(|cx| {
-                                                ContextMenu::build(cx, |menu, _| {
-                                                    menu.header("ADADA")
-                                                })
-                                            })
-                                            .trigger(
-                                                ButtonLike::new("user-menu")
-                                                    .child(
-                                                        h_stack()
-                                                            .gap_0p5()
-                                                            .child(Avatar::new(
-                                                                user.avatar_uri.clone(),
-                                                            ))
-                                                            .child(
-                                                                IconElement::new(Icon::ChevronDown)
-                                                                    .color(Color::Muted),
-                                                            ),
-                                                    )
-                                                    .style(ButtonStyle::Subtle)
-                                                    .tooltip(move |cx| {
-                                                        Tooltip::text("Toggle User Menu", cx)
-                                                    }),
-                                            )
-                                            .anchor(gpui::AnchorCorner::TopRight),
-                                    )
-                                    // this.child(
-                                    //     ButtonLike::new("user-menu")
-                                    //         .child(
-                                    //             h_stack().gap_0p5().child(Avatar::data(avatar)).child(
-                                    //                 IconElement::new(Icon::ChevronDown).color(Color::Muted),
-                                    //             ),
-                                    //         )
-                                    //         .style(ButtonStyle::Subtle)
-                                    //         .tooltip(move |cx| Tooltip::text("Toggle User Menu", cx)),
-                                    // )
-                                } else {
-                                    this.child(Button::new("sign_in", "Sign in").on_click(
-                                        move |_, cx| {
-                                            let client = client.clone();
-                                            cx.spawn(move |mut cx| async move {
-                                                client
-                                                    .authenticate_and_connect(true, &cx)
-                                                    .await
-                                                    .notify_async_err(&mut cx);
-                                            })
-                                            .detach();
-                                        },
-                                    ))
-                                }
-                            }),
-                    ),
+                    .map(|el| {
+                        let status = self.client.status();
+                        let status = &*status.borrow();
+                        if matches!(status, client::Status::Connected { .. }) {
+                            el.child(self.render_user_menu_button(cx))
+                        } else {
+                            el.children(self.render_connection_status(status, cx))
+                                .child(self.render_sign_in_button(cx))
+                                .child(self.render_user_menu_button(cx))
+                        }
+                    }),
             )
     }
 }
@@ -336,12 +285,6 @@ impl CollabTitlebarItem {
             project,
             user_store,
             client,
-            //         user_menu: cx.add_view(|cx| {
-            //             let view_id = cx.view_id();
-            //             let mut menu = ContextMenu::new(view_id, cx);
-            //             menu.set_position_mode(OverlayPositionMode::Local);
-            //             menu
-            //         }),
             branch_popover: None,
             project_popover: None,
             _subscriptions: subscriptions,
@@ -582,154 +525,113 @@ impl CollabTitlebarItem {
         cx.notify();
     }
 
-    // fn render_user_menu_button(
-    //     &self,
-    //     theme: &Theme,
-    //     avatar: Option<Arc<ImageData>>,
-    //     cx: &mut ViewContext<Self>,
-    // ) -> AnyElement<Self> {
-    //     let tooltip = theme.tooltip.clone();
-    //     let user_menu_button_style = if avatar.is_some() {
-    //         &theme.titlebar.user_menu.user_menu_button_online
-    //     } else {
-    //         &theme.titlebar.user_menu.user_menu_button_offline
-    //     };
+    fn render_connection_status(
+        &self,
+        status: &client::Status,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<AnyElement> {
+        match status {
+            client::Status::ConnectionError
+            | client::Status::ConnectionLost
+            | client::Status::Reauthenticating { .. }
+            | client::Status::Reconnecting { .. }
+            | client::Status::ReconnectionError { .. } => Some(
+                div()
+                    .id("disconnected")
+                    .bg(gpui::red()) // todo!() @nate
+                    .child(IconElement::new(Icon::Disconnected))
+                    .tooltip(|cx| Tooltip::text("Disconnected", cx))
+                    .into_any_element(),
+            ),
+            client::Status::UpgradeRequired => {
+                let auto_updater = auto_update::AutoUpdater::get(cx);
+                let label = match auto_updater.map(|auto_update| auto_update.read(cx).status()) {
+                    Some(AutoUpdateStatus::Updated) => "Please restart Zed to Collaborate",
+                    Some(AutoUpdateStatus::Installing)
+                    | Some(AutoUpdateStatus::Downloading)
+                    | Some(AutoUpdateStatus::Checking) => "Updating...",
+                    Some(AutoUpdateStatus::Idle) | Some(AutoUpdateStatus::Errored) | None => {
+                        "Please update Zed to Collaborate"
+                    }
+                };
 
-    //     let avatar_style = &user_menu_button_style.avatar;
-    //     Stack::new()
-    //         .with_child(
-    //             MouseEventHandler::new::<ToggleUserMenu, _>(0, cx, |state, _| {
-    //                 let style = user_menu_button_style
-    //                     .user_menu
-    //                     .inactive_state()
-    //                     .style_for(state);
+                Some(
+                    div()
+                        .bg(gpui::red()) // todo!() @nate
+                        .child(Button::new("connection-status", label).on_click(|_, cx| {
+                            if let Some(auto_updater) = auto_update::AutoUpdater::get(cx) {
+                                if auto_updater.read(cx).status() == AutoUpdateStatus::Updated {
+                                    workspace::restart(&Default::default(), cx);
+                                    return;
+                                }
+                            }
+                            auto_update::check(&Default::default(), cx);
+                        }))
+                        .into_any_element(),
+                )
+            }
+            _ => None,
+        }
+    }
 
-    //                 let mut dropdown = Flex::row().align_children_center();
+    pub fn render_sign_in_button(&mut self, _: &mut ViewContext<Self>) -> Button {
+        let client = self.client.clone();
+        Button::new("sign_in", "Sign in").on_click(move |_, cx| {
+            let client = client.clone();
+            cx.spawn(move |mut cx| async move {
+                client
+                    .authenticate_and_connect(true, &cx)
+                    .await
+                    .notify_async_err(&mut cx);
+            })
+            .detach();
+        })
+    }
 
-    //                 if let Some(avatar_img) = avatar {
-    //                     dropdown = dropdown.with_child(Self::render_face(
-    //                         avatar_img,
-    //                         *avatar_style,
-    //                         Color::transparent_black(),
-    //                         None,
-    //                     ));
-    //                 };
-
-    //                 dropdown
-    //                     .with_child(
-    //                         Svg::new("icons/caret_down.svg")
-    //                             .with_color(user_menu_button_style.icon.color)
-    //                             .constrained()
-    //                             .with_width(user_menu_button_style.icon.width)
-    //                             .contained()
-    //                             .into_any(),
-    //                     )
-    //                     .aligned()
-    //                     .constrained()
-    //                     .with_height(style.width)
-    //                     .contained()
-    //                     .with_style(style.container)
-    //                     .into_any()
-    //             })
-    //             .with_cursor_style(CursorStyle::PointingHand)
-    //             .on_down(MouseButton::Left, move |_, this, cx| {
-    //                 this.user_menu.update(cx, |menu, _| menu.delay_cancel());
-    //             })
-    //             .on_click(MouseButton::Left, move |_, this, cx| {
-    //                 this.toggle_user_menu(&Default::default(), cx)
-    //             })
-    //             .with_tooltip::<ToggleUserMenu>(
-    //                 0,
-    //                 "Toggle User Menu".to_owned(),
-    //                 Some(Box::new(ToggleUserMenu)),
-    //                 tooltip,
-    //                 cx,
-    //             )
-    //             .contained(),
-    //         )
-    //         .with_child(
-    //             ChildView::new(&self.user_menu, cx)
-    //                 .aligned()
-    //                 .bottom()
-    //                 .right(),
-    //         )
-    //         .into_any()
-    // }
-
-    // fn render_sign_in_button(&self, theme: &Theme, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-    //     let titlebar = &theme.titlebar;
-    //     MouseEventHandler::new::<SignIn, _>(0, cx, |state, _| {
-    //         let style = titlebar.sign_in_button.inactive_state().style_for(state);
-    //         Label::new("Sign In", style.text.clone())
-    //             .contained()
-    //             .with_style(style.container)
-    //     })
-    //     .with_cursor_style(CursorStyle::PointingHand)
-    //     .on_click(MouseButton::Left, move |_, this, cx| {
-    //         let client = this.client.clone();
-    //         cx.app_context()
-    //             .spawn(|cx| async move { client.authenticate_and_connect(true, &cx).await })
-    //             .detach_and_log_err(cx);
-    //     })
-    //     .into_any()
-    // }
-
-    // fn render_connection_status(
-    //     &self,
-    //     status: &client::Status,
-    //     cx: &mut ViewContext<Self>,
-    // ) -> Option<AnyElement<Self>> {
-    //     enum ConnectionStatusButton {}
-
-    //     let theme = &theme::current(cx).clone();
-    //     match status {
-    //         client::Status::ConnectionError
-    //         | client::Status::ConnectionLost
-    //         | client::Status::Reauthenticating { .. }
-    //         | client::Status::Reconnecting { .. }
-    //         | client::Status::ReconnectionError { .. } => Some(
-    //             Svg::new("icons/disconnected.svg")
-    //                 .with_color(theme.titlebar.offline_icon.color)
-    //                 .constrained()
-    //                 .with_width(theme.titlebar.offline_icon.width)
-    //                 .aligned()
-    //                 .contained()
-    //                 .with_style(theme.titlebar.offline_icon.container)
-    //                 .into_any(),
-    //         ),
-    //         client::Status::UpgradeRequired => {
-    //             let auto_updater = auto_update::AutoUpdater::get(cx);
-    //             let label = match auto_updater.map(|auto_update| auto_update.read(cx).status()) {
-    //                 Some(AutoUpdateStatus::Updated) => "Please restart Zed to Collaborate",
-    //                 Some(AutoUpdateStatus::Installing)
-    //                 | Some(AutoUpdateStatus::Downloading)
-    //                 | Some(AutoUpdateStatus::Checking) => "Updating...",
-    //                 Some(AutoUpdateStatus::Idle) | Some(AutoUpdateStatus::Errored) | None => {
-    //                     "Please update Zed to Collaborate"
-    //                 }
-    //             };
-
-    //             Some(
-    //                 MouseEventHandler::new::<ConnectionStatusButton, _>(0, cx, |_, _| {
-    //                     Label::new(label, theme.titlebar.outdated_warning.text.clone())
-    //                         .contained()
-    //                         .with_style(theme.titlebar.outdated_warning.container)
-    //                         .aligned()
-    //                 })
-    //                 .with_cursor_style(CursorStyle::PointingHand)
-    //                 .on_click(MouseButton::Left, |_, _, cx| {
-    //                     if let Some(auto_updater) = auto_update::AutoUpdater::get(cx) {
-    //                         if auto_updater.read(cx).status() == AutoUpdateStatus::Updated {
-    //                             workspace::restart(&Default::default(), cx);
-    //                             return;
-    //                         }
-    //                     }
-    //                     auto_update::check(&Default::default(), cx);
-    //                 })
-    //                 .into_any(),
-    //             )
-    //         }
-    //         _ => None,
-    //     }
-    // }
+    pub fn render_user_menu_button(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
+        if let Some(user) = self.user_store.read(cx).current_user() {
+            popover_menu("user-menu")
+                .menu(|cx| {
+                    ContextMenu::build(cx, |menu, _| {
+                        menu.action("Settings", zed_actions::OpenSettings.boxed_clone())
+                            .action("Theme", theme_selector::Toggle.boxed_clone())
+                            .separator()
+                            .action("Share Feedback", feedback::GiveFeedback.boxed_clone())
+                            .action("Sign Out", client::SignOut.boxed_clone())
+                    })
+                })
+                .trigger(
+                    ButtonLike::new("user-menu")
+                        .child(
+                            h_stack()
+                                .gap_0p5()
+                                .child(Avatar::new(user.avatar_uri.clone()))
+                                .child(IconElement::new(Icon::ChevronDown).color(Color::Muted)),
+                        )
+                        .style(ButtonStyle::Subtle)
+                        .tooltip(move |cx| Tooltip::text("Toggle User Menu", cx)),
+                )
+                .anchor(gpui::AnchorCorner::TopRight)
+        } else {
+            popover_menu("user-menu")
+                .menu(|cx| {
+                    ContextMenu::build(cx, |menu, _| {
+                        menu.action("Settings", zed_actions::OpenSettings.boxed_clone())
+                            .action("Theme", theme_selector::Toggle.boxed_clone())
+                            .separator()
+                            .action("Share Feedback", feedback::GiveFeedback.boxed_clone())
+                    })
+                })
+                .trigger(
+                    ButtonLike::new("user-menu")
+                        .child(
+                            h_stack()
+                                .gap_0p5()
+                                .child(IconElement::new(Icon::ChevronDown).color(Color::Muted)),
+                        )
+                        .style(ButtonStyle::Subtle)
+                        .tooltip(move |cx| Tooltip::text("Toggle User Menu", cx)),
+                )
+        }
+    }
 }

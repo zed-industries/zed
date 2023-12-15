@@ -11,8 +11,8 @@ use async_tungstenite::tungstenite::{
     http::{Request, StatusCode},
 };
 use futures::{
-    future::LocalBoxFuture, AsyncReadExt, FutureExt, SinkExt, StreamExt, TryFutureExt as _,
-    TryStreamExt,
+    channel::oneshot, future::LocalBoxFuture, AsyncReadExt, FutureExt, SinkExt, StreamExt,
+    TryFutureExt as _, TryStreamExt,
 };
 use gpui::{
     actions, serde_json, AnyModel, AnyWeakModel, AppContext, AsyncAppContext, Model,
@@ -1020,91 +1020,116 @@ impl Client {
     ) -> Task<Result<Credentials>> {
         let http = self.http.clone();
         cx.spawn(|cx| async move {
-            // Generate a pair of asymmetric encryption keys. The public key will be used by the
-            // zed server to encrypt the user's access token, so that it can'be intercepted by
-            // any other app running on the user's device.
-            let (public_key, private_key) =
-                rpc::auth::keypair().expect("failed to generate keypair for auth");
-            let public_key_string =
-                String::try_from(public_key).expect("failed to serialize public key for auth");
+            let background = cx.background_executor().clone();
 
-            if let Some((login, token)) = IMPERSONATE_LOGIN.as_ref().zip(ADMIN_API_TOKEN.as_ref()) {
-                return Self::authenticate_as_admin(http, login.clone(), token.clone()).await;
-            }
+            let (open_url_tx, open_url_rx) = oneshot::channel::<String>();
+            cx.update(|cx| {
+                cx.spawn(move |cx| async move {
+                    let url = open_url_rx.await?;
+                    cx.update(|cx| cx.open_url(&url))
+                })
+                .detach_and_log_err(cx);
+            })
+            .log_err();
 
-            // Start an HTTP server to receive the redirect from Zed's sign-in page.
-            let server = tiny_http::Server::http("127.0.0.1:0").expect("failed to find open port");
-            let port = server.server_addr().port();
+            let credentials = background
+                .clone()
+                .spawn(async move {
+                    // Generate a pair of asymmetric encryption keys. The public key will be used by the
+                    // zed server to encrypt the user's access token, so that it can'be intercepted by
+                    // any other app running on the user's device.
+                    let (public_key, private_key) =
+                        rpc::auth::keypair().expect("failed to generate keypair for auth");
+                    let public_key_string = String::try_from(public_key)
+                        .expect("failed to serialize public key for auth");
 
-            // Open the Zed sign-in page in the user's browser, with query parameters that indicate
-            // that the user is signing in from a Zed app running on the same device.
-            let mut url = format!(
-                "{}/native_app_signin?native_app_port={}&native_app_public_key={}",
-                *ZED_SERVER_URL, port, public_key_string
-            );
+                    if let Some((login, token)) =
+                        IMPERSONATE_LOGIN.as_ref().zip(ADMIN_API_TOKEN.as_ref())
+                    {
+                        return Self::authenticate_as_admin(http, login.clone(), token.clone())
+                            .await;
+                    }
 
-            if let Some(impersonate_login) = IMPERSONATE_LOGIN.as_ref() {
-                log::info!("impersonating user @{}", impersonate_login);
-                write!(&mut url, "&impersonate={}", impersonate_login).unwrap();
-            }
+                    // Start an HTTP server to receive the redirect from Zed's sign-in page.
+                    let server =
+                        tiny_http::Server::http("127.0.0.1:0").expect("failed to find open port");
+                    let port = server.server_addr().port();
 
-            cx.update(|cx| cx.open_url(&url))?;
+                    // Open the Zed sign-in page in the user's browser, with query parameters that indicate
+                    // that the user is signing in from a Zed app running on the same device.
+                    let mut url = format!(
+                        "{}/native_app_signin?native_app_port={}&native_app_public_key={}",
+                        *ZED_SERVER_URL, port, public_key_string
+                    );
 
-            // Receive the HTTP request from the user's browser. Retrieve the user id and encrypted
-            // access token from the query params.
-            //
-            // TODO - Avoid ever starting more than one HTTP server. Maybe switch to using a
-            // custom URL scheme instead of this local HTTP server.
-            let (user_id, access_token) = cx
-                .spawn(|_| async move {
-                    for _ in 0..100 {
-                        if let Some(req) = server.recv_timeout(Duration::from_secs(1))? {
-                            let path = req.url();
-                            let mut user_id = None;
-                            let mut access_token = None;
-                            let url = Url::parse(&format!("http://example.com{}", path))
-                                .context("failed to parse login notification url")?;
-                            for (key, value) in url.query_pairs() {
-                                if key == "access_token" {
-                                    access_token = Some(value.to_string());
-                                } else if key == "user_id" {
-                                    user_id = Some(value.to_string());
+                    if let Some(impersonate_login) = IMPERSONATE_LOGIN.as_ref() {
+                        log::info!("impersonating user @{}", impersonate_login);
+                        write!(&mut url, "&impersonate={}", impersonate_login).unwrap();
+                    }
+
+                    open_url_tx.send(url).log_err();
+
+                    // Receive the HTTP request from the user's browser. Retrieve the user id and encrypted
+                    // access token from the query params.
+                    //
+                    // TODO - Avoid ever starting more than one HTTP server. Maybe switch to using a
+                    // custom URL scheme instead of this local HTTP server.
+                    let (user_id, access_token) = background
+                        .spawn(async move {
+                            for _ in 0..100 {
+                                if let Some(req) = server.recv_timeout(Duration::from_secs(1))? {
+                                    let path = req.url();
+                                    let mut user_id = None;
+                                    let mut access_token = None;
+                                    let url = Url::parse(&format!("http://example.com{}", path))
+                                        .context("failed to parse login notification url")?;
+                                    for (key, value) in url.query_pairs() {
+                                        if key == "access_token" {
+                                            access_token = Some(value.to_string());
+                                        } else if key == "user_id" {
+                                            user_id = Some(value.to_string());
+                                        }
+                                    }
+
+                                    let post_auth_url =
+                                        format!("{}/native_app_signin_succeeded", *ZED_SERVER_URL);
+                                    req.respond(
+                                        tiny_http::Response::empty(302).with_header(
+                                            tiny_http::Header::from_bytes(
+                                                &b"Location"[..],
+                                                post_auth_url.as_bytes(),
+                                            )
+                                            .unwrap(),
+                                        ),
+                                    )
+                                    .context("failed to respond to login http request")?;
+                                    return Ok((
+                                        user_id
+                                            .ok_or_else(|| anyhow!("missing user_id parameter"))?,
+                                        access_token.ok_or_else(|| {
+                                            anyhow!("missing access_token parameter")
+                                        })?,
+                                    ));
                                 }
                             }
 
-                            let post_auth_url =
-                                format!("{}/native_app_signin_succeeded", *ZED_SERVER_URL);
-                            req.respond(
-                                tiny_http::Response::empty(302).with_header(
-                                    tiny_http::Header::from_bytes(
-                                        &b"Location"[..],
-                                        post_auth_url.as_bytes(),
-                                    )
-                                    .unwrap(),
-                                ),
-                            )
-                            .context("failed to respond to login http request")?;
-                            return Ok((
-                                user_id.ok_or_else(|| anyhow!("missing user_id parameter"))?,
-                                access_token
-                                    .ok_or_else(|| anyhow!("missing access_token parameter"))?,
-                            ));
-                        }
-                    }
+                            Err(anyhow!("didn't receive login redirect"))
+                        })
+                        .await?;
 
-                    Err(anyhow!("didn't receive login redirect"))
+                    let access_token = private_key
+                        .decrypt_string(&access_token)
+                        .context("failed to decrypt access token")?;
+
+                    Ok(Credentials {
+                        user_id: user_id.parse()?,
+                        access_token,
+                    })
                 })
                 .await?;
 
-            let access_token = private_key
-                .decrypt_string(&access_token)
-                .context("failed to decrypt access token")?;
             cx.update(|cx| cx.activate(true))?;
-
-            Ok(Credentials {
-                user_id: user_id.parse()?,
-                access_token,
-            })
+            Ok(credentials)
         })
     }
 

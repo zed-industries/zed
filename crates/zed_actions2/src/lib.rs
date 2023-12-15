@@ -22,4 +22,4 @@ pub struct OpenZedURL {
 
 impl_actions!(zed, [OpenBrowser, OpenZedURL]);
 
-actions!(zed, [Quit]);
+actions!(zed, [OpenSettings, Quit]);

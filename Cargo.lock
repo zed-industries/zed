@@ -1949,6 +1949,7 @@ name = "collab_ui2"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "auto_update2",
  "call2",
  "channel2",
  "client2",
@@ -1957,6 +1958,7 @@ dependencies = [
  "db2",
  "editor2",
  "feature_flags2",
+ "feedback2",
  "futures 0.3.28",
  "fuzzy2",
  "gpui2",
@@ -1978,6 +1980,7 @@ dependencies = [
  "settings2",
  "smallvec",
  "theme2",
+ "theme_selector2",
  "time",
  "tree-sitter-markdown",
  "ui2",
