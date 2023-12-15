@@ -1,20 +1,19 @@
 use editor::{scroll::autoscroll::Autoscroll, Anchor, Editor, ExcerptId};
 use gpui::{
-    actions, div, overlay, red, uniform_list, AnyElement, AppContext, CursorStyle, Div,
-    EventEmitter, FocusHandle, FocusableView, Hsla, InteractiveElement, IntoElement, Model,
-    MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement, Pixels, Render, Styled, TextStyle,
-    UniformListScrollHandle, View, ViewContext, VisualContext, WeakView, WindowContext,
+    actions, div, rems, uniform_list, AnyElement, AppContext, Div, EventEmitter, FocusHandle,
+    FocusableView, Hsla, InteractiveElement, IntoElement, Model, MouseButton, MouseDownEvent,
+    MouseMoveEvent, ParentElement, Pixels, Render, Styled, TextStyle, UniformListScrollHandle,
+    View, ViewContext, VisualContext, WeakView, WindowContext,
 };
-use language::{Buffer, OwnedSyntaxLayerInfo, SyntaxLayerInfo};
+use language::{Buffer, OwnedSyntaxLayerInfo};
 use settings::Settings;
 use std::{mem, ops::Range};
 use theme::{Theme, ThemeSettings};
 use tree_sitter::{Node, TreeCursor};
-use ui::{h_stack, Label};
+use ui::{h_stack, popover_menu, ButtonLike, ContextMenu, Label, PopoverMenu};
 use workspace::{
     item::{Item, ItemHandle},
-    ui::v_stack,
-    ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
+    SplitDirection, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
 };
 
 actions!(debug, [OpenSyntaxTreeView]);
@@ -26,7 +25,7 @@ pub fn init(cx: &mut AppContext) {
             let workspace_handle = workspace.weak_handle();
             let syntax_tree_view =
                 cx.build_view(|cx| SyntaxTreeView::new(workspace_handle, active_item, cx));
-            workspace.add_item(Box::new(syntax_tree_view), cx);
+            workspace.split_item(SplitDirection::Right, Box::new(syntax_tree_view), cx)
         });
     })
     .detach();
@@ -46,7 +45,6 @@ pub struct SyntaxTreeView {
 pub struct SyntaxTreeToolbarItemView {
     tree_view: Option<View<SyntaxTreeView>>,
     subscription: Option<gpui::Subscription>,
-    menu_open: bool,
 }
 
 struct EditorState {
@@ -279,7 +277,7 @@ impl SyntaxTreeView {
 
     fn render_node(
         cursor: &TreeCursor,
-        _depth: u32,
+        depth: u32,
         selected: bool,
         hovered: bool,
         list_hovered: bool,
@@ -290,18 +288,6 @@ impl SyntaxTreeView {
         let editor_colors = editor_theme.colors();
         let node = cursor.node();
         let mut range_style = style.clone();
-        // todo!() styling
-        // let font_id = cx.text_system().font_id(&style.text.font()).unwrap();
-        // let font_size = style.text.font_size.to_pixels(cx.rem_size());
-        // let line_height = style.text.line_height_in_pixels(cx.rem_size());
-        // let em_width = cx
-        //     .text_system()
-        //     .typographic_bounds(font_id, font_size, 'm')
-        //     .unwrap()
-        //     .size
-        //     .width;
-        // let gutter_padding = (em_width * editor_theme.gutter_padding_factor).round();
-
         range_style.color = editor_colors.editor_line_number;
 
         let mut anonymous_node_style = style.clone();
@@ -335,8 +321,7 @@ impl SyntaxTreeView {
                     Label::new(node.kind())
                 } else {
                     Label::new(format!("\"{}\"", node.kind()))
-                }, // todo!()
-                   // .margin(em_width),
+                },
             )
             .child(Label::new(format_node_range(node)))
             .text_bg(if selected {
@@ -346,10 +331,10 @@ impl SyntaxTreeView {
             } else {
                 Hsla::default()
             })
-            // todo!()
+            // todo!() does not work
+            .ml(rems(depth as f32 * 180.0))
             // .padding(gutter_padding + depth as f32 * 18.0)
-            .border_1()
-            .border_color(red());
+            ;
     }
 }
 
@@ -389,8 +374,6 @@ impl Render for SyntaxTreeView {
             let layer = layer.clone();
             let theme = editor_theme.clone();
 
-            // todo!()
-            // let list_hovered = state.hovered();
             let list_hovered = false;
             let list = uniform_list(
                 cx.view().clone(),
@@ -434,6 +417,7 @@ impl Render for SyntaxTreeView {
                     items
                 },
             )
+            // todo!() does scroll either editor or the tree
             .track_scroll(self.list_scroll_handle.clone())
             .on_mouse_move(cx.listener(move |tree_view, event: &MouseMoveEvent, cx| {
                 tree_view.mouse_y = Some(event.position.y);
@@ -492,13 +476,12 @@ impl Item for SyntaxTreeView {
 impl SyntaxTreeToolbarItemView {
     pub fn new() -> Self {
         Self {
-            menu_open: false,
             tree_view: None,
             subscription: None,
         }
     }
 
-    fn render_menu(&mut self, cx: &mut ViewContext<'_, Self>) -> Option<Div> {
+    fn render_menu(&mut self, cx: &mut ViewContext<'_, Self>) -> Option<PopoverMenu<ContextMenu>> {
         let tree_view = self.tree_view.as_ref()?;
         let tree_view = tree_view.read(cx);
 
@@ -507,32 +490,28 @@ impl SyntaxTreeToolbarItemView {
         let active_layer = buffer_state.active_layer.clone()?;
         let active_buffer = buffer_state.buffer.read(cx).snapshot();
 
+        let view = cx.view().clone();
         Some(
-            v_stack()
-                .size_full()
-                .child(Self::render_header(&active_layer, cx))
-                .children(self.menu_open.then(|| {
-                    overlay().child(
-                        v_stack()
-                            .size_full()
-                            .children(active_buffer.syntax_layers().enumerate().map(
-                                |(ix, layer)| Self::render_menu_item(&active_layer, layer, ix, cx),
-                            ))
-                            .on_mouse_down_out(cx.listener(|this, e: &MouseDownEvent, cx| {
-                                if e.button == MouseButton::Left {
-                                    this.menu_open = false;
-                                    cx.notify()
-                                }
-                            })),
-                    )
-                }))
-                .z_index(99),
+            popover_menu("Syntax Tree")
+                .trigger(Self::render_header(&active_layer))
+                .menu(move |cx| {
+                    ContextMenu::build(cx, |mut menu, cx| {
+                        for (layer_ix, layer) in active_buffer.syntax_layers().enumerate() {
+                            menu = menu.entry(
+                                format!(
+                                    "{} {}",
+                                    layer.language.name(),
+                                    format_node_range(layer.node())
+                                ),
+                                cx.handler_for(&view, move |view, cx| {
+                                    view.select_layer(layer_ix, cx);
+                                }),
+                            );
+                        }
+                        menu
+                    })
+                }),
         )
-    }
-
-    fn toggle_menu(&mut self, cx: &mut ViewContext<Self>) {
-        self.menu_open = !self.menu_open;
-        cx.notify();
     }
 
     fn select_layer(&mut self, layer_ix: usize, cx: &mut ViewContext<Self>) -> Option<()> {
@@ -544,50 +523,15 @@ impl SyntaxTreeToolbarItemView {
             let layer = snapshot.syntax_layers().nth(layer_ix)?;
             buffer_state.active_layer = Some(layer.to_owned());
             view.selected_descendant_ix = None;
-            self.menu_open = false;
             cx.notify();
             Some(())
         })
     }
 
-    fn render_header(active_layer: &OwnedSyntaxLayerInfo, cx: &mut ViewContext<Self>) -> Div {
-        h_stack()
-            .size_full()
+    fn render_header(active_layer: &OwnedSyntaxLayerInfo) -> ButtonLike {
+        ButtonLike::new("syntax tree header")
             .child(Label::new(active_layer.language.name()))
             .child(Label::new(format_node_range(active_layer.node())))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |view, _, cx| {
-                    view.toggle_menu(cx);
-                }),
-            )
-            .cursor(CursorStyle::PointingHand)
-            .border_1()
-            .border_color(red())
-    }
-
-    fn render_menu_item(
-        active_layer: &OwnedSyntaxLayerInfo,
-        layer: SyntaxLayerInfo,
-        layer_ix: usize,
-        cx: &mut ViewContext<Self>,
-    ) -> Div {
-        // todo!() styling
-        let _is_selected = layer.node() == active_layer.node();
-        h_stack()
-            .size_full()
-            .child(Label::new(layer.language.name().to_string()))
-            .child(Label::new(format_node_range(layer.node())))
-            .cursor(CursorStyle::PointingHand)
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |view, _, cx| {
-                    view.select_layer(layer_ix, cx);
-                }),
-            )
-            .border_1()
-            .border_color(red())
-            .bg(red())
     }
 }
 
@@ -604,15 +548,11 @@ fn format_node_range(node: Node) -> String {
 }
 
 impl Render for SyntaxTreeToolbarItemView {
-    type Element = Div;
+    type Element = PopoverMenu<ContextMenu>;
 
-    // todo!()
-    // fn ui_name() -> &'static str {
-    //     "SyntaxTreeToolbarItemView"
-    // }
-
-    fn render(&mut self, cx: &mut ViewContext<'_, Self>) -> Div {
-        self.render_menu(cx).unwrap_or_else(|| div())
+    fn render(&mut self, cx: &mut ViewContext<'_, Self>) -> PopoverMenu<ContextMenu> {
+        self.render_menu(cx)
+            .unwrap_or_else(|| popover_menu("Empty Syntax Tree"))
     }
 }
 
@@ -624,7 +564,6 @@ impl ToolbarItemView for SyntaxTreeToolbarItemView {
         active_pane_item: Option<&dyn ItemHandle>,
         cx: &mut ViewContext<Self>,
     ) -> ToolbarItemLocation {
-        self.menu_open = false;
         if let Some(item) = active_pane_item {
             if let Some(view) = item.downcast::<SyntaxTreeView>() {
                 self.tree_view = Some(view.clone());

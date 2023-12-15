@@ -9,7 +9,7 @@ use gpui::{
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrev};
 use std::{rc::Rc, time::Duration};
 
-pub enum ContextMenuItem {
+enum ContextMenuItem {
     Separator,
     Header(SharedString),
     Entry {
