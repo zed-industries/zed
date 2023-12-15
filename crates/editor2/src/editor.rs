@@ -9303,7 +9303,7 @@ impl Render for Editor {
                 font_size: rems(0.875).into(),
                 font_weight: FontWeight::NORMAL,
                 font_style: FontStyle::Normal,
-                line_height: relative(1.).into(),
+                line_height: relative(settings.buffer_line_height.value()),
                 background_color: None,
                 underline: None,
                 white_space: WhiteSpace::Normal,
