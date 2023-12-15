@@ -1927,7 +1927,7 @@ impl Render for Pane {
                                 this.handle_project_entry_drop(entry_id, cx)
                             }))
                             .map(|div| match self.drag_split_direction {
-                                None => div.full(),
+                                None => div.top_0().left_0().right_0().bottom_0(),
                                 Some(SplitDirection::Up) => div.top_0().left_0().right_0().h_32(),
                                 Some(SplitDirection::Down) => {
                                     div.left_0().bottom_0().right_0().h_32()
