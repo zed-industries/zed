@@ -91,6 +91,14 @@ impl UniformListScrollHandle {
             }
         }
     }
+
+    pub fn scroll_top(&self) -> Pixels {
+        if let Some(state) = &*self.0.borrow() {
+            -state.scroll_offset.borrow().y
+        } else {
+            Pixels::ZERO
+        }
+    }
 }
 
 impl Styled for UniformList {
