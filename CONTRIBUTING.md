@@ -39,6 +39,8 @@ Other things to mention here
 - [ ] Importance of tests
 - [ ] Look over Piotr's PR and pull in what this is missing (tour of the codebase, etc.)
     - https://github.com/zed-industries/zed/pull/3143/files
+- [ ] Ask people to check the PRs to see if something has already been started on
+- [ ] Maybe have a channel that maps out what teammates / community users are working on what, so people can see what's being worked on
 
 Things to do:
 - [ ] Put names devs who "own" each channel in the channel notes
