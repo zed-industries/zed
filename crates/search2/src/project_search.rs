@@ -273,13 +273,15 @@ pub enum ViewEvent {
 impl EventEmitter<ViewEvent> for ProjectSearchView {}
 
 impl Render for ProjectSearchView {
-    type Element = Div;
+    type Element = AnyElement;
+
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         if self.has_matches() {
             div()
                 .flex_1()
                 .size_full()
                 .child(self.results_editor.clone())
+                .into_any()
         } else {
             let model = self.model.read(cx);
             let has_no_results = model.no_results.unwrap_or(false);
@@ -352,14 +354,20 @@ impl Render for ProjectSearchView {
                     .max_w_96()
                     .child(Label::new(text).size(LabelSize::Small))
             });
-            v_stack().flex_1().size_full().justify_center().child(
-                h_stack()
-                    .size_full()
-                    .justify_center()
-                    .child(h_stack().flex_1())
-                    .child(v_stack().child(major_text).children(minor_text))
-                    .child(h_stack().flex_1()),
-            )
+            v_stack()
+                .track_focus(&self.query_editor.focus_handle(cx))
+                .flex_1()
+                .size_full()
+                .justify_center()
+                .child(
+                    h_stack()
+                        .size_full()
+                        .justify_center()
+                        .child(h_stack().flex_1())
+                        .child(v_stack().child(major_text).children(minor_text))
+                        .child(h_stack().flex_1()),
+                )
+                .into_any()
         }
     }
 }
