@@ -939,11 +939,11 @@ impl EditorElement {
                                     cx,
                                     |fold_element_state, cx| {
                                         if fold_element_state.is_active() {
-                                            gpui::blue()
+                                            cx.theme().colors().ghost_element_active
                                         } else if fold_bounds.contains(&cx.mouse_position()) {
-                                            gpui::black()
+                                            cx.theme().colors().ghost_element_hover
                                         } else {
-                                            gpui::red()
+                                            cx.theme().colors().ghost_element_background
                                         }
                                     },
                                 )
