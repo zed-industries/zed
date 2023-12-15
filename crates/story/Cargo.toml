@@ -8,3 +8,5 @@ publish = false
 
 [dependencies]
 gpui = { package = "gpui2", path = "../gpui2" }
+smallvec.workspace = true
+itertools = {package = "itertools", version = "0.10"}
