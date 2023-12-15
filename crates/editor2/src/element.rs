@@ -2284,8 +2284,8 @@ impl EditorElement {
                                 .cursor_pointer()
                                 .hover(|style| style.bg(cx.theme().colors().element_hover))
                                 .on_click(cx.listener(|_editor, _event, _cx| {
-                                    // TODO: Implement collapsing path headers
-                                    todo!("Clicking path header")
+                                    // todo!() Implement collapsing path headers
+                                    // todo!("Clicking path header")
                                 }))
                                 .child(
                                     h_stack()
@@ -2447,13 +2447,13 @@ impl EditorElement {
             let interactive_bounds = interactive_bounds.clone();
 
             move |event: &ScrollWheelEvent, phase, cx| {
-                if phase != DispatchPhase::Bubble {
-                    return;
+                if phase == DispatchPhase::Bubble
+                    && interactive_bounds.visibly_contains(&event.position, cx)
+                {
+                    editor.update(cx, |editor, cx| {
+                        Self::scroll(editor, event, &position_map, &interactive_bounds, cx)
+                    });
                 }
-
-                editor.update(cx, |editor, cx| {
-                    Self::scroll(editor, event, &position_map, &interactive_bounds, cx)
-                });
             }
         });
 
@@ -2461,48 +2461,54 @@ impl EditorElement {
             let position_map = layout.position_map.clone();
             let editor = self.editor.clone();
             let stacking_order = cx.stacking_order().clone();
+            let interactive_bounds = interactive_bounds.clone();
 
             move |event: &MouseDownEvent, phase, cx| {
-                if phase != DispatchPhase::Bubble {
-                    return;
+                if phase == DispatchPhase::Bubble
+                    && interactive_bounds.visibly_contains(&event.position, cx)
+                {
+                    match event.button {
+                        MouseButton::Left => editor.update(cx, |editor, cx| {
+                            Self::mouse_left_down(
+                                editor,
+                                event,
+                                &position_map,
+                                text_bounds,
+                                gutter_bounds,
+                                &stacking_order,
+                                cx,
+                            );
+                        }),
+                        MouseButton::Right => editor.update(cx, |editor, cx| {
+                            Self::mouse_right_down(editor, event, &position_map, text_bounds, cx);
+                        }),
+                        _ => {}
+                    };
                 }
+            }
+        });
 
-                match event.button {
-                    MouseButton::Left => editor.update(cx, |editor, cx| {
-                        Self::mouse_left_down(
+        cx.on_mouse_event({
+            let position_map = layout.position_map.clone();
+            let editor = self.editor.clone();
+            let stacking_order = cx.stacking_order().clone();
+            let interactive_bounds = interactive_bounds.clone();
+
+            move |event: &MouseUpEvent, phase, cx| {
+                if phase == DispatchPhase::Bubble
+                    && interactive_bounds.visibly_contains(&event.position, cx)
+                {
+                    editor.update(cx, |editor, cx| {
+                        Self::mouse_up(
                             editor,
                             event,
                             &position_map,
                             text_bounds,
-                            gutter_bounds,
                             &stacking_order,
                             cx,
-                        );
-                    }),
-                    MouseButton::Right => editor.update(cx, |editor, cx| {
-                        Self::mouse_right_down(editor, event, &position_map, text_bounds, cx);
-                    }),
-                    _ => {}
-                };
-            }
-        });
-
-        cx.on_mouse_event({
-            let position_map = layout.position_map.clone();
-            let editor = self.editor.clone();
-            let stacking_order = cx.stacking_order().clone();
-
-            move |event: &MouseUpEvent, phase, cx| {
-                editor.update(cx, |editor, cx| {
-                    Self::mouse_up(
-                        editor,
-                        event,
-                        &position_map,
-                        text_bounds,
-                        &stacking_order,
-                        cx,
-                    )
-                });
+                        )
+                    });
+                }
             }
         });
         cx.on_mouse_event({
@@ -2511,21 +2517,21 @@ impl EditorElement {
             let stacking_order = cx.stacking_order().clone();
 
             move |event: &MouseMoveEvent, phase, cx| {
-                if phase != DispatchPhase::Bubble {
-                    return;
+                if phase == DispatchPhase::Bubble
+                    && interactive_bounds.visibly_contains(&event.position, cx)
+                {
+                    editor.update(cx, |editor, cx| {
+                        Self::mouse_moved(
+                            editor,
+                            event,
+                            &position_map,
+                            text_bounds,
+                            gutter_bounds,
+                            &stacking_order,
+                            cx,
+                        )
+                    });
                 }
-
-                editor.update(cx, |editor, cx| {
-                    Self::mouse_moved(
-                        editor,
-                        event,
-                        &position_map,
-                        text_bounds,
-                        gutter_bounds,
-                        &stacking_order,
-                        cx,
-                    )
-                });
             }
         });
     }

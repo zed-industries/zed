@@ -65,8 +65,13 @@ impl ModalBranchList {
     ) -> Result<()> {
         // Modal branch picker has a longer trailoff than a popover one.
         let delegate = BranchListDelegate::new(workspace, cx.view().clone(), 70, cx)?;
-        workspace.toggle_modal(cx, |cx| ModalBranchList {
-            picker: cx.build_view(|cx| Picker::new(delegate, cx)),
+        workspace.toggle_modal(cx, |cx| {
+            let modal = ModalBranchList {
+                picker: cx.build_view(|cx| Picker::new(delegate, cx)),
+            };
+            cx.subscribe(&modal.picker, |_, _, _, cx| cx.emit(DismissEvent))
+                .detach();
+            modal
         });
 
         Ok(())

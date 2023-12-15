@@ -1,6 +1,7 @@
 use crate::{
-    px, AnyElement, AvailableSpace, BorrowAppContext, DispatchPhase, Element, IntoElement, Pixels,
-    Point, ScrollWheelEvent, Size, Style, StyleRefinement, Styled, WindowContext,
+    point, px, AnyElement, AvailableSpace, BorrowAppContext, Bounds, DispatchPhase, Element,
+    IntoElement, Pixels, Point, ScrollWheelEvent, Size, Style, StyleRefinement, Styled,
+    WindowContext,
 };
 use collections::VecDeque;
 use refineable::Refineable as _;
@@ -23,7 +24,7 @@ pub struct List {
 pub struct ListState(Rc<RefCell<StateInner>>);
 
 struct StateInner {
-    last_layout_width: Option<Pixels>,
+    last_layout_bounds: Option<Bounds<Pixels>>,
     render_item: Box<dyn FnMut(usize, &mut WindowContext) -> AnyElement>,
     items: SumTree<ListItem>,
     logical_scroll_top: Option<ListOffset>,
@@ -83,7 +84,7 @@ impl ListState {
         let mut items = SumTree::new();
         items.extend((0..element_count).map(|_| ListItem::Unrendered), &());
         Self(Rc::new(RefCell::new(StateInner {
-            last_layout_width: None,
+            last_layout_bounds: None,
             render_item: Box::new(render_item),
             items,
             logical_scroll_top: None,
@@ -151,6 +152,64 @@ impl ListState {
             scroll_top.offset_in_item = px(0.);
         }
         state.logical_scroll_top = Some(scroll_top);
+    }
+
+    pub fn scroll_to_reveal_item(&self, ix: usize) {
+        let state = &mut *self.0.borrow_mut();
+        let mut scroll_top = state.logical_scroll_top();
+        let height = state
+            .last_layout_bounds
+            .map_or(px(0.), |bounds| bounds.size.height);
+
+        if ix <= scroll_top.item_ix {
+            scroll_top.item_ix = ix;
+            scroll_top.offset_in_item = px(0.);
+        } else {
+            let mut cursor = state.items.cursor::<ListItemSummary>();
+            cursor.seek(&Count(ix + 1), Bias::Right, &());
+            let bottom = cursor.start().height;
+            let goal_top = px(0.).max(bottom - height);
+
+            cursor.seek(&Height(goal_top), Bias::Left, &());
+            let start_ix = cursor.start().count;
+            let start_item_top = cursor.start().height;
+
+            if start_ix >= scroll_top.item_ix {
+                scroll_top.item_ix = start_ix;
+                scroll_top.offset_in_item = goal_top - start_item_top;
+            }
+        }
+
+        state.logical_scroll_top = Some(scroll_top);
+    }
+
+    /// Get the bounds for the given item in window coordinates.
+    pub fn bounds_for_item(&self, ix: usize) -> Option<Bounds<Pixels>> {
+        let state = &*self.0.borrow();
+        let bounds = state.last_layout_bounds.unwrap_or_default();
+        let scroll_top = state.logical_scroll_top();
+
+        if ix < scroll_top.item_ix {
+            return None;
+        }
+
+        let mut cursor = state.items.cursor::<(Count, Height)>();
+        cursor.seek(&Count(scroll_top.item_ix), Bias::Right, &());
+
+        let scroll_top = cursor.start().1 .0 + scroll_top.offset_in_item;
+
+        cursor.seek_forward(&Count(ix), Bias::Right, &());
+        if let Some(&ListItem::Rendered { height }) = cursor.item() {
+            let &(Count(count), Height(top)) = cursor.start();
+            if count == ix {
+                let top = bounds.top() + top - scroll_top;
+                return Some(Bounds::from_corners(
+                    point(bounds.left(), top),
+                    point(bounds.right(), top + height),
+                ));
+            }
+        }
+        None
     }
 }
 
@@ -265,7 +324,9 @@ impl Element for List {
         let state = &mut *self.state.0.borrow_mut();
 
         // If the width of the list has changed, invalidate all cached item heights
-        if state.last_layout_width != Some(bounds.size.width) {
+        if state.last_layout_bounds.map_or(true, |last_bounds| {
+            last_bounds.size.width != bounds.size.width
+        }) {
             state.items = SumTree::from_iter(
                 (0..state.items.summary().count).map(|_| ListItem::Unrendered),
                 &(),
@@ -392,7 +453,7 @@ impl Element for List {
         }
 
         state.items = new_items;
-        state.last_layout_width = Some(bounds.size.width);
+        state.last_layout_bounds = Some(bounds);
 
         let list_state = self.state.clone();
         let height = bounds.size.height;

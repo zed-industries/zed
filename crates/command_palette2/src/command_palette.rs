@@ -101,6 +101,7 @@ pub struct CommandInterceptResult {
 
 pub struct CommandPaletteDelegate {
     command_palette: WeakView<CommandPalette>,
+    all_commands: Vec<Command>,
     commands: Vec<Command>,
     matches: Vec<StringMatch>,
     selected_ix: usize,
@@ -135,6 +136,7 @@ impl CommandPaletteDelegate {
     ) -> Self {
         Self {
             command_palette,
+            all_commands: commands.clone(),
             matches: vec![],
             commands,
             selected_ix: 0,
@@ -167,7 +169,7 @@ impl PickerDelegate for CommandPaletteDelegate {
         query: String,
         cx: &mut ViewContext<Picker<Self>>,
     ) -> gpui::Task<()> {
-        let mut commands = self.commands.clone();
+        let mut commands = self.all_commands.clone();
 
         cx.spawn(move |picker, mut cx| async move {
             cx.read_global::<HitCounts, _>(|hit_counts, _| {

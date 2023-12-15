@@ -9263,6 +9263,8 @@ name = "story"
 version = "0.1.0"
 dependencies = [
  "gpui2",
+ "itertools 0.10.5",
+ "smallvec",
 ]
 
 [[package]]
@@ -9277,6 +9279,7 @@ dependencies = [
  "editor2",
  "fuzzy2",
  "gpui2",
+ "indoc",
  "itertools 0.11.0",
  "language2",
  "log",
