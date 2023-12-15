@@ -11,14 +11,8 @@ use ui::{prelude::*, Avatar};
 use util::{ResultExt as _, TryFutureExt};
 use workspace::ModalView;
 
-pub fn init(cx: &mut AppContext) {
-    //Picker::<ContactFinderDelegate>::init(cx);
-    //cx.add_action(ContactFinder::dismiss)
-}
-
 pub struct ContactFinder {
     picker: View<Picker<ContactFinderDelegate>>,
-    has_focus: bool,
 }
 
 impl ContactFinder {
@@ -31,16 +25,12 @@ impl ContactFinder {
         };
         let picker = cx.build_view(|cx| Picker::new(delegate, cx));
 
-        Self {
-            picker,
-            has_focus: false,
-        }
+        Self { picker }
     }
 
     pub fn set_query(&mut self, query: String, cx: &mut ViewContext<Self>) {
         self.picker.update(cx, |picker, cx| {
-            // todo!()
-            // picker.set_query(query, cx);
+            picker.set_query(query, cx);
         });
     }
 }
@@ -62,31 +52,8 @@ impl Render for ContactFinder {
             .w(rems(34.))
     }
 
-    // fn focus_in(&mut self, _: gpui::AnyViewHandle, cx: &mut ViewContext<Self>) {
-    //     self.has_focus = true;
-    //     if cx.is_self_focused() {
-    //         cx.focus(&self.picker)
-    //     }
-    // }
-
-    // fn focus_out(&mut self, _: gpui::AnyViewHandle, _: &mut ViewContext<Self>) {
-    //     self.has_focus = false;
-    // }
-
     type Element = Div;
 }
-
-// impl Modal for ContactFinder {
-//     fn has_focus(&self) -> bool {
-//         self.has_focus
-//     }
-
-//     fn dismiss_on_event(event: &Self::Event) -> bool {
-//         match event {
-//             PickerEvent::Dismiss => true,
-//         }
-//     }
-// }
 
 pub struct ContactFinderDelegate {
     parent: WeakView<ContactFinder>,
@@ -161,7 +128,6 @@ impl PickerDelegate for ContactFinderDelegate {
     }
 
     fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>) {
-        //cx.emit(PickerEvent::Dismiss);
         self.parent
             .update(cx, |_, cx| cx.emit(DismissEvent))
             .log_err();
@@ -191,6 +157,7 @@ impl PickerDelegate for ContactFinderDelegate {
                 .child(Label::new(user.github_login.clone()))
                 .children(icon_path.map(|icon_path| svg().path(icon_path))),
         )
+        // todo!()
         // Flex::row()
         //     .with_children(user.avatar.clone().map(|avatar| {
         //         Image::from_data(avatar)

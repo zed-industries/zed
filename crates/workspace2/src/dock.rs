@@ -1,5 +1,5 @@
+use crate::DraggedDock;
 use crate::{status_bar::StatusItemView, Workspace};
-use crate::{DockClickReset, DockDragState};
 use gpui::{
     div, px, Action, AnchorCorner, AnyView, AppContext, Axis, ClickEvent, Div, Entity, EntityId,
     EventEmitter, FocusHandle, FocusableView, IntoElement, MouseButton, ParentElement, Render,
@@ -41,7 +41,7 @@ pub trait Panel: FocusableView + EventEmitter<PanelEvent> {
 }
 
 pub trait PanelHandle: Send + Sync {
-    fn entity_id(&self) -> EntityId;
+    fn panel_id(&self) -> EntityId;
     fn persistent_name(&self) -> &'static str;
     fn position(&self, cx: &WindowContext) -> DockPosition;
     fn position_is_valid(&self, position: DockPosition, cx: &WindowContext) -> bool;
@@ -62,7 +62,7 @@ impl<T> PanelHandle for View<T>
 where
     T: Panel,
 {
-    fn entity_id(&self) -> EntityId {
+    fn panel_id(&self) -> EntityId {
         Entity::entity_id(self)
     }
 
@@ -135,7 +135,7 @@ pub struct Dock {
     is_open: bool,
     active_panel_index: usize,
     focus_handle: FocusHandle,
-    focus_subscription: Subscription,
+    _focus_subscription: Subscription,
 }
 
 impl FocusableView for Dock {
@@ -187,7 +187,6 @@ struct PanelEntry {
 
 pub struct PanelButtons {
     dock: View<Dock>,
-    workspace: WeakView<Workspace>,
 }
 
 impl Dock {
@@ -204,7 +203,7 @@ impl Dock {
             active_panel_index: 0,
             is_open: false,
             focus_handle,
-            focus_subscription,
+            _focus_subscription: focus_subscription,
         }
     }
 
@@ -261,7 +260,7 @@ impl Dock {
 
     pub fn set_panel_zoomed(&mut self, panel: &AnyView, zoomed: bool, cx: &mut ViewContext<Self>) {
         for entry in &mut self.panel_entries {
-            if entry.panel.entity_id() == panel.entity_id() {
+            if entry.panel.panel_id() == panel.entity_id() {
                 if zoomed != entry.panel.is_zoomed(cx) {
                     entry.panel.set_zoomed(zoomed, cx);
                 }
@@ -309,7 +308,7 @@ impl Dock {
 
                     let was_visible = this.is_open()
                         && this.visible_panel().map_or(false, |active_panel| {
-                            active_panel.entity_id() == Entity::entity_id(&panel)
+                            active_panel.panel_id() == Entity::entity_id(&panel)
                         });
 
                     this.remove_panel(&panel, cx);
@@ -351,7 +350,7 @@ impl Dock {
                     if let Some(ix) = this
                         .panel_entries
                         .iter()
-                        .position(|entry| entry.panel.entity_id() == Entity::entity_id(&panel))
+                        .position(|entry| entry.panel.panel_id() == Entity::entity_id(&panel))
                     {
                         this.set_open(true, cx);
                         this.activate_panel(ix, cx);
@@ -361,7 +360,7 @@ impl Dock {
                 PanelEvent::Close => {
                     if this
                         .visible_panel()
-                        .map_or(false, |p| p.entity_id() == Entity::entity_id(&panel))
+                        .map_or(false, |p| p.panel_id() == Entity::entity_id(&panel))
                     {
                         this.set_open(false, cx);
                     }
@@ -389,7 +388,7 @@ impl Dock {
         if let Some(panel_ix) = self
             .panel_entries
             .iter()
-            .position(|entry| entry.panel.entity_id() == Entity::entity_id(panel))
+            .position(|entry| entry.panel.panel_id() == Entity::entity_id(panel))
         {
             if panel_ix == self.active_panel_index {
                 self.active_panel_index = 0;
@@ -450,7 +449,7 @@ impl Dock {
     pub fn panel_size(&self, panel: &dyn PanelHandle, cx: &WindowContext) -> Option<f32> {
         self.panel_entries
             .iter()
-            .find(|entry| entry.panel.entity_id() == panel.entity_id())
+            .find(|entry| entry.panel.panel_id() == panel.panel_id())
             .map(|entry| entry.panel.size(cx))
     }
 
@@ -487,62 +486,72 @@ impl Render for Dock {
         if let Some(entry) = self.visible_entry() {
             let size = entry.panel.size(cx);
 
-            let mut pre_resize_handle = None;
-            let mut post_resize_handle = None;
             let position = self.position;
-            let handler = div()
+            let mut handle = div()
                 .id("resize-handle")
-                .bg(cx.theme().colors().border)
-                .on_mouse_down(gpui::MouseButton::Left, move |_, cx| {
-                    cx.update_global(|drag: &mut DockDragState, cx| drag.0 = Some(position))
+                .on_drag(DraggedDock(position), |dock, cx| {
+                    cx.build_view(|_| dock.clone())
                 })
                 .on_click(cx.listener(|v, e: &ClickEvent, cx| {
-                    if e.down.button == MouseButton::Left {
-                        cx.update_global(|state: &mut DockClickReset, cx| {
-                            if state.0.is_some() {
-                                state.0 = None;
-                                v.resize_active_panel(None, cx)
-                            } else {
-                                let double_click = cx.double_click_interval();
-                                let timer = cx.background_executor().timer(double_click);
-                                state.0 = Some(cx.spawn(|_, mut cx| async move {
-                                    timer.await;
-                                    cx.update_global(|state: &mut DockClickReset, cx| {
-                                        state.0 = None;
-                                    })
-                                    .ok();
-                                }));
-                            }
-                        })
+                    if e.down.button == MouseButton::Left && e.down.click_count == 2 {
+                        v.resize_active_panel(None, cx)
                     }
-                }));
+                }))
+                .z_index(1);
+
+            const HANDLE_SIZE: Pixels = Pixels(6.);
 
             match self.position() {
                 DockPosition::Left => {
-                    post_resize_handle = Some(handler.w_1().h_full().cursor_col_resize())
+                    handle = handle
+                        .absolute()
+                        .right(px(0.))
+                        .top(px(0.))
+                        .h_full()
+                        .w(HANDLE_SIZE)
+                        .cursor_col_resize();
                 }
                 DockPosition::Bottom => {
-                    pre_resize_handle = Some(handler.w_full().h_1().cursor_row_resize())
+                    handle = handle
+                        .absolute()
+                        .top(px(0.))
+                        .left(px(0.))
+                        .w_full()
+                        .h(HANDLE_SIZE)
+                        .cursor_row_resize();
                 }
                 DockPosition::Right => {
-                    pre_resize_handle = Some(handler.w_full().h_1().cursor_col_resize())
+                    handle = handle
+                        .absolute()
+                        .top(px(0.))
+                        .left(px(0.))
+                        .w_full()
+                        .h(HANDLE_SIZE)
+                        .cursor_col_resize();
                 }
             }
 
             div()
+                .flex()
                 .border_color(cx.theme().colors().border)
                 .map(|this| match self.position().axis() {
-                    Axis::Horizontal => this.w(px(size)).h_full(),
-                    Axis::Vertical => this.h(px(size)).w_full(),
+                    Axis::Horizontal => this.w(px(size)).h_full().flex_row(),
+                    Axis::Vertical => this.h(px(size)).w_full().flex_col(),
                 })
                 .map(|this| match self.position() {
                     DockPosition::Left => this.border_r(),
                     DockPosition::Right => this.border_l(),
                     DockPosition::Bottom => this.border_t(),
                 })
-                .children(pre_resize_handle)
-                .child(entry.panel.to_any())
-                .children(post_resize_handle)
+                .child(
+                    div()
+                        .map(|this| match self.position().axis() {
+                            Axis::Horizontal => this.min_w(px(size)).h_full(),
+                            Axis::Vertical => this.min_h(px(size)).w_full(),
+                        })
+                        .child(entry.panel.to_any()),
+                )
+                .child(handle)
         } else {
             div()
         }
@@ -550,166 +559,12 @@ impl Render for Dock {
 }
 
 impl PanelButtons {
-    pub fn new(
-        dock: View<Dock>,
-        workspace: WeakView<Workspace>,
-        cx: &mut ViewContext<Self>,
-    ) -> Self {
+    pub fn new(dock: View<Dock>, cx: &mut ViewContext<Self>) -> Self {
         cx.observe(&dock, |_, _, cx| cx.notify()).detach();
-        Self { dock, workspace }
+        Self { dock }
     }
 }
 
-// impl Render for PanelButtons {
-//     type Element = ();
-
-//     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-//         todo!("")
-//     }
-
-//     fn ui_name() -> &'static str {
-//         "PanelButtons"
-//     }
-
-//     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-//         let theme = &settings::get::<ThemeSettings>(cx).theme;
-//         let tooltip_style = theme.tooltip.clone();
-//         let theme = &theme.workspace.status_bar.panel_buttons;
-//         let button_style = theme.button.clone();
-//         let dock = self.dock.read(cx);
-//         let active_ix = dock.active_panel_index;
-//         let is_open = dock.is_open;
-//         let dock_position = dock.position;
-//         let group_style = match dock_position {
-//             DockPosition::Left => theme.group_left,
-//             DockPosition::Bottom => theme.group_bottom,
-//             DockPosition::Right => theme.group_right,
-//         };
-//         let menu_corner = match dock_position {
-//             DockPosition::Left => AnchorCorner::BottomLeft,
-//             DockPosition::Bottom | DockPosition::Right => AnchorCorner::BottomRight,
-//         };
-
-//         let panels = dock
-//             .panel_entries
-//             .iter()
-//             .map(|item| (item.panel.clone(), item.context_menu.clone()))
-//             .collect::<Vec<_>>();
-//         Flex::row()
-//             .with_children(panels.into_iter().enumerate().filter_map(
-//                 |(panel_ix, (view, context_menu))| {
-//                     let icon_path = view.icon_path(cx)?;
-//                     let is_active = is_open && panel_ix == active_ix;
-//                     let (tooltip, tooltip_action) = if is_active {
-//                         (
-//                             format!("Close {} dock", dock_position.to_label()),
-//                             Some(match dock_position {
-//                                 DockPosition::Left => crate::ToggleLeftDock.boxed_clone(),
-//                                 DockPosition::Bottom => crate::ToggleBottomDock.boxed_clone(),
-//                                 DockPosition::Right => crate::ToggleRightDock.boxed_clone(),
-//                             }),
-//                         )
-//                     } else {
-//                         view.icon_tooltip(cx)
-//                     };
-//                     Some(
-//                         Stack::new()
-//                             .with_child(
-//                                 MouseEventHandler::new::<Self, _>(panel_ix, cx, |state, cx| {
-//                                     let style = button_style.in_state(is_active);
-
-//                                     let style = style.style_for(state);
-//                                     Flex::row()
-//                                         .with_child(
-//                                             Svg::new(icon_path)
-//                                                 .with_color(style.icon_color)
-//                                                 .constrained()
-//                                                 .with_width(style.icon_size)
-//                                                 .aligned(),
-//                                         )
-//                                         .with_children(if let Some(label) = view.icon_label(cx) {
-//                                             Some(
-//                                                 Label::new(label, style.label.text.clone())
-//                                                     .contained()
-//                                                     .with_style(style.label.container)
-//                                                     .aligned(),
-//                                             )
-//                                         } else {
-//                                             None
-//                                         })
-//                                         .constrained()
-//                                         .with_height(style.icon_size)
-//                                         .contained()
-//                                         .with_style(style.container)
-//                                 })
-//                                 .with_cursor_style(CursorStyle::PointingHand)
-//                                 .on_click(MouseButton::Left, {
-//                                     let tooltip_action =
-//                                         tooltip_action.as_ref().map(|action| action.boxed_clone());
-//                                     move |_, this, cx| {
-//                                         if let Some(tooltip_action) = &tooltip_action {
-//                                             let window = cx.window();
-//                                             let view_id = this.workspace.id();
-//                                             let tooltip_action = tooltip_action.boxed_clone();
-//                                             cx.spawn(|_, mut cx| async move {
-//                                                 window.dispatch_action(
-//                                                     view_id,
-//                                                     &*tooltip_action,
-//                                                     &mut cx,
-//                                                 );
-//                                             })
-//                                             .detach();
-//                                         }
-//                                     }
-//                                 })
-//                                 .on_click(MouseButton::Right, {
-//                                     let view = view.clone();
-//                                     let menu = context_menu.clone();
-//                                     move |_, _, cx| {
-//                                         const POSITIONS: [DockPosition; 3] = [
-//                                             DockPosition::Left,
-//                                             DockPosition::Right,
-//                                             DockPosition::Bottom,
-//                                         ];
-
-//                                         menu.update(cx, |menu, cx| {
-//                                             let items = POSITIONS
-//                                                 .into_iter()
-//                                                 .filter(|position| {
-//                                                     *position != dock_position
-//                                                         && view.position_is_valid(*position, cx)
-//                                                 })
-//                                                 .map(|position| {
-//                                                     let view = view.clone();
-//                                                     ContextMenuItem::handler(
-//                                                         format!("Dock {}", position.to_label()),
-//                                                         move |cx| view.set_position(position, cx),
-//                                                     )
-//                                                 })
-//                                                 .collect();
-//                                             menu.show(Default::default(), menu_corner, items, cx);
-//                                         })
-//                                     }
-//                                 })
-//                                 .with_tooltip::<Self>(
-//                                     panel_ix,
-//                                     tooltip,
-//                                     tooltip_action,
-//                                     tooltip_style.clone(),
-//                                     cx,
-//                                 ),
-//                             )
-//                             .with_child(ChildView::new(&context_menu, cx)),
-//                     )
-//                 },
-//             ))
-//             .contained()
-//             .with_style(group_style)
-//             .into_any()
-//     }
-// }
-
-// here be kittens
 impl Render for PanelButtons {
     type Element = Div;
 

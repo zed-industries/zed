@@ -1,4 +1,5 @@
 mod derive_into_element;
+mod derive_render;
 mod register_action;
 mod style_helpers;
 mod test;
@@ -13,6 +14,11 @@ pub fn register_action(ident: TokenStream) -> TokenStream {
 #[proc_macro_derive(IntoElement)]
 pub fn derive_into_element(input: TokenStream) -> TokenStream {
     derive_into_element::derive_into_element(input)
+}
+
+#[proc_macro_derive(Render)]
+pub fn derive_render(input: TokenStream) -> TokenStream {
+    derive_render::derive_render(input)
 }
 
 #[proc_macro]

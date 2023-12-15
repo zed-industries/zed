@@ -1377,33 +1377,28 @@ impl ProjectPanel {
             })
             .unwrap_or(theme.status().info);
 
+        let file_name = details.filename.clone();
+        let icon = details.icon.clone();
+        let depth = details.depth;
         div()
             .id(entry_id.to_proto() as usize)
-            .on_drag({
-                let details = details.clone();
-                move |cx| {
-                    let details = details.clone();
-                    cx.build_view(|_| DraggedProjectEntryView {
-                        details,
-                        width,
-                        entry_id,
-                    })
-                }
+            .on_drag(entry_id, move |entry_id, cx| {
+                cx.build_view(|_| DraggedProjectEntryView {
+                    details: details.clone(),
+                    width,
+                    entry_id: *entry_id,
+                })
             })
-            .drag_over::<DraggedProjectEntryView>(|style| {
-                style.bg(cx.theme().colors().ghost_element_hover)
-            })
-            .on_drop(cx.listener(
-                move |this, dragged_view: &View<DraggedProjectEntryView>, cx| {
-                    this.move_entry(dragged_view.read(cx).entry_id, entry_id, kind.is_file(), cx);
-                },
-            ))
+            .drag_over::<ProjectEntryId>(|style| style.bg(cx.theme().colors().ghost_element_hover))
+            .on_drop(cx.listener(move |this, dragged_id: &ProjectEntryId, cx| {
+                this.move_entry(*dragged_id, entry_id, kind.is_file(), cx);
+            }))
             .child(
                 ListItem::new(entry_id.to_proto() as usize)
-                    .indent_level(details.depth)
+                    .indent_level(depth)
                     .indent_step_size(px(settings.indent_size))
                     .selected(is_selected)
-                    .child(if let Some(icon) = &details.icon {
+                    .child(if let Some(icon) = &icon {
                         div().child(IconElement::from_path(icon.to_string()))
                     } else {
                         div()
@@ -1414,7 +1409,7 @@ impl ProjectPanel {
                         } else {
                             div()
                                 .text_color(filename_text_color)
-                                .child(Label::new(details.filename.clone()))
+                                .child(Label::new(file_name))
                         }
                         .ml_1(),
                     )

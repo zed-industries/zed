@@ -123,6 +123,7 @@ members = [
     "crates/story",
     "crates/vim",
     "crates/vcs_menu",
+    "crates/vcs_menu2",
     "crates/workspace2",
     "crates/welcome",
     "crates/welcome2",

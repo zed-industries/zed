@@ -79,6 +79,10 @@ impl PlatformWindow for TestWindow {
         Point::default()
     }
 
+    fn modifiers(&self) -> crate::Modifiers {
+        crate::Modifiers::default()
+    }
+
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
         self
     }

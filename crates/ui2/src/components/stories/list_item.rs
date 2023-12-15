@@ -17,7 +17,7 @@ impl Render for ListItemStory {
             .child(ListItem::new("hello_world").child("Hello, world!"))
             .child(Story::label("Inset"))
             .child(
-                ListItem::new("hello_world")
+                ListItem::new("inset_list_item")
                     .inset(true)
                     .start_slot(
                         IconElement::new(Icon::Bell)
@@ -59,7 +59,7 @@ impl Render for ListItemStory {
             )
             .child(Story::label("With end hover slot"))
             .child(
-                ListItem::new("with_left_avatar")
+                ListItem::new("with_end_hover_slot")
                     .child("Hello, world!")
                     .end_slot(
                         h_stack()

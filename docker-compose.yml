@@ -1,0 +1,16 @@
+version: "3.7"
+
+services:
+  postgres:
+    image: postgres:15
+    container_name: zed_postgres
+    ports:
+      - 5432:5432
+    environment:
+      POSTGRES_HOST_AUTH_METHOD: trust
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker-compose.sql:/docker-entrypoint-initdb.d/init.sql
+
+volumes:
+  postgres_data:

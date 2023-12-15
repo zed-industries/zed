@@ -81,11 +81,12 @@ impl Element for Img {
     }
 
     fn paint(
-        self,
+        &mut self,
         bounds: Bounds<Pixels>,
         element_state: &mut Self::State,
         cx: &mut WindowContext,
     ) {
+        let source = self.source.clone();
         self.interactivity.paint(
             bounds,
             bounds.size,
@@ -94,7 +95,7 @@ impl Element for Img {
             |style, _scroll_offset, cx| {
                 let corner_radii = style.corner_radii.to_pixels(bounds.size, cx.rem_size());
                 cx.with_z_index(1, |cx| {
-                    match self.source {
+                    match source {
                         ImageSource::Uri(uri) => {
                             let image_future = cx.image_cache.get(uri.clone());
                             if let Some(data) = image_future

@@ -1,8 +1,9 @@
-use crate::{prelude::*, Disclosure};
 use gpui::{
     px, AnyElement, AnyView, ClickEvent, Div, MouseButton, MouseDownEvent, Pixels, Stateful,
 };
 use smallvec::SmallVec;
+
+use crate::{prelude::*, Disclosure};
 
 #[derive(IntoElement)]
 pub struct ListItem {
@@ -127,7 +128,7 @@ impl RenderOnce for ListItem {
 
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         h_stack()
-            .id("item_container")
+            .id(self.id)
             .w_full()
             .relative()
             // When an item is inset draw the indent spacing outside of the item
@@ -150,7 +151,7 @@ impl RenderOnce for ListItem {
             })
             .child(
                 h_stack()
-                    .id(self.id)
+                    .id("inner_list_item")
                     .w_full()
                     .relative()
                     .gap_1()
@@ -170,13 +171,7 @@ impl RenderOnce for ListItem {
                             })
                     })
                     .when_some(self.on_click, |this, on_click| {
-                        this.cursor_pointer().on_click(move |event, cx| {
-                            // HACK: GPUI currently fires `on_click` with any mouse button,
-                            // but we only care about the left button.
-                            if event.down.button == MouseButton::Left {
-                                (on_click)(event, cx)
-                            }
-                        })
+                        this.cursor_pointer().on_click(on_click)
                     })
                     .when_some(self.on_secondary_mouse_down, |this, on_mouse_down| {
                         this.on_mouse_down(MouseButton::Right, move |event, cx| {
@@ -192,10 +187,14 @@ impl RenderOnce for ListItem {
                             this.ml(self.indent_level as f32 * self.indent_step_size)
                         }
                     })
-                    .children(
-                        self.toggle
-                            .map(|is_open| Disclosure::new(is_open).on_toggle(self.on_toggle)),
-                    )
+                    .children(self.toggle.map(|is_open| {
+                        div()
+                            .flex()
+                            .absolute()
+                            .left(rems(-1.))
+                            .visible_on_hover("")
+                            .child(Disclosure::new(is_open).on_toggle(self.on_toggle))
+                    }))
                     .child(
                         h_stack()
                             .flex_1()
@@ -220,8 +219,7 @@ impl RenderOnce for ListItem {
                                 .absolute()
                                 .right_2()
                                 .top_0()
-                                .invisible()
-                                .group_hover("list_item", |this| this.visible())
+                                .visible_on_hover("list_item")
                                 .child(end_hover_slot),
                         )
                     }),

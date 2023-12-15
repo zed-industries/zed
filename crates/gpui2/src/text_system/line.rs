@@ -1,7 +1,6 @@
 use crate::{
-    black, point, px, size, transparent_black, BorrowWindow, Bounds, Corners, Edges, Hsla,
-    LineLayout, Pixels, Point, Result, SharedString, UnderlineStyle, WindowContext, WrapBoundary,
-    WrappedLineLayout,
+    black, fill, point, px, size, BorrowWindow, Bounds, Hsla, LineLayout, Pixels, Point, Result,
+    SharedString, UnderlineStyle, WindowContext, WrapBoundary, WrappedLineLayout,
 };
 use derive_more::{Deref, DerefMut};
 use smallvec::SmallVec;
@@ -109,16 +108,13 @@ fn paint_line(
             if wraps.peek() == Some(&&WrapBoundary { run_ix, glyph_ix }) {
                 wraps.next();
                 if let Some((background_origin, background_color)) = current_background.as_mut() {
-                    cx.paint_quad(
+                    cx.paint_quad(fill(
                         Bounds {
                             origin: *background_origin,
                             size: size(glyph_origin.x - background_origin.x, line_height),
                         },
-                        Corners::default(),
                         *background_color,
-                        Edges::default(),
-                        transparent_black(),
-                    );
+                    ));
                     background_origin.x = origin.x;
                     background_origin.y += line_height;
                 }
@@ -180,16 +176,13 @@ fn paint_line(
             }
 
             if let Some((background_origin, background_color)) = finished_background {
-                cx.paint_quad(
+                cx.paint_quad(fill(
                     Bounds {
                         origin: background_origin,
                         size: size(glyph_origin.x - background_origin.x, line_height),
                     },
-                    Corners::default(),
                     background_color,
-                    Edges::default(),
-                    transparent_black(),
-                );
+                ));
             }
 
             if let Some((underline_origin, underline_style)) = finished_underline {
@@ -235,16 +228,13 @@ fn paint_line(
     }
 
     if let Some((background_origin, background_color)) = current_background.take() {
-        cx.paint_quad(
+        cx.paint_quad(fill(
             Bounds {
                 origin: background_origin,
                 size: size(last_line_end_x - background_origin.x, line_height),
             },
-            Corners::default(),
             background_color,
-            Edges::default(),
-            transparent_black(),
-        );
+        ));
     }
 
     if let Some((underline_start, underline_style)) = current_underline.take() {

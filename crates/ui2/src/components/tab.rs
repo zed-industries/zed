@@ -158,7 +158,6 @@ impl RenderOnce for Tab {
                     )
                     .child(
                         h_stack()
-                            .invisible()
                             .w_3()
                             .h_3()
                             .justify_center()
@@ -167,7 +166,7 @@ impl RenderOnce for Tab {
                                 TabCloseSide::Start => this.left_1(),
                                 TabCloseSide::End => this.right_1(),
                             })
-                            .group_hover("", |style| style.visible())
+                            .visible_on_hover("")
                             .children(self.end_slot),
                     )
                     .children(self.children),
