@@ -11,6 +11,7 @@ use simplelog::SimpleLogger;
 use theme2::{ThemeRegistry, ThemeSettings};
 use ui::prelude::*;
 
+pub use indoc::indoc;
 use storybook2::assets::Assets;
 pub use storybook2::story_selector::*;
 // pub use crate::story_selector::{ComponentStory, StorySelector};
