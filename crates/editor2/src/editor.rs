@@ -4228,16 +4228,18 @@ impl Editor {
     ) -> Option<IconButton> {
         if self.available_code_actions.is_some() {
             Some(
-                IconButton::new("code_actions_indicator", ui::Icon::Bolt).on_click(cx.listener(
-                    |editor, e, cx| {
+                IconButton::new("code_actions_indicator", ui::Icon::Bolt)
+                    .icon_size(IconSize::Small)
+                    .icon_color(Color::Muted)
+                    .selected(is_active)
+                    .on_click(cx.listener(|editor, e, cx| {
                         editor.toggle_code_actions(
                             &ToggleCodeActions {
                                 deployed_from_indicator: true,
                             },
                             cx,
                         );
-                    },
-                )),
+                    })),
             )
         } else {
             None
