@@ -76,7 +76,10 @@ impl RecentProjects {
                         let delegate =
                             RecentProjectsDelegate::new(weak_workspace, workspace_locations, true);
 
-                        RecentProjects::new(delegate, cx)
+                        let modal = RecentProjects::new(delegate, cx);
+                        cx.subscribe(&modal.picker, |_, _, _, cx| cx.emit(DismissEvent))
+                            .detach();
+                        modal
                     });
                 } else {
                     workspace.show_notification(0, cx, |cx| {

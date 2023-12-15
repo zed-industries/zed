@@ -10,11 +10,13 @@ use editor::{
     items::active_match_index, scroll::autoscroll::Autoscroll, Anchor, Editor, EditorEvent,
     MultiBuffer, SelectAll, MAX_TAB_TITLE_LEN,
 };
+use editor::{EditorElement, EditorStyle};
 use gpui::{
-    actions, div, white, AnyElement, AnyView, AppContext, Context as _, Div, Element, EntityId,
-    EventEmitter, FocusableView, InteractiveElement, IntoElement, KeyContext, Model, ModelContext,
-    ParentElement, PromptLevel, Render, SharedString, Styled, Subscription, Task, View,
-    ViewContext, VisualContext, WeakModel, WeakView, WindowContext,
+    actions, div, AnyElement, AnyView, AppContext, Context as _, Div, Element, EntityId,
+    EventEmitter, FocusableView, FontStyle, FontWeight, InteractiveElement, IntoElement,
+    KeyContext, Model, ModelContext, ParentElement, PromptLevel, Render, SharedString, Styled,
+    Subscription, Task, TextStyle, View, ViewContext, VisualContext, WeakModel, WeakView,
+    WhiteSpace, WindowContext,
 };
 use menu::Confirm;
 use project::{
@@ -23,6 +25,7 @@ use project::{
 };
 use semantic_index::{SemanticIndex, SemanticIndexStatus};
 
+use settings::Settings;
 use smol::stream::StreamExt;
 use std::{
     any::{Any, TypeId},
@@ -32,6 +35,7 @@ use std::{
     path::PathBuf,
     time::{Duration, Instant},
 };
+use theme::ThemeSettings;
 
 use ui::{
     h_stack, prelude::*, v_stack, Button, Icon, IconButton, IconElement, Label, LabelCommon,
@@ -273,13 +277,15 @@ pub enum ViewEvent {
 impl EventEmitter<ViewEvent> for ProjectSearchView {}
 
 impl Render for ProjectSearchView {
-    type Element = Div;
+    type Element = AnyElement;
+
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         if self.has_matches() {
             div()
                 .flex_1()
                 .size_full()
                 .child(self.results_editor.clone())
+                .into_any()
         } else {
             let model = self.model.read(cx);
             let has_no_results = model.no_results.unwrap_or(false);
@@ -352,21 +358,31 @@ impl Render for ProjectSearchView {
                     .max_w_96()
                     .child(Label::new(text).size(LabelSize::Small))
             });
-            v_stack().flex_1().size_full().justify_center().child(
-                h_stack()
-                    .size_full()
-                    .justify_center()
-                    .child(h_stack().flex_1())
-                    .child(v_stack().child(major_text).children(minor_text))
-                    .child(h_stack().flex_1()),
-            )
+            v_stack()
+                .track_focus(&self.query_editor.focus_handle(cx))
+                .flex_1()
+                .size_full()
+                .justify_center()
+                .child(
+                    h_stack()
+                        .size_full()
+                        .justify_center()
+                        .child(h_stack().flex_1())
+                        .child(v_stack().child(major_text).children(minor_text))
+                        .child(h_stack().flex_1()),
+                )
+                .into_any()
         }
     }
 }
 
 impl FocusableView for ProjectSearchView {
     fn focus_handle(&self, cx: &AppContext) -> gpui::FocusHandle {
-        self.results_editor.focus_handle(cx)
+        if self.has_matches() {
+            self.results_editor.focus_handle(cx)
+        } else {
+            self.query_editor.focus_handle(cx)
+        }
     }
 }
 
@@ -1425,6 +1441,36 @@ impl ProjectSearchBar {
         };
         new_placeholder_text
     }
+
+    fn render_text_input(&self, editor: &View<Editor>, cx: &ViewContext<Self>) -> impl IntoElement {
+        let settings = ThemeSettings::get_global(cx);
+        let text_style = TextStyle {
+            color: if editor.read(cx).read_only() {
+                cx.theme().colors().text_disabled
+            } else {
+                cx.theme().colors().text
+            },
+            font_family: settings.ui_font.family.clone(),
+            font_features: settings.ui_font.features,
+            font_size: rems(0.875).into(),
+            font_weight: FontWeight::NORMAL,
+            font_style: FontStyle::Normal,
+            line_height: relative(1.3).into(),
+            background_color: None,
+            underline: None,
+            white_space: WhiteSpace::Normal,
+        };
+
+        EditorElement::new(
+            &editor,
+            EditorStyle {
+                background: cx.theme().colors().editor_background,
+                local_player: cx.theme().players().local(),
+                text: text_style,
+                ..Default::default()
+            },
+        )
+    }
 }
 
 impl Render for ProjectSearchBar {
@@ -1445,85 +1491,79 @@ impl Render for ProjectSearchBar {
         }
         let search = search.read(cx);
         let semantic_is_available = SemanticIndex::enabled(cx);
-        let query_column = v_stack()
-            //.flex_1()
-            .child(
-                h_stack()
-                    .min_w_80()
-                    .on_action(cx.listener(|this, action, cx| this.confirm(action, cx)))
-                    .on_action(
-                        cx.listener(|this, action, cx| this.previous_history_query(action, cx)),
-                    )
-                    .on_action(cx.listener(|this, action, cx| this.next_history_query(action, cx)))
-                    .child(IconElement::new(Icon::MagnifyingGlass))
-                    .child(search.query_editor.clone())
-                    .child(
-                        h_stack()
-                            .child(
-                                IconButton::new("project-search-filter-button", Icon::Filter)
-                                    .tooltip(|cx| {
-                                        Tooltip::for_action("Toggle filters", &ToggleFilters, cx)
-                                    })
-                                    .on_click(cx.listener(|this, _, cx| {
-                                        this.toggle_filters(cx);
-                                    }))
-                                    .selected(
-                                        self.active_project_search
-                                            .as_ref()
-                                            .map(|search| search.read(cx).filters_enabled)
-                                            .unwrap_or_default(),
-                                    ),
-                            )
-                            .when(search.current_mode != SearchMode::Semantic, |this| {
-                                this.child(
-                                    IconButton::new(
-                                        "project-search-case-sensitive",
-                                        Icon::CaseSensitive,
+        let query_column = v_stack().child(
+            h_stack()
+                .min_w(rems(512. / 16.))
+                .px_2()
+                .py_1()
+                .gap_2()
+                .bg(cx.theme().colors().editor_background)
+                .border_1()
+                .border_color(cx.theme().colors().border)
+                .rounded_lg()
+                .on_action(cx.listener(|this, action, cx| this.confirm(action, cx)))
+                .on_action(cx.listener(|this, action, cx| this.previous_history_query(action, cx)))
+                .on_action(cx.listener(|this, action, cx| this.next_history_query(action, cx)))
+                .child(IconElement::new(Icon::MagnifyingGlass))
+                .child(self.render_text_input(&search.query_editor, cx))
+                .child(
+                    h_stack()
+                        .child(
+                            IconButton::new("project-search-filter-button", Icon::Filter)
+                                .tooltip(|cx| {
+                                    Tooltip::for_action("Toggle filters", &ToggleFilters, cx)
+                                })
+                                .on_click(cx.listener(|this, _, cx| {
+                                    this.toggle_filters(cx);
+                                }))
+                                .selected(
+                                    self.active_project_search
+                                        .as_ref()
+                                        .map(|search| search.read(cx).filters_enabled)
+                                        .unwrap_or_default(),
+                                ),
+                        )
+                        .when(search.current_mode != SearchMode::Semantic, |this| {
+                            this.child(
+                                IconButton::new(
+                                    "project-search-case-sensitive",
+                                    Icon::CaseSensitive,
+                                )
+                                .tooltip(|cx| {
+                                    Tooltip::for_action(
+                                        "Toggle case sensitive",
+                                        &ToggleCaseSensitive,
+                                        cx,
                                     )
+                                })
+                                .selected(self.is_option_enabled(SearchOptions::CASE_SENSITIVE, cx))
+                                .on_click(cx.listener(
+                                    |this, _, cx| {
+                                        this.toggle_search_option(
+                                            SearchOptions::CASE_SENSITIVE,
+                                            cx,
+                                        );
+                                    },
+                                )),
+                            )
+                            .child(
+                                IconButton::new("project-search-whole-word", Icon::WholeWord)
                                     .tooltip(|cx| {
                                         Tooltip::for_action(
-                                            "Toggle case sensitive",
-                                            &ToggleCaseSensitive,
+                                            "Toggle whole word",
+                                            &ToggleWholeWord,
                                             cx,
                                         )
                                     })
-                                    .selected(
-                                        self.is_option_enabled(SearchOptions::CASE_SENSITIVE, cx),
-                                    )
-                                    .on_click(cx.listener(
-                                        |this, _, cx| {
-                                            this.toggle_search_option(
-                                                SearchOptions::CASE_SENSITIVE,
-                                                cx,
-                                            );
-                                        },
-                                    )),
-                                )
-                                .child(
-                                    IconButton::new("project-search-whole-word", Icon::WholeWord)
-                                        .tooltip(|cx| {
-                                            Tooltip::for_action(
-                                                "Toggle whole word",
-                                                &ToggleWholeWord,
-                                                cx,
-                                            )
-                                        })
-                                        .selected(
-                                            self.is_option_enabled(SearchOptions::WHOLE_WORD, cx),
-                                        )
-                                        .on_click(cx.listener(|this, _, cx| {
-                                            this.toggle_search_option(
-                                                SearchOptions::WHOLE_WORD,
-                                                cx,
-                                            );
-                                        })),
-                                )
-                            }),
-                    )
-                    .border_2()
-                    .bg(white())
-                    .rounded_lg(),
-            );
+                                    .selected(self.is_option_enabled(SearchOptions::WHOLE_WORD, cx))
+                                    .on_click(cx.listener(|this, _, cx| {
+                                        this.toggle_search_option(SearchOptions::WHOLE_WORD, cx);
+                                    })),
+                            )
+                        }),
+                ),
+        );
+
         let mode_column = v_stack().items_start().justify_start().child(
             h_stack()
                 .child(
@@ -1579,12 +1619,16 @@ impl Render for ProjectSearchBar {
         );
         let replace_column = if search.replace_enabled {
             h_stack()
-                .p_1()
                 .flex_1()
-                .border_2()
+                .h_full()
+                .gap_2()
+                .px_2()
+                .py_1()
+                .border_1()
+                .border_color(cx.theme().colors().border)
                 .rounded_lg()
                 .child(IconElement::new(Icon::Replace).size(ui::IconSize::Small))
-                .child(search.replacement_editor.clone())
+                .child(self.render_text_input(&search.replacement_editor, cx))
         } else {
             // Fill out the space if we don't have a replacement editor.
             h_stack().flex_1()
@@ -1647,9 +1691,10 @@ impl Render for ProjectSearchBar {
             ]);
         v_stack()
             .key_context(key_context)
+            .flex_grow()
             .p_1()
             .m_2()
-            .justify_between()
+            .gap_2()
             .on_action(cx.listener(|this, _: &ToggleFilters, cx| {
                 this.toggle_filters(cx);
             }))
@@ -1703,6 +1748,7 @@ impl Render for ProjectSearchBar {
             })
             .child(
                 h_stack()
+                    .justify_between()
                     .child(query_column)
                     .child(mode_column)
                     .child(replace_column)
@@ -1711,15 +1757,19 @@ impl Render for ProjectSearchBar {
             .when(search.filters_enabled, |this| {
                 this.child(
                     h_stack()
-                        .mt_2()
                         .flex_1()
+                        .gap_2()
                         .justify_between()
                         .child(
                             h_stack()
                                 .flex_1()
+                                .h_full()
+                                .px_2()
+                                .py_1()
                                 .border_1()
-                                .mr_2()
-                                .child(search.included_files_editor.clone())
+                                .border_color(cx.theme().colors().border)
+                                .rounded_lg()
+                                .child(self.render_text_input(&search.included_files_editor, cx))
                                 .when(search.current_mode != SearchMode::Semantic, |this| {
                                     this.child(
                                         SearchOptions::INCLUDE_IGNORED.as_button(
@@ -1739,9 +1789,13 @@ impl Render for ProjectSearchBar {
                         .child(
                             h_stack()
                                 .flex_1()
+                                .h_full()
+                                .px_2()
+                                .py_1()
                                 .border_1()
-                                .ml_2()
-                                .child(search.excluded_files_editor.clone()),
+                                .border_color(cx.theme().colors().border)
+                                .rounded_lg()
+                                .child(self.render_text_input(&search.excluded_files_editor, cx)),
                         ),
                 )
             })

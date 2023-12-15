@@ -257,7 +257,7 @@ impl Element for List {
     }
 
     fn paint(
-        self,
+        &mut self,
         bounds: crate::Bounds<crate::Pixels>,
         _state: &mut Self::State,
         cx: &mut crate::WindowContext,
@@ -385,7 +385,7 @@ impl Element for List {
         // Paint the visible items
         let mut item_origin = bounds.origin;
         item_origin.y -= scroll_top.offset_in_item;
-        for mut item_element in item_elements {
+        for item_element in &mut item_elements {
             let item_height = item_element.measure(available_item_space, cx).height;
             item_element.draw(item_origin, available_item_space, cx);
             item_origin.y += item_height;

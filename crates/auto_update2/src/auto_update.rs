@@ -6,15 +6,17 @@ use db::kvp::KEY_VALUE_STORE;
 use db::RELEASE_CHANNEL;
 use gpui::{
     actions, AppContext, AsyncAppContext, Context as _, Model, ModelContext, SemanticVersion, Task,
-    ViewContext, VisualContext,
+    ViewContext, VisualContext, WindowContext,
 };
 use isahc::AsyncBody;
+
 use serde::Deserialize;
 use serde_derive::Serialize;
 use smol::io::AsyncReadExt;
 
 use settings::{Settings, SettingsStore};
 use smol::{fs::File, process::Command};
+
 use std::{ffi::OsString, sync::Arc, time::Duration};
 use update_notification::UpdateNotification;
 use util::channel::{AppCommitSha, ReleaseChannel};
@@ -24,16 +26,7 @@ use workspace::Workspace;
 const SHOULD_SHOW_UPDATE_NOTIFICATION_KEY: &str = "auto-updater-should-show-updated-notification";
 const POLL_INTERVAL: Duration = Duration::from_secs(60 * 60);
 
-//todo!(remove CheckThatAutoUpdaterWorks)
-actions!(
-    auto_update,
-    [
-        Check,
-        DismissErrorMessage,
-        ViewReleaseNotes,
-        CheckThatAutoUpdaterWorks
-    ]
-);
+actions!(auto_update, [Check, DismissErrorMessage, ViewReleaseNotes]);
 
 #[derive(Serialize)]
 struct UpdateRequestBody {
@@ -90,7 +83,10 @@ pub fn init(http_client: Arc<dyn HttpClient>, server_url: String, cx: &mut AppCo
     cx.observe_new_views(|workspace: &mut Workspace, _cx| {
         workspace.register_action(|_, action: &Check, cx| check(action, cx));
 
+        workspace.register_action(|_, action, cx| view_release_notes(action, cx));
+
         // @nate - code to trigger update notification on launch
+        // todo!("remove this when Nate is done")
         // workspace.show_notification(0, _cx, |cx| {
         //     cx.build_view(|_| UpdateNotification::new(SemanticVersion::from_str("1.1.1").unwrap()))
         // });
@@ -119,13 +115,10 @@ pub fn init(http_client: Arc<dyn HttpClient>, server_url: String, cx: &mut AppCo
             updater
         });
         cx.set_global(Some(auto_updater));
-        //todo!(action)
-        // cx.add_global_action(view_release_notes);
-        // cx.add_action(UpdateNotification::dismiss);
     }
 }
 
-pub fn check(_: &Check, cx: &mut ViewContext<Workspace>) {
+pub fn check(_: &Check, cx: &mut WindowContext) {
     if let Some(updater) = AutoUpdater::get(cx) {
         updater.update(cx, |updater, cx| updater.poll(cx));
     } else {

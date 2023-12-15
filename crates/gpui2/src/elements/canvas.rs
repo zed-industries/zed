@@ -4,13 +4,13 @@ use crate::{Bounds, Element, IntoElement, Pixels, Style, StyleRefinement, Styled
 
 pub fn canvas(callback: impl 'static + FnOnce(&Bounds<Pixels>, &mut WindowContext)) -> Canvas {
     Canvas {
-        paint_callback: Box::new(callback),
+        paint_callback: Some(Box::new(callback)),
         style: StyleRefinement::default(),
     }
 }
 
 pub struct Canvas {
-    paint_callback: Box<dyn FnOnce(&Bounds<Pixels>, &mut WindowContext)>,
+    paint_callback: Option<Box<dyn FnOnce(&Bounds<Pixels>, &mut WindowContext)>>,
     style: StyleRefinement,
 }
 
@@ -27,7 +27,7 @@ impl IntoElement for Canvas {
 }
 
 impl Element for Canvas {
-    type State = ();
+    type State = Style;
 
     fn layout(
         &mut self,
@@ -37,11 +37,13 @@ impl Element for Canvas {
         let mut style = Style::default();
         style.refine(&self.style);
         let layout_id = cx.request_layout(&style, []);
-        (layout_id, ())
+        (layout_id, style)
     }
 
-    fn paint(self, bounds: Bounds<Pixels>, _: &mut (), cx: &mut WindowContext) {
-        (self.paint_callback)(&bounds, cx)
+    fn paint(&mut self, bounds: Bounds<Pixels>, style: &mut Style, cx: &mut WindowContext) {
+        style.paint(bounds, cx, |cx| {
+            (self.paint_callback.take().unwrap())(&bounds, cx)
+        });
     }
 }
 

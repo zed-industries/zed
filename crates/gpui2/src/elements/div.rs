@@ -1,10 +1,9 @@
 use crate::{
     point, px, Action, AnyDrag, AnyElement, AnyTooltip, AnyView, AppContext, BorrowAppContext,
-    BorrowWindow, Bounds, ClickEvent, DispatchPhase, Element, ElementId, FocusEvent, FocusHandle,
-    IntoElement, KeyContext, KeyDownEvent, KeyUpEvent, LayoutId, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, Render, ScrollWheelEvent,
-    SharedString, Size, StackingOrder, Style, StyleRefinement, Styled, Task, View, Visibility,
-    WindowContext,
+    BorrowWindow, Bounds, ClickEvent, DispatchPhase, Element, ElementId, FocusHandle, IntoElement,
+    KeyContext, KeyDownEvent, KeyUpEvent, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, ParentElement, Pixels, Point, Render, ScrollWheelEvent, SharedString, Size,
+    StackingOrder, Style, StyleRefinement, Styled, Task, View, Visibility, WindowContext,
 };
 
 use collections::HashMap;
@@ -15,6 +14,7 @@ use std::{
     cell::RefCell,
     cmp::Ordering,
     fmt::Debug,
+    marker::PhantomData,
     mem,
     rc::Rc,
     time::Duration,
@@ -30,9 +30,299 @@ pub struct GroupStyle {
     pub style: Box<StyleRefinement>,
 }
 
-pub struct DragMoveEvent<W: Render> {
+pub struct DragMoveEvent<T> {
     pub event: MouseMoveEvent,
-    pub drag: View<W>,
+    pub bounds: Bounds<Pixels>,
+    drag: PhantomData<T>,
+}
+
+impl<T: 'static> DragMoveEvent<T> {
+    pub fn drag<'b>(&self, cx: &'b AppContext) -> &'b T {
+        cx.active_drag
+            .as_ref()
+            .and_then(|drag| drag.value.downcast_ref::<T>())
+            .expect("DragMoveEvent is only valid when the stored active drag is of the same type.")
+    }
+}
+
+impl Interactivity {
+    pub fn on_mouse_down(
+        &mut self,
+        button: MouseButton,
+        listener: impl Fn(&MouseDownEvent, &mut WindowContext) + 'static,
+    ) {
+        self.mouse_down_listeners
+            .push(Box::new(move |event, bounds, phase, cx| {
+                if phase == DispatchPhase::Bubble
+                    && event.button == button
+                    && bounds.visibly_contains(&event.position, cx)
+                {
+                    (listener)(event, cx)
+                }
+            }));
+    }
+
+    pub fn on_any_mouse_down(
+        &mut self,
+        listener: impl Fn(&MouseDownEvent, &mut WindowContext) + 'static,
+    ) {
+        self.mouse_down_listeners
+            .push(Box::new(move |event, bounds, phase, cx| {
+                if phase == DispatchPhase::Bubble && bounds.visibly_contains(&event.position, cx) {
+                    (listener)(event, cx)
+                }
+            }));
+    }
+
+    pub fn on_mouse_up(
+        &mut self,
+        button: MouseButton,
+        listener: impl Fn(&MouseUpEvent, &mut WindowContext) + 'static,
+    ) {
+        self.mouse_up_listeners
+            .push(Box::new(move |event, bounds, phase, cx| {
+                if phase == DispatchPhase::Bubble
+                    && event.button == button
+                    && bounds.visibly_contains(&event.position, cx)
+                {
+                    (listener)(event, cx)
+                }
+            }));
+    }
+
+    pub fn on_any_mouse_up(
+        &mut self,
+        listener: impl Fn(&MouseUpEvent, &mut WindowContext) + 'static,
+    ) {
+        self.mouse_up_listeners
+            .push(Box::new(move |event, bounds, phase, cx| {
+                if phase == DispatchPhase::Bubble && bounds.visibly_contains(&event.position, cx) {
+                    (listener)(event, cx)
+                }
+            }));
+    }
+
+    pub fn on_mouse_down_out(
+        &mut self,
+        listener: impl Fn(&MouseDownEvent, &mut WindowContext) + 'static,
+    ) {
+        self.mouse_down_listeners
+            .push(Box::new(move |event, bounds, phase, cx| {
+                if phase == DispatchPhase::Capture && !bounds.visibly_contains(&event.position, cx)
+                {
+                    (listener)(event, cx)
+                }
+            }));
+    }
+
+    pub fn on_mouse_up_out(
+        &mut self,
+        button: MouseButton,
+        listener: impl Fn(&MouseUpEvent, &mut WindowContext) + 'static,
+    ) {
+        self.mouse_up_listeners
+            .push(Box::new(move |event, bounds, phase, cx| {
+                if phase == DispatchPhase::Capture
+                    && event.button == button
+                    && !bounds.visibly_contains(&event.position, cx)
+                {
+                    (listener)(event, cx);
+                }
+            }));
+    }
+
+    pub fn on_mouse_move(
+        &mut self,
+        listener: impl Fn(&MouseMoveEvent, &mut WindowContext) + 'static,
+    ) {
+        self.mouse_move_listeners
+            .push(Box::new(move |event, bounds, phase, cx| {
+                if phase == DispatchPhase::Bubble && bounds.visibly_contains(&event.position, cx) {
+                    (listener)(event, cx);
+                }
+            }));
+    }
+
+    pub fn on_drag_move<T>(
+        &mut self,
+        listener: impl Fn(&DragMoveEvent<T>, &mut WindowContext) + 'static,
+    ) where
+        T: 'static,
+    {
+        self.mouse_move_listeners
+            .push(Box::new(move |event, bounds, phase, cx| {
+                if phase == DispatchPhase::Capture
+                    && bounds.drag_target_contains(&event.position, cx)
+                {
+                    if cx
+                        .active_drag
+                        .as_ref()
+                        .is_some_and(|drag| drag.value.as_ref().type_id() == TypeId::of::<T>())
+                    {
+                        (listener)(
+                            &DragMoveEvent {
+                                event: event.clone(),
+                                bounds: bounds.bounds,
+                                drag: PhantomData,
+                            },
+                            cx,
+                        );
+                    }
+                }
+            }));
+    }
+
+    pub fn on_scroll_wheel(
+        &mut self,
+        listener: impl Fn(&ScrollWheelEvent, &mut WindowContext) + 'static,
+    ) {
+        self.scroll_wheel_listeners
+            .push(Box::new(move |event, bounds, phase, cx| {
+                if phase == DispatchPhase::Bubble && bounds.visibly_contains(&event.position, cx) {
+                    (listener)(event, cx);
+                }
+            }));
+    }
+
+    pub fn capture_action<A: Action>(
+        &mut self,
+        listener: impl Fn(&A, &mut WindowContext) + 'static,
+    ) {
+        self.action_listeners.push((
+            TypeId::of::<A>(),
+            Box::new(move |action, phase, cx| {
+                let action = action.downcast_ref().unwrap();
+                if phase == DispatchPhase::Capture {
+                    (listener)(action, cx)
+                }
+            }),
+        ));
+    }
+
+    pub fn on_action<A: Action>(&mut self, listener: impl Fn(&A, &mut WindowContext) + 'static) {
+        self.action_listeners.push((
+            TypeId::of::<A>(),
+            Box::new(move |action, phase, cx| {
+                let action = action.downcast_ref().unwrap();
+                if phase == DispatchPhase::Bubble {
+                    (listener)(action, cx)
+                }
+            }),
+        ));
+    }
+
+    pub fn on_boxed_action(
+        &mut self,
+        action: &Box<dyn Action>,
+        listener: impl Fn(&Box<dyn Action>, &mut WindowContext) + 'static,
+    ) {
+        let action = action.boxed_clone();
+        self.action_listeners.push((
+            (*action).type_id(),
+            Box::new(move |_, phase, cx| {
+                if phase == DispatchPhase::Bubble {
+                    (listener)(&action, cx)
+                }
+            }),
+        ));
+    }
+
+    pub fn on_key_down(&mut self, listener: impl Fn(&KeyDownEvent, &mut WindowContext) + 'static) {
+        self.key_down_listeners
+            .push(Box::new(move |event, phase, cx| {
+                if phase == DispatchPhase::Bubble {
+                    (listener)(event, cx)
+                }
+            }));
+    }
+
+    pub fn capture_key_down(
+        &mut self,
+        listener: impl Fn(&KeyDownEvent, &mut WindowContext) + 'static,
+    ) {
+        self.key_down_listeners
+            .push(Box::new(move |event, phase, cx| {
+                if phase == DispatchPhase::Capture {
+                    listener(event, cx)
+                }
+            }));
+    }
+
+    pub fn on_key_up(&mut self, listener: impl Fn(&KeyUpEvent, &mut WindowContext) + 'static) {
+        self.key_up_listeners
+            .push(Box::new(move |event, phase, cx| {
+                if phase == DispatchPhase::Bubble {
+                    listener(event, cx)
+                }
+            }));
+    }
+
+    pub fn capture_key_up(&mut self, listener: impl Fn(&KeyUpEvent, &mut WindowContext) + 'static) {
+        self.key_up_listeners
+            .push(Box::new(move |event, phase, cx| {
+                if phase == DispatchPhase::Capture {
+                    listener(event, cx)
+                }
+            }));
+    }
+
+    pub fn on_drop<T: 'static>(&mut self, listener: impl Fn(&T, &mut WindowContext) + 'static) {
+        self.drop_listeners.push((
+            TypeId::of::<T>(),
+            Box::new(move |dragged_value, cx| {
+                listener(dragged_value.downcast_ref().unwrap(), cx);
+            }),
+        ));
+    }
+
+    pub fn on_click(&mut self, listener: impl Fn(&ClickEvent, &mut WindowContext) + 'static)
+    where
+        Self: Sized,
+    {
+        self.click_listeners
+            .push(Box::new(move |event, cx| listener(event, cx)));
+    }
+
+    pub fn on_drag<T, W>(
+        &mut self,
+        value: T,
+        constructor: impl Fn(&T, &mut WindowContext) -> View<W> + 'static,
+    ) where
+        Self: Sized,
+        T: 'static,
+        W: 'static + Render,
+    {
+        debug_assert!(
+            self.drag_listener.is_none(),
+            "calling on_drag more than once on the same element is not supported"
+        );
+        self.drag_listener = Some((
+            Box::new(value),
+            Box::new(move |value, cx| constructor(value.downcast_ref().unwrap(), cx).into()),
+        ));
+    }
+
+    pub fn on_hover(&mut self, listener: impl Fn(&bool, &mut WindowContext) + 'static)
+    where
+        Self: Sized,
+    {
+        debug_assert!(
+            self.hover_listener.is_none(),
+            "calling on_hover more than once on the same element is not supported"
+        );
+        self.hover_listener = Some(Box::new(listener));
+    }
+
+    pub fn tooltip(&mut self, build_tooltip: impl Fn(&mut WindowContext) -> AnyView + 'static)
+    where
+        Self: Sized,
+    {
+        debug_assert!(
+            self.tooltip_builder.is_none(),
+            "calling tooltip more than once on the same element is not supported"
+        );
+        self.tooltip_builder = Some(Rc::new(build_tooltip));
+    }
 }
 
 pub trait InteractiveElement: Sized {
@@ -92,16 +382,7 @@ pub trait InteractiveElement: Sized {
         button: MouseButton,
         listener: impl Fn(&MouseDownEvent, &mut WindowContext) + 'static,
     ) -> Self {
-        self.interactivity().mouse_down_listeners.push(Box::new(
-            move |event, bounds, phase, cx| {
-                if phase == DispatchPhase::Bubble
-                    && event.button == button
-                    && bounds.visibly_contains(&event.position, cx)
-                {
-                    (listener)(event, cx)
-                }
-            },
-        ));
+        self.interactivity().on_mouse_down(button, listener);
         self
     }
 
@@ -109,13 +390,7 @@ pub trait InteractiveElement: Sized {
         mut self,
         listener: impl Fn(&MouseDownEvent, &mut WindowContext) + 'static,
     ) -> Self {
-        self.interactivity().mouse_down_listeners.push(Box::new(
-            move |event, bounds, phase, cx| {
-                if phase == DispatchPhase::Bubble && bounds.visibly_contains(&event.position, cx) {
-                    (listener)(event, cx)
-                }
-            },
-        ));
+        self.interactivity().on_any_mouse_down(listener);
         self
     }
 
@@ -124,30 +399,7 @@ pub trait InteractiveElement: Sized {
         button: MouseButton,
         listener: impl Fn(&MouseUpEvent, &mut WindowContext) + 'static,
     ) -> Self {
-        self.interactivity()
-            .mouse_up_listeners
-            .push(Box::new(move |event, bounds, phase, cx| {
-                if phase == DispatchPhase::Bubble
-                    && event.button == button
-                    && bounds.visibly_contains(&event.position, cx)
-                {
-                    (listener)(event, cx)
-                }
-            }));
-        self
-    }
-
-    fn on_any_mouse_up(
-        mut self,
-        listener: impl Fn(&MouseUpEvent, &mut WindowContext) + 'static,
-    ) -> Self {
-        self.interactivity()
-            .mouse_up_listeners
-            .push(Box::new(move |event, bounds, phase, cx| {
-                if phase == DispatchPhase::Bubble && bounds.visibly_contains(&event.position, cx) {
-                    (listener)(event, cx)
-                }
-            }));
+        self.interactivity().on_mouse_up(button, listener);
         self
     }
 
@@ -155,14 +407,7 @@ pub trait InteractiveElement: Sized {
         mut self,
         listener: impl Fn(&MouseDownEvent, &mut WindowContext) + 'static,
     ) -> Self {
-        self.interactivity().mouse_down_listeners.push(Box::new(
-            move |event, bounds, phase, cx| {
-                if phase == DispatchPhase::Capture && !bounds.visibly_contains(&event.position, cx)
-                {
-                    (listener)(event, cx)
-                }
-            },
-        ));
+        self.interactivity().on_mouse_down_out(listener);
         self
     }
 
@@ -171,16 +416,7 @@ pub trait InteractiveElement: Sized {
         button: MouseButton,
         listener: impl Fn(&MouseUpEvent, &mut WindowContext) + 'static,
     ) -> Self {
-        self.interactivity()
-            .mouse_up_listeners
-            .push(Box::new(move |event, bounds, phase, cx| {
-                if phase == DispatchPhase::Capture
-                    && event.button == button
-                    && !bounds.visibly_contains(&event.position, cx)
-                {
-                    (listener)(event, cx);
-                }
-            }));
+        self.interactivity().on_mouse_up_out(button, listener);
         self
     }
 
@@ -188,41 +424,18 @@ pub trait InteractiveElement: Sized {
         mut self,
         listener: impl Fn(&MouseMoveEvent, &mut WindowContext) + 'static,
     ) -> Self {
-        self.interactivity().mouse_move_listeners.push(Box::new(
-            move |event, bounds, phase, cx| {
-                if phase == DispatchPhase::Bubble && bounds.visibly_contains(&event.position, cx) {
-                    (listener)(event, cx);
-                }
-            },
-        ));
+        self.interactivity().on_mouse_move(listener);
         self
     }
 
-    fn on_drag_move<W>(
+    fn on_drag_move<T: 'static>(
         mut self,
-        listener: impl Fn(&DragMoveEvent<W>, &mut WindowContext) + 'static,
+        listener: impl Fn(&DragMoveEvent<T>, &mut WindowContext) + 'static,
     ) -> Self
     where
-        W: Render,
+        T: 'static,
     {
-        self.interactivity().mouse_move_listeners.push(Box::new(
-            move |event, bounds, phase, cx| {
-                if phase == DispatchPhase::Capture
-                    && bounds.drag_target_contains(&event.position, cx)
-                {
-                    if let Some(view) = cx.active_drag().and_then(|view| view.downcast::<W>().ok())
-                    {
-                        (listener)(
-                            &DragMoveEvent {
-                                event: event.clone(),
-                                drag: view,
-                            },
-                            cx,
-                        );
-                    }
-                }
-            },
-        ));
+        self.interactivity().on_drag_move(listener);
         self
     }
 
@@ -230,13 +443,7 @@ pub trait InteractiveElement: Sized {
         mut self,
         listener: impl Fn(&ScrollWheelEvent, &mut WindowContext) + 'static,
     ) -> Self {
-        self.interactivity().scroll_wheel_listeners.push(Box::new(
-            move |event, bounds, phase, cx| {
-                if phase == DispatchPhase::Bubble && bounds.visibly_contains(&event.position, cx) {
-                    (listener)(event, cx);
-                }
-            },
-        ));
+        self.interactivity().on_scroll_wheel(listener);
         self
     }
 
@@ -245,29 +452,13 @@ pub trait InteractiveElement: Sized {
         mut self,
         listener: impl Fn(&A, &mut WindowContext) + 'static,
     ) -> Self {
-        self.interactivity().action_listeners.push((
-            TypeId::of::<A>(),
-            Box::new(move |action, phase, cx| {
-                let action = action.downcast_ref().unwrap();
-                if phase == DispatchPhase::Capture {
-                    (listener)(action, cx)
-                }
-            }),
-        ));
+        self.interactivity().capture_action(listener);
         self
     }
 
     /// Add a listener for the given action, fires during the bubble event phase
     fn on_action<A: Action>(mut self, listener: impl Fn(&A, &mut WindowContext) + 'static) -> Self {
-        self.interactivity().action_listeners.push((
-            TypeId::of::<A>(),
-            Box::new(move |action, phase, cx| {
-                let action = action.downcast_ref().unwrap();
-                if phase == DispatchPhase::Bubble {
-                    (listener)(action, cx)
-                }
-            }),
-        ));
+        self.interactivity().on_action(listener);
         self
     }
 
@@ -276,15 +467,7 @@ pub trait InteractiveElement: Sized {
         action: &Box<dyn Action>,
         listener: impl Fn(&Box<dyn Action>, &mut WindowContext) + 'static,
     ) -> Self {
-        let action = action.boxed_clone();
-        self.interactivity().action_listeners.push((
-            (*action).type_id(),
-            Box::new(move |_, phase, cx| {
-                if phase == DispatchPhase::Bubble {
-                    (listener)(&action, cx)
-                }
-            }),
-        ));
+        self.interactivity().on_boxed_action(action, listener);
         self
     }
 
@@ -292,13 +475,7 @@ pub trait InteractiveElement: Sized {
         mut self,
         listener: impl Fn(&KeyDownEvent, &mut WindowContext) + 'static,
     ) -> Self {
-        self.interactivity()
-            .key_down_listeners
-            .push(Box::new(move |event, phase, cx| {
-                if phase == DispatchPhase::Bubble {
-                    (listener)(event, cx)
-                }
-            }));
+        self.interactivity().on_key_down(listener);
         self
     }
 
@@ -306,24 +483,12 @@ pub trait InteractiveElement: Sized {
         mut self,
         listener: impl Fn(&KeyDownEvent, &mut WindowContext) + 'static,
     ) -> Self {
-        self.interactivity()
-            .key_down_listeners
-            .push(Box::new(move |event, phase, cx| {
-                if phase == DispatchPhase::Capture {
-                    listener(event, cx)
-                }
-            }));
+        self.interactivity().capture_key_down(listener);
         self
     }
 
     fn on_key_up(mut self, listener: impl Fn(&KeyUpEvent, &mut WindowContext) + 'static) -> Self {
-        self.interactivity()
-            .key_up_listeners
-            .push(Box::new(move |event, phase, cx| {
-                if phase == DispatchPhase::Bubble {
-                    listener(event, cx)
-                }
-            }));
+        self.interactivity().on_key_up(listener);
         self
     }
 
@@ -331,13 +496,7 @@ pub trait InteractiveElement: Sized {
         mut self,
         listener: impl Fn(&KeyUpEvent, &mut WindowContext) + 'static,
     ) -> Self {
-        self.interactivity()
-            .key_up_listeners
-            .push(Box::new(move |event, phase, cx| {
-                if phase == DispatchPhase::Capture {
-                    listener(event, cx)
-                }
-            }));
+        self.interactivity().capture_key_up(listener);
         self
     }
 
@@ -363,16 +522,8 @@ pub trait InteractiveElement: Sized {
         self
     }
 
-    fn on_drop<W: 'static>(
-        mut self,
-        listener: impl Fn(&View<W>, &mut WindowContext) + 'static,
-    ) -> Self {
-        self.interactivity().drop_listeners.push((
-            TypeId::of::<W>(),
-            Box::new(move |dragged_view, cx| {
-                listener(&dragged_view.downcast().unwrap(), cx);
-            }),
-        ));
+    fn on_drop<T: 'static>(mut self, listener: impl Fn(&T, &mut WindowContext) + 'static) -> Self {
+        self.interactivity().on_drop(listener);
         self
     }
 }
@@ -431,25 +582,21 @@ pub trait StatefulInteractiveElement: InteractiveElement {
     where
         Self: Sized,
     {
-        self.interactivity()
-            .click_listeners
-            .push(Box::new(move |event, cx| listener(event, cx)));
+        self.interactivity().on_click(listener);
         self
     }
 
-    fn on_drag<W>(mut self, constructor: impl Fn(&mut WindowContext) -> View<W> + 'static) -> Self
+    fn on_drag<T, W>(
+        mut self,
+        value: T,
+        constructor: impl Fn(&T, &mut WindowContext) -> View<W> + 'static,
+    ) -> Self
     where
         Self: Sized,
+        T: 'static,
         W: 'static + Render,
     {
-        debug_assert!(
-            self.interactivity().drag_listener.is_none(),
-            "calling on_drag more than once on the same element is not supported"
-        );
-        self.interactivity().drag_listener = Some(Box::new(move |cursor_offset, cx| AnyDrag {
-            view: constructor(cx).into(),
-            cursor_offset,
-        }));
+        self.interactivity().on_drag(value, constructor);
         self
     }
 
@@ -457,11 +604,7 @@ pub trait StatefulInteractiveElement: InteractiveElement {
     where
         Self: Sized,
     {
-        debug_assert!(
-            self.interactivity().hover_listener.is_none(),
-            "calling on_hover more than once on the same element is not supported"
-        );
-        self.interactivity().hover_listener = Some(Box::new(listener));
+        self.interactivity().on_hover(listener);
         self
     }
 
@@ -469,11 +612,7 @@ pub trait StatefulInteractiveElement: InteractiveElement {
     where
         Self: Sized,
     {
-        debug_assert!(
-            self.interactivity().tooltip_builder.is_none(),
-            "calling tooltip more than once on the same element is not supported"
-        );
-        self.interactivity().tooltip_builder = Some(Rc::new(build_tooltip));
+        self.interactivity().tooltip(build_tooltip);
         self
     }
 }
@@ -496,10 +635,6 @@ pub trait FocusableElement: InteractiveElement {
     }
 }
 
-pub type FocusListeners = Vec<FocusListener>;
-
-pub type FocusListener = Box<dyn Fn(&FocusHandle, &FocusEvent, &mut WindowContext) + 'static>;
-
 pub type MouseDownListener =
     Box<dyn Fn(&MouseDownEvent, &InteractiveBounds, DispatchPhase, &mut WindowContext) + 'static>;
 pub type MouseUpListener =
@@ -513,9 +648,9 @@ pub type ScrollWheelListener =
 
 pub type ClickListener = Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>;
 
-pub type DragListener = Box<dyn Fn(Point<Pixels>, &mut WindowContext) -> AnyDrag + 'static>;
+pub type DragListener = Box<dyn Fn(&dyn Any, &mut WindowContext) -> AnyView + 'static>;
 
-type DropListener = dyn Fn(AnyView, &mut WindowContext) + 'static;
+type DropListener = Box<dyn Fn(&dyn Any, &mut WindowContext) + 'static>;
 
 pub type TooltipBuilder = Rc<dyn Fn(&mut WindowContext) -> AnyView + 'static>;
 
@@ -529,17 +664,20 @@ pub type ActionListener = Box<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext
 
 #[track_caller]
 pub fn div() -> Div {
-    let mut div = Div {
-        interactivity: Interactivity::default(),
-        children: SmallVec::default(),
+    #[cfg(debug_assertions)]
+    let interactivity = {
+        let mut interactivity = Interactivity::default();
+        interactivity.location = Some(*core::panic::Location::caller());
+        interactivity
     };
 
-    #[cfg(debug_assertions)]
-    {
-        div.interactivity.location = Some(*core::panic::Location::caller());
-    }
+    #[cfg(not(debug_assertions))]
+    let interactivity = Interactivity::default();
 
-    div
+    Div {
+        interactivity,
+        children: SmallVec::default(),
+    }
 }
 
 pub struct Div {
@@ -598,7 +736,7 @@ impl Element for Div {
     }
 
     fn paint(
-        self,
+        &mut self,
         bounds: Bounds<Pixels>,
         element_state: &mut Self::State,
         cx: &mut WindowContext,
@@ -642,10 +780,6 @@ impl Element for Div {
             &mut element_state.interactive_state,
             cx,
             |style, scroll_offset, cx| {
-                if style.visibility == Visibility::Hidden {
-                    return;
-                }
-
                 let z_index = style.z_index.unwrap_or(0);
 
                 cx.with_z_index(z_index, |cx| {
@@ -653,7 +787,7 @@ impl Element for Div {
                         cx.with_text_style(style.text_style().cloned(), |cx| {
                             cx.with_content_mask(style.overflow_mask(bounds), |cx| {
                                 cx.with_element_offset(scroll_offset, |cx| {
-                                    for child in self.children {
+                                    for child in &mut self.children {
                                         child.paint(cx);
                                     }
                                 })
@@ -685,7 +819,10 @@ pub struct DivState {
 
 impl DivState {
     pub fn is_active(&self) -> bool {
-        self.interactive_state.pending_mouse_down.borrow().is_some()
+        self.interactive_state
+            .pending_mouse_down
+            .as_ref()
+            .map_or(false, |pending| pending.borrow().is_some())
     }
 }
 
@@ -712,9 +849,9 @@ pub struct Interactivity {
     pub key_down_listeners: Vec<KeyDownListener>,
     pub key_up_listeners: Vec<KeyUpListener>,
     pub action_listeners: Vec<(TypeId, ActionListener)>,
-    pub drop_listeners: Vec<(TypeId, Box<DropListener>)>,
+    pub drop_listeners: Vec<(TypeId, DropListener)>,
     pub click_listeners: Vec<ClickListener>,
-    pub drag_listener: Option<DragListener>,
+    pub drag_listener: Option<(Box<dyn Any>, DragListener)>,
     pub hover_listener: Option<Box<dyn Fn(&bool, &mut WindowContext)>>,
     pub tooltip_builder: Option<TooltipBuilder>,
 
@@ -770,7 +907,7 @@ impl Interactivity {
     }
 
     pub fn paint(
-        mut self,
+        &mut self,
         bounds: Bounds<Pixels>,
         content_size: Size<Pixels>,
         element_state: &mut InteractiveElementState,
@@ -779,13 +916,17 @@ impl Interactivity {
     ) {
         let style = self.compute_style(Some(bounds), element_state, cx);
 
+        if style.visibility == Visibility::Hidden {
+            return;
+        }
+
         #[cfg(debug_assertions)]
         if self.element_id.is_some()
             && (style.debug || style.debug_below || cx.has_global::<crate::DebugBelow>())
             && bounds.contains(&cx.mouse_position())
         {
             const FONT_SIZE: crate::Pixels = crate::Pixels(10.);
-            let element_id = format!("{:?}", self.element_id.unwrap());
+            let element_id = format!("{:?}", self.element_id.as_ref().unwrap());
             let str_len = element_id.len();
 
             let render_debug_text = |cx: &mut WindowContext| {
@@ -893,15 +1034,15 @@ impl Interactivity {
         if style
             .background
             .as_ref()
-            .is_some_and(|fill| fill.color().is_some())
+            .is_some_and(|fill| fill.color().is_some_and(|color| !color.is_transparent()))
         {
             cx.with_z_index(style.z_index.unwrap_or(0), |cx| cx.add_opaque_layer(bounds))
         }
 
-        let interactive_bounds = Rc::new(InteractiveBounds {
+        let interactive_bounds = InteractiveBounds {
             bounds: bounds.intersect(&cx.content_mask().bounds),
             stacking_order: cx.stacking_order().clone(),
-        });
+        };
 
         if let Some(mouse_cursor) = style.mouse_cursor {
             let mouse_position = &cx.mouse_position();
@@ -934,28 +1075,28 @@ impl Interactivity {
         for listener in self.mouse_down_listeners.drain(..) {
             let interactive_bounds = interactive_bounds.clone();
             cx.on_mouse_event(move |event: &MouseDownEvent, phase, cx| {
-                listener(event, &*interactive_bounds, phase, cx);
+                listener(event, &interactive_bounds, phase, cx);
             })
         }
 
         for listener in self.mouse_up_listeners.drain(..) {
             let interactive_bounds = interactive_bounds.clone();
             cx.on_mouse_event(move |event: &MouseUpEvent, phase, cx| {
-                listener(event, &*interactive_bounds, phase, cx);
+                listener(event, &interactive_bounds, phase, cx);
             })
         }
 
         for listener in self.mouse_move_listeners.drain(..) {
             let interactive_bounds = interactive_bounds.clone();
             cx.on_mouse_event(move |event: &MouseMoveEvent, phase, cx| {
-                listener(event, &*interactive_bounds, phase, cx);
+                listener(event, &interactive_bounds, phase, cx);
             })
         }
 
         for listener in self.scroll_wheel_listeners.drain(..) {
             let interactive_bounds = interactive_bounds.clone();
             cx.on_mouse_event(move |event: &ScrollWheelEvent, phase, cx| {
-                listener(event, &*interactive_bounds, phase, cx);
+                listener(event, &interactive_bounds, phase, cx);
             })
         }
 
@@ -998,8 +1139,10 @@ impl Interactivity {
                     if phase == DispatchPhase::Bubble
                         && interactive_bounds.drag_target_contains(&event.position, cx)
                     {
-                        if let Some(drag_state_type) =
-                            cx.active_drag.as_ref().map(|drag| drag.view.entity_type())
+                        if let Some(drag_state_type) = cx
+                            .active_drag
+                            .as_ref()
+                            .map(|drag| drag.value.as_ref().type_id())
                         {
                             for (drop_state_type, listener) in &drop_listeners {
                                 if *drop_state_type == drag_state_type {
@@ -1008,7 +1151,7 @@ impl Interactivity {
                                         .take()
                                         .expect("checked for type drag state type above");
 
-                                    listener(drag.view.clone(), cx);
+                                    listener(drag.value.as_ref(), cx);
                                     cx.notify();
                                     cx.stop_propagation();
                                 }
@@ -1022,14 +1165,20 @@ impl Interactivity {
         }
 
         let click_listeners = mem::take(&mut self.click_listeners);
-        let drag_listener = mem::take(&mut self.drag_listener);
+        let mut drag_listener = mem::take(&mut self.drag_listener);
 
         if !click_listeners.is_empty() || drag_listener.is_some() {
-            let pending_mouse_down = element_state.pending_mouse_down.clone();
+            let pending_mouse_down = element_state
+                .pending_mouse_down
+                .get_or_insert_with(Default::default)
+                .clone();
             let mouse_down = pending_mouse_down.borrow().clone();
             if let Some(mouse_down) = mouse_down {
-                if let Some(drag_listener) = drag_listener {
-                    let active_state = element_state.clicked_state.clone();
+                if drag_listener.is_some() {
+                    let active_state = element_state
+                        .clicked_state
+                        .get_or_insert_with(Default::default)
+                        .clone();
                     let interactive_bounds = interactive_bounds.clone();
 
                     cx.on_mouse_event(move |event: &MouseMoveEvent, phase, cx| {
@@ -1041,10 +1190,18 @@ impl Interactivity {
                             && interactive_bounds.visibly_contains(&event.position, cx)
                             && (event.position - mouse_down.position).magnitude() > DRAG_THRESHOLD
                         {
+                            let (drag_value, drag_listener) = drag_listener
+                                .take()
+                                .expect("The notify below should invalidate this callback");
+
                             *active_state.borrow_mut() = ElementClickedState::default();
                             let cursor_offset = event.position - bounds.origin;
-                            let drag = drag_listener(cursor_offset, cx);
-                            cx.active_drag = Some(drag);
+                            let drag = (drag_listener)(drag_value.as_ref(), cx);
+                            cx.active_drag = Some(AnyDrag {
+                                view: drag,
+                                value: drag_value,
+                                cursor_offset,
+                            });
                             cx.notify();
                             cx.stop_propagation();
                         }
@@ -1082,8 +1239,14 @@ impl Interactivity {
         }
 
         if let Some(hover_listener) = self.hover_listener.take() {
-            let was_hovered = element_state.hover_state.clone();
-            let has_mouse_down = element_state.pending_mouse_down.clone();
+            let was_hovered = element_state
+                .hover_state
+                .get_or_insert_with(Default::default)
+                .clone();
+            let has_mouse_down = element_state
+                .pending_mouse_down
+                .get_or_insert_with(Default::default)
+                .clone();
             let interactive_bounds = interactive_bounds.clone();
 
             cx.on_mouse_event(move |event: &MouseMoveEvent, phase, cx| {
@@ -1104,8 +1267,14 @@ impl Interactivity {
         }
 
         if let Some(tooltip_builder) = self.tooltip_builder.take() {
-            let active_tooltip = element_state.active_tooltip.clone();
-            let pending_mouse_down = element_state.pending_mouse_down.clone();
+            let active_tooltip = element_state
+                .active_tooltip
+                .get_or_insert_with(Default::default)
+                .clone();
+            let pending_mouse_down = element_state
+                .pending_mouse_down
+                .get_or_insert_with(Default::default)
+                .clone();
             let interactive_bounds = interactive_bounds.clone();
 
             cx.on_mouse_event(move |event: &MouseMoveEvent, phase, cx| {
@@ -1147,19 +1316,30 @@ impl Interactivity {
                 }
             });
 
-            let active_tooltip = element_state.active_tooltip.clone();
+            let active_tooltip = element_state
+                .active_tooltip
+                .get_or_insert_with(Default::default)
+                .clone();
             cx.on_mouse_event(move |_: &MouseDownEvent, _, _| {
                 active_tooltip.borrow_mut().take();
             });
 
-            if let Some(active_tooltip) = element_state.active_tooltip.borrow().as_ref() {
+            if let Some(active_tooltip) = element_state
+                .active_tooltip
+                .get_or_insert_with(Default::default)
+                .borrow()
+                .as_ref()
+            {
                 if active_tooltip.tooltip.is_some() {
                     cx.active_tooltip = active_tooltip.tooltip.clone()
                 }
             }
         }
 
-        let active_state = element_state.clicked_state.clone();
+        let active_state = element_state
+            .clicked_state
+            .get_or_insert_with(Default::default)
+            .clone();
         if active_state.borrow().is_clicked() {
             cx.on_mouse_event(move |_: &MouseUpEvent, phase, cx| {
                 if phase == DispatchPhase::Capture {
@@ -1235,23 +1415,26 @@ impl Interactivity {
             .as_ref()
             .map(|scroll_offset| *scroll_offset.borrow());
 
+        let key_down_listeners = mem::take(&mut self.key_down_listeners);
+        let key_up_listeners = mem::take(&mut self.key_up_listeners);
+        let action_listeners = mem::take(&mut self.action_listeners);
         cx.with_key_dispatch(
             self.key_context.clone(),
             element_state.focus_handle.clone(),
             |_, cx| {
-                for listener in self.key_down_listeners.drain(..) {
+                for listener in key_down_listeners {
                     cx.on_key_event(move |event: &KeyDownEvent, phase, cx| {
                         listener(event, phase, cx);
                     })
                 }
 
-                for listener in self.key_up_listeners.drain(..) {
+                for listener in key_up_listeners {
                     cx.on_key_event(move |event: &KeyUpEvent, phase, cx| {
                         listener(event, phase, cx);
                     })
                 }
 
-                for (action_type, listener) in self.action_listeners {
+                for (action_type, listener) in action_listeners {
                     cx.on_action(action_type, listener)
                 }
 
@@ -1312,7 +1495,7 @@ impl Interactivity {
                 if let Some(drag) = cx.active_drag.take() {
                     for (state_type, group_drag_style) in &self.group_drag_over_styles {
                         if let Some(group_bounds) = GroupBounds::get(&group_drag_style.group, cx) {
-                            if *state_type == drag.view.entity_type()
+                            if *state_type == drag.value.as_ref().type_id()
                                 && group_bounds.contains(&mouse_position)
                             {
                                 style.refine(&group_drag_style.style);
@@ -1321,7 +1504,7 @@ impl Interactivity {
                     }
 
                     for (state_type, drag_over_style) in &self.drag_over_styles {
-                        if *state_type == drag.view.entity_type()
+                        if *state_type == drag.value.as_ref().type_id()
                             && bounds
                                 .intersect(&cx.content_mask().bounds)
                                 .contains(&mouse_position)
@@ -1338,7 +1521,10 @@ impl Interactivity {
                 }
             }
 
-            let clicked_state = element_state.clicked_state.borrow();
+            let clicked_state = element_state
+                .clicked_state
+                .get_or_insert_with(Default::default)
+                .borrow();
             if clicked_state.group {
                 if let Some(group) = self.group_active_style.as_ref() {
                     style.refine(&group.style)
@@ -1397,11 +1583,11 @@ impl Default for Interactivity {
 #[derive(Default)]
 pub struct InteractiveElementState {
     pub focus_handle: Option<FocusHandle>,
-    pub clicked_state: Rc<RefCell<ElementClickedState>>,
-    pub hover_state: Rc<RefCell<bool>>,
-    pub pending_mouse_down: Rc<RefCell<Option<MouseDownEvent>>>,
+    pub clicked_state: Option<Rc<RefCell<ElementClickedState>>>,
+    pub hover_state: Option<Rc<RefCell<bool>>>,
+    pub pending_mouse_down: Option<Rc<RefCell<Option<MouseDownEvent>>>>,
     pub scroll_offset: Option<Rc<RefCell<Point<Pixels>>>>,
-    pub active_tooltip: Rc<RefCell<Option<ActiveTooltip>>>,
+    pub active_tooltip: Option<Rc<RefCell<Option<ActiveTooltip>>>>,
 }
 
 pub struct ActiveTooltip {
@@ -1487,7 +1673,7 @@ where
         self.element.layout(state, cx)
     }
 
-    fn paint(self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut WindowContext) {
+    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut WindowContext) {
         self.element.paint(bounds, state, cx)
     }
 }
@@ -1561,7 +1747,7 @@ where
         self.element.layout(state, cx)
     }
 
-    fn paint(self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut WindowContext) {
+    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut WindowContext) {
         self.element.paint(bounds, state, cx)
     }
 }

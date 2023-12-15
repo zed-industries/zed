@@ -193,7 +193,7 @@ impl<T: SearchableItem> SearchableItemHandle for View<T> {
         cx: &mut WindowContext,
     ) -> Task<Vec<Box<dyn Any + Send>>> {
         let matches = self.update(cx, |this, cx| this.find_matches(query, cx));
-        cx.spawn(|cx| async {
+        cx.spawn(|_| async {
             let matches = matches.await;
             matches
                 .into_iter()
@@ -253,7 +253,7 @@ pub trait WeakSearchableItemHandle: WeakItemHandle {
 }
 
 impl<T: SearchableItem> WeakSearchableItemHandle for WeakView<T> {
-    fn upgrade(&self, cx: &AppContext) -> Option<Box<dyn SearchableItemHandle>> {
+    fn upgrade(&self, _cx: &AppContext) -> Option<Box<dyn SearchableItemHandle>> {
         Some(Box::new(self.upgrade()?))
     }
 
