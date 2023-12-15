@@ -584,10 +584,7 @@ impl CollabPanel {
     }
 
     fn scroll_to_item(&mut self, ix: usize) {
-        self.list_state.scroll_to(ListOffset {
-            item_ix: ix,
-            offset_in_item: px(0.),
-        })
+        self.list_state.scroll_to_reveal_item(ix)
     }
 
     fn update_entries(&mut self, select_same_item: bool, cx: &mut ViewContext<Self>) {

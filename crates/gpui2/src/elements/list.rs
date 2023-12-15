@@ -154,11 +154,40 @@ impl ListState {
         state.logical_scroll_top = Some(scroll_top);
     }
 
+    pub fn scroll_to_reveal_item(&self, ix: usize) {
+        let state = &mut *self.0.borrow_mut();
+        let mut scroll_top = state.logical_scroll_top();
+        let height = state
+            .last_layout_bounds
+            .map_or(px(0.), |bounds| bounds.size.height);
+
+        if ix <= scroll_top.item_ix {
+            scroll_top.item_ix = ix;
+            scroll_top.offset_in_item = px(0.);
+        } else {
+            let mut cursor = state.items.cursor::<ListItemSummary>();
+            cursor.seek(&Count(ix + 1), Bias::Right, &());
+            let bottom = cursor.start().height;
+            let goal_top = px(0.).max(bottom - height);
+
+            cursor.seek(&Height(goal_top), Bias::Left, &());
+            let start_ix = cursor.start().count;
+            let start_item_top = cursor.start().height;
+
+            if start_ix >= scroll_top.item_ix {
+                scroll_top.item_ix = start_ix;
+                scroll_top.offset_in_item = goal_top - start_item_top;
+            }
+        }
+
+        state.logical_scroll_top = Some(scroll_top);
+    }
+
     /// Get the bounds for the given item in window coordinates.
     pub fn bounds_for_item(&self, ix: usize) -> Option<Bounds<Pixels>> {
         let state = &*self.0.borrow();
         let bounds = state.last_layout_bounds.unwrap_or_default();
-        let scroll_top = state.logical_scroll_top.unwrap_or_default();
+        let scroll_top = state.logical_scroll_top();
 
         if ix < scroll_top.item_ix {
             return None;
@@ -264,7 +293,7 @@ impl std::fmt::Debug for ListItem {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy)]
 pub struct ListOffset {
     pub item_ix: usize,
     pub offset_in_item: Pixels,
