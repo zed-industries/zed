@@ -6,7 +6,7 @@
 
 ![Staff usage of channels](./assets/screenshots/staff_usage_of_channels.png)
 
-*Metrics were not being collected before August 2023*
+*Channel metrics were not collected prior to August 2023*
 
 While we still have improvements to make, we believe we've sanded down a lot of the sharp edges and that the experience is both smooth and enjoyable - one that gets you as close to hypothetically sitting next to your teammates as possible, even if you're potentially on different sides of the globe. We want to continue working this way amongst ourselves and we are extremely excited to work with *you* in this way. We invite you to contribute to Zed *through* Zed.
 
