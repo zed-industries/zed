@@ -191,7 +191,7 @@ impl Element for UniformList {
             content_size,
             &mut element_state.interactive,
             cx,
-            |style, scroll_offset, cx| {
+            |style, mut scroll_offset, cx| {
                 let border = style.border_widths.to_pixels(cx.rem_size());
                 let padding = style.padding.to_pixels(bounds.size.into(), cx.rem_size());
 
@@ -204,6 +204,13 @@ impl Element for UniformList {
                 cx.with_z_index(style.z_index.unwrap_or(0), |cx| {
                     style.paint(bounds, cx, |cx| {
                         if self.item_count > 0 {
+                            let min_scroll_offset =
+                                padded_bounds.size.height - (item_height * self.item_count);
+                            if scroll_offset.y < min_scroll_offset {
+                                shared_scroll_offset.borrow_mut().y = min_scroll_offset;
+                                scroll_offset.y = min_scroll_offset;
+                            }
+
                             if let Some(scroll_handle) = self.scroll_handle.clone() {
                                 scroll_handle.0.borrow_mut().replace(ScrollHandleState {
                                     item_height,
