@@ -157,7 +157,7 @@ impl Interactivity {
                     if cx
                         .active_drag
                         .as_ref()
-                        .is_some_and(|drag| drag.value.type_id() == TypeId::of::<T>())
+                        .is_some_and(|drag| (*drag.value).type_id() == TypeId::of::<T>())
                     {
                         (listener)(
                             &DragMoveEvent {
@@ -432,7 +432,7 @@ pub trait InteractiveElement: Sized {
         listener: impl Fn(&DragMoveEvent<T>, &mut WindowContext) + 'static,
     ) -> Self
     where
-        T: Render,
+        T: 'static,
     {
         self.interactivity().on_drag_move(listener);
         self
