@@ -12,7 +12,7 @@ use crate::{
     UnderlineStyle, View, VisualContext, WeakView, WindowBounds, WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::{anyhow, Context as _, Result};
-use collections::HashMap;
+use collections::FxHashMap;
 use derive_more::{Deref, DerefMut};
 use futures::{
     channel::{mpsc, oneshot},
@@ -38,12 +38,24 @@ use std::{
 };
 use util::ResultExt;
 
-const ACTIVE_DRAG_Z_INDEX: u32 = 1;
+const ACTIVE_DRAG_Z_INDEX: u8 = 1;
 
 /// A global stacking order, which is created by stacking successive z-index values.
 /// Each z-index will always be interpreted in the context of its parent z-index.
-#[derive(Deref, DerefMut, Ord, PartialOrd, Eq, PartialEq, Clone, Default, Debug)]
-pub struct StackingOrder(pub(crate) SmallVec<[u32; 16]>);
+#[derive(Deref, DerefMut, Clone, Debug, Ord, PartialOrd, PartialEq, Eq)]
+pub struct StackingOrder {
+    #[deref]
+    #[deref_mut]
+    z_indices: SmallVec<[u8; 64]>,
+}
+
+impl Default for StackingOrder {
+    fn default() -> Self {
+        StackingOrder {
+            z_indices: SmallVec::new(),
+        }
+    }
+}
 
 /// Represents the two different phases when dispatching events.
 #[derive(Default, Copy, Clone, Debug, Eq, PartialEq)]
@@ -238,6 +250,7 @@ pub struct Window {
     bounds_observers: SubscriberSet<(), AnyObserver>,
     active: bool,
     pub(crate) dirty: bool,
+    pub(crate) drawing: bool,
     activation_observers: SubscriberSet<(), AnyObserver>,
     pub(crate) last_blur: Option<Option<FocusId>>,
     pub(crate) focus: Option<FocusId>,
@@ -251,8 +264,8 @@ pub(crate) struct ElementStateBox {
 
 // #[derive(Default)]
 pub(crate) struct Frame {
-    pub(crate) element_states: HashMap<GlobalElementId, ElementStateBox>,
-    mouse_listeners: HashMap<TypeId, Vec<(StackingOrder, AnyMouseListener)>>,
+    pub(crate) element_states: FxHashMap<GlobalElementId, ElementStateBox>,
+    mouse_listeners: FxHashMap<TypeId, Vec<(StackingOrder, AnyMouseListener)>>,
     pub(crate) dispatch_tree: DispatchTree,
     pub(crate) focus_listeners: Vec<AnyFocusListener>,
     pub(crate) scene_builder: SceneBuilder,
@@ -265,8 +278,8 @@ pub(crate) struct Frame {
 impl Frame {
     fn new(dispatch_tree: DispatchTree) -> Self {
         Frame {
-            element_states: HashMap::default(),
-            mouse_listeners: HashMap::default(),
+            element_states: FxHashMap::default(),
+            mouse_listeners: FxHashMap::default(),
             dispatch_tree,
             focus_listeners: Vec::new(),
             scene_builder: SceneBuilder::default(),
@@ -374,6 +387,7 @@ impl Window {
             bounds_observers: SubscriberSet::new(),
             active: false,
             dirty: false,
+            drawing: false,
             activation_observers: SubscriberSet::new(),
             last_blur: None,
             focus: None,
@@ -425,7 +439,9 @@ impl<'a> WindowContext<'a> {
 
     /// Mark the window as dirty, scheduling it to be redrawn on the next frame.
     pub fn notify(&mut self) {
-        self.window.dirty = true;
+        if !self.window.drawing {
+            self.window.dirty = true;
+        }
     }
 
     /// Close this window.
@@ -891,7 +907,7 @@ impl<'a> WindowContext<'a> {
 
     /// Called during painting to invoke the given closure in a new stacking context. The given
     /// z-index is interpreted relative to the previous call to `stack`.
-    pub fn with_z_index<R>(&mut self, z_index: u32, f: impl FnOnce(&mut Self) -> R) -> R {
+    pub fn with_z_index<R>(&mut self, z_index: u8, f: impl FnOnce(&mut Self) -> R) -> R {
         self.window.next_frame.z_index_stack.push(z_index);
         let result = f(self);
         self.window.next_frame.z_index_stack.pop();
@@ -1238,6 +1254,10 @@ impl<'a> WindowContext<'a> {
 
     /// Draw pixels to the display for this window based on the contents of its scene.
     pub(crate) fn draw(&mut self) -> Scene {
+        let t0 = std::time::Instant::now();
+        self.window.dirty = false;
+        self.window.drawing = true;
+
         let window_was_focused = self
             .window
             .focus
@@ -1327,7 +1347,8 @@ impl<'a> WindowContext<'a> {
             self.platform.set_cursor_style(cursor_style);
         }
 
-        self.window.dirty = false;
+        self.window.drawing = false;
+        eprintln!("window draw: {:?}", t0.elapsed());
 
         scene
     }
@@ -2227,7 +2248,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         &mut self.window_cx
     }
 
-    pub fn with_z_index<R>(&mut self, z_index: u32, f: impl FnOnce(&mut Self) -> R) -> R {
+    pub fn with_z_index<R>(&mut self, z_index: u8, f: impl FnOnce(&mut Self) -> R) -> R {
         self.window.next_frame.z_index_stack.push(z_index);
         let result = f(self);
         self.window.next_frame.z_index_stack.pop();
@@ -2364,10 +2385,12 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     }
 
     pub fn notify(&mut self) {
-        self.window_cx.notify();
-        self.window_cx.app.push_effect(Effect::Notify {
-            emitter: self.view.model.entity_id,
-        });
+        if !self.window.drawing {
+            self.window_cx.notify();
+            self.window_cx.app.push_effect(Effect::Notify {
+                emitter: self.view.model.entity_id,
+            });
+        }
     }
 
     pub fn observe_window_bounds(
@@ -2902,12 +2925,12 @@ impl AnyWindowHandle {
     }
 }
 
-#[cfg(any(test, feature = "test-support"))]
-impl From<SmallVec<[u32; 16]>> for StackingOrder {
-    fn from(small_vec: SmallVec<[u32; 16]>) -> Self {
-        StackingOrder(small_vec)
-    }
-}
+// #[cfg(any(test, feature = "test-support"))]
+// impl From<SmallVec<[u32; 16]>> for StackingOrder {
+//     fn from(small_vec: SmallVec<[u32; 16]>) -> Self {
+//         StackingOrder(small_vec)
+//     }
+// }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub enum ElementId {

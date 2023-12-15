@@ -1524,33 +1524,17 @@ impl Render for ProjectSearchBar {
                                         cx,
                                     )
                                 })
-                                .selected(self.is_option_enabled(SearchOptions::CASE_SENSITIVE, cx))
+                                .selected(self.is_option_enabled(SearchOptions::WHOLE_WORD, cx))
                                 .on_click(cx.listener(
                                     |this, _, cx| {
-                                        this.toggle_search_option(
-                                            SearchOptions::CASE_SENSITIVE,
-                                            cx,
-                                        );
+                                        this.toggle_search_option(SearchOptions::WHOLE_WORD, cx);
                                     },
                                 )),
-                            )
-                            .child(
-                                IconButton::new("project-search-whole-word", Icon::WholeWord)
-                                    .tooltip(|cx| {
-                                        Tooltip::for_action(
-                                            "Toggle whole word",
-                                            &ToggleWholeWord,
-                                            cx,
-                                        )
-                                    })
-                                    .selected(self.is_option_enabled(SearchOptions::WHOLE_WORD, cx))
-                                    .on_click(cx.listener(|this, _, cx| {
-                                        this.toggle_search_option(SearchOptions::WHOLE_WORD, cx);
-                                    })),
                             )
                         }),
                 ),
         );
+
         let mode_column = v_stack().items_start().justify_start().child(
             h_stack()
                 .child(

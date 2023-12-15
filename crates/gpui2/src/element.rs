@@ -23,7 +23,7 @@ pub trait IntoElement: Sized {
         self.into_element().into_any()
     }
 
-    fn draw<T, R>(
+    fn draw_and_update_state<T, R>(
         self,
         origin: Point<Pixels>,
         available_space: Size<T>,
@@ -92,7 +92,7 @@ pub trait Element: 'static + IntoElement {
         cx: &mut WindowContext,
     ) -> (LayoutId, Self::State);
 
-    fn paint(self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut WindowContext);
+    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut WindowContext);
 
     fn into_any(self) -> AnyElement {
         AnyElement::new(self)
@@ -150,8 +150,8 @@ impl<C: RenderOnce> Element for Component<C> {
         }
     }
 
-    fn paint(self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut WindowContext) {
-        let element = state.rendered_element.take().unwrap();
+    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut WindowContext) {
+        let mut element = state.rendered_element.take().unwrap();
         if let Some(element_id) = element.element_id() {
             cx.with_element_state(element_id, |element_state, cx| {
                 let mut element_state = element_state.unwrap();
@@ -420,7 +420,7 @@ impl AnyElement {
         self.0.layout(cx)
     }
 
-    pub fn paint(mut self, cx: &mut WindowContext) {
+    pub fn paint(&mut self, cx: &mut WindowContext) {
         self.0.paint(cx)
     }
 
@@ -435,7 +435,7 @@ impl AnyElement {
 
     /// Initializes this element and performs layout in the available space, then paints it at the given origin.
     pub fn draw(
-        mut self,
+        &mut self,
         origin: Point<Pixels>,
         available_space: Size<AvailableSpace>,
         cx: &mut WindowContext,
@@ -465,8 +465,8 @@ impl Element for AnyElement {
         (layout_id, ())
     }
 
-    fn paint(self, _: Bounds<Pixels>, _: &mut Self::State, cx: &mut WindowContext) {
-        self.paint(cx);
+    fn paint(&mut self, _: Bounds<Pixels>, _: &mut Self::State, cx: &mut WindowContext) {
+        self.paint(cx)
     }
 }
 
@@ -508,5 +508,11 @@ impl Element for () {
         (cx.request_layout(&crate::Style::default(), None), ())
     }
 
-    fn paint(self, _bounds: Bounds<Pixels>, _state: &mut Self::State, _cx: &mut WindowContext) {}
+    fn paint(
+        &mut self,
+        _bounds: Bounds<Pixels>,
+        _state: &mut Self::State,
+        _cx: &mut WindowContext,
+    ) {
+    }
 }

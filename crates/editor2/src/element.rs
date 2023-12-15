@@ -933,7 +933,7 @@ impl EditorElement {
                                         cx.stop_propagation();
                                     },
                                 ))
-                                .draw(
+                                .draw_and_update_state(
                                     fold_bounds.origin,
                                     fold_bounds.size,
                                     cx,
@@ -1199,11 +1199,10 @@ impl EditorElement {
                 .child(mouse_context_menu.context_menu.clone())
                 .anchor(AnchorCorner::TopLeft)
                 .snap_to_window();
-            element.draw(
+            element.into_any().draw(
                 gpui::Point::default(),
                 size(AvailableSpace::MinContent, AvailableSpace::MinContent),
                 cx,
-                |_, _| {},
             );
         }
     }
@@ -1496,7 +1495,7 @@ impl EditorElement {
         let scroll_left = scroll_position.x * layout.position_map.em_width;
         let scroll_top = scroll_position.y * layout.position_map.line_height;
 
-        for block in layout.blocks.drain(..) {
+        for mut block in layout.blocks.drain(..) {
             let mut origin = bounds.origin
                 + point(
                     Pixels::ZERO,
@@ -2781,7 +2780,7 @@ impl Element for EditorElement {
     }
 
     fn paint(
-        mut self,
+        &mut self,
         bounds: Bounds<gpui::Pixels>,
         element_state: &mut Self::State,
         cx: &mut gpui::WindowContext,

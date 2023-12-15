@@ -12,7 +12,7 @@ pub trait Styled: Sized {
 
     gpui2_macros::style_helpers!();
 
-    fn z_index(mut self, z_index: u32) -> Self {
+    fn z_index(mut self, z_index: u8) -> Self {
         self.style().z_index = Some(z_index);
         self
     }

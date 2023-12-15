@@ -91,7 +91,7 @@ impl<V: Render> Element for View<V> {
         (layout_id, Some(element))
     }
 
-    fn paint(self, _: Bounds<Pixels>, element: &mut Self::State, cx: &mut WindowContext) {
+    fn paint(&mut self, _: Bounds<Pixels>, element: &mut Self::State, cx: &mut WindowContext) {
         element.take().unwrap().paint(cx);
     }
 }
@@ -171,7 +171,7 @@ impl<V> Eq for WeakView<V> {}
 pub struct AnyView {
     model: AnyModel,
     layout: fn(&AnyView, &mut WindowContext) -> (LayoutId, AnyElement),
-    paint: fn(&AnyView, AnyElement, &mut WindowContext),
+    paint: fn(&AnyView, &mut AnyElement, &mut WindowContext),
 }
 
 impl AnyView {
@@ -209,9 +209,20 @@ impl AnyView {
         cx: &mut WindowContext,
     ) {
         cx.with_absolute_element_offset(origin, |cx| {
-            let (layout_id, rendered_element) = (self.layout)(self, cx);
+            let start_time = std::time::Instant::now();
+            let (layout_id, mut rendered_element) = (self.layout)(self, cx);
+            let duration = start_time.elapsed();
+            println!("request layout: {:?}", duration);
+
+            let start_time = std::time::Instant::now();
             cx.compute_layout(layout_id, available_space);
-            (self.paint)(self, rendered_element, cx);
+            let duration = start_time.elapsed();
+            println!("compute layout: {:?}", duration);
+
+            let start_time = std::time::Instant::now();
+            (self.paint)(self, &mut rendered_element, cx);
+            let duration = start_time.elapsed();
+            println!("paint: {:?}", duration);
         })
     }
 }
@@ -238,12 +249,12 @@ impl Element for AnyView {
         (layout_id, Some(state))
     }
 
-    fn paint(self, _: Bounds<Pixels>, state: &mut Self::State, cx: &mut WindowContext) {
+    fn paint(&mut self, _: Bounds<Pixels>, state: &mut Self::State, cx: &mut WindowContext) {
         debug_assert!(
             state.is_some(),
             "state is None. Did you include an AnyView twice in the tree?"
         );
-        (self.paint)(&self, state.take().unwrap(), cx)
+        (self.paint)(&self, state.as_mut().unwrap(), cx)
     }
 }
 
@@ -274,7 +285,7 @@ impl IntoElement for AnyView {
 pub struct AnyWeakView {
     model: AnyWeakModel,
     layout: fn(&AnyView, &mut WindowContext) -> (LayoutId, AnyElement),
-    paint: fn(&AnyView, AnyElement, &mut WindowContext),
+    paint: fn(&AnyView, &mut AnyElement, &mut WindowContext),
 }
 
 impl AnyWeakView {
@@ -339,7 +350,7 @@ mod any_view {
 
     pub(crate) fn paint<V: 'static + Render>(
         _view: &AnyView,
-        element: AnyElement,
+        element: &mut AnyElement,
         cx: &mut WindowContext,
     ) {
         element.paint(cx);
