@@ -1,95 +1,105 @@
 #!/usr/bin/env node
 
-const {spawn, execFileSync} = require('child_process')
+const { spawn, execFileSync } = require("child_process");
 
-const RESOLUTION_REGEX = /(\d+) x (\d+)/
-const DIGIT_FLAG_REGEX = /^--?(\d+)$/
-const ZED_2_MODE = "--zed2"
+const RESOLUTION_REGEX = /(\d+) x (\d+)/;
+const DIGIT_FLAG_REGEX = /^--?(\d+)$/;
+const ZED_2_MODE = "--zed2";
+const RELEASE_MODE = "--release";
 
-const args = process.argv.slice(2)
+const args = process.argv.slice(2);
 
 // Parse the number of Zed instances to spawn.
-let instanceCount = 1
-const digitMatch = args[0]?.match(DIGIT_FLAG_REGEX)
+let instanceCount = 1;
+const digitMatch = args[0]?.match(DIGIT_FLAG_REGEX);
 if (digitMatch) {
-  instanceCount = parseInt(digitMatch[1])
-  args.shift()
+  instanceCount = parseInt(digitMatch[1]);
+  args.shift();
 }
-const isZed2 = args.some(arg => arg === ZED_2_MODE);
+const isZed2 = args.some((arg) => arg === ZED_2_MODE);
+const isReleaseMode = args.some((arg) => arg === RELEASE_MODE);
 if (instanceCount > 4) {
-  throw new Error('Cannot spawn more than 4 instances')
+  throw new Error("Cannot spawn more than 4 instances");
 }
 
 // Parse the resolution of the main screen
 const displayInfo = JSON.parse(
-  execFileSync(
-    'system_profiler',
-    ['SPDisplaysDataType', '-json'],
-    {encoding: 'utf8'}
-  )
-)
-const mainDisplayResolution = displayInfo
-  ?.SPDisplaysDataType[0]
-  ?.spdisplays_ndrvs
-  ?.find(entry => entry.spdisplays_main === "spdisplays_yes")
-  ?._spdisplays_resolution
-  ?.match(RESOLUTION_REGEX)
+  execFileSync("system_profiler", ["SPDisplaysDataType", "-json"], {
+    encoding: "utf8",
+  }),
+);
+const mainDisplayResolution =
+  displayInfo?.SPDisplaysDataType[0]?.spdisplays_ndrvs
+    ?.find((entry) => entry.spdisplays_main === "spdisplays_yes")
+    ?._spdisplays_resolution?.match(RESOLUTION_REGEX);
 if (!mainDisplayResolution) {
-  throw new Error('Could not parse screen resolution')
+  throw new Error("Could not parse screen resolution");
 }
-const screenWidth = parseInt(mainDisplayResolution[1])
-const screenHeight = parseInt(mainDisplayResolution[2])
+const screenWidth = parseInt(mainDisplayResolution[1]);
+const screenHeight = parseInt(mainDisplayResolution[2]);
 
 // Determine the window size for each instance
-let instanceWidth = screenWidth
-let instanceHeight = screenHeight
+let instanceWidth = screenWidth;
+let instanceHeight = screenHeight;
 if (instanceCount > 1) {
-  instanceWidth = Math.floor(screenWidth / 2)
+  instanceWidth = Math.floor(screenWidth / 2);
   if (instanceCount > 2) {
-    instanceHeight = Math.floor(screenHeight / 2)
+    instanceHeight = Math.floor(screenHeight / 2);
   }
 }
 
-let users = [
-  'nathansobo',
-  'as-cii',
-  'maxbrunsfeld',
-  'iamnbutler'
-]
+let users = ["nathansobo", "as-cii", "maxbrunsfeld", "iamnbutler"];
 
-const RUST_LOG = process.env.RUST_LOG || 'info'
+const RUST_LOG = process.env.RUST_LOG || "info";
 
 // If a user is specified, make sure it's first in the list
-const user = process.env.ZED_IMPERSONATE
+const user = process.env.ZED_IMPERSONATE;
 if (user) {
-  users = [user].concat(users.filter(u => u !== user))
+  users = [user].concat(users.filter((u) => u !== user));
 }
 
 const positions = [
-  '0,0',
+  "0,0",
   `${instanceWidth},0`,
   `0,${instanceHeight}`,
-  `${instanceWidth},${instanceHeight}`
-]
+  `${instanceWidth},${instanceHeight}`,
+];
 
-const buildArgs = isZed2 ? ["build", "-p", "zed2"] : ["build"]
-const zedBinary = isZed2 ? "target/debug/Zed2" : "target/debug/Zed"
-execFileSync('cargo', buildArgs, { stdio: 'inherit' })
+const buildArgs = (() => {
+  const buildArgs = ["build"];
+  if (isReleaseMode) {
+    buildArgs.push("--release");
+  }
+
+  if (isZed2) {
+    buildArgs.push("-p", "zed2");
+  }
+
+  return buildArgs;
+})();
+const zedBinary = (() => {
+  const target = isReleaseMode ? "release" : "debug";
+  const binary = isZed2 ? "Zed2" : "Zed";
+
+  return `target/${target}/${binary}`;
+})();
+
+execFileSync("cargo", buildArgs, { stdio: "inherit" });
 setTimeout(() => {
   for (let i = 0; i < instanceCount; i++) {
     spawn(zedBinary, i == 0 ? args : [], {
-      stdio: 'inherit',
+      stdio: "inherit",
       env: {
         ZED_IMPERSONATE: users[i],
         ZED_WINDOW_POSITION: positions[i],
-        ZED_STATELESS: '1',
-        ZED_ALWAYS_ACTIVE: '1',
-        ZED_SERVER_URL: 'http://localhost:8080',
-        ZED_ADMIN_API_TOKEN: 'secret',
+        ZED_STATELESS: "1",
+        ZED_ALWAYS_ACTIVE: "1",
+        ZED_SERVER_URL: "http://localhost:8080",
+        ZED_ADMIN_API_TOKEN: "secret",
         ZED_WINDOW_SIZE: `${instanceWidth},${instanceHeight}`,
         PATH: process.env.PATH,
         RUST_LOG,
-      }
-    })
+      },
+    });
   }
-}, 0.1)
+}, 0.1);
