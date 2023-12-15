@@ -4228,16 +4228,18 @@ impl Editor {
     ) -> Option<IconButton> {
         if self.available_code_actions.is_some() {
             Some(
-                IconButton::new("code_actions_indicator", ui::Icon::Bolt).on_click(cx.listener(
-                    |editor, e, cx| {
+                IconButton::new("code_actions_indicator", ui::Icon::Bolt)
+                    .icon_size(IconSize::Small)
+                    .icon_color(Color::Muted)
+                    .selected(is_active)
+                    .on_click(cx.listener(|editor, e, cx| {
                         editor.toggle_code_actions(
                             &ToggleCodeActions {
                                 deployed_from_indicator: true,
                             },
                             cx,
                         );
-                    },
-                )),
+                    })),
             )
         } else {
             None
@@ -4260,11 +4262,7 @@ impl Editor {
                 fold_data
                     .map(|(fold_status, buffer_row, active)| {
                         (active || gutter_hovered || fold_status == FoldStatus::Folded).then(|| {
-                            let icon = match fold_status {
-                                FoldStatus::Folded => ui::Icon::ChevronRight,
-                                FoldStatus::Foldable => ui::Icon::ChevronDown,
-                            };
-                            IconButton::new(ix as usize, icon)
+                            IconButton::new(ix as usize, ui::Icon::ChevronDown)
                                 .on_click(cx.listener(move |editor, e, cx| match fold_status {
                                     FoldStatus::Folded => {
                                         editor.unfold_at(&UnfoldAt { buffer_row }, cx);
@@ -4274,6 +4272,10 @@ impl Editor {
                                     }
                                 }))
                                 .icon_color(ui::Color::Muted)
+                                .icon_size(ui::IconSize::Small)
+                                .selected(fold_status == FoldStatus::Folded)
+                                .selected_icon(ui::Icon::ChevronRight)
+                                .size(ui::ButtonSize::None)
                         })
                     })
                     .flatten()
@@ -9303,7 +9305,7 @@ impl Render for Editor {
                 font_size: rems(0.875).into(),
                 font_weight: FontWeight::NORMAL,
                 font_style: FontStyle::Normal,
-                line_height: relative(1.).into(),
+                line_height: relative(settings.buffer_line_height.value()),
                 background_color: None,
                 underline: None,
                 white_space: WhiteSpace::Normal,
