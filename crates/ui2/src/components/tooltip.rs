@@ -78,13 +78,13 @@ impl Render for Tooltip {
                 v_stack()
                     .elevation_2(cx)
                     .font(ui_font)
-                    .text_ui_sm()
+                    .text_ui()
                     .text_color(cx.theme().colors().text)
                     .py_1()
                     .px_2()
                     .child(
                         h_stack()
-                            .gap_2()
+                            .gap_4()
                             .child(self.title.clone())
                             .when_some(self.key_binding.clone(), |this, key_binding| {
                                 this.justify_between().child(key_binding)
