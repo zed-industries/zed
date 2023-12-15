@@ -29,6 +29,7 @@ pub(crate) struct DispatchNode {
     pub key_listeners: Vec<KeyListener>,
     pub action_listeners: Vec<DispatchActionListener>,
     pub context: Option<KeyContext>,
+    focus_id: Option<FocusId>,
     parent: Option<DispatchNodeId>,
 }
 
@@ -127,8 +128,9 @@ impl DispatchTree {
     }
 
     pub fn make_focusable(&mut self, focus_id: FocusId) {
-        self.focusable_node_ids
-            .insert(focus_id, self.active_node_id());
+        let node_id = self.active_node_id();
+        self.active_node().focus_id = Some(focus_id);
+        self.focusable_node_ids.insert(focus_id, node_id);
     }
 
     pub fn focus_contains(&self, parent: FocusId, child: FocusId) -> bool {
@@ -245,6 +247,20 @@ impl DispatchTree {
         }
         dispatch_path.reverse(); // Reverse the path so it goes from the root to the focused node.
         dispatch_path
+    }
+
+    pub fn focus_path(&self, focus_id: FocusId) -> SmallVec<[FocusId; 8]> {
+        let mut focus_path: SmallVec<[FocusId; 8]> = SmallVec::new();
+        let mut current_node_id = self.focusable_node_ids.get(&focus_id).copied();
+        while let Some(node_id) = current_node_id {
+            let node = self.node(node_id);
+            if let Some(focus_id) = node.focus_id {
+                focus_path.push(focus_id);
+            }
+            current_node_id = node.parent;
+        }
+        focus_path.reverse(); // Reverse the path so it goes from the root to the focused node.
+        focus_path
     }
 
     pub fn node(&self, node_id: DispatchNodeId) -> &DispatchNode {

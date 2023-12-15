@@ -1,10 +1,9 @@
 use crate::{
     point, px, Action, AnyDrag, AnyElement, AnyTooltip, AnyView, AppContext, BorrowAppContext,
-    BorrowWindow, Bounds, ClickEvent, DispatchPhase, Element, ElementId, FocusEvent, FocusHandle,
-    IntoElement, KeyContext, KeyDownEvent, KeyUpEvent, LayoutId, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, Render, ScrollWheelEvent,
-    SharedString, Size, StackingOrder, Style, StyleRefinement, Styled, Task, View, Visibility,
-    WindowContext,
+    BorrowWindow, Bounds, ClickEvent, DispatchPhase, Element, ElementId, FocusHandle, IntoElement,
+    KeyContext, KeyDownEvent, KeyUpEvent, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, ParentElement, Pixels, Point, Render, ScrollWheelEvent, SharedString, Size,
+    StackingOrder, Style, StyleRefinement, Styled, Task, View, Visibility, WindowContext,
 };
 
 use collections::HashMap;
@@ -635,10 +634,6 @@ pub trait FocusableElement: InteractiveElement {
         self
     }
 }
-
-pub type FocusListeners = Vec<FocusListener>;
-
-pub type FocusListener = Box<dyn Fn(&FocusHandle, &FocusEvent, &mut WindowContext) + 'static>;
 
 pub type MouseDownListener =
     Box<dyn Fn(&MouseDownEvent, &InteractiveBounds, DispatchPhase, &mut WindowContext) + 'static>;

@@ -17,11 +17,10 @@ use time::UtcOffset;
 use crate::{
     current_platform, image_cache::ImageCache, init_app_menus, Action, ActionRegistry, Any,
     AnyView, AnyWindowHandle, AppMetadata, AssetSource, BackgroundExecutor, ClipboardItem, Context,
-    DispatchPhase, DisplayId, Entity, EventEmitter, FocusEvent, FocusHandle, FocusId,
-    ForegroundExecutor, KeyBinding, Keymap, Keystroke, LayoutId, Menu, PathPromptOptions, Pixels,
-    Platform, PlatformDisplay, Point, Render, SharedString, SubscriberSet, Subscription,
-    SvgRenderer, Task, TextStyle, TextStyleRefinement, TextSystem, View, ViewContext, Window,
-    WindowContext, WindowHandle, WindowId,
+    DispatchPhase, DisplayId, Entity, EventEmitter, ForegroundExecutor, KeyBinding, Keymap,
+    Keystroke, LayoutId, Menu, PathPromptOptions, Pixels, Platform, PlatformDisplay, Point, Render,
+    SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextStyle, TextStyleRefinement,
+    TextSystem, View, ViewContext, Window, WindowContext, WindowHandle, WindowId,
 };
 use anyhow::{anyhow, Result};
 use collections::{FxHashMap, FxHashSet, VecDeque};
@@ -572,28 +571,27 @@ impl AppContext {
         loop {
             self.release_dropped_entities();
             self.release_dropped_focus_handles();
+
             if let Some(effect) = self.pending_effects.pop_front() {
                 match effect {
                     Effect::Notify { emitter } => {
                         self.apply_notify_effect(emitter);
                     }
+
                     Effect::Emit {
                         emitter,
                         event_type,
                         event,
                     } => self.apply_emit_effect(emitter, event_type, event),
-                    Effect::FocusChanged {
-                        window_handle,
-                        focused,
-                    } => {
-                        self.apply_focus_changed_effect(window_handle, focused);
-                    }
+
                     Effect::Refresh => {
                         self.apply_refresh_effect();
                     }
+
                     Effect::NotifyGlobalObservers { global_type } => {
                         self.apply_notify_global_observers_effect(global_type);
                     }
+
                     Effect::Defer { callback } => {
                         self.apply_defer_effect(callback);
                     }
@@ -613,7 +611,7 @@ impl AppContext {
                     .values()
                     .filter_map(|window| {
                         let window = window.as_ref()?;
-                        window.dirty.then_some(window.handle)
+                        (window.dirty || window.focus_invalidated).then_some(window.handle)
                     })
                     .collect::<Vec<_>>()
                 {
@@ -691,51 +689,6 @@ impl AppContext {
                     true
                 }
             });
-    }
-
-    fn apply_focus_changed_effect(
-        &mut self,
-        window_handle: AnyWindowHandle,
-        focused: Option<FocusId>,
-    ) {
-        window_handle
-            .update(self, |_, cx| {
-                // The window might change focus multiple times in an effect cycle.
-                // We only honor effects for the most recently focused handle.
-                if cx.window.focus == focused {
-                    // if someone calls focus multiple times in one frame with the same handle
-                    // the first apply_focus_changed_effect will have taken the last blur already
-                    // and run the rest of this, so we can return.
-                    let Some(last_blur) = cx.window.last_blur.take() else {
-                        return;
-                    };
-
-                    let focused = focused
-                        .map(|id| FocusHandle::for_id(id, &cx.window.focus_handles).unwrap());
-
-                    let blurred =
-                        last_blur.and_then(|id| FocusHandle::for_id(id, &cx.window.focus_handles));
-
-                    let focus_changed = focused.is_some() || blurred.is_some();
-                    let event = FocusEvent { focused, blurred };
-
-                    let mut listeners = mem::take(&mut cx.window.rendered_frame.focus_listeners);
-                    if focus_changed {
-                        for listener in &mut listeners {
-                            listener(&event, cx);
-                        }
-                    }
-                    cx.window.rendered_frame.focus_listeners = listeners;
-
-                    if focus_changed {
-                        cx.window
-                            .focus_listeners
-                            .clone()
-                            .retain(&(), |listener| listener(&event, cx));
-                    }
-                }
-            })
-            .ok();
     }
 
     fn apply_refresh_effect(&mut self) {
@@ -1251,10 +1204,6 @@ pub(crate) enum Effect {
         emitter: EntityId,
         event_type: TypeId,
         event: Box<dyn Any>,
-    },
-    FocusChanged {
-        window_handle: AnyWindowHandle,
-        focused: Option<FocusId>,
     },
     Refresh,
     NotifyGlobalObservers {

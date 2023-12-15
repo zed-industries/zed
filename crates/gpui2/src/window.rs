@@ -2,14 +2,14 @@ use crate::{
     key_dispatch::DispatchActionListener, px, size, transparent_black, Action, AnyDrag, AnyView,
     AppContext, AsyncWindowContext, AvailableSpace, Bounds, BoxShadow, Context, Corners,
     CursorStyle, DevicePixels, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity,
-    EntityId, EventEmitter, FileDropEvent, Flatten, FocusEvent, FontId, GlobalElementId, GlyphId,
-    Hsla, ImageData, InputEvent, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeystrokeEvent,
-    LayoutId, Model, ModelContext, Modifiers, MonochromeSprite, MouseButton, MouseMoveEvent,
-    MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInputHandler,
-    PlatformWindow, Point, PolychromeSprite, PromptLevel, Quad, Render, RenderGlyphParams,
-    RenderImageParams, RenderSvgParams, ScaledPixels, Scene, SceneBuilder, Shadow, SharedString,
-    Size, Style, SubscriberSet, Subscription, Surface, TaffyLayoutEngine, Task, Underline,
-    UnderlineStyle, View, VisualContext, WeakView, WindowBounds, WindowOptions, SUBPIXEL_VARIANTS,
+    EntityId, EventEmitter, FileDropEvent, Flatten, FontId, GlobalElementId, GlyphId, Hsla,
+    ImageData, InputEvent, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeystrokeEvent, LayoutId,
+    Model, ModelContext, Modifiers, MonochromeSprite, MouseButton, MouseMoveEvent, MouseUpEvent,
+    Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInputHandler, PlatformWindow, Point,
+    PolychromeSprite, PromptLevel, Quad, Render, RenderGlyphParams, RenderImageParams,
+    RenderSvgParams, ScaledPixels, Scene, SceneBuilder, Shadow, SharedString, Size, Style,
+    SubscriberSet, Subscription, Surface, TaffyLayoutEngine, Task, Underline, UnderlineStyle, View,
+    VisualContext, WeakView, WindowBounds, WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::FxHashMap;
@@ -86,8 +86,12 @@ impl DispatchPhase {
 
 type AnyObserver = Box<dyn FnMut(&mut WindowContext) -> bool + 'static>;
 type AnyMouseListener = Box<dyn FnMut(&dyn Any, DispatchPhase, &mut WindowContext) + 'static>;
-type AnyFocusListener = Box<dyn Fn(&FocusEvent, &mut WindowContext) + 'static>;
 type AnyWindowFocusListener = Box<dyn FnMut(&FocusEvent, &mut WindowContext) -> bool + 'static>;
+
+struct FocusEvent {
+    previous_focus_path: SmallVec<[FocusId; 8]>,
+    current_focus_path: SmallVec<[FocusId; 8]>,
+}
 
 slotmap::new_key_type! { pub struct FocusId; }
 
@@ -239,8 +243,8 @@ pub struct Window {
     pub(crate) rendered_frame: Frame,
     pub(crate) next_frame: Frame,
     pub(crate) focus_handles: Arc<RwLock<SlotMap<FocusId, AtomicUsize>>>,
-    pub(crate) focus_listeners: SubscriberSet<(), AnyWindowFocusListener>,
-    pub(crate) blur_listeners: SubscriberSet<(), AnyObserver>,
+    focus_listeners: SubscriberSet<(), AnyWindowFocusListener>,
+    blur_listeners: SubscriberSet<(), AnyObserver>,
     default_prevented: bool,
     mouse_position: Point<Pixels>,
     modifiers: Modifiers,
@@ -252,8 +256,10 @@ pub struct Window {
     pub(crate) dirty: bool,
     pub(crate) drawing: bool,
     activation_observers: SubscriberSet<(), AnyObserver>,
-    pub(crate) last_blur: Option<Option<FocusId>>,
     pub(crate) focus: Option<FocusId>,
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) focus_invalidated: bool,
 }
 
 pub(crate) struct ElementStateBox {
@@ -264,10 +270,10 @@ pub(crate) struct ElementStateBox {
 
 // #[derive(Default)]
 pub(crate) struct Frame {
+    focus: Option<FocusId>,
     pub(crate) element_states: FxHashMap<GlobalElementId, ElementStateBox>,
     mouse_listeners: FxHashMap<TypeId, Vec<(StackingOrder, AnyMouseListener)>>,
     pub(crate) dispatch_tree: DispatchTree,
-    pub(crate) focus_listeners: Vec<AnyFocusListener>,
     pub(crate) scene_builder: SceneBuilder,
     pub(crate) depth_map: Vec<(StackingOrder, Bounds<Pixels>)>,
     pub(crate) z_index_stack: StackingOrder,
@@ -278,10 +284,10 @@ pub(crate) struct Frame {
 impl Frame {
     fn new(dispatch_tree: DispatchTree) -> Self {
         Frame {
+            focus: None,
             element_states: FxHashMap::default(),
             mouse_listeners: FxHashMap::default(),
             dispatch_tree,
-            focus_listeners: Vec::new(),
             scene_builder: SceneBuilder::default(),
             z_index_stack: StackingOrder::default(),
             depth_map: Default::default(),
@@ -293,9 +299,14 @@ impl Frame {
     fn clear(&mut self) {
         self.element_states.clear();
         self.mouse_listeners.values_mut().for_each(Vec::clear);
-        self.focus_listeners.clear();
         self.dispatch_tree.clear();
         self.depth_map.clear();
+    }
+
+    fn focus_path(&self) -> SmallVec<[FocusId; 8]> {
+        self.focus
+            .map(|focus_id| self.dispatch_tree.focus_path(focus_id))
+            .unwrap_or_default()
     }
 }
 
@@ -389,8 +400,10 @@ impl Window {
             dirty: false,
             drawing: false,
             activation_observers: SubscriberSet::new(),
-            last_blur: None,
             focus: None,
+
+            #[cfg(any(test, feature = "test-support"))]
+            focus_invalidated: false,
         }
     }
 }
@@ -468,35 +481,23 @@ impl<'a> WindowContext<'a> {
             return;
         }
 
-        let focus_id = handle.id;
-
-        if self.window.last_blur.is_none() {
-            self.window.last_blur = Some(self.window.focus);
-        }
-
-        self.window.focus = Some(focus_id);
+        self.window.focus = Some(handle.id);
         self.window
             .rendered_frame
             .dispatch_tree
             .clear_pending_keystrokes();
-        self.app.push_effect(Effect::FocusChanged {
-            window_handle: self.window.handle,
-            focused: Some(focus_id),
-        });
+
+        #[cfg(any(test, feature = "test-support"))]
+        {
+            self.window.focus_invalidated = true;
+        }
+
         self.notify();
     }
 
     /// Remove focus from all elements within this context's window.
     pub fn blur(&mut self) {
-        if self.window.last_blur.is_none() {
-            self.window.last_blur = Some(self.window.focus);
-        }
-
         self.window.focus = None;
-        self.app.push_effect(Effect::FocusChanged {
-            window_handle: self.window.handle,
-            focused: None,
-        });
         self.notify();
     }
 
@@ -1258,16 +1259,11 @@ impl<'a> WindowContext<'a> {
         self.window.dirty = false;
         self.window.drawing = true;
 
-        let window_was_focused = self
-            .window
-            .focus
-            .and_then(|focus_id| {
-                self.window
-                    .rendered_frame
-                    .dispatch_tree
-                    .focusable_node_id(focus_id)
-            })
-            .is_some();
+        #[cfg(any(test, feature = "test-support"))]
+        {
+            self.window.focus_invalidated = false;
+        }
+
         self.text_system().start_frame();
         self.window.platform_window.clear_input_handler();
         self.window.layout_engine.as_mut().unwrap().clear();
@@ -1306,23 +1302,6 @@ impl<'a> WindowContext<'a> {
             });
         }
 
-        let window_is_focused = self
-            .window
-            .focus
-            .and_then(|focus_id| {
-                self.window
-                    .next_frame
-                    .dispatch_tree
-                    .focusable_node_id(focus_id)
-            })
-            .is_some();
-        if window_was_focused && !window_is_focused {
-            self.window
-                .blur_listeners
-                .clone()
-                .retain(&(), |listener| listener(self));
-        }
-
         self.window
             .next_frame
             .dispatch_tree
@@ -1330,10 +1309,30 @@ impl<'a> WindowContext<'a> {
                 &mut self.window.rendered_frame.dispatch_tree,
                 self.window.focus,
             );
+        self.window.next_frame.focus = self.window.focus;
         self.window.root_view = Some(root_view);
 
-        let window = &mut self.window;
-        mem::swap(&mut window.rendered_frame, &mut window.next_frame);
+        let previous_focus_path = self.window.rendered_frame.focus_path();
+        mem::swap(&mut self.window.rendered_frame, &mut self.window.next_frame);
+        let current_focus_path = self.window.rendered_frame.focus_path();
+
+        if previous_focus_path != current_focus_path {
+            if !previous_focus_path.is_empty() && current_focus_path.is_empty() {
+                self.window
+                    .blur_listeners
+                    .clone()
+                    .retain(&(), |listener| listener(self));
+            }
+
+            let event = FocusEvent {
+                previous_focus_path,
+                current_focus_path,
+            };
+            self.window
+                .focus_listeners
+                .clone()
+                .retain(&(), |listener| listener(&event, self));
+        }
 
         let scene = self.window.rendered_frame.scene_builder.build();
 
@@ -1739,22 +1738,6 @@ impl<'a> WindowContext<'a> {
         self.window.next_frame.dispatch_tree.pop_node();
 
         result
-    }
-
-    /// Register a focus listener for the next frame only. It will be cleared
-    /// on the next frame render. You should use this method only from within elements,
-    /// and we may want to enforce that better via a different context type.
-    // todo!() Move this to `FrameContext` to emphasize its individuality?
-    pub fn on_focus_changed(
-        &mut self,
-        listener: impl Fn(&FocusEvent, &mut WindowContext) + 'static,
-    ) {
-        self.window
-            .next_frame
-            .focus_listeners
-            .push(Box::new(move |event, cx| {
-                listener(event, cx);
-            }));
     }
 
     /// Set an input handler, such as [ElementInputHandler], which interfaces with the
@@ -2433,7 +2416,9 @@ impl<'a, V: 'static> ViewContext<'a, V> {
             (),
             Box::new(move |event, cx| {
                 view.update(cx, |view, cx| {
-                    if event.focused.as_ref().map(|focused| focused.id) == Some(focus_id) {
+                    if event.previous_focus_path.last() != Some(&focus_id)
+                        && event.current_focus_path.last() == Some(&focus_id)
+                    {
                         listener(view, cx)
                     }
                 })
@@ -2458,10 +2443,8 @@ impl<'a, V: 'static> ViewContext<'a, V> {
             (),
             Box::new(move |event, cx| {
                 view.update(cx, |view, cx| {
-                    if event
-                        .focused
-                        .as_ref()
-                        .map_or(false, |focused| focus_id.contains(focused.id, cx))
+                    if !event.previous_focus_path.contains(&focus_id)
+                        && event.current_focus_path.contains(&focus_id)
                     {
                         listener(view, cx)
                     }
@@ -2487,7 +2470,9 @@ impl<'a, V: 'static> ViewContext<'a, V> {
             (),
             Box::new(move |event, cx| {
                 view.update(cx, |view, cx| {
-                    if event.blurred.as_ref().map(|blurred| blurred.id) == Some(focus_id) {
+                    if event.previous_focus_path.last() == Some(&focus_id)
+                        && event.current_focus_path.last() != Some(&focus_id)
+                    {
                         listener(view, cx)
                     }
                 })
@@ -2528,10 +2513,8 @@ impl<'a, V: 'static> ViewContext<'a, V> {
             (),
             Box::new(move |event, cx| {
                 view.update(cx, |view, cx| {
-                    if event
-                        .blurred
-                        .as_ref()
-                        .map_or(false, |blurred| focus_id.contains(blurred.id, cx))
+                    if event.previous_focus_path.contains(&focus_id)
+                        && !event.current_focus_path.contains(&focus_id)
                     {
                         listener(view, cx)
                     }
