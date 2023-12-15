@@ -9739,12 +9739,8 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, is_valid: bool) -> Rend
         };
         highlighted_lines.push(line);
     }
-    let message = diagnostic.message;
     Arc::new(move |cx: &mut BlockContext| {
-        let message = message.clone();
         let copy_id: SharedString = format!("copy-{}", cx.block_id.clone()).to_string().into();
-        let write_to_clipboard = cx.write_to_clipboard(ClipboardItem::new(message.clone()));
-
         // TODO: Nate: We should tint the background of the block with the severity color
         // We need to extend the theme before we can do this
         v_stack()
@@ -9754,7 +9750,6 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, is_valid: bool) -> Rend
             .bg(gpui::red())
             .children(highlighted_lines.iter().map(|(line, highlights)| {
                 let group_id = cx.block_id.to_string();
-
                 h_stack()
                     .group(group_id.clone())
                     .gap_2()
@@ -9769,7 +9764,12 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, is_valid: bool) -> Rend
                                 .size(ButtonSize::Compact)
                                 .style(ButtonStyle::Transparent)
                                 .visible_on_hover(group_id)
-                                .on_click(cx.listener(move |_, _, cx| write_to_clipboard))
+                                .on_click(cx.listener({
+                                    let message = diagnostic.message.clone();
+                                    move |_, _, cx| {
+                                        cx.write_to_clipboard(ClipboardItem::new(message.clone()))
+                                    }
+                                }))
                                 .tooltip(|cx| Tooltip::text("Copy diagnostic message", cx)),
                         ),
                     )
