@@ -2225,14 +2225,14 @@ impl CollabPanel {
                     .selected(is_selected),
             )
             .when(section == Section::Channels, |el| {
-                el.drag_over::<DraggedChannelView>(|style| {
+                el.drag_over::<Channel>(|style| {
                     style.bg(cx.theme().colors().ghost_element_hover)
                 })
                 .on_drop(cx.listener(
-                    move |this, view: &View<DraggedChannelView>, cx| {
+                    move |this, dragged_channel: &Channel, cx| {
                         this.channel_store
                             .update(cx, |channel_store, cx| {
-                                channel_store.move_channel(view.read(cx).channel.id, None, cx)
+                                channel_store.move_channel(dragged_channel.id, None, cx)
                             })
                             .detach_and_log_err(cx)
                     },
@@ -2451,15 +2451,15 @@ impl CollabPanel {
                     width,
                 })
             })
-            .drag_over::<DraggedChannelView>(|style| {
+            .drag_over::<Channel>(|style| {
                 style.bg(cx.theme().colors().ghost_element_hover)
             })
             .on_drop(
-                cx.listener(move |this, view: &View<DraggedChannelView>, cx| {
+                cx.listener(move |this, dragged_channel: &Channel, cx| {
                     this.channel_store
                         .update(cx, |channel_store, cx| {
                             channel_store.move_channel(
-                                view.read(cx).channel.id,
+                                dragged_channel.id,
                                 Some(channel_id),
                                 cx,
                             )
