@@ -3625,17 +3625,15 @@ impl Render for Workspace {
                             .flex_row()
                             .h_full()
                             // Left Dock
-                            .children(if self.zoomed_position == Some(DockPosition::Left) {
-                                None
-                            } else {
-                                Some(
+                            .children(self.zoomed_position.ne(&Some(DockPosition::Left)).then(
+                                || {
                                     div()
                                         .flex()
                                         .flex_none()
                                         .overflow_hidden()
-                                        .child(self.left_dock.clone()),
-                                )
-                            })
+                                        .child(self.left_dock.clone())
+                                },
+                            ))
                             // Panes
                             .child(
                                 div()
@@ -3652,16 +3650,22 @@ impl Render for Workspace {
                                         &self.app_state,
                                         cx,
                                     ))
-                                    .child(self.bottom_dock.clone()),
+                                    .children(
+                                        self.zoomed_position
+                                            .ne(&Some(DockPosition::Bottom))
+                                            .then(|| self.bottom_dock.clone()),
+                                    ),
                             )
                             // Right Dock
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_none()
-                                    .overflow_hidden()
-                                    .child(self.right_dock.clone()),
-                            ),
+                            .children(self.zoomed_position.ne(&Some(DockPosition::Right)).then(
+                                || {
+                                    div()
+                                        .flex()
+                                        .flex_none()
+                                        .overflow_hidden()
+                                        .child(self.right_dock.clone())
+                                },
+                            )),
                     )
                     .children(self.render_notifications(cx))
                     .children(self.zoomed.as_ref().and_then(|view| {
@@ -3687,137 +3691,6 @@ impl Render for Workspace {
             .child(self.status_bar.clone())
     }
 }
-
-// impl View for Workspace {
-
-//     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-//         let theme = theme::current(cx).clone();
-//         Stack::new()
-//             .with_child(
-//                 Flex::column()
-//                     .with_child(self.render_titlebar(&theme, cx))
-//                     .with_child(
-//                         Stack::new()
-//                             .with_child({
-//                                 let project = self.project.clone();
-//                                 Flex::row()
-//                                     .with_children(self.render_dock(DockPosition::Left, cx))
-//                                     .with_child(
-//                                         Flex::column()
-//                                             .with_child(
-//                                                 FlexItem::new(
-//                                                     self.center.render(
-//                                                         &project,
-//                                                         &theme,
-//                                                         &self.follower_states,
-//                                                         self.active_call(),
-//                                                         self.active_pane(),
-//                                                         self.zoomed
-//                                                             .as_ref()
-//                                                             .and_then(|zoomed| zoomed.upgrade(cx))
-//                                                             .as_ref(),
-//                                                         &self.app_state,
-//                                                         cx,
-//                                                     ),
-//                                                 )
-//                                                 .flex(1., true),
-//                                             )
-//                                             .with_children(
-//                                                 self.render_dock(DockPosition::Bottom, cx),
-//                                             )
-//                                             .flex(1., true),
-//                                     )
-//                                     .with_children(self.render_dock(DockPosition::Right, cx))
-//                             })
-//                             .with_child(Overlay::new(
-//                                 Stack::new()
-//                                     .with_children(self.zoomed.as_ref().and_then(|zoomed| {
-//                                         enum ZoomBackground {}
-//                                         let zoomed = zoomed.upgrade(cx)?;
-
-//                                         let mut foreground_style =
-//                                             theme.workspace.zoomed_pane_foreground;
-//                                         if let Some(zoomed_dock_position) = self.zoomed_position {
-//                                             foreground_style =
-//                                                 theme.workspace.zoomed_panel_foreground;
-//                                             let margin = foreground_style.margin.top;
-//                                             let border = foreground_style.border.top;
-
-//                                             // Only include a margin and border on the opposite side.
-//                                             foreground_style.margin.top = 0.;
-//                                             foreground_style.margin.left = 0.;
-//                                             foreground_style.margin.bottom = 0.;
-//                                             foreground_style.margin.right = 0.;
-//                                             foreground_style.border.top = false;
-//                                             foreground_style.border.left = false;
-//                                             foreground_style.border.bottom = false;
-//                                             foreground_style.border.right = false;
-//                                             match zoomed_dock_position {
-//                                                 DockPosition::Left => {
-//                                                     foreground_style.margin.right = margin;
-//                                                     foreground_style.border.right = border;
-//                                                 }
-//                                                 DockPosition::Right => {
-//                                                     foreground_style.margin.left = margin;
-//                                                     foreground_style.border.left = border;
-//                                                 }
-//                                                 DockPosition::Bottom => {
-//                                                     foreground_style.margin.top = margin;
-//                                                     foreground_style.border.top = border;
-//                                                 }
-//                                             }
-//                                         }
-
-//                                         Some(
-//                                             ChildView::new(&zoomed, cx)
-//                                                 .contained()
-//                                                 .with_style(foreground_style)
-//                                                 .aligned()
-//                                                 .contained()
-//                                                 .with_style(theme.workspace.zoomed_background)
-//                                                 .mouse::<ZoomBackground>(0)
-//                                                 .capture_all()
-//                                                 .on_down(
-//                                                     MouseButton::Left,
-//                                                     |_, this: &mut Self, cx| {
-//                                                         this.zoom_out(cx);
-//                                                     },
-//                                                 ),
-//                                         )
-//                                     }))
-//                                     .with_children(self.modal.as_ref().map(|modal| {
-//                                         // Prevent clicks within the modal from falling
-//                                         // through to the rest of the workspace.
-//                                         enum ModalBackground {}
-//                                         MouseEventHandler::new::<ModalBackground, _>(
-//                                             0,
-//                                             cx,
-//                                             |_, cx| ChildView::new(modal.view.as_any(), cx),
-//                                         )
-//                                         .on_click(MouseButton::Left, |_, _, _| {})
-//                                         .contained()
-//                                         .with_style(theme.workspace.modal)
-//                                         .aligned()
-//                                         .top()
-//                                     }))
-//                                     .with_children(self.render_notifications(&theme.workspace, cx)),
-//                             ))
-//                             .provide_resize_bounds::<WorkspaceBounds>()
-//                             .flex(1.0, true),
-//                     )
-//                     .with_child(ChildView::new(&self.status_bar, cx))
-//                     .contained()
-//                     .with_background_color(theme.workspace.background),
-//             )
-//             .with_children(DragAndDrop::render(cx))
-//             .with_children(self.render_disconnected_overlay(cx))
-//             .into_any_named("workspace")
-//     }
-
-//     fn modifiers_changed(&mut self, e: &ModifiersChangedEvent, cx: &mut ViewContext<Self>) -> bool {
-//         DragAndDrop::<Workspace>::update_modifiers(e.modifiers, cx)
-//     }
-// }
 
 impl WorkspaceStore {
     pub fn new(client: Arc<Client>, cx: &mut ModelContext<Self>) -> Self {
