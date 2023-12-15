@@ -177,7 +177,7 @@ pub struct Pane {
     toolbar: View<Toolbar>,
     new_item_menu: Option<View<ContextMenu>>,
     split_item_menu: Option<View<ContextMenu>>,
-    //     tab_context_menu: ViewHandle<ContextMenu>,
+    //     tab_context_menu: View<ContextMenu>,
     workspace: WeakView<Workspace>,
     project: Model<Project>,
     drag_split_direction: Option<SplitDirection>,
@@ -256,11 +256,11 @@ struct DraggedTab {
 
 // struct TabBarContextMenu {
 //     kind: TabBarContextMenuKind,
-//     handle: ViewHandle<ContextMenu>,
+//     handle: View<ContextMenu>,
 // }
 
 // impl TabBarContextMenu {
-//     fn handle_if_kind(&self, kind: TabBarContextMenuKind) -> Option<ViewHandle<ContextMenu>> {
+//     fn handle_if_kind(&self, kind: TabBarContextMenuKind) -> Option<View<ContextMenu>> {
 //         if self.kind == kind {
 //             return Some(self.handle.clone());
 //         }
@@ -329,7 +329,7 @@ impl Pane {
     ) -> Self {
         // todo!("context menu")
         // let pane_view_id = cx.view_id();
-        // let context_menu = cx.add_view(|cx| ContextMenu::new(pane_view_id, cx));
+        // let context_menu = cx.build_view(|cx| ContextMenu::new(pane_view_id, cx));
         // context_menu.update(cx, |menu, _| {
         //     menu.set_position_mode(OverlayPositionMode::Local)
         // });
@@ -368,7 +368,7 @@ impl Pane {
             //     kind: TabBarContextMenuKind::New,
             //     handle: context_menu,
             // },
-            // tab_context_menu: cx.add_view(|cx| ContextMenu::new(pane_view_id, cx)),
+            // tab_context_menu: cx.build_view(|_| ContextMenu::new(pane_view_id, cx)),
             workspace,
             project,
             // can_drop: Rc::new(|_, _| true),
@@ -1968,52 +1968,6 @@ impl Render for Pane {
                 }),
             )
     }
-
-    // fn focus_in(&mut self, focused: AnyViewHandle, cx: &mut ViewContext<Self>) {
-    //     if !self.has_focus {
-    //         self.has_focus = true;
-    //         cx.emit(Event::Focus);
-    //         cx.notify();
-    //     }
-
-    //     self.toolbar.update(cx, |toolbar, cx| {
-    //         toolbar.focus_changed(true, cx);
-    //     });
-
-    //     if let Some(active_item) = self.active_item() {
-    //         if cx.is_self_focused() {
-    //             // Pane was focused directly. We need to either focus a view inside the active item,
-    //             // or focus the active item itself
-    //             if let Some(weak_last_focused_view) =
-    //                 self.last_focused_view_by_item.get(&active_item.id())
-    //             {
-    //                 if let Some(last_focused_view) = weak_last_focused_view.upgrade(cx) {
-    //                     cx.focus(&last_focused_view);
-    //                     return;
-    //                 } else {
-    //                     self.last_focused_view_by_item.remove(&active_item.id());
-    //                 }
-    //             }
-
-    //             cx.focus(active_item.as_any());
-    //         } else if focused != self.tab_bar_context_menu.handle {
-    //             self.last_focused_view_by_item
-    //                 .insert(active_item.id(), focused.downgrade());
-    //         }
-    //     }
-    // }
-
-    // fn focus_out(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
-    //     self.has_focus = false;
-    //     self.toolbar.update(cx, |toolbar, cx| {
-    //         toolbar.focus_changed(false, cx);
-    //     });
-    //     cx.notify();
-    // }
-
-    // fn update_keymap_context(&self, keymap: &mut KeymapContext, _: &AppContext) {
-    //     Self::reset_to_default_keymap_context(keymap);
-    // }
 }
 
 impl ItemNavHistory {
@@ -2171,98 +2125,6 @@ impl NavHistoryState {
     }
 }
 
-// pub struct PaneBackdrop<V> {
-//     child_view: usize,
-//     child: AnyElement<V>,
-// }
-
-// impl<V> PaneBackdrop<V> {
-//     pub fn new(pane_item_view: usize, child: AnyElement<V>) -> Self {
-//         PaneBackdrop {
-//             child,
-//             child_view: pane_item_view,
-//         }
-//     }
-// }
-
-// impl<V: 'static> Element<V> for PaneBackdrop<V> {
-//     type LayoutState = ();
-
-//     type PaintState = ();
-
-//     fn layout(
-//         &mut self,
-//         constraint: gpui::SizeConstraint,
-//         view: &mut V,
-//         cx: &mut ViewContext<V>,
-//     ) -> (Vector2F, Self::LayoutState) {
-//         let size = self.child.layout(constraint, view, cx);
-//         (size, ())
-//     }
-
-//     fn paint(
-//         &mut self,
-//         bounds: RectF,
-//         visible_bounds: RectF,
-//         _: &mut Self::LayoutState,
-//         view: &mut V,
-//         cx: &mut ViewContext<V>,
-//     ) -> Self::PaintState {
-//         let background = theme::current(cx).editor.background;
-
-//         let visible_bounds = bounds.intersection(visible_bounds).unwrap_or_default();
-
-//         cx.scene().push_quad(gpui::Quad {
-//             bounds: RectF::new(bounds.origin(), bounds.size()),
-//             background: Some(background),
-//             ..Default::default()
-//         });
-
-//         let child_view_id = self.child_view;
-//         cx.scene().push_mouse_region(
-//             MouseRegion::new::<Self>(child_view_id, 0, visible_bounds).on_down(
-//                 gpui::platform::MouseButton::Left,
-//                 move |_, _: &mut V, cx| {
-//                     let window = cx.window();
-//                     cx.app_context().focus(window, Some(child_view_id))
-//                 },
-//             ),
-//         );
-
-//         cx.scene().push_layer(Some(bounds));
-//         self.child.paint(bounds.origin(), visible_bounds, view, cx);
-//         cx.scene().pop_layer();
-//     }
-
-//     fn rect_for_text_range(
-//         &self,
-//         range_utf16: std::ops::Range<usize>,
-//         _bounds: RectF,
-//         _visible_bounds: RectF,
-//         _layout: &Self::LayoutState,
-//         _paint: &Self::PaintState,
-//         view: &V,
-//         cx: &gpui::ViewContext<V>,
-//     ) -> Option<RectF> {
-//         self.child.rect_for_text_range(range_utf16, view, cx)
-//     }
-
-//     fn debug(
-//         &self,
-//         _bounds: RectF,
-//         _layout: &Self::LayoutState,
-//         _paint: &Self::PaintState,
-//         view: &V,
-//         cx: &gpui::ViewContext<V>,
-//     ) -> serde_json::Value {
-//         gpui::json::json!({
-//             "type": "Pane Back Drop",
-//             "view": self.child_view,
-//             "child": self.child.debug(view, cx),
-//         })
-//     }
-// }
-
 fn dirty_message_for(buffer_path: Option<ProjectPath>) -> String {
     let path = buffer_path
         .as_ref()
@@ -2272,528 +2134,549 @@ fn dirty_message_for(buffer_path: Option<ProjectPath>) -> String {
     format!("{path} contains unsaved edits. Do you want to save it?")
 }
 
-// todo!("uncomment tests")
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     use crate::item::test::{TestItem, TestProjectItem};
-//     use gpui::TestAppContext;
-//     use project::FakeFs;
-//     use settings::SettingsStore;
-
-//     #[gpui::test]
-//     async fn test_remove_active_empty(cx: &mut TestAppContext) {
-//         init_test(cx);
-//         let fs = FakeFs::new(cx.background());
-
-//         let project = Project::test(fs, None, cx).await;
-//         let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
-//         let workspace = window.root(cx);
-//         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
-
-//         pane.update(cx, |pane, cx| {
-//             assert!(pane
-//                 .close_active_item(&CloseActiveItem { save_intent: None }, cx)
-//                 .is_none())
-//         });
-//     }
-
-//     #[gpui::test]
-//     async fn test_add_item_with_new_item(cx: &mut TestAppContext) {
-//         cx.foreground().forbid_parking();
-//         init_test(cx);
-//         let fs = FakeFs::new(cx.background());
-
-//         let project = Project::test(fs, None, cx).await;
-//         let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
-//         let workspace = window.root(cx);
-//         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
-
-//         // 1. Add with a destination index
-//         //   a. Add before the active item
-//         set_labeled_items(&pane, ["A", "B*", "C"], cx);
-//         pane.update(cx, |pane, cx| {
-//             pane.add_item(
-//                 Box::new(cx.add_view(|_| TestItem::new().with_label("D"))),
-//                 false,
-//                 false,
-//                 Some(0),
-//                 cx,
-//             );
-//         });
-//         assert_item_labels(&pane, ["D*", "A", "B", "C"], cx);
-
-//         //   b. Add after the active item
-//         set_labeled_items(&pane, ["A", "B*", "C"], cx);
-//         pane.update(cx, |pane, cx| {
-//             pane.add_item(
-//                 Box::new(cx.add_view(|_| TestItem::new().with_label("D"))),
-//                 false,
-//                 false,
-//                 Some(2),
-//                 cx,
-//             );
-//         });
-//         assert_item_labels(&pane, ["A", "B", "D*", "C"], cx);
-
-//         //   c. Add at the end of the item list (including off the length)
-//         set_labeled_items(&pane, ["A", "B*", "C"], cx);
-//         pane.update(cx, |pane, cx| {
-//             pane.add_item(
-//                 Box::new(cx.add_view(|_| TestItem::new().with_label("D"))),
-//                 false,
-//                 false,
-//                 Some(5),
-//                 cx,
-//             );
-//         });
-//         assert_item_labels(&pane, ["A", "B", "C", "D*"], cx);
-
-//         // 2. Add without a destination index
-//         //   a. Add with active item at the start of the item list
-//         set_labeled_items(&pane, ["A*", "B", "C"], cx);
-//         pane.update(cx, |pane, cx| {
-//             pane.add_item(
-//                 Box::new(cx.add_view(|_| TestItem::new().with_label("D"))),
-//                 false,
-//                 false,
-//                 None,
-//                 cx,
-//             );
-//         });
-//         set_labeled_items(&pane, ["A", "D*", "B", "C"], cx);
-
-//         //   b. Add with active item at the end of the item list
-//         set_labeled_items(&pane, ["A", "B", "C*"], cx);
-//         pane.update(cx, |pane, cx| {
-//             pane.add_item(
-//                 Box::new(cx.add_view(|_| TestItem::new().with_label("D"))),
-//                 false,
-//                 false,
-//                 None,
-//                 cx,
-//             );
-//         });
-//         assert_item_labels(&pane, ["A", "B", "C", "D*"], cx);
-//     }
-
-//     #[gpui::test]
-//     async fn test_add_item_with_existing_item(cx: &mut TestAppContext) {
-//         cx.foreground().forbid_parking();
-//         init_test(cx);
-//         let fs = FakeFs::new(cx.background());
-
-//         let project = Project::test(fs, None, cx).await;
-//         let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
-//         let workspace = window.root(cx);
-//         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
-
-//         // 1. Add with a destination index
-//         //   1a. Add before the active item
-//         let [_, _, _, d] = set_labeled_items(&pane, ["A", "B*", "C", "D"], cx);
-//         pane.update(cx, |pane, cx| {
-//             pane.add_item(d, false, false, Some(0), cx);
-//         });
-//         assert_item_labels(&pane, ["D*", "A", "B", "C"], cx);
-
-//         //   1b. Add after the active item
-//         let [_, _, _, d] = set_labeled_items(&pane, ["A", "B*", "C", "D"], cx);
-//         pane.update(cx, |pane, cx| {
-//             pane.add_item(d, false, false, Some(2), cx);
-//         });
-//         assert_item_labels(&pane, ["A", "B", "D*", "C"], cx);
-
-//         //   1c. Add at the end of the item list (including off the length)
-//         let [a, _, _, _] = set_labeled_items(&pane, ["A", "B*", "C", "D"], cx);
-//         pane.update(cx, |pane, cx| {
-//             pane.add_item(a, false, false, Some(5), cx);
-//         });
-//         assert_item_labels(&pane, ["B", "C", "D", "A*"], cx);
-
-//         //   1d. Add same item to active index
-//         let [_, b, _] = set_labeled_items(&pane, ["A", "B*", "C"], cx);
-//         pane.update(cx, |pane, cx| {
-//             pane.add_item(b, false, false, Some(1), cx);
-//         });
-//         assert_item_labels(&pane, ["A", "B*", "C"], cx);
-
-//         //   1e. Add item to index after same item in last position
-//         let [_, _, c] = set_labeled_items(&pane, ["A", "B*", "C"], cx);
-//         pane.update(cx, |pane, cx| {
-//             pane.add_item(c, false, false, Some(2), cx);
-//         });
-//         assert_item_labels(&pane, ["A", "B", "C*"], cx);
-
-//         // 2. Add without a destination index
-//         //   2a. Add with active item at the start of the item list
-//         let [_, _, _, d] = set_labeled_items(&pane, ["A*", "B", "C", "D"], cx);
-//         pane.update(cx, |pane, cx| {
-//             pane.add_item(d, false, false, None, cx);
-//         });
-//         assert_item_labels(&pane, ["A", "D*", "B", "C"], cx);
-
-//         //   2b. Add with active item at the end of the item list
-//         let [a, _, _, _] = set_labeled_items(&pane, ["A", "B", "C", "D*"], cx);
-//         pane.update(cx, |pane, cx| {
-//             pane.add_item(a, false, false, None, cx);
-//         });
-//         assert_item_labels(&pane, ["B", "C", "D", "A*"], cx);
-
-//         //   2c. Add active item to active item at end of list
-//         let [_, _, c] = set_labeled_items(&pane, ["A", "B", "C*"], cx);
-//         pane.update(cx, |pane, cx| {
-//             pane.add_item(c, false, false, None, cx);
-//         });
-//         assert_item_labels(&pane, ["A", "B", "C*"], cx);
-
-//         //   2d. Add active item to active item at start of list
-//         let [a, _, _] = set_labeled_items(&pane, ["A*", "B", "C"], cx);
-//         pane.update(cx, |pane, cx| {
-//             pane.add_item(a, false, false, None, cx);
-//         });
-//         assert_item_labels(&pane, ["A*", "B", "C"], cx);
-//     }
-
-//     #[gpui::test]
-//     async fn test_add_item_with_same_project_entries(cx: &mut TestAppContext) {
-//         cx.foreground().forbid_parking();
-//         init_test(cx);
-//         let fs = FakeFs::new(cx.background());
-
-//         let project = Project::test(fs, None, cx).await;
-//         let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
-//         let workspace = window.root(cx);
-//         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
-
-//         // singleton view
-//         pane.update(cx, |pane, cx| {
-//             let item = TestItem::new()
-//                 .with_singleton(true)
-//                 .with_label("buffer 1")
-//                 .with_project_items(&[TestProjectItem::new(1, "one.txt", cx)]);
-
-//             pane.add_item(Box::new(cx.add_view(|_| item)), false, false, None, cx);
-//         });
-//         assert_item_labels(&pane, ["buffer 1*"], cx);
-
-//         // new singleton view with the same project entry
-//         pane.update(cx, |pane, cx| {
-//             let item = TestItem::new()
-//                 .with_singleton(true)
-//                 .with_label("buffer 1")
-//                 .with_project_items(&[TestProjectItem::new(1, "1.txt", cx)]);
-
-//             pane.add_item(Box::new(cx.add_view(|_| item)), false, false, None, cx);
-//         });
-//         assert_item_labels(&pane, ["buffer 1*"], cx);
-
-//         // new singleton view with different project entry
-//         pane.update(cx, |pane, cx| {
-//             let item = TestItem::new()
-//                 .with_singleton(true)
-//                 .with_label("buffer 2")
-//                 .with_project_items(&[TestProjectItem::new(2, "2.txt", cx)]);
-//             pane.add_item(Box::new(cx.add_view(|_| item)), false, false, None, cx);
-//         });
-//         assert_item_labels(&pane, ["buffer 1", "buffer 2*"], cx);
-
-//         // new multibuffer view with the same project entry
-//         pane.update(cx, |pane, cx| {
-//             let item = TestItem::new()
-//                 .with_singleton(false)
-//                 .with_label("multibuffer 1")
-//                 .with_project_items(&[TestProjectItem::new(1, "1.txt", cx)]);
-
-//             pane.add_item(Box::new(cx.add_view(|_| item)), false, false, None, cx);
-//         });
-//         assert_item_labels(&pane, ["buffer 1", "buffer 2", "multibuffer 1*"], cx);
-
-//         // another multibuffer view with the same project entry
-//         pane.update(cx, |pane, cx| {
-//             let item = TestItem::new()
-//                 .with_singleton(false)
-//                 .with_label("multibuffer 1b")
-//                 .with_project_items(&[TestProjectItem::new(1, "1.txt", cx)]);
-
-//             pane.add_item(Box::new(cx.add_view(|_| item)), false, false, None, cx);
-//         });
-//         assert_item_labels(
-//             &pane,
-//             ["buffer 1", "buffer 2", "multibuffer 1", "multibuffer 1b*"],
-//             cx,
-//         );
-//     }
-
-//     #[gpui::test]
-//     async fn test_remove_item_ordering(cx: &mut TestAppContext) {
-//         init_test(cx);
-//         let fs = FakeFs::new(cx.background());
-
-//         let project = Project::test(fs, None, cx).await;
-//         let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
-//         let workspace = window.root(cx);
-//         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
-
-//         add_labeled_item(&pane, "A", false, cx);
-//         add_labeled_item(&pane, "B", false, cx);
-//         add_labeled_item(&pane, "C", false, cx);
-//         add_labeled_item(&pane, "D", false, cx);
-//         assert_item_labels(&pane, ["A", "B", "C", "D*"], cx);
-
-//         pane.update(cx, |pane, cx| pane.activate_item(1, false, false, cx));
-//         add_labeled_item(&pane, "1", false, cx);
-//         assert_item_labels(&pane, ["A", "B", "1*", "C", "D"], cx);
-
-//         pane.update(cx, |pane, cx| {
-//             pane.close_active_item(&CloseActiveItem { save_intent: None }, cx)
-//         })
-//         .unwrap()
-//         .await
-//         .unwrap();
-//         assert_item_labels(&pane, ["A", "B*", "C", "D"], cx);
-
-//         pane.update(cx, |pane, cx| pane.activate_item(3, false, false, cx));
-//         assert_item_labels(&pane, ["A", "B", "C", "D*"], cx);
-
-//         pane.update(cx, |pane, cx| {
-//             pane.close_active_item(&CloseActiveItem { save_intent: None }, cx)
-//         })
-//         .unwrap()
-//         .await
-//         .unwrap();
-//         assert_item_labels(&pane, ["A", "B*", "C"], cx);
-
-//         pane.update(cx, |pane, cx| {
-//             pane.close_active_item(&CloseActiveItem { save_intent: None }, cx)
-//         })
-//         .unwrap()
-//         .await
-//         .unwrap();
-//         assert_item_labels(&pane, ["A", "C*"], cx);
-
-//         pane.update(cx, |pane, cx| {
-//             pane.close_active_item(&CloseActiveItem { save_intent: None }, cx)
-//         })
-//         .unwrap()
-//         .await
-//         .unwrap();
-//         assert_item_labels(&pane, ["A*"], cx);
-//     }
-
-//     #[gpui::test]
-//     async fn test_close_inactive_items(cx: &mut TestAppContext) {
-//         init_test(cx);
-//         let fs = FakeFs::new(cx.background());
-
-//         let project = Project::test(fs, None, cx).await;
-//         let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
-//         let workspace = window.root(cx);
-//         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
-
-//         set_labeled_items(&pane, ["A", "B", "C*", "D", "E"], cx);
-
-//         pane.update(cx, |pane, cx| {
-//             pane.close_inactive_items(&CloseInactiveItems, cx)
-//         })
-//         .unwrap()
-//         .await
-//         .unwrap();
-//         assert_item_labels(&pane, ["C*"], cx);
-//     }
-
-//     #[gpui::test]
-//     async fn test_close_clean_items(cx: &mut TestAppContext) {
-//         init_test(cx);
-//         let fs = FakeFs::new(cx.background());
-
-//         let project = Project::test(fs, None, cx).await;
-//         let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
-//         let workspace = window.root(cx);
-//         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
-
-//         add_labeled_item(&pane, "A", true, cx);
-//         add_labeled_item(&pane, "B", false, cx);
-//         add_labeled_item(&pane, "C", true, cx);
-//         add_labeled_item(&pane, "D", false, cx);
-//         add_labeled_item(&pane, "E", false, cx);
-//         assert_item_labels(&pane, ["A^", "B", "C^", "D", "E*"], cx);
-
-//         pane.update(cx, |pane, cx| pane.close_clean_items(&CloseCleanItems, cx))
-//             .unwrap()
-//             .await
-//             .unwrap();
-//         assert_item_labels(&pane, ["A^", "C*^"], cx);
-//     }
-
-//     #[gpui::test]
-//     async fn test_close_items_to_the_left(cx: &mut TestAppContext) {
-//         init_test(cx);
-//         let fs = FakeFs::new(cx.background());
-
-//         let project = Project::test(fs, None, cx).await;
-//         let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
-//         let workspace = window.root(cx);
-//         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
-
-//         set_labeled_items(&pane, ["A", "B", "C*", "D", "E"], cx);
-
-//         pane.update(cx, |pane, cx| {
-//             pane.close_items_to_the_left(&CloseItemsToTheLeft, cx)
-//         })
-//         .unwrap()
-//         .await
-//         .unwrap();
-//         assert_item_labels(&pane, ["C*", "D", "E"], cx);
-//     }
-
-//     #[gpui::test]
-//     async fn test_close_items_to_the_right(cx: &mut TestAppContext) {
-//         init_test(cx);
-//         let fs = FakeFs::new(cx.background());
-
-//         let project = Project::test(fs, None, cx).await;
-//         let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
-//         let workspace = window.root(cx);
-//         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
-
-//         set_labeled_items(&pane, ["A", "B", "C*", "D", "E"], cx);
-
-//         pane.update(cx, |pane, cx| {
-//             pane.close_items_to_the_right(&CloseItemsToTheRight, cx)
-//         })
-//         .unwrap()
-//         .await
-//         .unwrap();
-//         assert_item_labels(&pane, ["A", "B", "C*"], cx);
-//     }
-
-//     #[gpui::test]
-//     async fn test_close_all_items(cx: &mut TestAppContext) {
-//         init_test(cx);
-//         let fs = FakeFs::new(cx.background());
-
-//         let project = Project::test(fs, None, cx).await;
-//         let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
-//         let workspace = window.root(cx);
-//         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
-
-//         add_labeled_item(&pane, "A", false, cx);
-//         add_labeled_item(&pane, "B", false, cx);
-//         add_labeled_item(&pane, "C", false, cx);
-//         assert_item_labels(&pane, ["A", "B", "C*"], cx);
-
-//         pane.update(cx, |pane, cx| {
-//             pane.close_all_items(&CloseAllItems { save_intent: None }, cx)
-//         })
-//         .unwrap()
-//         .await
-//         .unwrap();
-//         assert_item_labels(&pane, [], cx);
-
-//         add_labeled_item(&pane, "A", true, cx);
-//         add_labeled_item(&pane, "B", true, cx);
-//         add_labeled_item(&pane, "C", true, cx);
-//         assert_item_labels(&pane, ["A^", "B^", "C*^"], cx);
-
-//         let save = pane
-//             .update(cx, |pane, cx| {
-//                 pane.close_all_items(&CloseAllItems { save_intent: None }, cx)
-//             })
-//             .unwrap();
-
-//         cx.foreground().run_until_parked();
-//         window.simulate_prompt_answer(2, cx);
-//         save.await.unwrap();
-//         assert_item_labels(&pane, [], cx);
-//     }
-
-//     fn init_test(cx: &mut TestAppContext) {
-//         cx.update(|cx| {
-//             cx.set_global(SettingsStore::test(cx));
-//             theme::init((), cx);
-//             crate::init_settings(cx);
-//             Project::init_settings(cx);
-//         });
-//     }
-
-//     fn add_labeled_item(
-//         pane: &ViewHandle<Pane>,
-//         label: &str,
-//         is_dirty: bool,
-//         cx: &mut TestAppContext,
-//     ) -> Box<ViewHandle<TestItem>> {
-//         pane.update(cx, |pane, cx| {
-//             let labeled_item =
-//                 Box::new(cx.add_view(|_| TestItem::new().with_label(label).with_dirty(is_dirty)));
-//             pane.add_item(labeled_item.clone(), false, false, None, cx);
-//             labeled_item
-//         })
-//     }
-
-//     fn set_labeled_items<const COUNT: usize>(
-//         pane: &ViewHandle<Pane>,
-//         labels: [&str; COUNT],
-//         cx: &mut TestAppContext,
-//     ) -> [Box<ViewHandle<TestItem>>; COUNT] {
-//         pane.update(cx, |pane, cx| {
-//             pane.items.clear();
-//             let mut active_item_index = 0;
-
-//             let mut index = 0;
-//             let items = labels.map(|mut label| {
-//                 if label.ends_with("*") {
-//                     label = label.trim_end_matches("*");
-//                     active_item_index = index;
-//                 }
-
-//                 let labeled_item = Box::new(cx.add_view(|_| TestItem::new().with_label(label)));
-//                 pane.add_item(labeled_item.clone(), false, false, None, cx);
-//                 index += 1;
-//                 labeled_item
-//             });
-
-//             pane.activate_item(active_item_index, false, false, cx);
-
-//             items
-//         })
-//     }
-
-//     // Assert the item label, with the active item label suffixed with a '*'
-//     fn assert_item_labels<const COUNT: usize>(
-//         pane: &ViewHandle<Pane>,
-//         expected_states: [&str; COUNT],
-//         cx: &mut TestAppContext,
-//     ) {
-//         pane.read_with(cx, |pane, cx| {
-//             let actual_states = pane
-//                 .items
-//                 .iter()
-//                 .enumerate()
-//                 .map(|(ix, item)| {
-//                     let mut state = item
-//                         .as_any()
-//                         .downcast_ref::<TestItem>()
-//                         .unwrap()
-//                         .read(cx)
-//                         .label
-//                         .clone();
-//                     if ix == pane.active_item_index {
-//                         state.push('*');
-//                     }
-//                     if item.is_dirty(cx) {
-//                         state.push('^');
-//                     }
-//                     state
-//                 })
-//                 .collect::<Vec<_>>();
-
-//             assert_eq!(
-//                 actual_states, expected_states,
-//                 "pane items do not match expectation"
-//             );
-//         })
-//     }
-// }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::item::test::{TestItem, TestProjectItem};
+    use gpui::{TestAppContext, VisualTestContext};
+    use project::FakeFs;
+    use settings::SettingsStore;
+    use theme::LoadThemes;
+
+    #[gpui::test]
+    async fn test_remove_active_empty(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
+        let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
+
+        pane.update(cx, |pane, cx| {
+            assert!(pane
+                .close_active_item(&CloseActiveItem { save_intent: None }, cx)
+                .is_none())
+        });
+    }
+
+    #[gpui::test]
+    async fn test_add_item_with_new_item(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
+        let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
+
+        // 1. Add with a destination index
+        //   a. Add before the active item
+        set_labeled_items(&pane, ["A", "B*", "C"], cx);
+        pane.update(cx, |pane, cx| {
+            pane.add_item(
+                Box::new(cx.build_view(|cx| TestItem::new(cx).with_label("D"))),
+                false,
+                false,
+                Some(0),
+                cx,
+            );
+        });
+        assert_item_labels(&pane, ["D*", "A", "B", "C"], cx);
+
+        //   b. Add after the active item
+        set_labeled_items(&pane, ["A", "B*", "C"], cx);
+        pane.update(cx, |pane, cx| {
+            pane.add_item(
+                Box::new(cx.build_view(|cx| TestItem::new(cx).with_label("D"))),
+                false,
+                false,
+                Some(2),
+                cx,
+            );
+        });
+        assert_item_labels(&pane, ["A", "B", "D*", "C"], cx);
+
+        //   c. Add at the end of the item list (including off the length)
+        set_labeled_items(&pane, ["A", "B*", "C"], cx);
+        pane.update(cx, |pane, cx| {
+            pane.add_item(
+                Box::new(cx.build_view(|cx| TestItem::new(cx).with_label("D"))),
+                false,
+                false,
+                Some(5),
+                cx,
+            );
+        });
+        assert_item_labels(&pane, ["A", "B", "C", "D*"], cx);
+
+        // 2. Add without a destination index
+        //   a. Add with active item at the start of the item list
+        set_labeled_items(&pane, ["A*", "B", "C"], cx);
+        pane.update(cx, |pane, cx| {
+            pane.add_item(
+                Box::new(cx.build_view(|cx| TestItem::new(cx).with_label("D"))),
+                false,
+                false,
+                None,
+                cx,
+            );
+        });
+        set_labeled_items(&pane, ["A", "D*", "B", "C"], cx);
+
+        //   b. Add with active item at the end of the item list
+        set_labeled_items(&pane, ["A", "B", "C*"], cx);
+        pane.update(cx, |pane, cx| {
+            pane.add_item(
+                Box::new(cx.build_view(|cx| TestItem::new(cx).with_label("D"))),
+                false,
+                false,
+                None,
+                cx,
+            );
+        });
+        assert_item_labels(&pane, ["A", "B", "C", "D*"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_add_item_with_existing_item(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
+        let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
+
+        // 1. Add with a destination index
+        //   1a. Add before the active item
+        let [_, _, _, d] = set_labeled_items(&pane, ["A", "B*", "C", "D"], cx);
+        pane.update(cx, |pane, cx| {
+            pane.add_item(d, false, false, Some(0), cx);
+        });
+        assert_item_labels(&pane, ["D*", "A", "B", "C"], cx);
+
+        //   1b. Add after the active item
+        let [_, _, _, d] = set_labeled_items(&pane, ["A", "B*", "C", "D"], cx);
+        pane.update(cx, |pane, cx| {
+            pane.add_item(d, false, false, Some(2), cx);
+        });
+        assert_item_labels(&pane, ["A", "B", "D*", "C"], cx);
+
+        //   1c. Add at the end of the item list (including off the length)
+        let [a, _, _, _] = set_labeled_items(&pane, ["A", "B*", "C", "D"], cx);
+        pane.update(cx, |pane, cx| {
+            pane.add_item(a, false, false, Some(5), cx);
+        });
+        assert_item_labels(&pane, ["B", "C", "D", "A*"], cx);
+
+        //   1d. Add same item to active index
+        let [_, b, _] = set_labeled_items(&pane, ["A", "B*", "C"], cx);
+        pane.update(cx, |pane, cx| {
+            pane.add_item(b, false, false, Some(1), cx);
+        });
+        assert_item_labels(&pane, ["A", "B*", "C"], cx);
+
+        //   1e. Add item to index after same item in last position
+        let [_, _, c] = set_labeled_items(&pane, ["A", "B*", "C"], cx);
+        pane.update(cx, |pane, cx| {
+            pane.add_item(c, false, false, Some(2), cx);
+        });
+        assert_item_labels(&pane, ["A", "B", "C*"], cx);
+
+        // 2. Add without a destination index
+        //   2a. Add with active item at the start of the item list
+        let [_, _, _, d] = set_labeled_items(&pane, ["A*", "B", "C", "D"], cx);
+        pane.update(cx, |pane, cx| {
+            pane.add_item(d, false, false, None, cx);
+        });
+        assert_item_labels(&pane, ["A", "D*", "B", "C"], cx);
+
+        //   2b. Add with active item at the end of the item list
+        let [a, _, _, _] = set_labeled_items(&pane, ["A", "B", "C", "D*"], cx);
+        pane.update(cx, |pane, cx| {
+            pane.add_item(a, false, false, None, cx);
+        });
+        assert_item_labels(&pane, ["B", "C", "D", "A*"], cx);
+
+        //   2c. Add active item to active item at end of list
+        let [_, _, c] = set_labeled_items(&pane, ["A", "B", "C*"], cx);
+        pane.update(cx, |pane, cx| {
+            pane.add_item(c, false, false, None, cx);
+        });
+        assert_item_labels(&pane, ["A", "B", "C*"], cx);
+
+        //   2d. Add active item to active item at start of list
+        let [a, _, _] = set_labeled_items(&pane, ["A*", "B", "C"], cx);
+        pane.update(cx, |pane, cx| {
+            pane.add_item(a, false, false, None, cx);
+        });
+        assert_item_labels(&pane, ["A*", "B", "C"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_add_item_with_same_project_entries(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
+        let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
+
+        // singleton view
+        pane.update(cx, |pane, cx| {
+            pane.add_item(
+                Box::new(cx.build_view(|cx| {
+                    TestItem::new(cx)
+                        .with_singleton(true)
+                        .with_label("buffer 1")
+                        .with_project_items(&[TestProjectItem::new(1, "one.txt", cx)])
+                })),
+                false,
+                false,
+                None,
+                cx,
+            );
+        });
+        assert_item_labels(&pane, ["buffer 1*"], cx);
+
+        // new singleton view with the same project entry
+        pane.update(cx, |pane, cx| {
+            pane.add_item(
+                Box::new(cx.build_view(|cx| {
+                    TestItem::new(cx)
+                        .with_singleton(true)
+                        .with_label("buffer 1")
+                        .with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
+                })),
+                false,
+                false,
+                None,
+                cx,
+            );
+        });
+        assert_item_labels(&pane, ["buffer 1*"], cx);
+
+        // new singleton view with different project entry
+        pane.update(cx, |pane, cx| {
+            pane.add_item(
+                Box::new(cx.build_view(|cx| {
+                    TestItem::new(cx)
+                        .with_singleton(true)
+                        .with_label("buffer 2")
+                        .with_project_items(&[TestProjectItem::new(2, "2.txt", cx)])
+                })),
+                false,
+                false,
+                None,
+                cx,
+            );
+        });
+        assert_item_labels(&pane, ["buffer 1", "buffer 2*"], cx);
+
+        // new multibuffer view with the same project entry
+        pane.update(cx, |pane, cx| {
+            pane.add_item(
+                Box::new(cx.build_view(|cx| {
+                    TestItem::new(cx)
+                        .with_singleton(false)
+                        .with_label("multibuffer 1")
+                        .with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
+                })),
+                false,
+                false,
+                None,
+                cx,
+            );
+        });
+        assert_item_labels(&pane, ["buffer 1", "buffer 2", "multibuffer 1*"], cx);
+
+        // another multibuffer view with the same project entry
+        pane.update(cx, |pane, cx| {
+            pane.add_item(
+                Box::new(cx.build_view(|cx| {
+                    TestItem::new(cx)
+                        .with_singleton(false)
+                        .with_label("multibuffer 1b")
+                        .with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
+                })),
+                false,
+                false,
+                None,
+                cx,
+            );
+        });
+        assert_item_labels(
+            &pane,
+            ["buffer 1", "buffer 2", "multibuffer 1", "multibuffer 1b*"],
+            cx,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_remove_item_ordering(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
+        let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
+
+        add_labeled_item(&pane, "A", false, cx);
+        add_labeled_item(&pane, "B", false, cx);
+        add_labeled_item(&pane, "C", false, cx);
+        add_labeled_item(&pane, "D", false, cx);
+        assert_item_labels(&pane, ["A", "B", "C", "D*"], cx);
+
+        pane.update(cx, |pane, cx| pane.activate_item(1, false, false, cx));
+        add_labeled_item(&pane, "1", false, cx);
+        assert_item_labels(&pane, ["A", "B", "1*", "C", "D"], cx);
+
+        pane.update(cx, |pane, cx| {
+            pane.close_active_item(&CloseActiveItem { save_intent: None }, cx)
+        })
+        .unwrap()
+        .await
+        .unwrap();
+        assert_item_labels(&pane, ["A", "B*", "C", "D"], cx);
+
+        pane.update(cx, |pane, cx| pane.activate_item(3, false, false, cx));
+        assert_item_labels(&pane, ["A", "B", "C", "D*"], cx);
+
+        pane.update(cx, |pane, cx| {
+            pane.close_active_item(&CloseActiveItem { save_intent: None }, cx)
+        })
+        .unwrap()
+        .await
+        .unwrap();
+        assert_item_labels(&pane, ["A", "B*", "C"], cx);
+
+        pane.update(cx, |pane, cx| {
+            pane.close_active_item(&CloseActiveItem { save_intent: None }, cx)
+        })
+        .unwrap()
+        .await
+        .unwrap();
+        assert_item_labels(&pane, ["A", "C*"], cx);
+
+        pane.update(cx, |pane, cx| {
+            pane.close_active_item(&CloseActiveItem { save_intent: None }, cx)
+        })
+        .unwrap()
+        .await
+        .unwrap();
+        assert_item_labels(&pane, ["A*"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_close_inactive_items(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
+        let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
+
+        set_labeled_items(&pane, ["A", "B", "C*", "D", "E"], cx);
+
+        pane.update(cx, |pane, cx| {
+            pane.close_inactive_items(&CloseInactiveItems, cx)
+        })
+        .unwrap()
+        .await
+        .unwrap();
+        assert_item_labels(&pane, ["C*"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_close_clean_items(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
+        let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
+
+        add_labeled_item(&pane, "A", true, cx);
+        add_labeled_item(&pane, "B", false, cx);
+        add_labeled_item(&pane, "C", true, cx);
+        add_labeled_item(&pane, "D", false, cx);
+        add_labeled_item(&pane, "E", false, cx);
+        assert_item_labels(&pane, ["A^", "B", "C^", "D", "E*"], cx);
+
+        pane.update(cx, |pane, cx| pane.close_clean_items(&CloseCleanItems, cx))
+            .unwrap()
+            .await
+            .unwrap();
+        assert_item_labels(&pane, ["A^", "C*^"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_close_items_to_the_left(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
+        let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
+
+        set_labeled_items(&pane, ["A", "B", "C*", "D", "E"], cx);
+
+        pane.update(cx, |pane, cx| {
+            pane.close_items_to_the_left(&CloseItemsToTheLeft, cx)
+        })
+        .unwrap()
+        .await
+        .unwrap();
+        assert_item_labels(&pane, ["C*", "D", "E"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_close_items_to_the_right(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
+        let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
+
+        set_labeled_items(&pane, ["A", "B", "C*", "D", "E"], cx);
+
+        pane.update(cx, |pane, cx| {
+            pane.close_items_to_the_right(&CloseItemsToTheRight, cx)
+        })
+        .unwrap()
+        .await
+        .unwrap();
+        assert_item_labels(&pane, ["A", "B", "C*"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_close_all_items(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
+        let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
+
+        add_labeled_item(&pane, "A", false, cx);
+        add_labeled_item(&pane, "B", false, cx);
+        add_labeled_item(&pane, "C", false, cx);
+        assert_item_labels(&pane, ["A", "B", "C*"], cx);
+
+        pane.update(cx, |pane, cx| {
+            pane.close_all_items(&CloseAllItems { save_intent: None }, cx)
+        })
+        .unwrap()
+        .await
+        .unwrap();
+        assert_item_labels(&pane, [], cx);
+
+        add_labeled_item(&pane, "A", true, cx);
+        add_labeled_item(&pane, "B", true, cx);
+        add_labeled_item(&pane, "C", true, cx);
+        assert_item_labels(&pane, ["A^", "B^", "C*^"], cx);
+
+        let save = pane
+            .update(cx, |pane, cx| {
+                pane.close_all_items(&CloseAllItems { save_intent: None }, cx)
+            })
+            .unwrap();
+
+        cx.executor().run_until_parked();
+        cx.simulate_prompt_answer(2);
+        save.await.unwrap();
+        assert_item_labels(&pane, [], cx);
+    }
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme::init(LoadThemes::JustBase, cx);
+            crate::init_settings(cx);
+            Project::init_settings(cx);
+        });
+    }
+
+    fn add_labeled_item(
+        pane: &View<Pane>,
+        label: &str,
+        is_dirty: bool,
+        cx: &mut VisualTestContext,
+    ) -> Box<View<TestItem>> {
+        pane.update(cx, |pane, cx| {
+            let labeled_item = Box::new(
+                cx.build_view(|cx| TestItem::new(cx).with_label(label).with_dirty(is_dirty)),
+            );
+            pane.add_item(labeled_item.clone(), false, false, None, cx);
+            labeled_item
+        })
+    }
+
+    fn set_labeled_items<const COUNT: usize>(
+        pane: &View<Pane>,
+        labels: [&str; COUNT],
+        cx: &mut VisualTestContext,
+    ) -> [Box<View<TestItem>>; COUNT] {
+        pane.update(cx, |pane, cx| {
+            pane.items.clear();
+            let mut active_item_index = 0;
+
+            let mut index = 0;
+            let items = labels.map(|mut label| {
+                if label.ends_with("*") {
+                    label = label.trim_end_matches("*");
+                    active_item_index = index;
+                }
+
+                let labeled_item =
+                    Box::new(cx.build_view(|cx| TestItem::new(cx).with_label(label)));
+                pane.add_item(labeled_item.clone(), false, false, None, cx);
+                index += 1;
+                labeled_item
+            });
+
+            pane.activate_item(active_item_index, false, false, cx);
+
+            items
+        })
+    }
+
+    // Assert the item label, with the active item label suffixed with a '*'
+    fn assert_item_labels<const COUNT: usize>(
+        pane: &View<Pane>,
+        expected_states: [&str; COUNT],
+        cx: &mut VisualTestContext,
+    ) {
+        pane.update(cx, |pane, cx| {
+            let actual_states = pane
+                .items
+                .iter()
+                .enumerate()
+                .map(|(ix, item)| {
+                    let mut state = item
+                        .to_any()
+                        .downcast::<TestItem>()
+                        .unwrap()
+                        .read(cx)
+                        .label
+                        .clone();
+                    if ix == pane.active_item_index {
+                        state.push('*');
+                    }
+                    if item.is_dirty(cx) {
+                        state.push('^');
+                    }
+                    state
+                })
+                .collect::<Vec<_>>();
+
+            assert_eq!(
+                actual_states, expected_states,
+                "pane items do not match expectation"
+            );
+        })
+    }
+}
 
 impl Render for DraggedTab {
     type Element = <Tab as RenderOnce>::Rendered;
