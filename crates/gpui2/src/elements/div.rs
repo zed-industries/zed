@@ -33,6 +33,7 @@ pub struct GroupStyle {
 
 pub struct DragMoveEvent<T> {
     pub event: MouseMoveEvent,
+    pub bounds: Bounds<Pixels>,
     drag: PhantomData<T>,
 }
 
@@ -208,7 +209,7 @@ pub trait InteractiveElement: Sized {
         self
     }
 
-    fn on_drag_move<T>(
+    fn on_drag_move<T: 'static>(
         mut self,
         listener: impl Fn(&DragMoveEvent<T>, &mut WindowContext) + 'static,
     ) -> Self
@@ -223,11 +224,12 @@ pub trait InteractiveElement: Sized {
                     if cx
                         .active_drag
                         .as_ref()
-                        .is_some_and(|drag| (*drag.value).type_id() == TypeId::of::<T>())
+                        .is_some_and(|drag| drag.value.as_ref().type_id() == TypeId::of::<T>())
                     {
                         (listener)(
                             &DragMoveEvent {
                                 event: event.clone(),
+                                bounds: bounds.bounds,
                                 drag: PhantomData,
                             },
                             cx,
