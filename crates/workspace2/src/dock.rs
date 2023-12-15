@@ -317,7 +317,7 @@ impl Dock {
                         new_dock.add_panel(panel.clone(), workspace.clone(), cx);
                         if was_visible {
                             new_dock.set_open(true, cx);
-                            new_dock.activate_panel(this.panels_len() - 1, cx);
+                            new_dock.activate_panel(new_dock.panels_len() - 1, cx);
                         }
                     });
                 }
