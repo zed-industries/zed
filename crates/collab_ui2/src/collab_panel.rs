@@ -2113,8 +2113,8 @@ impl CollabPanel {
             .size_full()
             .child(list(self.list_state.clone()).full())
             .child(
-                div().p_2().child(
-                    div()
+                v_stack().p_2().child(
+                    v_stack()
                         .border_primary(cx)
                         .border_t()
                         .child(self.filter_editor.clone()),
