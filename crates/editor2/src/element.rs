@@ -933,7 +933,7 @@ impl EditorElement {
                                         cx.stop_propagation();
                                     },
                                 ))
-                                .draw2(
+                                .draw_and_update_state(
                                     fold_bounds.origin,
                                     fold_bounds.size,
                                     cx,

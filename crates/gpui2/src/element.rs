@@ -23,7 +23,7 @@ pub trait IntoElement: Sized {
         self.into_element().into_any()
     }
 
-    fn draw2<T, R>(
+    fn draw_and_update_state<T, R>(
         self,
         origin: Point<Pixels>,
         available_space: Size<T>,
