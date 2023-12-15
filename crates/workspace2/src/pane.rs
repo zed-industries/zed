@@ -1889,21 +1889,27 @@ impl Render for Pane {
             .child(self.render_tab_bar(cx))
             .child(
                 // main content
-                v_stack()
+                div()
                     .flex_1()
                     .relative()
                     .group("")
                     .on_drag_move::<DraggedTab>(cx.listener(Self::handle_drag_move))
                     .on_drag_move::<ProjectEntryId>(cx.listener(Self::handle_drag_move))
-                    .child(self.toolbar.clone())
                     .map(|div| {
                         if let Some(item) = self.active_item() {
-                            div.child(item.to_any())
+                            div.flex_col()
+                                .child(self.toolbar.clone())
+                                .child(item.to_any())
                         } else {
-                            div.items_center().size_full().justify_center().child(
-                                Label::new("Open a file or project to get started.")
-                                    .color(Color::Muted),
-                            )
+                            div.flex()
+                                .flex_row()
+                                .items_center()
+                                .size_full()
+                                .justify_center()
+                                .child(
+                                    Label::new("Open a file or project to get started.")
+                                        .color(Color::Muted),
+                                )
                         }
                     })
                     .child(
