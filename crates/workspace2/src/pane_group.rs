@@ -693,7 +693,8 @@ mod element {
 
     use gpui::{
         px, relative, Along, AnyElement, Axis, Bounds, CursorStyle, Element, IntoElement,
-        MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Style, WindowContext,
+        MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, Size, Style,
+        WindowContext,
     };
     use parking_lot::Mutex;
     use smallvec::SmallVec;
@@ -736,7 +737,8 @@ mod element {
             e: &MouseMoveEvent,
             ix: usize,
             axis: Axis,
-            axis_bounds: Bounds<Pixels>,
+            child_start: Point<Pixels>,
+            container_size: Size<Pixels>,
             cx: &mut WindowContext,
         ) {
             let min_size = match axis {
@@ -747,7 +749,7 @@ mod element {
             debug_assert!(flex_values_in_bounds(flexes.as_slice()));
 
             let size = move |ix, flexes: &[f32]| {
-                axis_bounds.size.along(axis) * (flexes[ix] / flexes.len() as f32)
+                container_size.along(axis) * (flexes[ix] / flexes.len() as f32)
             };
 
             // Don't allow resizing to less than the minimum size, if elements are already too small
@@ -756,10 +758,10 @@ mod element {
             }
 
             let mut proposed_current_pixel_change =
-                (e.position - axis_bounds.origin).along(axis) - size(ix, flexes.as_slice());
+                (e.position - child_start).along(axis) - size(ix, flexes.as_slice());
 
             let flex_changes = |pixel_dx, target_ix, next: isize, flexes: &[f32]| {
-                let flex_change = pixel_dx / axis_bounds.size.along(axis);
+                let flex_change = pixel_dx / container_size.along(axis);
                 let current_target_flex = flexes[target_ix] + flex_change;
                 let next_target_flex = flexes[(target_ix as isize + next) as usize] - flex_change;
                 (current_target_flex, next_target_flex)
@@ -854,7 +856,15 @@ mod element {
                 cx.on_mouse_event(move |e: &MouseMoveEvent, phase, cx| {
                     let dragged_handle = dragged_handle.borrow();
                     if phase.bubble() && *dragged_handle == Some(ix) {
-                        Self::compute_resize(&flexes, e, ix, axis, axis_bounds, cx)
+                        Self::compute_resize(
+                            &flexes,
+                            e,
+                            ix,
+                            axis,
+                            pane_bounds.origin,
+                            axis_bounds.size,
+                            cx,
+                        )
                     }
                 });
             });
