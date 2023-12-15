@@ -1536,12 +1536,29 @@ impl Render for ProjectSearchBar {
                                         cx,
                                     )
                                 })
-                                .selected(self.is_option_enabled(SearchOptions::WHOLE_WORD, cx))
+                                .selected(self.is_option_enabled(SearchOptions::CASE_SENSITIVE, cx))
                                 .on_click(cx.listener(
                                     |this, _, cx| {
-                                        this.toggle_search_option(SearchOptions::WHOLE_WORD, cx);
+                                        this.toggle_search_option(
+                                            SearchOptions::CASE_SENSITIVE,
+                                            cx,
+                                        );
                                     },
                                 )),
+                            )
+                            .child(
+                                IconButton::new("project-search-whole-word", Icon::WholeWord)
+                                    .tooltip(|cx| {
+                                        Tooltip::for_action(
+                                            "Toggle whole word",
+                                            &ToggleWholeWord,
+                                            cx,
+                                        )
+                                    })
+                                    .selected(self.is_option_enabled(SearchOptions::WHOLE_WORD, cx))
+                                    .on_click(cx.listener(|this, _, cx| {
+                                        this.toggle_search_option(SearchOptions::WHOLE_WORD, cx);
+                                    })),
                             )
                         }),
                 ),
