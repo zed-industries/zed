@@ -5,6 +5,7 @@ const { spawn, execFileSync } = require("child_process");
 const RESOLUTION_REGEX = /(\d+) x (\d+)/;
 const DIGIT_FLAG_REGEX = /^--?(\d+)$/;
 const ZED_2_MODE = "--zed2";
+const RELEASE_MODE = "--release";
 
 const args = process.argv.slice(2);
 
@@ -16,6 +17,7 @@ if (digitMatch) {
   args.shift();
 }
 const isZed2 = args.some((arg) => arg === ZED_2_MODE);
+const isReleaseMode = args.some((arg) => arg === RELEASE_MODE);
 if (instanceCount > 4) {
   throw new Error("Cannot spawn more than 4 instances");
 }
@@ -63,8 +65,25 @@ const positions = [
   `${instanceWidth},${instanceHeight}`,
 ];
 
-const buildArgs = isZed2 ? ["build", "-p", "zed2"] : ["build"];
-const zedBinary = isZed2 ? "target/debug/Zed2" : "target/debug/Zed";
+const buildArgs = (() => {
+  const buildArgs = ["build"];
+  if (isReleaseMode) {
+    buildArgs.push("--release");
+  }
+
+  if (isZed2) {
+    buildArgs.push("-p", "zed2");
+  }
+
+  return buildArgs;
+})();
+const zedBinary = (() => {
+  const target = isReleaseMode ? "release" : "debug";
+  const binary = isZed2 ? "Zed2" : "Zed";
+
+  return `target/${target}/${binary}`;
+})();
+
 execFileSync("cargo", buildArgs, { stdio: "inherit" });
 setTimeout(() => {
   for (let i = 0; i < instanceCount; i++) {
