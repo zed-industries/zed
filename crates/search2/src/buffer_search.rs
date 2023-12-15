@@ -338,7 +338,9 @@ impl BufferSearchBar {
             pane.update(cx, |this, cx| {
                 this.toolbar().update(cx, |this, cx| {
                     if let Some(search_bar) = this.item_of_type::<BufferSearchBar>() {
-                        search_bar.update(cx, |this, cx| this.toggle(deploy, cx));
+                        search_bar.update(cx, |this, cx| {
+                            this.deploy(deploy, cx);
+                        });
                         return;
                     }
                     let view = cx.build_view(|cx| BufferSearchBar::new(cx));
@@ -1483,9 +1485,9 @@ mod tests {
                     search_bar.select_all_matches(&SelectAllMatches, cx);
                 });
                 assert!(
-                editor.update(cx, |this, cx| !this.is_focused(cx.window_context())),
-                "Should not switch focus to editor if SelectAllMatches does not find any matches"
-            );
+                    editor.update(cx, |this, cx| !this.is_focused(cx.window_context())),
+                    "Should not switch focus to editor if SelectAllMatches does not find any matches"
+                );
                 search_bar.update(cx, |search_bar, cx| {
                     let all_selections =
                         editor.update(cx, |editor, cx| editor.selections.display_ranges(cx));
@@ -1651,6 +1653,7 @@ mod tests {
             assert_eq!(search_bar.search_options, SearchOptions::NONE);
         });
     }
+
     #[gpui::test]
     async fn test_replace_simple(cx: &mut TestAppContext) {
         let (editor, search_bar, cx) = init_test(cx);
