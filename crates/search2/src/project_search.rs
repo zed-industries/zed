@@ -378,7 +378,11 @@ impl Render for ProjectSearchView {
 
 impl FocusableView for ProjectSearchView {
     fn focus_handle(&self, cx: &AppContext) -> gpui::FocusHandle {
-        self.results_editor.focus_handle(cx)
+        if self.has_matches() {
+            self.results_editor.focus_handle(cx)
+        } else {
+            self.query_editor.focus_handle(cx)
+        }
     }
 }
 

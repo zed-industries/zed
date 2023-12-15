@@ -489,7 +489,6 @@ impl<'a> WindowContext<'a> {
 
         #[cfg(any(test, feature = "test-support"))]
         {
-            println!("invalidating focus");
             self.window.focus_invalidated = true;
         }
 
