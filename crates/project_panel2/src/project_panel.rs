@@ -1671,7 +1671,7 @@ mod tests {
         path::{Path, PathBuf},
         sync::atomic::{self, AtomicUsize},
     };
-    use workspace::{dock::PanelHandle, AppState};
+    use workspace::AppState;
 
     #[gpui::test]
     async fn test_visible_list(cx: &mut gpui::TestAppContext) {
