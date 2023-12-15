@@ -74,12 +74,16 @@ impl Render for CollabTitlebarItem {
             // Set a non-scaling min-height here to ensure the titlebar is
             // always at least the height of the traffic lights.
             .min_h(px(32.))
-            .when(
-                !matches!(cx.window_bounds(), WindowBounds::Fullscreen),
-                // Use pixels here instead of a rem-based size because the macOS traffic
-                // lights are a static size, and don't scale with the rest of the UI.
-                |s| s.pl(px(68.)),
-            )
+            .pl_2()
+            .map(|this| {
+                if matches!(cx.window_bounds(), WindowBounds::Fullscreen) {
+                    this.pl_2()
+                } else {
+                    // Use pixels here instead of a rem-based size because the macOS traffic
+                    // lights are a static size, and don't scale with the rest of the UI.
+                    this.pl(px(72.))
+                }
+            })
             .bg(cx.theme().colors().title_bar_background)
             .on_click(|event, cx| {
                 if event.up.click_count == 2 {
@@ -165,6 +169,7 @@ impl Render for CollabTitlebarItem {
             .child(
                 h_stack()
                     .gap_1()
+                    .pr_1()
                     .when_some(room, |this, room| {
                         let room = room.read(cx);
                         let is_shared = self.project.read(cx).is_shared();
@@ -325,8 +330,6 @@ impl CollabTitlebarItem {
         let name = util::truncate_and_trailoff(name, MAX_PROJECT_NAME_LENGTH);
 
         div()
-            .border()
-            .border_color(gpui::red())
             .child(
                 Button::new("project_name_trigger", name)
                     .style(ButtonStyle::Subtle)
@@ -365,10 +368,9 @@ impl CollabTitlebarItem {
 
         Some(
             div()
-                .border()
-                .border_color(gpui::red())
                 .child(
                     Button::new("project_branch_trigger", branch_name)
+                        .color(Color::Muted)
                         .style(ButtonStyle::Subtle)
                         .tooltip(move |cx| {
                             Tooltip::with_meta(

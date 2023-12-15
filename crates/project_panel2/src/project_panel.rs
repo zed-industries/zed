@@ -1389,7 +1389,9 @@ impl ProjectPanel {
                     entry_id: *entry_id,
                 })
             })
-            .drag_over::<ProjectEntryId>(|style| style.bg(cx.theme().colors().ghost_element_hover))
+            .drag_over::<ProjectEntryId>(|style| {
+                style.bg(cx.theme().colors().drop_target_background)
+            })
             .on_drop(cx.listener(move |this, dragged_id: &ProjectEntryId, cx| {
                 this.move_entry(*dragged_id, entry_id, kind.is_file(), cx);
             }))
@@ -1399,7 +1401,7 @@ impl ProjectPanel {
                     .indent_step_size(px(settings.indent_size))
                     .selected(is_selected)
                     .child(if let Some(icon) = &icon {
-                        div().child(IconElement::from_path(icon.to_string()))
+                        div().child(IconElement::from_path(icon.to_string()).color(Color::Muted))
                     } else {
                         div()
                     })
