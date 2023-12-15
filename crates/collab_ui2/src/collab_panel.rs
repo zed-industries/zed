@@ -2142,7 +2142,7 @@ impl CollabPanel {
     }
 
     fn render_signed_out(&mut self, cx: &mut ViewContext<Self>) -> Div {
-        v_stack().child(
+        v_stack().border_1().border_color(gpui::red()).child(
             Button::new("sign_in", "Sign in to collaborate").on_click(cx.listener(
                 |this, _, cx| {
                     let client = this.client.clone();
@@ -2301,9 +2301,14 @@ impl CollabPanel {
                     .into_any_element()
             }),
             Section::Contacts => Some(
-                IconButton::new("add-contact", Icon::Plus)
-                    .on_click(cx.listener(|this, _, cx| this.toggle_contact_finder(cx)))
-                    .tooltip(|cx| Tooltip::text("Search for new contact", cx))
+                div()
+                    .border_1()
+                    .border_color(gpui::red())
+                    .child(
+                        IconButton::new("add-contact", Icon::Plus)
+                            .on_click(cx.listener(|this, _, cx| this.toggle_contact_finder(cx)))
+                            .tooltip(|cx| Tooltip::text("Search for new contact", cx)),
+                    )
                     .into_any_element(),
             ),
             Section::Channels => Some(
@@ -2323,7 +2328,7 @@ impl CollabPanel {
             | Section::Offline => true,
         };
 
-        h_stack()
+        let mut row = h_stack()
             .w_full()
             .group("section-header")
             .child(
@@ -2350,7 +2355,13 @@ impl CollabPanel {
                             .detach_and_log_err(cx)
                     },
                 ))
-            })
+            });
+
+        if section == Section::Offline {
+            row = div().border_1().border_color(gpui::red()).child(row);
+        }
+
+        row
     }
 
     fn render_contact(
