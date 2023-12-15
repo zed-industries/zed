@@ -9758,7 +9758,7 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, is_valid: bool) -> Rend
                     .px_1p5()
                     .child(HighlightedLabel::new(line.clone(), highlights.clone()))
                     .child(
-                        div().border().border_color(gpui::red()).child(
+                        div().z_index(1).child(
                             IconButton::new(copy_id.clone(), Icon::Copy)
                                 .icon_color(Color::Muted)
                                 .size(ButtonSize::Compact)
