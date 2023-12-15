@@ -8,9 +8,10 @@ use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
 use gpui::{
     actions, impl_actions, overlay, prelude::*, Action, AnchorCorner, AppContext,
-    AsyncWindowContext, DismissEvent, Div, EntityId, EventEmitter, FocusHandle, Focusable,
-    FocusableView, Model, MouseButton, NavigationDirection, Pixels, Point, PromptLevel, Render,
-    ScrollHandle, Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
+    AsyncWindowContext, DismissEvent, Div, DragMoveEvent, EntityId, EventEmitter, FocusHandle,
+    Focusable, FocusableView, Model, MouseButton, NavigationDirection, Pixels, Point, PromptLevel,
+    Render, ScrollHandle, Subscription, Task, View, ViewContext, VisualContext, WeakView,
+    WindowContext,
 };
 use parking_lot::Mutex;
 use project::{Project, ProjectEntryId, ProjectPath};
@@ -28,8 +29,8 @@ use std::{
 use theme::ThemeSettings;
 
 use ui::{
-    h_stack, prelude::*, right_click_menu, ButtonSize, Color, Icon, IconButton, IconSize,
-    Indicator, Label, Tab, TabBar, TabPosition, Tooltip,
+    prelude::*, right_click_menu, ButtonSize, Color, Icon, IconButton, IconSize, Indicator, Label,
+    Tab, TabBar, TabPosition, Tooltip,
 };
 use ui::{v_stack, ContextMenu};
 use util::{maybe, truncate_and_remove_front, ResultExt};
@@ -179,6 +180,7 @@ pub struct Pane {
     //     tab_context_menu: ViewHandle<ContextMenu>,
     workspace: WeakView<Workspace>,
     project: Model<Project>,
+    drag_split_direction: Option<SplitDirection>,
     //     can_drop: Rc<dyn Fn(&DragAndDrop<Workspace>, &WindowContext) -> bool>,
     can_split: bool,
     //     render_tab_bar_buttons: Rc<dyn Fn(&mut Pane, &mut ViewContext<Pane>) -> AnyElement<Pane>>,
@@ -361,6 +363,7 @@ impl Pane {
             new_item_menu: None,
             split_item_menu: None,
             tab_bar_scroll_handle: ScrollHandle::new(),
+            drag_split_direction: None,
             // tab_bar_context_menu: TabBarContextMenu {
             //     kind: TabBarContextMenuKind::New,
             //     handle: context_menu,
@@ -1503,9 +1506,11 @@ impl Pane {
             .drag_over::<DraggedTab>(|tab| tab.bg(cx.theme().colors().tab_active_background))
             .drag_over::<ProjectEntryId>(|tab| tab.bg(gpui::red()))
             .on_drop(cx.listener(move |this, dragged_tab: &DraggedTab, cx| {
+                this.drag_split_direction = None;
                 this.handle_tab_drop(dragged_tab, ix, cx)
             }))
             .on_drop(cx.listener(move |this, entry_id: &ProjectEntryId, cx| {
+                this.drag_split_direction = None;
                 this.handle_project_entry_drop(entry_id, cx)
             }))
             .when_some(item.tab_tooltip_text(cx), |tab, text| {
@@ -1655,9 +1660,11 @@ impl Pane {
                     })
                     .drag_over::<ProjectEntryId>(|bar| bar.bg(gpui::red()))
                     .on_drop(cx.listener(move |this, dragged_tab: &DraggedTab, cx| {
+                        this.drag_split_direction = None;
                         this.handle_tab_drop(dragged_tab, this.items.len(), cx)
                     }))
                     .on_drop(cx.listener(move |this, entry_id: &ProjectEntryId, cx| {
+                        this.drag_split_direction = None;
                         this.handle_project_entry_drop(entry_id, cx)
                     })),
             )
@@ -1719,18 +1726,42 @@ impl Pane {
         self.zoomed
     }
 
+    fn handle_drag_move<T>(&mut self, event: &DragMoveEvent<T>, cx: &mut ViewContext<Self>) {
+        let edge_width = cx.rem_size() * 8;
+        let cursor = event.event.position;
+        let direction = if cursor.x < event.bounds.left() + edge_width {
+            Some(SplitDirection::Left)
+        } else if cursor.x > event.bounds.right() - edge_width {
+            Some(SplitDirection::Right)
+        } else if cursor.y < event.bounds.top() + edge_width {
+            Some(SplitDirection::Up)
+        } else if cursor.y > event.bounds.bottom() - edge_width {
+            Some(SplitDirection::Down)
+        } else {
+            None
+        };
+        if direction != self.drag_split_direction {
+            self.drag_split_direction = direction;
+            cx.notify();
+        }
+    }
+
     fn handle_tab_drop(
         &mut self,
         dragged_tab: &DraggedTab,
         ix: usize,
         cx: &mut ViewContext<'_, Pane>,
     ) {
+        let mut to_pane = cx.view().clone();
+        let split_direction = self.drag_split_direction;
         let item_id = dragged_tab.item_id;
         let from_pane = dragged_tab.pane.clone();
-        let to_pane = cx.view().clone();
         self.workspace
             .update(cx, |_, cx| {
                 cx.defer(move |workspace, cx| {
+                    if let Some(split_direction) = split_direction {
+                        to_pane = workspace.split_pane(to_pane, split_direction, cx);
+                    }
                     workspace.move_item(from_pane, to_pane, item_id, ix, cx);
                 });
             })
@@ -1742,7 +1773,8 @@ impl Pane {
         project_entry_id: &ProjectEntryId,
         cx: &mut ViewContext<'_, Pane>,
     ) {
-        let to_pane = cx.view().downgrade();
+        let mut to_pane = cx.view().clone();
+        let split_direction = self.drag_split_direction;
         let project_entry_id = *project_entry_id;
         self.workspace
             .update(cx, |_, cx| {
@@ -1752,53 +1784,11 @@ impl Pane {
                         .read(cx)
                         .path_for_entry(project_entry_id, cx)
                     {
+                        if let Some(split_direction) = split_direction {
+                            to_pane = workspace.split_pane(to_pane, split_direction, cx);
+                        }
                         workspace
-                            .open_path(path, Some(to_pane), true, cx)
-                            .detach_and_log_err(cx);
-                    }
-                });
-            })
-            .log_err();
-    }
-
-    fn handle_split_tab_drop(
-        &mut self,
-        dragged_tab: &DraggedTab,
-        split_direction: SplitDirection,
-        cx: &mut ViewContext<'_, Pane>,
-    ) {
-        let item_id = dragged_tab.item_id;
-        let from_pane = dragged_tab.pane.clone();
-        let to_pane = cx.view().clone();
-        self.workspace
-            .update(cx, |_, cx| {
-                cx.defer(move |workspace, cx| {
-                    let pane = workspace.split_pane(to_pane, split_direction, cx);
-                    workspace.move_item(from_pane, pane, item_id, 0, cx);
-                });
-            })
-            .log_err();
-    }
-
-    fn handle_split_project_entry_drop(
-        &mut self,
-        project_entry_id: &ProjectEntryId,
-        split_direction: SplitDirection,
-        cx: &mut ViewContext<'_, Pane>,
-    ) {
-        let project_entry_id = *project_entry_id;
-        let current_pane = cx.view().clone();
-        self.workspace
-            .update(cx, |_, cx| {
-                cx.defer(move |workspace, cx| {
-                    if let Some(path) = workspace
-                        .project()
-                        .read(cx)
-                        .path_for_entry(project_entry_id, cx)
-                    {
-                        let pane = workspace.split_pane(current_pane, split_direction, cx);
-                        workspace
-                            .open_path(path, Some(pane.downgrade()), true, cx)
+                            .open_path(path, Some(to_pane.downgrade()), true, cx)
                             .detach_and_log_err(cx);
                     }
                 });
@@ -1817,6 +1807,9 @@ impl Render for Pane {
     type Element = Focusable<Div>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+        let mut drag_target_color = cx.theme().colors().text;
+        drag_target_color.a = 0.5;
+
         v_stack()
             .key_context("Pane")
             .track_focus(&self.focus_handle)
@@ -1894,71 +1887,54 @@ impl Render for Pane {
                 }),
             )
             .child(self.render_tab_bar(cx))
-            .child(self.toolbar.clone())
-            .child(if let Some(item) = self.active_item() {
-                let mut drag_target_color = cx.theme().colors().text;
-                drag_target_color.a = 0.5;
-
-                div()
-                    .flex()
+            .child(
+                // main content
+                v_stack()
                     .flex_1()
                     .relative()
-                    .child(item.to_any())
+                    .group("")
+                    .on_drag_move::<DraggedTab>(cx.listener(Self::handle_drag_move))
+                    .on_drag_move::<ProjectEntryId>(cx.listener(Self::handle_drag_move))
+                    .child(self.toolbar.clone())
+                    .map(|div| {
+                        if let Some(item) = self.active_item() {
+                            div.child(item.to_any())
+                        } else {
+                            div.items_center().size_full().justify_center().child(
+                                Label::new("Open a file or project to get started.")
+                                    .color(Color::Muted),
+                            )
+                        }
+                    })
                     .child(
+                        // drag target
                         div()
+                            .invisible()
                             .absolute()
-                            .full()
-                            .z_index(1)
-                            .drag_over::<DraggedTab>(|style| style.bg(drag_target_color))
-                            .drag_over::<ProjectEntryId>(|style| style.bg(gpui::red()))
-                            .on_drop(cx.listener(move |this, dragged_tab: &DraggedTab, cx| {
+                            .bg(drag_target_color)
+                            .group_drag_over::<DraggedTab>("", |style| style.visible())
+                            .group_drag_over::<ProjectEntryId>("", |style| style.visible())
+                            .on_drop(cx.listener(move |this, dragged_tab, cx| {
                                 this.handle_tab_drop(dragged_tab, this.active_item_index(), cx)
                             }))
-                            .on_drop(cx.listener(move |this, entry_id: &ProjectEntryId, cx| {
+                            .on_drop(cx.listener(move |this, entry_id, cx| {
                                 this.handle_project_entry_drop(entry_id, cx)
-                            })),
-                    )
-                    .children(
-                        [
-                            (SplitDirection::Up, 2),
-                            (SplitDirection::Down, 2),
-                            (SplitDirection::Left, 3),
-                            (SplitDirection::Right, 3),
-                        ]
-                        .into_iter()
-                        .map(|(direction, z_index)| {
-                            let div = div()
-                                .absolute()
-                                .z_index(z_index)
-                                .invisible()
-                                .bg(drag_target_color)
-                                .drag_over::<DraggedTab>(|style| style.visible())
-                                .drag_over::<ProjectEntryId>(|style| style.visible())
-                                .on_drop(cx.listener(move |this, dragged_tab: &DraggedTab, cx| {
-                                    this.handle_split_tab_drop(dragged_tab, direction, cx)
-                                }))
-                                .on_drop(cx.listener(
-                                    move |this, entry_id: &ProjectEntryId, cx| {
-                                        this.handle_split_project_entry_drop(
-                                            entry_id, direction, cx,
-                                        )
-                                    },
-                                ));
-                            match direction {
-                                SplitDirection::Up => div.top_0().left_0().right_0().h_32(),
-                                SplitDirection::Down => div.left_0().bottom_0().right_0().h_32(),
-                                SplitDirection::Left => div.top_0().left_0().bottom_0().w_32(),
-                                SplitDirection::Right => div.top_0().bottom_0().right_0().w_32(),
-                            }
-                        }),
-                    )
-            } else {
-                h_stack()
-                    .items_center()
-                    .size_full()
-                    .justify_center()
-                    .child(Label::new("Open a file or project to get started.").color(Color::Muted))
-            })
+                            }))
+                            .map(|div| match self.drag_split_direction {
+                                None => div.full(),
+                                Some(SplitDirection::Up) => div.top_0().left_0().right_0().h_32(),
+                                Some(SplitDirection::Down) => {
+                                    div.left_0().bottom_0().right_0().h_32()
+                                }
+                                Some(SplitDirection::Left) => {
+                                    div.top_0().left_0().bottom_0().w_32()
+                                }
+                                Some(SplitDirection::Right) => {
+                                    div.top_0().bottom_0().right_0().w_32()
+                                }
+                            }),
+                    ),
+            )
             .on_mouse_down(
                 MouseButton::Navigate(NavigationDirection::Back),
                 cx.listener(|pane, _, cx| {
