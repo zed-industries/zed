@@ -1897,7 +1897,7 @@ impl Render for Pane {
                     .on_drag_move::<ProjectEntryId>(cx.listener(Self::handle_drag_move))
                     .map(|div| {
                         if let Some(item) = self.active_item() {
-                            div.flex_col()
+                            v_stack()
                                 .child(self.toolbar.clone())
                                 .child(item.to_any())
                         } else {
