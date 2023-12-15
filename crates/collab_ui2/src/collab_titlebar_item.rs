@@ -233,56 +233,68 @@ impl Render for CollabTitlebarItem {
                                 }),
                         )
                     })
-                    .child(h_stack().px_1p5().map(|this| {
-                        if let Some(user) = current_user {
-                            // TODO: Finish implementing user menu popover
-                            //
-                            this.child(
-                                popover_menu("user-menu")
-                                    .menu(|cx| {
-                                        ContextMenu::build(cx, |menu, _| menu.header("ADADA"))
-                                    })
-                                    .trigger(
-                                        ButtonLike::new("user-menu")
-                                            .child(
-                                                h_stack()
-                                                    .gap_0p5()
-                                                    .child(Avatar::new(user.avatar_uri.clone()))
+                    .child(
+                        h_stack()
+                            .border_color(gpui::red())
+                            .border_1()
+                            .px_1p5()
+                            .map(|this| {
+                                if let Some(user) = current_user {
+                                    // TODO: Finish implementing user menu popover
+                                    //
+                                    this.child(
+                                        popover_menu("user-menu")
+                                            .menu(|cx| {
+                                                ContextMenu::build(cx, |menu, _| {
+                                                    menu.header("ADADA")
+                                                })
+                                            })
+                                            .trigger(
+                                                ButtonLike::new("user-menu")
                                                     .child(
-                                                        IconElement::new(Icon::ChevronDown)
-                                                            .color(Color::Muted),
-                                                    ),
+                                                        h_stack()
+                                                            .gap_0p5()
+                                                            .child(Avatar::new(
+                                                                user.avatar_uri.clone(),
+                                                            ))
+                                                            .child(
+                                                                IconElement::new(Icon::ChevronDown)
+                                                                    .color(Color::Muted),
+                                                            ),
+                                                    )
+                                                    .style(ButtonStyle::Subtle)
+                                                    .tooltip(move |cx| {
+                                                        Tooltip::text("Toggle User Menu", cx)
+                                                    }),
                                             )
-                                            .style(ButtonStyle::Subtle)
-                                            .tooltip(move |cx| {
-                                                Tooltip::text("Toggle User Menu", cx)
-                                            }),
+                                            .anchor(gpui::AnchorCorner::TopRight),
                                     )
-                                    .anchor(gpui::AnchorCorner::TopRight),
-                            )
-                            // this.child(
-                            //     ButtonLike::new("user-menu")
-                            //         .child(
-                            //             h_stack().gap_0p5().child(Avatar::data(avatar)).child(
-                            //                 IconElement::new(Icon::ChevronDown).color(Color::Muted),
-                            //             ),
-                            //         )
-                            //         .style(ButtonStyle::Subtle)
-                            //         .tooltip(move |cx| Tooltip::text("Toggle User Menu", cx)),
-                            // )
-                        } else {
-                            this.child(Button::new("sign_in", "Sign in").on_click(move |_, cx| {
-                                let client = client.clone();
-                                cx.spawn(move |mut cx| async move {
-                                    client
-                                        .authenticate_and_connect(true, &cx)
-                                        .await
-                                        .notify_async_err(&mut cx);
-                                })
-                                .detach();
-                            }))
-                        }
-                    })),
+                                    // this.child(
+                                    //     ButtonLike::new("user-menu")
+                                    //         .child(
+                                    //             h_stack().gap_0p5().child(Avatar::data(avatar)).child(
+                                    //                 IconElement::new(Icon::ChevronDown).color(Color::Muted),
+                                    //             ),
+                                    //         )
+                                    //         .style(ButtonStyle::Subtle)
+                                    //         .tooltip(move |cx| Tooltip::text("Toggle User Menu", cx)),
+                                    // )
+                                } else {
+                                    this.child(Button::new("sign_in", "Sign in").on_click(
+                                        move |_, cx| {
+                                            let client = client.clone();
+                                            cx.spawn(move |mut cx| async move {
+                                                client
+                                                    .authenticate_and_connect(true, &cx)
+                                                    .await
+                                                    .notify_async_err(&mut cx);
+                                            })
+                                            .detach();
+                                        },
+                                    ))
+                                }
+                            }),
+                    ),
             )
     }
 }
