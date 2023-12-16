@@ -2292,7 +2292,7 @@ impl Workspace {
         cx.notify();
     }
 
-    fn start_following(
+    pub fn start_following(
         &mut self,
         leader_id: PeerId,
         cx: &mut ViewContext<Self>,
@@ -2347,56 +2347,54 @@ impl Workspace {
         }))
     }
 
-    // pub fn follow_next_collaborator(
-    //     &mut self,
-    //     _: &FollowNextCollaborator,
-    //     cx: &mut ViewContext<Self>,
-    // ) {
-    //     let collaborators = self.project.read(cx).collaborators();
-    //     let next_leader_id = if let Some(leader_id) = self.leader_for_pane(&self.active_pane) {
-    //         let mut collaborators = collaborators.keys().copied();
-    //         for peer_id in collaborators.by_ref() {
-    //             if peer_id == leader_id {
-    //                 break;
-    //             }
-    //         }
-    //         collaborators.next()
-    //     } else if let Some(last_leader_id) =
-    //         self.last_leaders_by_pane.get(&self.active_pane.downgrade())
-    //     {
-    //         if collaborators.contains_key(last_leader_id) {
-    //             Some(*last_leader_id)
-    //         } else {
-    //             None
-    //         }
-    //     } else {
-    //         None
-    //     };
-
-    //     let pane = self.active_pane.clone();
-    //     let Some(leader_id) = next_leader_id.or_else(|| collaborators.keys().copied().next())
-    //     else {
-    //         return;
-    //     };
-    //     if Some(leader_id) == self.unfollow(&pane, cx) {
-    //         return;
-    //     }
-    //     if let Some(task) = self.follow(leader_id, cx) {
-    //         task.detach();
-    //     }
-    // }
-
-    pub fn follow(
+    pub fn follow_next_collaborator(
         &mut self,
-        leader_id: PeerId,
+        _: &FollowNextCollaborator,
         cx: &mut ViewContext<Self>,
-    ) -> Option<Task<Result<()>>> {
-        let room = ActiveCall::global(cx).read(cx).room()?.read(cx);
-        let project = self.project.read(cx);
-
-        let Some(remote_participant) = room.remote_participant_for_peer_id(leader_id) else {
-            return None;
+    ) {
+        let collaborators = self.project.read(cx).collaborators();
+        let next_leader_id = if let Some(leader_id) = self.leader_for_pane(&self.active_pane) {
+            let mut collaborators = collaborators.keys().copied();
+            for peer_id in collaborators.by_ref() {
+                if peer_id == leader_id {
+                    break;
+                }
+            }
+            collaborators.next()
+        } else if let Some(last_leader_id) =
+            self.last_leaders_by_pane.get(&self.active_pane.downgrade())
+        {
+            if collaborators.contains_key(last_leader_id) {
+                Some(*last_leader_id)
+            } else {
+                None
+            }
+        } else {
+            None
         };
+
+        let pane = self.active_pane.clone();
+        let Some(leader_id) = next_leader_id.or_else(|| collaborators.keys().copied().next())
+        else {
+            return;
+        };
+        if Some(leader_id) == self.unfollow(&pane, cx) {
+            return;
+        }
+        self.start_following(leader_id, cx)
+            .map(|task| task.detach_and_log_err(cx));
+    }
+
+    pub fn follow(&mut self, leader_id: PeerId, cx: &mut ViewContext<Self>) {
+        let Some(room) = ActiveCall::global(cx).read(cx).room() else {
+            return;
+        };
+        let room = room.read(cx);
+        let Some(remote_participant) = room.remote_participant_for_peer_id(leader_id) else {
+            return;
+        };
+
+        let project = self.project.read(cx);
 
         let other_project_id = match remote_participant.location {
             call::ParticipantLocation::External => None,
@@ -2413,37 +2411,22 @@ impl Workspace {
         // if they are active in another project, follow there.
         if let Some(project_id) = other_project_id {
             let app_state = self.app_state.clone();
-            return Some(crate::join_remote_project(
-                project_id,
-                remote_participant.user.id,
-                app_state,
-                cx,
-            ));
+            crate::join_remote_project(project_id, remote_participant.user.id, app_state, cx)
+                .detach_and_log_err(cx);
         }
 
         // if you're already following, find the right pane and focus it.
         for (pane, state) in &self.follower_states {
             if leader_id == state.leader_id {
                 cx.focus_view(pane);
-                return None;
+                return;
             }
         }
 
         // Otherwise, follow.
         self.start_following(leader_id, cx)
+            .map(|task| task.detach_and_log_err(cx));
     }
-
-    //     // if you're already following, find the right pane and focus it.
-    //     for (pane, state) in &self.follower_states {
-    //         if leader_id == state.leader_id {
-    //             cx.focus(pane);
-    //             return None;
-    //         }
-    //     }
-
-    //     // Otherwise, follow.
-    //     self.start_following(leader_id, cx)
-    // }
 
     pub fn unfollow(&mut self, pane: &View<Pane>, cx: &mut ViewContext<Self>) -> Option<PeerId> {
         let state = self.follower_states.remove(pane)?;
@@ -2855,12 +2838,6 @@ impl Workspace {
                     if leader_in_this_project || !item.is_project_item(cx) {
                         items_to_activate.push((pane.clone(), item.boxed_clone()));
                     }
-                } else {
-                    log::warn!(
-                        "unknown view id {:?} for leader {:?}",
-                        active_view_id,
-                        leader_id
-                    );
                 }
                 continue;
             }
@@ -3255,6 +3232,7 @@ impl Workspace {
             .on_action(cx.listener(Self::close_all_items_and_panes))
             .on_action(cx.listener(Self::save_all))
             .on_action(cx.listener(Self::add_folder_to_project))
+            .on_action(cx.listener(Self::follow_next_collaborator))
             .on_action(cx.listener(|workspace, _: &Unfollow, cx| {
                 let pane = workspace.active_pane().clone();
                 workspace.unfollow(&pane, cx);
@@ -4240,9 +4218,7 @@ pub fn join_remote_project(
                     });
 
                 if let Some(follow_peer_id) = follow_peer_id {
-                    workspace
-                        .follow(follow_peer_id, cx)
-                        .map(|follow| follow.detach_and_log_err(cx));
+                    workspace.follow(follow_peer_id, cx);
                 }
             }
         })?;
