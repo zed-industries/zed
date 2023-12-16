@@ -685,7 +685,9 @@ async fn test_following_to_channel_notes_without_a_shared_project(
     // Client B follows client A.
     workspace_b
         .update(cx_b, |workspace, cx| {
-            workspace.follow(client_a.peer_id().unwrap(), cx).unwrap()
+            workspace
+                .start_following(client_a.peer_id().unwrap(), cx)
+                .unwrap()
         })
         .await
         .unwrap();

@@ -401,33 +401,30 @@ impl CollabTitlebarItem {
     ) -> Option<FacePile> {
         let followers = project_id.map_or(&[] as &[_], |id| room.followers_for(peer_id, id));
 
-        let pile = FacePile::default().child(
-            div()
-                .child(
-                    Avatar::new(user.avatar_uri.clone())
-                        .grayscale(!is_present)
-                        .border_color(if is_speaking {
-                            gpui::blue()
-                        } else if is_muted {
-                            gpui::red()
-                        } else {
-                            Hsla::default()
-                        }),
-                )
-                .children(followers.iter().filter_map(|follower_peer_id| {
-                    let follower = room
-                        .remote_participants()
-                        .values()
-                        .find_map(|p| (p.peer_id == *follower_peer_id).then_some(&p.user))
-                        .or_else(|| {
-                            (self.client.peer_id() == Some(*follower_peer_id))
-                                .then_some(current_user)
-                        })?
-                        .clone();
+        let pile = FacePile::default()
+            .child(
+                Avatar::new(user.avatar_uri.clone())
+                    .grayscale(!is_present)
+                    .border_color(if is_speaking {
+                        gpui::blue()
+                    } else if is_muted {
+                        gpui::red()
+                    } else {
+                        Hsla::default()
+                    }),
+            )
+            .children(followers.iter().filter_map(|follower_peer_id| {
+                let follower = room
+                    .remote_participants()
+                    .values()
+                    .find_map(|p| (p.peer_id == *follower_peer_id).then_some(&p.user))
+                    .or_else(|| {
+                        (self.client.peer_id() == Some(*follower_peer_id)).then_some(current_user)
+                    })?
+                    .clone();
 
-                    Some(div().child(Avatar::new(follower.avatar_uri.clone())))
-                })),
-        );
+                Some(Avatar::new(follower.avatar_uri.clone()))
+            }));
 
         Some(pile)
     }
