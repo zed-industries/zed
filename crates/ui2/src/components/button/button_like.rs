@@ -355,7 +355,7 @@ impl RenderOnce for ButtonLike {
             .group("")
             .flex_none()
             .h(self.size.height())
-            .when_some(self.width, |this, width| this.w(width))
+            .when_some(self.width, |this, width| this.w(width).justify_center())
             .rounded_md()
             .gap_1()
             .map(|this| match self.size {

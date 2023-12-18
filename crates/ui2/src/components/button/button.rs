@@ -151,26 +151,31 @@ impl RenderOnce for Button {
         self.base.child(
             h_stack()
                 .gap_1()
-                .map(|this| {
-                    if self.icon_position == Some(IconPosition::End) {
-                        this.flex_row_reverse()
-                    } else {
-                        this
-                    }
+                .when(self.icon_position.is_some(), |this| {
+                    this.children(self.icon.map(|icon| {
+                        ButtonIcon::new(icon)
+                            .disabled(is_disabled)
+                            .selected(is_selected)
+                            .selected_icon(self.selected_icon)
+                            .size(self.icon_size)
+                            .color(self.icon_color)
+                    }))
                 })
                 .child(
                     Label::new(label)
                         .color(label_color)
                         .line_height_style(LineHeightStyle::UILabel),
                 )
-                .children(self.icon.map(|icon| {
-                    ButtonIcon::new(icon)
-                        .disabled(is_disabled)
-                        .selected(is_selected)
-                        .selected_icon(self.selected_icon)
-                        .size(self.icon_size)
-                        .color(self.icon_color)
-                })),
+                .when(!self.icon_position.is_some(), |this| {
+                    this.children(self.icon.map(|icon| {
+                        ButtonIcon::new(icon)
+                            .disabled(is_disabled)
+                            .selected(is_selected)
+                            .selected_icon(self.selected_icon)
+                            .size(self.icon_size)
+                            .color(self.icon_color)
+                    }))
+                }),
         )
     }
 }
