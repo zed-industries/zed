@@ -282,6 +282,8 @@ impl<'a> Debug for ThemeColorsRefinementPrinter<'a> {
                 HslaPrinter(color).fmt(f)?;
                 f.write_str(")")?;
                 f.write_str(",")?;
+            } else {
+                log::warn!(target: "theme_printer", "No value for '{}' in theme", color_name);
             }
         }
 
