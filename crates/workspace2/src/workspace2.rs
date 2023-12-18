@@ -3534,6 +3534,8 @@ impl Render for Workspace {
             )
         };
 
+        let theme = cx.theme().clone();
+        let colors = theme.colors();
         cx.set_rem_size(ui_font_size);
 
         self.actions(div(), cx)
@@ -3546,10 +3548,10 @@ impl Render for Workspace {
             .gap_0()
             .justify_start()
             .items_start()
-            .text_color(cx.theme().colors().text)
-            .bg(cx.theme().colors().background)
+            .text_color(colors.text)
+            .bg(colors.background)
             .border()
-            .border_color(cx.theme().colors().border)
+            .border_color(colors.border)
             .children(self.titlebar_item.clone())
             .child(
                 div()
@@ -3562,7 +3564,7 @@ impl Render for Workspace {
                     .overflow_hidden()
                     .border_t()
                     .border_b()
-                    .border_color(cx.theme().colors().border)
+                    .border_color(colors.border)
                     .child(
                         canvas(cx.listener(|workspace, bounds, _| {
                             workspace.bounds = *bounds;
@@ -3601,13 +3603,15 @@ impl Render for Workspace {
                             .flex_row()
                             .h_full()
                             // Left Dock
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_none()
-                                    .overflow_hidden()
-                                    .child(self.left_dock.clone()),
-                            )
+                            .children(self.zoomed_position.ne(&Some(DockPosition::Left)).then(
+                                || {
+                                    div()
+                                        .flex()
+                                        .flex_none()
+                                        .overflow_hidden()
+                                        .child(self.left_dock.clone())
+                                },
+                            ))
                             // Panes
                             .child(
                                 div()
@@ -3615,29 +3619,52 @@ impl Render for Workspace {
                                     .flex_col()
                                     .flex_1()
                                     .overflow_hidden()
-                                    .child({
-                                        self.center.render(
-                                            &self.project,
-                                            &self.follower_states,
-                                            self.active_call(),
-                                            &self.active_pane,
-                                            self.zoomed.as_ref(),
-                                            &self.app_state,
-                                            cx,
-                                        )
-                                    })
-                                    .child(self.bottom_dock.clone()),
+                                    .child(self.center.render(
+                                        &self.project,
+                                        &self.follower_states,
+                                        self.active_call(),
+                                        &self.active_pane,
+                                        self.zoomed.as_ref(),
+                                        &self.app_state,
+                                        cx,
+                                    ))
+                                    .children(
+                                        self.zoomed_position
+                                            .ne(&Some(DockPosition::Bottom))
+                                            .then(|| self.bottom_dock.clone()),
+                                    ),
                             )
                             // Right Dock
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_none()
-                                    .overflow_hidden()
-                                    .child(self.right_dock.clone()),
-                            ),
+                            .children(self.zoomed_position.ne(&Some(DockPosition::Right)).then(
+                                || {
+                                    div()
+                                        .flex()
+                                        .flex_none()
+                                        .overflow_hidden()
+                                        .child(self.right_dock.clone())
+                                },
+                            )),
                     )
-                    .children(self.render_notifications(cx)),
+                    .children(self.render_notifications(cx))
+                    .children(self.zoomed.as_ref().and_then(|view| {
+                        let zoomed_view = view.upgrade()?;
+                        let div = div()
+                            .z_index(1)
+                            .absolute()
+                            .overflow_hidden()
+                            .border_color(colors.border)
+                            .bg(colors.background)
+                            .child(zoomed_view)
+                            .inset_0()
+                            .shadow_lg();
+
+                        Some(match self.zoomed_position {
+                            Some(DockPosition::Left) => div.right_2().border_r(),
+                            Some(DockPosition::Right) => div.left_2().border_l(),
+                            Some(DockPosition::Bottom) => div.top_2().border_t(),
+                            None => div.top_2().bottom_2().left_2().right_2().border(),
+                        })
+                    })),
             )
             .child(self.status_bar.clone())
     }
