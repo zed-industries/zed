@@ -570,8 +570,11 @@ mod element {
     };
     use parking_lot::Mutex;
     use smallvec::SmallVec;
+    use ui::prelude::*;
 
     use super::{HANDLE_HITBOX_SIZE, HORIZONTAL_MIN_SIZE, VERTICAL_MIN_SIZE};
+
+    const DIVIDER_SIZE: f32 = 1.0;
 
     pub fn pane_axis(
         axis: Axis,
@@ -699,12 +702,18 @@ mod element {
             cx: &mut WindowContext,
         ) {
             let handle_bounds = Bounds {
-                origin: pane_bounds.origin.apply_along(axis, |o| {
-                    o + pane_bounds.size.along(axis) - Pixels(HANDLE_HITBOX_SIZE / 2.)
+                origin: pane_bounds.origin.apply_along(axis, |origin| {
+                    origin + pane_bounds.size.along(axis) - px(HANDLE_HITBOX_SIZE / 2.)
                 }),
                 size: pane_bounds
                     .size
-                    .apply_along(axis, |_| Pixels(HANDLE_HITBOX_SIZE)),
+                    .apply_along(axis, |_| px(HANDLE_HITBOX_SIZE)),
+            };
+            let divider_bounds = Bounds {
+                origin: pane_bounds
+                    .origin
+                    .apply_along(axis, |origin| origin + pane_bounds.size.along(axis)),
+                size: pane_bounds.size.apply_along(axis, |_| px(DIVIDER_SIZE)),
             };
 
             cx.with_z_index(3, |cx| {
@@ -716,6 +725,7 @@ mod element {
                 }
 
                 cx.add_opaque_layer(handle_bounds);
+                cx.paint_quad(gpui::fill(divider_bounds, cx.theme().colors().border));
 
                 cx.on_mouse_event({
                     let dragged_handle = dragged_handle.clone();
@@ -790,7 +800,7 @@ mod element {
 
             for (ix, child) in self.children.iter_mut().enumerate() {
                 //todo!(active_pane_magnification)
-                // If usign active pane magnification, need to switch to using
+                // If using active pane magnification, need to switch to using
                 // 1 for all non-active panes, and then the magnification for the
                 // active pane.
                 let child_size = bounds
