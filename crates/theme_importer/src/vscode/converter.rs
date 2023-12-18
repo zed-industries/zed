@@ -243,6 +243,8 @@ impl VsCodeThemeConverter {
                 .editor_foreground
                 .as_ref()
                 .traverse(|color| try_parse_color(&color))?,
+            editor_wrap_guide: vscode_panel_border,
+            editor_active_wrap_guide: vscode_panel_border,
             scrollbar_track_background: vscode_editor_background,
             scrollbar_track_border: vscode_colors
                 .editor_overview_ruler_border

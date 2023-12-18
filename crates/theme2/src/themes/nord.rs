@@ -51,6 +51,8 @@ pub fn nord() -> UserThemeFamily {
                     editor_gutter_background: Some(rgba(0x2e3440ff).into()),
                     editor_line_number: Some(rgba(0x4c566aff).into()),
                     editor_active_line_number: Some(rgba(0xd8dee9ff).into()),
+                    editor_wrap_guide: Some(rgba(0x3b4252ff).into()),
+                    editor_active_wrap_guide: Some(rgba(0x3b4252ff).into()),
                     terminal_background: Some(rgba(0x2e3440ff).into()),
                     terminal_ansi_bright_black: Some(rgba(0x4c566aff).into()),
                     terminal_ansi_bright_red: Some(rgba(0xbf616aff).into()),
