@@ -1,6 +1,6 @@
 use crate::{
-    frame_alloc, ArenaRef, AvailableSpace, BorrowWindow, Bounds, ElementId, LayoutId, Pixels,
-    Point, Size, ViewContext, WindowContext,
+    ArenaRef, AvailableSpace, BorrowWindow, Bounds, ElementId, LayoutId, Pixels, Point, Size,
+    ViewContext, WindowContext, ELEMENT_ARENA,
 };
 use derive_more::{Deref, DerefMut};
 pub(crate) use smallvec::SmallVec;
@@ -413,7 +413,8 @@ impl AnyElement {
         E: 'static + Element,
         E::State: Any,
     {
-        let element = frame_alloc(|| Some(DrawableElement::new(element)))
+        let element = ELEMENT_ARENA
+            .with_borrow_mut(|arena| arena.alloc(|| Some(DrawableElement::new(element))))
             .map(|element| element as &mut dyn ElementObject);
         AnyElement(element)
     }
