@@ -1,6 +1,6 @@
 use crate::{
-    Action, ActionRegistry, DispatchPhase, FocusId, KeyBinding, KeyContext, KeyMatch, Keymap,
-    Keystroke, KeystrokeMatcher, WindowContext,
+    arena::ArenaRef, Action, ActionRegistry, DispatchPhase, FocusId, KeyBinding, KeyContext,
+    KeyMatch, Keymap, Keystroke, KeystrokeMatcher, WindowContext,
 };
 use collections::HashMap;
 use parking_lot::Mutex;
@@ -33,12 +33,12 @@ pub(crate) struct DispatchNode {
     parent: Option<DispatchNodeId>,
 }
 
-type KeyListener = Rc<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext)>;
+type KeyListener = ArenaRef<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext)>;
 
 #[derive(Clone)]
 pub(crate) struct DispatchActionListener {
     pub(crate) action_type: TypeId,
-    pub(crate) listener: Rc<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext)>,
+    pub(crate) listener: ArenaRef<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext)>,
 }
 
 impl DispatchTree {
@@ -117,7 +117,7 @@ impl DispatchTree {
     pub fn on_action(
         &mut self,
         action_type: TypeId,
-        listener: Rc<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext)>,
+        listener: ArenaRef<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext)>,
     ) {
         self.active_node()
             .action_listeners

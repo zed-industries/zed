@@ -1,6 +1,6 @@
 use crate::{
-    AvailableSpace, BorrowWindow, Bounds, ElementId, LayoutId, Pixels, Point, Size, ViewContext,
-    WindowContext,
+    frame_alloc, ArenaRef, AvailableSpace, BorrowWindow, Bounds, ElementId, LayoutId, Pixels,
+    Point, Size, ViewContext, WindowContext,
 };
 use derive_more::{Deref, DerefMut};
 pub(crate) use smallvec::SmallVec;
@@ -405,7 +405,7 @@ where
     }
 }
 
-pub struct AnyElement(Box<dyn ElementObject>);
+pub struct AnyElement(ArenaRef<dyn ElementObject>);
 
 impl AnyElement {
     pub fn new<E>(element: E) -> Self
@@ -413,7 +413,9 @@ impl AnyElement {
         E: 'static + Element,
         E::State: Any,
     {
-        AnyElement(Box::new(Some(DrawableElement::new(element))) as Box<dyn ElementObject>)
+        let element = frame_alloc(|| Some(DrawableElement::new(element)))
+            .map(|element| element as &mut dyn ElementObject);
+        AnyElement(element)
     }
 
     pub fn layout(&mut self, cx: &mut WindowContext) -> LayoutId {
@@ -441,11 +443,6 @@ impl AnyElement {
         cx: &mut WindowContext,
     ) {
         self.0.draw(origin, available_space, cx)
-    }
-
-    /// Converts this `AnyElement` into a trait object that can be stored and manipulated.
-    pub fn into_any(self) -> AnyElement {
-        AnyElement::new(self)
     }
 
     pub fn inner_id(&self) -> Option<ElementId> {
@@ -478,6 +475,10 @@ impl IntoElement for AnyElement {
     }
 
     fn into_element(self) -> Self::Element {
+        self
+    }
+
+    fn into_any_element(self) -> AnyElement {
         self
     }
 }

@@ -1,15 +1,17 @@
 use crate::{
-    key_dispatch::DispatchActionListener, px, size, transparent_black, Action, AnyDrag, AnyView,
-    AppContext, AsyncWindowContext, AvailableSpace, Bounds, BoxShadow, Context, Corners,
-    CursorStyle, DevicePixels, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity,
-    EntityId, EventEmitter, FileDropEvent, Flatten, FontId, GlobalElementId, GlyphId, Hsla,
-    ImageData, InputEvent, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeystrokeEvent, LayoutId,
-    Model, ModelContext, Modifiers, MonochromeSprite, MouseButton, MouseMoveEvent, MouseUpEvent,
-    Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInputHandler, PlatformWindow, Point,
-    PolychromeSprite, PromptLevel, Quad, Render, RenderGlyphParams, RenderImageParams,
-    RenderSvgParams, ScaledPixels, Scene, SceneBuilder, Shadow, SharedString, Size, Style,
-    SubscriberSet, Subscription, Surface, TaffyLayoutEngine, Task, Underline, UnderlineStyle, View,
-    VisualContext, WeakView, WindowBounds, WindowOptions, SUBPIXEL_VARIANTS,
+    arena::{Arena, ArenaRef},
+    key_dispatch::DispatchActionListener,
+    px, size, transparent_black, Action, AnyDrag, AnyView, AppContext, AsyncWindowContext,
+    AvailableSpace, Bounds, BoxShadow, Context, Corners, CursorStyle, DevicePixels, DispatchNodeId,
+    DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter, FileDropEvent, Flatten,
+    FontId, GlobalElementId, GlyphId, Hsla, ImageData, InputEvent, IsZero, KeyBinding, KeyContext,
+    KeyDownEvent, KeystrokeEvent, LayoutId, Model, ModelContext, Modifiers, MonochromeSprite,
+    MouseButton, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay,
+    PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, PromptLevel, Quad, Render,
+    RenderGlyphParams, RenderImageParams, RenderSvgParams, ScaledPixels, Scene, SceneBuilder,
+    Shadow, SharedString, Size, Style, SubscriberSet, Subscription, Surface, TaffyLayoutEngine,
+    Task, Underline, UnderlineStyle, View, VisualContext, WeakView, WindowBounds, WindowOptions,
+    SUBPIXEL_VARIANTS,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::FxHashMap;
@@ -25,6 +27,7 @@ use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
     borrow::{Borrow, BorrowMut, Cow},
+    cell::RefCell,
     fmt::Debug,
     future::Future,
     hash::{Hash, Hasher},
@@ -85,7 +88,7 @@ impl DispatchPhase {
 }
 
 type AnyObserver = Box<dyn FnMut(&mut WindowContext) -> bool + 'static>;
-type AnyMouseListener = Box<dyn FnMut(&dyn Any, DispatchPhase, &mut WindowContext) + 'static>;
+type AnyMouseListener = ArenaRef<dyn FnMut(&dyn Any, DispatchPhase, &mut WindowContext) + 'static>;
 type AnyWindowFocusListener = Box<dyn FnMut(&FocusEvent, &mut WindowContext) -> bool + 'static>;
 
 struct FocusEvent {
@@ -94,6 +97,15 @@ struct FocusEvent {
 }
 
 slotmap::new_key_type! { pub struct FocusId; }
+
+thread_local! {
+    pub static FRAME_ARENA: RefCell<Arena> = RefCell::new(Arena::new(16 * 1024 * 1024));
+}
+
+#[inline(always)]
+pub(crate) fn frame_alloc<T>(f: impl FnOnce() -> T) -> ArenaRef<T> {
+    FRAME_ARENA.with_borrow_mut(|arena| arena.alloc(f))
+}
 
 impl FocusId {
     /// Obtains whether the element associated with this handle is currently focused.
@@ -268,7 +280,6 @@ pub(crate) struct ElementStateBox {
     type_name: &'static str,
 }
 
-// #[derive(Default)]
 pub(crate) struct Frame {
     focus: Option<FocusId>,
     pub(crate) element_states: FxHashMap<GlobalElementId, ElementStateBox>,
@@ -818,25 +829,23 @@ impl<'a> WindowContext<'a> {
     /// Register a mouse event listener on the window for the next frame. The type of event
     /// is determined by the first parameter of the given listener. When the next frame is rendered
     /// the listener will be cleared.
-    ///
-    /// This is a fairly low-level method, so prefer using event handlers on elements unless you have
-    /// a specific need to register a global listener.
     pub fn on_mouse_event<Event: 'static>(
         &mut self,
         mut handler: impl FnMut(&Event, DispatchPhase, &mut WindowContext) + 'static,
     ) {
         let order = self.window.next_frame.z_index_stack.clone();
+        let handler = frame_alloc(|| {
+            move |event: &dyn Any, phase: DispatchPhase, cx: &mut WindowContext<'_>| {
+                handler(event.downcast_ref().unwrap(), phase, cx)
+            }
+        })
+        .map(|handler| handler as _);
         self.window
             .next_frame
             .mouse_listeners
             .entry(TypeId::of::<Event>())
             .or_default()
-            .push((
-                order,
-                Box::new(move |event: &dyn Any, phase, cx| {
-                    handler(event.downcast_ref().unwrap(), phase, cx)
-                }),
-            ))
+            .push((order, handler))
     }
 
     /// Register a key event listener on the window for the next frame. The type of event
@@ -847,16 +856,17 @@ impl<'a> WindowContext<'a> {
     /// a specific need to register a global listener.
     pub fn on_key_event<Event: 'static>(
         &mut self,
-        handler: impl Fn(&Event, DispatchPhase, &mut WindowContext) + 'static,
+        listener: impl Fn(&Event, DispatchPhase, &mut WindowContext) + 'static,
     ) {
-        self.window
-            .next_frame
-            .dispatch_tree
-            .on_key_event(Rc::new(move |event, phase, cx| {
+        let listener = frame_alloc(|| {
+            move |event: &dyn Any, phase, cx: &mut WindowContext<'_>| {
                 if let Some(event) = event.downcast_ref::<Event>() {
-                    handler(event, phase, cx)
+                    listener(event, phase, cx)
                 }
-            }));
+            }
+        })
+        .map(|handler| handler as _);
+        self.window.next_frame.dispatch_tree.on_key_event(listener);
     }
 
     /// Register an action listener on the window for the next frame. The type of action
@@ -868,12 +878,13 @@ impl<'a> WindowContext<'a> {
     pub fn on_action(
         &mut self,
         action_type: TypeId,
-        handler: impl Fn(&dyn Any, DispatchPhase, &mut WindowContext) + 'static,
+        listener: impl Fn(&dyn Any, DispatchPhase, &mut WindowContext) + 'static,
     ) {
-        self.window.next_frame.dispatch_tree.on_action(
-            action_type,
-            Rc::new(move |action, phase, cx| handler(action, phase, cx)),
-        );
+        let listener = frame_alloc(|| listener).map(|handler| handler as _);
+        self.window
+            .next_frame
+            .dispatch_tree
+            .on_action(action_type, listener);
     }
 
     pub fn is_action_available(&self, action: &dyn Action) -> bool {
@@ -1267,16 +1278,23 @@ impl<'a> WindowContext<'a> {
         self.window.platform_window.clear_input_handler();
         self.window.layout_engine.as_mut().unwrap().clear();
         self.window.next_frame.clear();
+        FRAME_ARENA.with_borrow_mut(|arena| arena.clear());
         let root_view = self.window.root_view.take().unwrap();
 
         self.with_z_index(0, |cx| {
             cx.with_key_dispatch(Some(KeyContext::default()), None, |_, cx| {
                 for (action_type, action_listeners) in &cx.app.global_action_listeners {
                     for action_listener in action_listeners.iter().cloned() {
-                        cx.window.next_frame.dispatch_tree.on_action(
-                            *action_type,
-                            Rc::new(move |action, phase, cx| action_listener(action, phase, cx)),
-                        )
+                        let listener = frame_alloc(|| {
+                            move |action: &dyn Any, phase, cx: &mut WindowContext<'_>| {
+                                action_listener(action, phase, cx)
+                            }
+                        })
+                        .map(|listener| listener as _);
+                        cx.window
+                            .next_frame
+                            .dispatch_tree
+                            .on_action(*action_type, listener)
                     }
                 }
 
@@ -2591,13 +2609,13 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     pub fn on_action(
         &mut self,
         action_type: TypeId,
-        handler: impl Fn(&mut V, &dyn Any, DispatchPhase, &mut ViewContext<V>) + 'static,
+        listener: impl Fn(&mut V, &dyn Any, DispatchPhase, &mut ViewContext<V>) + 'static,
     ) {
         let handle = self.view().clone();
         self.window_cx
             .on_action(action_type, move |action, phase, cx| {
                 handle.update(cx, |view, cx| {
-                    handler(view, action, phase, cx);
+                    listener(view, action, phase, cx);
                 })
             });
     }
