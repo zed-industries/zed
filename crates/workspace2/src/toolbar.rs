@@ -108,6 +108,7 @@ impl Render for Toolbar {
             .bg(cx.theme().colors().toolbar_background)
             .child(
                 h_stack()
+                    .justify_between()
                     .when(self.left_items().count() > 0, |this| {
                         this.child(
                             h_stack()
