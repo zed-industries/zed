@@ -2,18 +2,16 @@ use collections::{HashMap, VecDeque};
 use editor::{Editor, EditorElement, EditorEvent, MoveToEnd};
 use futures::{channel::mpsc, StreamExt};
 use gpui::{
-    actions, div, red, AnchorCorner, AnyElement, AppContext, Context, CursorStyle, Div,
-    EventEmitter, FocusHandle, FocusableView, InteractiveElement, IntoElement, Model, ModelContext,
-    MouseButton, ParentElement, Render, Styled, Subscription, View, ViewContext, VisualContext,
-    WeakModel, WindowContext,
+    actions, div, AnchorCorner, AnyElement, AppContext, Context, Div, EventEmitter, FocusHandle,
+    FocusableView, InteractiveElement, IntoElement, Model, ModelContext, MouseButton,
+    ParentElement, Render, Styled, Subscription, View, ViewContext, VisualContext, WeakModel,
+    WindowContext,
 };
 use language::{LanguageServerId, LanguageServerName};
 use lsp::IoKind;
 use project::{search::SearchQuery, Project};
 use std::{borrow::Cow, sync::Arc};
-use ui::{
-    h_stack, popover_menu, v_stack, Button, Checkbox, Clickable, ContextMenu, Divider, Label,
-};
+use ui::{h_stack, popover_menu, Button, Checkbox, Clickable, ContextMenu, Label, Selection};
 use workspace::{
     item::{Item, ItemHandle},
     searchable::{SearchEvent, SearchableItem, SearchableItemHandle},
@@ -729,38 +727,86 @@ impl Render for LspLogToolbarItemView {
             }
         });
 
+        let log_toolbar_view = cx.view().clone();
         let lsp_menu = popover_menu("LspLogView")
             .anchor(AnchorCorner::TopLeft)
-            .trigger(Self::render_language_server_menu_header(current_server))
+            .trigger(Button::new(
+                "language_server_menu_header",
+                current_server
+                    .and_then(|row| {
+                        Some(Cow::Owned(format!(
+                            "{} ({}) - {}",
+                            row.server_name.0,
+                            row.worktree_root_name,
+                            if row.rpc_trace_selected {
+                                RPC_MESSAGES
+                            } else {
+                                SERVER_LOGS
+                            },
+                        )))
+                    })
+                    .unwrap_or_else(|| "No server selected".into()),
+            ))
             .menu(move |cx| {
                 let menu_rows = menu_rows.clone();
                 let log_view = log_view.clone();
+                let log_toolbar_view = log_toolbar_view.clone();
                 ContextMenu::build(cx, move |mut menu, cx| {
-                    for row in menu_rows {
+                    for (ix, row) in menu_rows.into_iter().enumerate() {
                         menu = menu
                             .header(format!(
                                 "{} ({})",
                                 row.server_name.0, row.worktree_root_name
                             ))
                             .entry(
-                                format!("{SERVER_LOGS} ({})", row.server_name.0),
-                                |cx| {
-                                    dbg!("????????????????????");
-                                }, // cx.handler_for(&log_view, move |view, cx| {
-                                   //     // todo!() why does not it work???
-                                   //     dbg!("~~~~~~~~~~~~~~~~~~~~~~~~~~??@@@#", row.server_id);
-                                   //     view.show_logs_for_server(row.server_id, cx)
-                                   // }),
+                                SERVER_LOGS,
+                                cx.handler_for(&log_view, move |view, cx| {
+                                    view.show_logs_for_server(row.server_id, cx)
+                                }),
                             )
-                            // TODO kb custom element with checkbox & toggle logging for server
-                            .entry(
-                                format!("{RPC_MESSAGES} ({})", row.server_name.0),
-                                |cx| {
-                                    dbg!("?????????????@@@@@@@@@@@@@@@");
-                                }, // cx.handler_for(&log_view, move |view, cx| {
-                                   //     view.show_rpc_trace_for_server(row.server_id, cx)
-                                   // }),
-                            )
+                            .custom_entry({
+                                let log_view = log_view.clone();
+                                let log_toolbar_view = log_toolbar_view.clone();
+                                move |cx| {
+                                    h_stack()
+                                        .w_full()
+                                        .justify_between()
+                                        .child(Label::new(RPC_MESSAGES))
+                                        .child(
+                                            Checkbox::new(
+                                                ix,
+                                                if row.rpc_trace_enabled {
+                                                    Selection::Selected
+                                                } else {
+                                                    Selection::Unselected
+                                                },
+                                            )
+                                            .on_click(
+                                                cx.listener_for(
+                                                    &log_toolbar_view,
+                                                    move |view, selection, cx| {
+                                                        let enabled = matches!(
+                                                            selection,
+                                                            Selection::Selected
+                                                        );
+                                                        view.toggle_logging_for_server(
+                                                            row.server_id,
+                                                            enabled,
+                                                            cx,
+                                                        );
+                                                    },
+                                                ),
+                                            ),
+                                        )
+                                        .on_mouse_down(
+                                            MouseButton::Left,
+                                            cx.listener_for(&log_view, move |view, _, cx| {
+                                                view.show_rpc_trace_for_server(row.server_id, cx)
+                                            }),
+                                        )
+                                        .into_any_element()
+                                }
+                            })
                     }
                     menu
                 })
@@ -815,98 +861,6 @@ impl LspLogToolbarItemView {
             });
         }
         cx.notify();
-    }
-
-    fn show_logs_for_server(&mut self, id: LanguageServerId, cx: &mut ViewContext<Self>) {
-        if let Some(log_view) = &self.log_view {
-            log_view.update(cx, |view, cx| view.show_logs_for_server(id, cx));
-            cx.notify();
-        }
-    }
-
-    fn show_rpc_trace_for_server(&mut self, id: LanguageServerId, cx: &mut ViewContext<Self>) {
-        if let Some(log_view) = &self.log_view {
-            log_view.update(cx, |view, cx| view.show_rpc_trace_for_server(id, cx));
-            cx.notify();
-        }
-    }
-
-    fn render_language_server_menu_header(current_server: Option<LogMenuItem>) -> Button {
-        Button::new(
-            "language_server_menu_header",
-            current_server
-                .and_then(|row| {
-                    Some(Cow::Owned(format!(
-                        "{} ({}) - {}",
-                        row.server_name.0,
-                        row.worktree_root_name,
-                        if row.rpc_trace_selected {
-                            RPC_MESSAGES
-                        } else {
-                            SERVER_LOGS
-                        },
-                    )))
-                })
-                .unwrap_or_else(|| "No server selected".into()),
-        )
-    }
-
-    fn render_language_server_menu_item(
-        id: LanguageServerId,
-        name: LanguageServerName,
-        worktree_root_name: &str,
-        rpc_trace_enabled: bool,
-        _logs_selected: bool,
-        _rpc_trace_selected: bool,
-        cx: &mut ViewContext<Self>,
-    ) -> Div {
-        v_stack()
-            .size_full()
-            .child(Label::new(format!("{} ({})", name.0, worktree_root_name)))
-            .child(
-                div()
-                    .child(Label::new(SERVER_LOGS))
-                    .cursor(CursorStyle::PointingHand)
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |view, _, cx| {
-                            view.show_logs_for_server(id, cx);
-                        }),
-                    ),
-            )
-            .child(
-                h_stack()
-                    .size_full()
-                    .child(Label::new(RPC_MESSAGES))
-                    .child(
-                        Checkbox::new(
-                            id.0,
-                            if rpc_trace_enabled {
-                                ui::Selection::Selected
-                            } else {
-                                ui::Selection::Unselected
-                            },
-                        )
-                        .on_click(cx.listener(
-                            move |this, selection, cx| {
-                                let enabled = matches!(selection, ui::Selection::Selected);
-                                this.toggle_logging_for_server(id, enabled, cx);
-                            },
-                        )),
-                    )
-                    .border_1()
-                    .border_color(red())
-                    .cursor(CursorStyle::PointingHand)
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |view, _, cx| {
-                            view.show_rpc_trace_for_server(id, cx);
-                        }),
-                    ),
-            )
-            .border_1()
-            .border_color(red())
-            .bg(red())
     }
 }
 

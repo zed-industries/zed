@@ -1427,8 +1427,16 @@ impl Interactivity {
                 let line_height = cx.line_height();
                 let scroll_max = (content_size - bounds.size).max(&Size::default());
                 let interactive_bounds = interactive_bounds.clone();
-
+            let id = self.element_id.clone();
                 cx.on_mouse_event(move |event: &ScrollWheelEvent, phase, cx| {
+                if id == Some(ElementId::Name("SyntaxTreeView".into())) {
+                    dbg!(
+                        &overflow,
+                        event.position,
+                        &interactive_bounds,
+                        interactive_bounds.visibly_contains(&event.position, cx)
+                    );
+                }
                     if phase == DispatchPhase::Bubble
                         && interactive_bounds.visibly_contains(&event.position, cx)
                     {
@@ -1442,9 +1450,15 @@ impl Interactivity {
                         }
 
                         if overflow.y == Overflow::Scroll {
-                            scroll_offset.y =
-                                (scroll_offset.y + delta.y).clamp(-scroll_max.height, px(0.));
+                            if id == Some(ElementId::Name("SyntaxTreeView".into())) {
+                            println!("prev scroll offset: {old_scroll_offset:?}, scroll_max: {scroll_max:?}, delta:{delta:?}");
                         }
+                        scroll_offset.y =
+                            (scroll_offset.y + delta.y).clamp(-scroll_max.height, px(0.));
+                        if id == Some(ElementId::Name("SyntaxTreeView".into())) {
+                            println!("new scroll offset: {scroll_offset:?}, scroll_max: {scroll_max:?}, delta:{delta:?}");
+                        }
+                    }
 
                         if *scroll_offset != old_scroll_offset {
                             cx.notify();
@@ -1487,15 +1501,16 @@ impl Interactivity {
                     }
 
                     cx.with_z_index(style.z_index.unwrap_or(0), |cx| {
-                        if style.background.as_ref().is_some_and(|fill| {
-                            fill.color().is_some_and(|color| !color.is_transparent())
-                        }) {
-                            cx.add_opaque_layer(bounds)
-                        }
-                        f(style, scroll_offset.unwrap_or_default(), cx)
-                    })
-                },
-            );
+                    if style.background.as_ref().is_some_and(|fill| {
+                        fill.color().is_some_and(|color| !color.is_transparent())
+                    }) {
+                        cx.add_opaque_layer(bounds)
+                    }
+
+                    f(style, scroll_offset.unwrap_or_default(), cx)
+                })
+            },
+        );
 
             if let Some(group) = self.group.as_ref() {
                 GroupBounds::pop(group, cx);

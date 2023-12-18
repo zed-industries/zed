@@ -1,9 +1,9 @@
 use editor::{scroll::autoscroll::Autoscroll, Anchor, Editor, ExcerptId};
 use gpui::{
-    actions, div, rems, uniform_list, AnyElement, AppContext, Div, EventEmitter, FocusHandle,
-    FocusableView, Hsla, InteractiveElement, IntoElement, Model, MouseButton, MouseDownEvent,
-    MouseMoveEvent, ParentElement, Pixels, Render, Styled, TextStyle, UniformListScrollHandle,
-    View, ViewContext, VisualContext, WeakView, WindowContext,
+    actions, canvas, div, rems, uniform_list, AnyElement, AppContext, AvailableSpace, Div,
+    EventEmitter, FocusHandle, FocusableView, Hsla, InteractiveElement, IntoElement, Model,
+    MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement, Pixels, Render, Styled, TextStyle,
+    UniformListScrollHandle, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use language::{Buffer, OwnedSyntaxLayerInfo};
 use settings::Settings;
@@ -305,7 +305,7 @@ impl SyntaxTreeView {
             anonymous_node_style.color = color;
         }
 
-        let mut row = h_stack().size_full();
+        let mut row = h_stack().bg(gpui::yellow());
         if let Some(field_name) = cursor.field_name() {
             let mut field_style = style.clone();
             if let Some(color) = property_color {
@@ -332,7 +332,8 @@ impl SyntaxTreeView {
                 Hsla::default()
             })
             // todo!() does not work
-            .ml(rems(depth as f32 * 180.0))
+            // .ml(rems(dbg!(depth) as f32 * 10.0))
+            .pl(rems(dbg!(depth) as f32 * 10.0))
             // .padding(gutter_padding + depth as f32 * 18.0)
             ;
     }
@@ -341,7 +342,7 @@ impl SyntaxTreeView {
 impl Render for SyntaxTreeView {
     type Element = Div;
 
-    fn render(&mut self, cx: &mut gpui::ViewContext<'_, Self>) -> Div {
+    fn render(&mut self, cx: &mut gpui::ViewContext<'_, Self>) -> Self::Element {
         let settings = ThemeSettings::get_global(cx);
         let font = settings.buffer_font.clone();
         let font_size = settings.buffer_font_size(cx);
@@ -363,7 +364,7 @@ impl Render for SyntaxTreeView {
             self.hover_state_changed(cx);
         }
 
-        let mut rendered = div();
+        let mut rendered = div().flex_1();
 
         if let Some(layer) = self
             .editor
@@ -417,7 +418,7 @@ impl Render for SyntaxTreeView {
                     items
                 },
             )
-            // todo!() does scroll either editor or the tree
+            .size_full()
             .track_scroll(self.list_scroll_handle.clone())
             .on_mouse_move(cx.listener(move |tree_view, event: &MouseMoveEvent, cx| {
                 tree_view.mouse_y = Some(event.position.y);
@@ -431,7 +432,16 @@ impl Render for SyntaxTreeView {
             )
             .text_bg(editor_colors.background);
 
-            rendered = rendered.child(list);
+            rendered = rendered.child(
+                canvas(move |bounds, cx| {
+                    list.into_any_element().draw(
+                        bounds.origin,
+                        bounds.size.map(AvailableSpace::Definite),
+                        cx,
+                    )
+                })
+                .size_full(),
+            );
         }
 
         rendered
